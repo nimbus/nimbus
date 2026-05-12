@@ -1,10 +1,10 @@
 # WebSocket Protocol
 
-This document is the canonical public contract for Neovex WebSocket
+This document is the canonical public contract for Nimbus WebSocket
 negotiation, handshake, framing, ordering, and reconnect behavior.
 
-It defines the single prelaunch WebSocket contract Neovex now supports:
-explicit `neovex.v2` negotiation plus the structured handshake/error behavior
+It defines the single prelaunch WebSocket contract Nimbus now supports:
+explicit `nimbus.v2` negotiation plus the structured handshake/error behavior
 that `docs/plans/archive/websocket-protocol-plan.md` established.
 
 Use [errors.md](errors.md)
@@ -48,11 +48,11 @@ Those remain owned by their separate reference or follow-on plans.
 
 | Identifier | Status | Meaning |
 | --- | --- | --- |
-| `neovex.v2` | required | `hello` / `client_hello`, structured errors, and the current JSON subscription/auth framing |
+| `nimbus.v2` | required | `hello` / `client_hello`, structured errors, and the current JSON subscription/auth framing |
 
 Rules:
 
-- Clients must offer `Sec-WebSocket-Protocol: neovex.v2`.
+- Clients must offer `Sec-WebSocket-Protocol: nimbus.v2`.
 - If the client omits the header or offers only unsupported protocols, the
   server rejects the upgrade with an HTTP `400` structured error body.
 
@@ -62,7 +62,7 @@ Example request:
 GET /convex/demo/ws HTTP/1.1
 Upgrade: websocket
 Connection: Upgrade
-Sec-WebSocket-Protocol: neovex.v2
+Sec-WebSocket-Protocol: nimbus.v2
 ```
 
 Example successful response:
@@ -71,19 +71,19 @@ Example successful response:
 HTTP/1.1 101 Switching Protocols
 Upgrade: websocket
 Connection: Upgrade
-Sec-WebSocket-Protocol: neovex.v2
+Sec-WebSocket-Protocol: nimbus.v2
 ```
 
 ## Handshake
 
-### `neovex.v2`
+### `nimbus.v2`
 
 Immediately after upgrade, the server sends `hello`:
 
 ```json
 {
   "type": "hello",
-  "protocol": "neovex.v2",
+  "protocol": "nimbus.v2",
   "server": {
     "version": "0.2.3",
     "build": "git:abc123"
@@ -105,7 +105,7 @@ The client must answer within 10 seconds:
 ```json
 {
   "type": "client_hello",
-  "protocol": "neovex.v2",
+  "protocol": "nimbus.v2",
   "client": {
     "kind": "browser",
     "version": "0.2.3"
@@ -127,7 +127,7 @@ Rules:
 
 ## Message Shapes
 
-After the `neovex.v2` hello exchange completes, the current public client
+After the `nimbus.v2` hello exchange completes, the current public client
 frames remain the JSON `authenticate`, `clear_auth`, `subscribe`, and
 `unsubscribe` messages shown below.
 
@@ -223,7 +223,7 @@ frames remain the JSON `authenticate`, `clear_auth`, `subscribe`, and
 
 ## Ordering Rules
 
-These rules are normative for `neovex.v2`:
+These rules are normative for `nimbus.v2`:
 
 - Each socket has exactly one application writer.
 - For a mutation `M` that changes live queries `Q1..Qn`, the server must emit
@@ -252,7 +252,7 @@ Current guaranteed baseline:
 - reconnecting creates a new socket and a new logical session
 - clients must reauthenticate if they use application auth
 - clients must resubscribe after reconnect
-- `neovex.v2` has no server-managed resume token
+- `nimbus.v2` has no server-managed resume token
 - `session.id` is currently diagnostic only and is used for correlation and
   logging
 

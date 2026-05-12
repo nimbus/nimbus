@@ -1,6 +1,6 @@
 # Error Schema
 
-This document defines the structured Neovex error contract for HTTP, WebSocket
+This document defines the structured Nimbus error contract for HTTP, WebSocket
 session failures, and per-operation failures.
 
 Schema source for the examples below:
@@ -23,22 +23,22 @@ HTTP responses use a top-level envelope:
 {
   "error": {
     "code": "protocol.no_overlap",
-    "message": "Server does not support protocol neovex.v3.",
+    "message": "Server does not support protocol nimbus.v3.",
     "requestId": "req_01HX3PKGZT2S7Z8K4M3NQ3D2QF",
     "timestamp": "2026-04-26T12:34:56.789Z",
     "severity": "fatal",
     "retryable": false,
     "detail": {
       "serverSupports": [
-        "neovex.v2"
+        "nimbus.v2"
       ],
       "clientOffered": [
-        "neovex.v3"
+        "nimbus.v3"
       ]
     },
     "remediation": {
       "action": "upgrade_server",
-      "message": "Update Neovex to a version that supports the requested protocol."
+      "message": "Update Nimbus to a version that supports the requested protocol."
     }
   }
 }
@@ -155,8 +155,8 @@ Current action vocabulary:
 
 ## Canonical Mappings
 
-This table is the required public mapping for the current `neovex_core::Error`
-and `neovex_server::AppError` surfaces.
+This table is the required public mapping for the current `nimbus_core::Error`
+and `nimbus_server::AppError` surfaces.
 
 | Internal variant | Code | Severity | Retryable |
 | --- | --- | --- | --- |

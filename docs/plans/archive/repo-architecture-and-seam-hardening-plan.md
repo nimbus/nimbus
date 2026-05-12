@@ -2,7 +2,7 @@
 
 Canonical execution control plane for the next repo-wide architecture wave.
 This plan exists because the latest full-subsystem review found a smaller set
-of higher-value seams that still keep Neovex from feeling fully canonical,
+of higher-value seams that still keep Nimbus from feeling fully canonical,
 fully modular, and fully enterprise-trustworthy pre-launch:
 
 - Firebase application auth still accepts JSON-object bearer payloads as
@@ -10,7 +10,7 @@ fully modular, and fully enterprise-trustworthy pre-launch:
 - the Cloud Functions `firebase-admin/firestore` async write path is not truly
   async/cancellable once execution begins
 - provider-specific Firebase admin host-call variants still live in the
-  generic `neovex-runtime` host ABI
+  generic `nimbus-runtime` host ABI
 - durable document `update_time` now exists in core, but native and Convex
   read surfaces still do not expose that lifecycle metadata canonically
 - the structured-query engine root remains above the repo's hard modularity
@@ -65,7 +65,7 @@ issues are fewer, but they are more fundamental:
   read surfaces
 - two high-churn ownership roots still need decomposition
 
-This is the kind of cleanup Neovex should finish pre-launch while breaking
+This is the kind of cleanup Nimbus should finish pre-launch while breaking
 changes are preferred over compatibility theater.
 
 ## Relationship To Other Plans
@@ -145,11 +145,11 @@ This plan does not cover:
   server-side emulator gate.
 - Cloud Functions `firebase-admin/firestore` async writes still route through a
   blocking helper instead of a native async/cancellable capability path.
-- `neovex-runtime::host` still includes `FirebaseAdminFirestore*` host-call
+- `nimbus-runtime::host` still includes `FirebaseAdminFirestore*` host-call
   variants even though that surface is provider-specific rather than generic.
-- Shared document state now stores durable `update_time`, but native Neovex and
+- Shared document state now stores durable `update_time`, but native Nimbus and
   Convex read projections still do not expose it.
-- `crates/neovex-engine/src/service/queries/structured.rs` is still above the
+- `crates/nimbus-engine/src/service/queries/structured.rs` is still above the
   repo's 2,000-line decomposition threshold.
 - `packages/codegen/src/cloud_functions.mjs` is still above the "needs
   justification" band and mixes too many ownership stories.
@@ -244,7 +244,7 @@ host-call operations.
 - decide the narrowest canonical shape for provider-specific runtime ABI
   extension without re-entangling adapters
 - move Firebase-admin-specific operation naming and payload ownership out of
-  the generic `neovex-runtime` host surface
+  the generic `nimbus-runtime` host surface
 - keep the runtime crate zero-workspace-dependency while tightening provider
   neutrality
 
@@ -279,7 +279,7 @@ Goal: decompose the structured query engine root by owned concept.
 
 Completion gate:
 
-- `crates/neovex-engine/src/service/queries/structured.rs` is back below the
+- `crates/nimbus-engine/src/service/queries/structured.rs` is back below the
   repo threshold or justified only as a thin ownership root
 
 ### RASH7 — Cloud Functions Codegen/Runtime-Bundle Ownership Split
@@ -316,10 +316,10 @@ Completion gate:
 | Date | Item | Status | Notes | Verification |
 | --- | --- | --- | --- | --- |
 | 2026-04-26 | `RASH1` | `done` | Converted the full-subsystem architecture review into one active control-plane owner, registered it in `docs/plans/README.md`, and updated `AGENTS.md` so the remaining auth, ABI, lifecycle, engine, and codegen seams now have one explicit execution owner instead of relying on a stack of completed baselines. | `git diff -- AGENTS.md docs/plans/README.md docs/plans/repo-architecture-and-seam-hardening-plan.md`; `rg -n "repo-architecture-and-seam-hardening-plan" AGENTS.md docs/plans/README.md`. |
-| 2026-04-26 | `RASH2` | `done` | Removed implicit Firebase mock-user bearer authentication from the default server contract. JSON-object emulator bearers now authenticate only when `FirebaseConfig` explicitly enables emulator mock-user-token auth; otherwise Firebase routes fail closed through the shared application-auth verifier path. Updated the Firebase auth, compatibility, migration, and browser `Listen` docs to match, and added focused REST plus WebSocket `Listen` proofs for ungated-versus-gated behavior while keeping verified bearer auth green. | `cargo fmt --all --check`; `cargo test -p neovex-server firebase_mock_user_token_requires_explicit_server_opt_in --lib`; `cargo test -p neovex-server firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_in --lib`; `cargo test -p neovex-server firebase_rest_commit_and_batch_get_respect_bearer_principal --lib`. |
-| 2026-04-26 | `RASH3` | `done` | Removed the hidden `spawn_blocking` fallback from the shared runtime-host async batch helper. Async atomic write batches now require an active mutation execution unit instead of silently creating a blocking fallback, which matches the covered Cloud Functions mutation invocation model and keeps the async Firestore-admin write path honest. Added a lightweight regression guard so runtime-host capability code cannot quietly reintroduce `spawn_blocking`. | `cargo fmt --all --check`; `cargo test -p neovex-server async_runtime_integration_removes_hot_path_blocking_adapters --lib`; `cargo test -p neovex-server cloud_functions --lib`. |
-| 2026-04-26 | `RASH4` | `done` | Replaced the four Firebase-admin-specific runtime host-call variants with one provider-neutral `RuntimeExtensionCall` ABI shape in `neovex-runtime`. The runtime crate now owns only the generic async extension lane, while the Cloud Functions adapter owns the `cloud_functions` extension namespace, the `firebase_admin.firestore.*` operation strings, and the typed payload decoding/dispatch. Convex-side host-call contract and unsupported-adapter handling were updated to keep the adapter boundary explicit instead of carrying Cloud Functions-specific operation names in generic runtime or Convex bridge enums. | `cargo fmt --all --check`; `cargo check -p neovex-runtime -p neovex-server`; `cargo test -p neovex-runtime host_call --lib`; `cargo test -p neovex-server cloud_functions --lib`; `cargo test -p neovex-server adapters::convex::tests::contracts --lib`; `npm run test --workspace @neovex/codegen`. |
-| 2026-04-26 | `RASH5` | `done` | Made durable `update_time` part of the shared external document projection instead of leaving it trapped behind provider-specific read paths. `Document::to_json()` and `into_json()` now expose `_updateTime`, shared auth/system-field lookups understand it, generated schema document types include it, and focused native plus Convex-facing tests/docs were updated so read surfaces derive lifecycle metadata from the same shared document source. Firebase and Cloud Functions keep their provider-specific `updateTime` / `update_time_ms` naming on top of that same durable field. | `cargo fmt --all --check`; `cargo check -p neovex-core -p neovex-server`; `cargo test -p neovex-core document_to_json_includes_system_fields --lib`; `cargo test -p neovex-server convex_query_returns_documents_as_plain_json --lib`; `cargo test -p neovex-server query_endpoint_returns_filtered_results --lib`; `npm run test --workspace @neovex/codegen`. |
-| 2026-04-26 | `RASH6` | `done` | Split the structured-query engine root into concept-owned children. `structured.rs` is now a 522-line composition root over shared types and `Service` entrypoints, with lowering/index-validation preparation moved into `structured/prepare.rs`, ordering/cursor/finalization logic moved into `structured/finalize.rs`, and the large inline proof slab moved into `structured/tests.rs`. The result keeps the structured query contract intact while putting the highest-churn ownership clusters behind explicit module seams. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p neovex-engine`; `cargo test -p neovex-engine structured --lib`. |
-| 2026-04-26 | `RASH7` | `done` | Split the Cloud Functions codegen/runtime-bundle root into project detection, bundling, and generated-runtime ownership seams. `packages/codegen/src/cloud_functions.mjs` is now a 194-line composition root; project/app detection lives in `cloud_functions/project.mjs`, esbuild virtual-module assembly lives in `cloud_functions/bundle.mjs`, and generated runtime/shim source generation lives in `cloud_functions/runtime_sources.mjs`. This preserves the existing artifact contract and selftest coverage while making the composition root thin and explicit. | `npm run test --workspace @neovex/codegen`; `npm run typecheck --workspace @neovex/codegen`. |
+| 2026-04-26 | `RASH2` | `done` | Removed implicit Firebase mock-user bearer authentication from the default server contract. JSON-object emulator bearers now authenticate only when `FirebaseConfig` explicitly enables emulator mock-user-token auth; otherwise Firebase routes fail closed through the shared application-auth verifier path. Updated the Firebase auth, compatibility, migration, and browser `Listen` docs to match, and added focused REST plus WebSocket `Listen` proofs for ungated-versus-gated behavior while keeping verified bearer auth green. | `cargo fmt --all --check`; `cargo test -p nimbus-server firebase_mock_user_token_requires_explicit_server_opt_in --lib`; `cargo test -p nimbus-server firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_in --lib`; `cargo test -p nimbus-server firebase_rest_commit_and_batch_get_respect_bearer_principal --lib`. |
+| 2026-04-26 | `RASH3` | `done` | Removed the hidden `spawn_blocking` fallback from the shared runtime-host async batch helper. Async atomic write batches now require an active mutation execution unit instead of silently creating a blocking fallback, which matches the covered Cloud Functions mutation invocation model and keeps the async Firestore-admin write path honest. Added a lightweight regression guard so runtime-host capability code cannot quietly reintroduce `spawn_blocking`. | `cargo fmt --all --check`; `cargo test -p nimbus-server async_runtime_integration_removes_hot_path_blocking_adapters --lib`; `cargo test -p nimbus-server cloud_functions --lib`. |
+| 2026-04-26 | `RASH4` | `done` | Replaced the four Firebase-admin-specific runtime host-call variants with one provider-neutral `RuntimeExtensionCall` ABI shape in `nimbus-runtime`. The runtime crate now owns only the generic async extension lane, while the Cloud Functions adapter owns the `cloud_functions` extension namespace, the `firebase_admin.firestore.*` operation strings, and the typed payload decoding/dispatch. Convex-side host-call contract and unsupported-adapter handling were updated to keep the adapter boundary explicit instead of carrying Cloud Functions-specific operation names in generic runtime or Convex bridge enums. | `cargo fmt --all --check`; `cargo check -p nimbus-runtime -p nimbus-server`; `cargo test -p nimbus-runtime host_call --lib`; `cargo test -p nimbus-server cloud_functions --lib`; `cargo test -p nimbus-server adapters::convex::tests::contracts --lib`; `npm run test --workspace @nimbus/codegen`. |
+| 2026-04-26 | `RASH5` | `done` | Made durable `update_time` part of the shared external document projection instead of leaving it trapped behind provider-specific read paths. `Document::to_json()` and `into_json()` now expose `_updateTime`, shared auth/system-field lookups understand it, generated schema document types include it, and focused native plus Convex-facing tests/docs were updated so read surfaces derive lifecycle metadata from the same shared document source. Firebase and Cloud Functions keep their provider-specific `updateTime` / `update_time_ms` naming on top of that same durable field. | `cargo fmt --all --check`; `cargo check -p nimbus-core -p nimbus-server`; `cargo test -p nimbus-core document_to_json_includes_system_fields --lib`; `cargo test -p nimbus-server convex_query_returns_documents_as_plain_json --lib`; `cargo test -p nimbus-server query_endpoint_returns_filtered_results --lib`; `npm run test --workspace @nimbus/codegen`. |
+| 2026-04-26 | `RASH6` | `done` | Split the structured-query engine root into concept-owned children. `structured.rs` is now a 522-line composition root over shared types and `Service` entrypoints, with lowering/index-validation preparation moved into `structured/prepare.rs`, ordering/cursor/finalization logic moved into `structured/finalize.rs`, and the large inline proof slab moved into `structured/tests.rs`. The result keeps the structured query contract intact while putting the highest-churn ownership clusters behind explicit module seams. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p nimbus-engine`; `cargo test -p nimbus-engine structured --lib`. |
+| 2026-04-26 | `RASH7` | `done` | Split the Cloud Functions codegen/runtime-bundle root into project detection, bundling, and generated-runtime ownership seams. `packages/codegen/src/cloud_functions.mjs` is now a 194-line composition root; project/app detection lives in `cloud_functions/project.mjs`, esbuild virtual-module assembly lives in `cloud_functions/bundle.mjs`, and generated runtime/shim source generation lives in `cloud_functions/runtime_sources.mjs`. This preserves the existing artifact contract and selftest coverage while making the composition root thin and explicit. | `npm run test --workspace @nimbus/codegen`; `npm run typecheck --workspace @nimbus/codegen`. |
 | 2026-04-26 | `RASH8` | `done` | Closed the wave after focused proof lanes passed. Refreshed `docs/plans/README.md` and `AGENTS.md` so this plan is no longer advertised as an active execution owner and instead serves as the latest completed repo-wide architecture/seam hardening baseline. Kept the earlier runtime/auth/canonicalization plans as supporting completed baselines and left future repo-wide seam work gated on promoting a new active control plan rather than silently reusing this finished one. | `git diff -- AGENTS.md docs/plans/README.md docs/plans/repo-architecture-and-seam-hardening-plan.md`; `rg -n "repo-architecture-and-seam-hardening-plan" AGENTS.md docs/plans/README.md`. |

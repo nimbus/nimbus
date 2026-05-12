@@ -10,7 +10,7 @@ Runs the reproducible encryption-at-rest benchmark capture flow:
   2. embedded providers with manifest-backed local encryption
   3. libsql replica provider local-cache reopen and refresh drills with
      encrypted local cache, when
-     NEOVEX_LIBSQL_URL and NEOVEX_LIBSQL_ADMIN_URL are set
+     NIMBUS_LIBSQL_URL and NIMBUS_LIBSQL_ADMIN_URL are set
 
 Outputs:
   - system-info.log
@@ -106,7 +106,7 @@ collect_system_info() {
     fi
     echo
     echo "[benchmark env overrides]"
-    env | sort | grep -E '^NEOVEX_(BENCH|LIBSQL_REPLICA_BENCH)_' || true
+    env | sort | grep -E '^NIMBUS_(BENCH|LIBSQL_REPLICA_BENCH)_' || true
   } >"$system_info_log"
 }
 
@@ -130,8 +130,8 @@ run_logged \
   "$embedded_encrypted_log" \
   make bench-embedded-providers REPORT="$embedded_encrypted_report" ENCRYPTION=temp-master-key-file
 
-libsql_status="skipped: set NEOVEX_LIBSQL_URL and NEOVEX_LIBSQL_ADMIN_URL to capture encrypted libsql replica evidence"
-if [[ -n "${NEOVEX_LIBSQL_URL:-}" && -n "${NEOVEX_LIBSQL_ADMIN_URL:-}" ]]; then
+libsql_status="skipped: set NIMBUS_LIBSQL_URL and NIMBUS_LIBSQL_ADMIN_URL to capture encrypted libsql replica evidence"
+if [[ -n "${NIMBUS_LIBSQL_URL:-}" && -n "${NIMBUS_LIBSQL_ADMIN_URL:-}" ]]; then
   run_logged \
     "libsql replica benchmark with encrypted local cache" \
     "$libsql_log" \

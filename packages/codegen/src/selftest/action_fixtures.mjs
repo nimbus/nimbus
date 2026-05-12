@@ -75,7 +75,7 @@ export const read = action({
   const packageReport = await readConvexJson(appDir, "node_external_packages.json");
   assert.equal(packageReport.mode, "explicit");
   assert.deepEqual(packageReport.configuredExternalPackages, ["sharp", "@scope/pkg"]);
-  assert.equal(packageReport.limits.enforcedByNeovex, false);
+  assert.equal(packageReport.limits.enforcedByNimbus, false);
   assert.equal(packageReport.limits.convexCloudReference.zippedBytes, 45 * 1024 * 1024);
   assert.deepEqual(
     packageReport.packages.map((entry) => entry.packageName),
@@ -325,7 +325,7 @@ export default http;
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /routesByName/);
   assert.match(runtimeBundle, /"messages:postMessage"/);
-  assert.match(runtimeBundle, /op_neovex_http_route/);
+  assert.match(runtimeBundle, /op_nimbus_http_route/);
 }
 
 async function testActionCompositionServerFixture() {
@@ -419,7 +419,7 @@ export const listViaAction = action({
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /executeActionDefinition/);
-  assert.match(runtimeBundle, /op_neovex_ctx_action/);
+  assert.match(runtimeBundle, /op_nimbus_ctx_action/);
   assert.match(runtimeBundle, /runQuery/);
 }
 

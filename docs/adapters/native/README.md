@@ -1,7 +1,7 @@
 # Native HTTP / WebSocket Adapter
 
 ```bash
-neovex start --port 8080
+nimbus start --port 8080
 
 curl -s -X POST http://localhost:8080/api/tenants -H "Content-Type: application/json" -d '{"id": "demo"}'
 curl -s -X POST http://localhost:8080/api/tenants/demo/documents -H "Content-Type: application/json" \
@@ -10,7 +10,7 @@ curl -s http://localhost:8080/api/tenants/demo/query -H "Content-Type: applicati
   -d '{"table": "messages", "filters": []}'
 ```
 
-The most direct path to Neovex. REST for documents, WebSocket for live
+The most direct path to Nimbus. REST for documents, WebSocket for live
 subscriptions. No SDK needed -- just curl or any HTTP client. ~1 minute
 from install to query.
 
@@ -18,7 +18,7 @@ from install to query.
 
 ```bash
 # 1. Start the server
-neovex start --port 8080
+nimbus start --port 8080
 
 # 2. Create a tenant
 curl -s -X POST http://localhost:8080/api/tenants \
@@ -38,11 +38,11 @@ curl -s -X POST http://localhost:8080/api/tenants/demo/query \
 
 ## Client package
 
-`neovex`
+`nimbus`
 
-- `neovex/rest` -- `NeovexRestClient` (HTTP) and `NeovexSubscriptionClient` (WebSocket) for the native REST API
-- `neovex/browser` -- `NeovexHttpClient` and `NeovexClient` for server-function references (Convex-style)
-- `neovex/server`, `neovex/react`, `neovex/values` -- server functions, React hooks, value types
+- `nimbus/rest` -- `NimbusRestClient` (HTTP) and `NimbusSubscriptionClient` (WebSocket) for the native REST API
+- `nimbus/browser` -- `NimbusHttpClient` and `NimbusClient` for server-function references (Convex-style)
+- `nimbus/server`, `nimbus/react`, `nimbus/values` -- server functions, React hooks, value types
 
 ## Project Layout
 
@@ -56,11 +56,11 @@ my-app/
 └── index.html
 ```
 
-For server functions with the native `neovex/` source root (experimental):
+For server functions with the native `nimbus/` source root (experimental):
 
 ```
 my-app/
-├── neovex/
+├── nimbus/
 │   ├── schema.ts
 │   ├── messages.ts
 │   └── _generated/
@@ -69,7 +69,7 @@ my-app/
 │       └── server.ts
 ├── src/
 │   └── main.tsx
-├── .neovex/
+├── .nimbus/
 │   └── convex/                # Internal build artifacts
 ├── package.json
 └── vite.config.ts
@@ -77,14 +77,14 @@ my-app/
 
 ## Example Code
 
-### Using the `neovex/rest` SDK
+### Using the `nimbus/rest` SDK
 
-The `neovex/rest` export provides `NeovexRestClient` for HTTP operations and `NeovexSubscriptionClient` for live WebSocket subscriptions.
+The `nimbus/rest` export provides `NimbusRestClient` for HTTP operations and `NimbusSubscriptionClient` for live WebSocket subscriptions.
 
 ```typescript
-import { NeovexRestClient, NeovexSubscriptionClient } from "neovex/rest";
+import { NimbusRestClient, NimbusSubscriptionClient } from "nimbus/rest";
 
-const client = new NeovexRestClient("http://localhost:8080");
+const client = new NimbusRestClient("http://localhost:8080");
 
 // Health check
 await client.health();
@@ -136,9 +136,9 @@ const result = await client.getScheduledJobResult("my-tenant", job_id);
 ### Live subscriptions (WebSocket)
 
 ```typescript
-import { NeovexSubscriptionClient } from "neovex/rest";
+import { NimbusSubscriptionClient } from "nimbus/rest";
 
-const ws = new NeovexSubscriptionClient("http://localhost:8080", "my-tenant", {
+const ws = new NimbusSubscriptionClient("http://localhost:8080", "my-tenant", {
   onLog: (msg) => console.log(msg),
 });
 
@@ -157,22 +157,22 @@ subscription.unsubscribe();
 ws.close();
 ```
 
-The native WebSocket uses the `neovex.v2` protocol. See the [WebSocket protocol reference](websocket-protocol.md) for the full framing contract.
+The native WebSocket uses the `nimbus.v2` protocol. See the [WebSocket protocol reference](websocket-protocol.md) for the full framing contract.
 
-### Server functions with the `neovex` SDK
+### Server functions with the `nimbus` SDK
 
-When using server functions with a `neovex/` source root, the `neovex/browser` package provides typed clients for function references (distinct from the REST surface above):
+When using server functions with a `nimbus/` source root, the `nimbus/browser` package provides typed clients for function references (distinct from the REST surface above):
 
 ```typescript
-import { NeovexHttpClient, NeovexClient } from "neovex/browser";
-import { api } from "./neovex/_generated/api.ts";
+import { NimbusHttpClient, NimbusClient } from "nimbus/browser";
+import { api } from "./nimbus/_generated/api.ts";
 
 // HTTP client for one-shot queries
-const http = new NeovexHttpClient("http://localhost:8080/convex/my-tenant");
+const http = new NimbusHttpClient("http://localhost:8080/convex/my-tenant");
 const tasks = await http.query(api.tasks.list, {});
 
 // WebSocket client for live subscriptions
-const live = new NeovexClient("http://localhost:8080/convex/my-tenant");
+const live = new NimbusClient("http://localhost:8080/convex/my-tenant");
 live.onUpdate(api.tasks.list, {}, (results) => console.log(results));
 ```
 
@@ -192,7 +192,7 @@ live.onUpdate(api.tasks.list, {}, (results) => console.log(results));
 | `PUT` | `/api/tenants/{id}/schema/{table}` | Set table schema |
 | `POST` | `/api/tenants/{id}/schedule` | Schedule mutation |
 | `POST` | `/api/tenants/{id}/crons` | Create cron job |
-| `WS` | `/ws?tenant_id={id}` | WebSocket (neovex.v2) |
+| `WS` | `/ws?tenant_id={id}` | WebSocket (nimbus.v2) |
 
 See the [HTTP and WebSocket API reference](http-api.md) for the full route catalog.
 
@@ -200,14 +200,14 @@ See the [HTTP and WebSocket API reference](http-api.md) for the full route catal
 
 > **Important:** `POST /api/tenants` creates tenants on demand without authentication. This is convenient for local development but is a security concern in production. Pre-provision tenants via the admin API. A `--auto-create-tenants` flag (default off, opt-in for development) is planned.
 
-## `neovex/` Source Root (Experimental)
+## `nimbus/` Source Root (Experimental)
 
-The native `neovex/` source root is the preferred authoring mode for new Neovex-native projects. When codegen detects both `neovex/` and `convex/` directories, `neovex/` takes priority. Generated files import from `neovex/*` instead of `convex/*`.
+The native `nimbus/` source root is the preferred authoring mode for new Nimbus-native projects. When codegen detects both `nimbus/` and `convex/` directories, `nimbus/` takes priority. Generated files import from `nimbus/*` instead of `convex/*`.
 
-This is experimental. See the [source directory story](../../plans/stories/support-neovex-source-directory.md) for the full contract.
+This is experimental. See the [source directory story](../../plans/stories/support-nimbus-source-directory.md) for the full contract.
 
 ## Related Docs
 
 - [HTTP and WebSocket API reference](http-api.md)
 - [WebSocket protocol](websocket-protocol.md)
-- [Demo: neovex/html](../../demos/neovex/html/)
+- [Demo: nimbus/html](../../demos/nimbus/html/)

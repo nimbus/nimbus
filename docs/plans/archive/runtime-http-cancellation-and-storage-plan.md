@@ -57,43 +57,43 @@ The remaining item 3 work is now owned by
   once they receive one:
   - `ConvexRuntimeBridge::call_async(...)` forwards the token into the
     cancellable bridge dispatcher in
-    `crates/neovex-server/src/convex/runtime_bridge.rs:943-960`
+    `crates/nimbus-server/src/convex/runtime_bridge.rs:943-960`
   - the runtime host executor drops queued jobs and returns `Cancelled` when
-    the token fires in `crates/neovex-runtime/src/host_executor.rs:41-139`
-  - `op_neovex_async_host_call(...)` already ties JS async host ops to runtime
-    cancellation state in `crates/neovex-runtime/src/runtime.rs:1136-1185`
+    the token fires in `crates/nimbus-runtime/src/host_executor.rs:41-139`
+  - `op_nimbus_async_host_call(...)` already ties JS async host ops to runtime
+    cancellation state in `crates/nimbus-runtime/src/runtime.rs:1136-1185`
 - WebSocket runtime subscriptions already own a real live
   `HostCallCancellation` and cancel it on teardown in
-  `crates/neovex-server/src/convex/subscriptions.rs:461` and
-  `crates/neovex-server/src/convex/subscriptions.rs:767`
+  `crates/nimbus-server/src/convex/subscriptions.rs:461` and
+  `crates/nimbus-server/src/convex/subscriptions.rs:767`
 - Cooperative cancellation already exists for long read loops in the engine:
   - `query_documents_cancellable(...)` in
-    `crates/neovex-engine/src/service/queries.rs:47-56`
+    `crates/nimbus-engine/src/service/queries.rs:47-56`
   - `paginate_documents_cancellable(...)` in
-    `crates/neovex-engine/src/service/queries.rs:64-76`
-  - table scans in `crates/neovex-storage/src/store.rs:247-292`
-  - index scans in `crates/neovex-storage/src/index.rs:410-566`
+    `crates/nimbus-engine/src/service/queries.rs:64-76`
+  - table scans in `crates/nimbus-storage/src/store.rs:247-292`
+  - index scans in `crates/nimbus-storage/src/index.rs:410-566`
 
 ### What is still open
 
 - The runtime-backed HTTP entrypoint still creates a detached default token
   instead of receiving a request-scoped one:
   - `invoke_named_convex_function_async(...)` in
-    `crates/neovex-server/src/convex/dispatch.rs:129-138`
+    `crates/nimbus-server/src/convex/dispatch.rs:129-138`
   - `invoke_named_convex_function_with_trace_async(...)` creates
     `HostCallCancellation::default()` in
-    `crates/neovex-server/src/convex/dispatch.rs:187-201`
+    `crates/nimbus-server/src/convex/dispatch.rs:187-201`
 - Runtime-backed HTTP handlers still call that detached async helper directly:
-  - query route in `crates/neovex-server/src/convex/mod.rs:663-677`
+  - query route in `crates/nimbus-server/src/convex/mod.rs:663-677`
   - paginated query route in
-    `crates/neovex-server/src/convex/mod.rs:711-725`
-  - mutation route in `crates/neovex-server/src/convex/mod.rs:758-772`
-  - action route in `crates/neovex-server/src/convex/mod.rs:810-825`
+    `crates/nimbus-server/src/convex/mod.rs:711-725`
+  - mutation route in `crates/nimbus-server/src/convex/mod.rs:758-772`
+  - action route in `crates/nimbus-server/src/convex/mod.rs:810-825`
   - runtime-backed `httpAction` dispatch in
-    `crates/neovex-server/src/convex/http_actions.rs:45-75`
+    `crates/nimbus-server/src/convex/http_actions.rs:45-75`
 - Direct non-runtime HTTP routes still use `run_blocking(...)` and therefore
   have no request-scoped teardown story today:
-  - `crates/neovex-server/src/state.rs:100-110`
+  - `crates/nimbus-server/src/state.rs:100-110`
 
 ### What recent bridge work did help with
 
@@ -101,16 +101,16 @@ Recent changes improved cancellation once execution is already inside the
 runtime bridge:
 
 - async `ctx.db.get` now has a cancellable bridge path in
-  `crates/neovex-server/src/convex/runtime_bridge.rs:451-477`
+  `crates/nimbus-server/src/convex/runtime_bridge.rs:451-477`
 - async `http_route` now has a cancellable bridge path in
-  `crates/neovex-server/src/convex/runtime_bridge.rs:1186-1218`
+  `crates/nimbus-server/src/convex/runtime_bridge.rs:1186-1218`
 - the `InvocationKind::Mutation` / `InvocationKind::Action` branches inside
   `convex.invoke` now use cancellable direct helpers in
-  `crates/neovex-server/src/convex/runtime_bridge.rs:1157-1181`
+  `crates/nimbus-server/src/convex/runtime_bridge.rs:1157-1181`
 - those direct helpers live in
-  `crates/neovex-server/src/convex/dispatch.rs:338-370`
+  `crates/nimbus-server/src/convex/dispatch.rs:338-370`
 - there are regression tests for the above in
-  `crates/neovex-server/src/convex/mod.rs:1325-1408`
+  `crates/nimbus-server/src/convex/mod.rs:1325-1408`
 
 That work is useful, but it does **not** fix the HTTP request-teardown hole,
 because the HTTP handlers still do not own and pass a request-scoped token into
@@ -147,7 +147,7 @@ Add:
 
 - `invoke_named_convex_function_async_cancellable(...)`
 
-in `crates/neovex-server/src/convex/dispatch.rs`.
+in `crates/nimbus-server/src/convex/dispatch.rs`.
 
 Requirements:
 
@@ -190,11 +190,11 @@ The important behavior is:
 
 Update these call sites to use the new cancellable async helper:
 
-- `crates/neovex-server/src/convex/mod.rs:663-677`
-- `crates/neovex-server/src/convex/mod.rs:711-725`
-- `crates/neovex-server/src/convex/mod.rs:758-772`
-- `crates/neovex-server/src/convex/mod.rs:810-825`
-- `crates/neovex-server/src/convex/http_actions.rs:45-75`
+- `crates/nimbus-server/src/convex/mod.rs:663-677`
+- `crates/nimbus-server/src/convex/mod.rs:711-725`
+- `crates/nimbus-server/src/convex/mod.rs:758-772`
+- `crates/nimbus-server/src/convex/mod.rs:810-825`
+- `crates/nimbus-server/src/convex/http_actions.rs:45-75`
 
 Each handler should:
 
@@ -211,7 +211,7 @@ returns HTTP response parts rather than a plain Convex value.
 Requirements:
 
 - the request-scoped guard must be created before the runtime-backed branch in
-  `crates/neovex-server/src/convex/http_actions.rs:45-75`
+  `crates/nimbus-server/src/convex/http_actions.rs:45-75`
 - the same live token must be passed into
   `invoke_named_convex_function_async_cancellable(...)`
 - the guard must stay alive until the runtime value has been decoded and
@@ -225,7 +225,7 @@ Requirements:
 No new metric names are needed for the first pass.
 
 This workstream should rely on the existing counters in
-`crates/neovex-runtime/src/metrics.rs:16-106` and verify that dropped HTTP
+`crates/nimbus-runtime/src/metrics.rs:16-106` and verify that dropped HTTP
 requests move:
 
 - `canceled_invocations`
@@ -237,8 +237,8 @@ Do not rework subscription teardown in this pass.
 
 The WebSocket path already has a live cancellation token in:
 
-- `crates/neovex-server/src/convex/subscriptions.rs:461`
-- `crates/neovex-server/src/convex/subscriptions.rs:767`
+- `crates/nimbus-server/src/convex/subscriptions.rs:461`
+- `crates/nimbus-server/src/convex/subscriptions.rs:767`
 
 That path should stay as-is unless the HTTP cancellation wiring reveals a shared
 abstraction worth extracting later.
@@ -310,7 +310,7 @@ Introduce a server helper that can coordinate:
 Recommended shape:
 
 - add a helper alongside `run_blocking(...)` in
-  `crates/neovex-server/src/state.rs:100-110`, for example
+  `crates/nimbus-server/src/state.rs:100-110`, for example
   `run_blocking_cancellable(...)`
 - inside the helper, start `spawn_blocking(...)` and race it with
   `cancellation.cancelled()`
@@ -332,9 +332,9 @@ Important nuance:
 The direct query/paginated code paths should be updated to use:
 
 - `query_documents_cancellable(...)` from
-  `crates/neovex-engine/src/service/queries.rs:47-56`
+  `crates/nimbus-engine/src/service/queries.rs:47-56`
 - `paginate_documents_cancellable(...)` from
-  `crates/neovex-engine/src/service/queries.rs:64-76`
+  `crates/nimbus-engine/src/service/queries.rs:64-76`
 
 #### 2. Do not fake write preemption
 

@@ -1,6 +1,6 @@
 # Firecracker Runtime: Implementation Sketches
 
-Code sketches for integrating a Firecracker-based container runtime into Neovex.
+Code sketches for integrating a Firecracker-based container runtime into Nimbus.
 These are reference designs, not production code. See
 `firecracker-container-runtime.md` for the research context.
 
@@ -12,7 +12,7 @@ These are reference designs, not production code. See
 
 ```
 crates/
-  neovex-vmm/           # NEW: microVM management (host side)
+  nimbus-vmm/           # NEW: microVM management (host side)
     src/
       lib.rs            # Public API: VmPool, VmHandle
       firecracker.rs    # Firecracker sidecar management (Phase 1)
@@ -21,7 +21,7 @@ crates/
       vsock.rs          # Host-side vsock communication
       snapshot.rs       # Snapshot cache and restore
       kernel.rs         # Kernel download and management
-  neovex-init/          # NEW: Guest init binary (PID 1 inside VM)
+  nimbus-init/          # NEW: Guest init binary (PID 1 inside VM)
     src/
       main.rs           # Mount, configure, exec entrypoint
       vsock_api.rs      # JSON-RPC API server over vsock
@@ -35,7 +35,7 @@ crates/
 Thin HTTP-over-Unix-socket client. No third-party SDK needed.
 
 ```rust
-// crates/neovex-vmm/src/firecracker.rs
+// crates/nimbus-vmm/src/firecracker.rs
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Child};
@@ -123,7 +123,7 @@ impl FirecrackerVm {
         let boot = serde_json::json!({
             "kernel_image_path": kernel.to_str().unwrap(),
             "boot_args": "console=ttyS0 reboot=k panic=1 pci=off \
-                          init=/sbin/neovex-init root=/dev/vda rw"
+                          init=/sbin/nimbus-init root=/dev/vda rw"
         });
         self.api_put("/boot-source", &boot.to_string()).await?;
 
@@ -207,7 +207,7 @@ impl Drop for FirecrackerVm {
 ## 2. OCI Image to ext4 Rootfs
 
 ```rust
-// crates/neovex-vmm/src/oci.rs
+// crates/nimbus-vmm/src/oci.rs
 
 use oci_client::{Client, Reference, secrets::RegistryAuth};
 use std::path::Path;
@@ -252,7 +252,7 @@ pub async fn oci_to_rootfs(
     }
 
     // Inject init
-    let init_dest = rootfs_dir.join("sbin/neovex-init");
+    let init_dest = rootfs_dir.join("sbin/nimbus-init");
     std::fs::create_dir_all(rootfs_dir.join("sbin"))?;
     std::fs::copy(init_binary, &init_dest)?;
     #[cfg(unix)]
@@ -319,12 +319,12 @@ fn extract_layer_with_whiteouts(
 
 ---
 
-## 3. Guest Init (neovex-init)
+## 3. Guest Init (nimbus-init)
 
 Compiled as `x86_64-unknown-linux-musl` static binary.
 
 ```rust
-// crates/neovex-init/src/main.rs
+// crates/nimbus-init/src/main.rs
 
 use nix::mount::{mount, MsFlags};
 use nix::unistd::{execvp, fork, ForkResult, sethostname, chdir, Pid};
@@ -338,7 +338,7 @@ const CONFIG_PORT: u32 = 10001;
 const API_PORT: u32 = 10000;
 
 fn main() {
-    eprintln!("[neovex-init] PID 1 starting");
+    eprintln!("[nimbus-init] PID 1 starting");
 
     mount_filesystems().expect("mount failed");
     setup_dev_symlinks();
@@ -349,7 +349,7 @@ fn main() {
 
     // Networking
     setup_networking(&config);
-    sethostname(config.hostname.as_deref().unwrap_or("neovex-vm")).ok();
+    sethostname(config.hostname.as_deref().unwrap_or("nimbus-vm")).ok();
 
     // Start vsock API server (background thread)
     std::thread::spawn(move || vsock_api::serve(API_PORT));
@@ -368,11 +368,11 @@ fn main() {
     let mut args = config.entrypoint.clone();
     args.extend(config.cmd.clone());
     if args.is_empty() {
-        eprintln!("[neovex-init] No entrypoint, sleeping");
+        eprintln!("[nimbus-init] No entrypoint, sleeping");
         loop { std::thread::sleep(std::time::Duration::from_secs(3600)); }
     }
 
-    eprintln!("[neovex-init] exec: {:?}", args);
+    eprintln!("[nimbus-init] exec: {:?}", args);
 
     // Fork: PID 1 reaps children, child execs user process
     match unsafe { fork() }.expect("fork failed") {
@@ -461,7 +461,7 @@ struct VmConfig {
 ## 4. Host-Side Vsock Communication
 
 ```rust
-// crates/neovex-vmm/src/vsock.rs
+// crates/nimbus-vmm/src/vsock.rs
 
 use tokio::net::UnixStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -495,7 +495,7 @@ pub async fn send_config(
         "cmd": config.cmd,
         "env": config.env,
         "working_dir": config.working_dir,
-        "hostname": "neovex-agent",
+        "hostname": "nimbus-agent",
     });
 
     stream.write_all(serde_json::to_vec(&cfg)?.as_slice()).await?;
@@ -529,7 +529,7 @@ pub async fn rpc_call(
 ## 5. Custom Minimal VMM (Phase 2 — rust-vmm crates)
 
 ```rust
-// crates/neovex-vmm/src/vmm.rs — sketch of the in-process VMM
+// crates/nimbus-vmm/src/vmm.rs — sketch of the in-process VMM
 
 use kvm_ioctls::{Kvm, VmFd, VcpuFd, VcpuExit};
 use kvm_bindings::kvm_userspace_memory_region;
@@ -622,12 +622,12 @@ pub struct VmStatus {
 
 ---
 
-## 6. Neovex Integration: WorkerLoopFactory
+## 6. Nimbus Integration: WorkerLoopFactory
 
-How the Firecracker runtime plugs into neovex's existing trait system.
+How the Firecracker runtime plugs into nimbus's existing trait system.
 
 ```rust
-// crates/neovex-vmm/src/lib.rs — integration with neovex-runtime traits
+// crates/nimbus-vmm/src/lib.rs — integration with nimbus-runtime traits
 
 /// A VM-backed worker loop. Each instance wraps a running Firecracker VM
 /// and communicates with the guest agent over vsock.
@@ -679,7 +679,7 @@ impl VmWorkerLoopFactory {
 
 ## Dependencies Summary
 
-### neovex-vmm (host crate) — verified 2026-04-09
+### nimbus-vmm (host crate) — verified 2026-04-09
 
 ```toml
 [dependencies]
@@ -716,7 +716,7 @@ vmm-sys-util = "0.15"     # 7.7M
 event-manager = "0.4"     # 2.5M
 ```
 
-### neovex-init (guest binary)
+### nimbus-init (guest binary)
 
 ```toml
 [dependencies]

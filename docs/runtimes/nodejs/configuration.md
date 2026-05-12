@@ -1,6 +1,6 @@
 # Node.js Runtime Configuration
 
-Neovex mirrors the Convex-compatible Node runtime selection shape for action
+Nimbus mirrors the Convex-compatible Node runtime selection shape for action
 modules while keeping the runtime target explicit and evidence-backed.
 
 ## Opt In With `"use node"`
@@ -39,7 +39,7 @@ Allowed values:
 | `"22"` | Run eligible Node action modules with the Node22 compatibility target; current default |
 | `"24"` | Run eligible Node action modules with the Node24 compatibility target |
 
-If no value is configured, Neovex uses Node22.
+If no value is configured, Nimbus uses Node22.
 
 ## Debug Node API Usage
 
@@ -48,8 +48,8 @@ import Node built-ins, or when a package needs to be moved into the Node action
 bundle:
 
 ```bash
-neovex dev --once --debug-node-apis
-neovex codegen --app . --debug-node-apis
+nimbus dev --once --debug-node-apis
+nimbus codegen --app . --debug-node-apis
 ```
 
 Diagnostics should point to the importing module, explain whether `"use node"`
@@ -58,7 +58,7 @@ default runtime.
 
 ## Specifier Rules
 
-Neovex accepts both bare and `node:` forms for supported Node built-ins:
+Nimbus accepts both bare and `node:` forms for supported Node built-ins:
 
 ```ts
 import fs from "fs";

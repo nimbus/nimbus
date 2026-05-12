@@ -1,7 +1,7 @@
 # libkrun Evaluation
 
 Deep evaluation of `containers/libkrun` as a VMM-as-library alternative to
-Firecracker for embedding microVM execution in Neovex.
+Firecracker for embedding microVM execution in Nimbus.
 
 **Date:** 2026-04-09
 **Updated:** 2026-04-09 (verified against source code at
@@ -154,12 +154,12 @@ clean thread shutdown) is acknowledged as significant.
 
 ### The fork/subprocess workaround
 
-This is NOT as bad as it sounds for neovex. Two viable patterns:
+This is NOT as bad as it sounds for nimbus. Two viable patterns:
 
 **Pattern A: Small helper binary (recommended, what smolvm does)**
 
 ```rust
-// neovex-vmm-helper: tiny static binary (~100 lines)
+// nimbus-vmm-helper: tiny static binary (~100 lines)
 fn main() {
     unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL); }
     let config = read_config_from_stdin();
@@ -169,8 +169,8 @@ fn main() {
     krun_start_enter(ctx); // blocks, calls _exit on VM shutdown
 }
 
-// In neovex (has tokio, V8, etc.):
-let child = tokio::process::Command::new("neovex-vmm-helper")
+// In nimbus (has tokio, V8, etc.):
+let child = tokio::process::Command::new("nimbus-vmm-helper")
     .stdin(Stdio::piped())
     .spawn()?;
 // Send config, monitor via waitpid, communicate via vsock
@@ -182,13 +182,13 @@ exactly what `tokio::process::Command` is designed for. The child dying via
 
 **Pattern B: Direct fork() (risky in multi-threaded Rust)**
 
-Fork from the neovex process directly. Risky because:
+Fork from the nimbus process directly. Risky because:
 - Forking a process with tokio runtime leaves corrupted epoll state in child
 - V8's large address space means expensive page table duplication (10-50ms)
 - Lock corruption risk from any mutex held at fork time
 
-**Pattern A is strictly superior.** It's the same pattern neovex already uses
-for V8 test isolation (`crates/neovex-runtime/src/test_support/isolation.rs`
+**Pattern A is strictly superior.** It's the same pattern nimbus already uses
+for V8 test isolation (`crates/nimbus-runtime/src/test_support/isolation.rs`
 uses `Command::new()` for process isolation).
 
 `krun_get_shutdown_eventfd()` is only available in the EFI variant and only
@@ -242,7 +242,7 @@ Port forwarding from host to guest is available via `krun_set_port_map()`.
 - AF_UNIX only with absolute paths
 - Guest inherits host's network security context
 
-**Relevance to Neovex:** Very useful for agent workloads that need HTTP access.
+**Relevance to Nimbus:** Very useful for agent workloads that need HTTP access.
 Eliminates all networking complexity. However, ties you to the libkrunfw kernel.
 
 ---
@@ -255,11 +255,11 @@ Eliminates all networking complexity. However, ties you to the libkrunfw kernel.
 | **muvm** (AsahiLinux/muvm) | 846 | Singleton (file lock) | **Accepts it**: process is sacrificial. Subsequent invocations RPC to guest server. | Elegant singleton pattern — first call creates VM, rest send commands to it. |
 | **krunkit** (containers/krunkit) | 264 | Single process (macOS) | **Accepts it** + `krun_get_shutdown_eventfd()` for graceful shutdown via REST API. | Background thread runs REST server for Podman to control VM lifecycle. |
 | **krunvm** (containers/krunvm) | ~400 | Single process | Accepts it. | Uses buildah for OCI images + virtiofs. |
-| **smolvm** (smol-machines/smolvm) | 162 | Fork per VM | **fork()** before `krun_start_enter()`. Parent monitors child. | Closest to neovex's helper binary pattern. |
+| **smolvm** (smol-machines/smolvm) | 162 | Fork per VM | **fork()** before `krun_start_enter()`. Parent monitors child. | Closest to nimbus's helper binary pattern. |
 
 ### How each project handles the process lifecycle
 
-**crun (most relevant for neovex):** The OCI runtime is already a forked child
+**crun (most relevant for nimbus):** The OCI runtime is already a forked child
 process by the time it calls `krun_start_enter()`. This is the canonical
 pattern — the VMM replaces the child process, same as `execve()`.
 
@@ -274,13 +274,13 @@ calling `krun_start_enter()`. The thread survives because it runs inside the
 same process libkrun takes over. Podman sends `POST` to shut down the VM
 gracefully via `krun_get_shutdown_eventfd()`.
 
-### Pattern analysis for neovex
+### Pattern analysis for nimbus
 
-| Pattern | Used By | Pros | Cons | Fit for Neovex |
+| Pattern | Used By | Pros | Cons | Fit for Nimbus |
 |---------|---------|------|------|----------------|
 | **Helper binary** (Command::new) | smolvm, implied by crun | Safe, clean, tokio-compatible | Extra binary to ship | **Best fit** |
 | **Singleton** (file lock + RPC) | muvm | Elegant, one VM serves many | Only one VM per user | Good for long-running agents |
-| **Sacrificial process** (just accept it) | krunvm, krunkit | Simplest | Parent process dies | Only if neovex IS the VM |
+| **Sacrificial process** (just accept it) | krunvm, krunkit | Simplest | Parent process dies | Only if nimbus IS the VM |
 | **Background thread + REST** | krunkit | Graceful shutdown control | macOS-specific pattern | Useful for lifecycle API |
 
 ---
@@ -309,7 +309,7 @@ int libkrun_exec(/* ... */) {
 ### Key architectural lessons from crun
 
 1. **virtiofs for rootfs:** `krun_set_root("/")` exposes the host directory to
-   the guest via virtiofs. No ext4 images, no block devices. For neovex: unpack
+   the guest via virtiofs. No ext4 images, no block devices. For nimbus: unpack
    OCI layers to a directory, pass directory path to `krun_set_root()`.
 
 2. **OCI config via file:** crun writes `.krun_config.json` to the rootfs.
@@ -321,16 +321,16 @@ int libkrun_exec(/* ... */) {
 
 4. **Dynamic loading:** crun uses `dlopen("libkrun.so.1")` and resolves
    symbols via `dlsym()`. This keeps libkrun as an optional dependency. For
-   neovex's helper binary, static linking is simpler.
+   nimbus's helper binary, static linking is simpler.
 
 5. **Production-proven:** Red Hat's RamaLama project uses `--oci-runtime krun`
    for AI model inference isolation. Confidential Containers uses the SEV
    variant.
 
-### What neovex's helper would look like (modeled on crun)
+### What nimbus's helper would look like (modeled on crun)
 
 ```rust
-// neovex-vmm-helper/src/main.rs (~50 lines)
+// nimbus-vmm-helper/src/main.rs (~50 lines)
 fn main() {
     unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL); }
 
@@ -368,7 +368,7 @@ This is ~50 lines. Compare to the Firecracker sidecar approach which requires
 | **Snapshots** | **No** | Yes (mature, critical for rapid invocation) |
 | **Rootfs handling** | **virtiofs from directory** (no ext4 images!) | ext4 block device (requires `mkfs.ext4` pipeline) |
 | **Networking** | TSI (transparent, zero config) | TAP + iptables (manual setup, error-prone) |
-| **Guest init** | **Built-in** (`init/init.c`, reads OCI config) | Must provide your own (neovex-init) |
+| **Guest init** | **Built-in** (`init/init.c`, reads OCI config) | Must provide your own (nimbus-init) |
 | **Exit code** | Propagated via virtiofs ioctl, automatic | Must implement via vsock protocol |
 | **Security isolation** | Helper process (same as FC) | Jailer provides extra sandboxing |
 | **virtiofs** | Yes (built-in, primary mechanism) | No |
@@ -380,7 +380,7 @@ This is ~50 lines. Compare to the Firecracker sidecar approach which requires
 
 ---
 
-## Verdict for Neovex
+## Verdict for Nimbus
 
 ### The `_exit()` is a design pattern, not a bug
 
@@ -399,12 +399,12 @@ it works:
 The VMM replaces the child process, just like `execve()` replaces a process
 with a new program. The `_exit()` is the normal process termination.
 
-This maps perfectly to neovex's helper binary pattern:
+This maps perfectly to nimbus's helper binary pattern:
 
 ```
-crun pattern:                    neovex pattern:
-podman/conmon                    neovex (tokio + V8)
-  └── clone(crun/krun)             └── Command::new("neovex-vmm-helper")
+crun pattern:                    nimbus pattern:
+podman/conmon                    nimbus (tokio + V8)
+  └── clone(crun/krun)             └── Command::new("nimbus-vmm-helper")
         └── krun_start_enter()           └── krun_start_enter()
               └── _exit(code)                  └── _exit(code)
 ```
@@ -414,7 +414,7 @@ Both are architecturally identical. The parent monitors the child via
 
 ### Real advantages of libkrun over Firecracker
 
-| Advantage | Impact for Neovex |
+| Advantage | Impact for Nimbus |
 |-----------|-------------------|
 | **virtiofs eliminates ext4 pipeline** | crun proves you can pass an unpacked OCI rootfs directory directly to `krun_set_root("/path/to/rootfs")`. libkrun exposes it via virtiofs to the guest. **No `mkfs.ext4`, no disk images, no block devices.** This eliminates the most complex part of the Firecracker pipeline. |
 | **TSI networking** | No TAP devices, no iptables, no IP assignment. Guest processes transparently use host network. Massive simplification for agent workloads that need HTTP. |
@@ -423,7 +423,7 @@ Both are architecturally identical. The parent monitors the child via
 | **macOS support** | Agents work on developer machines (macOS + Hypervisor.framework), not just Linux servers. |
 | **No kernel management** | libkrunfw bundles the kernel. No separate vmlinux download/caching. |
 | **Stable API (SemVer since v1.0)** | Firecracker's API changes between versions. libkrun guarantees stability. |
-| **Built-in init** | libkrun ships a C init (`init/init.c`) that handles mounts, networking, OCI config parsing, and workload exec. Neovex may not need a custom `neovex-init` at all for basic cases. |
+| **Built-in init** | libkrun ships a C init (`init/init.c`) that handles mounts, networking, OCI config parsing, and workload exec. Nimbus may not need a custom `nimbus-init` at all for basic cases. |
 
 ### Real disadvantages
 
@@ -442,9 +442,9 @@ significant simplification (TSI, virtiofs, no kernel management).
 
 **Proposed evaluation path:**
 
-1. **Prototype both** as `neovex-vmm-helper` variants:
-   - `neovex-vmm-helper-fc`: spawns Firecracker, configures via REST API
-   - `neovex-vmm-helper-krun`: calls libkrun C API directly
+1. **Prototype both** as `nimbus-vmm-helper` variants:
+   - `nimbus-vmm-helper-fc`: spawns Firecracker, configures via REST API
+   - `nimbus-vmm-helper-krun`: calls libkrun C API directly
    - Same vsock protocol to the guest init in both cases
 
 2. **Compare on real workloads:**
@@ -454,7 +454,7 @@ significant simplification (TSI, virtiofs, no kernel management).
    - Memory overhead
 
 3. **Decision point:** If snapshot/restore (sub-10ms boot) is critical for
-   neovex's agent invocation model → Firecracker wins. If agents are
+   nimbus's agent invocation model → Firecracker wins. If agents are
    long-running (boot once, run for minutes/hours) → libkrun's simplicity
    wins.
 
@@ -469,9 +469,9 @@ Regardless of which VMM backend (Firecracker, libkrun, or custom rust-vmm),
 the architectural pattern is the same:
 
 ```
-neovex process (tokio + V8 + engine)
+nimbus process (tokio + V8 + engine)
     |
-    +-- tokio::process::Command::new("neovex-vmm-helper")
+    +-- tokio::process::Command::new("nimbus-vmm-helper")
     |       |-- communicates via vsock to guest init
     |       |-- parent monitors via child.wait()
     |       |-- PR_SET_PDEATHSIG ensures cleanup
@@ -482,13 +482,13 @@ neovex process (tokio + V8 + engine)
     |       |-- custom VMM: helper runs VMM in-process
     |
     +-- Guest VM
-            |-- neovex-init (PID 1)
+            |-- nimbus-init (PID 1)
             |-- vsock API server
             |-- OCI entrypoint
 ```
 
 This pattern gives you:
-- Process isolation (VMM crash doesn't kill neovex)
+- Process isolation (VMM crash doesn't kill nimbus)
 - Clean lifecycle management (waitpid + PR_SET_PDEATHSIG)
 - Backend swappability (same interface, different VMM)
 - Tokio compatibility (no fork from async context)
@@ -538,6 +538,6 @@ allocation is needed in the future:
 2. **Aggressive rootfs caching.** Image pull/unpack (seconds) dominates cold
    boot (~100ms). Cache buildah-mounted rootfs across restarts.
 3. **Optimized guest kernel.** Strip libkrunfw's kernel to essentials.
-4. **neovex already has V8 isolates.** For code that doesn't need hardware
+4. **nimbus already has V8 isolates.** For code that doesn't need hardware
    isolation, V8 isolates provide sub-millisecond startup. VMs are reserved
    for workloads that need full OS compatibility (databases, services).

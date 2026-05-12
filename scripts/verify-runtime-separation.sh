@@ -5,14 +5,14 @@ usage() {
   cat <<'EOF'
 usage: verify-runtime-separation.sh [options]
 
-Verify that the system OCI runtime remains separate from the private neovex
+Verify that the system OCI runtime remains separate from the private nimbus
 runtime path. The helper records system-runtime, private-runtime, and Podman
 runtime evidence and exits non-zero when the paths collapse onto the same
 runtime.
 
 options:
   --system-runtime <path-or-command>   System runtime command (default: crun)
-  --private-runtime <path>             Private neovex runtime path (default: /usr/libexec/neovex/crun)
+  --private-runtime <path>             Private nimbus runtime path (default: /usr/libexec/nimbus/crun)
   --podman <path-or-command>           Podman command (default: podman)
   -h, --help                           Show this help
 
@@ -21,7 +21,7 @@ examples:
 
   bash scripts/verify-runtime-separation.sh \
     --system-runtime /usr/bin/crun \
-    --private-runtime /usr/libexec/neovex/crun
+    --private-runtime /usr/libexec/nimbus/crun
 EOF
 }
 
@@ -68,7 +68,7 @@ PY
 }
 
 system_runtime="crun"
-private_runtime="/usr/libexec/neovex/crun"
+private_runtime="/usr/libexec/nimbus/crun"
 podman_command="podman"
 
 while [[ $# -gt 0 ]]; do
@@ -182,7 +182,7 @@ if [[ -n "${podman_runtime}" && -n "${private_runtime_path}" ]]; then
      [[ "${podman_runtime_compact}" == *"${private_runtime_real}"* ]] || \
      [[ -n "${podman_runtime_resolved}" && "${podman_runtime_resolved}" == "${private_runtime_path}" ]] || \
      [[ -n "${podman_runtime_real}" && "${podman_runtime_real}" == "${private_runtime_real}" ]]; then
-    print_line "podman.runtime.separation" "failed (Podman points at the private neovex runtime)"
+    print_line "podman.runtime.separation" "failed (Podman points at the private nimbus runtime)"
     failures=$((failures + 1))
   else
     print_line "podman.runtime.separation" "ok"

@@ -13,21 +13,21 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `crates/neovex-runtime/src/runtime/bootstrap.rs`
-- `crates/neovex-storage/src/store.rs`
-- `crates/neovex-engine/src/service/scheduler.rs`
-- `crates/neovex-engine/src/tenant/subscription_delivery.rs`
-- `crates/neovex-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/direct.rs`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-storage/src/tests.rs`
+- `crates/nimbus-runtime/src/runtime/bootstrap.rs`
+- `crates/nimbus-storage/src/store.rs`
+- `crates/nimbus-engine/src/service/scheduler.rs`
+- `crates/nimbus-engine/src/tenant/subscription_delivery.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/direct.rs`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-storage/src/tests.rs`
 
 Baseline verification status for this plan:
 
 - the immediately preceding modularity cleanup workstream closed green on
   2026-04-03 with:
-  `cargo test -p neovex-runtime`,
-  `cargo test -p neovex-engine`,
-  `cargo test -p neovex-server`,
+  `cargo test -p nimbus-runtime`,
+  `cargo test -p nimbus-engine`,
+  `cargo test -p nimbus-server`,
   `cargo check --workspace`,
   `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
@@ -43,7 +43,7 @@ Baseline verification status for this plan:
 
 ## Purpose
 
-Neovex's architecture is in a better place than it was before the last cleanup
+Nimbus's architecture is in a better place than it was before the last cleanup
 pass. The runtime, engine read path, subscription ownership, and tenant facade
 now have clearer composition roots, and `ARCHITECTURE.md` reflects that landed
 shape.
@@ -109,8 +109,8 @@ These rules are mandatory for every item in this plan.
    recorded.
 
 2. Keep core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -153,29 +153,29 @@ This plan assumes the codebase described in `ARCHITECTURE.md` today:
 
 The current hotspot map from the live worktree is:
 
-- `crates/neovex-runtime/src/runtime.rs` is 2189 lines, but its inline test
+- `crates/nimbus-runtime/src/runtime.rs` is 2189 lines, but its inline test
   module begins at line 445
-- `crates/neovex-runtime/src/executor.rs` is 1503 lines, but its inline test
+- `crates/nimbus-runtime/src/executor.rs` is 1503 lines, but its inline test
   module begins at line 437
-- `crates/neovex-runtime/src/runtime/bootstrap.rs` is 1222 lines and is now
+- `crates/nimbus-runtime/src/runtime/bootstrap.rs` is 1222 lines and is now
   the largest remaining runtime production hotspot
-- `crates/neovex-storage/src/store.rs` is 1719 lines and remains the clearest
+- `crates/nimbus-storage/src/store.rs` is 1719 lines and remains the clearest
   true storage god file
-- `crates/neovex-engine/src/service/scheduler.rs` is 524 lines and still mixes
+- `crates/nimbus-engine/src/service/scheduler.rs` is 524 lines and still mixes
   scheduled-job admin, cron admin, async wrappers, and coordination logic
-- `crates/neovex-engine/src/tenant/subscription_delivery.rs` is 390 lines and
+- `crates/nimbus-engine/src/tenant/subscription_delivery.rs` is 390 lines and
   still mixes queue state, worker lifecycle, metrics, and test pause seams
-- `crates/neovex-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/direct.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/direct.rs`
   is 491 lines and still repeats sync, async, and cancellable wrapper shapes
-- `crates/neovex-engine/src/tests.rs` is 10881 lines and
-  `crates/neovex-storage/src/tests.rs` is 3014 lines; both still bundle many
+- `crates/nimbus-engine/src/tests.rs` is 10881 lines and
+  `crates/nimbus-storage/src/tests.rs` is 3014 lines; both still bundle many
   concepts into single test surfaces
 
 Large files that are currently more concept-cohesive and are not first-wave
 targets for this plan:
 
-- `crates/neovex-engine/src/tenant/materialized_reads.rs`
-- `crates/neovex-storage/src/index.rs`
+- `crates/nimbus-engine/src/tenant/materialized_reads.rs`
+- `crates/nimbus-storage/src/index.rs`
 
 They may still deserve future cleanup, but they are not the best first slices
 for this workstream unless a later item reveals a clearer ownership break.
@@ -186,27 +186,27 @@ for this workstream unless a later item reveals a clearer ownership break.
 
 These findings describe the current reasons this plan exists.
 
-1. `crates/neovex-storage/src/store.rs` is still a true god file.
+1. `crates/nimbus-storage/src/store.rs` is still a true god file.
    It mixes the redb transaction model, write-path helpers, durable journal
    replay and recovery, read snapshot behavior, scan pushdown, low-level
    MessagePack probing, and schema or index rewrite helpers in one module.
 
-2. `crates/neovex-runtime/src/runtime/bootstrap.rs` is now the deepest runtime
+2. `crates/nimbus-runtime/src/runtime/bootstrap.rs` is now the deepest runtime
    production hotspot.
    It mixes host-call payload schemas, op registration, async and sync host
    call glue, bootstrap JavaScript, startup snapshot creation, timeout
    control, runtime host state, and isolate-pool concerns in one file.
 
-3. `crates/neovex-engine/src/service/scheduler.rs` still mixes distinct
+3. `crates/nimbus-engine/src/service/scheduler.rs` still mixes distinct
    scheduler concepts.
    Scheduled-job CRUD, cron CRUD, async and cancellable wrappers, loaded
    tenant scanning, and next-due coordination are all expressed together.
 
-4. `crates/neovex-engine/src/tenant/subscription_delivery.rs` still combines
+4. `crates/nimbus-engine/src/tenant/subscription_delivery.rs` still combines
    queue ownership, dedicated-worker lifecycle, stats accounting, and testing
    pause controls.
 
-5. `crates/neovex-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/direct.rs`
+5. `crates/nimbus-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/direct.rs`
    still duplicates sync, async, and cancellable host-bridge wrapper flows for
    query, mutation, pagination, and action paths.
 
@@ -248,11 +248,11 @@ Every implementation item must preserve these surfaces.
 
 | Surface | Must stay true | Minimum item-level verification |
 | --- | --- | --- |
-| Native CRUD, query, paginated query, schema, scheduler, and journal routes | route semantics and durable behavior stay unchanged | targeted engine tests; `cargo test -p neovex-server` for touched HTTP paths |
+| Native CRUD, query, paginated query, schema, scheduler, and journal routes | route semantics and durable behavior stay unchanged | targeted engine tests; `cargo test -p nimbus-server` for touched HTTP paths |
 | Durable journal and storage atomicity | document write, index update, and commit log append remain one transaction; replay and recovery behavior stay unchanged | targeted storage tests; engine tests when apply visibility or recovery paths are touched |
 | Native WebSocket subscriptions | initial bootstrap, live delivery, cleanup on disconnect, and unsubscribe behavior stay unchanged | targeted engine and server reactive tests |
 | Convex runtime query, mutation, action, scheduler, and nested-call paths | host-call semantics, error mapping, and ctx-op behavior stay unchanged | targeted runtime and server Convex tests |
-| Runtime admission, cancellation, timeout, fairness, and shutdown semantics | queued, active, cancelled, timed-out, and shutdown behavior stay unchanged | targeted runtime tests plus `cargo test -p neovex-runtime` |
+| Runtime admission, cancellation, timeout, fairness, and shutdown semantics | queued, active, cancelled, timed-out, and shutdown behavior stay unchanged | targeted runtime tests plus `cargo test -p nimbus-runtime` |
 | Materialized read surface, diagnostics, and metrics snapshots | serving behavior and snapshot or metrics shapes stay unchanged unless explicitly documented | targeted engine tests; diagnostics or metrics tests when touched |
 
 Exact targeted commands used for each item must be recorded in `Execution Log`.
@@ -354,13 +354,13 @@ before stopping. Do not rely on chat history as progress state.
 ### Additional verification by scope
 
 - for runtime bootstrap or runtime host-ABI cleanup:
-  `cargo test -p neovex-runtime`
+  `cargo test -p nimbus-runtime`
 - for storage store, durable journal, or read-snapshot cleanup:
-  `cargo test -p neovex-storage`
+  `cargo test -p nimbus-storage`
 - for engine scheduler or subscription-delivery cleanup:
-  `cargo test -p neovex-engine`
+  `cargo test -p nimbus-engine`
 - for server Convex host-bridge cleanup:
-  `cargo test -p neovex-server`
+  `cargo test -p nimbus-server`
 - before marking any item `done`:
   `cargo clippy --workspace --all-targets -- -D warnings`
 
@@ -384,10 +384,10 @@ If environmental limits block a command, record the limitation in
 | Item | Status | Summary | Hard Dependencies |
 | --- | --- | --- | --- |
 | CO0 | done | Baseline review and hotspot map for the current deeper modularity and canonical cleanup pass | none |
-| CO1 | done | Split `crates/neovex-runtime/src/runtime/bootstrap.rs` into concept-owned runtime bootstrap modules | CO0 |
-| CO2 | done | Decompose `crates/neovex-storage/src/store.rs` around durable write, journal, recovery, and read-snapshot ownership | CO0 |
-| CO3 | done | Split `crates/neovex-engine/src/service/scheduler.rs` by grouped scheduler concepts and normalize wrapper patterns | CO0, CO2 |
-| CO4 | done | Decompose `crates/neovex-engine/src/tenant/subscription_delivery.rs` around queue state, worker lifecycle, stats, and testing seams | CO0 |
+| CO1 | done | Split `crates/nimbus-runtime/src/runtime/bootstrap.rs` into concept-owned runtime bootstrap modules | CO0 |
+| CO2 | done | Decompose `crates/nimbus-storage/src/store.rs` around durable write, journal, recovery, and read-snapshot ownership | CO0 |
+| CO3 | done | Split `crates/nimbus-engine/src/service/scheduler.rs` by grouped scheduler concepts and normalize wrapper patterns | CO0, CO2 |
+| CO4 | done | Decompose `crates/nimbus-engine/src/tenant/subscription_delivery.rs` around queue state, worker lifecycle, stats, and testing seams | CO0 |
 | CO5 | done | Normalize the Convex host-bridge direct ctx-op surface to remove repeated sync, async, and cancellable wrapper logic | CO0, CO1, CO3 |
 | CO6 | done | Perform the concept-owned test-surface and idiomatic Rust cleanup sweep after the main production ownership boundaries stabilize | CO1, CO2, CO3, CO4, CO5 |
 | CO7 | done | Update docs and run the full verification sweep | CO1, CO2, CO3, CO4, CO5, CO6 |
@@ -437,7 +437,7 @@ If environmental limits block a command, record the limitation in
 | CO3 | done; `service/scheduler.rs` is now a thin scheduler composition root over `service/scheduler/access.rs`, `scheduled_jobs.rs`, `cron.rs`, and `coordination.rs`, so scheduled-job CRUD and result persistence, cron CRUD, shared sync/async/cancellable tenant-store access, and loaded-tenant startup recovery or next-due coordination no longer live in one file | start `CO4` by splitting `tenant/subscription_delivery.rs` into concept-owned queue-state, worker-lifecycle, stats-accounting, and test-pause modules without changing shutdown or delivery ordering |
 | CO4 | done; `tenant/subscription_delivery.rs` is now a tenant-local delivery composition root over `tenant/subscription_delivery/queue.rs`, `worker.rs`, `stats.rs`, and `pause.rs`, so queue state, dedicated worker lifecycle, stats snapshots, and test-only pause control no longer live in one file while shutdown, queue overflow fallback, and delivery ordering semantics stay intact | start `CO5` by normalizing `server/.../ctx_ops/direct.rs` so the direct Convex ctx-op surface has one canonical home for sync, async, and cancellable wrapper behavior without changing auth, result encoding, or execution-unit short-circuiting |
 | CO5 | done; `server/.../ctx_ops/direct.rs` is now a thin composition root over `direct/execution.rs` and `direct/invocation.rs`, so execution-context dispatch and execution-unit short-circuit behavior are separated from runtime payload decode/validate/encode and default-cancellation wrappers while auth, result encoding, and host-call semantics stay unchanged | start `CO6` by moving the highest-value clumped tests toward concept-owned surfaces and cleaning up leftover naming, visibility, and helper placement across the stabilized module trees |
-| CO6 | done; moved the highest-value scheduler and subscription-delivery regressions out of `crates/neovex-engine/src/tests.rs` into `service/scheduler/tests.rs` and `tenant/subscription_delivery/tests.rs`, removed the duplicate root-level copies and dead helper glue, and corrected the moved scheduler schema helper to preserve the old no-policy baseline | start `CO7` by deciding the completed-plan closure shape, then update plan entrypoints and archive or retire this control plane after the repo-wide verification sweep is recorded |
+| CO6 | done; moved the highest-value scheduler and subscription-delivery regressions out of `crates/nimbus-engine/src/tests.rs` into `service/scheduler/tests.rs` and `tenant/subscription_delivery/tests.rs`, removed the duplicate root-level copies and dead helper glue, and corrected the moved scheduler schema helper to preserve the old no-policy baseline | start `CO7` by deciding the completed-plan closure shape, then update plan entrypoints and archive or retire this control plane after the repo-wide verification sweep is recorded |
 | CO7 | done; recorded the green repo-wide `make check`, `make test`, and `make clippy` sweep, then archived this completed control plane and updated the plan index plus `AGENTS.md` so future agents do not resume finished cleanup work as active state | none; if follow-on modularity or cleanup work is promoted later, start from `docs/plans/README.md` and create or promote a new active plan instead of resuming this archived one |
 
 ---
@@ -475,7 +475,7 @@ Acceptance criteria:
 
 - targeted runtime tests for bundle loading, bootstrap snapshot creation, and
   host-call registration
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-runtime`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -508,7 +508,7 @@ Acceptance criteria:
 
 - targeted storage tests for write transactions, journal recovery, and read
   snapshot behavior
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-storage`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -537,7 +537,7 @@ Acceptance criteria:
 
 - targeted engine tests for scheduled jobs, cron behavior, and scheduler
   recovery
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -566,7 +566,7 @@ Acceptance criteria:
 
 - targeted engine tests for subscription delivery ordering, queueing, and
   shutdown cleanup
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -595,8 +595,8 @@ Acceptance criteria:
 
 - targeted server and runtime tests for Convex query, pagination, mutation, and
   action host calls
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -624,9 +624,9 @@ Acceptance criteria:
 
 - targeted crate tests for every subsystem whose tests moved or whose naming or
   visibility changed
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-storage`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -669,10 +669,10 @@ Acceptance criteria:
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-03 | CO0 | done | reviewed the live post-modularity architecture, confirmed the remaining hotspots are `runtime/bootstrap.rs`, `store.rs`, scheduler, subscription delivery, direct ctx-op wrappers, and clumped tests, then promoted this plan as the next control plane | docs-only planning pass; relied on the previously green MC workstream baseline recorded above | archive the completed modularity plan, update repo entrypoints to the new control plane, commit the completed modularity cleanup plus this new planning state, then start `CO1` |
-| 2026-04-03 | CO1 | done | replaced the monolithic `runtime/bootstrap.rs` file with a concept-owned bootstrap module tree for payloads, op registration/handlers, bootstrap source install, runtime state and timeout control, and startup snapshot/isolate-pool ownership, while keeping `runtime.rs` as the stable public root | `bash scripts/cargo-isolated.sh -- test -p neovex-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO2` by decomposing `crates/neovex-storage/src/store.rs` into a storage module tree rooted in durable writes, journal/recovery, read snapshots, and scan/probing ownership |
-| 2026-04-03 | CO2 | done | replaced the storage `store.rs` god file with a concept-owned storage module tree: `write.rs` owns direct durable write and batch-apply behavior, `journal.rs` owns durable journal append/read/replay/recovery, `read.rs` owns read snapshots and scan entrypoints, `scan.rs` owns pushdown plus MessagePack probing, and `schema_rewrite.rs` owns schema-aware index rewrite helpers | `bash scripts/cargo-isolated.sh -- test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO3` by splitting `crates/neovex-engine/src/service/scheduler.rs` into concept-owned modules for scheduled jobs, cron jobs, async/cancellable wrappers, and tenant coordination |
-| 2026-04-03 | CO3 | done | replaced the mixed scheduler service file with a concept-owned scheduler module tree: `scheduled_jobs.rs` owns scheduled-job CRUD and result persistence, `cron.rs` owns cron CRUD, `access.rs` owns the shared sync/async/cancellable tenant-store wrapper flows, and `coordination.rs` owns loaded-tenant scans, startup recovery, and next-due work discovery | `bash scripts/cargo-isolated.sh -- test -p neovex-engine`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO4` by decomposing `crates/neovex-engine/src/tenant/subscription_delivery.rs` around queue state, worker lifecycle, stats, and test-only pause seams |
-| 2026-04-03 | CO4 | done | replaced the mixed tenant subscription-delivery file with a concept-owned module tree: `queue.rs` owns bounded queue state and batch draining, `worker.rs` owns the dedicated worker lifecycle and shutdown, `stats.rs` owns delivery metrics and stats snapshots, and `pause.rs` isolates the test-only pause seam while `subscription_delivery.rs` stays the tenant-facing composition root | `bash scripts/cargo-isolated.sh -- test -p neovex-engine subscription_delivery_queue_`; `bash scripts/cargo-isolated.sh -- test -p neovex-engine`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO5` by normalizing `crates/neovex-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/direct.rs` around one canonical direct ctx-op wrapper flow |
-| 2026-04-03 | CO5 | done | replaced the repeated direct Convex ctx-op wrapper file with a concept-owned direct module tree: `direct/execution.rs` owns execution-context dispatch and execution-unit short-circuit behavior, while `direct/invocation.rs` owns runtime payload decode/validate/encode and the default-cancellation wrapper flow for query, pagination, mutation, and action entrypoints | `cargo test -p neovex-server`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO6` by moving the highest-value clumped tests toward concept-owned surfaces and cleaning up leftover naming, visibility, and helper placement across the stabilized module trees |
-| 2026-04-03 | CO6 | done | moved the highest-value scheduler and subscription-delivery regression clusters from the giant engine root test module into `service/scheduler/tests.rs` and `tenant/subscription_delivery/tests.rs`, removed the duplicate root-level copies and dead helpers from `crates/neovex-engine/src/tests.rs`, and tightened the moved scheduler schema helper so the concept-owned test surfaces preserve the prior no-policy baseline | `bash scripts/cargo-isolated.sh -- test -p neovex-engine`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime`; `bash scripts/cargo-isolated.sh -- test -p neovex-storage`; `cargo check --workspace`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | finish `CO7` by recording the make-based repo-wide sweep, then archive this completed control plane and update the repo entrypoints so new agents do not resume finished cleanup work |
+| 2026-04-03 | CO1 | done | replaced the monolithic `runtime/bootstrap.rs` file with a concept-owned bootstrap module tree for payloads, op registration/handlers, bootstrap source install, runtime state and timeout control, and startup snapshot/isolate-pool ownership, while keeping `runtime.rs` as the stable public root | `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO2` by decomposing `crates/nimbus-storage/src/store.rs` into a storage module tree rooted in durable writes, journal/recovery, read snapshots, and scan/probing ownership |
+| 2026-04-03 | CO2 | done | replaced the storage `store.rs` god file with a concept-owned storage module tree: `write.rs` owns direct durable write and batch-apply behavior, `journal.rs` owns durable journal append/read/replay/recovery, `read.rs` owns read snapshots and scan entrypoints, `scan.rs` owns pushdown plus MessagePack probing, and `schema_rewrite.rs` owns schema-aware index rewrite helpers | `bash scripts/cargo-isolated.sh -- test -p nimbus-storage`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO3` by splitting `crates/nimbus-engine/src/service/scheduler.rs` into concept-owned modules for scheduled jobs, cron jobs, async/cancellable wrappers, and tenant coordination |
+| 2026-04-03 | CO3 | done | replaced the mixed scheduler service file with a concept-owned scheduler module tree: `scheduled_jobs.rs` owns scheduled-job CRUD and result persistence, `cron.rs` owns cron CRUD, `access.rs` owns the shared sync/async/cancellable tenant-store wrapper flows, and `coordination.rs` owns loaded-tenant scans, startup recovery, and next-due work discovery | `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO4` by decomposing `crates/nimbus-engine/src/tenant/subscription_delivery.rs` around queue state, worker lifecycle, stats, and test-only pause seams |
+| 2026-04-03 | CO4 | done | replaced the mixed tenant subscription-delivery file with a concept-owned module tree: `queue.rs` owns bounded queue state and batch draining, `worker.rs` owns the dedicated worker lifecycle and shutdown, `stats.rs` owns delivery metrics and stats snapshots, and `pause.rs` isolates the test-only pause seam while `subscription_delivery.rs` stays the tenant-facing composition root | `bash scripts/cargo-isolated.sh -- test -p nimbus-engine subscription_delivery_queue_`; `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO5` by normalizing `crates/nimbus-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/direct.rs` around one canonical direct ctx-op wrapper flow |
+| 2026-04-03 | CO5 | done | replaced the repeated direct Convex ctx-op wrapper file with a concept-owned direct module tree: `direct/execution.rs` owns execution-context dispatch and execution-unit short-circuit behavior, while `direct/invocation.rs` owns runtime payload decode/validate/encode and the default-cancellation wrapper flow for query, pagination, mutation, and action entrypoints | `cargo test -p nimbus-server`; `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | start `CO6` by moving the highest-value clumped tests toward concept-owned surfaces and cleaning up leftover naming, visibility, and helper placement across the stabilized module trees |
+| 2026-04-03 | CO6 | done | moved the highest-value scheduler and subscription-delivery regression clusters from the giant engine root test module into `service/scheduler/tests.rs` and `tenant/subscription_delivery/tests.rs`, removed the duplicate root-level copies and dead helpers from `crates/nimbus-engine/src/tests.rs`, and tightened the moved scheduler schema helper so the concept-owned test surfaces preserve the prior no-policy baseline | `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`; `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime`; `bash scripts/cargo-isolated.sh -- test -p nimbus-storage`; `cargo check --workspace`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | finish `CO7` by recording the make-based repo-wide sweep, then archive this completed control plane and update the repo entrypoints so new agents do not resume finished cleanup work |
 | 2026-04-03 | CO7 | done | recorded the green repo-wide `make check`, `make test`, and `make clippy` sweep, then archived this completed control plane and updated the plan index plus `AGENTS.md` so the repo no longer presents this finished cleanup pass as active work | `make check`; `make test`; `make clippy` | completed; future modularity follow-on work should start from a new active plan rather than this archived record |

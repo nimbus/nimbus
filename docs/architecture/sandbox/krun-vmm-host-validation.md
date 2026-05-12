@@ -2,8 +2,8 @@
 
 This runbook is the operator-facing historical baseline for the krun-backed
 VMM foundation. It defines the reproducible Linux-side commands and evidence
-used to build the patched private `neovex-crun` binary, stage it at
-`/usr/libexec/neovex/crun`, prepare the first OCI bundle recipe with
+used to build the patched private `nimbus-crun` binary, stage it at
+`/usr/libexec/nimbus/crun`, prepare the first OCI bundle recipe with
 `krun.port_map` in `"host:guest"` form, and lay out the repeatable conmon
 lifecycle drill.
 
@@ -15,19 +15,19 @@ Repo-owned helper entrypoints:
 
 - `make check-vmm-host`
 - `make collect-vmm-package-versions`
-- `make prepare-linux-vmm-validation-bundle CRUN_SRC=~/src/github.com/containers/crun OUTPUT_ROOT=/tmp/neovex-linux-vmm-validation`
-- `make collect-podman-machine-diagnostics MACHINE=neovex-libkrun-validation PROVIDER=libkrun OUTPUT_DIR=/tmp/neovex-libkrun-diagnostics`
-- `make recreate-podman-machine MACHINE=neovex-libkrun-users-only PROVIDER=libkrun TMP_ROOT=/tmp/podman OUTPUT_DIR=/tmp/neovex-libkrun-users-only-recreate VOLUME=/Users:/Users`
+- `make prepare-linux-vmm-validation-bundle CRUN_SRC=~/src/github.com/containers/crun OUTPUT_ROOT=/tmp/nimbus-linux-vmm-validation`
+- `make collect-podman-machine-diagnostics MACHINE=nimbus-libkrun-validation PROVIDER=libkrun OUTPUT_DIR=/tmp/nimbus-libkrun-diagnostics`
+- `make recreate-podman-machine MACHINE=nimbus-libkrun-users-only PROVIDER=libkrun TMP_ROOT=/tmp/podman OUTPUT_DIR=/tmp/nimbus-libkrun-users-only-recreate VOLUME=/Users:/Users`
 - `make verify-crun-patch CRUN_SRC=~/src/github.com/containers/crun`
-- `make build-neovex-crun CRUN_SRC=~/src/github.com/containers/crun OUTPUT=/tmp/neovex-crun-stage/crun`
-- `make verify-neovex-crun-fedora-userspace CRUN_SRC=~/src/github.com/containers/crun OUTPUT_DIR=/tmp/neovex-crun-fedora-userspace-output WORK_DIR=/tmp/neovex-crun-fedora-userspace-build`
-- `make prepare-krun-bundle BUNDLE_DIR=/tmp/neovex-krun-probe ROOTFS=/absolute/path/to/rootfs HOST_PORT=18080 GUEST_PORT=8080`
+- `make build-nimbus-crun CRUN_SRC=~/src/github.com/containers/crun OUTPUT=/tmp/nimbus-crun-stage/crun`
+- `make verify-nimbus-crun-fedora-userspace CRUN_SRC=~/src/github.com/containers/crun OUTPUT_DIR=/tmp/nimbus-crun-fedora-userspace-output WORK_DIR=/tmp/nimbus-crun-fedora-userspace-build`
+- `make prepare-krun-bundle BUNDLE_DIR=/tmp/nimbus-krun-probe ROOTFS=/absolute/path/to/rootfs HOST_PORT=18080 GUEST_PORT=8080`
 - `make verify-krun-bundle-helper`
-- `make prepare-direct-krun-drill BUNDLE_DIR=/tmp/neovex-krun-probe STATE_ROOT=/tmp/neovex-direct-krun-drill`
+- `make prepare-direct-krun-drill BUNDLE_DIR=/tmp/nimbus-krun-probe STATE_ROOT=/tmp/nimbus-direct-krun-drill`
 - `make verify-direct-krun-drill-helper`
-- `make verify-runtime-separation SYSTEM_RUNTIME=/usr/bin/crun PRIVATE_RUNTIME=/usr/libexec/neovex/crun`
+- `make verify-runtime-separation SYSTEM_RUNTIME=/usr/bin/crun PRIVATE_RUNTIME=/usr/libexec/nimbus/crun`
 - `make verify-runtime-separation-helper`
-- `make prepare-conmon-krun-drill BUNDLE_DIR=/tmp/neovex-krun-probe STATE_ROOT=/tmp/neovex-conmon-drill`
+- `make prepare-conmon-krun-drill BUNDLE_DIR=/tmp/nimbus-krun-probe STATE_ROOT=/tmp/nimbus-conmon-drill`
 - `make verify-conmon-krun-drill-helper`
 - `make verify-linux-vmm-validation-bundle-helper`
 - `make verify-podman-machine-recreate-helper`
@@ -50,7 +50,7 @@ execution bundle first:
 ```bash
 bash scripts/prepare-linux-vmm-validation-bundle.sh \
   --crun-source ~/src/github.com/containers/crun \
-  --output-root /tmp/neovex-linux-vmm-validation
+  --output-root /tmp/nimbus-linux-vmm-validation
 ```
 
 Or through `make`:
@@ -58,7 +58,7 @@ Or through `make`:
 ```bash
 make prepare-linux-vmm-validation-bundle \
   CRUN_SRC=~/src/github.com/containers/crun \
-  OUTPUT_ROOT=/tmp/neovex-linux-vmm-validation
+  OUTPUT_ROOT=/tmp/nimbus-linux-vmm-validation
 ```
 
 This emits:
@@ -72,7 +72,7 @@ This emits:
 Recommended Linux-host entrypoint:
 
 ```bash
-bash /tmp/neovex-linux-vmm-validation/commands/00-run-through-lh6.sh
+bash /tmp/nimbus-linux-vmm-validation/commands/00-run-through-lh6.sh
 ```
 
 If a queue item fails and needs focused reruns, execute the numbered scripts
@@ -82,12 +82,12 @@ hand.
 Optional macOS-only preflight before entering a Linux guest:
 
 ```bash
-bash scripts/verify-neovex-crun-fedora-userspace.sh \
+bash scripts/verify-nimbus-crun-fedora-userspace.sh \
   --crun-source ~/src/github.com/containers/crun \
-  --output-dir /tmp/neovex-crun-fedora-userspace-output \
-  --work-dir /tmp/neovex-crun-fedora-userspace-build
+  --output-dir /tmp/nimbus-crun-fedora-userspace-output \
+  --work-dir /tmp/nimbus-crun-fedora-userspace-build
 
-file /tmp/neovex-crun-fedora-userspace-output/crun
+file /tmp/nimbus-crun-fedora-userspace-output/crun
 ```
 
 This proves the patch and Linux userspace build helper on a Mac through Docker
@@ -101,18 +101,18 @@ artifacts before changing providers, deleting machines, or overwriting logs:
 
 ```bash
 bash scripts/collect-podman-machine-diagnostics.sh \
-  --machine neovex-libkrun-validation \
+  --machine nimbus-libkrun-validation \
   --provider libkrun \
-  --output-dir /tmp/neovex-libkrun-diagnostics
+  --output-dir /tmp/nimbus-libkrun-diagnostics
 ```
 
 Or through `make`:
 
 ```bash
 make collect-podman-machine-diagnostics \
-  MACHINE=neovex-libkrun-validation \
+  MACHINE=nimbus-libkrun-validation \
   PROVIDER=libkrun \
-  OUTPUT_DIR=/tmp/neovex-libkrun-diagnostics
+  OUTPUT_DIR=/tmp/nimbus-libkrun-diagnostics
 ```
 
 The helper captures:
@@ -135,11 +135,11 @@ checked-in recreate helper instead of continuing ad hoc restart loops:
 
 ```bash
 bash scripts/recreate-podman-machine.sh \
-  --machine neovex-libkrun-users-only \
-  --connection neovex-libkrun-users-only \
+  --machine nimbus-libkrun-users-only \
+  --connection nimbus-libkrun-users-only \
   --provider libkrun \
   --tmp-root /tmp/podman \
-  --output-dir /tmp/neovex-libkrun-users-only-recreate \
+  --output-dir /tmp/nimbus-libkrun-users-only-recreate \
   --cpus 2 \
   --memory 2048 \
   --disk-size 20 \
@@ -150,11 +150,11 @@ Or through `make`:
 
 ```bash
 make recreate-podman-machine \
-  MACHINE=neovex-libkrun-users-only \
-  CONNECTION=neovex-libkrun-users-only \
+  MACHINE=nimbus-libkrun-users-only \
+  CONNECTION=nimbus-libkrun-users-only \
   PROVIDER=libkrun \
   TMP_ROOT=/tmp/podman \
-  OUTPUT_DIR=/tmp/neovex-libkrun-users-only-recreate \
+  OUTPUT_DIR=/tmp/nimbus-libkrun-users-only-recreate \
   CPUS=2 \
   MEMORY=2048 \
   DISK_SIZE=20 \
@@ -169,7 +169,7 @@ This helper:
 - reinitializes it with the known-good short-root `/tmp/podman` recipe
 - starts it and captures a post-start readiness bundle
 
-On the current host, the bundle at `/tmp/neovex-libkrun-users-only-recreate`
+On the current host, the bundle at `/tmp/nimbus-libkrun-users-only-recreate`
 preserved the old missing API/gvproxy socket failure in
 `pre-diagnostics/summary.txt`, then returned
 `result ready info=ok ssh=ok` in `readiness/summary.txt` after recreate. Record
@@ -208,11 +208,11 @@ Record the exact source path that was verified.
 Stage a private patched binary without touching the system runtime:
 
 ```bash
-bash scripts/build-neovex-crun.sh \
+bash scripts/build-nimbus-crun.sh \
   --source ~/src/github.com/containers/crun \
-  --output /tmp/neovex-crun-stage/crun
+  --output /tmp/nimbus-crun-stage/crun
 
-/tmp/neovex-crun-stage/crun --version
+/tmp/nimbus-crun-stage/crun --version
 ```
 
 The build helper copies the upstream checkout into a separate Linux build
@@ -224,21 +224,21 @@ without mutating the source checkout.
 Install the private runtime path expected by the plan:
 
 ```bash
-bash scripts/build-neovex-crun.sh \
+bash scripts/build-nimbus-crun.sh \
   --source ~/src/github.com/containers/crun \
-  --output /tmp/neovex-crun-stage/crun \
-  --install-path /usr/libexec/neovex/crun \
+  --output /tmp/nimbus-crun-stage/crun \
+  --install-path /usr/libexec/nimbus/crun \
   --sudo-install
 
-/usr/libexec/neovex/crun --version
+/usr/libexec/nimbus/crun --version
 ```
 
-This path is private to neovex. It must not replace the distro `crun` binary.
+This path is private to nimbus. It must not replace the distro `crun` binary.
 
 ## 5. Prepare The First Port-Mapping Bundle
 
 ```bash
-bundle_dir=/tmp/neovex-krun-probe
+bundle_dir=/tmp/nimbus-krun-probe
 rootfs=/absolute/path/to/buildah-mounted-rootfs
 
 bash scripts/prepare-krun-bundle.sh \
@@ -289,17 +289,17 @@ bash scripts/verify-krun-bundle-helper.sh
 
 Once the bundle exists and the private runtime is installed, create the
 operator-visible state layout for the first direct
-`/usr/libexec/neovex/crun run --bundle ...` drill:
+`/usr/libexec/nimbus/crun run --bundle ...` drill:
 
 ```bash
-bundle_dir=/tmp/neovex-krun-probe
-state_root=/tmp/neovex-direct-krun-drill
+bundle_dir=/tmp/nimbus-krun-probe
+state_root=/tmp/nimbus-direct-krun-drill
 
 bash scripts/prepare-direct-krun-drill.sh \
   --bundle-dir "${bundle_dir}" \
   --state-root "${state_root}" \
-  --container-id neovex-http \
-  --runtime /usr/libexec/neovex/crun
+  --container-id nimbus-http \
+  --runtime /usr/libexec/nimbus/crun
 ```
 
 For the repo-owned preparation proof, run:
@@ -309,7 +309,7 @@ bash scripts/verify-direct-krun-drill-helper.sh
 ```
 
 The helper generates these operator-facing scripts and files under
-`${state_root}/containers/neovex-http/`:
+`${state_root}/containers/nimbus-http/`:
 
 - `run-runtime.sh`
 - `start-runtime.sh`
@@ -324,11 +324,11 @@ The helper generates these operator-facing scripts and files under
 Suggested Linux-host sequence after preparation:
 
 ```bash
-bash "${state_root}/containers/neovex-http/start-runtime.sh"
-bash "${state_root}/containers/neovex-http/wait-for-http.sh"
-bash "${state_root}/containers/neovex-http/probe-http.sh"
-bash "${state_root}/containers/neovex-http/graceful-stop.sh"
-bash "${state_root}/containers/neovex-http/show-exit-status.sh"
+bash "${state_root}/containers/nimbus-http/start-runtime.sh"
+bash "${state_root}/containers/nimbus-http/wait-for-http.sh"
+bash "${state_root}/containers/nimbus-http/probe-http.sh"
+bash "${state_root}/containers/nimbus-http/graceful-stop.sh"
+bash "${state_root}/containers/nimbus-http/show-exit-status.sh"
 ```
 
 Notes:
@@ -350,7 +350,7 @@ Run the checked-in helper after the private install:
 ```bash
 bash scripts/verify-runtime-separation.sh \
   --system-runtime /usr/bin/crun \
-  --private-runtime /usr/libexec/neovex/crun
+  --private-runtime /usr/libexec/nimbus/crun
 ```
 
 Or through `make`:
@@ -358,7 +358,7 @@ Or through `make`:
 ```bash
 make verify-runtime-separation \
   SYSTEM_RUNTIME=/usr/bin/crun \
-  PRIVATE_RUNTIME=/usr/libexec/neovex/crun
+  PRIVATE_RUNTIME=/usr/libexec/nimbus/crun
 ```
 
 The helper records the system-runtime path and version, the private-runtime
@@ -373,25 +373,25 @@ bash scripts/verify-runtime-separation-helper.sh
 ```
 
 The expected outcome is that system Podman continues to point at the distro
-runtime path, while neovex uses `/usr/libexec/neovex/crun`.
+runtime path, while nimbus uses `/usr/libexec/nimbus/crun`.
 
 ## 8. Prepare The Conmon Lifecycle Drill
 
 Once the bundle exists and the private runtime is staged, create the
-operator-visible state layout for the first `conmon -> /usr/libexec/neovex/crun
+operator-visible state layout for the first `conmon -> /usr/libexec/nimbus/crun
 -> guest` run:
 
 ```bash
-bundle_dir=/tmp/neovex-krun-probe
-state_root=/tmp/neovex-conmon-drill
+bundle_dir=/tmp/nimbus-krun-probe
+state_root=/tmp/nimbus-conmon-drill
 
 bash scripts/prepare-conmon-krun-drill.sh \
   --bundle-dir "${bundle_dir}" \
   --state-root "${state_root}" \
-  --container-id neovex-http \
-  --name neovex-http \
+  --container-id nimbus-http \
+  --name nimbus-http \
   --conmon /usr/bin/conmon \
-  --runtime /usr/libexec/neovex/crun
+  --runtime /usr/libexec/nimbus/crun
 ```
 
 For the repo-owned preparation proof, run:
@@ -401,7 +401,7 @@ bash scripts/verify-conmon-krun-drill-helper.sh
 ```
 
 The helper generates these operator-facing scripts and files under
-`${state_root}/containers/neovex-http/`:
+`${state_root}/containers/nimbus-http/`:
 
 - `run-conmon.sh`
 - `find-attach-sockets.sh`
@@ -415,12 +415,12 @@ The helper generates these operator-facing scripts and files under
 Suggested Linux-host sequence after preparation:
 
 ```bash
-bash "${state_root}/containers/neovex-http/run-conmon.sh"
-bash "${state_root}/containers/neovex-http/find-attach-sockets.sh"
-bash "${state_root}/containers/neovex-http/capture-process-tree.sh"
+bash "${state_root}/containers/nimbus-http/run-conmon.sh"
+bash "${state_root}/containers/nimbus-http/find-attach-sockets.sh"
+bash "${state_root}/containers/nimbus-http/capture-process-tree.sh"
 curl -fsS http://127.0.0.1:18080/
-bash "${state_root}/containers/neovex-http/graceful-stop.sh"
-bash "${state_root}/containers/neovex-http/show-exit-status.sh"
+bash "${state_root}/containers/nimbus-http/graceful-stop.sh"
+bash "${state_root}/containers/nimbus-http/show-exit-status.sh"
 ```
 
 Notes:

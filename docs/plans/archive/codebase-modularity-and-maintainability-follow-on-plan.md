@@ -13,20 +13,20 @@ Reviewed against:
 - `docs/plans/README.md`
 - `AGENTS.md`
 - `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
-- `crates/neovex-bin/src/machine/mod.rs`
-- `crates/neovex-bin/src/machine/manager.rs`
-- `crates/neovex-bin/src/service/mod.rs`
-- `crates/neovex-bin/src/service/compose.rs`
-- `crates/neovex-bin/src/machine/api.rs`
-- `crates/neovex-sandbox/src/backends/oci/buildah.rs`
-- `crates/neovex-sandbox/src/backends/krun/vm.rs`
-- `crates/neovex-sandbox/tests/krun_linux_smoke.rs`
-- `crates/neovex-engine/src/tests/mutation_journal.rs`
-- `crates/neovex-engine/benches/embedded-provider-benchmarks.rs`
-- `crates/neovex-engine/benches/postgres-provider-benchmarks.rs`
-- `crates/neovex-engine/benches/mysql-provider-benchmarks.rs`
-- `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs`
-- `crates/neovex-storage/src/libsql.rs`
+- `crates/nimbus-bin/src/machine/mod.rs`
+- `crates/nimbus-bin/src/machine/manager.rs`
+- `crates/nimbus-bin/src/service/mod.rs`
+- `crates/nimbus-bin/src/service/compose.rs`
+- `crates/nimbus-bin/src/machine/api.rs`
+- `crates/nimbus-sandbox/src/backends/oci/buildah.rs`
+- `crates/nimbus-sandbox/src/backends/krun/vm.rs`
+- `crates/nimbus-sandbox/tests/krun_linux_smoke.rs`
+- `crates/nimbus-engine/src/tests/mutation_journal.rs`
+- `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs`
+- `crates/nimbus-engine/benches/postgres-provider-benchmarks.rs`
+- `crates/nimbus-engine/benches/mysql-provider-benchmarks.rs`
+- `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs`
+- `crates/nimbus-storage/src/libsql.rs`
 - the current git worktree on `main`
 
 Baseline verification status for this plan:
@@ -101,21 +101,21 @@ This is a maintainability and correctness roadmap, not a feature roadmap.
 This plan covers:
 
 - extraction of oversized inline regression suites from already-thin
-  composition roots in `crates/neovex-bin/src/machine/mod.rs`,
-  `crates/neovex-bin/src/machine/manager.rs`,
-  `crates/neovex-bin/src/service/mod.rs`, and
-  `crates/neovex-sandbox/src/backends/krun/vm.rs`
+  composition roots in `crates/nimbus-bin/src/machine/mod.rs`,
+  `crates/nimbus-bin/src/machine/manager.rs`,
+  `crates/nimbus-bin/src/service/mod.rs`, and
+  `crates/nimbus-sandbox/src/backends/krun/vm.rs`
 - concept-owned decomposition of
-  `crates/neovex-bin/src/service/compose.rs`
+  `crates/nimbus-bin/src/service/compose.rs`
 - concept-owned decomposition of
-  `crates/neovex-bin/src/machine/api.rs`
+  `crates/nimbus-bin/src/machine/api.rs`
 - concept-owned decomposition of
-  `crates/neovex-sandbox/src/backends/oci/buildah.rs`
+  `crates/nimbus-sandbox/src/backends/oci/buildah.rs`
 - regression-suite packaging cleanup for
-  `crates/neovex-engine/src/tests/mutation_journal.rs`
-  and `crates/neovex-sandbox/tests/krun_linux_smoke.rs`
+  `crates/nimbus-engine/src/tests/mutation_journal.rs`
+  and `crates/nimbus-sandbox/tests/krun_linux_smoke.rs`
 - benchmark harness modularization for the provider benchmark surfaces in
-  `crates/neovex-engine/benches/`
+  `crates/nimbus-engine/benches/`
 - follow-on doc, verification, and archive cleanup needed to keep this work
   resumable through handoff and compaction
 
@@ -144,8 +144,8 @@ These rules are mandatory for every item in this plan.
    unchanged unless a specific item explicitly records otherwise.
 
 2. Keep the core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -189,65 +189,65 @@ These rules are mandatory for every item in this plan.
   even after the earlier proof-packaging and production splits landed.
 - Since kickoff, the first three roadmap slices have already reduced the
   original CLI hotspots into concept-owned or proof-owned surfaces:
-  - `crates/neovex-bin/src/machine/mod.rs`,
-    `crates/neovex-bin/src/machine/manager.rs`,
-    `crates/neovex-bin/src/service/mod.rs`, and
-    `crates/neovex-sandbox/src/backends/krun/vm.rs` now keep thin production
+  - `crates/nimbus-bin/src/machine/mod.rs`,
+    `crates/nimbus-bin/src/machine/manager.rs`,
+    `crates/nimbus-bin/src/service/mod.rs`, and
+    `crates/nimbus-sandbox/src/backends/krun/vm.rs` now keep thin production
     roots with sibling regression files after `CMF1`
-  - `crates/neovex-bin/src/service/compose.rs` now reads as a 179-line
+  - `crates/nimbus-bin/src/service/compose.rs` now reads as a 179-line
     composition root over `service/compose/raw.rs`, `lower.rs`, `parse.rs`,
     `warnings.rs`, `render.rs`, and `tests.rs` after `CMF2`
-  - `crates/neovex-bin/src/machine/api.rs` now reads as a 201-line composition
+  - `crates/nimbus-bin/src/machine/api.rs` now reads as a 201-line composition
     root over `machine/api/routes.rs`, `capabilities.rs`, `binaries.rs`,
     `listener.rs`, `state.rs`, `logs.rs`, `process.rs`, and `tests.rs` after
     `CMF3`
-  - `crates/neovex-sandbox/src/backends/oci/buildah.rs` now reads as a 25-line
+  - `crates/nimbus-sandbox/src/backends/oci/buildah.rs` now reads as a 25-line
     composition root over `buildah/cli.rs`, `defaults.rs`, `inspect.rs`,
     `user.rs`, `render.rs`, and `tests.rs` after `CMF4`
-  - `crates/neovex-engine/src/tests/mutation_journal.rs` now reads as a 7-line
+  - `crates/nimbus-engine/src/tests/mutation_journal.rs` now reads as a 7-line
     composition root over `mutation_journal/cancellation.rs`,
     `applied_visibility.rs`, `queued.rs`, `subscriptions.rs`, and
     `support.rs` after `CMF5`
-  - `crates/neovex-sandbox/tests/krun_linux_smoke.rs` now reads as a 34-line
+  - `crates/nimbus-sandbox/tests/krun_linux_smoke.rs` now reads as a 34-line
     smoke entrypoint over `krun_linux_smoke/launch.rs`, `inspect.rs`,
     `restart.rs`, `published_endpoints.rs`, `cleanup.rs`, and `support.rs`
     after `CMF6`
-  - `crates/neovex-engine/benches/provider_bench/common.rs` now owns the
+  - `crates/nimbus-engine/benches/provider_bench/common.rs` now owns the
     shared benchmark tenant-id, schema/query, directory-copy, round-override,
     and stats-formatting helpers, while
     `embedded-provider-benchmarks.rs` and
     `libsql-replica-provider-benchmarks.rs`
     now read as 1,817- and 1,987-line roots over local benchmark
     `report`, `support`, and `suite` modules after the first `CMF7` burst
-  - `crates/neovex-engine/benches/postgres-provider-benchmarks.rs` and
+  - `crates/nimbus-engine/benches/postgres-provider-benchmarks.rs` and
     `mysql-provider-benchmarks.rs` now read as 568- and 571-line composition
     roots over local benchmark `report`, `scenarios`, `suite`, `support`, and
     `workloads` modules after the `CMF7` closeout split
 - The selected benchmark hotspot map is now closed out from the live worktree:
   - no selected provider benchmark root remains at or above the hard
     2,000-line threshold
-  - `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` remains at
+  - `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs` remains at
     1,817 lines with explicit justification: after the shared-helper plus
     local `report` and `support` extraction, the remaining bulk is the
     provider-owned embedded workload suite plus the small benchmark data
     models it operates on, so another split would mostly mirror a single
     provider benchmark tree rather than separate a distinct ownership mix
-  - `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs`
+  - `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs`
     remains at 1,987 lines with explicit justification: the root now delegates
     report rendering, suite orchestration, and provider bootstrap into sibling
     modules, while the remaining lines are the cohesive libsql-replica
     workload definitions and benchmark models that own the provider-specific
     semantics together
-  - `crates/neovex-engine/benches/postgres-provider-benchmarks.rs` is 568
+  - `crates/nimbus-engine/benches/postgres-provider-benchmarks.rs` is 568
     lines
-  - `crates/neovex-engine/benches/mysql-provider-benchmarks.rs` is 571 lines
+  - `crates/nimbus-engine/benches/mysql-provider-benchmarks.rs` is 571 lines
 - Several notable production files are now below the threshold and already
   organized around acceptable seams:
-  - `crates/neovex-storage/src/libsql.rs` is 1,471 lines and already delegates
+  - `crates/nimbus-storage/src/libsql.rs` is 1,471 lines and already delegates
     through `provider`, `storage`, `read`, `write`, `remote`, and `transport`
-  - `crates/neovex-storage/src/mysql.rs` is 1,445 lines and already acts as a
+  - `crates/nimbus-storage/src/mysql.rs` is 1,445 lines and already acts as a
     thin composition root
-  - `crates/neovex-storage/src/postgres.rs` is 1,287 lines and already acts as
+  - `crates/nimbus-storage/src/postgres.rs` is 1,287 lines and already acts as
     a thin composition root
 
 ---
@@ -264,7 +264,7 @@ These rules are mandatory for every item in this plan.
    environment-bootstrap patterns. That duplication makes the benchmark suite
    harder to extend and harder to keep consistent across providers.
 
-2. `crates/neovex-storage/src/libsql.rs` is now the main "leave it alone for
+2. `crates/nimbus-storage/src/libsql.rs` is now the main "leave it alone for
    now" example.
    It is below the threshold and its remaining root-level ownership is the
    replica freshness state machine plus shared low-level helpers. That is a
@@ -293,18 +293,18 @@ This plan is successful only when all of the following are true:
 
 ## Assessed But Not Selected
 
-- `crates/neovex-storage/src/libsql.rs` at 1,471 lines is below the threshold
+- `crates/nimbus-storage/src/libsql.rs` at 1,471 lines is below the threshold
   and already reads as a concept-owned replica freshness composition root over
   its new submodules. Revisit only if later work pushes new unrelated
   ownership into the root.
-- `crates/neovex-storage/src/mysql.rs` at 1,445 lines and
-  `crates/neovex-storage/src/postgres.rs` at 1,287 lines are below the
+- `crates/nimbus-storage/src/mysql.rs` at 1,445 lines and
+  `crates/nimbus-storage/src/postgres.rs` at 1,287 lines are below the
   threshold and already aligned to the clearer provider layout from the
   previous wave.
-- `crates/neovex-bin/src/machine/client.rs`,
-  `crates/neovex-sandbox/src/backends/container/runtime.rs`,
-  `crates/neovex-sandbox/src/backends/oci/builder.rs`, and
-  `crates/neovex-sandbox/src/backends/oci/network.rs`
+- `crates/nimbus-bin/src/machine/client.rs`,
+  `crates/nimbus-sandbox/src/backends/container/runtime.rs`,
+  `crates/nimbus-sandbox/src/backends/oci/builder.rs`, and
+  `crates/nimbus-sandbox/src/backends/oci/network.rs`
   are notable but not first-wave targets for this pass because they are below
   the threshold and the reviewed ownership seams are less urgent than the files
   selected above.
@@ -353,14 +353,14 @@ Every implementation item in this plan must run its focused verification, plus:
 
 Use these focused lanes as appropriate:
 
-- `cargo test -p neovex-bin machine`
-- `cargo test -p neovex-bin service`
-- `cargo test -p neovex-sandbox`
-- `cargo test -p neovex-engine mutation_journal`
-- `cargo check -p neovex-engine --benches`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
-- `cargo clippy -p neovex-sandbox --all-targets -- -D warnings`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo test -p nimbus-bin machine`
+- `cargo test -p nimbus-bin service`
+- `cargo test -p nimbus-sandbox`
+- `cargo test -p nimbus-engine mutation_journal`
+- `cargo check -p nimbus-engine --benches`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-sandbox --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 Before this whole workstream can be considered complete, run and record:
 
@@ -385,12 +385,12 @@ If environment restrictions block a command, do not silently skip it:
 | --- | --- | --- | --- | --- |
 | CMF0 | `done` | reviewed the live post-cleanup codebase, applied the new line-count thresholds, and promoted this follow-on maintainability control plane | none | docs-only review and planning pass on 2026-04-19 |
 | CMF1 | `done` | extract oversized inline regression suites from already-thin roots in `machine/mod.rs`, `machine/manager.rs`, `service/mod.rs`, and `krun/vm.rs` | CMF0 | completed on 2026-04-19 with the production roots reduced to thin composition surfaces and the moved regression suites preserved in sibling test modules |
-| CMF2 | `done` | split `crates/neovex-bin/src/service/compose.rs` into concept-owned project, lowering, parsing, and rendering seams | CMF0 | completed on 2026-04-19 with a thin `compose.rs` root and dedicated `raw`, `lower`, `parse`, `warnings`, `render`, and `tests` modules |
-| CMF3 | `done` | split `crates/neovex-bin/src/machine/api.rs` into router, listener, capability, lifecycle, logs, process, and helper-resolution seams | CMF0 | completed on 2026-04-19 with a thin `api.rs` root and dedicated `routes`, `capabilities`, `binaries`, `listener`, `state`, `logs`, `process`, and `tests` modules |
-| CMF4 | `done` | split `crates/neovex-sandbox/src/backends/oci/buildah.rs` into CLI/session, inspect/defaults, rootfs-user, parsing, and render/error seams | CMF0 | completed on 2026-04-19 with a thin `buildah.rs` root and dedicated `cli`, `defaults`, `inspect`, `user`, `render`, and `tests` modules |
-| CMF5 | `done` | repackage `crates/neovex-engine/src/tests/mutation_journal.rs` into scenario-owned submodules with shared helpers | CMF0 | completed on 2026-04-19 with a thin `mutation_journal.rs` root plus dedicated `cancellation`, `applied_visibility`, `queued`, `subscriptions`, and `support` modules |
-| CMF6 | `done` | repackage `crates/neovex-sandbox/tests/krun_linux_smoke.rs` into scenario-owned smoke modules and helpers | CMF1 recommended first | completed on 2026-04-19 with a thin `krun_linux_smoke.rs` entrypoint plus dedicated `launch`, `inspect`, `restart`, `published_endpoints`, `cleanup`, and `support` modules |
-| CMF7 | `done` | modularize the provider benchmark harness under `crates/neovex-engine/benches/` and split the 2k to 4k benchmark files into shared harness plus provider-owned workloads | CMF2 through CM4 recommended first | completed on 2026-04-19 with shared `provider_bench/common.rs`, modularized provider-local harness trees, and explicit justification recorded for the near-threshold embedded and libsql roots |
+| CMF2 | `done` | split `crates/nimbus-bin/src/service/compose.rs` into concept-owned project, lowering, parsing, and rendering seams | CMF0 | completed on 2026-04-19 with a thin `compose.rs` root and dedicated `raw`, `lower`, `parse`, `warnings`, `render`, and `tests` modules |
+| CMF3 | `done` | split `crates/nimbus-bin/src/machine/api.rs` into router, listener, capability, lifecycle, logs, process, and helper-resolution seams | CMF0 | completed on 2026-04-19 with a thin `api.rs` root and dedicated `routes`, `capabilities`, `binaries`, `listener`, `state`, `logs`, `process`, and `tests` modules |
+| CMF4 | `done` | split `crates/nimbus-sandbox/src/backends/oci/buildah.rs` into CLI/session, inspect/defaults, rootfs-user, parsing, and render/error seams | CMF0 | completed on 2026-04-19 with a thin `buildah.rs` root and dedicated `cli`, `defaults`, `inspect`, `user`, `render`, and `tests` modules |
+| CMF5 | `done` | repackage `crates/nimbus-engine/src/tests/mutation_journal.rs` into scenario-owned submodules with shared helpers | CMF0 | completed on 2026-04-19 with a thin `mutation_journal.rs` root plus dedicated `cancellation`, `applied_visibility`, `queued`, `subscriptions`, and `support` modules |
+| CMF6 | `done` | repackage `crates/nimbus-sandbox/tests/krun_linux_smoke.rs` into scenario-owned smoke modules and helpers | CMF1 recommended first | completed on 2026-04-19 with a thin `krun_linux_smoke.rs` entrypoint plus dedicated `launch`, `inspect`, `restart`, `published_endpoints`, `cleanup`, and `support` modules |
+| CMF7 | `done` | modularize the provider benchmark harness under `crates/nimbus-engine/benches/` and split the 2k to 4k benchmark files into shared harness plus provider-owned workloads | CMF2 through CM4 recommended first | completed on 2026-04-19 with shared `provider_bench/common.rs`, modularized provider-local harness trees, and explicit justification recorded for the near-threshold embedded and libsql roots |
 | CMF8 | `done` | update docs, run the full verification sweep, and archive this completed follow-on plan cleanly | CMF1 through CM7 | completed on 2026-04-19 after the docs were switched to archive references, the full verification sweep passed, and this plan was moved into `docs/plans/archive/` |
 
 ---
@@ -458,10 +458,10 @@ If environment restrictions block a command, do not silently skip it:
 #### Implementation plan
 
 1. Keep the production roots in
-   `crates/neovex-bin/src/machine/mod.rs`,
-   `crates/neovex-bin/src/machine/manager.rs`,
-   `crates/neovex-bin/src/service/mod.rs`, and
-   `crates/neovex-sandbox/src/backends/krun/vm.rs`
+   `crates/nimbus-bin/src/machine/mod.rs`,
+   `crates/nimbus-bin/src/machine/manager.rs`,
+   `crates/nimbus-bin/src/service/mod.rs`, and
+   `crates/nimbus-sandbox/src/backends/krun/vm.rs`
    as the public composition surfaces.
 2. Move the large inline test modules into sibling files or scenario-owned
    test modules with clear ownership and stable imports.
@@ -470,13 +470,13 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-bin machine`
-- `cargo test -p neovex-bin service`
-- `cargo test -p neovex-sandbox`
+- `cargo test -p nimbus-bin machine`
+- `cargo test -p nimbus-bin service`
+- `cargo test -p nimbus-sandbox`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
-- `cargo clippy -p neovex-sandbox --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-sandbox --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -490,7 +490,7 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Implementation plan
 
-1. Keep `crates/neovex-bin/src/service/compose.rs` or a successor
+1. Keep `crates/nimbus-bin/src/service/compose.rs` or a successor
    `service/compose/` directory as the public Compose service-plan surface.
 2. Separate raw Compose document types, project/service lowering, parser
    helpers, warning helpers, and rendering helpers into clearer modules.
@@ -498,10 +498,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-bin service`
+- `cargo test -p nimbus-bin service`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -513,7 +513,7 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Implementation plan
 
-1. Keep `crates/neovex-bin/src/machine/api.rs` or a successor directory module
+1. Keep `crates/nimbus-bin/src/machine/api.rs` or a successor directory module
    as the machine API composition root.
 2. Separate router/listener setup, capability reporting, lifecycle handlers,
    persisted-state refresh, log/process helpers, and binary-resolution helpers
@@ -523,10 +523,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-bin machine`
+- `cargo test -p nimbus-bin machine`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -538,7 +538,7 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Implementation plan
 
-1. Keep `crates/neovex-sandbox/src/backends/oci/buildah.rs` or a successor
+1. Keep `crates/nimbus-sandbox/src/backends/oci/buildah.rs` or a successor
    directory module as the public buildah helper surface.
 2. Separate the CLI/session wrapper, inspect/defaults parsing, rootfs-user
    resolution, env/port parsing, and render/error helpers into clearer modules.
@@ -546,10 +546,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-sandbox`
+- `cargo test -p nimbus-sandbox`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-sandbox --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-sandbox --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -569,10 +569,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-engine mutation_journal`
+- `cargo test -p nimbus-engine mutation_journal`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -591,10 +591,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-sandbox`
+- `cargo test -p nimbus-sandbox`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-sandbox --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-sandbox --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -607,7 +607,7 @@ If environment restrictions block a command, do not silently skip it:
 #### Implementation plan
 
 1. Keep the provider benchmark suite under
-   `crates/neovex-engine/benches/`.
+   `crates/nimbus-engine/benches/`.
 2. Extract shared config parsing, report rendering, workload-lane definitions,
    and environment/bootstrap helpers into common benchmark modules.
 3. Leave provider-specific workload setup and provider-specific environment
@@ -617,10 +617,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo check -p neovex-engine --benches`
+- `cargo check -p nimbus-engine --benches`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -661,19 +661,19 @@ If environment restrictions block a command, do not silently skip it:
 | Date | Item | Status | Notes | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-19 | CMF0 | `done` | Reviewed the live repo after the completed maintainability wave, applied the new thresholds of "under 1,500 usually okay unless concept-mixed", "1,500 to 1,999 needs explicit justification", and "2,000 or above must be broken down by ownership or proof packaging", and promoted this follow-on plan as the new active control plane. The review found that the old production god files were already split, so the next wave should focus on thin-root test extraction, the remaining concept-mixed production files (`service/compose.rs`, `machine/api.rs`, `buildah.rs`), oversized regression suites (`mutation_journal.rs`, `krun_linux_smoke.rs`), and the repeated provider benchmark harness files. | docs-only review; no new code verification claimed | start `CMF1` by extracting the oversized inline regression suites from the already-thin CLI and krun roots |
-| 2026-04-19 | CMF1 | `in_progress` | Reconciled the live worktree and confirmed there is no pre-existing `in_progress` follow-on item. Began the first implementation slice by extracting the large inline regression suites out of `crates/neovex-bin/src/machine/mod.rs`, `crates/neovex-bin/src/machine/manager.rs`, `crates/neovex-bin/src/service/mod.rs`, and `crates/neovex-sandbox/src/backends/krun/vm.rs` while keeping those files as the production composition roots. | plan review plus `git status -sb`; targeted `sed`/`rg` reads over the four root files and their inline test module boundaries | mechanically move the inline `mod tests` blocks into sibling files, then run the focused `neovex-bin` and `neovex-sandbox` verification lanes |
-| 2026-04-19 | CMF1 | `done` | Moved the inline regression suites out of `crates/neovex-bin/src/machine/mod.rs`, `crates/neovex-bin/src/machine/manager.rs`, `crates/neovex-bin/src/service/mod.rs`, and `crates/neovex-sandbox/src/backends/krun/vm.rs` into sibling files at `machine/tests.rs`, `machine/manager/tests.rs`, `service/tests.rs`, and `krun/vm/tests.rs`. The production roots stayed in place as the public composition surfaces, and their file sizes dropped to 203, 473, 770, and 319 lines respectively without changing behavior. | `cargo test -p neovex-bin machine`; `cargo test -p neovex-bin service`; `cargo test -p neovex-sandbox`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`; `cargo clippy -p neovex-sandbox --all-targets -- -D warnings` | start `CMF2` by mapping `crates/neovex-bin/src/service/compose.rs` into raw model, lowering, parser, warning, and render seams before moving code |
-| 2026-04-19 | CMF2 | `in_progress` | Began the next eligible production cleanup item immediately after closing `CMF1`. The target is `crates/neovex-bin/src/service/compose.rs`, which still mixes raw Compose model decoding, project or service lowering, parser helpers, warning helpers, and rendering in one file. | `wc -l crates/neovex-bin/src/service/compose.rs`; targeted `sed`/`rg` reads over the live Compose plan surface during the follow-on review and again after `CMF1` closed | extract the first concept-owned `service/compose/` modules without changing Compose load, warning, or rendered-plan semantics |
-| 2026-04-19 | CMF2 | `done` | Repackaged `crates/neovex-bin/src/service/compose.rs` into a thin 179-line composition root plus `service/compose/raw.rs`, `lower.rs`, `parse.rs`, `warnings.rs`, `render.rs`, and `tests.rs`. Raw Compose document decoding, lowering, scalar and lifecycle parsing, warning emission, render helpers, and the Compose regression suite now live in concept-owned files without changing the rendered plan, warning, or load semantics. | `cargo test -p neovex-bin service`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings` | start `CMF3` by mapping `crates/neovex-bin/src/machine/api.rs` into router/listener, lifecycle, persisted-state refresh, log/process, and binary-resolution seams |
-| 2026-04-19 | CMF3 | `in_progress` | Began the next eligible item immediately after closing `CMF2`. The target is `crates/neovex-bin/src/machine/api.rs`, which still mixes router and listener setup, capability reporting, lifecycle handlers, persisted-state refresh, log/process helpers, and helper-binary resolution in one file. | `git status -sb`; follow-on plan ledger reconciliation; upcoming targeted reads over `machine/api.rs` | extract the first `machine/api/` concept-owned modules without changing route shapes, listener behavior, or helper reporting |
-| 2026-04-19 | CMF3 | `done` | Repackaged `crates/neovex-bin/src/machine/api.rs` into a thin 201-line composition root plus `machine/api/routes.rs`, `capabilities.rs`, `binaries.rs`, `listener.rs`, `state.rs`, `logs.rs`, `process.rs`, and `tests.rs`. Router setup, lifecycle handlers, helper-binary discovery, capability probing, persisted-state refresh, log/process helpers, and the machine API regression suite now live in concept-owned files without changing route shapes, listener behavior, or helper reporting. | `cargo test -p neovex-bin machine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings` | start `CMF4` by mapping `crates/neovex-sandbox/src/backends/oci/buildah.rs` into CLI/session, inspect/defaults, rootfs-user, parsing, and render/error seams |
-| 2026-04-19 | CMF4 | `in_progress` | Began the next eligible production cleanup item immediately after closing `CMF3`. The target is `crates/neovex-sandbox/src/backends/oci/buildah.rs`, which still mixes the CLI/session wrapper, mount lifecycle, inspect/default parsing, rootfs-user resolution, env/port parsing, and render/error helpers in one file. | `wc -l crates/neovex-sandbox/src/backends/oci/buildah.rs`; updated plan hotspot map after the landed `CMF1` through `CMF3` seams | map `buildah.rs` into the first concept-owned backend helper modules without changing buildah-backed launch or mount-session semantics |
-| 2026-04-19 | CMF4 | `done` | Repackaged `crates/neovex-sandbox/src/backends/oci/buildah.rs` into a thin 25-line composition root plus `buildah/cli.rs`, `defaults.rs`, `inspect.rs`, `user.rs`, `render.rs`, and `tests.rs`. The buildah CLI wrapper, mount-session lifecycle, inspect/config decoding, rootfs-user resolution, env/port/default merging, command-failure rendering, and regression coverage now live in concept-owned files without changing buildah-backed launch or mount-session semantics. | `cargo test -p neovex-sandbox`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-sandbox --all-targets -- -D warnings` | start `CMF5` by grouping `crates/neovex-engine/src/tests/mutation_journal.rs` into cancellation, queueing, applied-visibility, and subscription/journal scenario modules |
-| 2026-04-19 | CMF5 | `in_progress` | Began the next eligible regression-packaging item immediately after closing `CMF4`. The target is `crates/neovex-engine/src/tests/mutation_journal.rs`, which still keeps cancellation, queued mutation, applied-visibility, and subscription/journal coordination scenarios in one file with shared setup helpers mixed through the proof surface. | `wc -l crates/neovex-engine/src/tests/mutation_journal.rs`; updated plan hotspot map after the landed `CMF4` buildah split | map `mutation_journal.rs` into scenario-owned modules and extract shared helpers without changing the regression semantics |
-| 2026-04-19 | CMF5 | `done` | Repackaged `crates/neovex-engine/src/tests/mutation_journal.rs` into a 7-line composition root plus `mutation_journal/cancellation.rs`, `applied_visibility.rs`, `queued.rs`, `subscriptions.rs`, and `support.rs`. Cancellation, queued mutation, applied-visibility, and subscription or journal coordination scenarios now live in concept-owned files, and the durable-append faulted-service setup moved into a local support helper without changing the regression semantics. | `cargo test -p neovex-engine mutation_journal`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings` | start `CMF6` by grouping `crates/neovex-sandbox/tests/krun_linux_smoke.rs` into launch, inspect, restart, published-endpoint, and cleanup scenario modules |
-| 2026-04-19 | CMF6 | `in_progress` | Began the next eligible regression-packaging item immediately after closing `CMF5`. The target is `crates/neovex-sandbox/tests/krun_linux_smoke.rs`, which still keeps launch, inspect, restart, published-endpoint, and cleanup smoke scenarios plus shared setup helpers in one oversized proof surface. | `wc -l crates/neovex-sandbox/tests/krun_linux_smoke.rs`; follow-on plan reconciliation after landing the `CMF5` mutation-journal split | map `krun_linux_smoke.rs` into scenario-owned smoke modules and local helpers without changing krun smoke semantics |
-| 2026-04-19 | CMF6 | `done` | Repackaged `crates/neovex-sandbox/tests/krun_linux_smoke.rs` into a 34-line smoke entrypoint plus `krun_linux_smoke/launch.rs`, `inspect.rs`, `restart.rs`, `published_endpoints.rs`, `cleanup.rs`, and `support.rs`. The ignored Linux smoke scenarios now live in concept-owned modules, and the repeated backend-config, probe, manifest, buildah, and cleanup plumbing moved into a local support module without changing the smoke semantics. | `cargo test -p neovex-sandbox`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-sandbox --all-targets -- -D warnings` | start `CMF7` by mapping the repeated provider benchmark harness patterns across the four benchmark entrypoints |
-| 2026-04-19 | CMF7 | `in_progress` | Began the next eligible benchmark-packaging item immediately after closing `CMF6`. The target is the provider benchmark harness under `crates/neovex-engine/benches/`, where the embedded, libsql replica, Postgres, and MySQL benchmark entrypoints still repeat shared config parsing, report rendering, workload-lane orchestration, and environment bootstrap code across four large files. | `wc -l crates/neovex-engine/benches/embedded-provider-benchmarks.rs crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs crates/neovex-engine/benches/postgres-provider-benchmarks.rs crates/neovex-engine/benches/mysql-provider-benchmarks.rs`; follow-on plan reconciliation after landing the `CMF6` krun smoke split | design and extract a shared benchmark harness module tree before moving provider-specific workloads beside each provider entrypoint |
-| 2026-04-19 | CMF7 | `in_progress` | Extracted `crates/neovex-engine/benches/provider_bench/common.rs` for the shared benchmark tenant-id, schema/query, round-override, directory-copy, and stats-formatting helpers, then repackaged `embedded-provider-benchmarks.rs` into local `report.rs` and `support.rs` modules and `libsql-replica-provider-benchmarks.rs` into local `suite.rs`, `report.rs`, and `support.rs` modules. The embedded and libsql roots now measure 1,817 and 1,987 lines respectively while preserving the benchmark workload definitions, CLI slugs, and markdown output shape. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p neovex-engine --benches`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings` | continue `CMF7` by splitting the remaining Postgres and MySQL benchmark roots and then revisit whether the embedded/libsql roots need one more concept split or can close with explicit justification |
-| 2026-04-19 | CMF7 | `done` | Completed the provider benchmark harness modularization by reducing `postgres-provider-benchmarks.rs` and `mysql-provider-benchmarks.rs` to 568- and 571-line composition roots over provider-local `report.rs`, `scenarios.rs`, `suite.rs`, `support.rs`, and `workloads.rs` modules. The shared benchmark helpers now live in `provider_bench/common.rs`, the embedded and libsql roots remain at 1,817 and 1,987 lines with explicit closeout justification, and the benchmark CLI slugs, workload definitions, and markdown report shape stayed intact. | `cargo fmt --all`; `cargo check -p neovex-engine --benches`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings` | start `CMF8` by running the full repo verification sweep, updating the docs for archive state, and moving this plan into `docs/plans/archive/` once the closeout is recorded |
-| 2026-04-19 | CMF8 | `done` | Updated `AGENTS.md` and `docs/plans/README.md` so broad maintainability work now treats this wave as archived history, then ran the full closeout verification bundle and archived this plan under `docs/plans/archive/`. Every selected root now sits below the hard 2,000-line threshold, and the remaining 1,500-to-1,999-line embedded and libsql benchmark roots have explicit closeout justification recorded in this plan. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p neovex-engine --benches`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `make check`; `make test`; `make clippy`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `cargo deny check`; `make ci` | no further maintainability follow-on items remain; promote a new active plan before starting another repo-wide cleanup wave |
+| 2026-04-19 | CMF1 | `in_progress` | Reconciled the live worktree and confirmed there is no pre-existing `in_progress` follow-on item. Began the first implementation slice by extracting the large inline regression suites out of `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-bin/src/machine/manager.rs`, `crates/nimbus-bin/src/service/mod.rs`, and `crates/nimbus-sandbox/src/backends/krun/vm.rs` while keeping those files as the production composition roots. | plan review plus `git status -sb`; targeted `sed`/`rg` reads over the four root files and their inline test module boundaries | mechanically move the inline `mod tests` blocks into sibling files, then run the focused `nimbus-bin` and `nimbus-sandbox` verification lanes |
+| 2026-04-19 | CMF1 | `done` | Moved the inline regression suites out of `crates/nimbus-bin/src/machine/mod.rs`, `crates/nimbus-bin/src/machine/manager.rs`, `crates/nimbus-bin/src/service/mod.rs`, and `crates/nimbus-sandbox/src/backends/krun/vm.rs` into sibling files at `machine/tests.rs`, `machine/manager/tests.rs`, `service/tests.rs`, and `krun/vm/tests.rs`. The production roots stayed in place as the public composition surfaces, and their file sizes dropped to 203, 473, 770, and 319 lines respectively without changing behavior. | `cargo test -p nimbus-bin machine`; `cargo test -p nimbus-bin service`; `cargo test -p nimbus-sandbox`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings`; `cargo clippy -p nimbus-sandbox --all-targets -- -D warnings` | start `CMF2` by mapping `crates/nimbus-bin/src/service/compose.rs` into raw model, lowering, parser, warning, and render seams before moving code |
+| 2026-04-19 | CMF2 | `in_progress` | Began the next eligible production cleanup item immediately after closing `CMF1`. The target is `crates/nimbus-bin/src/service/compose.rs`, which still mixes raw Compose model decoding, project or service lowering, parser helpers, warning helpers, and rendering in one file. | `wc -l crates/nimbus-bin/src/service/compose.rs`; targeted `sed`/`rg` reads over the live Compose plan surface during the follow-on review and again after `CMF1` closed | extract the first concept-owned `service/compose/` modules without changing Compose load, warning, or rendered-plan semantics |
+| 2026-04-19 | CMF2 | `done` | Repackaged `crates/nimbus-bin/src/service/compose.rs` into a thin 179-line composition root plus `service/compose/raw.rs`, `lower.rs`, `parse.rs`, `warnings.rs`, `render.rs`, and `tests.rs`. Raw Compose document decoding, lowering, scalar and lifecycle parsing, warning emission, render helpers, and the Compose regression suite now live in concept-owned files without changing the rendered plan, warning, or load semantics. | `cargo test -p nimbus-bin service`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings` | start `CMF3` by mapping `crates/nimbus-bin/src/machine/api.rs` into router/listener, lifecycle, persisted-state refresh, log/process, and binary-resolution seams |
+| 2026-04-19 | CMF3 | `in_progress` | Began the next eligible item immediately after closing `CMF2`. The target is `crates/nimbus-bin/src/machine/api.rs`, which still mixes router and listener setup, capability reporting, lifecycle handlers, persisted-state refresh, log/process helpers, and helper-binary resolution in one file. | `git status -sb`; follow-on plan ledger reconciliation; upcoming targeted reads over `machine/api.rs` | extract the first `machine/api/` concept-owned modules without changing route shapes, listener behavior, or helper reporting |
+| 2026-04-19 | CMF3 | `done` | Repackaged `crates/nimbus-bin/src/machine/api.rs` into a thin 201-line composition root plus `machine/api/routes.rs`, `capabilities.rs`, `binaries.rs`, `listener.rs`, `state.rs`, `logs.rs`, `process.rs`, and `tests.rs`. Router setup, lifecycle handlers, helper-binary discovery, capability probing, persisted-state refresh, log/process helpers, and the machine API regression suite now live in concept-owned files without changing route shapes, listener behavior, or helper reporting. | `cargo test -p nimbus-bin machine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings` | start `CMF4` by mapping `crates/nimbus-sandbox/src/backends/oci/buildah.rs` into CLI/session, inspect/defaults, rootfs-user, parsing, and render/error seams |
+| 2026-04-19 | CMF4 | `in_progress` | Began the next eligible production cleanup item immediately after closing `CMF3`. The target is `crates/nimbus-sandbox/src/backends/oci/buildah.rs`, which still mixes the CLI/session wrapper, mount lifecycle, inspect/default parsing, rootfs-user resolution, env/port parsing, and render/error helpers in one file. | `wc -l crates/nimbus-sandbox/src/backends/oci/buildah.rs`; updated plan hotspot map after the landed `CMF1` through `CMF3` seams | map `buildah.rs` into the first concept-owned backend helper modules without changing buildah-backed launch or mount-session semantics |
+| 2026-04-19 | CMF4 | `done` | Repackaged `crates/nimbus-sandbox/src/backends/oci/buildah.rs` into a thin 25-line composition root plus `buildah/cli.rs`, `defaults.rs`, `inspect.rs`, `user.rs`, `render.rs`, and `tests.rs`. The buildah CLI wrapper, mount-session lifecycle, inspect/config decoding, rootfs-user resolution, env/port/default merging, command-failure rendering, and regression coverage now live in concept-owned files without changing buildah-backed launch or mount-session semantics. | `cargo test -p nimbus-sandbox`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-sandbox --all-targets -- -D warnings` | start `CMF5` by grouping `crates/nimbus-engine/src/tests/mutation_journal.rs` into cancellation, queueing, applied-visibility, and subscription/journal scenario modules |
+| 2026-04-19 | CMF5 | `in_progress` | Began the next eligible regression-packaging item immediately after closing `CMF4`. The target is `crates/nimbus-engine/src/tests/mutation_journal.rs`, which still keeps cancellation, queued mutation, applied-visibility, and subscription/journal coordination scenarios in one file with shared setup helpers mixed through the proof surface. | `wc -l crates/nimbus-engine/src/tests/mutation_journal.rs`; updated plan hotspot map after the landed `CMF4` buildah split | map `mutation_journal.rs` into scenario-owned modules and extract shared helpers without changing the regression semantics |
+| 2026-04-19 | CMF5 | `done` | Repackaged `crates/nimbus-engine/src/tests/mutation_journal.rs` into a 7-line composition root plus `mutation_journal/cancellation.rs`, `applied_visibility.rs`, `queued.rs`, `subscriptions.rs`, and `support.rs`. Cancellation, queued mutation, applied-visibility, and subscription or journal coordination scenarios now live in concept-owned files, and the durable-append faulted-service setup moved into a local support helper without changing the regression semantics. | `cargo test -p nimbus-engine mutation_journal`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings` | start `CMF6` by grouping `crates/nimbus-sandbox/tests/krun_linux_smoke.rs` into launch, inspect, restart, published-endpoint, and cleanup scenario modules |
+| 2026-04-19 | CMF6 | `in_progress` | Began the next eligible regression-packaging item immediately after closing `CMF5`. The target is `crates/nimbus-sandbox/tests/krun_linux_smoke.rs`, which still keeps launch, inspect, restart, published-endpoint, and cleanup smoke scenarios plus shared setup helpers in one oversized proof surface. | `wc -l crates/nimbus-sandbox/tests/krun_linux_smoke.rs`; follow-on plan reconciliation after landing the `CMF5` mutation-journal split | map `krun_linux_smoke.rs` into scenario-owned smoke modules and local helpers without changing krun smoke semantics |
+| 2026-04-19 | CMF6 | `done` | Repackaged `crates/nimbus-sandbox/tests/krun_linux_smoke.rs` into a 34-line smoke entrypoint plus `krun_linux_smoke/launch.rs`, `inspect.rs`, `restart.rs`, `published_endpoints.rs`, `cleanup.rs`, and `support.rs`. The ignored Linux smoke scenarios now live in concept-owned modules, and the repeated backend-config, probe, manifest, buildah, and cleanup plumbing moved into a local support module without changing the smoke semantics. | `cargo test -p nimbus-sandbox`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-sandbox --all-targets -- -D warnings` | start `CMF7` by mapping the repeated provider benchmark harness patterns across the four benchmark entrypoints |
+| 2026-04-19 | CMF7 | `in_progress` | Began the next eligible benchmark-packaging item immediately after closing `CMF6`. The target is the provider benchmark harness under `crates/nimbus-engine/benches/`, where the embedded, libsql replica, Postgres, and MySQL benchmark entrypoints still repeat shared config parsing, report rendering, workload-lane orchestration, and environment bootstrap code across four large files. | `wc -l crates/nimbus-engine/benches/embedded-provider-benchmarks.rs crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs crates/nimbus-engine/benches/postgres-provider-benchmarks.rs crates/nimbus-engine/benches/mysql-provider-benchmarks.rs`; follow-on plan reconciliation after landing the `CMF6` krun smoke split | design and extract a shared benchmark harness module tree before moving provider-specific workloads beside each provider entrypoint |
+| 2026-04-19 | CMF7 | `in_progress` | Extracted `crates/nimbus-engine/benches/provider_bench/common.rs` for the shared benchmark tenant-id, schema/query, round-override, directory-copy, and stats-formatting helpers, then repackaged `embedded-provider-benchmarks.rs` into local `report.rs` and `support.rs` modules and `libsql-replica-provider-benchmarks.rs` into local `suite.rs`, `report.rs`, and `support.rs` modules. The embedded and libsql roots now measure 1,817 and 1,987 lines respectively while preserving the benchmark workload definitions, CLI slugs, and markdown output shape. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p nimbus-engine --benches`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings` | continue `CMF7` by splitting the remaining Postgres and MySQL benchmark roots and then revisit whether the embedded/libsql roots need one more concept split or can close with explicit justification |
+| 2026-04-19 | CMF7 | `done` | Completed the provider benchmark harness modularization by reducing `postgres-provider-benchmarks.rs` and `mysql-provider-benchmarks.rs` to 568- and 571-line composition roots over provider-local `report.rs`, `scenarios.rs`, `suite.rs`, `support.rs`, and `workloads.rs` modules. The shared benchmark helpers now live in `provider_bench/common.rs`, the embedded and libsql roots remain at 1,817 and 1,987 lines with explicit closeout justification, and the benchmark CLI slugs, workload definitions, and markdown report shape stayed intact. | `cargo fmt --all`; `cargo check -p nimbus-engine --benches`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings` | start `CMF8` by running the full repo verification sweep, updating the docs for archive state, and moving this plan into `docs/plans/archive/` once the closeout is recorded |
+| 2026-04-19 | CMF8 | `done` | Updated `AGENTS.md` and `docs/plans/README.md` so broad maintainability work now treats this wave as archived history, then ran the full closeout verification bundle and archived this plan under `docs/plans/archive/`. Every selected root now sits below the hard 2,000-line threshold, and the remaining 1,500-to-1,999-line embedded and libsql benchmark roots have explicit closeout justification recorded in this plan. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p nimbus-engine --benches`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings`; `make check`; `make test`; `make clippy`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `cargo deny check`; `make ci` | no further maintainability follow-on items remain; promote a new active plan before starting another repo-wide cleanup wave |

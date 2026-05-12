@@ -1,6 +1,6 @@
 # HTTP And WebSocket API
 
-This document lists the public server routes exposed by Neovex today.
+This document lists the public server routes exposed by Nimbus today.
 
 Native routes are always available. Convex routes are available only when the
 server has an active app generation from `--app-dir` or deploy activation; the
@@ -13,7 +13,7 @@ routes return `404` before a generation is active.
 | `GET` | `/health` | health check |
 | `GET` | `/debug/license/status` | current license snapshot and usage state |
 | `GET` | `/debug/tenants/{tenant_id}/engine/metrics` | per-tenant engine durability, worker, serving, and provider-specific diagnostics such as `libsql` replica freshness |
-| `POST` | `/api/admin/deploy` | deploy admin API; disabled unless `NEOVEX_DEPLOY_TOKEN` was configured at startup |
+| `POST` | `/api/admin/deploy` | deploy admin API; disabled unless `NIMBUS_DEPLOY_TOKEN` was configured at startup |
 | `GET` | `/demos` | redirects to the demo index |
 | `GET` | `/demos/` | serves the demo directory |
 

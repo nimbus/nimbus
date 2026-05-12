@@ -3,7 +3,7 @@ function cloudFunctionsEntrySource(project) {
   const modules = [];
   if (project.kind === "firebase_project") {
     for (const [index, codebase] of project.codebases.entries()) {
-      const localName = `__neovexCloudFunctionsModule${index}`;
+      const localName = `__nimbusCloudFunctionsModule${index}`;
       const relativeEntrypoint = ensureRelativeImport(codebase.relativeEntrypoint);
       imports.push(`import * as ${localName} from ${JSON.stringify(relativeEntrypoint)};`);
       modules.push(`{
@@ -21,18 +21,18 @@ import {
   collectExportedTargets,
   collectRegisteredFrameworkTargets,
   createInvocationDispatcher,
-} from "__neovex_cloud_functions_shared__";
+} from "__nimbus_cloud_functions_shared__";
 
 ${imports.join("\n")}
 
-const __neovexCollectedTargets = [
+const __nimbusCollectedTargets = [
   ...collectExportedTargets([
 ${modules.join(",\n")}
   ]),
   ...collectRegisteredFrameworkTargets(),
 ];
-export const __neovexTargets = __neovexCollectedTargets.map((target) => target.target);
-globalThis.__neovexInvoke = createInvocationDispatcher(__neovexCollectedTargets);
+export const __nimbusTargets = __nimbusCollectedTargets.map((target) => target.target);
+globalThis.__nimbusInvoke = createInvocationDispatcher(__nimbusCollectedTargets);
 
 export {};
 `;
@@ -40,7 +40,7 @@ export {};
 
 function cloudFunctionsSharedSource() {
   return `
-const TARGET_MARKER = "__neovexCloudFunctionTarget";
+const TARGET_MARKER = "__nimbusCloudFunctionTarget";
 const SUPPORTED_GLOBAL_OPTIONS = new Set(["retry"]);
 const SUPPORTED_DOCUMENT_OPTIONS = new Set(["document", "database", "retry"]);
 const SUPPORTED_HTTPS_OPTIONS = new Set([]);
@@ -78,7 +78,7 @@ function validatePlainObject(value, label) {
   }
 }
 
-const globalState = globalThis.__neovexCloudFunctionsState ??= {
+const globalState = globalThis.__nimbusCloudFunctionsState ??= {
   globalDefaults: {},
   frameworkTargets: [],
 };
@@ -804,7 +804,7 @@ function createInvocationDispatcher(targets) {
   const handlers = new Map(
     targets.map((target) => [target.entrypoint, target.invoke]),
   );
-  return async function __neovexInvoke(request) {
+  return async function __nimbusInvoke(request) {
     const handler = handlers.get(request.function_name);
     if (!handler) {
       throw new Error(\`unknown handler \${request.function_name}\`);
@@ -831,7 +831,7 @@ export {
 
 function cloudFunctionsAdminAppSource() {
   return `
-const APPS = globalThis.__neovexAdminApps ??= [];
+const APPS = globalThis.__nimbusAdminApps ??= [];
 
 function initializeApp(options = {}, name = "[DEFAULT]") {
   const existing = APPS.find((app) => app.name === name);
@@ -868,7 +868,7 @@ export { deleteApp, getApp, getApps, initializeApp };
 
 function cloudFunctionsAdminFirestoreSource() {
   return `
-import { initializeApp } from "__neovex_firebase_admin_app__";
+import { initializeApp } from "__nimbus_firebase_admin_app__";
 
 class Timestamp {
   constructor(milliseconds) {
@@ -1000,8 +1000,8 @@ function materializeWriteResult(value) {
 }
 
 async function callFirestoreAdminHost(operation, payload) {
-  return globalThis.__neovexAsyncHostValue(
-    "op_neovex_runtime_extension_call",
+  return globalThis.__nimbusAsyncHostValue(
+    "op_nimbus_runtime_extension_call",
     {
       namespace: "cloud_functions",
       operation,

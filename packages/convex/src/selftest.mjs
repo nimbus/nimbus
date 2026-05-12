@@ -94,10 +94,10 @@ export const list = defineQuery("messages:list", () => ({
   assert.match(generatedServer, /QueryCtx/);
   assert.match(generatedServer, /from "convex\/server"/);
 
-  const neovexAppDir = await fs.mkdtemp(path.join(os.tmpdir(), "convex_cli_codegen_"));
-  await fs.mkdir(path.join(neovexAppDir, "neovex"), { recursive: true });
+  const nimbusAppDir = await fs.mkdtemp(path.join(os.tmpdir(), "convex_cli_codegen_"));
+  await fs.mkdir(path.join(nimbusAppDir, "nimbus"), { recursive: true });
   await fs.writeFile(
-    path.join(neovexAppDir, "neovex", "messages.ts"),
+    path.join(nimbusAppDir, "nimbus", "messages.ts"),
     `
 import { defineQuery } from "convex/browser";
 
@@ -111,20 +111,20 @@ export const list = defineQuery("messages:list", () => ({
     "utf8",
   );
 
-  const neovexResult = spawnSync(process.execPath, [cliPath, "codegen", "--app", neovexAppDir], {
+  const nimbusResult = spawnSync(process.execPath, [cliPath, "codegen", "--app", nimbusAppDir], {
     encoding: "utf8",
   });
-  assert.equal(neovexResult.status, 0, neovexResult.stderr || neovexResult.stdout);
+  assert.equal(nimbusResult.status, 0, nimbusResult.stderr || nimbusResult.stdout);
 
-  const neovexGeneratedApi = await fs.readFile(
-    path.join(neovexAppDir, "neovex", "_generated", "api.ts"),
+  const nimbusGeneratedApi = await fs.readFile(
+    path.join(nimbusAppDir, "nimbus", "_generated", "api.ts"),
     "utf8",
   );
   assert.match(
-    neovexGeneratedApi,
+    nimbusGeneratedApi,
     /makeQueryReference<\{\}, unknown\[]>\("messages:list", "public"\)/,
   );
-  assert.match(neovexGeneratedApi, /from "neovex\/browser"/);
+  assert.match(nimbusGeneratedApi, /from "nimbus\/browser"/);
 }
 
 async function typecheckConvexSurface() {
@@ -271,7 +271,7 @@ export const identityHttp = httpAction(async (ctx) => {
 }
 
 async function loadBundledBrowserModule() {
-  const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex-convex-browser-"));
+  const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-convex-browser-"));
   const outfile = path.join(outdir, "browser.mjs");
   await build({
     entryPoints: [fileURLToPath(new URL("./browser.ts", import.meta.url))],
@@ -1116,7 +1116,7 @@ function makeJwt(payload) {
 function assertClientHello(message) {
   assert.deepEqual(message, {
     type: "client_hello",
-    protocol: "neovex.v2",
+    protocol: "nimbus.v2",
     client: {
       kind: "browser",
       version: "unknown",

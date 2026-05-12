@@ -54,7 +54,7 @@ async function main() {
 
 async function assertPackageExports() {
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
-  assert.equal(packageJson.name, "@neovex/firebase");
+  assert.equal(packageJson.name, "@nimbus/firebase");
   assert.deepEqual(packageJson.exports, {
     ".": "./src/index.ts",
     "./app": "./src/app.ts",
@@ -63,7 +63,7 @@ async function assertPackageExports() {
 }
 
 async function buildPackageSurface() {
-  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex-firebase-package-"));
+  const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-firebase-package-"));
   for (const entry of [
     { name: "app", source: "./app.ts" },
     { name: "firestore", source: "./firestore.ts" },
@@ -158,12 +158,12 @@ function normalizeWebSocketBinaryFrame(data) {
 
 function decodeListenAuthSubprotocol(protocols) {
   const offered = protocols.find((protocol) =>
-    protocol.startsWith("neovex.firebase.auth."),
+    protocol.startsWith("nimbus.firebase.auth."),
   );
   if (!offered) {
     return null;
   }
-  const encoded = offered.slice("neovex.firebase.auth.".length);
+  const encoded = offered.slice("nimbus.firebase.auth.".length);
   return new TextDecoder().decode(Buffer.from(encoded, "base64url"));
 }
 
@@ -256,7 +256,7 @@ async function assertGeneratedProtoSurface() {
       await fs.access(path.join(packageRoot, relativePath));
     } catch {
       throw new Error(
-        `Missing generated Firestore protobuf output at ${relativePath}. Run "npm run codegen:proto --workspace @neovex/firebase" first.`,
+        `Missing generated Firestore protobuf output at ${relativePath}. Run "npm run codegen:proto --workspace @nimbus/firebase" first.`,
       );
     }
   }
@@ -2602,7 +2602,7 @@ async function testListenWatchSurface(firestoreModule, appModule, protobufModule
     documentSocket.url,
     "ws://listen.test/google.firestore.v1.Firestore/Listen",
   );
-  assert.deepEqual(documentSocket.protocols, ["neovex.firebase.listen.v1"]);
+  assert.deepEqual(documentSocket.protocols, ["nimbus.firebase.listen.v1"]);
 
   documentSocket.emitOpen();
   await flushMicrotasks();
@@ -2713,7 +2713,7 @@ async function testListenWatchSurface(firestoreModule, appModule, protobufModule
   await flushMicrotasks();
   assert.equal(sockets.length, 2);
   const querySocket = sockets[1];
-  assert.deepEqual(querySocket.protocols, ["neovex.firebase.listen.v1"]);
+  assert.deepEqual(querySocket.protocols, ["nimbus.firebase.listen.v1"]);
 
   querySocket.emitOpen();
   await flushMicrotasks();
@@ -3236,7 +3236,7 @@ async function testListenWatchSurface(firestoreModule, appModule, protobufModule
     );
     await flushMicrotasks();
     assert.equal(authSockets.length, 1);
-    assert.deepEqual(authSockets[0].protocols[0], "neovex.firebase.listen.v1");
+    assert.deepEqual(authSockets[0].protocols[0], "nimbus.firebase.listen.v1");
     assert.equal(
       decodeListenAuthSubprotocol(authSockets[0].protocols),
       "stale-listen-token",
@@ -3433,7 +3433,7 @@ async function testSmokeSurface(bundleDir, smokeBaseUrl) {
   const appModule = await import(pathToFileURL(path.join(bundleDir, "app.mjs")).href);
   const firestoreModule = await import(pathToFileURL(path.join(bundleDir, "firestore.mjs")).href);
   const baseUrl = new URL(smokeBaseUrl);
-  const smokeAuthToken = process.env.NEOVEX_FIREBASE_SMOKE_MOCK_USER_TOKEN;
+  const smokeAuthToken = process.env.NIMBUS_FIREBASE_SMOKE_MOCK_USER_TOKEN;
   assert.ok(baseUrl.hostname, "Smoke base URL must include a hostname.");
   assert.ok(baseUrl.port, "Smoke base URL must include an explicit port.");
 
@@ -3655,7 +3655,7 @@ async function testSmokeSurface(bundleDir, smokeBaseUrl) {
 }
 
 async function typecheckFirebaseSurface() {
-  const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex-firebase-ts-"));
+  const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-firebase-ts-"));
   const normalize = (target) => path.relative(fixtureDir, target).replaceAll("\\", "/");
   const rootEntry = normalize(path.join(packageRoot, "src", "index.ts"));
   const appEntry = normalize(path.join(packageRoot, "src", "app.ts"));
@@ -3674,9 +3674,9 @@ async function typecheckFirebaseSurface() {
           allowImportingTsExtensions: true,
           lib: ["ES2022", "DOM"],
           paths: {
-            "@neovex/firebase": [rootEntry],
-            "@neovex/firebase/app": [appEntry],
-            "@neovex/firebase/firestore": [firestoreEntry],
+            "@nimbus/firebase": [rootEntry],
+            "@nimbus/firebase/app": [appEntry],
+            "@nimbus/firebase/firestore": [firestoreEntry],
           },
         },
         files: ["fixture.ts"],
@@ -3697,7 +3697,7 @@ import {
   initializeApp,
   type FirebaseApp,
   type FirebaseOptions,
-} from "@neovex/firebase/app";
+} from "@nimbus/firebase/app";
 import {
   addDoc,
   arrayRemove,
@@ -3748,11 +3748,11 @@ import {
   type SetOptions,
   type Unsubscribe,
   type WriteBatch,
-} from "@neovex/firebase/firestore";
+} from "@nimbus/firebase/firestore";
 import {
   getFirestore as getFirestoreFromRoot,
   initializeApp as initializeAppFromRoot,
-} from "@neovex/firebase";
+} from "@nimbus/firebase";
 
 const options: FirebaseOptions = {
   apiKey: "demo-key",

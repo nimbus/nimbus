@@ -12,20 +12,20 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `crates/neovex-engine/src/tenant/materialized_reads.rs`
-- `crates/neovex-storage/src/index.rs`
-- `crates/neovex-engine/src/service/mutations/direct.rs`
-- `crates/neovex-engine/src/service/queries/planner.rs`
-- `crates/neovex-storage/src/tests.rs`
-- `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow.rs`
+- `crates/nimbus-engine/src/tenant/materialized_reads.rs`
+- `crates/nimbus-storage/src/index.rs`
+- `crates/nimbus-engine/src/service/mutations/direct.rs`
+- `crates/nimbus-engine/src/service/queries/planner.rs`
+- `crates/nimbus-storage/src/tests.rs`
+- `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow.rs`
 
 Baseline verification status for this plan:
 
 - the immediately preceding deeper concept-ownership cleanup workstream closed
   green on 2026-04-03 with:
-  `bash scripts/cargo-isolated.sh -- test -p neovex-engine`,
-  `bash scripts/cargo-isolated.sh -- test -p neovex-runtime`,
-  `bash scripts/cargo-isolated.sh -- test -p neovex-storage`,
+  `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`,
+  `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime`,
+  `bash scripts/cargo-isolated.sh -- test -p nimbus-storage`,
   `cargo check --workspace`,
   `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
@@ -41,7 +41,7 @@ Baseline verification status for this plan:
 
 ## Purpose
 
-Neovex is in a much healthier architectural state than it was before the last
+Nimbus is in a much healthier architectural state than it was before the last
 two cleanup passes. The transport, runtime bootstrap, storage root, scheduler,
 subscription delivery, and direct Convex ctx-op seams now have clearer
 composition roots and more explicit ownership.
@@ -104,8 +104,8 @@ These rules are mandatory for every item in this plan.
    records otherwise.
 
 2. Keep core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -146,29 +146,29 @@ This plan assumes the codebase described in `ARCHITECTURE.md` today:
 
 The current hotspot map from the live worktree is:
 
-- `crates/neovex-engine/src/tenant/materialized_reads.rs` is 1339 lines and
+- `crates/nimbus-engine/src/tenant/materialized_reads.rs` is 1339 lines and
   still mixes serving snapshots, backend residency and eviction, warm-load
   coordination, stats snapshots, and test pause seams
-- `crates/neovex-storage/src/index.rs` is 1077 lines and still mixes scalar
+- `crates/nimbus-storage/src/index.rs` is 1077 lines and still mixes scalar
   encoding, key construction, scan execution, composite bound synthesis,
   transaction-side maintenance, and read-snapshot convenience methods
-- `crates/neovex-engine/src/service/mutations/direct.rs` is 961 lines and
+- `crates/nimbus-engine/src/service/mutations/direct.rs` is 961 lines and
   still mixes public CRUD convenience APIs, async and cancellable wrappers,
   principal variants, execution-mode/result helpers, and direct store-backed
   mutation execution
-- `crates/neovex-engine/src/service/queries/planner.rs` is 929 lines and
+- `crates/nimbus-engine/src/service/queries/planner.rs` is 929 lines and
   still mixes exact and range planning, residual-filter derivation, candidate
   scoring, order support, and plan-backed document loading
-- `crates/neovex-storage/src/tests.rs` is 3014 lines and
-  `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow.rs` is
+- `crates/nimbus-storage/src/tests.rs` is 3014 lines and
+  `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow.rs` is
   2312 lines; both remain high-value but still concept-mixed scenario surfaces
 
 Large files that are currently more cohesive and are not first-wave targets
 for this plan:
 
-- `crates/neovex-runtime/src/runtime.rs`
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-storage/src/simulation.rs`
+- `crates/nimbus-runtime/src/runtime.rs`
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-storage/src/simulation.rs`
 
 They may still deserve future cleanup, but they are not the best first slices
 unless a later item reveals a clearer ownership break.
@@ -179,32 +179,32 @@ unless a later item reveals a clearer ownership break.
 
 These findings describe the current reasons this plan exists.
 
-1. `crates/neovex-engine/src/tenant/materialized_reads.rs` is the clearest
+1. `crates/nimbus-engine/src/tenant/materialized_reads.rs` is the clearest
    remaining production god file.
    It combines serving snapshot retention, in-memory serving backend
    ownership, warm-load coordination, residency accounting, public stats, and
    test-only publish pause seams.
 
-2. `crates/neovex-storage/src/index.rs` still mixes several different storage
+2. `crates/nimbus-storage/src/index.rs` still mixes several different storage
    concepts.
    Public index encoding and key helpers, exact/range/prefix scans, composite
    bound synthesis, transaction-side index maintenance, and read-snapshot
    convenience methods all live together.
 
-3. `crates/neovex-engine/src/service/mutations/direct.rs` is still dense at
+3. `crates/nimbus-engine/src/service/mutations/direct.rs` is still dense at
    the direct service boundary.
    Public CRUD convenience APIs, async/principal/cancellable wrapper flows,
    scheduled execution-mode branching, and direct store-backed mutation
    helpers are all expressed in one module.
 
-4. `crates/neovex-engine/src/service/queries/planner.rs` still combines too
+4. `crates/nimbus-engine/src/service/queries/planner.rs` still combines too
    many planner concerns.
    Candidate selection, exact and range bound synthesis, order support
    scoring, residual-filter derivation, and plan-backed document loading are
    all coupled together.
 
 5. The biggest remaining test surfaces are still concept-mixed.
-   `neovex-storage/src/tests.rs` and the Convex demo-flow runtime tests are
+   `nimbus-storage/src/tests.rs` and the Convex demo-flow runtime tests are
    valuable coverage, but they are harder to extend and debug than they should
    be.
 
@@ -341,13 +341,13 @@ instead of resuming this one.
 ### Additional verification by scope
 
 - for serving-snapshot or materialized-read cleanup:
-  `cargo test -p neovex-engine`
+  `cargo test -p nimbus-engine`
 - for storage index or scan cleanup:
-  `cargo test -p neovex-storage`
+  `cargo test -p nimbus-storage`
 - for direct mutation or planner cleanup:
-  `cargo test -p neovex-engine`
+  `cargo test -p nimbus-engine`
 - for server demo-flow or Convex runtime scenario test cleanup:
-  `cargo test -p neovex-server`
+  `cargo test -p nimbus-server`
 - before marking any item `done`:
   `cargo clippy --workspace --all-targets -- -D warnings`
 
@@ -371,10 +371,10 @@ If environmental limits block a command, record the limitation in
 | Item | Status | Summary | Hard Dependencies |
 | --- | --- | --- | --- |
 | DM0 | done | Baseline review and hotspot map for the next deeper module-ownership cleanup pass | none |
-| DM1 | done | Split `crates/neovex-engine/src/tenant/materialized_reads.rs` into a concept-owned `tenant/materialized_reads/` serving module tree | DM0 |
-| DM2 | done | Decompose `crates/neovex-storage/src/index.rs` into a concept-owned `index/` module tree for encoding, key layout, bounds, scan, and maintenance ownership | DM0 |
-| DM3 | done | Split `crates/neovex-engine/src/service/mutations/direct.rs` into a concept-owned `direct/` module tree for API, execution, store-apply, and execution-type ownership | DM0 |
-| DM4 | done | Decompose `crates/neovex-engine/src/service/queries/planner.rs` into a concept-owned `planner/` module tree for exact planning, range planning, loading, and scoring ownership | DM0, DM2 |
+| DM1 | done | Split `crates/nimbus-engine/src/tenant/materialized_reads.rs` into a concept-owned `tenant/materialized_reads/` serving module tree | DM0 |
+| DM2 | done | Decompose `crates/nimbus-storage/src/index.rs` into a concept-owned `index/` module tree for encoding, key layout, bounds, scan, and maintenance ownership | DM0 |
+| DM3 | done | Split `crates/nimbus-engine/src/service/mutations/direct.rs` into a concept-owned `direct/` module tree for API, execution, store-apply, and execution-type ownership | DM0 |
+| DM4 | done | Decompose `crates/nimbus-engine/src/service/queries/planner.rs` into a concept-owned `planner/` module tree for exact planning, range planning, loading, and scoring ownership | DM0, DM2 |
 | DM5 | done | Split the highest-value clumped storage and Convex demo scenario tests into more concept-owned surfaces | DM1, DM2, DM3, DM4 |
 | DM6 | done | Perform the idiomatic Rust, naming, visibility, and helper-placement sweep across the stabilized module trees | DM1, DM2, DM3, DM4, DM5 |
 | DM7 | done | Update docs and run the full verification sweep | DM1, DM2, DM3, DM4, DM5, DM6 |
@@ -455,7 +455,7 @@ Acceptance criteria:
 
 - targeted engine tests for full-scan warmup, serving snapshot pinning, and
   publication or retention behavior
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -486,7 +486,7 @@ Acceptance criteria:
 
 - targeted storage tests for index encoding, exact/range/prefix scans, and
   index maintenance
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-storage`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -516,7 +516,7 @@ Acceptance criteria:
 - targeted engine tests for direct insert/update/delete, async mutation
   behavior, and scheduled execution flows
 - targeted server or runtime tests when host-call mutation paths are touched
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -543,7 +543,7 @@ Acceptance criteria:
 
 - targeted engine tests for exact, composite, range, pagination, and fallback
   planner behavior
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -573,8 +573,8 @@ Acceptance criteria:
 #### Focused verification
 
 - targeted storage and server test modules for every moved scenario cluster
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-server`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -599,9 +599,9 @@ Acceptance criteria:
 
 - targeted crate tests for every subsystem whose naming, visibility, or helper
   placement changed
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-server`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -643,10 +643,10 @@ Acceptance criteria:
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-03 | DM0 | done | reviewed the live post-cleanup architecture, confirmed the next real hotspots are `tenant/materialized_reads.rs`, `storage/index.rs`, `service/mutations/direct.rs`, `service/queries/planner.rs`, and the remaining clumped storage plus Convex demo scenario tests, then promoted this plan as the next active control plane | docs-only planning pass; relied on the previously green deeper concept-ownership cleanup baseline recorded above | update the plan index and agent entrypoints to this new control plane, commit the completed earlier cleanup handoff plus this new planning state, then start `DM1` |
-| 2026-04-03 | DM1 | done | Replaced `crates/neovex-engine/src/tenant/materialized_reads.rs` with a concept-owned `tenant/materialized_reads/` module tree. `mod.rs` is now the thin `TenantMaterializedReadSurface` composition root over `snapshot.rs`, `backend.rs`, `warm_load.rs`, `stats.rs`, and the test-only `pause.rs`; serving semantics, retention, warm-load waiting, stats, and publish-pause behavior were preserved, and `ARCHITECTURE.md` was updated to describe the new ownership map. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; attempted `cargo check --workspace`, but it was blocked by an unrelated external Cargo process holding the shared package cache; attempted `bash scripts/cargo-isolated.sh -- check --workspace`, but sandbox network restrictions prevented `rusty_v8` from downloading its prebuilt artifact | start `DM2` by splitting `crates/neovex-storage/src/index.rs` around scalar/tuple encoding, key construction, scan execution, composite bounds, and transaction-side maintenance |
-| 2026-04-03 | DM2 | done | Replaced `crates/neovex-storage/src/index.rs` with a concept-owned `index/` module tree. `mod.rs` now composes `encoding.rs`, `keyspace.rs`, `bounds.rs`, `scan.rs`, and `maintenance.rs` while keeping the public storage and planner-facing index API stable. `ARCHITECTURE.md` now records the new storage indexing ownership map. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p neovex-storage`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; attempted `cargo check --workspace`, but it was still blocked by an unrelated external Cargo process holding the shared package cache | start `DM3` by splitting `crates/neovex-engine/src/service/mutations/direct.rs` around CRUD wrappers, wrapper normalization, execution-mode/result helpers, and direct store-backed execution |
-| 2026-04-03 | DM3 | done | Replaced `crates/neovex-engine/src/service/mutations/direct.rs` with a concept-owned `direct/` module tree. `api.rs` now owns the direct CRUD service surface plus async/principal/cancellable wrapper normalization, `execution.rs` owns execution-mode dispatch and mutation auth staging, `store.rs` owns the direct store-apply helpers, and `types.rs` owns the shared execution mode/result contract. `ARCHITECTURE.md` now records that ownership map. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo check --workspace` | start `DM4` by decomposing `crates/neovex-engine/src/service/queries/planner.rs` around exact planning, range planning, residual-filter derivation, candidate scoring, and plan-backed loading helpers |
-| 2026-04-03 | DM4 | done | Replaced `crates/neovex-engine/src/service/queries/planner.rs` with a concept-owned `planner/` module tree. `mod.rs` remains the planner surface, `exact.rs` owns exact-prefix planning, `range.rs` owns range-bound derivation and range-plan selection, `loading.rs` owns plan-backed loading over stores, snapshots, and in-memory documents, and `scoring.rs` owns candidate scoring plus requested-order support. `ARCHITECTURE.md` now records that ownership map. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo check --workspace` | start `DM5` by moving the highest-value storage and Convex demo scenario tests into concept-owned test surfaces without dropping broad coverage |
-| 2026-04-03 | DM5 | done | Moved the storage index regression cluster out of `crates/neovex-storage/src/tests.rs` into `crates/neovex-storage/src/index/tests.rs`, and split the Convex demo runtime scenario file into `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/mod.rs` plus `seeded_usage.rs` so the seeded and faulted usage-model scenarios now live beside their own helpers instead of in one 2,300-line file. The storage and server suites still provide the same broad integration coverage, but the moved tests now report under concept-owned modules. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p neovex-storage`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo check --workspace` | start `DM6` by tightening naming, visibility, helper placement, and leftover glue across the stabilized module trees |
-| 2026-04-03 | DM6 | done | Tightened the public surface that had widened during the earlier refactors so the stabilized module trees are also idiomatic at the visibility boundary. The direct-mutation execution types are now scoped to `crate::service::mutations`, and the storage `index/` tree now exposes only the encoding helpers plus the crate-internal document-key helper while keeping the lower-level keyspace helpers private to the indexing modules. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p neovex-storage`; `bash scripts/cargo-isolated.sh -- test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo check --workspace` | finish `DM7` by reconciling docs and plan ownership, then run the repo-wide verification sweep and archive the completed control plane cleanly |
+| 2026-04-03 | DM1 | done | Replaced `crates/nimbus-engine/src/tenant/materialized_reads.rs` with a concept-owned `tenant/materialized_reads/` module tree. `mod.rs` is now the thin `TenantMaterializedReadSurface` composition root over `snapshot.rs`, `backend.rs`, `warm_load.rs`, `stats.rs`, and the test-only `pause.rs`; serving semantics, retention, warm-load waiting, stats, and publish-pause behavior were preserved, and `ARCHITECTURE.md` was updated to describe the new ownership map. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; attempted `cargo check --workspace`, but it was blocked by an unrelated external Cargo process holding the shared package cache; attempted `bash scripts/cargo-isolated.sh -- check --workspace`, but sandbox network restrictions prevented `rusty_v8` from downloading its prebuilt artifact | start `DM2` by splitting `crates/nimbus-storage/src/index.rs` around scalar/tuple encoding, key construction, scan execution, composite bounds, and transaction-side maintenance |
+| 2026-04-03 | DM2 | done | Replaced `crates/nimbus-storage/src/index.rs` with a concept-owned `index/` module tree. `mod.rs` now composes `encoding.rs`, `keyspace.rs`, `bounds.rs`, `scan.rs`, and `maintenance.rs` while keeping the public storage and planner-facing index API stable. `ARCHITECTURE.md` now records the new storage indexing ownership map. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p nimbus-storage`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; attempted `cargo check --workspace`, but it was still blocked by an unrelated external Cargo process holding the shared package cache | start `DM3` by splitting `crates/nimbus-engine/src/service/mutations/direct.rs` around CRUD wrappers, wrapper normalization, execution-mode/result helpers, and direct store-backed execution |
+| 2026-04-03 | DM3 | done | Replaced `crates/nimbus-engine/src/service/mutations/direct.rs` with a concept-owned `direct/` module tree. `api.rs` now owns the direct CRUD service surface plus async/principal/cancellable wrapper normalization, `execution.rs` owns execution-mode dispatch and mutation auth staging, `store.rs` owns the direct store-apply helpers, and `types.rs` owns the shared execution mode/result contract. `ARCHITECTURE.md` now records that ownership map. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo check --workspace` | start `DM4` by decomposing `crates/nimbus-engine/src/service/queries/planner.rs` around exact planning, range planning, residual-filter derivation, candidate scoring, and plan-backed loading helpers |
+| 2026-04-03 | DM4 | done | Replaced `crates/nimbus-engine/src/service/queries/planner.rs` with a concept-owned `planner/` module tree. `mod.rs` remains the planner surface, `exact.rs` owns exact-prefix planning, `range.rs` owns range-bound derivation and range-plan selection, `loading.rs` owns plan-backed loading over stores, snapshots, and in-memory documents, and `scoring.rs` owns candidate scoring plus requested-order support. `ARCHITECTURE.md` now records that ownership map. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo check --workspace` | start `DM5` by moving the highest-value storage and Convex demo scenario tests into concept-owned test surfaces without dropping broad coverage |
+| 2026-04-03 | DM5 | done | Moved the storage index regression cluster out of `crates/nimbus-storage/src/tests.rs` into `crates/nimbus-storage/src/index/tests.rs`, and split the Convex demo runtime scenario file into `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/mod.rs` plus `seeded_usage.rs` so the seeded and faulted usage-model scenarios now live beside their own helpers instead of in one 2,300-line file. The storage and server suites still provide the same broad integration coverage, but the moved tests now report under concept-owned modules. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p nimbus-storage`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo check --workspace` | start `DM6` by tightening naming, visibility, helper placement, and leftover glue across the stabilized module trees |
+| 2026-04-03 | DM6 | done | Tightened the public surface that had widened during the earlier refactors so the stabilized module trees are also idiomatic at the visibility boundary. The direct-mutation execution types are now scoped to `crate::service::mutations`, and the storage `index/` tree now exposes only the encoding helpers plus the crate-internal document-key helper while keeping the lower-level keyspace helpers private to the indexing modules. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p nimbus-storage`; `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo check --workspace` | finish `DM7` by reconciling docs and plan ownership, then run the repo-wide verification sweep and archive the completed control plane cleanly |
 | 2026-04-03 | DM7 | done | Reconciled the docs and control-plane entrypoints for a finished workstream by archiving this plan under `docs/plans/archive/`, removing its live-plan references from `docs/plans/README.md` and `AGENTS.md`, and recording the final repo-wide verification state. No architecture-level ownership docs changed during closure, so `ARCHITECTURE.md`, `README.md`, and `docs/README.md` stayed as-is. | `make check`; `make test`; `make clippy`; attempted `make ci`, but it failed in the local environment because `cargo deny` is not installed (`cargo deny check` could not run) | if new deeper cleanup work is promoted later, create or promote a new active control plane from `docs/plans/README.md` |

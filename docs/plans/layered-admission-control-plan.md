@@ -22,7 +22,7 @@ instrumentation gaps, experiment design, and promotion criteria.
 - Read this before promoting any new admission-control work.
 - Use it to decide whether a new gate should exist at all, not to justify a
   gate after coding it.
-- Treat codebase architecture, battle-tested prior art, and measured Neovex
+- Treat codebase architecture, battle-tested prior art, and measured Nimbus
   behavior as equal inputs.
 - If a specific EO8 slice is promoted, update this document with the experiment
   result and then add a concrete implementation plan in this document or in a
@@ -70,7 +70,7 @@ of that architectural decision.
 flowchart LR
     Code["Codebase Architecture Review"] --> Decide["Promote Exactly One EO8 Slice"]
     Prior["Battle-Tested Prior Art"] --> Decide
-    Data["Measured Neovex Load Behavior"] --> Decide
+    Data["Measured Nimbus Load Behavior"] --> Decide
     Decide --> Gate["Specific Gate + Overload Semantics + Default Bound"]
 ```
 
@@ -101,8 +101,8 @@ possible.
 
 ### Mutations
 
-- `crates/neovex-engine/src/service/mutations/journal.rs`
-- `crates/neovex-engine/src/tenant.rs`
+- `crates/nimbus-engine/src/service/mutations/journal.rs`
+- `crates/nimbus-engine/src/tenant.rs`
 
 Mutations already enter a tenant-local outer admission gate before journal
 ownership transfer. They are the canonical example of layered admission done on
@@ -111,8 +111,8 @@ expire once it has crossed the journal boundary.
 
 ### Queries
 
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/tenant.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/tenant.rs`
 
 Queries currently have no dedicated slot gate analogous to runtime permits or
 mutation admission. That does not automatically mean they need one. It means
@@ -121,10 +121,10 @@ work classes if storage or execution resources are shared.
 
 ### Runtime
 
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-runtime/src/worker_loop.rs`
-- `crates/neovex-runtime/src/limits.rs`
-- `crates/neovex-runtime/src/runtime.rs`
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/worker_loop.rs`
+- `crates/nimbus-runtime/src/limits.rs`
+- `crates/nimbus-runtime/src/runtime.rs`
 
 Runtime work already has explicit admission boundaries:
 
@@ -138,8 +138,8 @@ still allow a harmful spillover path.
 
 ### Storage
 
-- `crates/neovex-storage/src/async_storage.rs`
-- `crates/neovex-engine/src/service/background_executor.rs`
+- `crates/nimbus-storage/src/async_storage.rs`
+- `crates/nimbus-engine/src/service/background_executor.rs`
 
 Storage already runs on service-owned bounded executors with explicit semaphore
 control. The open `EO8` question is not whether storage is bounded. It is
@@ -148,8 +148,8 @@ foreground and background paths or reads and writes.
 
 ### Scheduled jobs
 
-- `crates/neovex-engine/src/scheduler.rs`
-- `crates/neovex-engine/src/service/scheduler.rs`
+- `crates/nimbus-engine/src/scheduler.rs`
+- `crates/nimbus-engine/src/service/scheduler.rs`
 
 Scheduled jobs now have bounded tenant fan-out, which prevents one paused or
 slow tenant from serializing all due work. They do not yet have an explicit
@@ -210,19 +210,19 @@ Across these systems, the durable pattern is:
 4. isolate by work class only when the classes materially compete
 5. tune from measurements, not from intuition alone
 
-## Observability Already Available In Neovex
+## Observability Already Available In Nimbus
 
-Neovex already exposes enough surface to begin an `EO8` experiment without
+Nimbus already exposes enough surface to begin an `EO8` experiment without
 inventing a new control plane first.
 
 ### Runtime diagnostics
 
 - Route: `GET /debug/runtime/metrics`
 - Wiring:
-  `crates/neovex-server/src/router.rs`,
-  `crates/neovex-server/src/http/metadata.rs`
+  `crates/nimbus-server/src/router.rs`,
+  `crates/nimbus-server/src/http/metadata.rs`
 - Snapshot type:
-  `crates/neovex-runtime/src/metrics.rs` (`RuntimeMetricsSnapshot`)
+  `crates/nimbus-runtime/src/metrics.rs` (`RuntimeMetricsSnapshot`)
 
 Available signal includes:
 
@@ -239,10 +239,10 @@ Available signal includes:
 
 - Route: `GET /debug/tenants/{tenant_id}/engine/metrics`
 - Wiring:
-  `crates/neovex-server/src/router.rs`,
-  `crates/neovex-server/src/http/metadata.rs`
+  `crates/nimbus-server/src/router.rs`,
+  `crates/nimbus-server/src/http/metadata.rs`
 - Snapshot types:
-  `crates/neovex-engine/src/tenant.rs`
+  `crates/nimbus-engine/src/tenant.rs`
   (`TenantEngineDiagnosticsSnapshot`, `MutationAdmissionStats`,
   `MutationJournalStats`, `SubscriptionDeliveryStats`, `QueryPlanningStats`)
 
@@ -255,7 +255,7 @@ Available signal includes:
 
 ### Deterministic test surfaces
 
-- `crates/neovex-server/src/tests.rs` includes
+- `crates/nimbus-server/src/tests.rs` includes
   `wait_for_runtime_metrics(...)`
 - server integration suites already exercise HTTP, WebSocket, runtime,
   scheduler, and subscription flows deterministically
@@ -286,7 +286,7 @@ The data can still be gathered in a disciplined way from existing surfaces.
 
 ### Minimum data-collection workflow
 
-1. Start Neovex with representative runtime, scheduler, and storage limits.
+1. Start Nimbus with representative runtime, scheduler, and storage limits.
 2. Drive one workload mix at a time through the existing HTTP, WebSocket,
    runtime, and scheduler-facing interfaces.
 3. Capture client-side latency by work class:

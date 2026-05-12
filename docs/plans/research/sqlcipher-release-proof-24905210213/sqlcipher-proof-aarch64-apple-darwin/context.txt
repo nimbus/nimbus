@@ -1,6 +1,6 @@
 script=scripts/verify-sqlcipher-proof.sh
 mode=cargo-lanes
-cwd=/Users/runner/work/neovex/neovex
+cwd=/Users/runner/work/nimbus/nimbus
 runner_os=macOS
 runner_arch=ARM64
 github_job=build

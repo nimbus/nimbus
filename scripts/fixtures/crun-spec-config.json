@@ -18,7 +18,7 @@
     "path": "rootfs",
     "readonly": true
   },
-  "hostname": "neovex-test",
+  "hostname": "nimbus-test",
   "annotations": {
     "org.opencontainers.image.title": "fixture"
   }

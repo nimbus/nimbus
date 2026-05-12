@@ -1,10 +1,10 @@
 # Examples
 
-## Using `@neovex/mongodb` URI helper
+## Using `@nimbus/mongodb` URI helper
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@neovex/mongodb";
+import { uri } from "@nimbus/mongodb";
 
 const client = new MongoClient(uri({ database: "myapp" }));
 await client.connect();
@@ -59,7 +59,7 @@ const docs = await messages.find({ author: "Alice" }).toArray();
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@neovex/mongodb";
+import { uri } from "@nimbus/mongodb";
 
 const client = new MongoClient(uri({
   database: "myapp",
@@ -125,7 +125,7 @@ func main() {
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@neovex/mongodb";
+import { uri } from "@nimbus/mongodb";
 
 const client = new MongoClient(uri({ database: "myapp" }));
 await client.connect();

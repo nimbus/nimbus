@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/neovex-conmon-drill-verify.XXXXXX")"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-conmon-drill-verify.XXXXXX")"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 bundle_dir="${tmp_dir}/bundle"
@@ -19,13 +19,13 @@ state_root="$(cd "${state_root}" && pwd)"
 bash "${repo_root}/scripts/prepare-conmon-krun-drill.sh" \
   --bundle-dir "${bundle_dir}" \
   --state-root "${state_root}" \
-  --container-id neovex-http \
-  --name neovex-http \
+  --container-id nimbus-http \
+  --name nimbus-http \
   --conmon /usr/bin/conmon \
-  --runtime /usr/libexec/neovex/crun \
+  --runtime /usr/libexec/nimbus/crun \
   > "${output_file}"
 
-container_state_dir="${state_root}/containers/neovex-http"
+container_state_dir="${state_root}/containers/nimbus-http"
 command_file="${container_state_dir}/run-conmon.sh"
 find_attach_sockets_script="${container_state_dir}/find-attach-sockets.sh"
 capture_process_tree_script="${container_state_dir}/capture-process-tree.sh"
@@ -39,8 +39,8 @@ oci_log="${container_state_dir}/oci.log"
 pidfile="${container_state_dir}/pidfile"
 conmon_pidfile="${container_state_dir}/conmon.pid"
 exit_dir="${state_root}/exits"
-exit_status_file="${exit_dir}/neovex-http"
-persist_dir="${state_root}/persist/neovex-http"
+exit_status_file="${exit_dir}/nimbus-http"
+persist_dir="${state_root}/persist/nimbus-http"
 
 for generated_file in \
   "${command_file}" \
@@ -87,7 +87,7 @@ grep -F "drill.attach_socket_search_cmd=bash ${find_attach_sockets_script}" "${o
 grep -F "drill.process_tree_cmd=bash ${capture_process_tree_script}" "${output_file}" >/dev/null
 grep -F "drill.graceful_stop_cmd=bash ${graceful_stop_script}" "${output_file}" >/dev/null
 
-grep -F "exec /usr/bin/conmon --api-version 1 -c neovex-http -u neovex-http -r /usr/libexec/neovex/crun -b ${bundle_dir} -p ${pidfile} -n neovex-http --exit-dir ${exit_dir} --persist-dir ${persist_dir} --full-attach -l k8s-file:${ctr_log} --log-level debug --syslog --conmon-pidfile ${conmon_pidfile} --runtime-arg --log-format=json --runtime-arg --log --runtime-arg ${oci_log}" "${command_file}" >/dev/null
+grep -F "exec /usr/bin/conmon --api-version 1 -c nimbus-http -u nimbus-http -r /usr/libexec/nimbus/crun -b ${bundle_dir} -p ${pidfile} -n nimbus-http --exit-dir ${exit_dir} --persist-dir ${persist_dir} --full-attach -l k8s-file:${ctr_log} --log-level debug --syslog --conmon-pidfile ${conmon_pidfile} --runtime-arg --log-format=json --runtime-arg --log --runtime-arg ${oci_log}" "${command_file}" >/dev/null
 grep -F "find ${persist_dir} -type s -print | sort" "${find_attach_sockets_script}" >/dev/null
 grep -F "conmon_pid=\"\$(cat ${conmon_pidfile})\"" "${capture_process_tree_script}" >/dev/null
 grep -F "runtime_pid=\"\$(cat ${pidfile})\"" "${capture_process_tree_script}" >/dev/null

@@ -8,7 +8,7 @@ implementation starts.
 
 ## Current State
 
-Today Neovex supports only single-field secondary indexes:
+Today Nimbus supports only single-field secondary indexes:
 
 - schema shape: `IndexDefinition { name, field }`
 - storage key shape: `table\0index\0<encoded-value><doc-id>`

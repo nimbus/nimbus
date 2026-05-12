@@ -13,7 +13,7 @@ and lock costs. External backends such as Postgres, MySQL, or replica-connected
 SQLite also pay network round trips, pool checkout, TLS, remote planning, and
 server-side concurrency costs.
 
-That makes the Neovex-owned pre-storage layer even more important for external
+That makes the Nimbus-owned pre-storage layer even more important for external
 SQL, but only for the right kind of work:
 
 - do more semantic shaping above the seam
@@ -47,7 +47,7 @@ Those capability seams should remain semantic. They must not be replaced by:
 
 External providers may still optimize aggressively below that seam by bundling
 round trips, using server-side planning, or choosing backend-native
-notification and recovery mechanisms, as long as the Neovex-owned semantics
+notification and recovery mechanisms, as long as the Nimbus-owned semantics
 above the seam stay unchanged.
 
 ## Postgres Provider Shape
@@ -56,13 +56,13 @@ The first concrete non-local mode should be `PostgresProvider`.
 
 Its intended shape is:
 
-- one provider-owned Postgres database for the Neovex service
+- one provider-owned Postgres database for the Nimbus service
 - one small provider metadata schema for tenant registry and routing metadata
-- one Postgres schema per Neovex tenant
-- the same logical per-tenant tables Neovex already uses in SQLite
+- one Postgres schema per Nimbus tenant
+- the same logical per-tenant tables Nimbus already uses in SQLite
 - fully qualified tenant-schema SQL instead of mutable session `search_path`
 
-The journal model remains Neovex-owned:
+The journal model remains Nimbus-owned:
 
 - `commit_log` stores serialized `DurableMutationRecord` blobs
 - Postgres sequence or identity allocation owns physical sequence numbering
@@ -103,7 +103,7 @@ If this path is activated, the best first-fit Rust connector family is
 `libsql`, not a local-only SQLite driver stretched into a replication story.
 `libsql` already exposes remote and local replica builders, synced databases,
 delegated remote writes, `read_your_writes`, and `sync_until`, which is much
-closer to the provider semantics Neovex needs. Plain `rusqlite` or
+closer to the provider semantics Nimbus needs. Plain `rusqlite` or
 `sqlx::Sqlite` remain good local SQLite tools, but they do not solve the
 replica-topology problem on their own.
 
@@ -120,9 +120,9 @@ That distinction matters:
 - replica reads remain correct only when the provider-owned durable/applied
   sequence barrier proves that cache freshness is sufficient
 
-Today the safest first sync model is a Neovex-owned snapshot or catch-up
+Today the safest first sync model is a Nimbus-owned snapshot or catch-up
 refresher over the remote `libsql` SQL connection, producing provider-owned
-local SQLite cache files directly. The main Neovex process must not assume it
+local SQLite cache files directly. The main Nimbus process must not assume it
 can host `new_remote_replica(...)` directly until that runtime path is proven
 stable in the live harness. That means:
 
@@ -153,7 +153,7 @@ poll worker keeps loaded and unloaded tenants aligned with remote schema,
 journal, and scheduled-work state.
 
 The first slice explicitly defers `libsql` synced/offline-write database
-shapes. Neovex does not need disconnected local writes for this activation, and
+shapes. Nimbus does not need disconnected local writes for this activation, and
 bringing them in early would expand the roadmap into conflict resolution,
 multi-writer policy, and promotion semantics that do not belong in the first
 replica-connected SQLite pass.
@@ -165,14 +165,14 @@ than from a generic "remote SQLite" promise.
 
 ## MySQL Provider Shape
 
-The first MySQL mode should preserve the same Neovex semantics as the
+The first MySQL mode should preserve the same Nimbus semantics as the
 Postgres-first path while using MySQL-native physical mechanics.
 
 Its intended shape is:
 
-- one provider-owned MySQL deployment for the Neovex service
+- one provider-owned MySQL deployment for the Nimbus service
 - one small provider metadata database for tenant registry and routing
-- one tenant database per Neovex tenant, using fully qualified
+- one tenant database per Nimbus tenant, using fully qualified
   `tenant_db.table_name` SQL
 - InnoDB MVCC transactions for consistent reads, execution-unit OCC, and
   durable journal append behavior
@@ -183,7 +183,7 @@ Its intended shape is:
 
 If this path is activated, the best first-fit Rust connector stack is
 `mysql_async` directly. It is Tokio-native, already ships with a pooled async
-connection model and explicit transaction APIs, and fits Neovex's need for
+connection model and explicit transaction APIs, and fits Nimbus's need for
 dynamic fully qualified SQL, locking reads, and provider-owned statement
 control. `sqlx` and `diesel-async` remain valid options in the abstract, but
 they are not the best first fit for a provider that will rely on dynamic

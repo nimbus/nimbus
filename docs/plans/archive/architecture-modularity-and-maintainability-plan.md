@@ -21,21 +21,21 @@ Reviewed against:
 - `docs/plans/archive/codebase-modularity-and-maintainability-hotspots-plan.md`
 - `docs/plans/archive/codebase-modularity-and-maintainability-follow-on-plan.md`
 - `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-engine/src/persistence_config.rs`
-- `crates/neovex-engine/src/persistence/tenant.rs`
-- `crates/neovex-engine/src/tenant.rs`
-- `crates/neovex-runtime/src/host.rs`
-- `crates/neovex-server/src/router.rs`
-- `crates/neovex-server/src/adapters/convex/host_bridge/bridge.rs`
-- `crates/neovex-server/src/adapters/convex/host_bridge/async_bridge/mod.rs`
-- `crates/neovex-storage/src/libsql.rs`
-- `crates/neovex-storage/src/mysql.rs`
-- `crates/neovex-storage/src/postgres.rs`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-engine/src/persistence_config.rs`
+- `crates/nimbus-engine/src/persistence/tenant.rs`
+- `crates/nimbus-engine/src/tenant.rs`
+- `crates/nimbus-runtime/src/host.rs`
+- `crates/nimbus-server/src/router.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/bridge.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/async_bridge/mod.rs`
+- `crates/nimbus-storage/src/libsql.rs`
+- `crates/nimbus-storage/src/mysql.rs`
+- `crates/nimbus-storage/src/postgres.rs`
 - `packages/codegen/src/main.mjs`
-- `packages/neovex/src/server.ts`
-- `packages/neovex/src/browser.ts`
-- `packages/neovex/src/react.ts`
+- `packages/nimbus/src/server.ts`
+- `packages/nimbus/src/browser.ts`
+- `packages/nimbus/src/react.ts`
 - `packages/convex/src/server.ts`
 - `packages/convex/src/browser.ts`
 - `packages/convex/src/react.ts`
@@ -59,10 +59,10 @@ Baseline verification status for this plan:
 The codebase is in a healthier state than the old god-file era. The central
 architecture is real:
 
-- `neovex-runtime` still owns a narrow workspace-independent runtime contract
-- `neovex-server` still owns transport and compatibility integration
-- `neovex-engine` still owns the central coordinator and tenant runtime
-- `neovex-storage` still owns persistence backends and durable semantics
+- `nimbus-runtime` still owns a narrow workspace-independent runtime contract
+- `nimbus-server` still owns transport and compatibility integration
+- `nimbus-engine` still owns the central coordinator and tenant runtime
+- `nimbus-storage` still owns persistence backends and durable semantics
 
 The next broad cleanup wave should not rewrite that center. The more honest
 assessment is that complexity is pooling at the edges:
@@ -162,8 +162,8 @@ These rules are mandatory for every item in this plan.
    unless a specific item explicitly records otherwise.
 
 2. Keep core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through the engine-owned mutation path.
    Storage atomicity stays unchanged.
 
@@ -217,13 +217,13 @@ These rules are mandatory for every item in this plan.
 - There are now no active `.rs`, `.ts`, `.mjs`, or active-plan `.md` files
   above the 1,500-line threshold today.
 - The next largest active code files are:
-  - `crates/neovex-storage/src/mysql/backend.rs` at 1,236 lines
-  - `crates/neovex-sandbox/src/backends/oci/builder.rs` at 1,199 lines
-  - `crates/neovex-storage/src/postgres/write.rs` at 1,188 lines
-  - `crates/neovex-engine/src/tests/queries.rs` at 1,170 lines
+  - `crates/nimbus-storage/src/mysql/backend.rs` at 1,236 lines
+  - `crates/nimbus-sandbox/src/backends/oci/builder.rs` at 1,199 lines
+  - `crates/nimbus-storage/src/postgres/write.rs` at 1,188 lines
+  - `crates/nimbus-engine/src/tests/queries.rs` at 1,170 lines
 - `AMM1` removed the temporary `libsql.rs` threshold exception by extracting
   replica-cache freshness and provider-backend helper ownership into concept
-  modules and by shrinking `crates/neovex-engine/src/persistence/tenant.rs`
+  modules and by shrinking `crates/nimbus-engine/src/persistence/tenant.rs`
   into a thin capability root.
 - `AMM2` moved provider selection, encryption bootstrap, and route/build
   wiring behind typed startup seams, so the engine and CLI no longer keep the
@@ -240,10 +240,10 @@ These rules are mandatory for every item in this plan.
     set through each call path
 - `AMM4` materially thinned the JS compatibility wrapper:
   - `packages/convex/src/server.ts` now delegates query, mutation, action,
-    table, schema, and HTTP wrapper behavior through `neovex/server` while
+    table, schema, and HTTP wrapper behavior through `nimbus/server` while
     keeping the narrower Convex-facing type aliases and helper names
   - `packages/convex/src/browser.ts` now re-exports shared client-state and
-    auth-fetcher types from `neovex/browser` and drops redundant pass-through
+    auth-fetcher types from `nimbus/browser` and drops redundant pass-through
     method wrappers
   - `packages/codegen` remains aligned with one canonical runtime contract by
     continuing to emit `convex/*` imports whose implementation now resolves
@@ -255,7 +255,7 @@ These rules are mandatory for every item in this plan.
     compatibility guidance
   - `AMM6` lifted the AWS KMS dependency chain to `aws-config 1.8.16` and
     `aws-sdk-kms 1.105.0`, removed the legacy `rustls-webpki 0.101.7`
-    `cargo deny` path, and made `neovex-storage` own the Hyper features its
+    `cargo deny` path, and made `nimbus-storage` own the Hyper features its
     `aws-kms` support already depended on implicitly
   - the full closeout verification contract is now green, so this plan can
     archive cleanly instead of remaining as a live control-plane blocker
@@ -277,7 +277,7 @@ These rules are mandatory for every item in this plan.
 
 3. The JS compatibility surface is materially healthier after `AMM4`.
    `packages/convex` now delegates more of its server and browser surface
-   through canonical `packages/neovex` implementations instead of carrying as
+   through canonical `packages/nimbus` implementations instead of carrying as
    much copy-forward logic.
 
 4. The remaining cleanup became closeout-first rather than seam-first, and is
@@ -307,10 +307,10 @@ them further.
 
 Primary targets:
 
-- `crates/neovex-storage/src/libsql.rs`
-- `crates/neovex-storage/src/mysql.rs`
-- `crates/neovex-storage/src/postgres.rs`
-- `crates/neovex-engine/src/persistence/tenant.rs`
+- `crates/nimbus-storage/src/libsql.rs`
+- `crates/nimbus-storage/src/mysql.rs`
+- `crates/nimbus-storage/src/postgres.rs`
+- `crates/nimbus-engine/src/persistence/tenant.rs`
 - adjacent provider-local `provider.rs`, `read.rs`, `write.rs`, and `storage.rs`
   modules as needed
 
@@ -330,10 +330,10 @@ home for provider-selection and bootstrapping policy.
 
 Primary targets:
 
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-engine/src/persistence_config.rs`
-- `crates/neovex-bin/src/serve/config.rs`
-- `crates/neovex-server/src/router.rs`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-engine/src/persistence_config.rs`
+- `crates/nimbus-bin/src/serve/config.rs`
+- `crates/nimbus-server/src/router.rs`
 
 Desired outcome:
 
@@ -349,10 +349,10 @@ inversion seam.
 
 Primary targets:
 
-- `crates/neovex-server/src/adapters/convex/`
+- `crates/nimbus-server/src/adapters/convex/`
 - especially `host_bridge/`, `execution/`, `registry/`, and subscription
   transform surfaces
-- `crates/neovex-server/src/adapters/convex/host_bridge/bridge.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/bridge.rs`
 
 Desired outcome:
 
@@ -365,14 +365,14 @@ Desired outcome:
 
 ### AMM4. Make `packages/convex` a thinner compatibility wrapper over canonical JS surfaces
 
-Keep the JS story cheap to evolve by consolidating on canonical `neovex`
+Keep the JS story cheap to evolve by consolidating on canonical `nimbus`
 implementations and generated contracts.
 
 Primary targets:
 
-- `packages/neovex/src/server.ts`
-- `packages/neovex/src/browser.ts`
-- `packages/neovex/src/react.ts`
+- `packages/nimbus/src/server.ts`
+- `packages/nimbus/src/browser.ts`
+- `packages/nimbus/src/react.ts`
 - `packages/convex/src/server.ts`
 - `packages/convex/src/browser.ts`
 - `packages/convex/src/react.ts`
@@ -380,7 +380,7 @@ Primary targets:
 
 Desired outcome:
 
-- `packages/neovex` owns the canonical implementation and richer Neovex-native
+- `packages/nimbus` owns the canonical implementation and richer Nimbus-native
   surface
 - `packages/convex` wraps or re-exports wherever behavior is the same
 - type and API drift between the two packages becomes harder to introduce
@@ -419,7 +419,7 @@ This plan is successful only when all of the following are true:
 - the Convex compatibility tree is easier to navigate and reason about as a
   bounded subsystem
 - `packages/convex` is materially thinner and more obviously derived from
-  canonical `packages/neovex` surfaces
+  canonical `packages/nimbus` surfaces
 - active files between 1,500 and 1,999 lines, if any remain, have explicit
   justifications in the plan closeout notes
 - no active code file remains at or above 2,000 lines without a
@@ -435,7 +435,7 @@ This plan is successful only when all of the following are true:
 | --- | --- |
 | Engine mutation and query semantics | service coordination, tenant lifecycle, mutation ordering, and read visibility stay unchanged while roots and config surfaces are repackaged |
 | Storage-provider semantics | provider-local CRUD, scheduler, journal, schema, refresh, and durability behavior stay unchanged while provider roots and facades are thinned |
-| Runtime inversion seam | `HostBridge` stays the runtime contract and `neovex-runtime` keeps zero workspace dependencies |
+| Runtime inversion seam | `HostBridge` stays the runtime contract and `nimbus-runtime` keeps zero workspace dependencies |
 | Native server routes | HTTP and WebSocket behavior stays unchanged unless a specific item explicitly records a behavior change |
 | Convex compatibility behavior | runtime-backed query, mutation, action, scheduler, and subscription semantics stay unchanged while internal facades are simplified |
 | JS SDK and compat surfaces | public API behavior and type meaning stay compatible unless a specific item explicitly records and justifies a breaking pre-launch cleanup |
@@ -473,15 +473,15 @@ Every implementation item in this plan must run:
 Use these focused lanes as appropriate:
 
 - for provider-root or persistence-facade work:
-  `cargo test -p neovex-storage`
-  `cargo test -p neovex-engine`
+  `cargo test -p nimbus-storage`
+  `cargo test -p nimbus-engine`
 - for service bootstrap, config, or router cleanup:
-  `cargo test -p neovex-engine`
-  `cargo test -p neovex-server`
-  `cargo test -p neovex-bin`
+  `cargo test -p nimbus-engine`
+  `cargo test -p nimbus-server`
+  `cargo test -p nimbus-bin`
 - for Convex compatibility cleanup:
-  `cargo test -p neovex-server`
-  `cargo test -p neovex-runtime`
+  `cargo test -p nimbus-server`
+  `cargo test -p nimbus-runtime`
 - for JS SDK and codegen cleanup:
   `npm run test --workspaces --if-present`
   `npm run build --workspaces --if-present`
@@ -508,7 +508,7 @@ If environment restrictions block a command, do not silently skip it:
 | File | Line Count | Justification | Next Review Trigger |
 | --- | --- | --- | --- |
 
-No active threshold exceptions remain after `AMM1`; `crates/neovex-storage/src/libsql.rs`
+No active threshold exceptions remain after `AMM1`; `crates/nimbus-storage/src/libsql.rs`
 now sits at 868 lines and the provider or engine roots touched in this pass
 are below the 1,500-line review threshold.
 
@@ -524,7 +524,7 @@ Any later exception should append another row to this table.
 | AMM1 | `done` | normalized persistence-provider roots and shrank the engine persistence facade around clearer concept ownership and smaller delegation surfaces | AMM0 |
 | AMM2 | `done` | separated service bootstrapping, persistence policy, and router wiring into a clearer build pipeline | AMM0, AMM1 |
 | AMM3 | `done` | bounded the Convex compatibility subsystem behind smaller server facades, shared runtime invocation contexts, and cleaner host-bridge construction seams | AMM0, AMM2 |
-| AMM4 | `done` | consolidated the JS SDK and compatibility layers so `packages/convex` delegates more behavior and shared types through canonical `packages/neovex` surfaces | AMM0, AMM3 |
+| AMM4 | `done` | consolidated the JS SDK and compatibility layers so `packages/convex` delegates more behavior and shared types through canonical `packages/nimbus` surfaces | AMM0, AMM3 |
 | AMM5 | `done` | landed the canonical naming, module-ownership, and size-governance sweep across the active repo entrypoints | AMM0, AMM1, AMM2, AMM3, AMM4 |
 | AMM6 | `done` | lifted the AWS KMS dependency chain off the vulnerable legacy Rustls path, reran the full verification sweep, reconciled the repo entrypoints, and archived this plan as completed | AMM1, AMM2, AMM3, AMM4, AMM5 |
 
@@ -564,12 +564,12 @@ Any later exception should append another row to this table.
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
 | AMM0 | done; completed the repo-wide architectural review, identified the next five high-signal moves, and promoted this document as the active owner for generic architecture and maintainability work | start `AMM1` by mapping the current provider roots and `TenantPersistence` delegation surface into concept-owned seams and deciding whether the engine-side facade should shrink by capability grouping, provider-local wrapper extraction, or both |
-| AMM1 | done; decomposed `libsql.rs` into `libsql/backend.rs` and `libsql/freshness.rs`, moved MySQL and Postgres shared backend helpers behind provider-local `backend.rs` modules, and split `crates/neovex-engine/src/persistence/tenant.rs` into capability-owned `reads`, `writes`, `journal`, `scheduler`, and `schema` modules | start `AMM2` by mapping `Service` construction, persistence config, encryption bootstrap, and router overloads into a smaller build pipeline that treats the landed persistence seams as stable inputs |
-| AMM2 | done; moved typed provider selection into `crates/neovex-engine/src/persistence_config.rs`, extracted `crates/neovex-engine/src/service/bootstrap.rs` so `Service` no longer owns the startup matrix, split CLI encryption versus provider resolution in `crates/neovex-bin/src/serve/config.rs`, and normalized the server route-build overloads behind one internal `RouterBuildConfig` in `crates/neovex-server/src/router.rs` | start `AMM3` by inventorying `crates/neovex-server/src/adapters/convex/host_bridge/`, `execution/`, `registry/`, and subscription transform surfaces and choosing the smallest bounded facades that materially reduce coordination width |
-| AMM3 | done; introduced `ConvexHostBridgeScope` plus `ConvexHostBridgeInvocation`, extracted `execution/runtime_backed/invoke/context.rs` as the canonical runtime-backed invocation bundle, and routed runtime-backed handlers plus subscription transforms through shared context objects instead of repeating the same constructor and call width at each site | start `AMM4` by inventorying `packages/neovex`, `packages/convex`, and `packages/codegen` for wrapper, alias, and re-export opportunities that preserve the current JS surface behavior |
-| AMM4 | done; replaced most of `packages/convex/src/server.ts` with a thin typed wrapper over `neovex/server`, re-exported shared browser client-state and auth-fetcher types from `neovex/browser`, and removed redundant Convex client pass-through methods so the compatibility package is thinner without changing generated `convex/*` imports or public helper names | start `AMM5` by reconciling `AGENTS.md`, `docs/plans/README.md`, and the control plan language with the thin-root, naming, and size-governance rules proven out by `AMM1` through `AMM4` |
+| AMM1 | done; decomposed `libsql.rs` into `libsql/backend.rs` and `libsql/freshness.rs`, moved MySQL and Postgres shared backend helpers behind provider-local `backend.rs` modules, and split `crates/nimbus-engine/src/persistence/tenant.rs` into capability-owned `reads`, `writes`, `journal`, `scheduler`, and `schema` modules | start `AMM2` by mapping `Service` construction, persistence config, encryption bootstrap, and router overloads into a smaller build pipeline that treats the landed persistence seams as stable inputs |
+| AMM2 | done; moved typed provider selection into `crates/nimbus-engine/src/persistence_config.rs`, extracted `crates/nimbus-engine/src/service/bootstrap.rs` so `Service` no longer owns the startup matrix, split CLI encryption versus provider resolution in `crates/nimbus-bin/src/serve/config.rs`, and normalized the server route-build overloads behind one internal `RouterBuildConfig` in `crates/nimbus-server/src/router.rs` | start `AMM3` by inventorying `crates/nimbus-server/src/adapters/convex/host_bridge/`, `execution/`, `registry/`, and subscription transform surfaces and choosing the smallest bounded facades that materially reduce coordination width |
+| AMM3 | done; introduced `ConvexHostBridgeScope` plus `ConvexHostBridgeInvocation`, extracted `execution/runtime_backed/invoke/context.rs` as the canonical runtime-backed invocation bundle, and routed runtime-backed handlers plus subscription transforms through shared context objects instead of repeating the same constructor and call width at each site | start `AMM4` by inventorying `packages/nimbus`, `packages/convex`, and `packages/codegen` for wrapper, alias, and re-export opportunities that preserve the current JS surface behavior |
+| AMM4 | done; replaced most of `packages/convex/src/server.ts` with a thin typed wrapper over `nimbus/server`, re-exported shared browser client-state and auth-fetcher types from `nimbus/browser`, and removed redundant Convex client pass-through methods so the compatibility package is thinner without changing generated `convex/*` imports or public helper names | start `AMM5` by reconciling `AGENTS.md`, `docs/plans/README.md`, and the control plan language with the thin-root, naming, and size-governance rules proven out by `AMM1` through `AMM4` |
 | AMM5 | done; updated `AGENTS.md` and `docs/plans/README.md` so the active maintainability plan now explicitly owns thin-root discipline, concept-owned naming, helper-bucket avoidance, threshold exceptions, and wrapper-first JS compatibility guidance for future cleanup work | start `AMM6` by running the final verification sweep, reconciling any last doc drift, and preparing the plan for archive or retirement only after everything is green |
-| AMM6 | done; lifted the AWS KMS dependency chain to `aws-config 1.8.16` and `aws-sdk-kms 1.105.0`, removed the legacy `rustls-webpki 0.101.7` path by selecting the explicit `default-https-client` / `rt-tokio` lane, made `neovex-storage` own the Hyper features its `aws-kms` tests and libsql transport already required, reran the full verification contract, and archived this plan as completed | none; future broad maintainability or reliability-hardening work must promote a new active plan |
+| AMM6 | done; lifted the AWS KMS dependency chain to `aws-config 1.8.16` and `aws-sdk-kms 1.105.0`, removed the legacy `rustls-webpki 0.101.7` path by selecting the explicit `default-https-client` / `rt-tokio` lane, made `nimbus-storage` own the Hyper features its `aws-kms` tests and libsql transport already required, reran the full verification contract, and archived this plan as completed | none; future broad maintainability or reliability-hardening work must promote a new active plan |
 
 ---
 
@@ -601,12 +601,12 @@ Acceptance criteria:
 
 #### Focused verification
 
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-engine`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-storage --all-targets -- -D warnings`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-storage --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -626,14 +626,14 @@ Acceptance criteria:
 
 #### Focused verification
 
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-server`
-- `cargo test -p neovex-bin`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-server`
+- `cargo test -p nimbus-bin`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
-- `cargo clippy -p neovex-server --all-targets -- -D warnings`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-server --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -653,12 +653,12 @@ Acceptance criteria:
 
 #### Focused verification
 
-- `cargo test -p neovex-server`
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-server`
+- `cargo test -p nimbus-runtime`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-server --all-targets -- -D warnings`
-- `cargo clippy -p neovex-runtime --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-server --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -671,7 +671,7 @@ Acceptance criteria:
 #### Implementation plan
 
 1. Inventory the public surfaces where `packages/convex` can defer to
-   `packages/neovex` instead of maintaining parallel logic or types.
+   `packages/nimbus` instead of maintaining parallel logic or types.
 2. Keep `packages/codegen` aligned with one canonical runtime and SDK contract.
 3. Prefer wrapper, re-export, and alias patterns over copy-forward divergence.
 
@@ -741,15 +741,15 @@ Acceptance criteria:
 | 2026-04-20 | AMM0 | `documented` | Authored a new active architecture, modularity, and maintainability control plane from a live architectural review of the current codebase; selected the top five structural moves and codified the requested file-size and ownership rules | docs-only review; no code verification claimed for the planning pass | Update repo entrypoints to point at this new active plan, then begin `AMM1` with a provider-root and persistence-facade seam inventory |
 | 2026-04-21 | AMM0 | `reconciled` | Updated the live control plane after commit `0675a0b4` landed optional encryption at rest; recorded the new `libsql.rs` threshold exception and clarified that encryption now raises the baseline persistence and bootstrapping complexity for `AMM1` and `AMM2` | docs-only reconciliation against the live worktree and latest commit; no code verification claimed for the planning pass | Use the revised baseline when handing the workstream to the implementation agent, with `libsql.rs` treated as an explicit `AMM1` target rather than an unrelated exception |
 | 2026-04-21 | AMM1 | `in_progress` | Reconciled the live worktree to the active control-plane docs, marked the provider-root normalization item active, and started the focused ownership inventory for `libsql.rs`, `mysql.rs`, `postgres.rs`, and the engine tenant-persistence facade before any code movement | startup reconciliation only; no item verification claimed yet | Complete the seam inventory, then land the first provider-root or engine-facade decomposition with focused persistence verification |
-| 2026-04-21 | AMM1 | `done` | Decomposed `libsql.rs` into `libsql/backend.rs` and `libsql/freshness.rs`, moved MySQL and Postgres shared backend helpers behind provider-local `backend.rs` modules, and split `crates/neovex-engine/src/persistence/tenant.rs` into capability-owned `reads`, `writes`, `journal`, `scheduler`, and `schema` modules; reduced `crates/neovex-storage/src/libsql.rs` to 868 lines and cleared the active threshold exception while preserving the landed encryption-backed replica behavior | `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo clippy -p neovex-storage --all-targets -- -D warnings`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM2` by mapping `Service` construction, persistence config, encryption bootstrap, and router wiring into a smaller build pipeline |
+| 2026-04-21 | AMM1 | `done` | Decomposed `libsql.rs` into `libsql/backend.rs` and `libsql/freshness.rs`, moved MySQL and Postgres shared backend helpers behind provider-local `backend.rs` modules, and split `crates/nimbus-engine/src/persistence/tenant.rs` into capability-owned `reads`, `writes`, `journal`, `scheduler`, and `schema` modules; reduced `crates/nimbus-storage/src/libsql.rs` to 868 lines and cleared the active threshold exception while preserving the landed encryption-backed replica behavior | `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo clippy -p nimbus-storage --all-targets -- -D warnings`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM2` by mapping `Service` construction, persistence config, encryption bootstrap, and router wiring into a smaller build pipeline |
 | 2026-04-21 | AMM2 | `in_progress` | Promoted the service bootstrap and router cleanup item immediately after AMM1 closeout so the plan stays aligned with the live delivery order; the next work burst will inspect `service/mod.rs`, `persistence_config.rs`, `serve/config.rs`, and `router.rs` together because provider selection and encryption bootstrap now form one current pipeline concern | status handoff only; no AMM2 verification claimed yet | Read the AMM2 targets and land the first builder/bootstrap or router extraction without changing public bootstrap or route semantics |
-| 2026-04-21 | AMM2 | `done` | Moved typed provider selection and startup lowering into a private bootstrap plan in `crates/neovex-engine/src/persistence_config.rs`, extracted `crates/neovex-engine/src/service/bootstrap.rs` so `Service` no longer owns the startup matrix, split CLI encryption versus provider selection in `crates/neovex-bin/src/serve/config.rs`, and normalized router construction behind one internal `RouterBuildConfig` in `crates/neovex-server/src/router.rs` without changing public bootstrap or route semantics | `cargo test -p neovex-engine` (one initial run hit the timing-sensitive `tests::materialized_serving::concurrency::materialized_surface_handles_concurrent_reads_and_writes`; the isolated rerun and a full rerun both passed); `cargo test -p neovex-server`; `cargo test -p neovex-bin`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo clippy -p neovex-server --all-targets -- -D warnings`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM3` by inventorying the Convex compatibility subsystem around host-bridge construction, execution routing, registry access, and subscription transforms |
-| 2026-04-21 | AMM3 | `in_progress` | Promoted the Convex compatibility cleanup item immediately after AMM2 closeout so the plan stays aligned with the live delivery order; the next work burst will inspect `crates/neovex-server/src/adapters/convex/host_bridge/`, `execution/`, `registry/`, and subscription transforms together because that subsystem now carries the broadest remaining coordination width | status handoff only; no AMM3 verification claimed yet | Read the AMM3 targets and land the first bounded facade or constructor-width reduction without changing Convex behavior |
-| 2026-04-21 | AMM3 | `done` | Added `ConvexHostBridgeScope` and `ConvexHostBridgeInvocation` so bridge construction separates durable scope from per-call invocation metadata, extracted `crates/neovex-server/src/adapters/convex/execution/runtime_backed/invoke/context.rs` as the canonical runtime-backed invocation bundle, and routed runtime-backed function handlers plus subscription transform reevaluation through shared context objects instead of rebuilding the same service, registry, tenant, and runtime-service argument set at each call site | `cargo test -p neovex-server`; `cargo test -p neovex-runtime`; `cargo clippy -p neovex-server --all-targets -- -D warnings`; `cargo clippy -p neovex-runtime --all-targets -- -D warnings`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM4` by inventorying `packages/neovex`, `packages/convex`, and `packages/codegen` for wrapper or re-export consolidation opportunities |
+| 2026-04-21 | AMM2 | `done` | Moved typed provider selection and startup lowering into a private bootstrap plan in `crates/nimbus-engine/src/persistence_config.rs`, extracted `crates/nimbus-engine/src/service/bootstrap.rs` so `Service` no longer owns the startup matrix, split CLI encryption versus provider selection in `crates/nimbus-bin/src/serve/config.rs`, and normalized router construction behind one internal `RouterBuildConfig` in `crates/nimbus-server/src/router.rs` without changing public bootstrap or route semantics | `cargo test -p nimbus-engine` (one initial run hit the timing-sensitive `tests::materialized_serving::concurrency::materialized_surface_handles_concurrent_reads_and_writes`; the isolated rerun and a full rerun both passed); `cargo test -p nimbus-server`; `cargo test -p nimbus-bin`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings`; `cargo clippy -p nimbus-server --all-targets -- -D warnings`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM3` by inventorying the Convex compatibility subsystem around host-bridge construction, execution routing, registry access, and subscription transforms |
+| 2026-04-21 | AMM3 | `in_progress` | Promoted the Convex compatibility cleanup item immediately after AMM2 closeout so the plan stays aligned with the live delivery order; the next work burst will inspect `crates/nimbus-server/src/adapters/convex/host_bridge/`, `execution/`, `registry/`, and subscription transforms together because that subsystem now carries the broadest remaining coordination width | status handoff only; no AMM3 verification claimed yet | Read the AMM3 targets and land the first bounded facade or constructor-width reduction without changing Convex behavior |
+| 2026-04-21 | AMM3 | `done` | Added `ConvexHostBridgeScope` and `ConvexHostBridgeInvocation` so bridge construction separates durable scope from per-call invocation metadata, extracted `crates/nimbus-server/src/adapters/convex/execution/runtime_backed/invoke/context.rs` as the canonical runtime-backed invocation bundle, and routed runtime-backed function handlers plus subscription transform reevaluation through shared context objects instead of rebuilding the same service, registry, tenant, and runtime-service argument set at each call site | `cargo test -p nimbus-server`; `cargo test -p nimbus-runtime`; `cargo clippy -p nimbus-server --all-targets -- -D warnings`; `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM4` by inventorying `packages/nimbus`, `packages/convex`, and `packages/codegen` for wrapper or re-export consolidation opportunities |
 | 2026-04-21 | AMM4 | `in_progress` | Promoted the JS wrapper-consolidation item immediately after AMM3 closeout so the roadmap stays aligned with the live worktree; the next work burst will inspect the browser, react, server, values, and codegen surfaces together because they now carry the broadest remaining compatibility drift risk | status handoff only; no AMM4 verification claimed yet | Read the AMM4 targets and land the first wrapper or alias consolidation without changing intended pre-launch JS behavior |
-| 2026-04-21 | AMM4 | `done` | Replaced most of `packages/convex/src/server.ts` with thin typed wrappers over `neovex/server`, re-exported shared browser state and auth-fetcher types from `neovex/browser`, and removed redundant Convex client pass-through methods so the compatibility package now delegates more behavior through canonical `packages/neovex` surfaces while preserving Convex helper names and generated import paths | `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM5` by reconciling `AGENTS.md`, `docs/plans/README.md`, and active-plan ownership guidance with the patterns proven out by the first four items |
+| 2026-04-21 | AMM4 | `done` | Replaced most of `packages/convex/src/server.ts` with thin typed wrappers over `nimbus/server`, re-exported shared browser state and auth-fetcher types from `nimbus/browser`, and removed redundant Convex client pass-through methods so the compatibility package now delegates more behavior through canonical `packages/nimbus` surfaces while preserving Convex helper names and generated import paths | `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM5` by reconciling `AGENTS.md`, `docs/plans/README.md`, and active-plan ownership guidance with the patterns proven out by the first four items |
 | 2026-04-21 | AMM5 | `in_progress` | Promoted the naming, thin-root, and size-governance sweep immediately after the JS wrapper closeout so the active plan remains the live governance source; the next work burst will inspect `AGENTS.md`, `docs/plans/README.md`, and any touched architecture notes for remaining drift against the codebase state | status handoff only; no AMM5 verification claimed yet | Read the governance entrypoints and land the smallest updates that make the active plan, repo guidance, and landed code tell the same ownership story |
 | 2026-04-21 | AMM5 | `done` | Updated `AGENTS.md` and `docs/plans/README.md` so the active maintainability control plane now explicitly owns thin-root discipline, concept-owned naming, helper-bucket avoidance, threshold exceptions, and wrapper-first JS compatibility guidance for future cleanup work | `cargo fmt --all --check`; `cargo check --workspace` | Start `AMM6` by running the final verification sweep and reconciling the closeout or archive state from the worktree plus docs |
 | 2026-04-21 | AMM6 | `in_progress` | Promoted the final verification and closeout item immediately after the governance sweep so the roadmap stays aligned with the live worktree; the next work burst will run the full verification contract, reconcile any remaining doc drift, and archive or retire this active plan only if the verification state is explicit and green | status handoff only; no AMM6 verification claimed yet | Run `make check`, `make test`, `make clippy`, the JS test or build lanes, and `make ci` if practical before closing the workstream |
 | 2026-04-21 | AMM6 | `blocked` | Ran the final closeout verification sweep: `make check`, `make test`, `make clippy`, `npm run test --workspaces --if-present`, and `npm run build --workspaces --if-present` all passed, but `make ci` failed in `cargo deny` on `RUSTSEC-2026-0098` and `RUSTSEC-2026-0099` for `rustls-webpki 0.101.7` through `aws-smithy-http-client 1.1.12` in the AWS KMS chain. An initial sandboxed `make ci` also failed because `cargo deny` could not lock `~/.cargo/advisory-dbs/db.lock`; the escalated rerun removed that environment-only blocker and exposed the real advisory failure. Escalated `cargo update -p aws-config --dry-run` and `cargo update -p aws-smithy-http-client --dry-run` both reported `Locking 0 packages to latest compatible versions`, so there is no simple latest-compatible lockfile lift available from the current dependency ranges. | `make check`; `make test`; `make clippy`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `make ci` (failed in `cargo deny` on `RUSTSEC-2026-0098` and `RUSTSEC-2026-0099`); escalated `cargo update -p aws-config --dry-run`; escalated `cargo update -p aws-smithy-http-client --dry-run` | Keep `AMM6` active until the AWS dependency-chain advisories are resolved or an explicit deny-policy exception is approved and recorded; do not archive this plan yet |
-| 2026-04-21 | AMM6 | `done` | Lifted the AWS KMS dependency chain to `aws-config 1.8.16` and `aws-sdk-kms 1.105.0`, disabled the `aws-sdk-kms` default feature set so the build now uses the explicit `default-https-client` / `rt-tokio` transport lane instead of the legacy `tls-rustls` path, and made `neovex-storage` own the Hyper `client`, `server`, `http1`, and `runtime` features its libsql transport plus `aws-kms` test harness already required after the legacy AWS path stopped supplying them transitively. The updated graph no longer contains `rustls-webpki 0.101.7`, the focused `aws-kms` verification is green again, the full closeout sweep including `make ci` now passes, and the repo entrypoints have been reconciled so this plan can archive cleanly as the latest completed maintainability governance baseline. | `cargo update -p aws-config --precise 1.8.16`; `cargo update -p aws-sdk-kms --precise 1.105.0`; `cargo tree -p neovex-storage -e features --features aws-kms -i aws-sdk-kms`; `cargo tree -p neovex-storage --features aws-kms -i rustls-webpki@0.103.12`; `cargo test -p neovex-storage --features aws-kms`; `cargo clippy -p neovex-storage --all-targets --features aws-kms -- -D warnings`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `make ci` | None; future repo-wide maintainability or reliability-hardening work must promote a new active plan instead of resuming this archived one |
+| 2026-04-21 | AMM6 | `done` | Lifted the AWS KMS dependency chain to `aws-config 1.8.16` and `aws-sdk-kms 1.105.0`, disabled the `aws-sdk-kms` default feature set so the build now uses the explicit `default-https-client` / `rt-tokio` transport lane instead of the legacy `tls-rustls` path, and made `nimbus-storage` own the Hyper `client`, `server`, `http1`, and `runtime` features its libsql transport plus `aws-kms` test harness already required after the legacy AWS path stopped supplying them transitively. The updated graph no longer contains `rustls-webpki 0.101.7`, the focused `aws-kms` verification is green again, the full closeout sweep including `make ci` now passes, and the repo entrypoints have been reconciled so this plan can archive cleanly as the latest completed maintainability governance baseline. | `cargo update -p aws-config --precise 1.8.16`; `cargo update -p aws-sdk-kms --precise 1.105.0`; `cargo tree -p nimbus-storage -e features --features aws-kms -i aws-sdk-kms`; `cargo tree -p nimbus-storage --features aws-kms -i rustls-webpki@0.103.12`; `cargo test -p nimbus-storage --features aws-kms`; `cargo clippy -p nimbus-storage --all-targets --features aws-kms -- -D warnings`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `make ci` | None; future repo-wide maintainability or reliability-hardening work must promote a new active plan instead of resuming this archived one |

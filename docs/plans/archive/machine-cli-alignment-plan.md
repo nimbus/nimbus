@@ -1,6 +1,6 @@
 # Plan: Machine CLI Alignment and UX Control Plane
 
-Canonical execution plan for the next machine-command UX wave in Neovex. This
+Canonical execution plan for the next machine-command UX wave in Nimbus. This
 plan promotes a consistent, battle-tested CLI style system for commands that
 map naturally to Podman and Docker/Moby conventions, while implementing that
 system with idiomatic Rust CLI building blocks instead of one-off formatting.
@@ -8,14 +8,14 @@ system with idiomatic Rust CLI building blocks instead of one-off formatting.
 The intent is simple: borrow the best command UX ideas shamelessly, keep
 Podman as the primary implementation reference where we have local source, use
 Docker/Moby as a product-surface comparator where the semantics fit, and make
-Neovex consistent rather than bespoke.
+Nimbus consistent rather than bespoke.
 
 Reviewed against:
 
-- `crates/neovex-bin/src/main.rs`
-- `crates/neovex-bin/src/machine/mod.rs`
-- `crates/neovex-bin/src/machine/manager.rs`
-- `crates/neovex-bin/src/service/mod.rs`
+- `crates/nimbus-bin/src/main.rs`
+- `crates/nimbus-bin/src/machine/mod.rs`
+- `crates/nimbus-bin/src/machine/manager.rs`
+- `crates/nimbus-bin/src/service/mod.rs`
 - `docs/reference/cli.md`
 - `docs/plans/archive/machine-cli-dx-plan.md`
 - `/Users/jack/src/github.com/containers/podman/cmd/podman/root.go`
@@ -136,7 +136,7 @@ Source of truth:
 1. the current git worktree
 2. this plan's `Roadmap Status Ledger` and `Execution Log`
 3. `docs/reference/cli.md`
-4. the owning command implementations in `crates/neovex-bin/src/*`
+4. the owning command implementations in `crates/nimbus-bin/src/*`
 
 General rules:
 
@@ -144,9 +144,9 @@ General rules:
   the consistency contract for machine-adjacent commands.
 - It does not own microVM architecture, machine guest content, or service
   control-plane architecture.
-- Podman local source is the primary code-backed reference. When Neovex already
+- Podman local source is the primary code-backed reference. When Nimbus already
   has a command whose meaning matches Podman, copy Podman's behavior unless
-  Neovex has a documented reason not to.
+  Nimbus has a documented reason not to.
 - Docker/Moby is a secondary UX reference. Use it for terse action phrasing,
   pull/progress expectations, and help/output familiarity when Podman has no
   stronger command analogue.
@@ -195,7 +195,7 @@ This plan standardizes the Rust building blocks we should use for command UX.
 ### Intentionally defer
 
 - `miette`, `color-eyre`, or other compiler-style rich diagnostic stacks
-  - not the right fit for Podman/Docker-style operator CLI output; Neovex
+  - not the right fit for Podman/Docker-style operator CLI output; Nimbus
     should prefer concise actionable errors, not Rust-developer backtraces in
     normal command output
 - interactive prompt or TUI frameworks
@@ -214,7 +214,7 @@ This plan standardizes the Rust building blocks we should use for command UX.
   - examples block
   - options grouped and named consistently
 - Commands with close Podman analogues should use the same noun/verb phrasing
-  and help tone unless Neovex needs a clearly different contract.
+  and help tone unless Nimbus needs a clearly different contract.
 - Root help/version behavior must be included:
   - explicit subcommand requirements
   - terse top-level version output
@@ -267,7 +267,7 @@ This plan standardizes the Rust building blocks we should use for command UX.
 
 This plan covers:
 
-- shared CLI UX infrastructure inside `neovex-bin`
+- shared CLI UX infrastructure inside `nimbus-bin`
 - root-command help/version/error behavior
 - help/usage/examples template consistency
 - progress styling and byte-progress adoption
@@ -325,27 +325,27 @@ applied only where semantics map cleanly.
 
 This section is the CLIA1 freeze point. If a later code change wants to diverge
 from one of these contracts, it must update this matrix in the same change set
-and explain why Neovex needs the difference.
+and explain why Nimbus needs the difference.
 
 ### Root command contract
 
-| Surface | Primary reference | Target contract | Intentional Neovex note |
+| Surface | Primary reference | Target contract | Intentional Nimbus note |
 | --- | --- | --- | --- |
-| `neovex --help` | Podman root help in `cmd/podman/root.go` | custom root help/usage template, concise command taxonomy, examples where needed, and no default Clap layout leakage | Neovex keeps its own product description and command tree |
-| `neovex --version` | Podman and Docker terse version output | single-line version output with no extra prose | no change to the explicit top-level flag |
-| `neovex` with no subcommand | intentional Neovex contract, documented against the current parser | remain an explicit-subcommand CLI; the parser, help text, and docs must all agree that `serve` is explicit | do not reintroduce implicit server start |
+| `nimbus --help` | Podman root help in `cmd/podman/root.go` | custom root help/usage template, concise command taxonomy, examples where needed, and no default Clap layout leakage | Nimbus keeps its own product description and command tree |
+| `nimbus --version` | Podman and Docker terse version output | single-line version output with no extra prose | no change to the explicit top-level flag |
+| `nimbus` with no subcommand | intentional Nimbus contract, documented against the current parser | remain an explicit-subcommand CLI; the parser, help text, and docs must all agree that `serve` is explicit | do not reintroduce implicit server start |
 | root errors and exit behavior | Podman root execution/error flow | terse stderr errors, no automatic usage dump unless the contract explicitly wants it, stable exit codes, and help/version short-circuit behavior | implementation stays in Clap/Rust, but the operator surface should feel Podman-like |
 
 ### Machine command matrix
 
-| Neovex surface | Primary reference | Secondary comparator | Target default mode | Target contract and notes |
+| Nimbus surface | Primary reference | Secondary comparator | Target default mode | Target contract and notes |
 | --- | --- | --- | --- | --- |
 | `machine init` | `podman machine init` | none | action summary | concise stdout success summary; if `--now` starts the VM, hand off to the same progress and readiness path as `machine start`; any resource/image flags keep Podman-like naming where already shipped |
-| `machine start` | `podman machine start` | none | action summary plus progress | stdout prints the final success summary; stderr carries phase/progress output; retain Neovex create-if-missing behavior as an intentional divergence; landed Podman-style `--quiet` and `--no-info`, with `--quiet` suppressing phase/progress chatter while keeping the final success summary and `--no-info` suppressing advisory `info:` notices only |
+| `machine start` | `podman machine start` | none | action summary plus progress | stdout prints the final success summary; stderr carries phase/progress output; retain Nimbus create-if-missing behavior as an intentional divergence; landed Podman-style `--quiet` and `--no-info`, with `--quiet` suppressing phase/progress chatter while keeping the final success summary and `--no-info` suppressing advisory `info:` notices only |
 | `machine stop` | `podman machine stop` | none | action summary | one concise success line, with operator guidance only when something unusual happened |
-| `machine status` | Podman behavior split across `machine list`, `machine inspect`, and `machine info` | Docker-style human status tables | human table | keep the consolidated Neovex `status` surface intentionally; default is a human summary table, `--format json|yaml` is explicit structured output, and `--quiet` stays names-only if the command keeps that flag |
+| `machine status` | Podman behavior split across `machine list`, `machine inspect`, and `machine info` | Docker-style human status tables | human table | keep the consolidated Nimbus `status` surface intentionally; default is a human summary table, `--format json|yaml` is explicit structured output, and `--quiet` stays names-only if the command keeps that flag |
 | `machine list` / `machine ls` | `podman machine list` | none | human table | mirror Podman table feel and aliasing; `--format` semantics should match Podman precedence, with explicit user format winning over `--quiet` |
-| `machine inspect` | `podman machine inspect` | `docker inspect` | structured inspect | JSON remains the default because the strong analogue is structured-by-default; YAML is an explicit Neovex extension; human summaries belong in `status` and `list`, not here |
+| `machine inspect` | `podman machine inspect` | `docker inspect` | structured inspect | JSON remains the default because the strong analogue is structured-by-default; YAML is an explicit Nimbus extension; human summaries belong in `status` and `list`, not here |
 | `machine set` | `podman machine set` | none | action summary | concise mutation result, no structured status dump on success |
 | `machine cp` | `podman machine cp` | `docker cp` | action with passthrough copy output | keep direct copy semantics and Podman-like `--quiet`; do not wrap transfer output in extra styling |
 | `machine ssh` | `podman machine ssh` | none | interactive passthrough | preserve SSH/stdin/stdout passthrough behavior; avoid decorative output around the session |
@@ -355,24 +355,24 @@ and explain why Neovex needs the difference.
 
 ### Service and local runtime matrix
 
-| Neovex surface | Primary reference | Secondary comparator | Target default mode | Target contract and notes |
+| Nimbus surface | Primary reference | Secondary comparator | Target default mode | Target contract and notes |
 | --- | --- | --- | --- | --- |
 | `service config` | `docker compose config` | none | structured validation output | keep structured resolved output by default because the closest analogue is structured; `--services` remains a terse names-only projection |
 | `service up` | `docker compose up` | Podman action-command tone | action summary plus progress | move away from YAML lifecycle dumps toward concise action summaries; any long-running setup or warnings belong on stderr |
 | `service down` | `docker compose down` | Podman stop/rm tone | action summary | default success path should be terse and mutation-oriented, not a serialized outcome dump |
-| `service list` | `docker compose ps` for project-scoped human summaries | `podman ps` table feel | human table | target a default table surface in CLIA8; keep `list` as the Neovex command name because `ps` is reserved for host-process detail |
+| `service list` | `docker compose ps` for project-scoped human summaries | `podman ps` table feel | human table | target a default table surface in CLIA8; keep `list` as the Nimbus command name because `ps` is reserved for host-process detail |
 | `service inspect` | `docker inspect` | `podman inspect` | structured inspect | the strong analogue is structured-by-default; if a human summary is useful, add a separate summary surface instead of overloading inspect |
 | `service logs` | `docker compose logs` | `podman logs` | passthrough logs | preserve direct log streaming semantics; `--follow` remains a transport/control flag, not a style flag |
 | `service ps` | `docker top` | `podman top` | human process summary | keep `ps` focused on process snapshots for one service; target a human-readable process table or summary rather than raw YAML once CLIA8 lands |
-| `serve` | no exact Podman/Docker analogue | `podman system service` for help/error tone and `docker compose up` for attached output expectations | long-running server command | keep `serve` explicitly Neovex-specific; borrow terse action/help/error conventions where they fit, but do not force a fake container-runtime analogy onto the server lifecycle |
+| `serve` | no exact Podman/Docker analogue | `podman system service` for help/error tone and `docker compose up` for attached output expectations | long-running server command | keep `serve` explicitly Nimbus-specific; borrow terse action/help/error conventions where they fit, but do not force a fake container-runtime analogy onto the server lifecycle |
 
 ### Frozen intentional divergences
 
-- `neovex` keeps an explicit `serve` subcommand instead of implicit server
+- `nimbus` keeps an explicit `serve` subcommand instead of implicit server
   startup.
 - `machine start` keeps create-if-missing behavior because that developer path
-  is already part of the shipped Neovex contract.
-- `machine status` remains a consolidated Neovex summary surface instead of
+  is already part of the shipped Nimbus contract.
+- `machine status` remains a consolidated Nimbus summary surface instead of
   splitting status across multiple Podman-style commands.
 - `service list` stays distinct from `service ps`: `list` is the project/tenant
   lifecycle summary surface, while `ps` is reserved for per-service process
@@ -387,8 +387,8 @@ and explain why Neovex needs the difference.
 ### Minimum verification for every code item
 
 - `cargo fmt --all --check`
-- focused `cargo check -p neovex-bin`
-- focused `cargo test -p neovex-bin` for touched modules
+- focused `cargo check -p nimbus-bin`
+- focused `cargo test -p nimbus-bin` for touched modules
 - update this plan's ledger and execution log in the same change set
 
 ### Required UX verification lanes
@@ -424,7 +424,7 @@ and explain why Neovex needs the difference.
   - isolated macOS machine proof for TTY and non-TTY paths
   - local debug binary and installed/Homebrew binary paths are distinguished
     explicitly in proof commands and captured output
-  - where relevant, compare the Neovex command flow directly against the
+  - where relevant, compare the Nimbus command flow directly against the
     analogous Podman command on the same host
 
 ---
@@ -433,7 +433,7 @@ and explain why Neovex needs the difference.
 
 | Item | Status | Summary | Hard Dependencies |
 | --- | --- | --- | --- |
-| CLIA1 | completed | Froze the comparative reference matrix for root, machine, service, and `serve` surfaces; documented flag-precedence ownership and the intentional Neovex divergences that later UX work must preserve or explicitly change | none |
+| CLIA1 | completed | Froze the comparative reference matrix for root, machine, service, and `serve` surfaces; documented flag-precedence ownership and the intentional Nimbus divergences that later UX work must preserve or explicitly change | none |
 | CLIA2 | completed | Introduced a shared internal `cli_ux` layer for stdout/stderr helpers, TTY-gated phase output, and reusable table rendering; migrated machine action output, machine summary tables, machine-manager notices, and service warning/stdout paths onto it | CLIA1 |
 | CLIA3 | completed | Adopted `indicatif`-backed byte progress in the shared `cli_ux` seam for guest release-asset downloads, machine image HTTP/OCI pulls, and raw/compressed materialization and extraction paths, including replacing the guest archive shell-out with Rust extraction so first-start progress stays byte-aware end-to-end | CLIA2 |
 | CLIA4 | completed | Adopted `comfy-table` in the shared table helper, migrated machine status/list onto the crate-backed borderless contract, and added table helper coverage for alignment, minimum widths, and empty-row header rendering | CLIA2 |
@@ -441,7 +441,7 @@ and explain why Neovex needs the difference.
 | CLIA6 | completed | Standardized machine-family mutation success summaries, added shared action-block and `Hint:` helpers in `cli_ux`, replaced the default YAML mutation dump on `machine os apply` / `machine os upgrade` with concise action summaries, and tightened common machine remediation errors so real operator failures read like guidance instead of internal assertions | CLIA2, CLIA5 |
 | CLIA7 | completed | Completed the machine-family convergence sweep: explicit `machine list --format` now wins over `--quiet`, `machine start` now carries Podman-style `--quiet/--no-info` output controls, and the machine command family now follows the shared action/table/structured-output contract with real macOS PTY proof | CLIA3, CLIA4, CLIA6 |
 | CLIA8 | completed | Completed the service and `serve` convergence sweep: `service up` / `down` now use concise action summaries, `service list` defaults to a human table with explicit structured formats, `service inspect` now behaves like a structured inspect surface with JSON default and YAML explicit, `service ps` now defaults to a human process summary with explicit structured formats, and the service family now follows the same action/table/structured-output rules as the machine family | CLIA2, CLIA4, CLIA6 |
-| CLIA9 | completed | Added the checked-in isolated-root/local-binary machine proof lane (`collect-neovex-machine-cli-proof`), its deterministic verifier, Makefile wiring, and macOS flow documentation so local proof commands clearly state which binary and roots are under test and no longer rely on ad hoc shell snippets | CLIA7 |
+| CLIA9 | completed | Added the checked-in isolated-root/local-binary machine proof lane (`collect-nimbus-machine-cli-proof`), its deterministic verifier, Makefile wiring, and macOS flow documentation so local proof commands clearly state which binary and roots are under test and no longer rely on ad hoc shell snippets | CLIA7 |
 | CLIA10 | completed | Refreshed real-host proof across the isolated local-binary and packaged/Homebrew lanes, fixed the service-proof readiness matcher to accept the shipped JSON `service inspect` contract, and closed the plan with release-grade macOS proof bundles for machine and service surfaces before archiving the control plane | CLIA7, CLIA8, CLIA9 |
 
 ---
@@ -453,7 +453,7 @@ and explain why Neovex needs the difference.
 Outputs:
 
 - explicit per-command mapping table:
-  - Neovex command
+  - Nimbus command
   - Podman analogue
   - Docker/Moby analogue, if useful
   - target default output mode
@@ -469,7 +469,7 @@ Outputs:
 Acceptance criteria:
 
 - no in-scope command is left with an undefined UX reference family
-- any intentionally Neovex-specific divergence is written down before code
+- any intentionally Nimbus-specific divergence is written down before code
 - the root command and documentation agree about whether `serve` is explicit or
   implicit
 
@@ -530,7 +530,7 @@ Acceptance criteria:
 
 - help output is recognizably closer to Podman's layout than default Clap
 - examples render cleanly and consistently
-- top-level `neovex --help` and `neovex --version` remain intentional and
+- top-level `nimbus --help` and `nimbus --version` remain intentional and
   documented
 
 ### CLIA6 — Success and error contract
@@ -617,49 +617,49 @@ Acceptance criteria:
   added release/Homebrew proof plus CLI-reference correctness to the
   verification contract.
 - 2026-04-18: Completed CLIA1. Froze the comparative reference matrix for root,
-  machine, service, and `serve` surfaces; documented the intentional Neovex
+  machine, service, and `serve` surfaces; documented the intentional Nimbus
   divergences that later slices must preserve or explicitly change; and updated
   `AGENTS.md` so future agents treat this plan as the active CLI control plane
   and resume the earliest unfinished `CLIA` item.
-- 2026-04-18: Completed CLIA2. Added `crates/neovex-bin/src/cli_ux.rs` as the
+- 2026-04-18: Completed CLIA2. Added `crates/nimbus-bin/src/cli_ux.rs` as the
   shared CLI UX seam for stdout/stderr writes, TTY-gated phase output, action
   summary formatting, and reusable table rendering. Migrated machine action
   summaries, machine status/list tables, machine-manager progress/info/warning
   output, and service warning/stdout paths onto the shared helpers. Verified
-  with `cargo fmt --all --check`, `cargo check -p neovex-bin`, and
-  `cargo test -p neovex-bin`.
+  with `cargo fmt --all --check`, `cargo check -p nimbus-bin`, and
+  `cargo test -p nimbus-bin`.
 - 2026-04-18: Started CLIA3. The active in-progress slice is byte-aware
   progress plumbing through the shared `cli_ux` seam for guest release-asset
   downloads, machine image downloads, OCI blob pulls, and raw/compressed
   materialization paths, while keeping plain phase banners only where the byte
   count truly is not available.
 - 2026-04-18: Completed CLIA3. Added `indicatif`-backed byte progress helpers
-  to `crates/neovex-bin/src/cli_ux.rs` and wired them into guest release-asset
+  to `crates/nimbus-bin/src/cli_ux.rs` and wired them into guest release-asset
   download and extraction, machine image HTTP download, OCI blob pulls, and
   raw/gzip/zstd materialization. Replaced the guest archive shell-out with Rust
   gzip+tar extraction so the guest-binary path can report byte-aware progress
   end-to-end. Verified with `cargo fmt --all --check`,
-  `cargo check -p neovex-bin`, and `cargo test -p neovex-bin`.
+  `cargo check -p nimbus-bin`, and `cargo test -p nimbus-bin`.
 - 2026-04-18: Completed CLIA4. Adopted `comfy-table` as the shared table crate
-  inside `crates/neovex-bin/src/cli_ux.rs`, preserving the borderless,
+  inside `crates/nimbus-bin/src/cli_ux.rs`, preserving the borderless,
   Podman-like summary layout while removing the last hand-maintained spacing
   logic from migrated machine status/list output. Added helper coverage for
   minimum-width alignment and empty-row header rendering, then verified with
-  `cargo fmt --all --check`, `cargo check -p neovex-bin`, and
-  `cargo test -p neovex-bin`.
+  `cargo fmt --all --check`, `cargo check -p nimbus-bin`, and
+  `cargo test -p nimbus-bin`.
 - 2026-04-18: Started CLIA5. Landed the first shared help-template slice in
-  `cli_ux` plus root/group examples for `neovex`, `machine`, `service`, and
+  `cli_ux` plus root/group examples for `nimbus`, `machine`, `service`, and
   `serve`, and validated the rendered root help with
-  `cargo run -p neovex-bin -- --help`. The next CLIA5 slice is extending that
+  `cargo run -p nimbus-bin -- --help`. The next CLIA5 slice is extending that
   template contract and example coverage across the remaining leaf commands so
   their `--help` output is consistently Podman-aligned instead of default Clap.
 - 2026-04-18: Completed CLIA5. Extended the shared help template and example
   contract across the remaining machine, machine-os, and service leaf
   commands, added focused service leaf help coverage to match the machine
   sweep, and re-verified with `cargo fmt --all --check`,
-  `cargo check -p neovex-bin`, `cargo test -p neovex-bin`, plus live help
-  spot-checks via `cargo run -p neovex-bin -- machine init --help` and
-  `cargo run -p neovex-bin -- service up --help`.
+  `cargo check -p nimbus-bin`, `cargo test -p nimbus-bin`, plus live help
+  spot-checks via `cargo run -p nimbus-bin -- machine init --help` and
+  `cargo run -p nimbus-bin -- service up --help`.
 - 2026-04-18: Started CLIA6. Auditing the machine command family now for
   inconsistent success summaries, stale failure wording, and missing
   remediation hints so the next slice can standardize the default human
@@ -669,15 +669,15 @@ Acceptance criteria:
   `machine os upgrade` away from default YAML status dumps and onto concise
   machine-action summaries, and tightened common machine conflict errors so
   operators get an immediate next step instead of raw implementation wording.
-  Verified with `cargo fmt --all --check`, `cargo check -p neovex-bin`,
-  `cargo test -p neovex-bin`, and isolated-root local-binary proof showing the
+  Verified with `cargo fmt --all --check`, `cargo check -p nimbus-bin`,
+  `cargo test -p nimbus-bin`, and isolated-root local-binary proof showing the
   new `machine os upgrade --dry-run` action summary plus guided
   `machine start --memory 4096` error output.
 - 2026-04-18: Started CLIA7. Landed the first machine-family convergence slice
   by distinguishing default vs explicit `machine list --format` selection so
   an explicit `--format json` now wins over `--quiet` as planned, while plain
   `--quiet` still stays names-only. Verified with `cargo fmt --all --check`,
-  `cargo check -p neovex-bin`, `cargo test -p neovex-bin`, and an isolated
+  `cargo check -p nimbus-bin`, `cargo test -p nimbus-bin`, and an isolated
   rebuilt-binary proof of `machine list --quiet` versus
   `machine list --format json --quiet`.
 - 2026-04-19: Continued CLIA7. Added shared `cli_ux` output-mode guards and
@@ -685,15 +685,15 @@ Acceptance criteria:
   start contract: `--quiet` suppresses phase/progress chatter while preserving
   the final success summary, and `--no-info` suppresses only advisory
   `info:` notices. Updated the CLI reference in the same change set. Verified
-  with `cargo fmt --all --check`, `cargo check -p neovex-bin`, and
-  `cargo test -p neovex-bin`, plus isolated real-host macOS proof using the
+  with `cargo fmt --all --check`, `cargo check -p nimbus-bin`, and
+  `cargo test -p nimbus-bin`, plus isolated real-host macOS proof using the
   rebuilt local binary under temp XDG roots with a local raw guest image and
   explicit Linux guest-binary override:
-  `script -q /tmp/neovex-clia7-proof.RRzIHu/logs/verbose.log /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine start --image $HOME/.local/share/neovex/machine/default/images/default.raw`,
-  `script -q /tmp/neovex-clia7-proof.RRzIHu/logs/quiet.log /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine start --image $HOME/.local/share/neovex/machine/default/images/default.raw --quiet`,
+  `script -q /tmp/nimbus-clia7-proof.RRzIHu/logs/verbose.log /Users/jack/src/github.com/nimbus/nimbus/target/debug/nimbus machine start --image $HOME/.local/share/nimbus/machine/default/images/default.raw`,
+  `script -q /tmp/nimbus-clia7-proof.RRzIHu/logs/quiet.log /Users/jack/src/github.com/nimbus/nimbus/target/debug/nimbus machine start --image $HOME/.local/share/nimbus/machine/default/images/default.raw --quiet`,
   and
-  `script -q /tmp/neovex-clia7-proof.RRzIHu/logs/noinfo.log /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex machine start --image $HOME/.local/share/neovex/machine/default/images/default.raw --no-info`
-  with `NEOVEX_MACHINE_GUEST_BINARY=$HOME/.cache/neovex/machine/guest-neovex/v0.1.18-neovex_linux_arm64-neovex`.
+  `script -q /tmp/nimbus-clia7-proof.RRzIHu/logs/noinfo.log /Users/jack/src/github.com/nimbus/nimbus/target/debug/nimbus machine start --image $HOME/.local/share/nimbus/machine/default/images/default.raw --no-info`
+  with `NIMBUS_MACHINE_GUEST_BINARY=$HOME/.cache/nimbus/machine/guest-nimbus/v0.1.18-nimbus_linux_arm64-nimbus`.
 - 2026-04-19: Completed CLIA7 and advanced the active roadmap item to CLIA8
   after an audit against the landed machine matrix and current service code.
   The machine family now satisfies the plan matrix and acceptance criteria:
@@ -702,17 +702,17 @@ Acceptance criteria:
   controls have real macOS PTY proof. The opening CLIA8 audit shows the next
   biggest gap clearly: `service up`, `service down`, `service list`,
   `service inspect`, and `service ps` still render default YAML-style dumps in
-  `crates/neovex-bin/src/service/mod.rs`, so the next slice should migrate
+  `crates/nimbus-bin/src/service/mod.rs`, so the next slice should migrate
   those surfaces onto the shared action/table contract.
 - 2026-04-19: Continued CLIA8 with the first service-mutation slice. Replaced
   the default YAML lifecycle dumps from `service up` and `service down` with
   shared action-block summaries that name the project, tenant, service action,
   sandbox id, and resulting status. Updated `docs/reference/cli.md` in the
   same change set. Verified with `cargo fmt --all --check`,
-  `cargo check -p neovex-bin`,
-  `cargo test -p neovex-bin macos_service_up_uses_forwarded_machine_api -- --nocapture`,
+  `cargo check -p nimbus-bin`,
+  `cargo test -p nimbus-bin macos_service_up_uses_forwarded_machine_api -- --nocapture`,
   and
-  `cargo test -p neovex-bin macos_service_commands_use_forwarded_machine_api_for_container_projects -- --nocapture`.
+  `cargo test -p nimbus-bin macos_service_commands_use_forwarded_machine_api_for_container_projects -- --nocapture`.
 - 2026-04-19: Completed CLIA8 and advanced the active roadmap item to CLIA9.
   Migrated the remaining service summary/inspect surfaces onto the shared
   contract: `service list` now defaults to a human table with explicit
@@ -720,52 +720,52 @@ Acceptance criteria:
   inspect surface with JSON default plus explicit YAML, and `service ps` now
   defaults to a human process summary with explicit `--format json|yaml|table`.
   Updated `docs/reference/cli.md` in the same change set. Verified with
-  `cargo fmt --all --check`, `cargo check -p neovex-bin`,
-  `cargo test -p neovex-bin service::tests:: -- --nocapture`, and
-  `cargo test -p neovex-bin`.
+  `cargo fmt --all --check`, `cargo check -p nimbus-bin`,
+  `cargo test -p nimbus-bin service::tests:: -- --nocapture`, and
+  `cargo test -p nimbus-bin`.
 - 2026-04-19: Completed CLIA9 and advanced the active roadmap item to CLIA10.
   Promoted the earlier ad hoc isolated-root/local-binary drill into the
-  checked-in `scripts/collect-neovex-machine-cli-proof.sh` proof collector,
+  checked-in `scripts/collect-nimbus-machine-cli-proof.sh` proof collector,
   added the deterministic
-  `scripts/verify-neovex-machine-cli-proof-helper.sh` harness verifier, wired
+  `scripts/verify-nimbus-machine-cli-proof-helper.sh` harness verifier, wired
   both through `Makefile`, and updated `docs/reference/macos-machine-flow.md`
   so operators can distinguish the local-binary proof lane from the packaged
   Homebrew lane without guessing which binary or roots are under test.
-  Revalidated with `bash -n scripts/collect-neovex-machine-cli-proof.sh`,
-  `bash -n scripts/verify-neovex-machine-cli-proof-helper.sh`,
-  `bash scripts/verify-neovex-machine-cli-proof-helper.sh`,
-  `cargo fmt --all --check`, and `cargo check -p neovex-bin`.
+  Revalidated with `bash -n scripts/collect-nimbus-machine-cli-proof.sh`,
+  `bash -n scripts/verify-nimbus-machine-cli-proof-helper.sh`,
+  `bash scripts/verify-nimbus-machine-cli-proof-helper.sh`,
+  `cargo fmt --all --check`, and `cargo check -p nimbus-bin`.
 - 2026-04-19: Completed CLIA10 and closed this control plane. Real-host proof
   refreshed four macOS lanes: an explicit negative-control bundle at
-  `/tmp/neovex-clia10-local.EVNbBo` showed that the `collect-neovex-machine-cli-proof`
+  `/tmp/nimbus-clia10-local.EVNbBo` showed that the `collect-nimbus-machine-cli-proof`
   `--image /path/to/default.raw` override is debug-only and does not exercise
   the shipped host-managed machine-API contract (`machine status` ended
   `API unreachable` and the forwarded socket stayed missing); the real default
-  contract then succeeded at `/tmp/neovex-clia10-default.DMMOvC` with the
+  contract then succeeded at `/tmp/nimbus-clia10-default.DMMOvC` with the
   checked-in CLI collector plus host `service up/list/inspect/ps/logs/down`
   and localhost `http://127.0.0.1:18080/healthz` proof; the packaged
-  Homebrew/cask machine lane succeeded at `/tmp/neovex-clia10-cask.DWA3eu`;
+  Homebrew/cask machine lane succeeded at `/tmp/nimbus-clia10-cask.DWA3eu`;
   and the packaged machine-plus-service lane succeeded at
-  `/tmp/neovex-clia10-cask-service-clean.57DHQV` after an explicit packaged
+  `/tmp/nimbus-clia10-cask-service-clean.57DHQV` after an explicit packaged
   `machine start` restart between the machine-only and service-only collectors.
   During that rerun, the real packaged bundle exposed one remaining harness
-  seam: `scripts/collect-neovex-machine-service-proof.sh` still waited for the
+  seam: `scripts/collect-nimbus-machine-service-proof.sh` still waited for the
   pre-CLIA8 YAML `status: ready` line even though the shipped `service inspect`
   default is JSON. Fixed the matcher to accept both JSON and YAML readiness,
-  updated `scripts/verify-neovex-machine-service-proof-helper.sh` to emit the
+  updated `scripts/verify-nimbus-machine-service-proof-helper.sh` to emit the
   JSON shape, and re-verified with
-  `bash -n scripts/collect-neovex-machine-service-proof.sh`,
-  `bash scripts/verify-neovex-machine-service-proof-helper.sh`,
+  `bash -n scripts/collect-nimbus-machine-service-proof.sh`,
+  `bash scripts/verify-nimbus-machine-service-proof-helper.sh`,
   `cargo fmt --all --check`,
-  `cargo check -p neovex-bin`,
-  `cargo build --release -p neovex-bin`,
+  `cargo check -p nimbus-bin`,
+  `cargo build --release -p nimbus-bin`,
   the real-host default-path bundle command
-  `bash scripts/collect-neovex-machine-cli-proof.sh --root /tmp/neovex-clia10-default.DMMOvC --output-dir /tmp/neovex-clia10-default.DMMOvC/cli-proof --neovex /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex --keep-machine`
+  `bash scripts/collect-nimbus-machine-cli-proof.sh --root /tmp/nimbus-clia10-default.DMMOvC --output-dir /tmp/nimbus-clia10-default.DMMOvC/cli-proof --nimbus /Users/jack/src/github.com/nimbus/nimbus/target/debug/nimbus --keep-machine`
   plus
-  `bash scripts/collect-neovex-machine-service-proof.sh --home /tmp/neovex-clia10-default.DMMOvC/home --runtime-root /tmp/neovex-clia10-default.DMMOvC/runtime --output-dir /tmp/neovex-clia10-default.DMMOvC/service-proof --neovex /Users/jack/src/github.com/agentstation/neovex/target/debug/neovex --compose-file /tmp/neovex-clia10-default.DMMOvC/project/compose.yaml --service demo --published-url http://127.0.0.1:18080/healthz`,
+  `bash scripts/collect-nimbus-machine-service-proof.sh --home /tmp/nimbus-clia10-default.DMMOvC/home --runtime-root /tmp/nimbus-clia10-default.DMMOvC/runtime --output-dir /tmp/nimbus-clia10-default.DMMOvC/service-proof --nimbus /Users/jack/src/github.com/nimbus/nimbus/target/debug/nimbus --compose-file /tmp/nimbus-clia10-default.DMMOvC/project/compose.yaml --service demo --published-url http://127.0.0.1:18080/healthz`,
   and the packaged lane command
-  `bash scripts/collect-neovex-homebrew-cask-proof.sh --output-dir /tmp/neovex-clia10-cask-service-clean.57DHQV --host-binary /Users/jack/src/github.com/agentstation/neovex/target/release/neovex --keep-installed`
+  `bash scripts/collect-nimbus-homebrew-cask-proof.sh --output-dir /tmp/nimbus-clia10-cask-service-clean.57DHQV --host-binary /Users/jack/src/github.com/nimbus/nimbus/target/release/nimbus --keep-installed`
   followed by
-  `HOME=/tmp/neovex-clia10-cask-service-clean.57DHQV/home NEOVEX_MACHINE_RUNTIME_ROOT=/tmp/neovex-clia10-cask-service-clean.57DHQV/runtime /opt/homebrew/bin/neovex-dev machine start`,
-  `bash scripts/collect-neovex-machine-service-proof.sh --home /tmp/neovex-clia10-cask-service-clean.57DHQV/home --runtime-root /tmp/neovex-clia10-cask-service-clean.57DHQV/runtime --output-dir /tmp/neovex-clia10-cask-service-clean.57DHQV/service-proof --neovex /opt/homebrew/bin/neovex-dev --compose-file /tmp/neovex-clia10-cask-service-clean.57DHQV/project/compose.yaml --service demo --published-url http://127.0.0.1:18080/healthz`,
+  `HOME=/tmp/nimbus-clia10-cask-service-clean.57DHQV/home NIMBUS_MACHINE_RUNTIME_ROOT=/tmp/nimbus-clia10-cask-service-clean.57DHQV/runtime /opt/homebrew/bin/nimbus-dev machine start`,
+  `bash scripts/collect-nimbus-machine-service-proof.sh --home /tmp/nimbus-clia10-cask-service-clean.57DHQV/home --runtime-root /tmp/nimbus-clia10-cask-service-clean.57DHQV/runtime --output-dir /tmp/nimbus-clia10-cask-service-clean.57DHQV/service-proof --nimbus /opt/homebrew/bin/nimbus-dev --compose-file /tmp/nimbus-clia10-cask-service-clean.57DHQV/project/compose.yaml --service demo --published-url http://127.0.0.1:18080/healthz`,
   then packaged `machine stop` / `machine rm` and Homebrew cask cleanup.

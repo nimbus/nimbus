@@ -1,6 +1,6 @@
 # Documentation
 
-Start with the root [README.md](../README.md) for what Neovex is, how to
+Start with the root [README.md](../README.md) for what Nimbus is, how to
 install it, and a quick start. See [ARCHITECTURE.md](../ARCHITECTURE.md) for
 how the system is built.
 
@@ -17,7 +17,7 @@ Each adapter speaks a different client protocol against the same engine.
 - [Firebase / Firestore](adapters/firebase/) -- Firestore REST, gRPC-Web, WebSocket Listen
 - [Cloud Functions](adapters/cloud-functions/) -- Firebase v2 triggers and HTTP handlers
 - [MongoDB](adapters/mongodb/) -- MongoDB wire protocol with stock drivers
-- [Native HTTP/WS](adapters/native/) -- REST and WebSocket API with the `neovex` SDK
+- [Native HTTP/WS](adapters/native/) -- REST and WebSocket API with the `nimbus` SDK
 
 ## Operating
 

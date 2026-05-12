@@ -9,7 +9,7 @@ subsystem, not a wider mutable cache.
 
 ## Current State
 
-Today Neovex has a narrow but hardened materialized-serving path:
+Today Nimbus has a narrow but hardened materialized-serving path:
 
 - the authoritative source of truth remains redb plus the durable journal
 - reads still wait for `applied_sequence >= required_sequence`
@@ -50,7 +50,7 @@ Today Neovex has a narrow but hardened materialized-serving path:
   reuse, bypass, eviction, and in-flight load metrics
 
 This is a good tactical optimization. It is not yet the most maintainable
-long-term serving architecture for Neovex.
+long-term serving architecture for Nimbus.
 
 ## Goals
 
@@ -79,9 +79,9 @@ long-term serving architecture for Neovex.
 - no requirement that every query shape immediately move onto the first serving
   snapshot implementation
 
-## Why This Fits Neovex
+## Why This Fits Nimbus
 
-Neovex is not a generic distributed storage system. It is a single binary with:
+Nimbus is not a generic distributed storage system. It is a single binary with:
 
 - per-tenant embedded storage
 - embedded V8 runtime execution
@@ -119,7 +119,7 @@ The relevant ideas to borrow are:
 - treat "what exact snapshot did this read observe?" as a first-class concept
 - carry an exact covered frontier alongside the read result
 
-Neovex should borrow those semantics even if the first internal handle is not a
+Nimbus should borrow those semantics even if the first internal handle is not a
 user-visible token. The important local pattern is not just "have snapshots",
 but "have a bounded published version window, explicit `latest()`, and direct
 waiters for frontier advancement".
@@ -137,7 +137,7 @@ The relevant ideas to borrow are:
 - replay from checkpoint plus suffix must reconstruct exact serving state
 - bounds are part of correctness, not an optional optimization
 
-Neovex should borrow this discipline for any serving snapshot or serving
+Nimbus should borrow this discipline for any serving snapshot or serving
 replica. A published snapshot is only valid because ordered applied commits made
 it valid.
 
@@ -156,7 +156,7 @@ The relevant ideas to borrow are:
 - publication should notify exact frontier waiters when resolved state advances
 - resolved/checkpoint progress and backpressure should be operator-visible
 
-Neovex should borrow that frontier rigor without adopting CockroachDB's
+Nimbus should borrow that frontier rigor without adopting CockroachDB's
 distributed replication architecture. The local `Watcher` code is useful here
 because it buffers changes until a resolved frontier advances, then updates the
 resolved frontier and wakes waiters keyed to that frontier. That is the right
@@ -172,7 +172,7 @@ The canonical next step is:
 4. later swap the backend to a stronger serving materializer or serving replica
    without changing reader semantics
 
-For Neovex's server path, the preferred direction is:
+For Nimbus's server path, the preferred direction is:
 
 - **first**: versioned serving snapshots
 - **later, if justified**: a serving-materializer or serving-replica backend
@@ -259,13 +259,13 @@ struct ServingHandle {
 }
 ```
 
-This is the internal Neovex equivalent of a read token:
+This is the internal Nimbus equivalent of a read token:
 
 - bootstrap queries return results derived from a pinned handle
 - subscriptions activate at that handle's exact covered sequence
 - runtime host reads and scheduler reads can use the same handle type
 - future resumable or externalized read-state can build on this shape if
-  Neovex ever wants that API
+  Nimbus ever wants that API
 
 ### 4. Publication Rule
 
@@ -461,7 +461,7 @@ The `ServingSnapshotManager` contract stays the same either way.
 
 ## Best Follow-Up For Speed, Reliability, And Maintainability
 
-For Neovex specifically, the most canonical follow-up after `MH5` is:
+For Nimbus specifically, the most canonical follow-up after `MH5` is:
 
 1. implement a versioned `ServingSnapshotManager` over the current promoted
    full-scan shapes

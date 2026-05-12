@@ -15,22 +15,22 @@ Reviewed against:
 - `docs/research/tigerbeetle-code-reference.md`
 - `docs/plans/archive/verification-harness-plan.md`
 - `.github/workflows/ci.yml`
-- `crates/neovex-runtime/src/runtime/facade.rs`
-- `crates/neovex-runtime/src/limits.rs`
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-runtime/src/runtime/tests/cooperative.rs`
-- `crates/neovex-runtime/src/runtime/tests/bundle_integrity.rs`
-- `crates/neovex-server/src/adapters/convex/registry/loading.rs`
-- `crates/neovex-server/src/tests/auth/websocket_auth.rs`
-- `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/helpers.rs`
-- `crates/neovex-server/src/tests/scheduling/convex_scheduling/execution/public_schedule_after.rs`
-- `crates/neovex-server/src/tests/scheduling/cron_and_history.rs`
-- `crates/neovex-storage/src/simulation.rs`
-- `crates/neovex-storage/src/simulation/tests.rs`
-- `crates/neovex-test-support/src/lib.rs`
-- `crates/neovex-test-support/src/blocking_fault_injector.rs`
-- `crates/neovex-test-support/src/service_fixture.rs`
-- `crates/neovex-test-support/src/websocket_fixture.rs`
+- `crates/nimbus-runtime/src/runtime/facade.rs`
+- `crates/nimbus-runtime/src/limits.rs`
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/runtime/tests/cooperative.rs`
+- `crates/nimbus-runtime/src/runtime/tests/bundle_integrity.rs`
+- `crates/nimbus-server/src/adapters/convex/registry/loading.rs`
+- `crates/nimbus-server/src/tests/auth/websocket_auth.rs`
+- `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/helpers.rs`
+- `crates/nimbus-server/src/tests/scheduling/convex_scheduling/execution/public_schedule_after.rs`
+- `crates/nimbus-server/src/tests/scheduling/cron_and_history.rs`
+- `crates/nimbus-storage/src/simulation.rs`
+- `crates/nimbus-storage/src/simulation/tests.rs`
+- `crates/nimbus-test-support/src/lib.rs`
+- `crates/nimbus-test-support/src/blocking_fault_injector.rs`
+- `crates/nimbus-test-support/src/service_fixture.rs`
+- `crates/nimbus-test-support/src/websocket_fixture.rs`
 
 Baseline verification status for this plan:
 
@@ -47,7 +47,7 @@ Baseline verification status for this plan:
 
 ## Purpose
 
-Neovex already has strong correctness infrastructure:
+Nimbus already has strong correctness infrastructure:
 
 - deterministic storage simulation seams
 - named verification-harness seeds and repro commands
@@ -103,7 +103,7 @@ What not to copy literally:
 - CockroachDB's distributed topology and raft-specific machinery
 - FoundationDB's exact simulator structure
 
-Neovex should borrow the verification attitude from those systems while keeping
+Nimbus should borrow the verification attitude from those systems while keeping
 its own redb-backed, runtime-hosting, reactive-database architecture.
 
 ---
@@ -137,7 +137,7 @@ This plan covers:
 - real isolation for V8-sensitive and cooperative runtime tests
 - deterministic waiter and eventual-assertion helpers in place of sleep-based
   polling where the code already exposes better seams
-- promotion of `neovex-test-support` and related local test-support modules into
+- promotion of `nimbus-test-support` and related local test-support modules into
   canonical harness ownership surfaces
 - reproducible liveness and safety campaigns for the currently shaky runtime and
   transport flows
@@ -189,7 +189,7 @@ These rules are mandatory for every item in this plan.
    special execution profile, encode that in the harness instead of leaving it
    as a comment or CI quirk.
 
-7. Keep `neovex-test-support` and local test-support modules concept-owned.
+7. Keep `nimbus-test-support` and local test-support modules concept-owned.
    Shared harness logic should live in clear test-support homes instead of being
    duplicated ad hoc across individual tests.
 
@@ -200,19 +200,19 @@ These rules are mandatory for every item in this plan.
 
 ## Current Assessed State
 
-- `neovex-storage::simulation` already provides deterministic clocks, named
+- `nimbus-storage::simulation` already provides deterministic clocks, named
   signals, seeded fault injection, generated task-history replay, and stable
   verification-harness seed corpora.
 - `docs/README.md` already documents PR, nightly, and single-case repro entry
   points for the verification harness.
-- `neovex-test-support` already centralizes HTTP, WebSocket, service, and
+- `nimbus-test-support` already centralizes HTTP, WebSocket, service, and
   blocking-fault fixtures, but it does not yet own explicit runtime test
   profiles, eventual-assertion helpers, or isolation conventions.
 - The runtime tests are now concept-owned files, but the cooperative tests still
   rely on a comment that says they should run in subprocesses instead of a real
   isolation harness.
 - CI already has a verification-harness matrix, but the main test job currently
-  works around runtime instability by running `neovex-runtime` single-threaded
+  works around runtime instability by running `nimbus-runtime` single-threaded
   while the coverage job still uses a whole-workspace topology.
 - Several runtime and server tests still rely on `RuntimeLimits::default()`,
   `RuntimePolicy::default()`, or fixed `sleep(Duration::from_millis(50))`
@@ -223,11 +223,11 @@ These rules are mandatory for every item in this plan.
 
 ## Current Review Findings
 
-1. `crates/neovex-runtime/src/runtime/tests/cooperative.rs` already documents
+1. `crates/nimbus-runtime/src/runtime/tests/cooperative.rs` already documents
    that cooperative locker tests should run in subprocesses, but the harness
    still runs them as ordinary in-process unit tests.
 
-2. `.github/workflows/ci.yml` currently serializes `neovex-runtime` tests with
+2. `.github/workflows/ci.yml` currently serializes `nimbus-runtime` tests with
    `--test-threads=1`, while coverage still runs `cargo llvm-cov --workspace`.
    That means local, CI, and coverage do not currently exercise one explicit
    shared test topology.
@@ -376,10 +376,10 @@ of silently skipping it.
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | TH0 | `done` | reviewed the current runtime, server, storage, and CI harness surfaces and identified the next high-value deterministic testing and harness-hardening seams | none | docs-only review and planning pass on 2026-04-08 |
-| TH1 | `done` | introduce canonical explicit test profiles and remove hidden reliance on moving runtime defaults | none | completed on 2026-04-08 with named runtime test profiles in `neovex-runtime` and `neovex-test-support`, explicit profile selection across runtime and server semantic tests, restored product-default registry construction, and explicit default-behavior coverage |
+| TH1 | `done` | introduce canonical explicit test profiles and remove hidden reliance on moving runtime defaults | none | completed on 2026-04-08 with named runtime test profiles in `nimbus-runtime` and `nimbus-test-support`, explicit profile selection across runtime and server semantic tests, restored product-default registry construction, and explicit default-behavior coverage |
 | TH2 | `done` | add real isolation for V8-sensitive and cooperative runtime tests | TH1 implementation | completed on 2026-04-08 with harness-owned subprocess wrappers for cooperative, locker, and warm-pool V8-sensitive runtime tests plus removal of the CI `--test-threads=1` containment workaround in favor of an explicit runtime lane |
 | TH3 | `done` | replace critical sleep-based polling with deterministic waiters and eventual assertions | TH1 | completed on 2026-04-08 with metric-based waiters for runtime-pressure server tests, signal-based negative assertions in runtime executor fairness tests, and shared eventual helpers for websocket auth cleanup, demo-flow message arrival, and scheduler result availability |
-| TH4 | `done` | promote shared harness ownership and reproducible repro metadata through `neovex-test-support` and local runtime test support | TH1, TH3 | completed on 2026-04-08 with a real runtime-local `test_support` module tree, runtime test-root support extraction, shared `DeterministicTestCase` metadata in `neovex-test-support`, and case-tagged runtime-pressure waits in server tests |
+| TH4 | `done` | promote shared harness ownership and reproducible repro metadata through `nimbus-test-support` and local runtime test support | TH1, TH3 | completed on 2026-04-08 with a real runtime-local `test_support` module tree, runtime test-root support extraction, shared `DeterministicTestCase` metadata in `nimbus-test-support`, and case-tagged runtime-pressure waits in server tests |
 | TH5 | `done` | add reproducible liveness and safety campaigns for current runtime and transport weak spots | TH1 through TH4 | completed on 2026-04-08 with named runtime bundle-integrity and cooperative-dispatch campaigns plus named websocket auth/disconnect and scheduler-history campaigns carrying stable case ids, profiles, and repro commands |
 | TH6 | `done` | align CI and coverage topology with the harness architecture | TH2, TH4, TH5 | completed on 2026-04-08 with dedicated runtime and workspace CI lanes, ignored-only verification-harness corpora, zero-match harness guards, and narrow server-harness serialization |
 | TH7 | `done` | update docs, run the full verification sweep, and archive the completed plan cleanly | TH1 through TH6 | completed on 2026-04-08 with architecture/docs updates, full verification closure, and archive handoff |
@@ -461,12 +461,12 @@ of silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime --lib`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime --lib`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-runtime --all-targets -- -D warnings`
-- `cargo clippy -p neovex-server --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-server --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -491,10 +491,10 @@ of silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime --lib`
+- `cargo test -p nimbus-runtime --lib`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-runtime --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -517,8 +517,8 @@ of silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -532,7 +532,7 @@ of silently skipping it.
 
 #### Implementation plan
 
-1. Extend `neovex-test-support` and any local runtime test-support modules so
+1. Extend `nimbus-test-support` and any local runtime test-support modules so
    they become the canonical homes for:
    explicit runtime test profiles,
    eventual assertions,
@@ -546,9 +546,9 @@ of silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-test-support`
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-test-support`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -578,8 +578,8 @@ of silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime --lib`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime --lib`
+- `cargo test -p nimbus-server`
 - `bash scripts/verification-harness.sh pr server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
@@ -653,10 +653,10 @@ of silently skipping it.
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-08 | TH0 | done | Reviewed the current runtime, server, storage, test-support, and CI harness surfaces against the live worktree and the TigerBeetle research note. Confirmed that the next high-value work is not more ad hoc tests but a deterministic test-and-harness hardening pass centered on explicit profiles, runtime isolation, deterministic waiters, reproducible campaigns, and CI alignment. | docs-only review and planning pass; no new code verification claimed in this handoff | start `TH1` by cataloging explicit runtime and harness test profiles and removing hidden dependence on moving product defaults |
-| 2026-04-08 | TH1 | done | Added named runtime test profile helpers in `neovex-runtime` and `neovex-test-support`, migrated runtime and server semantic tests away from raw `RuntimeLimits::default()` / `RuntimePolicy::default()` inheritance, restored `ConvexRegistry` product-default construction, moved RTC test compensation into test helpers, and added explicit default-behavior coverage. | `cargo test -p neovex-runtime --lib`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-runtime --all-targets -- -D warnings`; `cargo clippy -p neovex-server --all-targets -- -D warnings` | start `TH2` by turning the comment-only cooperative subprocess requirement into a real harness-owned isolation category |
-| 2026-04-08 | TH2 | done | Added harness-owned subprocess wrappers for cooperative, locker, and warm-pool V8-sensitive runtime tests, serialized isolated child launches through the runtime test lock, and replaced the CI crate-wide `--test-threads=1` containment workaround with an explicit `neovex-runtime` lane plus `--exclude neovex-runtime` workspace lane. | `cargo test -p neovex-runtime --lib`; `cargo test -p neovex-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-runtime --all-targets -- -D warnings`; `cargo test --workspace --exclude neovex-runtime` | start `TH3` by replacing the highest-value sleep-based polling with deterministic waiters and eventual assertions |
-| 2026-04-08 | TH3 | done | Added shared `wait_for_condition` / `wait_for_value` helpers in `neovex-test-support`, switched websocket-auth cleanup, demo-flow message arrival, and scheduler history waits onto explicit eventual assertions, replaced fairness and queued-runtime pressure sleeps with runtime-metrics waiters, and converted runtime executor queue/fairness sleeps into `Notify`-backed negative assertions. | `cargo test -p neovex-runtime --lib`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `TH4` by promoting the new helpers and profile/repro utilities into clearer shared harness ownership surfaces |
-| 2026-04-08 | TH4 | done | Moved runtime-only harness ownership into a real `neovex-runtime::test_support` module tree, extracted shared runtime test fixtures and mock hosts into `runtime/tests/support.rs`, added shared `DeterministicTestCase` repro metadata in `neovex-test-support`, and adopted case-tagged runtime-metrics waiters for the current server runtime-pressure campaigns. | `cargo test -p neovex-runtime --lib`; `cargo test -p neovex-test-support`; `cargo test -p neovex-storage`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `TH5` by expressing the current fragile runtime and transport flows as named reproducible liveness and safety campaigns on the hardened harness surfaces |
-| 2026-04-08 | TH5 | done | Added named campaign metadata and failure-context wiring for the known weak spots: a new product-default runtime bundle-integrity-after-success queue-health campaign, stronger cooperative concurrent-dispatch repro context, websocket auth-change and disconnect cleanup campaigns with stable repro commands, and a named scheduler-history publication campaign. | `cargo test -p neovex-runtime --lib`; `cargo test -p neovex-server`; `bash scripts/verification-harness.sh pr server`; `cargo fmt --all --check`; `cargo check --workspace` | start `TH6` by aligning CI and coverage lanes with the real harness categories and wiring the verification-harness topology to the named campaign surfaces |
+| 2026-04-08 | TH1 | done | Added named runtime test profile helpers in `nimbus-runtime` and `nimbus-test-support`, migrated runtime and server semantic tests away from raw `RuntimeLimits::default()` / `RuntimePolicy::default()` inheritance, restored `ConvexRegistry` product-default construction, moved RTC test compensation into test helpers, and added explicit default-behavior coverage. | `cargo test -p nimbus-runtime --lib`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`; `cargo clippy -p nimbus-server --all-targets -- -D warnings` | start `TH2` by turning the comment-only cooperative subprocess requirement into a real harness-owned isolation category |
+| 2026-04-08 | TH2 | done | Added harness-owned subprocess wrappers for cooperative, locker, and warm-pool V8-sensitive runtime tests, serialized isolated child launches through the runtime test lock, and replaced the CI crate-wide `--test-threads=1` containment workaround with an explicit `nimbus-runtime` lane plus `--exclude nimbus-runtime` workspace lane. | `cargo test -p nimbus-runtime --lib`; `cargo test -p nimbus-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`; `cargo test --workspace --exclude nimbus-runtime` | start `TH3` by replacing the highest-value sleep-based polling with deterministic waiters and eventual assertions |
+| 2026-04-08 | TH3 | done | Added shared `wait_for_condition` / `wait_for_value` helpers in `nimbus-test-support`, switched websocket-auth cleanup, demo-flow message arrival, and scheduler history waits onto explicit eventual assertions, replaced fairness and queued-runtime pressure sleeps with runtime-metrics waiters, and converted runtime executor queue/fairness sleeps into `Notify`-backed negative assertions. | `cargo test -p nimbus-runtime --lib`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `TH4` by promoting the new helpers and profile/repro utilities into clearer shared harness ownership surfaces |
+| 2026-04-08 | TH4 | done | Moved runtime-only harness ownership into a real `nimbus-runtime::test_support` module tree, extracted shared runtime test fixtures and mock hosts into `runtime/tests/support.rs`, added shared `DeterministicTestCase` repro metadata in `nimbus-test-support`, and adopted case-tagged runtime-metrics waiters for the current server runtime-pressure campaigns. | `cargo test -p nimbus-runtime --lib`; `cargo test -p nimbus-test-support`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `TH5` by expressing the current fragile runtime and transport flows as named reproducible liveness and safety campaigns on the hardened harness surfaces |
+| 2026-04-08 | TH5 | done | Added named campaign metadata and failure-context wiring for the known weak spots: a new product-default runtime bundle-integrity-after-success queue-health campaign, stronger cooperative concurrent-dispatch repro context, websocket auth-change and disconnect cleanup campaigns with stable repro commands, and a named scheduler-history publication campaign. | `cargo test -p nimbus-runtime --lib`; `cargo test -p nimbus-server`; `bash scripts/verification-harness.sh pr server`; `cargo fmt --all --check`; `cargo check --workspace` | start `TH6` by aligning CI and coverage lanes with the real harness categories and wiring the verification-harness topology to the named campaign surfaces |
 | 2026-04-08 | TH6 | done | Aligned CI and coverage with the real harness architecture: split the main CI job into isolated runtime plus workspace lanes, kept coverage on the default workspace suite with the difference documented, moved the generated-history corpus tests into ignored-only harness lanes, added a zero-match guard to `scripts/verification-harness.sh`, and narrowed `--test-threads=1` to the dedicated server harness corpus where ephemeral HTTP fixtures still need serialized binding. | `bash scripts/verification-harness.sh pr storage`; `bash scripts/verification-harness.sh pr engine`; `bash scripts/verification-harness.sh pr server` (sandbox bind denied locally; reran successfully with escalation); `make check`; `make test`; `make clippy` | finish `TH7` by updating architecture and verification docs, attempting `make ci`, and archiving this completed control plane |
 | 2026-04-08 | TH7 | done | Updated `ARCHITECTURE.md` and `docs/README.md` to describe the landed deterministic harness architecture, completed the repo-wide verification closure, and archived the finished plan while removing live entrypoints from `docs/plans/README.md` and `AGENTS.md`. | `make check`; `make test`; `make clippy`; `bash scripts/verification-harness.sh pr storage`; `bash scripts/verification-harness.sh pr engine`; `bash scripts/verification-harness.sh pr server` (sandbox bind denied locally; reran successfully with escalation); `make ci` (sandbox advisory-db lock failed; reran successfully with escalation) | none |

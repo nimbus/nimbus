@@ -1,42 +1,42 @@
 import type {
-  AuthConfig as NeovexAuthConfig,
-  AuthProvider as NeovexAuthProvider,
-  Cursor as NeovexCursor,
-  DefaultFunctionArgs as NeovexDefaultFunctionArgs,
-  FilterExpressionBuilder as NeovexFilterExpressionBuilder,
-  FilterField as NeovexFilterField,
-  GenericDatabaseReader as NeovexGenericDatabaseReader,
-  GenericDatabaseWriter as NeovexGenericDatabaseWriter,
-  HttpRouteMethod as NeovexHttpRouteMethod,
-  HttpRouteSpec as NeovexHttpRouteSpec,
-  HttpRouter as NeovexHttpRouter,
-  IndexRangeBuilder as NeovexIndexRangeBuilder,
-  PaginationOptions as NeovexPaginationOptions,
-  PaginationResult as NeovexPaginationResult,
-  PaginationStatus as NeovexPaginationStatus,
-  QueryBuilder as NeovexQueryBuilder,
-  QueryOrder as NeovexQueryOrder,
-  SchemaDefinition as NeovexSchemaDefinition,
-  TableDefinition as NeovexTableDefinition,
-  UserIdentity as NeovexUserIdentity,
-  UserIdentityAttributes as NeovexUserIdentityAttributes,
-} from "neovex/server";
+  AuthConfig as NimbusAuthConfig,
+  AuthProvider as NimbusAuthProvider,
+  Cursor as NimbusCursor,
+  DefaultFunctionArgs as NimbusDefaultFunctionArgs,
+  FilterExpressionBuilder as NimbusFilterExpressionBuilder,
+  FilterField as NimbusFilterField,
+  GenericDatabaseReader as NimbusGenericDatabaseReader,
+  GenericDatabaseWriter as NimbusGenericDatabaseWriter,
+  HttpRouteMethod as NimbusHttpRouteMethod,
+  HttpRouteSpec as NimbusHttpRouteSpec,
+  HttpRouter as NimbusHttpRouter,
+  IndexRangeBuilder as NimbusIndexRangeBuilder,
+  PaginationOptions as NimbusPaginationOptions,
+  PaginationResult as NimbusPaginationResult,
+  PaginationStatus as NimbusPaginationStatus,
+  QueryBuilder as NimbusQueryBuilder,
+  QueryOrder as NimbusQueryOrder,
+  SchemaDefinition as NimbusSchemaDefinition,
+  TableDefinition as NimbusTableDefinition,
+  UserIdentity as NimbusUserIdentity,
+  UserIdentityAttributes as NimbusUserIdentityAttributes,
+} from "nimbus/server";
 import {
-  action as neovexAction,
-  defineSchema as neovexDefineSchema,
-  defineTable as neovexDefineTable,
-  httpAction as neovexHttpAction,
-  httpRouter as neovexHttpRouter,
-  internalAction as neovexInternalAction,
-  internalMutation as neovexInternalMutation,
-  internalPaginatedQuery as neovexInternalPaginatedQuery,
-  internalQuery as neovexInternalQuery,
-  mutation as neovexMutation,
-  paginatedQuery as neovexPaginatedQuery,
-  paginationOptsValidator as neovexPaginationOptsValidator,
-  paginationResultValidator as neovexPaginationResultValidator,
-  query as neovexQuery,
-} from "neovex/server";
+  action as nimbusAction,
+  defineSchema as nimbusDefineSchema,
+  defineTable as nimbusDefineTable,
+  httpAction as nimbusHttpAction,
+  httpRouter as nimbusHttpRouter,
+  internalAction as nimbusInternalAction,
+  internalMutation as nimbusInternalMutation,
+  internalPaginatedQuery as nimbusInternalPaginatedQuery,
+  internalQuery as nimbusInternalQuery,
+  mutation as nimbusMutation,
+  paginatedQuery as nimbusPaginatedQuery,
+  paginationOptsValidator as nimbusPaginationOptsValidator,
+  paginationResultValidator as nimbusPaginationResultValidator,
+  query as nimbusQuery,
+} from "nimbus/server";
 
 import type {
   ConvexActionReference,
@@ -47,11 +47,11 @@ import type {
 } from "./internal/shared.ts";
 import type { Infer, Validator } from "./values.ts";
 
-export type DefaultFunctionArgs = NeovexDefaultFunctionArgs;
-export type AuthProvider = NeovexAuthProvider;
-export type AuthConfig = NeovexAuthConfig;
-export type UserIdentity = NeovexUserIdentity;
-export type UserIdentityAttributes = NeovexUserIdentityAttributes;
+export type DefaultFunctionArgs = NimbusDefaultFunctionArgs;
+export type AuthProvider = NimbusAuthProvider;
+export type AuthConfig = NimbusAuthConfig;
+export type UserIdentity = NimbusUserIdentity;
+export type UserIdentityAttributes = NimbusUserIdentityAttributes;
 
 export interface Auth {
   getUserIdentity(): Promise<UserIdentity | null>;
@@ -67,17 +67,17 @@ type InferDefinitionReturns<Returns> = Returns extends Validator<unknown>
   ? Infer<Returns>
   : unknown;
 
-export type QueryOrder = NeovexQueryOrder;
-export type IndexRangeBuilder = NeovexIndexRangeBuilder;
-export type FilterField = NeovexFilterField;
-export type FilterExpressionBuilder = NeovexFilterExpressionBuilder;
-export type QueryBuilder = NeovexQueryBuilder;
-export type GenericDatabaseReader = NeovexGenericDatabaseReader;
-export type GenericDatabaseWriter = NeovexGenericDatabaseWriter;
-export type Cursor = NeovexCursor;
-export type PaginationStatus = NeovexPaginationStatus;
-export type PaginationOptions = NeovexPaginationOptions;
-export type PaginationResult<Item> = NeovexPaginationResult<Item>;
+export type QueryOrder = NimbusQueryOrder;
+export type IndexRangeBuilder = NimbusIndexRangeBuilder;
+export type FilterField = NimbusFilterField;
+export type FilterExpressionBuilder = NimbusFilterExpressionBuilder;
+export type QueryBuilder = NimbusQueryBuilder;
+export type GenericDatabaseReader = NimbusGenericDatabaseReader;
+export type GenericDatabaseWriter = NimbusGenericDatabaseWriter;
+export type Cursor = NimbusCursor;
+export type PaginationStatus = NimbusPaginationStatus;
+export type PaginationOptions = NimbusPaginationOptions;
+export type PaginationResult<Item> = NimbusPaginationResult<Item>;
 
 export type Scheduler = {
   runAfter<Args extends DefaultFunctionArgs>(
@@ -207,27 +207,27 @@ export type PublicHttpAction = {
   readonly handler: HttpActionHandler;
 };
 
-export type HttpRouteMethod = NeovexHttpRouteMethod;
+export type HttpRouteMethod = NimbusHttpRouteMethod;
 
-export type HttpRouteSpec = Omit<NeovexHttpRouteSpec, "handler"> & {
+export type HttpRouteSpec = Omit<NimbusHttpRouteSpec, "handler"> & {
   readonly handler: PublicHttpAction;
 };
 
-export type HttpRouter = Omit<NeovexHttpRouter, "route"> & {
+export type HttpRouter = Omit<NimbusHttpRouter, "route"> & {
   route(spec: HttpRouteSpec): HttpRouter;
 };
 
-export type TableDefinition<Fields extends ArgValidators> = NeovexTableDefinition<Fields>;
+export type TableDefinition<Fields extends ArgValidators> = NimbusTableDefinition<Fields>;
 export type SchemaDefinition<Tables extends Record<string, TableDefinition<any>>> =
-  NeovexSchemaDefinition<Tables>;
+  NimbusSchemaDefinition<Tables>;
 
 export const paginationOptsValidator =
-  neovexPaginationOptsValidator as Validator<PaginationOptions>;
+  nimbusPaginationOptsValidator as Validator<PaginationOptions>;
 
 export function paginationResultValidator<Item>(
   itemValidator: Validator<Item>,
 ): Validator<PaginationResult<Item>> {
-  return neovexPaginationResultValidator(
+  return nimbusPaginationResultValidator(
     itemValidator,
   ) as Validator<PaginationResult<Item>>;
 }
@@ -244,7 +244,7 @@ export function query<
 >(
   definition: QueryDefinition<Args, Returns>,
 ): RegisteredQuery<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return neovexQuery(definition as unknown as Parameters<typeof neovexQuery>[0]) as RegisteredQuery<
+  return nimbusQuery(definition as unknown as Parameters<typeof nimbusQuery>[0]) as RegisteredQuery<
     "public",
     InferDefinitionArgs<Args>,
     InferDefinitionReturns<Returns>
@@ -257,8 +257,8 @@ export function internalQuery<
 >(
   definition: QueryDefinition<Args, Returns>,
 ): RegisteredQuery<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return neovexInternalQuery(
-    definition as unknown as Parameters<typeof neovexInternalQuery>[0],
+  return nimbusInternalQuery(
+    definition as unknown as Parameters<typeof nimbusInternalQuery>[0],
   ) as RegisteredQuery<
     "internal",
     InferDefinitionArgs<Args>,
@@ -276,8 +276,8 @@ export function paginatedQuery<
   InferDefinitionArgs<Args>,
   InferDefinitionReturns<Returns>
 > {
-  return neovexPaginatedQuery(
-    definition as unknown as Parameters<typeof neovexPaginatedQuery>[0],
+  return nimbusPaginatedQuery(
+    definition as unknown as Parameters<typeof nimbusPaginatedQuery>[0],
   ) as RegisteredPaginatedQuery<
     "public",
     InferDefinitionArgs<Args>,
@@ -295,8 +295,8 @@ export function internalPaginatedQuery<
   InferDefinitionArgs<Args>,
   InferDefinitionReturns<Returns>
 > {
-  return neovexInternalPaginatedQuery(
-    definition as unknown as Parameters<typeof neovexInternalPaginatedQuery>[0],
+  return nimbusInternalPaginatedQuery(
+    definition as unknown as Parameters<typeof nimbusInternalPaginatedQuery>[0],
   ) as RegisteredPaginatedQuery<
     "internal",
     InferDefinitionArgs<Args>,
@@ -310,8 +310,8 @@ export function mutation<
 >(
   definition: MutationDefinition<Args, Returns>,
 ): RegisteredMutation<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return neovexMutation(
-    definition as unknown as Parameters<typeof neovexMutation>[0],
+  return nimbusMutation(
+    definition as unknown as Parameters<typeof nimbusMutation>[0],
   ) as RegisteredMutation<
     "public",
     InferDefinitionArgs<Args>,
@@ -325,8 +325,8 @@ export function internalMutation<
 >(
   definition: MutationDefinition<Args, Returns>,
 ): RegisteredMutation<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return neovexInternalMutation(
-    definition as unknown as Parameters<typeof neovexInternalMutation>[0],
+  return nimbusInternalMutation(
+    definition as unknown as Parameters<typeof nimbusInternalMutation>[0],
   ) as RegisteredMutation<
     "internal",
     InferDefinitionArgs<Args>,
@@ -340,7 +340,7 @@ export function action<
 >(
   definition: ActionDefinition<Args, Returns>,
 ): RegisteredAction<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return neovexAction(definition as unknown as Parameters<typeof neovexAction>[0]) as RegisteredAction<
+  return nimbusAction(definition as unknown as Parameters<typeof nimbusAction>[0]) as RegisteredAction<
     "public",
     InferDefinitionArgs<Args>,
     InferDefinitionReturns<Returns>
@@ -353,8 +353,8 @@ export function internalAction<
 >(
   definition: ActionDefinition<Args, Returns>,
 ): RegisteredAction<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return neovexInternalAction(
-    definition as unknown as Parameters<typeof neovexInternalAction>[0],
+  return nimbusInternalAction(
+    definition as unknown as Parameters<typeof nimbusInternalAction>[0],
   ) as RegisteredAction<
     "internal",
     InferDefinitionArgs<Args>,
@@ -369,23 +369,23 @@ export function httpAction(
         handler: HttpActionHandler;
       },
 ): PublicHttpAction {
-  return neovexHttpAction(
-    definition as Parameters<typeof neovexHttpAction>[0],
+  return nimbusHttpAction(
+    definition as Parameters<typeof nimbusHttpAction>[0],
   ) as PublicHttpAction;
 }
 
 export function httpRouter(): HttpRouter {
-  return neovexHttpRouter() as HttpRouter;
+  return nimbusHttpRouter() as HttpRouter;
 }
 
 export function defineTable<Fields extends ArgValidators>(
   fields: Fields,
 ): TableDefinition<Fields> {
-  return neovexDefineTable(fields) as TableDefinition<Fields>;
+  return nimbusDefineTable(fields) as TableDefinition<Fields>;
 }
 
 export function defineSchema<Tables extends Record<string, TableDefinition<any>>>(
   tables: Tables,
 ): SchemaDefinition<Tables> {
-  return neovexDefineSchema(tables) as SchemaDefinition<Tables>;
+  return nimbusDefineSchema(tables) as SchemaDefinition<Tables>;
 }

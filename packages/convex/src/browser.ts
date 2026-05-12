@@ -1,14 +1,14 @@
 import {
-  NeovexClient,
-  NeovexHttpClient,
-  NeovexReactClient,
-} from "neovex/browser";
+  NimbusClient,
+  NimbusHttpClient,
+  NimbusReactClient,
+} from "nimbus/browser";
 import type {
   AuthTokenFetcher,
   ConnectionState,
   Unsubscribe,
   WebSocketConstructor,
-} from "neovex/browser";
+} from "nimbus/browser";
 import type {
   ConvexActionReference,
   ConvexMutationReference,
@@ -40,7 +40,7 @@ export type {
   ConnectionState,
   Unsubscribe,
   WebSocketConstructor,
-} from "neovex/browser";
+} from "nimbus/browser";
 
 type FetchLike = typeof globalThis.fetch;
 
@@ -158,7 +158,7 @@ function withConvexDeploymentUrlCheck<T extends { skipConvexDeploymentUrlCheck?:
   };
 }
 
-export class ConvexHttpClient extends NeovexHttpClient {
+export class ConvexHttpClient extends NimbusHttpClient {
   constructor(address: string, options: ConvexHttpClientOptions = {}) {
     super(address, withConvexDeploymentUrlCheck(options));
   }
@@ -270,7 +270,7 @@ export class ConvexHttpClient extends NeovexHttpClient {
   }
 }
 
-export class ConvexClient extends NeovexClient {
+export class ConvexClient extends NimbusClient {
   constructor(address: string, options: ConvexClientOptions = {}) {
     super(address, withConvexDeploymentUrlCheck(options));
   }
@@ -429,7 +429,7 @@ export class ConvexClient extends NeovexClient {
   }
 }
 
-export class ConvexReactClient extends NeovexReactClient {
+export class ConvexReactClient extends NimbusReactClient {
   constructor(address: string, options: ConvexClientOptions = {}) {
     super(address, withConvexDeploymentUrlCheck(options));
   }

@@ -1,12 +1,12 @@
 #!/bin/sh
 # shellcheck shell=sh
-# Neovex install script — portable bootstrapper for all supported platforms.
+# Nimbus install script — portable bootstrapper for all supported platforms.
 #
 # Usage:
-#   curl -fsSL https://neovex.dev/install.sh | sh
-#   curl -fsSL https://neovex.dev/install.sh | sh -s -- --version v0.1.14
-#   curl -fsSL https://neovex.dev/install.sh | sh -s -- --dry-run
-#   curl -fsSL https://neovex.dev/install.sh | sh -s -- --uninstall
+#   curl -fsSL https://nimbus.dev/install.sh | sh
+#   curl -fsSL https://nimbus.dev/install.sh | sh -s -- --version v0.1.14
+#   curl -fsSL https://nimbus.dev/install.sh | sh -s -- --dry-run
+#   curl -fsSL https://nimbus.dev/install.sh | sh -s -- --uninstall
 #
 # See docs/plans/install-script-plan.md for the full contract.
 
@@ -14,26 +14,26 @@ set -eu
 
 # --- Globals ----------------------------------------------------------------
 
-NEOVEX_VERSION=""
-NEOVEX_CRUN_VERSION=""
-NEOVEX_PREFIX="/usr/local"
+NIMBUS_VERSION=""
+NIMBUS_CRUN_VERSION=""
+NIMBUS_PREFIX="/usr/local"
 DRY_RUN=""
 SKIP_DEPS=""
 UNINSTALL=""
 YES=""
-REQUIRE_ATTESTATIONS="${NEOVEX_REQUIRE_ATTESTATIONS:-}"
+REQUIRE_ATTESTATIONS="${NIMBUS_REQUIRE_ATTESTATIONS:-}"
 PLATFORM=""
 ARCH=""
 DISTRO_ID=""
 DISTRO_VERSION=""
 
 # GitHub API endpoints
-NEOVEX_RELEASES_API="https://api.github.com/repos/agentstation/neovex/releases"
-NEOVEX_CRUN_RELEASES_API="https://api.github.com/repos/agentstation/neovex-crun/releases"
+NIMBUS_RELEASES_API="https://api.github.com/repos/nimbus/nimbus/releases"
+NIMBUS_CRUN_RELEASES_API="https://api.github.com/repos/nimbus/nimbus-crun/releases"
 
 # Release asset base URLs
-NEOVEX_RELEASES_DOWNLOAD="https://github.com/agentstation/neovex/releases/download"
-NEOVEX_CRUN_RELEASES_DOWNLOAD="https://github.com/agentstation/neovex-crun/releases/download"
+NIMBUS_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus/releases/download"
+NIMBUS_CRUN_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus-crun/releases/download"
 
 # --- Output helpers ---------------------------------------------------------
 
@@ -334,35 +334,35 @@ check_kvm_access() {
 
 # --- Version resolution -----------------------------------------------------
 
-resolve_neovex_version() {
-  if [ -n "$NEOVEX_VERSION" ]; then
+resolve_nimbus_version() {
+  if [ -n "$NIMBUS_VERSION" ]; then
     return 0
   fi
 
-  say_info "Resolving latest neovex version..."
+  say_info "Resolving latest nimbus version..."
 
-  response="$(download "${NEOVEX_RELEASES_API}/latest" 2>/dev/null || true)"
+  response="$(download "${NIMBUS_RELEASES_API}/latest" 2>/dev/null || true)"
 
   if [ -z "$response" ]; then
-    err "failed to fetch latest neovex release — try --version <tag> or set GITHUB_TOKEN"
+    err "failed to fetch latest nimbus release — try --version <tag> or set GITHUB_TOKEN"
   fi
 
   # Simple JSON parsing for tag_name — avoids jq dependency
-  NEOVEX_VERSION="$(echo "$response" | tr ',' '\n' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+  NIMBUS_VERSION="$(echo "$response" | tr ',' '\n' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
 
-  if [ -z "$NEOVEX_VERSION" ]; then
+  if [ -z "$NIMBUS_VERSION" ]; then
     # Check for rate limiting
     if echo "$response" | grep -qi "rate limit"; then
       err "GitHub API rate limit reached — try --version <tag> or set GITHUB_TOKEN"
     fi
-    err "failed to parse latest neovex version from GitHub API"
+    err "failed to parse latest nimbus version from GitHub API"
   fi
 
-  say_info "Latest neovex version: $NEOVEX_VERSION"
+  say_info "Latest nimbus version: $NIMBUS_VERSION"
 }
 
 resolve_crun_version() {
-  if [ -n "$NEOVEX_CRUN_VERSION" ]; then
+  if [ -n "$NIMBUS_CRUN_VERSION" ]; then
     return 0
   fi
 
@@ -370,46 +370,46 @@ resolve_crun_version() {
     return 0
   fi
 
-  say_info "Resolving latest neovex-crun version..."
+  say_info "Resolving latest nimbus-crun version..."
 
-  response="$(download "${NEOVEX_CRUN_RELEASES_API}/latest" 2>/dev/null || true)"
+  response="$(download "${NIMBUS_CRUN_RELEASES_API}/latest" 2>/dev/null || true)"
 
   if [ -z "$response" ]; then
-    err "failed to fetch latest neovex-crun release — try --crun-version <tag> or set GITHUB_TOKEN"
+    err "failed to fetch latest nimbus-crun release — try --crun-version <tag> or set GITHUB_TOKEN"
   fi
 
-  NEOVEX_CRUN_VERSION="$(echo "$response" | tr ',' '\n' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+  NIMBUS_CRUN_VERSION="$(echo "$response" | tr ',' '\n' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
 
-  if [ -z "$NEOVEX_CRUN_VERSION" ]; then
+  if [ -z "$NIMBUS_CRUN_VERSION" ]; then
     if echo "$response" | grep -qi "rate limit"; then
       err "GitHub API rate limit reached — try --crun-version <tag> or set GITHUB_TOKEN"
     fi
-    err "failed to parse latest neovex-crun version from GitHub API"
+    err "failed to parse latest nimbus-crun version from GitHub API"
   fi
 
-  say_info "Latest neovex-crun version: $NEOVEX_CRUN_VERSION"
+  say_info "Latest nimbus-crun version: $NIMBUS_CRUN_VERSION"
 }
 
 # --- Asset naming -----------------------------------------------------------
 
-get_neovex_asset_name() {
+get_nimbus_asset_name() {
   case "$PLATFORM" in
     linux)
       case "$ARCH" in
-        x86_64) echo "neovex_linux_x86_64.tar.gz" ;;
-        arm64) echo "neovex_linux_arm64.tar.gz" ;;
+        x86_64) echo "nimbus_linux_x86_64.tar.gz" ;;
+        arm64) echo "nimbus_linux_arm64.tar.gz" ;;
       esac
       ;;
     darwin)
-      echo "neovex_darwin_arm64.tar.gz"
+      echo "nimbus_darwin_arm64.tar.gz"
       ;;
   esac
 }
 
 get_crun_asset_name() {
   case "$ARCH" in
-    x86_64) echo "neovex-crun-linux-amd64" ;;
-    arm64) echo "neovex-crun-linux-arm64" ;;
+    x86_64) echo "nimbus-crun-linux-amd64" ;;
+    arm64) echo "nimbus-crun-linux-arm64" ;;
   esac
 }
 
@@ -452,14 +452,14 @@ confirm() {
 
 # --- Idempotent checks ------------------------------------------------------
 
-get_installed_neovex_version() {
-  if check_cmd neovex; then
-    neovex --version 2>/dev/null | head -1 | sed 's/neovex /v/'
+get_installed_nimbus_version() {
+  if check_cmd nimbus; then
+    nimbus --version 2>/dev/null | head -1 | sed 's/nimbus /v/'
   fi
 }
 
 get_installed_crun_version() {
-  crun_path="/usr/libexec/neovex/crun"
+  crun_path="/usr/libexec/nimbus/crun"
   if [ -x "$crun_path" ]; then
     "$crun_path" --version 2>/dev/null | head -1 | sed 's/crun version /v/' | sed 's/ .*//'
   fi
@@ -469,7 +469,7 @@ get_installed_crun_version() {
 
 print_install_plan() {
   say ""
-  say "=== Neovex Install Plan ==="
+  say "=== Nimbus Install Plan ==="
   say ""
   say "Platform:      $PLATFORM ($ARCH)"
 
@@ -483,26 +483,26 @@ print_install_plan() {
   say ""
   say "Versions:"
   if [ "$PLATFORM" = "darwin" ]; then
-    if [ -n "$NEOVEX_VERSION" ]; then
-      say "  neovex:      current Homebrew cask (ignoring requested pin ${NEOVEX_VERSION})"
+    if [ -n "$NIMBUS_VERSION" ]; then
+      say "  nimbus:      current Homebrew cask (ignoring requested pin ${NIMBUS_VERSION})"
     else
-      say "  neovex:      current Homebrew cask"
+      say "  nimbus:      current Homebrew cask"
     fi
   else
-    say "  neovex:      ${NEOVEX_VERSION:-latest}"
+    say "  nimbus:      ${NIMBUS_VERSION:-latest}"
   fi
   if [ "$PLATFORM" = "linux" ]; then
-    say "  neovex-crun: ${NEOVEX_CRUN_VERSION:-latest}"
+    say "  nimbus-crun: ${NIMBUS_CRUN_VERSION:-latest}"
   fi
 
   say ""
   say "Install paths:"
   if [ "$PLATFORM" = "linux" ]; then
-    say "  neovex:      ${NEOVEX_PREFIX}/bin/neovex"
-    say "  neovex-crun: /usr/libexec/neovex/crun"
+    say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
+    say "  nimbus-crun: /usr/libexec/nimbus/crun"
   elif [ "$PLATFORM" = "darwin" ]; then
-    say "  neovex:      \$(brew --prefix)/bin/neovex (via Homebrew cask)"
-    say "  gvproxy:     \$(brew --prefix)/Caskroom/neovex/<version>/libexec/gvproxy"
+    say "  nimbus:      \$(brew --prefix)/bin/nimbus (via Homebrew cask)"
+    say "  gvproxy:     \$(brew --prefix)/Caskroom/nimbus/<version>/libexec/gvproxy"
     say "  krunkit:     \$(brew --prefix)/bin/krunkit (via Homebrew formula dependency)"
   fi
 
@@ -531,11 +531,11 @@ print_install_plan() {
     say "Supply-chain verification:"
     say "  checksum:     enforced"
     if check_cmd gh; then
-      say "  attestation:  GitHub provenance verification enabled for neovex"
+      say "  attestation:  GitHub provenance verification enabled for nimbus"
     elif [ -n "$REQUIRE_ATTESTATIONS" ]; then
       say "  attestation:  required, but gh CLI is missing"
     else
-      say "  attestation:  best-effort (install gh or set NEOVEX_REQUIRE_ATTESTATIONS=1 to fail closed)"
+      say "  attestation:  best-effort (install gh or set NIMBUS_REQUIRE_ATTESTATIONS=1 to fail closed)"
     fi
   fi
 
@@ -547,13 +547,13 @@ warn_ignored_args_for_platform() {
     return 0
   fi
 
-  if [ -n "$NEOVEX_VERSION" ]; then
-    say_warn "--version is currently ignored on macOS — Homebrew installs the published neovex cask version"
+  if [ -n "$NIMBUS_VERSION" ]; then
+    say_warn "--version is currently ignored on macOS — Homebrew installs the published nimbus cask version"
   fi
-  if [ -n "$NEOVEX_CRUN_VERSION" ]; then
+  if [ -n "$NIMBUS_CRUN_VERSION" ]; then
     say_warn "--crun-version is ignored on macOS"
   fi
-  if [ "$NEOVEX_PREFIX" != "/usr/local" ]; then
+  if [ "$NIMBUS_PREFIX" != "/usr/local" ]; then
     say_warn "--prefix is ignored on macOS — Homebrew manages the install prefix"
   fi
 }
@@ -623,103 +623,103 @@ install_system_deps() {
   esac
 }
 
-download_and_install_neovex_linux() {
+download_and_install_nimbus_linux() {
   if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would download and install neovex $NEOVEX_VERSION to ${NEOVEX_PREFIX}/bin/neovex"
+    say_info "[dry-run] Would download and install nimbus $NIMBUS_VERSION to ${NIMBUS_PREFIX}/bin/nimbus"
     return 0
   fi
 
-  asset_name="$(get_neovex_asset_name)"
-  download_url="${NEOVEX_RELEASES_DOWNLOAD}/${NEOVEX_VERSION}/${asset_name}"
-  checksums_url="${NEOVEX_RELEASES_DOWNLOAD}/${NEOVEX_VERSION}/checksums-sha256.txt"
+  asset_name="$(get_nimbus_asset_name)"
+  download_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/${asset_name}"
+  checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
 
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' EXIT
 
-  say_info "Downloading checksums for neovex ${NEOVEX_VERSION}..."
+  say_info "Downloading checksums for nimbus ${NIMBUS_VERSION}..."
   download_to_file "$checksums_url" "$tmpdir/checksums-sha256.txt"
 
   # Check if same version already installed
-  installed_version="$(get_installed_neovex_version)"
-  if [ "$installed_version" = "$NEOVEX_VERSION" ]; then
-    say_info "neovex $NEOVEX_VERSION is already installed — skipping"
+  installed_version="$(get_installed_nimbus_version)"
+  if [ "$installed_version" = "$NIMBUS_VERSION" ]; then
+    say_info "nimbus $NIMBUS_VERSION is already installed — skipping"
     return 0
   elif [ -n "$installed_version" ]; then
-    say_info "Upgrading neovex from $installed_version to $NEOVEX_VERSION"
+    say_info "Upgrading nimbus from $installed_version to $NIMBUS_VERSION"
   fi
 
-  say_info "Downloading neovex ${NEOVEX_VERSION}..."
+  say_info "Downloading nimbus ${NIMBUS_VERSION}..."
   download_to_file "$download_url" "$tmpdir/$asset_name"
 
   say_info "Verifying checksum..."
   verify_file_checksum "$tmpdir/$asset_name" "$tmpdir/checksums-sha256.txt" "$asset_name"
   verify_github_attestation \
     "$tmpdir/$asset_name" \
-    "agentstation/neovex" \
-    "refs/tags/$NEOVEX_VERSION" \
-    "agentstation/neovex/.github/workflows/release.yml" \
+    "nimbus/nimbus" \
+    "refs/tags/$NIMBUS_VERSION" \
+    "nimbus/nimbus/.github/workflows/release.yml" \
     "$asset_name"
 
   say_info "Extracting and installing..."
   tar -xzf "$tmpdir/$asset_name" -C "$tmpdir"
 
-  maybe_sudo install -d "${NEOVEX_PREFIX}/bin"
-  maybe_sudo install -m 0755 "$tmpdir/neovex" "${NEOVEX_PREFIX}/bin/neovex"
+  maybe_sudo install -d "${NIMBUS_PREFIX}/bin"
+  maybe_sudo install -m 0755 "$tmpdir/nimbus" "${NIMBUS_PREFIX}/bin/nimbus"
 
-  say_info "Installed neovex to ${NEOVEX_PREFIX}/bin/neovex"
+  say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
 }
 
 download_and_install_crun() {
   if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would download and install neovex-crun $NEOVEX_CRUN_VERSION to /usr/libexec/neovex/crun"
+    say_info "[dry-run] Would download and install nimbus-crun $NIMBUS_CRUN_VERSION to /usr/libexec/nimbus/crun"
     return 0
   fi
 
   asset_name="$(get_crun_asset_name)"
-  download_url="${NEOVEX_CRUN_RELEASES_DOWNLOAD}/${NEOVEX_CRUN_VERSION}/${asset_name}"
-  checksums_url="${NEOVEX_CRUN_RELEASES_DOWNLOAD}/${NEOVEX_CRUN_VERSION}/checksums.txt"
+  download_url="${NIMBUS_CRUN_RELEASES_DOWNLOAD}/${NIMBUS_CRUN_VERSION}/${asset_name}"
+  checksums_url="${NIMBUS_CRUN_RELEASES_DOWNLOAD}/${NIMBUS_CRUN_VERSION}/checksums.txt"
 
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' EXIT
 
-  say_info "Downloading checksums for neovex-crun ${NEOVEX_CRUN_VERSION}..."
+  say_info "Downloading checksums for nimbus-crun ${NIMBUS_CRUN_VERSION}..."
   download_to_file "$checksums_url" "$tmpdir/checksums.txt"
 
   # Check if the installed binary already matches the target release.
-  crun_path="/usr/libexec/neovex/crun"
+  crun_path="/usr/libexec/nimbus/crun"
   if [ -x "$crun_path" ]; then
     crun_version="$("$crun_path" --version 2>/dev/null | head -1 || true)"
     if echo "$crun_version" | grep -q '+LIBKRUN' && file_matches_manifest_checksum "$crun_path" "$tmpdir/checksums.txt" "$asset_name"; then
-      say_info "neovex-crun $NEOVEX_CRUN_VERSION is already installed — skipping"
+      say_info "nimbus-crun $NIMBUS_CRUN_VERSION is already installed — skipping"
       return 0
     fi
   fi
 
-  say_info "Downloading neovex-crun ${NEOVEX_CRUN_VERSION}..."
+  say_info "Downloading nimbus-crun ${NIMBUS_CRUN_VERSION}..."
   download_to_file "$download_url" "$tmpdir/$asset_name"
 
   say_info "Verifying checksum..."
   verify_file_checksum "$tmpdir/$asset_name" "$tmpdir/checksums.txt" "$asset_name"
   verify_github_attestation \
     "$tmpdir/$asset_name" \
-    "agentstation/neovex-crun" \
-    "refs/tags/$NEOVEX_CRUN_VERSION" \
-    "agentstation/neovex-crun/.github/workflows/build.yml" \
+    "nimbus/nimbus-crun" \
+    "refs/tags/$NIMBUS_CRUN_VERSION" \
+    "nimbus/nimbus-crun/.github/workflows/build.yml" \
     "$asset_name"
 
-  say_info "Installing neovex-crun..."
-  maybe_sudo install -d /usr/libexec/neovex
-  maybe_sudo install -m 0755 "$tmpdir/$asset_name" /usr/libexec/neovex/crun
+  say_info "Installing nimbus-crun..."
+  maybe_sudo install -d /usr/libexec/nimbus
+  maybe_sudo install -m 0755 "$tmpdir/$asset_name" /usr/libexec/nimbus/crun
 
-  say_info "Installed neovex-crun to /usr/libexec/neovex/crun"
+  say_info "Installed nimbus-crun to /usr/libexec/nimbus/crun"
 }
 
 install_linux() {
   check_kvm_access
   install_system_deps
-  resolve_neovex_version
+  resolve_nimbus_version
   resolve_crun_version
-  download_and_install_neovex_linux
+  download_and_install_nimbus_linux
   download_and_install_crun
   verify_installation
   print_getting_started_linux
@@ -729,13 +729,13 @@ print_getting_started_linux() {
   say ""
   say "=== Getting Started ==="
   say ""
-  say "Neovex is installed! To start the server:"
+  say "Nimbus is installed! To start the server:"
   say ""
-  say "  neovex serve"
+  say "  nimbus serve"
   say ""
   say "For more information:"
-  say "  neovex --help"
-  say "  https://neovex.dev/docs"
+  say "  nimbus --help"
+  say "  https://nimbus.dev/docs"
   say ""
 }
 
@@ -743,20 +743,20 @@ print_getting_started_linux() {
 
 install_or_upgrade_homebrew_cask() {
   if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would install or upgrade agentstation/tap/neovex via Homebrew"
+    say_info "[dry-run] Would install or upgrade nimbus/tap/nimbus via Homebrew"
     return 0
   fi
 
-  say_info "Tapping agentstation/tap..."
-  brew tap agentstation/tap 2>/dev/null || true
+  say_info "Tapping nimbus/tap..."
+  brew tap nimbus/tap 2>/dev/null || true
   brew tap slp/krunkit 2>/dev/null || true
 
-  if brew list --cask neovex >/dev/null 2>&1; then
-    say_info "Upgrading neovex cask..."
-    brew upgrade --cask neovex
+  if brew list --cask nimbus >/dev/null 2>&1; then
+    say_info "Upgrading nimbus cask..."
+    brew upgrade --cask nimbus
   else
-    say_info "Installing neovex cask..."
-    brew install --cask agentstation/tap/neovex
+    say_info "Installing nimbus cask..."
+    brew install --cask nimbus/tap/nimbus
   fi
 }
 
@@ -772,61 +772,61 @@ print_getting_started_macos() {
   say ""
   say "=== Getting Started ==="
   say ""
-  say "Neovex is installed! To initialize and start the machine VM:"
+  say "Nimbus is installed! To initialize and start the machine VM:"
   say ""
-  say "  neovex machine init"
-  say "  neovex serve"
+  say "  nimbus machine init"
+  say "  nimbus serve"
   say ""
   say "For more information:"
-  say "  neovex --help"
-  say "  https://neovex.dev/docs"
+  say "  nimbus --help"
+  say "  https://nimbus.dev/docs"
   say ""
 }
 
 # --- Uninstall --------------------------------------------------------------
 
 uninstall_linux() {
-  say_info "Uninstalling neovex from Linux..."
+  say_info "Uninstalling nimbus from Linux..."
 
   if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would remove ${NEOVEX_PREFIX}/bin/neovex"
-    say_info "[dry-run] Would remove /usr/libexec/neovex/crun"
+    say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
+    say_info "[dry-run] Would remove /usr/libexec/nimbus/crun"
     return 0
   fi
 
-  if [ -f "${NEOVEX_PREFIX}/bin/neovex" ]; then
-    maybe_sudo rm -f "${NEOVEX_PREFIX}/bin/neovex"
-    say_info "Removed ${NEOVEX_PREFIX}/bin/neovex"
+  if [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    maybe_sudo rm -f "${NIMBUS_PREFIX}/bin/nimbus"
+    say_info "Removed ${NIMBUS_PREFIX}/bin/nimbus"
   fi
 
-  if [ -f "/usr/libexec/neovex/crun" ]; then
-    maybe_sudo rm -f "/usr/libexec/neovex/crun"
-    say_info "Removed /usr/libexec/neovex/crun"
+  if [ -f "/usr/libexec/nimbus/crun" ]; then
+    maybe_sudo rm -f "/usr/libexec/nimbus/crun"
+    say_info "Removed /usr/libexec/nimbus/crun"
   fi
 
-  if [ -d "/usr/libexec/neovex" ]; then
-    maybe_sudo rmdir "/usr/libexec/neovex" 2>/dev/null || true
+  if [ -d "/usr/libexec/nimbus" ]; then
+    maybe_sudo rmdir "/usr/libexec/nimbus" 2>/dev/null || true
   fi
 
-  say_info "Neovex uninstalled"
+  say_info "Nimbus uninstalled"
   say ""
   say "System dependencies (conmon, buildah, etc.) were not removed."
   say "Remove them manually if no longer needed."
 }
 
 uninstall_macos() {
-  say_info "Uninstalling neovex from macOS..."
+  say_info "Uninstalling nimbus from macOS..."
 
   if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would run: brew uninstall --cask neovex"
+    say_info "[dry-run] Would run: brew uninstall --cask nimbus"
     return 0
   fi
 
-  if brew list --cask neovex >/dev/null 2>&1; then
-    brew uninstall --cask neovex
-    say_info "Uninstalled neovex cask"
+  if brew list --cask nimbus >/dev/null 2>&1; then
+    brew uninstall --cask nimbus
+    say_info "Uninstalled nimbus cask"
   else
-    say_info "neovex cask is not installed"
+    say_info "nimbus cask is not installed"
   fi
 
   say ""
@@ -845,7 +845,7 @@ verify_installation() {
   script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
   if [ -f "${script_dir}/verify-install.sh" ] && check_cmd bash; then
     say_info "Running installation verification..."
-    if NEOVEX_PREFIX="$NEOVEX_PREFIX" bash "${script_dir}/verify-install.sh"; then
+    if NIMBUS_PREFIX="$NIMBUS_PREFIX" bash "${script_dir}/verify-install.sh"; then
       say_info "Verification passed"
     else
       say_warn "Verification reported issues — see output above"
@@ -927,26 +927,26 @@ inline_check_linux_shared_lib() {
 }
 
 verify_linux_inline() {
-  if [ -x "${NEOVEX_PREFIX}/bin/neovex" ]; then
-    inline_print_line "neovex" "present path=${NEOVEX_PREFIX}/bin/neovex"
-  elif command -v neovex >/dev/null 2>&1; then
-    inline_print_line "neovex" "present path=$(command -v neovex)"
+  if [ -x "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    inline_print_line "nimbus" "present path=${NIMBUS_PREFIX}/bin/nimbus"
+  elif command -v nimbus >/dev/null 2>&1; then
+    inline_print_line "nimbus" "present path=$(command -v nimbus)"
   else
-    inline_print_line "neovex" "missing"
+    inline_print_line "nimbus" "missing"
     inline_mark_failure
   fi
 
-  crun_path="/usr/libexec/neovex/crun"
+  crun_path="/usr/libexec/nimbus/crun"
   if [ -x "$crun_path" ]; then
     crun_version="$("$crun_path" --version 2>/dev/null | head -1 || true)"
     if echo "$crun_version" | grep -q '+LIBKRUN'; then
-      inline_print_line "neovex-crun" "present path=$crun_path version=$crun_version"
+      inline_print_line "nimbus-crun" "present path=$crun_path version=$crun_version"
     else
-      inline_print_line "neovex-crun" "present path=$crun_path (missing +LIBKRUN flag)"
+      inline_print_line "nimbus-crun" "present path=$crun_path (missing +LIBKRUN flag)"
       inline_mark_failure
     fi
   else
-    inline_print_line "neovex-crun" "missing path=$crun_path"
+    inline_print_line "nimbus-crun" "missing path=$crun_path"
     inline_mark_failure
   fi
 
@@ -961,14 +961,14 @@ verify_linux_inline() {
 }
 
 resolve_macos_gvproxy_path() {
-  neovex_path="$(command -v neovex 2>/dev/null || true)"
-  if [ -z "$neovex_path" ]; then
+  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
+  if [ -z "$nimbus_path" ]; then
     return 1
   fi
 
-  real_path="$(readlink "$neovex_path" 2>/dev/null || echo "$neovex_path")"
+  real_path="$(readlink "$nimbus_path" 2>/dev/null || echo "$nimbus_path")"
   if [ "${real_path#/}" = "$real_path" ]; then
-    real_path="$(cd "$(dirname "$neovex_path")" && cd "$(dirname "$real_path")" && pwd)/$(basename "$real_path")"
+    real_path="$(cd "$(dirname "$nimbus_path")" && cd "$(dirname "$real_path")" && pwd)/$(basename "$real_path")"
   fi
 
   case "$real_path" in
@@ -990,7 +990,7 @@ resolve_macos_gvproxy_path() {
 }
 
 verify_macos_inline() {
-  inline_check_command "neovex" "neovex" required
+  inline_check_command "nimbus" "nimbus" required
   inline_check_command "krunkit" "krunkit" required
 
   if gvproxy_path="$(resolve_macos_gvproxy_path)"; then
@@ -1036,19 +1036,19 @@ verify_installation_inline() {
 
 usage() {
   cat <<EOF
-Neovex install script
+Nimbus install script
 
 Usage:
   install.sh [options]
 
 Options:
-  --version <tag>       Pin neovex version (e.g., v0.1.14)
+  --version <tag>       Pin nimbus version (e.g., v0.1.14)
                         Linux only; macOS installs the current Homebrew cask
-  --crun-version <tag>  Pin neovex-crun version (Linux only)
+  --crun-version <tag>  Pin nimbus-crun version (Linux only)
   --prefix <path>       Install prefix (default: /usr/local, Linux only)
   --skip-deps           Skip system dependency installation
   --dry-run             Print what would happen without executing
-  --uninstall           Remove neovex and neovex-crun
+  --uninstall           Remove nimbus and nimbus-crun
   -y, --yes             Skip interactive confirmation prompts
   -h, --help            Show this help message
 
@@ -1057,22 +1057,22 @@ Environment:
   HTTPS_PROXY           HTTP proxy for downloads
   HTTP_PROXY            HTTP proxy for downloads
   NO_PROXY              Hosts to exclude from proxy
-  NEOVEX_REQUIRE_ATTESTATIONS
+  NIMBUS_REQUIRE_ATTESTATIONS
                         Fail closed if GitHub artifact attestation verification
                         cannot run or fails
 
 Examples:
   # Install latest version
-  curl -fsSL https://neovex.dev/install.sh | sh
+  curl -fsSL https://nimbus.dev/install.sh | sh
 
   # Install specific version
-  curl -fsSL https://neovex.dev/install.sh | sh -s -- --version v0.1.14
+  curl -fsSL https://nimbus.dev/install.sh | sh -s -- --version v0.1.14
 
   # Dry run (see what would happen)
-  curl -fsSL https://neovex.dev/install.sh | sh -s -- --dry-run
+  curl -fsSL https://nimbus.dev/install.sh | sh -s -- --dry-run
 
   # Uninstall
-  curl -fsSL https://neovex.dev/install.sh | sh -s -- --uninstall
+  curl -fsSL https://nimbus.dev/install.sh | sh -s -- --uninstall
 EOF
 }
 
@@ -1084,21 +1084,21 @@ parse_args() {
         if [ $# -eq 0 ]; then
           err "--version requires a value"
         fi
-        NEOVEX_VERSION="$1"
+        NIMBUS_VERSION="$1"
         ;;
       --crun-version)
         shift
         if [ $# -eq 0 ]; then
           err "--crun-version requires a value"
         fi
-        NEOVEX_CRUN_VERSION="$1"
+        NIMBUS_CRUN_VERSION="$1"
         ;;
       --prefix)
         shift
         if [ $# -eq 0 ]; then
           err "--prefix requires a value"
         fi
-        NEOVEX_PREFIX="$1"
+        NIMBUS_PREFIX="$1"
         ;;
       --skip-deps)
         SKIP_DEPS="1"
@@ -1148,7 +1148,7 @@ main() {
 
   if [ -n "$DRY_RUN" ]; then
     if [ "$PLATFORM" = "linux" ]; then
-      resolve_neovex_version
+      resolve_nimbus_version
       resolve_crun_version
     fi
     print_install_plan

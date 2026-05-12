@@ -1,6 +1,6 @@
 # Node.js Packages And Bundling
 
-Neovex supports staged local packages for Node action modules. Package support
+Nimbus supports staged local packages for Node action modules. Package support
 is explicit so the runtime can stay deterministic and avoid fetching or
 installing dependencies during invocation.
 
@@ -32,9 +32,9 @@ by `"use node"` action modules:
 ## Local Package Requirement
 
 Externalized packages must resolve from local `node_modules` during codegen.
-Neovex stages the resolved package roots under `.neovex/convex/node_modules/`
+Nimbus stages the resolved package roots under `.nimbus/convex/node_modules/`
 and records package evidence metadata in
-`.neovex/convex/node_external_packages.json`.
+`.nimbus/convex/node_external_packages.json`.
 
 Runtime invocation does not:
 
@@ -45,7 +45,7 @@ Runtime invocation does not:
 
 ## Current Limits
 
-Neovex records Convex cloud-style package size references, but it does not yet
+Nimbus records Convex cloud-style package size references, but it does not yet
 enforce the same zipped or unzipped deployment thresholds. Unsupported or
 unresolved package imports should fail with precise diagnostics rather than
 falling back to ambiguous runtime errors.

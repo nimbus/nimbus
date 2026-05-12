@@ -44,8 +44,8 @@ If the timeline is unclear, improve diagnostics before widening timeouts.
 
 Prefer the narrowest faithful repro:
 
-- a focused crate lane such as `cargo test -p neovex-engine postgres_provider`
-- a focused surface such as `cargo test -p neovex-storage sqlite_foundation`
+- a focused crate lane such as `cargo test -p nimbus-engine postgres_provider`
+- a focused surface such as `cargo test -p nimbus-storage sqlite_foundation`
 - a harness repro such as
   `make verify-harness-repro SURFACE=<surface> MODE=<pr|nightly> CASE=<case-id>`
 - a single ignored subprocess lane when the failure output already provides the
@@ -92,7 +92,7 @@ as well as logic changes. Ask:
 
 - does the failing proof live beside the code it is protecting?
 - does the helper that controls the wait or fault seam belong to the proof
-  family, the crate, or `neovex-testing`?
+  family, the crate, or `nimbus-testing`?
 - would a scenario-owned module make future failures easier to investigate?
 
 If yes, update the owning control plan before refactoring.

@@ -13,12 +13,12 @@ function parseSmokeResult(text) {
   return JSON.parse(trimmed);
 }
 
-globalThis.__neovexInvoke = function () {
+globalThis.__nimbusInvoke = function () {
   const appRoot = process.cwd();
   const hostNodeBin = path.join(
     appRoot,
     "node_modules",
-    "neovex-host-node",
+    "nimbus-host-node",
     "bin",
     cliName("node"),
   );

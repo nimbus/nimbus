@@ -24,35 +24,35 @@ This file is the checked-in failure inventory for the currently manifested
 
 Integrated ownership result:
 
-- the previous Neovex-local `util` numeric-separator and
+- the previous Nimbus-local `util` numeric-separator and
   `diagnostics_channel` sync-unsubscribe shims were removed from
   `node22_runtime_bootstrap.js`
 - the current green Node22 lane proves those shared semantics now hold from the
   Deno fork instead:
-  - `agentstation/deno v2.7.14-locker.20` moved numeric-separator formatting
+  - `nimbus/deno v2.7.14-locker.20` moved numeric-separator formatting
     and `diagnostics_channel` stable-subscriber iteration into the fork
-  - `agentstation/deno v2.7.14-locker.21` added the `%s` +
+  - `nimbus/deno v2.7.14-locker.21` added the `%s` +
     `Symbol.toPrimitive` `util.format()` fix
-  - `agentstation/deno v2.7.14-locker.22` aligned `util.parseEnv()` with the
+  - `nimbus/deno v2.7.14-locker.22` aligned `util.parseEnv()` with the
     official Node plain-object return shape and added a fork-side regression in
     `tests/unit_node/util_test.ts`
-  - `agentstation/deno v2.7.14-locker.23`,
-    `agentstation/deno v2.7.14-locker.24`, and
-    `agentstation/deno v2.7.14-locker.25` moved the `node:perf_hooks`
+  - `nimbus/deno v2.7.14-locker.23`,
+    `nimbus/deno v2.7.14-locker.24`, and
+    `nimbus/deno v2.7.14-locker.25` moved the `node:perf_hooks`
     user-timing contract into the fork by exporting
     `PerformanceMark` / `PerformanceMeasure`, seeding the minimal
     `nodeTiming` marks the official file expects, and restoring Node-style
     Symbol coercion errors for `performance.mark()` / `clearMarks()` plus
     Node-style `ERR_INVALID_ARG_TYPE` validation for `startTime`
-  - `agentstation/deno v2.7.14-locker.26`,
-    `agentstation/deno v2.7.14-locker.27`, and
-    `agentstation/deno v2.7.14-locker.28` moved the `node:perf_hooks`
+  - `nimbus/deno v2.7.14-locker.26`,
+    `nimbus/deno v2.7.14-locker.27`, and
+    `nimbus/deno v2.7.14-locker.28` moved the `node:perf_hooks`
     resource-timing contract into the fork by exporting
     `PerformanceResourceTiming`, implementing
     `performance.markResourceTiming()`, fixing the web-layer enumerable
     descriptor setup, and hiding the internal `nodeTiming` bootstrap marks
     from public `performance.getEntries*()` queries
-  - the final `process.loadEnvFile()` promotion was intentionally Neovex-local:
+  - the final `process.loadEnvFile()` promotion was intentionally Nimbus-local:
     `source.rs` now lets explicitly loaded env-file keys surface through a
     runtime-only overlay even though ambient host env stays capability-gated,
     `node22_runtime_bootstrap.js` now adds Node-style path/default/missing-file
@@ -73,19 +73,19 @@ Integrated ownership result:
 
 - `test/parallel/test-process-features.js`
   - classification: `validation_lane_divergence`
-  - reason: the single Neovex `Node22` runtime contract intentionally keeps
+  - reason: the single Nimbus `Node22` runtime contract intentionally keeps
     `process.features.typescript`, while the official Node20 file expects the
     older key set that does not include `typescript`
-  - owner: Neovex bootstrap/target-contract layer, not the Deno fork
+  - owner: Nimbus bootstrap/target-contract layer, not the Deno fork
   - evidence:
     `runtime::tests::node_compat::node20_process_features_watchpoint`
 - `test/parallel/test-perf-hooks-resourcetiming.js`
   - classification: `validation_lane_divergence`
-  - reason: the single Neovex `Node22` runtime contract intentionally keeps
+  - reason: the single Nimbus `Node22` runtime contract intentionally keeps
     the later `PerformanceResourceTiming#toJSON()` fields `deliveryType` and
     `responseStatus`, while official Node20 still expects the older shape that
     omits them
-  - owner: Neovex target-contract layer, not the Deno fork
+  - owner: Nimbus target-contract layer, not the Deno fork
   - evidence:
     `runtime::tests::node_compat::node20_perf_hooks_resourcetiming_watchpoint`
 
@@ -93,7 +93,7 @@ Integrated ownership result:
 
 - `test/parallel/test-process-finalization.mjs`
   - classification: `later_family_dependency`
-  - reason: the official wrapper now runs through the Neovex sync subprocess
+  - reason: the official wrapper now runs through the Nimbus sync subprocess
     harness and the direct official fixture bodies for `close.mjs`,
     `before-exit.mjs`, and `unregister.mjs` are green; the only remaining
     failure is `different-registry-per-thread.mjs`, which depends on
@@ -113,7 +113,7 @@ Integrated ownership result:
 - Current supported-lane failures:
   - `test/parallel/test-process-features.js`
     - classification: `supported_lane_divergence`
-    - reason: Neovex still carries the current Node22-shaped
+    - reason: Nimbus still carries the current Node22-shaped
       `process.features` contract and does not yet expose
       `openssl_is_boringssl`
   - `test/parallel/test-util-deprecate.js`
@@ -153,5 +153,5 @@ to `NLC5`.
   `-fuse-ld=lld` verification seam, but the fork-side harness still needs
   machine prerequisites (`cmake`, built `deno`, and built `test_server`) that
   are absent in this environment.
-- The current Neovex Node22/Node20 manifested lanes therefore remain the
+- The current Nimbus Node22/Node20 manifested lanes therefore remain the
   primary evidence for the integrated ownership move.

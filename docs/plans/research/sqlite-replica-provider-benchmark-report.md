@@ -3,8 +3,8 @@
 Generated with:
 
 ```bash
-NEOVEX_SQLITE_URL='http://127.0.0.1:18080' \
-NEOVEX_SQLITE_ADMIN_URL='http://127.0.0.1:18081' \
+NIMBUS_SQLITE_URL='http://127.0.0.1:18080' \
+NIMBUS_SQLITE_ADMIN_URL='http://127.0.0.1:18081' \
 make bench-sqlite-replica-provider REPORT=docs/plans/research/sqlite-replica-provider-benchmark-report.md
 ```
 

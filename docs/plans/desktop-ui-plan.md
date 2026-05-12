@@ -1,9 +1,9 @@
 # Plan: Desktop UI
 
 Canonical execution plan for a Docker Desktop / Podman Desktop-style graphical
-interface for Neovex. The UI is an embedded React SPA served by
-`neovex-server` at `/ui/*`, consuming the system tenant query surface and
-HTTP lifecycle endpoints via the `neovex` JS SDK's `useQuery` /
+interface for Nimbus. The UI is an embedded React SPA served by
+`nimbus-server` at `/ui/*`, consuming the system tenant query surface and
+HTTP lifecycle endpoints via the `nimbus` JS SDK's `useQuery` /
 `useMutation` hooks over the existing Convex-compatible WebSocket.
 
 This plan covers the **React frontend only** — the server-side prerequisites
@@ -11,12 +11,12 @@ are owned by separate plans (see Prerequisites below).
 
 Reviewed against:
 
-- `crates/neovex-server/src/router.rs` — current route tree,
+- `crates/nimbus-server/src/router.rs` — current route tree,
   `tower_http::services::ServeDir` static serving at `/demos`
-- `packages/neovex/src/react.ts` — `NeovexProvider`, `useQuery`,
+- `packages/nimbus/src/react.ts` — `NimbusProvider`, `useQuery`,
   `useMutation`, `useAction`, `usePaginatedQuery`, `useQueries`,
-  `useNeovexAuth`, `useNeovexConnectionState`
-- `packages/neovex/src/browser.ts` — `NeovexClient`, `ConnectionState`
+  `useNimbusAuth`, `useNimbusConnectionState`
+- `packages/nimbus/src/browser.ts` — `NimbusClient`, `ConnectionState`
 - `demos/convex/html/` — proven end-to-end: codegen → React hooks →
   WebSocket → engine queries/mutations
 
@@ -46,7 +46,7 @@ These plans must complete before UI implementation begins:
 | --- | --- | --- |
 | `docs/plans/archive/websocket-protocol-plan.md` | Versioned protocol spec, error schema, subprotocol negotiation, structured error types | WP1–WP4 |
 | `docs/plans/archive/localhost-server-security-plan.md` | Token file, origin allowlist, session cookie, CSP, server discovery, audit log, middleware stack | LS1–LS5 |
-| `docs/plans/system-tenant-api-plan.md` | `_neovex` system tenant, state persistence, HTTP lifecycle endpoints, Convex function bundle | ST1–ST4 |
+| `docs/plans/system-tenant-api-plan.md` | `_nimbus` system tenant, state persistence, HTTP lifecycle endpoints, Convex function bundle | ST1–ST4 |
 
 ## Status
 
@@ -61,9 +61,9 @@ These plans must complete before UI implementation begins:
 
 ## Current Assessed State
 
-- No production UI, no `neovex ui` subcommand, no embedded SPA exist today.
+- No production UI, no `nimbus ui` subcommand, no embedded SPA exist today.
 - The JS SDK ships all needed hooks (`useQuery`, `useMutation`, `useAction`,
-  `usePaginatedQuery`, `useQueries`, `useNeovexConnectionState`).
+  `usePaginatedQuery`, `useQueries`, `useNimbusConnectionState`).
 - The server already serves static files at `/demos` via
   `tower_http::services::ServeDir`.
 - The React demos in `demos/convex/html/` prove the full stack end-to-end.
@@ -88,7 +88,7 @@ Each roadmap item must satisfy before closing:
 - Keyboard navigation works for all interactive elements added
 - `@axe-core/react` reports zero critical or serious a11y violations
 - Dark mode renders correctly (no invisible text, no broken contrast)
-- Bundle size of `packages/neovex-ui/dist/` stays under 500 KB gzipped
+- Bundle size of `packages/nimbus-ui/dist/` stays under 500 KB gzipped
 - Manual verification described per item
 
 ## Architecture
@@ -98,17 +98,17 @@ Each roadmap item must satisfy before closing:
 ```
 Phase 1: Embedded Web UI          Phase 2: Electron Shell
 ┌──────────────────────────┐      ┌──────────────────────────────┐
-│  packages/neovex-ui/     │      │  neovex-desktop repo         │
+│  packages/nimbus-ui/     │      │  nimbus-desktop repo         │
 │  React + shadcn/ui       │      │  Electron 41                 │
 │  Convex function bundle  │      │  (mac/win/linux)             │
 │  Vite build → dist/      │      │         │                    │
 │         │                │      │         ▼                    │
 │         ▼                │      │  loadURL(localhost:PORT/ui)  │
 │  rust-embed in           │      │  + tray, menus, auto-update  │
-│  neovex-server           │      └──────────────────────────────┘
+│  nimbus-server           │      └──────────────────────────────┘
 │         │                │
 │  GET /ui/* routes        │
-│  neovex ui subcommand    │
+│  nimbus ui subcommand    │
 └──────────────────────────┘
 ```
 
@@ -133,7 +133,7 @@ Phase 1: Embedded Web UI          Phase 2: Electron Shell
 ### Package layout
 
 ```
-packages/neovex-ui/
+packages/nimbus-ui/
 ├── package.json              # react 19.2, radix-ui, tailwindcss 4, vite 8
 ├── tsconfig.json
 ├── vite.config.ts
@@ -150,7 +150,7 @@ packages/neovex-ui/
 │   ├── cron_jobs.ts
 │   └── system.ts             # action: status
 ├── src/
-│   ├── main.tsx              # entry, NeovexProvider + router + ThemeProvider
+│   ├── main.tsx              # entry, NimbusProvider + router + ThemeProvider
 │   ├── routes/
 │   │   ├── __root.tsx        # shell layout (sidebar, header, connection state, dark mode)
 │   │   ├── dashboard.tsx
@@ -186,19 +186,19 @@ packages/neovex-ui/
    UI change.
 
 2. **Build integration** — `build-ui` Make target
-   (`npm run build -w packages/neovex-ui`). Top-level `build` and `ci`
+   (`npm run build -w packages/nimbus-ui`). Top-level `build` and `ci`
    targets depend on it. Release-build `build.rs` asserts
    `dist/index.html` exists.
 
-### `neovex ui` subcommand
+### `nimbus ui` subcommand
 
 ```
-neovex ui            # open browser to running server; error if none
-neovex ui --ensure   # start server first if none running, then open browser
+nimbus ui            # open browser to running server; error if none
+nimbus ui --ensure   # start server first if none running, then open browser
 ```
 
-Discovers server via `$XDG_RUNTIME_DIR/neovex/server.json` (written by
-`neovex start` — see `docs/plans/archive/localhost-server-security-plan.md` LS1). Uses
+Discovers server via `$XDG_RUNTIME_DIR/nimbus/server.json` (written by
+`nimbus start` — see `docs/plans/archive/localhost-server-security-plan.md` LS1). Uses
 `open::that` for cross-platform browser launch.
 
 ### Disconnected state UX
@@ -232,10 +232,10 @@ When the WebSocket connection drops:
 
 ### DU1 — Server: embedded static asset serving at `/ui/*`
 
-Add `rust-embed` 8.11.x to `neovex-server`, embed `packages/neovex-ui/dist/`,
+Add `rust-embed` 8.11.x to `nimbus-server`, embed `packages/nimbus-ui/dist/`,
 serve at `/ui/*` with `index.html` fallback. `debug_embed = false` for dev.
 
-Scaffold `packages/neovex-ui` as a minimal npm package with Vite 8.0.x and
+Scaffold `packages/nimbus-ui` as a minimal npm package with Vite 8.0.x and
 a placeholder `index.html`. Add `build-ui` Make target. Add `build.rs`
 assertion for release builds.
 
@@ -244,12 +244,12 @@ assertion for release builds.
 
 **Status:** `pending`
 
-### DU2 — CLI: `neovex ui` subcommand
+### DU2 — CLI: `nimbus ui` subcommand
 
-Add `neovex ui` and `neovex ui --ensure`. Reads server discovery file,
+Add `nimbus ui` and `nimbus ui --ensure`. Reads server discovery file,
 opens browser via `open::that`. `--ensure` starts server if not running.
 
-**Verification:** (a) `neovex start &` + `neovex ui` opens browser,
+**Verification:** (a) `nimbus start &` + `nimbus ui` opens browser,
 (b) no server → clear error, (c) `--ensure` starts then opens.
 
 **Status:** `pending`
@@ -261,7 +261,7 @@ Replace placeholder with full component stack: React 19.2.x, shadcn/ui
 Zustand 5.0.x, TanStack Router 1.168.x, Lucide 1.8.x.
 
 Build shell layout: sidebar nav, header with connection state indicator
-(`useNeovexConnectionState`), dark mode toggle with system preference
+(`useNimbusConnectionState`), dark mode toggle with system preference
 detection, error boundary, disconnected state overlay.
 
 **Verification:** `npm run build` succeeds, sidebar nav works, connection
@@ -342,7 +342,7 @@ Testing pyramid:
 | Unit | Vitest 4.1.x + JSDOM | Hooks, utilities, pure logic |
 | Component | Vitest + RTL 16.3.x + `@axe-core/react` | Rendering, interaction, a11y |
 | Integration | Vitest + mocked WebSocket | useQuery/useMutation against mock |
-| E2E | Playwright 1.59.x | Full flows against `neovex start` |
+| E2E | Playwright 1.59.x | Full flows against `nimbus start` |
 
 Co-located `.spec.tsx` beside every `.tsx` (Podman Desktop pattern).
 Storybook for all components + error rendering matrix (~12 stories).
@@ -369,7 +369,7 @@ native-app behavior (dock icon, tray, auto-update, deep links).
 | Shell complexity | `loadURL(localhost)` — no Rust logic needed | Rust build pipeline friction |
 | Bundle size | ~150 MB | ~10 MB |
 
-The shell wraps `localhost:PORT/ui` and manages `neovex start` lifecycle.
+The shell wraps `localhost:PORT/ui` and manages `nimbus start` lifecycle.
 All business logic stays in the Rust server.
 
 ### Security configuration (Electron 41.2.x)
@@ -409,7 +409,7 @@ never queries, mutations, or data.
   (`electron-updater` 6.8.x), server lifecycle
 - Renderer: sandboxed, `loadURL('http://localhost:PORT/ui/')`, same SPA
 - Server: `child_process.spawn` (not `utilityProcess`), discovered via
-  `$XDG_RUNTIME_DIR/neovex/server.json`
+  `$XDG_RUNTIME_DIR/nimbus/server.json`
 - macOS: `activate` → re-show window; `window-all-closed` → no-op
 - Windows/Linux: `window-all-closed` → quit
 
@@ -428,10 +428,10 @@ optional (`Tray.isSupported()`), `--disable-gpu` fallback documented.
 
 ### Repo structure
 
-Separate repo: `agentstation/neovex-desktop`.
+Separate repo: `nimbus/nimbus-desktop`.
 
 ```
-neovex-desktop/
+nimbus-desktop/
 ├── package.json              # electron 41.2, electron-builder 26.8
 ├── electron-builder.yml
 ├── src/

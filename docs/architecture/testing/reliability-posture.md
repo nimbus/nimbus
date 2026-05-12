@@ -2,7 +2,7 @@
 
 This document complements [ARCHITECTURE.md](../../ARCHITECTURE.md) and
 [verification-architecture.md](verification-architecture.md) with the proof
-discipline Neovex now expects for reliability-sensitive changes. The
+discipline Nimbus now expects for reliability-sensitive changes. The
 architecture docs explain what the system guarantees; this doc explains how we
 write and maintain proofs that deserve trust.
 
@@ -46,12 +46,12 @@ When a proof uses a wait, the failure message should explain:
 
 ## Time Budgets
 
-Neovex proofs should use bounded budgets that stay stable across local runs and
+Nimbus proofs should use bounded budgets that stay stable across local runs and
 CI contention:
 
-- Use CI-aware helper functions when a crate can share `neovex-testing`.
+- Use CI-aware helper functions when a crate can share `nimbus-testing`.
 - Mirror the same contract locally when architecture rules prevent a direct
-  dependency, as `neovex-runtime` does.
+  dependency, as `nimbus-runtime` does.
 - Prefer named budgets tied to the proof surface, such as progress windows,
   pending windows, or catch-up timeouts, rather than anonymous literals
   repeated through the file.
@@ -86,10 +86,10 @@ is trustworthy.
 
 Use these ownership rules by default:
 
-- `neovex-testing` owns shared eventual assertions, CI-aware timing helpers,
+- `nimbus-testing` owns shared eventual assertions, CI-aware timing helpers,
   deterministic case metadata, and reusable fault-gate primitives for crates
   that can depend on it.
-- `neovex-runtime` mirrors the same timing-helper contract locally to preserve
+- `nimbus-runtime` mirrors the same timing-helper contract locally to preserve
   the zero-workspace-dependency invariant.
 - Crate-local support modules should own proof helpers that are specific to one
   concept family, such as Postgres activity helpers, SQLite snapshot fixtures,

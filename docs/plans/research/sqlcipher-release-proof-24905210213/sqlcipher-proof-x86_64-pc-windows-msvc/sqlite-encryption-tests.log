@@ -1,4 +1,4 @@
-$ cargo test -p neovex-storage sqlite::encryption -- --nocapture
+$ cargo test -p nimbus-storage sqlite::encryption -- --nocapture
 [1m[92m Downloading[0m crates ...
 [1m[92m  Downloaded[0m etcetera v0.11.0
 [1m[92m  Downloaded[0m sdd v3.0.10
@@ -369,13 +369,13 @@ $ cargo test -p neovex-storage sqlite::encryption -- --nocapture
 [1m[92m   Compiling[0m reqwest v0.12.28
 [1m[92m   Compiling[0m libsql v0.9.30
 [1m[92m   Compiling[0m hkdf v0.12.4
-[1m[92m   Compiling[0m neovex-core v0.1.22 (D:\a\neovex\neovex\crates\neovex-core)
+[1m[92m   Compiling[0m nimbus-core v0.1.22 (D:\a\nimbus\nimbus\crates\nimbus-core)
 [1m[92m   Compiling[0m testcontainers-modules v0.15.0
 [1m[92m   Compiling[0m deadpool-postgres v0.14.1
 [1m[92m   Compiling[0m rusqlite v0.32.1
-[1m[92m   Compiling[0m neovex-storage v0.1.22 (D:\a\neovex\neovex\crates\neovex-storage)
+[1m[92m   Compiling[0m nimbus-storage v0.1.22 (D:\a\nimbus\nimbus\crates\nimbus-storage)
 [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 9m 59s
-[1m[92m     Running[0m unittests src\lib.rs (target\debug\deps\neovex_storage-129b715c446869b7.exe)
+[1m[92m     Running[0m unittests src\lib.rs (target\debug\deps\nimbus_storage-129b715c446869b7.exe)
 
 running 7 tests
 test sqlite::encryption::tests::test_path_with_quote_is_rejected ... ok

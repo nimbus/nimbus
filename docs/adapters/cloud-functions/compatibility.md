@@ -1,7 +1,7 @@
 # Cloud Functions Compatibility
 
 This reference records the currently implemented Cloud Functions-compatible
-surface in Neovex for both Firebase v2 authors and standalone
+surface in Nimbus for both Firebase v2 authors and standalone
 `@google-cloud/functions-framework` authors.
 
 Use this document as the precise compatibility matrix. For the practical
@@ -14,18 +14,18 @@ adoption path, see
 | --- | --- |
 | `supported` | Implemented and exercised by focused tests or generated-bundle smoke. |
 | `supported with caveats` | Usable now, but with an intentionally narrow option matrix or an explicit runtime boundary. |
-| `deferred` | Explicitly outside the current Neovex Cloud Functions claim. |
+| `deferred` | Explicitly outside the current Nimbus Cloud Functions claim. |
 | `not claimed` | No compatibility promise yet. |
 
 ## Audience Snapshot
 
 | Audience | Status | Notes |
 | --- | --- | --- |
-| Firebase v2 Firestore trigger authors | `supported` | Covered `firebase-functions/v2` imports and Firestore trigger helpers execute without source rewrites on Neovex. |
+| Firebase v2 Firestore trigger authors | `supported` | Covered `firebase-functions/v2` imports and Firestore trigger helpers execute without source rewrites on Nimbus. |
 | Firebase v2 HTTPS authors (`onRequest`, `onCall`) | `supported with caveats` | Base overloads are covered; option matrices stay intentionally narrow and fail fast outside the documented slice. |
 | Standalone Functions Framework CloudEvent authors | `supported` | `functions.cloudEvent(name, handler)` is covered with deploy-time `targets.json` bindings. |
-| Standalone Functions Framework HTTP authors | `supported` | `functions.http(name, handler)` is covered on the Neovex-hosted HTTP surface. |
-| Standalone Functions Framework local dev server parity | `deferred` | Neovex hosts execution inside its own server; it does not claim full `FUNCTION_TARGET` / generic framework web-server parity. |
+| Standalone Functions Framework HTTP authors | `supported` | `functions.http(name, handler)` is covered on the Nimbus-hosted HTTP surface. |
+| Standalone Functions Framework local dev server parity | `deferred` | Nimbus hosts execution inside its own server; it does not claim full `FUNCTION_TARGET` / generic framework web-server parity. |
 
 ## Authoring Surface Matrix
 
@@ -36,22 +36,22 @@ adoption path, see
 | `firebase-functions/v2/firestore onDocumentDeleted` | `supported` | Covered on the shared trigger path. | Default database only. |
 | `firebase-functions/v2/firestore onDocumentWritten` | `supported` | Covered on the shared trigger path, including retry inheritance. | Default database only. |
 | `firebase-functions/v2 setGlobalOptions()` | `supported with caveats` | Covered only for documented first-slice root defaults. | Only `retry` is inherited for Firestore document triggers. |
-| `firebase-functions/v2/https onRequest(handler)` | `supported` | Generated handlers run at `/<exportName>` on the Neovex server. | Covered base overload only; unsupported `HttpsOptions` fail fast. |
+| `firebase-functions/v2/https onRequest(handler)` | `supported` | Generated handlers run at `/<exportName>` on the Nimbus server. | Covered base overload only; unsupported `HttpsOptions` fail fast. |
 | `firebase-functions/v2/https onRequest({}, handler)` | `supported` | Same runtime path as `functions.http()`. | Empty-options overload only. |
 | `firebase-functions/v2/https onCall(handler)` | `supported` | Callable JSON envelope, default CORS behavior, and `HttpsError` mapping are covered. | App Check verification is deferred; option matrix is narrow. |
 | `firebase-functions/v2/https onCall({}, handler)` | `supported` | Same callable protocol as `onCall(handler)`. | Empty-options overload only. |
-| `@google-cloud/functions-framework functions.cloudEvent(name, handler)` | `supported` | Covered with deploy-time `targets.json` binding metadata. | Requires a binding entry in `.neovex/firebase/targets.json`. |
-| `@google-cloud/functions-framework functions.http(name, handler)` | `supported` | Covered on the Neovex-hosted HTTP surface. | Requires a binding entry in `.neovex/firebase/targets.json`. |
+| `@google-cloud/functions-framework functions.cloudEvent(name, handler)` | `supported` | Covered with deploy-time `targets.json` binding metadata. | Requires a binding entry in `.nimbus/firebase/targets.json`. |
+| `@google-cloud/functions-framework functions.http(name, handler)` | `supported` | Covered on the Nimbus-hosted HTTP surface. | Requires a binding entry in `.nimbus/firebase/targets.json`. |
 
 ## App Discovery And Project Layout
 
 | Concern | Status | Current claim |
 | --- | --- | --- |
-| Firebase `firebase.json` + `functions.source` discovery | `supported` | Neovex auto-detects the nearest compatible Firebase app root from the current directory or its parents. |
+| Firebase `firebase.json` + `functions.source` discovery | `supported` | Nimbus auto-detects the nearest compatible Firebase app root from the current directory or its parents. |
 | Firebase multi-codebase mapping | `supported` | `firebase.json` `codebase` / `source` layouts are preserved. |
-| Standalone Functions Framework package discovery | `supported` | Neovex auto-detects a package root when `package.json` declares `@google-cloud/functions-framework`. |
+| Standalone Functions Framework package discovery | `supported` | Nimbus auto-detects a package root when `package.json` declares `@google-cloud/functions-framework`. |
 | Explicit `--app-dir` override | `supported` | Remains authoritative for ambiguous or nonstandard repos. |
-| Generated artifact root | `supported` | Cloud Functions outputs live under `.neovex/firebase/`. |
+| Generated artifact root | `supported` | Cloud Functions outputs live under `.nimbus/firebase/`. |
 
 ## Delivery And Execution Semantics
 
@@ -114,7 +114,7 @@ For the exact root-default contract, see
 | Callable JSON envelope | `supported` | Covered. |
 | Callable default CORS behavior | `supported` | Covered. |
 | `HttpsError` / `FunctionsErrorCode` mapping | `supported` | Covered. |
-| Callable auth context with shared Neovex application auth enabled | `supported with caveats` | The runtime path supports it, but the current generated smoke primarily covers the default unauthenticated baseline. |
+| Callable auth context with shared Nimbus application auth enabled | `supported with caveats` | The runtime path supports it, but the current generated smoke primarily covers the default unauthenticated baseline. |
 | App Check verification | `deferred` | Explicit fail-fast boundary. |
 
 ## Known Non-Goals And Gaps
@@ -136,8 +136,8 @@ This matrix is sourced from:
   `docs/plans/archive/firebase-cloud-functions-plan.md`,
 - generated-bundle selftests in `packages/codegen/src/selftest/cloud_functions_fixtures.mjs`,
 - live trigger and HTTP integration tests in
-  `crates/neovex-server/src/adapters/cloud_functions/{execution,http}.rs`,
+  `crates/nimbus-server/src/adapters/cloud_functions/{execution,http}.rs`,
 - the shared engine trigger replay/retry tests in
-  `crates/neovex-engine/src/tests/mutation_journal/triggers.rs`,
+  `crates/nimbus-engine/src/tests/mutation_journal/triggers.rs`,
 - and the published contract docs for artifacts, bindings, root defaults, app
   discovery, and the covered admin surface.

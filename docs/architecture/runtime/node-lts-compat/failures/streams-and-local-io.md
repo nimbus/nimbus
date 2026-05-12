@@ -46,7 +46,7 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 - `test/parallel/test-fs-open.js`
   - classification: `application_preset_path_policy_divergence`
   - reason: the official file expects `ENOENT` for an absolute missing host
-    path outside the generated bundle root, while Neovex intentionally denies
+    path outside the generated bundle root, while Nimbus intentionally denies
     that path before raw host open in the application preset
   - owner: runtime path-policy contract difference, not a Node22 positive-path
     `fs` regression
@@ -196,7 +196,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
 - `test/parallel/test-fs-constants.js`
   - classification: `supported_lane_divergence`
   - reason: the official Node24 file expects a newer constant-surface
-    `TypeError` gate that Neovex has not adopted into the current Node22
+    `TypeError` gate that Nimbus has not adopted into the current Node22
     contract
   - owner: supported-lane future contract drift, not a current Node22 blocker
   - evidence:
@@ -257,7 +257,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
 - `test/parallel/test-fs-promises-watch.js`
   - classification: `supported_lane_divergence`
   - reason: the official Node24 file adds `maxQueue` and `overflow` option
-    validation that Neovex has not adopted into the current Node22-based
+    validation that Nimbus has not adopted into the current Node22-based
     `fs.watch()` / `fs.promises.watch()` contract
   - owner: supported-lane future watch option-validation drift, not a current
     Node22 blocker

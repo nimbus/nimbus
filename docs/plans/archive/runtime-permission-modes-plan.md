@@ -33,24 +33,24 @@ pre-work starting point; the progress log below records subsequent cutovers.
 
 The implementation surface is concentrated enough to execute safely:
 
-- At activation, `crates/neovex-runtime/src/limits.rs` owned the current
+- At activation, `crates/nimbus-runtime/src/limits.rs` owned the current
   `RuntimeProfile::{Application, Tooling}` terminology, constructor helpers,
   normalization invariants, and exported runtime policy shape.
-- At activation, `crates/neovex-runtime/src/runtime_capabilities.rs` owned the effective
+- At activation, `crates/nimbus-runtime/src/runtime_capabilities.rs` owned the effective
   filesystem, env, subprocess, network, FFI, and sys permission construction,
   currently deriving most decisions from `RuntimeProfile` plus
   `RuntimeSubprocessPolicy`.
-- `crates/neovex-runtime/src/runtime/bootstrap/state.rs` and
-  `crates/neovex-runtime/src/runtime/bootstrap/ops/shared.rs` expose runtime
+- `crates/nimbus-runtime/src/runtime/bootstrap/state.rs` and
+  `crates/nimbus-runtime/src/runtime/bootstrap/ops/shared.rs` expose runtime
   contract metadata to JavaScript and must move from preset language to
   mode/preset language without changing compatibility-target semantics.
-- `crates/neovex-server/src/protocol.rs` exposes runtime diagnostics and must
+- `crates/nimbus-server/src/protocol.rs` exposes runtime diagnostics and must
   report permission mode, grants, language, and preset distinctly once the new
   model lands.
-- `crates/neovex-server/src/adapters/convex/**` creates the product runtime
+- `crates/nimbus-server/src/adapters/convex/**` creates the product runtime
   lanes and should keep Convex adapter decisions at the adapter boundary while
   lowering into core runtime mode/grant/preset primitives.
-- `crates/neovex-bin/src/codegen.rs` is the embedded tooling lane and should
+- `crates/nimbus-bin/src/codegen.rs` is the embedded tooling lane and should
   become a `RuntimePreset::Tooling` user rather than a permission-mode special
   case.
 - Node compatibility manifests and docs may retain historical
@@ -82,13 +82,13 @@ permissions-first model that:
   - `Restricted`
   - `Standard`
   - `Privileged`
-- preserves named internal presets for common Neovex-owned workload shapes,
+- preserves named internal presets for common Nimbus-owned workload shapes,
   but makes those presets subordinate to the real `Mode + Grants` model
 - keeps fine-grained grants explicit, Deno-style, instead of relying on one
   broad mode name to imply every resource decision
 - treats AI-generated code as ordinary code that must be classified by the
   same mode-and-grants policy as any other execution surface
-- allows enterprises running Neovex to assign `Privileged` to their own code
+- allows enterprises running Nimbus to assign `Privileged` to their own code
   when they intentionally need it
 - keeps compatibility target orthogonal:
   - `WebStandardIsolate`
@@ -107,7 +107,7 @@ permissions-first model that:
 
 ## Migration Posture
 
-Neovex is still pre-launch, so this plan prefers direct breaking changes over
+Nimbus is still pre-launch, so this plan prefers direct breaking changes over
 compatibility layers.
 
 That means:
@@ -116,7 +116,7 @@ That means:
   kept as long-lived aliases
 - docs, config, runtime entrypoints, and policy surfaces should converge on
   `Restricted` / `Standard` / `Privileged` as the canonical names
-- Neovex may keep internal convenience presets for recurring workload shapes,
+- Nimbus may keep internal convenience presets for recurring workload shapes,
   but those presets must compile down to explicit mode-and-grant bundles
 - any temporary translation layer must be narrowly scoped to one implementation
   step and removed before plan closeout
@@ -152,7 +152,7 @@ The mode names should therefore answer the simplest user question first:
 
 ## Decision Summary
 
-Neovex should use three permission modes:
+Nimbus should use three permission modes:
 
 | Mode | Meaning | Default use |
 | --- | --- | --- |
@@ -187,7 +187,7 @@ The canonical implementation vocabulary should also be explicit:
   - an internal convenience bundle that resolves to `RuntimeMode +
     RuntimeGrants`
 
-At the same time, Neovex source code may still benefit from a small set of
+At the same time, Nimbus source code may still benefit from a small set of
 named internal presets for common workload shapes. Those presets are useful as
 ergonomic defaults, but they must not replace the canonical permission model.
 
@@ -250,7 +250,7 @@ Permission mode must be distinct from:
 - execution purpose
 - code provenance
 
-This means Neovex should not model:
+This means Nimbus should not model:
 
 - `Tooling` as a permission mode name
 - `Application` as a permission mode name
@@ -262,7 +262,7 @@ Those are useful metadata labels, but they are not the permission axis.
 
 ### 2. Fine-Grained Grants Are Required
 
-Modes alone are not enough. Neovex should pair modes with explicit grants.
+Modes alone are not enough. Nimbus should pair modes with explicit grants.
 
 Recommended top-level grant families:
 
@@ -285,7 +285,7 @@ Recommended top-level grant families:
 
 Additional rule:
 
-- not every capability should be modeled as raw host access; when Neovex is
+- not every capability should be modeled as raw host access; when Nimbus is
   exposing a managed resource or platform service, prefer explicit
   service/binding-style grants and identities over ambient env secrets plus
   unrestricted network reachability
@@ -300,7 +300,7 @@ Additional rule:
 
 ### 2.5 Internal Presets Are Allowed, But Subordinate
 
-Neovex may keep a small set of internal presets for recurring workload shapes.
+Nimbus may keep a small set of internal presets for recurring workload shapes.
 
 Good preset examples:
 
@@ -339,7 +339,7 @@ Rules:
 
 ### 3. Same-Context Code Shares One Permission Surface
 
-Neovex should adopt the same high-level rule Deno documents:
+Nimbus should adopt the same high-level rule Deno documents:
 code in the same execution context shares the same privilege level.
 
 That means:
@@ -365,8 +365,8 @@ The rule should be:
 
 ### 5. `Privileged` Does Not Mean “Host Root”
 
-Even `Privileged` should still run inside the outer Neovex sandbox and product
-security boundary. It means “broadest Neovex-approved powers,” not “escape the
+Even `Privileged` should still run inside the outer Nimbus sandbox and product
+security boundary. It means “broadest Nimbus-approved powers,” not “escape the
 platform.”
 
 ## Recommended Default Policy
@@ -440,7 +440,7 @@ Deno Deploy then shows the hosted-product lesson: a managed platform may run
 with broad internal runtime permissions and rely on the outer sandbox/product
 boundary instead of exposing raw CLI-style permission flags to end users.
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - adopt Deno-like grants
 - keep outer sandboxing as a separate control
@@ -456,7 +456,7 @@ Cloudflare Workers is the clearest `Restricted` precedent:
 - capability-style bindings
 - strong multi-tenant framing
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - `Restricted` should feel Workers-like
 - bindings/grants are a better mental model than ambient host access
@@ -469,7 +469,7 @@ Convex is the cleanest split-model precedent:
 - explicit opt-in Node.js runtime
 - Node restricted to actions via `"use node"`
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - keep the least-privileged default narrow
 - use explicit escape hatches instead of widening everything
@@ -483,7 +483,7 @@ Supabase Edge Functions is more permissive than Workers:
 - gateway applies auth and policies before function execution
 - explicit `/tmp` ephemeral storage
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - `Standard` can be broader than Workers without abandoning a serverless story
 - gateway/policy enforcement still matters outside the runtime itself
@@ -496,7 +496,7 @@ Lambda is a heavier isolated execution environment:
 - normal runtime/process model
 - separate tenant isolation mode for end-user supplied code
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - enterprise users may reasonably expect broader powers in a managed
   serverless/container-like environment
@@ -513,7 +513,7 @@ reference:
   separate concern
 - hosting plan and identity choices are separate from function purpose
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - managed resources should not all collapse into `env.read` plus
   `net.connect`; some should be modeled as first-class service/binding grants
@@ -529,7 +529,7 @@ agent/untrusted-code lane explicitly:
 - sandboxes can be reused, hold state, run commands, and act more like a
   durable environment than a one-shot code eval
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - `RuntimePreset::Code` should remain the short-lived provided-code lane
 - a future `RuntimePreset::Sandbox` can be a distinct environment-like surface
@@ -549,11 +549,11 @@ is not inherently a bad product idea:
 - explicit documentation for safer execution of untrusted LLM-generated code,
   including restricted IAM and network controls
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - broad execution can be a valid product posture
 - but it must be paired with strong outer isolation and explicit policy
-- this argues for `Privileged` as a real enterprise mode, not a Neovex-only
+- this argues for `Privileged` as a real enterprise mode, not a Nimbus-only
   internal concept
 
 ### Secrets, Env, Identity, And Service Bindings
@@ -568,7 +568,7 @@ The major platforms split along two implementation styles:
   local caches, or service bindings instead of treating all sensitive data as
   ordinary environment configuration.
 
-Implication for Neovex:
+Implication for Nimbus:
 
 - keep `secret` as a first-class grant family rather than folding it into
   `env.read`
@@ -598,7 +598,7 @@ Adding more fixed modes usually mixes axes again:
 - deployment environment
 - compatibility target
 
-When more differentiation is needed, Neovex should add grants, not more modes.
+When more differentiation is needed, Nimbus should add grants, not more modes.
 
 ## Roadmap
 
@@ -688,7 +688,7 @@ When more differentiation is needed, Neovex should add grants, not more modes.
   modes or presets. For this plan, only JavaScript is implemented and selected
   by default when no runtime language is provided; Python and future languages
   require separate future plans.
-- Decide whether Neovex wants a future centralized policy broker analogous to
+- Decide whether Nimbus wants a future centralized policy broker analogous to
   Deno's permission broker.
 
 ### RPM3 Runtime Enforcement Hardening

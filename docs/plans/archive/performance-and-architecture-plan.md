@@ -280,7 +280,7 @@ and their status is explicitly changed away from `deferred` or `blocked`.
 | 4C | deferred | none | promote only if external metrics export becomes a concrete requirement |
 | 7B | blocked | none | requires deploy identity and signing/auth design to exist first |
 | 10A | deferred | 3F, 6B | promote only if snapshot or historical reads become a product requirement |
-| 11A | deferred | 3B, 3E | promote only if the Neovex-native generated API becomes a product priority |
+| 11A | deferred | 3B, 3E | promote only if the Nimbus-native generated API becomes a product priority |
 | 11B | deferred | 11A | promote only if a typed WASM plugin ABI becomes a product priority |
 
 ### Status transition rules
@@ -304,49 +304,49 @@ future Codex run can reconstruct progress without chat history.
 
 | Date | Item | Outcome | Summary | Verification | Follow-up |
 | --- | --- | --- | --- | --- | --- |
-| 2026-04-01 | 3F | refined | TDD-hardened `MutationExecutionUnit` after review: OCC now records the applied snapshot sequence rather than the durable head, and repeated writes to the same document preserve insert semantics, collapse insert-then-delete to a no-op, and clear stale write ordering so restaged writes commit exactly once. Added regressions for insert-update, insert-delete, revert-restage, and durable-but-unapplied conflict detection under apply lag. | `cargo test -p neovex-engine mutation_execution_unit_insert_then_update_commits_as_single_insert -- --nocapture`; `cargo test -p neovex-engine mutation_execution_unit_insert_then_delete_commits_as_noop -- --nocapture`; `cargo test -p neovex-engine mutation_execution_unit_restage_after_revert_commits_once -- --nocapture`; `cargo test -p neovex-engine mutation_execution_unit_conflicts_with_durable_unapplied_write -- --nocapture`; `cargo fmt --all --check`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | keep execution-unit reads, snapshot sequencing, and conflict baselines anchored to the same applied view |
-| 2026-04-01 | 6A | refined | TDD-hardened the durable-journal and applied-visibility boundary after review: `DurableMutationRecord` now hashes a canonical payload shape that survives generic serde or MessagePack round-trips, and async get, query, and paginate calls now remain cancellable while waiting for the applied watermark instead of only after blocking storage work begins. Added regressions for journal records with and without scheduled execution ids plus apply-lag cancellation on all async read entrypoints. | `cargo test -p neovex-core durable_mutation_record_roundtrips_and_verifies_integrity -- --nocapture`; `cargo test -p neovex-core durable_mutation_record_without_scheduler_id_roundtrips_and_verifies_integrity -- --nocapture`; `cargo test -p neovex-engine get_document_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo test -p neovex-engine query_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo test -p neovex-engine paginate_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo fmt --all --check`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | keep durable-record encoding canonical and applied-watermark waits cancellation-aware on every async read path |
-| 2026-04-01 | 9B | refined | Extended the shadow-materializer parity harness to use the same schema- and principal-aware planning helpers plus planner-residual pagination semantics as the live service, so indexed or policy-filtered shadow queries now compare full page results and cursors against the redb-backed oracle instead of only matching raw document sets. | `cargo test -p neovex-engine shadow_materializer_queries_match_live_service_path -- --nocapture`; `cargo test -p neovex-engine shadow_materializer_schema_aware_queries_match_live_service_path -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep shadow parity anchored to live planner semantics before any serving-path promotion |
-| 2026-04-01 | 6A | refined | Verified and fixed two post-review Phase 6 gaps: journaled async mutations no longer leave behind detached cancellation-watcher tasks on non-cancelable paths, and sync point reads, queries, and pagination now wait for the same applied watermark as async reads before consulting materialized state. | `cargo test -p neovex-engine mutation_async_non_cancelable_call_drops_unused_cancellation_future_after_completion -- --nocapture`; `cargo test -p neovex-engine sync_query_waits_for_applied_journal_visibility_and_records_wait_metrics -- --nocapture`; `cargo test -p neovex-engine sync_get_document_waits_for_applied_journal_visibility -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep sync and async serving reads behind the same applied-watermark contract |
-| 2026-04-01 | 8B | refined | Verified and fixed the post-review embedded-replica drift: replica catch-up now refreshes schema state even when there are no new durable mutation records, replica-local query and pagination evaluation now reuse the same schema- and principal-aware planning helpers as the live service, and new regressions cover schema-only policy changes plus index rebuild changes after bootstrap. | `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-engine embedded_replica_ -- --nocapture`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server embedded_replica_matches_server_results_and_catches_up_after_http_writes -- --nocapture`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep the embedded replica aligned with live-service read semantics until any future serving promotion has stronger evidence |
-| 2026-04-01 | 9B | done | Added a TigerBeetle-inspired robustness harness around the shadow materializer and durable-journal replay path. The storage test matrix now proves replay convergence after interrupted compaction, rejection of corrupted journal and manifest inputs, and deterministic seeded rebuild parity against the redb-backed oracle across multiple generated histories; recovery bookkeeping also now preserves compaction counts monotonically when replay itself performs a compaction. Existing engine shadow-parity coverage remains in the verification matrix so redb stays the correctness oracle until any future serving promotion is explicitly justified. | `cargo test -p neovex-storage shadow_materializer_ -- --nocapture`; `cargo fmt --all`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine shadow_materializer -- --nocapture`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | no further non-deferred roadmap items remain; only deferred or blocked items are left |
+| 2026-04-01 | 3F | refined | TDD-hardened `MutationExecutionUnit` after review: OCC now records the applied snapshot sequence rather than the durable head, and repeated writes to the same document preserve insert semantics, collapse insert-then-delete to a no-op, and clear stale write ordering so restaged writes commit exactly once. Added regressions for insert-update, insert-delete, revert-restage, and durable-but-unapplied conflict detection under apply lag. | `cargo test -p nimbus-engine mutation_execution_unit_insert_then_update_commits_as_single_insert -- --nocapture`; `cargo test -p nimbus-engine mutation_execution_unit_insert_then_delete_commits_as_noop -- --nocapture`; `cargo test -p nimbus-engine mutation_execution_unit_restage_after_revert_commits_once -- --nocapture`; `cargo test -p nimbus-engine mutation_execution_unit_conflicts_with_durable_unapplied_write -- --nocapture`; `cargo fmt --all --check`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | keep execution-unit reads, snapshot sequencing, and conflict baselines anchored to the same applied view |
+| 2026-04-01 | 6A | refined | TDD-hardened the durable-journal and applied-visibility boundary after review: `DurableMutationRecord` now hashes a canonical payload shape that survives generic serde or MessagePack round-trips, and async get, query, and paginate calls now remain cancellable while waiting for the applied watermark instead of only after blocking storage work begins. Added regressions for journal records with and without scheduled execution ids plus apply-lag cancellation on all async read entrypoints. | `cargo test -p nimbus-core durable_mutation_record_roundtrips_and_verifies_integrity -- --nocapture`; `cargo test -p nimbus-core durable_mutation_record_without_scheduler_id_roundtrips_and_verifies_integrity -- --nocapture`; `cargo test -p nimbus-engine get_document_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo test -p nimbus-engine query_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo test -p nimbus-engine paginate_documents_async_cancellable_returns_cancelled_while_waiting_for_applied_visibility -- --nocapture`; `cargo fmt --all --check`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | keep durable-record encoding canonical and applied-watermark waits cancellation-aware on every async read path |
+| 2026-04-01 | 9B | refined | Extended the shadow-materializer parity harness to use the same schema- and principal-aware planning helpers plus planner-residual pagination semantics as the live service, so indexed or policy-filtered shadow queries now compare full page results and cursors against the redb-backed oracle instead of only matching raw document sets. | `cargo test -p nimbus-engine shadow_materializer_queries_match_live_service_path -- --nocapture`; `cargo test -p nimbus-engine shadow_materializer_schema_aware_queries_match_live_service_path -- --nocapture`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep shadow parity anchored to live planner semantics before any serving-path promotion |
+| 2026-04-01 | 6A | refined | Verified and fixed two post-review Phase 6 gaps: journaled async mutations no longer leave behind detached cancellation-watcher tasks on non-cancelable paths, and sync point reads, queries, and pagination now wait for the same applied watermark as async reads before consulting materialized state. | `cargo test -p nimbus-engine mutation_async_non_cancelable_call_drops_unused_cancellation_future_after_completion -- --nocapture`; `cargo test -p nimbus-engine sync_query_waits_for_applied_journal_visibility_and_records_wait_metrics -- --nocapture`; `cargo test -p nimbus-engine sync_get_document_waits_for_applied_journal_visibility -- --nocapture`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep sync and async serving reads behind the same applied-watermark contract |
+| 2026-04-01 | 8B | refined | Verified and fixed the post-review embedded-replica drift: replica catch-up now refreshes schema state even when there are no new durable mutation records, replica-local query and pagination evaluation now reuse the same schema- and principal-aware planning helpers as the live service, and new regressions cover schema-only policy changes plus index rebuild changes after bootstrap. | `cargo check -p nimbus-storage -p nimbus-engine`; `cargo test -p nimbus-engine embedded_replica_ -- --nocapture`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server embedded_replica_matches_server_results_and_catches_up_after_http_writes -- --nocapture`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep the embedded replica aligned with live-service read semantics until any future serving promotion has stronger evidence |
+| 2026-04-01 | 9B | done | Added a TigerBeetle-inspired robustness harness around the shadow materializer and durable-journal replay path. The storage test matrix now proves replay convergence after interrupted compaction, rejection of corrupted journal and manifest inputs, and deterministic seeded rebuild parity against the redb-backed oracle across multiple generated histories; recovery bookkeeping also now preserves compaction counts monotonically when replay itself performs a compaction. Existing engine shadow-parity coverage remains in the verification matrix so redb stays the correctness oracle until any future serving promotion is explicitly justified. | `cargo test -p nimbus-storage shadow_materializer_ -- --nocapture`; `cargo fmt --all`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine shadow_materializer -- --nocapture`; `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | no further non-deferred roadmap items remain; only deferred or blocked items are left |
 | 2026-04-01 | 9B | checkpointed | Promoted 9B after completing 9A. The current implementation slice is focused on TigerBeetle-style robustness testing rather than new serving behavior: deterministic replay after interrupted materialization and interrupted compaction, corruption detection for journal or manifest inputs, and a seeded property-style rebuild harness that repeatedly compares shadow materialization against the authoritative redb-backed state. | document and code review | add the new storage-first robustness tests, extend shadow parity coverage where helpful, run targeted verification plus the crate-level suites, then mark 9B done |
-| 2026-04-01 | 9A | done | Added a storage-owned `ShadowMaterializer` that rebuilds from a materialized snapshot plus authoritative durable-journal tail, carries explicit versioned manifest state, validates checkpoint and pending-tail invariants during recovery, and applies deterministic record-count compaction while remaining off the serving path. The engine now exposes an async bootstrap helper for constructing the shadow copy from the authoritative bootstrap-plus-stream contract, and storage or engine tests now prove rebuild parity, deterministic compaction, checkpoint-boundary recovery, and representative query or pagination parity against the redb-backed service path. | `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage shadow_materializer -- --nocapture`; `cargo test -p neovex-engine shadow_materializer -- --nocapture`; `cargo fmt --all`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 9B |
+| 2026-04-01 | 9A | done | Added a storage-owned `ShadowMaterializer` that rebuilds from a materialized snapshot plus authoritative durable-journal tail, carries explicit versioned manifest state, validates checkpoint and pending-tail invariants during recovery, and applies deterministic record-count compaction while remaining off the serving path. The engine now exposes an async bootstrap helper for constructing the shadow copy from the authoritative bootstrap-plus-stream contract, and storage or engine tests now prove rebuild parity, deterministic compaction, checkpoint-boundary recovery, and representative query or pagination parity against the redb-backed service path. | `cargo check -p nimbus-storage -p nimbus-engine`; `cargo test -p nimbus-storage shadow_materializer -- --nocapture`; `cargo test -p nimbus-engine shadow_materializer -- --nocapture`; `cargo fmt --all`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 9B |
 | 2026-04-01 | 9A | checkpointed | Reconciled the dirty worktree to Phase 9A. The current implementation adds a storage-owned `ShadowMaterializer` built from a materialized snapshot plus durable-journal tail, carries explicit checkpoint and manifest state with deterministic record-count compaction, and exposes an engine helper for building the shadow copy from the authoritative journal so parity tests can compare local query evaluation against the live redb-backed service path. Verification has not run yet for this item. | document and code review | finish validating manifest and checkpoint invariants, run the new storage and engine parity tests, update `ARCHITECTURE.md`, then mark 9A done |
-| 2026-04-01 | 8B | done | Added a narrow read-only embedded replica path on top of the authoritative journal by introducing `EmbeddedReplica` in the engine, bootstrapping it from the 8A snapshot-plus-stream contract, replaying authoritative journal pages into a local materialized store, and validating local query or pagination results against the live service and HTTP surfaces before and after catch-up. Writes and reactive fan-out remain server-authoritative. | `cargo check -p neovex-engine -p neovex-server`; `cargo test -p neovex-engine embedded_replica_bootstrap_matches_live_query_and_pagination_results -- --nocapture`; `cargo test -p neovex-engine embedded_replica_catches_up_after_reconnection -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server embedded_replica_matches_server_results_and_catches_up_after_http_writes -- --nocapture`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 9A |
+| 2026-04-01 | 8B | done | Added a narrow read-only embedded replica path on top of the authoritative journal by introducing `EmbeddedReplica` in the engine, bootstrapping it from the 8A snapshot-plus-stream contract, replaying authoritative journal pages into a local materialized store, and validating local query or pagination results against the live service and HTTP surfaces before and after catch-up. Writes and reactive fan-out remain server-authoritative. | `cargo check -p nimbus-engine -p nimbus-server`; `cargo test -p nimbus-engine embedded_replica_bootstrap_matches_live_query_and_pagination_results -- --nocapture`; `cargo test -p nimbus-engine embedded_replica_catches_up_after_reconnection -- --nocapture`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server embedded_replica_matches_server_results_and_catches_up_after_http_writes -- --nocapture`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 9A |
 | 2026-04-01 | 8B | checkpointed | Promoted 8B after completing 8A. The implementation is starting with a narrow read-only embedded replica that bootstraps from the snapshot-plus-stream contract, applies the same durable journal records into a local materialized store, and compares local query results directly against the existing server-evaluated path before taking on broader edge or offline scope. | document and code review | add the replica consumer module, prove bootstrap plus catch-up against local query evaluation, then extend engine and server integration tests |
-| 2026-04-01 | 8A | done | Added a concrete tenant-scoped authoritative journal stream with ordered sequence cursors, bounded page reads, explicit cursor-floor validation, and snapshot-based bootstrap metadata that reuses the same durable-journal vocabulary. Storage now defines the stream contract, the engine exposes sync and async stream plus bootstrap helpers, the server serves `/journal` and `/journal/bootstrap`, and commit-log compatibility remains a projection over the same ordered history. | `cargo check -p neovex-storage -p neovex-engine -p neovex-server -p neovex-test-support`; `cargo test -p neovex-storage durable_journal_stream_uses_cursor_floor_after_retention_cut -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail -- --nocapture`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tolerant_pages -- --nocapture`; `cargo test -p neovex-engine durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_reads -- --nocapture`; `cargo test -p neovex-engine durable_journal_reads_return_strictly_ordered_authoritative_records -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server journal_route_returns_ordered_cursor_pages -- --nocapture`; `cargo test -p neovex-server journal_bootstrap_route_returns_snapshot_and_durable_cut -- --nocapture`; `cargo test -p neovex-server commit_log_route_returns_sequenced_commits -- --nocapture`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 8B |
+| 2026-04-01 | 8A | done | Added a concrete tenant-scoped authoritative journal stream with ordered sequence cursors, bounded page reads, explicit cursor-floor validation, and snapshot-based bootstrap metadata that reuses the same durable-journal vocabulary. Storage now defines the stream contract, the engine exposes sync and async stream plus bootstrap helpers, the server serves `/journal` and `/journal/bootstrap`, and commit-log compatibility remains a projection over the same ordered history. | `cargo check -p nimbus-storage -p nimbus-engine -p nimbus-server -p nimbus-test-support`; `cargo test -p nimbus-storage durable_journal_stream_uses_cursor_floor_after_retention_cut -- --nocapture`; `cargo test -p nimbus-storage materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail -- --nocapture`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tolerant_pages -- --nocapture`; `cargo test -p nimbus-engine durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_reads -- --nocapture`; `cargo test -p nimbus-engine durable_journal_reads_return_strictly_ordered_authoritative_records -- --nocapture`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server journal_route_returns_ordered_cursor_pages -- --nocapture`; `cargo test -p nimbus-server journal_bootstrap_route_returns_snapshot_and_durable_cut -- --nocapture`; `cargo test -p nimbus-server commit_log_route_returns_sequenced_commits -- --nocapture`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 8B |
 | 2026-04-01 | 8A | checkpointed | Promoted 8A after reconciling the 6B cleanup. The implementation is starting from a single authoritative sequence-cursor journal stream plus a bootstrap response that carries a materialized snapshot and its durable cut, so external consumers can reconstruct from the same durable-journal vocabulary instead of a second replication format. | document and code review | add bounded journal stream reads with cursor-floor semantics, expose bootstrap metadata and HTTP routes, then extend engine and server tests for resume, ordering, and snapshot-plus-stream reconstruction |
-| 2026-04-01 | 6B | refined | Split the completed Phase 6 journal surfaces into dedicated engine and storage modules to keep the authoritative-history path readable before 8A. Journal worker, batching, and apply sequencing now live in a dedicated mutations submodule; snapshot, restore, and rebuild logic now live in a storage journal-snapshot submodule; and `read_commit_log*` is explicitly maintained as a compatibility wrapper over the durable-journal path. | `cargo check -p neovex-storage -p neovex-engine -p neovex-server`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep 8A as next eligible item; continue favoring durable-journal vocabulary on new external surfaces |
-| 2026-04-01 | 6B | refined | Hardened the snapshot-plus-tail rebuild foundation after a TigerBeetle-guided checkpoint review by adding explicit materialized-snapshot boundary metadata and validation. Snapshots now carry a version plus the durable head seen at export time, and rebuild now rejects incomplete journal tails instead of silently reconstructing only the applied prefix when a snapshot was taken during apply lag. | `cargo test -p neovex-storage materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_plus_journal_tail_rebuild_matches_live_state -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence -- --nocapture`; `cargo fmt --all --check` | keep using explicit snapshot cut-point metadata as the basis for 8A retention, cursor, and bootstrap rules |
-| 2026-04-01 | 6B | done | Promoted the durable mutation journal from a durability boundary into the authoritative per-tenant ordered history by adding a materialized snapshot-plus-tail rebuild surface in storage, exposing direct durable-journal reads through the engine, and shifting dependency-matching and replay tests onto the durable record vocabulary. Materialized document/index state remains the serving read path, but it can now be rebuilt to a chosen sequence boundary from a snapshot plus authoritative journal tail, which gives CDC and replica work a concrete foundation. | `cargo check -p neovex-core -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage durable_journal_metadata_supports_dependency_intersection_checks -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_plus_journal_tail_rebuild_matches_live_state -- --nocapture`; `cargo test -p neovex-storage materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence -- --nocapture`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine durable_journal_reads_return_strictly_ordered_authoritative_records -- --nocapture`; `cargo test -p neovex-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 8A |
+| 2026-04-01 | 6B | refined | Split the completed Phase 6 journal surfaces into dedicated engine and storage modules to keep the authoritative-history path readable before 8A. Journal worker, batching, and apply sequencing now live in a dedicated mutations submodule; snapshot, restore, and rebuild logic now live in a storage journal-snapshot submodule; and `read_commit_log*` is explicitly maintained as a compatibility wrapper over the durable-journal path. | `cargo check -p nimbus-storage -p nimbus-engine -p nimbus-server`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | keep 8A as next eligible item; continue favoring durable-journal vocabulary on new external surfaces |
+| 2026-04-01 | 6B | refined | Hardened the snapshot-plus-tail rebuild foundation after a TigerBeetle-guided checkpoint review by adding explicit materialized-snapshot boundary metadata and validation. Snapshots now carry a version plus the durable head seen at export time, and rebuild now rejects incomplete journal tails instead of silently reconstructing only the applied prefix when a snapshot was taken during apply lag. | `cargo test -p nimbus-storage materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail -- --nocapture`; `cargo test -p nimbus-storage materialized_snapshot_plus_journal_tail_rebuild_matches_live_state -- --nocapture`; `cargo test -p nimbus-storage materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence -- --nocapture`; `cargo fmt --all --check` | keep using explicit snapshot cut-point metadata as the basis for 8A retention, cursor, and bootstrap rules |
+| 2026-04-01 | 6B | done | Promoted the durable mutation journal from a durability boundary into the authoritative per-tenant ordered history by adding a materialized snapshot-plus-tail rebuild surface in storage, exposing direct durable-journal reads through the engine, and shifting dependency-matching and replay tests onto the durable record vocabulary. Materialized document/index state remains the serving read path, but it can now be rebuilt to a chosen sequence boundary from a snapshot plus authoritative journal tail, which gives CDC and replica work a concrete foundation. | `cargo check -p nimbus-core -p nimbus-storage -p nimbus-engine`; `cargo test -p nimbus-storage durable_journal_metadata_supports_dependency_intersection_checks -- --nocapture`; `cargo test -p nimbus-storage materialized_snapshot_plus_journal_tail_rebuild_matches_live_state -- --nocapture`; `cargo test -p nimbus-storage materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence -- --nocapture`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine durable_journal_reads_return_strictly_ordered_authoritative_records -- --nocapture`; `cargo test -p nimbus-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 8A |
 | 2026-04-01 | 6B | checkpointed | Promoted 6B after completing 6A and auditing the remaining authoritative-history gaps. The durable mutation journal now exists and already gates durability for async mutations, but the storage layer still needs an explicit snapshot-plus-tail rebuild surface, authoritative journal reads should stop depending on `CommitEntry`-only vocabulary, and replay coverage still needs to prove ordered journal consumption and point-in-time reconstruction against the materialized view. | document and code review | add snapshot export or restore plus journal-tail rebuild helpers, expose authoritative journal reads through the service layer, add ordered replay tests, then run targeted storage and engine verification |
-| 2026-04-01 | 6A | done | Finalized the durable mutation journal introduced in Phase 6 by making `DurableMutationRecord` the explicit on-disk journal format, tracking per-tenant durable versus applied watermarks in storage, batching immediate and scheduled async mutations through a tenant-local durable-append then ordered-apply queue, recovering durable-but-unapplied records on tenant open, and keeping reads, cache publication, and subscription fan-out behind the applied visibility boundary. Subscription bootstrap now registers inactive listeners until the initial result is delivered so journal-backed writes cannot publish a reactive update before bootstrap ordering is established. | `cargo check -p neovex-core -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage durable_journal_serialization_preserves_payload_and_metadata -- --nocapture`; `cargo test -p neovex-storage durable_journal_batch_append_enforces_no_holes -- --nocapture`; `cargo test -p neovex-storage recovery_replays_durable_but_unapplied_records -- --nocapture`; `cargo test -p neovex-storage commit_log_sequences_increment -- --nocapture`; `cargo test -p neovex-storage canceled_async_write_after_commit_still_reports_committed -- --nocapture`; `cargo test -p neovex-storage canceled_async_write_before_commit_leaves_no_durable_state -- --nocapture`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine mutation_journal_acknowledges_after_durable_append_before_apply_visibility -- --nocapture`; `cargo test -p neovex-engine query_waits_for_applied_journal_visibility_and_records_wait_metrics -- --nocapture`; `cargo test -p neovex-engine subscription_updates_publish_only_after_journal_apply -- --nocapture`; `cargo test -p neovex-engine service_reload_recovers_durable_journal_before_serving_async_reads -- --nocapture`; `cargo test -p neovex-engine mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log -- --nocapture`; `cargo test -p neovex-engine mutation_async_cancellable_after_commit_returns_committed_result -- --nocapture`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo test -p neovex-server --test reactive_loop`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 6B |
-| 2026-04-01 | 6A | checkpointed | Promoted 6A after completing 5C and beginning the first journal-oriented implementation slice. The current worktree has started introducing a first-class durable mutation record in `neovex-core`, per-tenant durable versus applied journal progress in `neovex-storage`, startup recovery hooks, and tenant-local mutation journal queue or watermark scaffolding in the engine. The item is not complete yet: the immediate async mutation path still needs the batched durable-append plus ordered-apply flow to compile and replace the old direct materialization path, and read-watermark gating plus the new storage or engine tests still need to land before verification can run. | document and code review | finish the immediate async journal batch path, gate reads on applied watermarks, add recovery and no-hole tests, then run targeted verification plus roadmap checks |
-| 2026-04-01 | 5C | done | Removed the remaining hot-path blocking adaptation layers by replacing `Service::call_blocking(...)` tenant-control and MAU paths with async storage-engine APIs, reworking tenant deletion around a tenant-local close-then-drain lifecycle primitive, and making runtime-backed async host calls await real engine or storage futures directly. Direct HTTP document reads and runtime-backed host operations now propagate cancellation to real storage work, and the default parallel `cargo test -p neovex-server` suite continues to pass after the 5A Deno-aligned bootstrap hardening. | `cargo check -p neovex-engine -p neovex-server`; `cargo test -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-runtime`; `cargo test -p neovex-server`; `cargo test -p neovex-engine delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work`; `cargo test -p neovex-server async_runtime_integration_removes_hot_path_blocking_adapters`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 6A |
-| 2026-04-01 | 5C | checkpointed | Promoted 5C after completing 5B and re-inventoried the remaining blocking adaptation layers. The only hot-path wrappers left are `Service::call_blocking(...)` in tenant create/delete and MAU recording plus the runtime host bridge `execute_async_blocking_host_call(...)` wrapper; the next slice will replace those with real async storage-backed lifecycle and host-call futures. The default parallel `cargo test -p neovex-server` suite now passes cleanly, so the earlier V8 abort appears resolved by the 5A Deno-aligned bootstrap hardening rather than this remaining 5C scope. | document and code review; `cargo test -p neovex-server` | remove the blocking helpers, migrate tenant lifecycle and usage writes onto async storage, and keep request-drop cancellation coverage green |
-| 2026-04-01 | 5B | done | Introduced an explicit async write transaction boundary in `neovex-storage` via `TenantWriteTransaction`, `TenantWriteCommit`, and `TenantWriteOutcome`; moved mutation, scheduler, and schema write paths onto that durable model; made the pre-commit versus post-commit boundary explicit with deterministic fault seams and transport-drop coverage; and updated `ARCHITECTURE.md` to describe the write-side async commit semantics. | `cargo check -p neovex-storage -p neovex-engine`; `cargo check -p neovex-server`; `cargo test -p neovex-storage async_write`; `cargo test -p neovex-engine mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log`; `cargo test -p neovex-engine mutation_async_cancellable_after_commit_returns_committed_result`; `cargo test -p neovex-engine scheduler_async_write_path_round_trips_pending_running_and_history_state`; `cargo test -p neovex-engine schema_async_write_path_rebuilds_and_removes_indexes_durably`; `cargo test -p neovex-server dropped_http_insert_after_commit_still_persists_the_document`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 5C is now in progress |
-| 2026-04-01 | 5B | checkpointed | Promoted 5B after the clean 5A checkpoint commit and re-inventoried the remaining write-side `call_blocking(...)` paths in mutations, scheduler state transitions, schema replacement, tenant create/delete, and MAU recording. The first implementation slice will introduce an explicit async write transaction boundary in `neovex-storage`, move document mutation commit plumbing onto it, and make pre-commit versus post-commit cancellation observable in engine tests before migrating the remaining write surfaces. | document and code review | land mutation-path async transactions first, then migrate scheduler and schema writes onto the same durable boundary |
-| 2026-04-01 | 5A | refined | Hardened the V8 bootstrap used by the async read-path server suite by switching the embedder onto Deno's unprotected platform mode and moving runtime bootstrap snapshot creation behind one process-global cache, so sibling-thread test binaries and multiple registries no longer race or duplicate bootstrap work during default parallel `cargo test` runs. | `cargo test -p neovex-runtime executor`; `cargo test -p neovex-server tests::convex_runtime -- --test-threads=2`; `cargo test -p neovex-server --test reactive_loop -- --test-threads=2`; `cargo test -p neovex-server`; `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item remains 5B |
-| 2026-04-01 | 5A | done | Added a read-first async storage boundary in `neovex-storage` with native async traits plus redb-backed tenant and usage executors, moved tenant load or list control paths and engine read or subscription bootstrap paths onto that boundary, preserved cooperative scan or index cancellation plus concurrent same-tenant readers, removed `Service::call_blocking_cancellable(...)`, and updated `ARCHITECTURE.md` to describe the async read path while leaving writes on the synchronous path for Phase 5B. | `cargo check -p neovex-storage -p neovex-engine`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server -- --test-threads=1`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 5B |
+| 2026-04-01 | 6A | done | Finalized the durable mutation journal introduced in Phase 6 by making `DurableMutationRecord` the explicit on-disk journal format, tracking per-tenant durable versus applied watermarks in storage, batching immediate and scheduled async mutations through a tenant-local durable-append then ordered-apply queue, recovering durable-but-unapplied records on tenant open, and keeping reads, cache publication, and subscription fan-out behind the applied visibility boundary. Subscription bootstrap now registers inactive listeners until the initial result is delivered so journal-backed writes cannot publish a reactive update before bootstrap ordering is established. | `cargo check -p nimbus-core -p nimbus-storage -p nimbus-engine`; `cargo test -p nimbus-storage durable_journal_serialization_preserves_payload_and_metadata -- --nocapture`; `cargo test -p nimbus-storage durable_journal_batch_append_enforces_no_holes -- --nocapture`; `cargo test -p nimbus-storage recovery_replays_durable_but_unapplied_records -- --nocapture`; `cargo test -p nimbus-storage commit_log_sequences_increment -- --nocapture`; `cargo test -p nimbus-storage canceled_async_write_after_commit_still_reports_committed -- --nocapture`; `cargo test -p nimbus-storage canceled_async_write_before_commit_leaves_no_durable_state -- --nocapture`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine mutation_journal_acknowledges_after_durable_append_before_apply_visibility -- --nocapture`; `cargo test -p nimbus-engine query_waits_for_applied_journal_visibility_and_records_wait_metrics -- --nocapture`; `cargo test -p nimbus-engine subscription_updates_publish_only_after_journal_apply -- --nocapture`; `cargo test -p nimbus-engine service_reload_recovers_durable_journal_before_serving_async_reads -- --nocapture`; `cargo test -p nimbus-engine mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log -- --nocapture`; `cargo test -p nimbus-engine mutation_async_cancellable_after_commit_returns_committed_result -- --nocapture`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server`; `cargo test -p nimbus-server --test reactive_loop`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 6B |
+| 2026-04-01 | 6A | checkpointed | Promoted 6A after completing 5C and beginning the first journal-oriented implementation slice. The current worktree has started introducing a first-class durable mutation record in `nimbus-core`, per-tenant durable versus applied journal progress in `nimbus-storage`, startup recovery hooks, and tenant-local mutation journal queue or watermark scaffolding in the engine. The item is not complete yet: the immediate async mutation path still needs the batched durable-append plus ordered-apply flow to compile and replace the old direct materialization path, and read-watermark gating plus the new storage or engine tests still need to land before verification can run. | document and code review | finish the immediate async journal batch path, gate reads on applied watermarks, add recovery and no-hole tests, then run targeted verification plus roadmap checks |
+| 2026-04-01 | 5C | done | Removed the remaining hot-path blocking adaptation layers by replacing `Service::call_blocking(...)` tenant-control and MAU paths with async storage-engine APIs, reworking tenant deletion around a tenant-local close-then-drain lifecycle primitive, and making runtime-backed async host calls await real engine or storage futures directly. Direct HTTP document reads and runtime-backed host operations now propagate cancellation to real storage work, and the default parallel `cargo test -p nimbus-server` suite continues to pass after the 5A Deno-aligned bootstrap hardening. | `cargo check -p nimbus-engine -p nimbus-server`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server`; `cargo test -p nimbus-engine delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work`; `cargo test -p nimbus-server async_runtime_integration_removes_hot_path_blocking_adapters`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 6A |
+| 2026-04-01 | 5C | checkpointed | Promoted 5C after completing 5B and re-inventoried the remaining blocking adaptation layers. The only hot-path wrappers left are `Service::call_blocking(...)` in tenant create/delete and MAU recording plus the runtime host bridge `execute_async_blocking_host_call(...)` wrapper; the next slice will replace those with real async storage-backed lifecycle and host-call futures. The default parallel `cargo test -p nimbus-server` suite now passes cleanly, so the earlier V8 abort appears resolved by the 5A Deno-aligned bootstrap hardening rather than this remaining 5C scope. | document and code review; `cargo test -p nimbus-server` | remove the blocking helpers, migrate tenant lifecycle and usage writes onto async storage, and keep request-drop cancellation coverage green |
+| 2026-04-01 | 5B | done | Introduced an explicit async write transaction boundary in `nimbus-storage` via `TenantWriteTransaction`, `TenantWriteCommit`, and `TenantWriteOutcome`; moved mutation, scheduler, and schema write paths onto that durable model; made the pre-commit versus post-commit boundary explicit with deterministic fault seams and transport-drop coverage; and updated `ARCHITECTURE.md` to describe the write-side async commit semantics. | `cargo check -p nimbus-storage -p nimbus-engine`; `cargo check -p nimbus-server`; `cargo test -p nimbus-storage async_write`; `cargo test -p nimbus-engine mutation_async_cancellable_before_commit_rolls_back_document_index_and_commit_log`; `cargo test -p nimbus-engine mutation_async_cancellable_after_commit_returns_committed_result`; `cargo test -p nimbus-engine scheduler_async_write_path_round_trips_pending_running_and_history_state`; `cargo test -p nimbus-engine schema_async_write_path_rebuilds_and_removes_indexes_durably`; `cargo test -p nimbus-server dropped_http_insert_after_commit_still_persists_the_document`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 5C is now in progress |
+| 2026-04-01 | 5B | checkpointed | Promoted 5B after the clean 5A checkpoint commit and re-inventoried the remaining write-side `call_blocking(...)` paths in mutations, scheduler state transitions, schema replacement, tenant create/delete, and MAU recording. The first implementation slice will introduce an explicit async write transaction boundary in `nimbus-storage`, move document mutation commit plumbing onto it, and make pre-commit versus post-commit cancellation observable in engine tests before migrating the remaining write surfaces. | document and code review | land mutation-path async transactions first, then migrate scheduler and schema writes onto the same durable boundary |
+| 2026-04-01 | 5A | refined | Hardened the V8 bootstrap used by the async read-path server suite by switching the embedder onto Deno's unprotected platform mode and moving runtime bootstrap snapshot creation behind one process-global cache, so sibling-thread test binaries and multiple registries no longer race or duplicate bootstrap work during default parallel `cargo test` runs. | `cargo test -p nimbus-runtime executor`; `cargo test -p nimbus-server tests::convex_runtime -- --test-threads=2`; `cargo test -p nimbus-server --test reactive_loop -- --test-threads=2`; `cargo test -p nimbus-server`; `cargo check -p nimbus-storage -p nimbus-engine`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item remains 5B |
+| 2026-04-01 | 5A | done | Added a read-first async storage boundary in `nimbus-storage` with native async traits plus redb-backed tenant and usage executors, moved tenant load or list control paths and engine read or subscription bootstrap paths onto that boundary, preserved cooperative scan or index cancellation plus concurrent same-tenant readers, removed `Service::call_blocking_cancellable(...)`, and updated `ARCHITECTURE.md` to describe the async read path while leaving writes on the synchronous path for Phase 5B. | `cargo check -p nimbus-storage -p nimbus-engine`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server -- --test-threads=1`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 5B |
 | 2026-04-01 | 5A | checkpointed | Promoted 5A after the clean 4D baseline, inventoried the remaining `call_blocking(...)` / `call_blocking_cancellable(...)` read and control paths in engine services, and mapped the first async migration slice to point reads, query and pagination backing scans, commit-log/latest-sequence reads, tenant load/list, schema reads, and usage reads. No code has landed yet for 5A. | document and code review | introduce the minimal async storage trait surface and a redb-backed read adapter first |
-| 2026-04-01 | 4D | done | Added first-class deterministic simulation seams in `neovex-storage` for clocks and named fault points, threaded them through `TenantStore` and `Service` via `*_with_simulation(...)` constructors, guarded storage commit visibility with reproducible injected-fault hooks, added shared deterministic harness support in `neovex-test-support`, and extended storage plus engine tests to prove seeded fault reproducibility and manual-clock scheduler execution without wall-clock sleeps. | `cargo check -p neovex-storage -p neovex-engine -p neovex-test-support`; `cargo test -p neovex-storage injected_fault_before_visibility_rolls_back_the_write_deterministically`; `cargo test -p neovex-storage seeded_fault_injector_reproduces_the_same_schedule_for_the_same_seed`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine manual_clock_advances_scheduled_work_without_wall_clock_sleep`; `cargo test -p neovex-engine scheduled_mutation_executes_and_triggers_reactive_update`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 5A |
-| 2026-04-01 | 3F | done | Added a stable-snapshot `MutationExecutionUnit` in the engine, layered serializable OCC validation over the shared dependency model, reused the same dependency vocabulary for runtime read tracking and conflict checks, routed runtime mutation `ctx.db.*`, `ctx.scheduler.*`, and direct `ctx.runQuery`/`ctx.runMutation` paths through staged execution-unit state, and committed staged document plus scheduler writes atomically in one redb transaction with bridge and engine regressions for conflicts, authorization-shaped visibility, read-your-own-writes, and scheduler-side-effect rollback on conflict. | `cargo test -p neovex-storage`; `cargo test -p neovex-engine mutation_execution_unit`; `cargo test -p neovex-engine`; `cargo test -p neovex-server read_tracking::tests::`; `cargo test -p neovex-server adapters::convex::tests::authorization::`; `cargo test -p neovex-server convex_named_mutation_can_use_bootstrapped_ctx_scheduler_api`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 4D |
-| 2026-04-01 | 3E | done | Added declarative principal and access-policy types in `neovex-core`, enforced planner-aware authorization in engine reads and atomic authorization in writes, stored principal snapshots plus policy revisions on subscriptions, threaded normalized Convex auth through runtime and handler entrypoints, and added engine plus server coverage for filtered reads, denied writes, policy-change teardown, auth-change teardown, and runtime non-bypass behavior. | `cargo test -p neovex-engine`; `cargo test -p neovex-server tests::auth::`; `cargo test -p neovex-server adapters::convex::tests::authorization::`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 3F |
-| 2026-04-01 | 3E | checkpointed | Added declarative principal and access-policy types in `neovex-core`, threaded normalized principals through engine query, mutation, subscription, and Convex runtime paths, stored principal snapshots plus policy revisions on subscriptions, and made policy or auth-context changes invalidate cached or live views conservatively. | `cargo check --workspace` | Add targeted engine and server auth tests, rerun roadmap-required verification, and then mark 3E done |
-| 2026-04-01 | 3D | done | Introduced a shared `DependencySet` model plus commit-intersection helper in `neovex-core`, moved engine subscriptions onto that normalized dependency vocabulary, translated runtime `RuntimeReadSet` values into the same shared form for re-evaluation skip checks, and added core, engine, and runtime tests for shared dependency matching and coarse engine fallback behavior. | `cargo test -p neovex-core`; `cargo test -p neovex-engine`; `cargo test -p neovex-server runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavior`; `cargo test -p neovex-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3E is now in progress |
-| 2026-04-01 | 3C | done | Added a tenant-local document cache to `TenantRuntime`, invalidated cache entries before subscription re-evaluation on every committed mutation, populated cached documents from `get_document(...)`, indexed lookups, and evaluated query results, and added deterministic hit or miss coverage for repeated gets, mutation invalidation, and subscription refreshes. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3D is now in progress |
-| 2026-04-01 | 3B | done | Extracted pure query planning into a private `QueryPlan` plus `plan_query(...)` helper in `service/queries.rs`, kept storage access in service-layer execution helpers, preserved paginated query shape while using residual filters for non-paginated exact-index scans, and added direct planner tests for full-scan, exact-index, range-index, and residual-filter behavior. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3C is now in progress |
-| 2026-04-01 | 3A | done | Narrowed engine-side subscription invalidation for insert and delete commits by reusing the evaluator filter matcher against candidate document snapshots, kept updates conservatively table-level to avoid false negatives, and added targeted subscription tests for matching inserts, matching deletes, conservative updates, and the indexed re-evaluation path. | `cargo test -p neovex-engine`; `cargo test -p neovex-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3B is now in progress |
-| 2026-04-01 | 7A | done | Added per-tenant top-level executor admission control with in-flight and queue-depth caps, recorded rejected invocation metrics globally and per tenant, mapped queue-limit failures to typed core/runtime errors plus `429` HTTP and structured WebSocket bootstrap errors, and extended runtime plus server coverage for fairness, rejection accounting, and cancellation safety. | `cargo test -p neovex-runtime`; `cargo test -p neovex-server convex_runtime_http_rejections_return_too_many_requests`; `cargo test -p neovex-server convex_runtime_websocket_bootstrap_rejections_send_error_frames`; `cargo test -p neovex-server runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is_enabled`; `cargo test -p neovex-server runtime_metrics_snapshot_surfaces_rejected_invocation_counts`; `cargo test -p neovex-server convex_runtime_only_query_reuses_same_isolate_for_ctx_run_query`; `cargo test -p neovex-server convex_runtime_only_query_enforces_nested_runtime_budget`; `cargo test -p neovex-server dropped_runtime_http_request_cancels_runtime_invocation`; `cargo test -p neovex-server dropped_queued_runtime_request_never_starts_mutation`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3A followed next in the same work session |
-| 2026-04-01 | 2A | done | Added worker-local warmed runtime shells via bootstrap startup snapshots owned by `RuntimeExecutor` workers, preserved per-invocation bundle/auth/session semantics by reinitializing runtime state and reloading user bundles each call, surfaced deterministic isolate pool counters in runtime diagnostics, and extended runtime plus server coverage for reuse, replacement on cancellation/timeout, nested dispatch, and runtime read-set tracking. | `cargo test -p neovex-runtime`; `cargo test -p neovex-server convex_runtime_only_query_reuses_same_isolate_for_ctx_run_query`; `cargo test -p neovex-server dropped_runtime_http_request_cancels_runtime_invocation`; `cargo test -p neovex-server dropped_queued_runtime_request_never_starts_mutation`; `cargo test -p neovex-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 7A is now in progress |
-| 2026-04-01 | 1G | done | Added drop-based subscription cleanup handles while preserving stable numeric ids, threaded those handles through generic, Convex, and runtime-backed websocket ownership paths, and added engine plus reactive-loop coverage for drop-based unregister on disconnect without an explicit unsubscribe message. | `cargo test -p neovex-engine`; `cargo test -p neovex-server websocket_disconnect_drops_subscription_without_explicit_unsubscribe`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 2A |
-| 2026-04-01 | 1F | done | Replaced the scheduler's unconditional interval polling with a next-due sleep loop across loaded tenants, added storage and service helpers for earliest scheduled or cron work, and introduced `Notify`-based wakeups so newly scheduled earlier work resumes promptly without changing bin-owned shutdown behavior. | `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1G |
-| 2026-04-01 | 1E | done | Routed full-scan fallback query and pagination evaluation through a row-at-a-time storage scan that only materializes matching documents, while preserving existing sort, cursor, and limit semantics and explicitly avoiding any partial MessagePack decoding claims. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1F |
-| 2026-04-01 | 1D | done | Deduplicated direct and scheduled mutation planning behind shared per-variant helpers in `service/mutations.rs`, keeping delete snapshot handling explicit while leaving the public direct and scheduled entrypoints as thin wrappers over the shared execution-mode path. | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1E |
-| 2026-04-01 | 1C | done | Relaxed diagnostic-only atomic counters in `RuntimeMetrics`, documented why relaxed ordering is safe there, and expanded snapshot assertions while leaving `HostCallCancellationState` on `SeqCst`. | `rg -n "Ordering::SeqCst" crates/neovex-runtime/src/metrics.rs crates/neovex-runtime/src/host.rs`; `cargo test -p neovex-runtime metrics`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1D |
-| 2026-04-01 | 1B | done | Moved `RuntimeBundle` onto shared internal state, added a stable canonical-path-plus-digest bundle identity for pooling/provenance bookkeeping, and kept path-backed bundles on strict per-invocation SHA-256 verification with regression tests for clone identity, tamper-after-success detection, and canonical-path normalization. | `cargo test -p neovex-runtime runtime_bundle`; `cargo test -p neovex-runtime runtime_rejects_bundle_integrity_mismatch`; `cargo test -p neovex-server convex_registry_requires_runtime_bundle_hash_sidecar`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1C |
-| 2026-04-01 | 1A | done | Reused one Tokio current-thread runtime per runtime worker, replaced the blocking entrypoint's async bridge with blocking worker submission/result handling, and added deterministic executor tests for worker-runtime reuse and sync entrypoint coverage. | `cargo test -p neovex-runtime executor`; `cargo test -p neovex-server convex_runtime::cancellation::request_drops`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1B |
+| 2026-04-01 | 4D | done | Added first-class deterministic simulation seams in `nimbus-storage` for clocks and named fault points, threaded them through `TenantStore` and `Service` via `*_with_simulation(...)` constructors, guarded storage commit visibility with reproducible injected-fault hooks, added shared deterministic harness support in `nimbus-test-support`, and extended storage plus engine tests to prove seeded fault reproducibility and manual-clock scheduler execution without wall-clock sleeps. | `cargo check -p nimbus-storage -p nimbus-engine -p nimbus-test-support`; `cargo test -p nimbus-storage injected_fault_before_visibility_rolls_back_the_write_deterministically`; `cargo test -p nimbus-storage seeded_fault_injector_reproduces_the_same_schedule_for_the_same_seed`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine manual_clock_advances_scheduled_work_without_wall_clock_sleep`; `cargo test -p nimbus-engine scheduled_mutation_executes_and_triggers_reactive_update`; `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 5A |
+| 2026-04-01 | 3F | done | Added a stable-snapshot `MutationExecutionUnit` in the engine, layered serializable OCC validation over the shared dependency model, reused the same dependency vocabulary for runtime read tracking and conflict checks, routed runtime mutation `ctx.db.*`, `ctx.scheduler.*`, and direct `ctx.runQuery`/`ctx.runMutation` paths through staged execution-unit state, and committed staged document plus scheduler writes atomically in one redb transaction with bridge and engine regressions for conflicts, authorization-shaped visibility, read-your-own-writes, and scheduler-side-effect rollback on conflict. | `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine mutation_execution_unit`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server read_tracking::tests::`; `cargo test -p nimbus-server adapters::convex::tests::authorization::`; `cargo test -p nimbus-server convex_named_mutation_can_use_bootstrapped_ctx_scheduler_api`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 4D |
+| 2026-04-01 | 3E | done | Added declarative principal and access-policy types in `nimbus-core`, enforced planner-aware authorization in engine reads and atomic authorization in writes, stored principal snapshots plus policy revisions on subscriptions, threaded normalized Convex auth through runtime and handler entrypoints, and added engine plus server coverage for filtered reads, denied writes, policy-change teardown, auth-change teardown, and runtime non-bypass behavior. | `cargo test -p nimbus-engine`; `cargo test -p nimbus-server tests::auth::`; `cargo test -p nimbus-server adapters::convex::tests::authorization::`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 3F |
+| 2026-04-01 | 3E | checkpointed | Added declarative principal and access-policy types in `nimbus-core`, threaded normalized principals through engine query, mutation, subscription, and Convex runtime paths, stored principal snapshots plus policy revisions on subscriptions, and made policy or auth-context changes invalidate cached or live views conservatively. | `cargo check --workspace` | Add targeted engine and server auth tests, rerun roadmap-required verification, and then mark 3E done |
+| 2026-04-01 | 3D | done | Introduced a shared `DependencySet` model plus commit-intersection helper in `nimbus-core`, moved engine subscriptions onto that normalized dependency vocabulary, translated runtime `RuntimeReadSet` values into the same shared form for re-evaluation skip checks, and added core, engine, and runtime tests for shared dependency matching and coarse engine fallback behavior. | `cargo test -p nimbus-core`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavior`; `cargo test -p nimbus-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3E is now in progress |
+| 2026-04-01 | 3C | done | Added a tenant-local document cache to `TenantRuntime`, invalidated cache entries before subscription re-evaluation on every committed mutation, populated cached documents from `get_document(...)`, indexed lookups, and evaluated query results, and added deterministic hit or miss coverage for repeated gets, mutation invalidation, and subscription refreshes. | `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3D is now in progress |
+| 2026-04-01 | 3B | done | Extracted pure query planning into a private `QueryPlan` plus `plan_query(...)` helper in `service/queries.rs`, kept storage access in service-layer execution helpers, preserved paginated query shape while using residual filters for non-paginated exact-index scans, and added direct planner tests for full-scan, exact-index, range-index, and residual-filter behavior. | `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3C is now in progress |
+| 2026-04-01 | 3A | done | Narrowed engine-side subscription invalidation for insert and delete commits by reusing the evaluator filter matcher against candidate document snapshots, kept updates conservatively table-level to avoid false negatives, and added targeted subscription tests for matching inserts, matching deletes, conservative updates, and the indexed re-evaluation path. | `cargo test -p nimbus-engine`; `cargo test -p nimbus-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3B is now in progress |
+| 2026-04-01 | 7A | done | Added per-tenant top-level executor admission control with in-flight and queue-depth caps, recorded rejected invocation metrics globally and per tenant, mapped queue-limit failures to typed core/runtime errors plus `429` HTTP and structured WebSocket bootstrap errors, and extended runtime plus server coverage for fairness, rejection accounting, and cancellation safety. | `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server convex_runtime_http_rejections_return_too_many_requests`; `cargo test -p nimbus-server convex_runtime_websocket_bootstrap_rejections_send_error_frames`; `cargo test -p nimbus-server runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is_enabled`; `cargo test -p nimbus-server runtime_metrics_snapshot_surfaces_rejected_invocation_counts`; `cargo test -p nimbus-server convex_runtime_only_query_reuses_same_isolate_for_ctx_run_query`; `cargo test -p nimbus-server convex_runtime_only_query_enforces_nested_runtime_budget`; `cargo test -p nimbus-server dropped_runtime_http_request_cancels_runtime_invocation`; `cargo test -p nimbus-server dropped_queued_runtime_request_never_starts_mutation`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 3A followed next in the same work session |
+| 2026-04-01 | 2A | done | Added worker-local warmed runtime shells via bootstrap startup snapshots owned by `RuntimeExecutor` workers, preserved per-invocation bundle/auth/session semantics by reinitializing runtime state and reloading user bundles each call, surfaced deterministic isolate pool counters in runtime diagnostics, and extended runtime plus server coverage for reuse, replacement on cancellation/timeout, nested dispatch, and runtime read-set tracking. | `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server convex_runtime_only_query_reuses_same_isolate_for_ctx_run_query`; `cargo test -p nimbus-server dropped_runtime_http_request_cancels_runtime_invocation`; `cargo test -p nimbus-server dropped_queued_runtime_request_never_starts_mutation`; `cargo test -p nimbus-server convex_runtime_nested_query_subscription_tracks_inner_runtime_reads`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | 7A is now in progress |
+| 2026-04-01 | 1G | done | Added drop-based subscription cleanup handles while preserving stable numeric ids, threaded those handles through generic, Convex, and runtime-backed websocket ownership paths, and added engine plus reactive-loop coverage for drop-based unregister on disconnect without an explicit unsubscribe message. | `cargo test -p nimbus-engine`; `cargo test -p nimbus-server websocket_disconnect_drops_subscription_without_explicit_unsubscribe`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 2A |
+| 2026-04-01 | 1F | done | Replaced the scheduler's unconditional interval polling with a next-due sleep loop across loaded tenants, added storage and service helpers for earliest scheduled or cron work, and introduced `Notify`-based wakeups so newly scheduled earlier work resumes promptly without changing bin-owned shutdown behavior. | `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1G |
+| 2026-04-01 | 1E | done | Routed full-scan fallback query and pagination evaluation through a row-at-a-time storage scan that only materializes matching documents, while preserving existing sort, cursor, and limit semantics and explicitly avoiding any partial MessagePack decoding claims. | `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1F |
+| 2026-04-01 | 1D | done | Deduplicated direct and scheduled mutation planning behind shared per-variant helpers in `service/mutations.rs`, keeping delete snapshot handling explicit while leaving the public direct and scheduled entrypoints as thin wrappers over the shared execution-mode path. | `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1E |
+| 2026-04-01 | 1C | done | Relaxed diagnostic-only atomic counters in `RuntimeMetrics`, documented why relaxed ordering is safe there, and expanded snapshot assertions while leaving `HostCallCancellationState` on `SeqCst`. | `rg -n "Ordering::SeqCst" crates/nimbus-runtime/src/metrics.rs crates/nimbus-runtime/src/host.rs`; `cargo test -p nimbus-runtime metrics`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1D |
+| 2026-04-01 | 1B | done | Moved `RuntimeBundle` onto shared internal state, added a stable canonical-path-plus-digest bundle identity for pooling/provenance bookkeeping, and kept path-backed bundles on strict per-invocation SHA-256 verification with regression tests for clone identity, tamper-after-success detection, and canonical-path normalization. | `cargo test -p nimbus-runtime runtime_bundle`; `cargo test -p nimbus-runtime runtime_rejects_bundle_integrity_mismatch`; `cargo test -p nimbus-server convex_registry_requires_runtime_bundle_hash_sidecar`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1C |
+| 2026-04-01 | 1A | done | Reused one Tokio current-thread runtime per runtime worker, replaced the blocking entrypoint's async bridge with blocking worker submission/result handling, and added deterministic executor tests for worker-runtime reuse and sync entrypoint coverage. | `cargo test -p nimbus-runtime executor`; `cargo test -p nimbus-server convex_runtime::cancellation::request_drops`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | next eligible item is 1B |
 | 2026-04-01 | meta | refined | Tightened the Codex protocol so resumed runs must reconcile dirty worktrees, resume `in_progress` items first, and checkpoint roadmap state before likely compaction, interruption, or handoff. | document review | keep using the roadmap as the durable progress log during implementation |
 | 2026-04-01 | meta | documented | Added Codex execution protocol, status ledger, status transitions, and execution log so the roadmap can survive autonomous compactions and handoffs. | document review | start updating this log when code work begins |
 
@@ -406,7 +406,7 @@ Every work item below should preserve them.
    its async successor. No work item should create a bypass around validation,
    indexing, commit-log append, or subscription fan-out.
 
-5. `neovex-runtime` stays independent.
+5. `nimbus-runtime` stays independent.
    The runtime crate still has zero workspace dependencies. Pooling, fairness,
    metrics, and async-bridge work must preserve that boundary.
 
@@ -447,7 +447,7 @@ Every work item below should preserve them.
     roadmap should move toward one normalized dependency-set model that can feed
     invalidation, replay consumers, and future OCC-style read/write-set work.
 
-12. If Neovex adds a custom journal-driven materializer, it should favor
+12. If Nimbus adds a custom journal-driven materializer, it should favor
     deterministic compaction and replay semantics inspired by TigerBeetle.
     Compaction and recovery behavior should be driven by journal state,
     checkpoint state, and explicit configuration rather than wall-clock timing
@@ -476,7 +476,7 @@ Every work item below should preserve them.
 
 ## Research Recommendation Status
 
-This section records how the research guide maps onto Neovex's actual project
+This section records how the research guide maps onto Nimbus's actual project
 decisions so agents do not have to infer intent from multiple documents.
 
 ### Adopted in this roadmap
@@ -486,7 +486,7 @@ decisions so agents do not have to infer intent from multiple documents.
 2. Use full re-evaluation plus dependency tracking as the correctness path
    before more advanced invalidation or materialization work.
 
-3. Build one Neovex-owned logical durable journal that can later serve replay,
+3. Build one Nimbus-owned logical durable journal that can later serve replay,
    invalidation, CDC, and replica consumers.
 
 4. Keep the server authoritative for v1 sync while preserving a later path to
@@ -513,13 +513,13 @@ decisions so agents do not have to infer intent from multiple documents.
    is in place. This roadmap preserves room for that layer, but does not make
    it a near-term implementation target.
 
-5. A Neovex-native schema-generated API and typed WASM plugin ABI are scheduled
+5. A Nimbus-native schema-generated API and typed WASM plugin ABI are scheduled
    in Phase `11`, using battle-tested patterns from PostgREST, Hasura, and
    Wasmtime while staying additive to the Convex compatibility surface.
 
 ### Intentional deviations from the research guide
 
-1. Neovex will not replace the V8 runtime with WASM in this roadmap.
+1. Nimbus will not replace the V8 runtime with WASM in this roadmap.
    The research guide's "schema-generated CRUD plus WASM plugins" direction is
    still valuable, but this project deliberately keeps V8 and `deno_core` as a
    first-class execution surface for Convex compatibility. If WASM is added, it
@@ -568,15 +568,15 @@ Use this section as the default operating procedure for every work item below.
 ### Where to add tests
 
 - runtime unit tests:
-  `crates/neovex-runtime/src/*.rs`
+  `crates/nimbus-runtime/src/*.rs`
 - engine behavior tests:
-  `crates/neovex-engine/src/tests.rs`
+  `crates/nimbus-engine/src/tests.rs`
 - storage behavior tests:
-  `crates/neovex-storage/src/tests.rs`
+  `crates/nimbus-storage/src/tests.rs`
 - server and router tests:
-  `crates/neovex-server/src/tests/`
+  `crates/nimbus-server/src/tests/`
 - Convex adapter integration tests:
-  `crates/neovex-server/src/adapters/convex/tests/`
+  `crates/nimbus-server/src/adapters/convex/tests/`
 
 ### Verification workflow per work item
 
@@ -597,10 +597,10 @@ Use this section as the default operating procedure for every work item below.
    - `cargo clippy --workspace --all-targets -- -D warnings`
 
 6. For larger architectural changes, run the relevant crate suites at minimum:
-   - `cargo test -p neovex-runtime`
-   - `cargo test -p neovex-engine`
-   - `cargo test -p neovex-storage`
-   - `cargo test -p neovex-server`
+   - `cargo test -p nimbus-runtime`
+   - `cargo test -p nimbus-engine`
+   - `cargo test -p nimbus-storage`
+   - `cargo test -p nimbus-server`
 
 ### Baseline verification commands
 
@@ -631,10 +631,10 @@ The roadmap below builds on work that is already in the tree:
   - per-tenant queue-wait and execution distributions
   - recent request correlations
 - `RequestCancellationGuard` already exists in
-  `crates/neovex-server/src/state.rs`
+  `crates/nimbus-server/src/state.rs`
 - runtime-backed named subscription re-evaluation already has read-set-aware
   skipping in
-  `crates/neovex-server/src/adapters/convex/subscriptions/transforms/runtime/reeval.rs`
+  `crates/nimbus-server/src/adapters/convex/subscriptions/transforms/runtime/reeval.rs`
 - typed-op hardening is already in place and must stay in place
 
 Those are baseline capabilities, not future work.
@@ -654,7 +654,7 @@ hot paths.
 
 #### Current verified state
 
-- `RuntimeExecutor::new(...)` in `crates/neovex-runtime/src/executor.rs`
+- `RuntimeExecutor::new(...)` in `crates/nimbus-runtime/src/executor.rs`
   builds a new current-thread Tokio runtime inside the worker loop before every
   job runs.
 - `RuntimeExecutor::invoke_blocking_with_cancellation(...)` also builds a fresh
@@ -680,12 +680,12 @@ hot paths.
 
 #### Files to change
 
-- `crates/neovex-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/executor.rs`
 
 #### Existing tests to extend
 
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-server/src/tests/convex_runtime/cancellation/request_drops/`
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-server/src/tests/convex_runtime/cancellation/request_drops/`
 
 #### New tests
 
@@ -713,7 +713,7 @@ the current bundle trust model.
 #### Current verified state
 
 - `RuntimeBundle::verify_integrity()` in
-  `crates/neovex-runtime/src/runtime.rs` recomputes the SHA-256 digest on every
+  `crates/nimbus-runtime/src/runtime.rs` recomputes the SHA-256 digest on every
   invocation.
 - `RuntimeBundle` is `Clone`, but clones do not currently share a richer stable
   internal identity.
@@ -744,16 +744,16 @@ the current bundle trust model.
 
 #### Files to change
 
-- `crates/neovex-runtime/src/runtime.rs`
+- `crates/nimbus-runtime/src/runtime.rs`
 - optionally
-  `crates/neovex-server/src/adapters/convex/registry/loading.rs` if canonical
+  `crates/nimbus-server/src/adapters/convex/registry/loading.rs` if canonical
   path normalization belongs in registry loading
 
 #### Existing tests to extend
 
-- runtime bundle integrity tests in `crates/neovex-runtime/src/runtime.rs`
+- runtime bundle integrity tests in `crates/nimbus-runtime/src/runtime.rs`
 - registry loading tests in
-  `crates/neovex-server/src/tests/registry_and_license/registry.rs`
+  `crates/nimbus-server/src/tests/registry_and_license/registry.rs`
 
 #### New tests
 
@@ -779,7 +779,7 @@ the current bundle trust model.
 
 #### Current verified state
 
-`crates/neovex-runtime/src/metrics.rs` uses `Ordering::SeqCst` for diagnostic
+`crates/nimbus-runtime/src/metrics.rs` uses `Ordering::SeqCst` for diagnostic
 counters that are only consumed by snapshots and diagnostics.
 
 #### Implementation plan
@@ -790,16 +790,16 @@ counters that are only consumed by snapshots and diagnostics.
 2. Add a short comment explaining why relaxed ordering is sufficient there.
 
 3. Do not change correctness-sensitive cancellation state in
-   `crates/neovex-runtime/src/host.rs`. `HostCallCancellationState` remains
+   `crates/nimbus-runtime/src/host.rs`. `HostCallCancellationState` remains
    `SeqCst`.
 
 #### Files to change
 
-- `crates/neovex-runtime/src/metrics.rs`
+- `crates/nimbus-runtime/src/metrics.rs`
 
 #### Existing tests to extend
 
-- `crates/neovex-runtime/src/metrics.rs`
+- `crates/nimbus-runtime/src/metrics.rs`
 
 #### New tests
 
@@ -822,7 +822,7 @@ changes.
 #### Current verified state
 
 `apply_mutation(...)` and `execute_scheduled_mutation(...)` in
-`crates/neovex-engine/src/service/mutations.rs` still duplicate:
+`crates/nimbus-engine/src/service/mutations.rs` still duplicate:
 
 - schema lookup
 - validation rules
@@ -856,11 +856,11 @@ changes.
 
 #### Files to change
 
-- `crates/neovex-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/service/mutations.rs`
 
 #### Existing tests to extend
 
-- `crates/neovex-engine/src/tests.rs`
+- `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -883,7 +883,7 @@ changes.
 
 #### Current verified state
 
-- `evaluate_query_cancellable(...)` in `crates/neovex-engine/src/evaluator.rs`
+- `evaluate_query_cancellable(...)` in `crates/nimbus-engine/src/evaluator.rs`
   calls `TenantStore::scan_table_cancellable(...)`, which collects every
   document in the table before filtering.
 - `evaluate_paginated_cancellable(...)` does the same for paginated fallback
@@ -916,12 +916,12 @@ field-extraction path is added later.
 
 #### Files to change
 
-- `crates/neovex-storage/src/store.rs`
-- `crates/neovex-engine/src/evaluator.rs`
+- `crates/nimbus-storage/src/store.rs`
+- `crates/nimbus-engine/src/evaluator.rs`
 
 #### Existing tests to extend
 
-- query and pagination tests in `crates/neovex-engine/src/tests.rs`
+- query and pagination tests in `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -947,9 +947,9 @@ due.
 
 #### Current verified state
 
-- `crates/neovex-engine/src/scheduler.rs` drives the scheduler with
+- `crates/nimbus-engine/src/scheduler.rs` drives the scheduler with
   `tokio::time::interval(...)`
-- the scheduler is spawned and shut down by `crates/neovex-bin/src/main.rs`
+- the scheduler is spawned and shut down by `crates/nimbus-bin/src/main.rs`
 - the storage layer exposes `claim_due_jobs(...)` and `load_cron_jobs(...)`, but
   it does not yet expose "next due at" helpers
 
@@ -960,7 +960,7 @@ due.
    - explicit scheduled-job and cron helpers if that splits the code more cleanly
 
 2. Add service wrappers for those helpers in
-   `crates/neovex-engine/src/service/scheduler.rs`.
+   `crates/nimbus-engine/src/service/scheduler.rs`.
 
 3. Replace the unconditional ticker in `run_scheduler_with_interval(...)` with a
    sleep-until loop keyed off the minimum next-due timestamp across loaded
@@ -972,19 +972,19 @@ due.
    - any future rescheduling path
    can wake the scheduler immediately when earlier work arrives.
 
-5. Keep watch-channel shutdown ownership in `neovex-bin` for now.
+5. Keep watch-channel shutdown ownership in `nimbus-bin` for now.
 
 #### Files to change
 
-- `crates/neovex-storage/src/scheduler.rs`
-- `crates/neovex-engine/src/service/scheduler.rs`
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-engine/src/scheduler.rs`
+- `crates/nimbus-storage/src/scheduler.rs`
+- `crates/nimbus-engine/src/service/scheduler.rs`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-engine/src/scheduler.rs`
 
 #### Existing tests to extend
 
-- scheduling tests in `crates/neovex-engine/src/tests.rs`
-- scheduler storage tests in `crates/neovex-storage/src/tests.rs`
+- scheduling tests in `crates/nimbus-engine/src/tests.rs`
+- scheduler storage tests in `crates/nimbus-storage/src/tests.rs`
 
 #### New tests
 
@@ -996,7 +996,7 @@ due.
 
 - the scheduler no longer wakes every second when no jobs or crons are due
 - new earlier work wakes the scheduler promptly
-- shutdown behavior in `crates/neovex-bin/src/main.rs` remains correct
+- shutdown behavior in `crates/nimbus-bin/src/main.rs` remains correct
 
 ---
 
@@ -1008,11 +1008,11 @@ due.
 #### Current verified state
 
 - `SubscriptionRegistry::register(...)` in
-  `crates/neovex-engine/src/subscriptions.rs` returns only a numeric id
+  `crates/nimbus-engine/src/subscriptions.rs` returns only a numeric id
 - manual unsubscribe/cleanup exists in:
-  - `crates/neovex-engine/src/service/subscriptions.rs`
-  - `crates/neovex-server/src/ws/socket.rs`
-  - `crates/neovex-server/src/runtime/subscriptions.rs`
+  - `crates/nimbus-engine/src/service/subscriptions.rs`
+  - `crates/nimbus-server/src/ws/socket.rs`
+  - `crates/nimbus-server/src/runtime/subscriptions.rs`
   - Convex subscription forwarding and teardown code
 
 #### Implementation plan
@@ -1034,16 +1034,16 @@ due.
 
 #### Files to change
 
-- `crates/neovex-engine/src/subscriptions.rs`
-- `crates/neovex-engine/src/service/subscriptions.rs`
-- `crates/neovex-server/src/ws/socket.rs`
-- `crates/neovex-server/src/runtime/subscriptions.rs`
-- `crates/neovex-server/src/adapters/convex/subscriptions/`
+- `crates/nimbus-engine/src/subscriptions.rs`
+- `crates/nimbus-engine/src/service/subscriptions.rs`
+- `crates/nimbus-server/src/ws/socket.rs`
+- `crates/nimbus-server/src/runtime/subscriptions.rs`
+- `crates/nimbus-server/src/adapters/convex/subscriptions/`
 
 #### Existing tests to extend
 
-- subscription tests in `crates/neovex-engine/src/tests.rs`
-- reactive loop and WebSocket tests in `crates/neovex-server/tests/reactive_loop/`
+- subscription tests in `crates/nimbus-engine/src/tests.rs`
+- reactive loop and WebSocket tests in `crates/nimbus-server/tests/reactive_loop/`
 
 #### New tests
 
@@ -1069,8 +1069,8 @@ without changing the JavaScript contract.
 
 #### Current verified state
 
-For each runtime invocation, `NeovexRuntime::invoke_bundle_unmanaged(...)` in
-`crates/neovex-runtime/src/runtime.rs` currently:
+For each runtime invocation, `NimbusRuntime::invoke_bundle_unmanaged(...)` in
+`crates/nimbus-runtime/src/runtime.rs` currently:
 
 - verifies bundle integrity
 - creates a fresh `JsRuntime`
@@ -1095,7 +1095,7 @@ today.
 
 #### Implementation plan
 
-1. Put the pool under the worker threads, not under `NeovexRuntime`.
+1. Put the pool under the worker threads, not under `NimbusRuntime`.
    `RuntimeExecutor` already owns the long-lived worker threads and is the
    natural owner for thread-affine isolate reuse.
 
@@ -1144,19 +1144,19 @@ today.
 
 #### Files to change
 
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-runtime/src/runtime.rs`
-- `crates/neovex-runtime/src/metrics.rs`
-- `crates/neovex-runtime/src/limits.rs` only if new config is actually needed
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/runtime.rs`
+- `crates/nimbus-runtime/src/metrics.rs`
+- `crates/nimbus-runtime/src/limits.rs` only if new config is actually needed
 
 #### Existing tests to extend
 
-- runtime invocation tests in `crates/neovex-runtime/src/runtime.rs`
-- runtime executor tests in `crates/neovex-runtime/src/executor.rs`
+- runtime invocation tests in `crates/nimbus-runtime/src/runtime.rs`
+- runtime executor tests in `crates/nimbus-runtime/src/executor.rs`
 - nested runtime tests in
-  `crates/neovex-server/src/tests/convex_functions/runtime_queries/nested_runtime.rs`
+  `crates/nimbus-server/src/tests/convex_functions/runtime_queries/nested_runtime.rs`
 - runtime cancellation tests in
-  `crates/neovex-server/src/tests/convex_runtime/cancellation/request_drops/`
+  `crates/nimbus-server/src/tests/convex_runtime/cancellation/request_drops/`
 
 #### New tests
 
@@ -1194,10 +1194,10 @@ transaction substrate before the deeper async and journal work.
 #### Current verified state
 
 - `SubscriptionRegistry::affected(...)` in
-  `crates/neovex-engine/src/subscriptions.rs` matches subscriptions only by
+  `crates/nimbus-engine/src/subscriptions.rs` matches subscriptions only by
   table name
 - engine subscription fan-out in
-  `crates/neovex-engine/src/service/mutations.rs` re-evaluates every affected
+  `crates/nimbus-engine/src/service/mutations.rs` re-evaluates every affected
   subscription at table granularity
 - runtime-backed named subscription re-evaluation already has a narrower skip
   path using `RuntimeReadSet`
@@ -1226,15 +1226,15 @@ transaction substrate before the deeper async and journal work.
 
 #### Files to change
 
-- `crates/neovex-engine/src/subscriptions.rs`
-- `crates/neovex-engine/src/service/mutations.rs`
-- optionally `crates/neovex-storage/src/store.rs` and
-  `crates/neovex-storage/src/index.rs` if a follow-up expands update APIs to
+- `crates/nimbus-engine/src/subscriptions.rs`
+- `crates/nimbus-engine/src/service/mutations.rs`
+- optionally `crates/nimbus-storage/src/store.rs` and
+  `crates/nimbus-storage/src/index.rs` if a follow-up expands update APIs to
   return document snapshots
 
 #### Existing tests to extend
 
-- `crates/neovex-engine/src/tests.rs`
+- `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -1262,7 +1262,7 @@ selection.
 #### Current verified state
 
 Index selection logic still lives inline in
-`crates/neovex-engine/src/service/queries.rs`.
+`crates/nimbus-engine/src/service/queries.rs`.
 
 #### Important invariant
 
@@ -1272,7 +1272,7 @@ touches storage must remain in the service layer, not `evaluator.rs`.
 #### Implementation plan
 
 1. Add a private `QueryPlan` enum in
-   `crates/neovex-engine/src/service/queries.rs`.
+   `crates/nimbus-engine/src/service/queries.rs`.
 
 2. Add a pure `plan_query(...)` helper that selects among:
    - full scan
@@ -1290,11 +1290,11 @@ touches storage must remain in the service layer, not `evaluator.rs`.
 
 #### Files to change
 
-- `crates/neovex-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
 
 #### Existing tests to extend
 
-- query planner and index behavior tests in `crates/neovex-engine/src/tests.rs`
+- query planner and index behavior tests in `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -1315,7 +1315,7 @@ documents.
 
 #### Current verified state
 
-- `TenantRuntime` in `crates/neovex-engine/src/tenant.rs` does not cache reads
+- `TenantRuntime` in `crates/nimbus-engine/src/tenant.rs` does not cache reads
 - engine query and get paths always read through `TenantStore`
 - subscription re-evaluation re-reads the same documents repeatedly
 
@@ -1341,13 +1341,13 @@ documents.
 
 #### Files to change
 
-- `crates/neovex-engine/src/tenant.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/tenant.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/service/mutations.rs`
 
 #### Existing tests to extend
 
-- `crates/neovex-engine/src/tests.rs`
+- `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -1370,7 +1370,7 @@ and provides the substrate for journal-driven matching later.
 #### Current verified state
 
 - engine subscriptions currently rely on table-level matching in
-  `crates/neovex-engine/src/subscriptions.rs`, with Phase 3A only narrowing that
+  `crates/nimbus-engine/src/subscriptions.rs`, with Phase 3A only narrowing that
   path conservatively
 - runtime-backed named subscriptions already capture `RuntimeReadSet` and use
   `commit_intersects_runtime_read_set(...)` in the server crate
@@ -1380,7 +1380,7 @@ and provides the substrate for journal-driven matching later.
 #### Implementation plan
 
 1. Introduce a normalized dependency-set model in a workspace-shared layer,
-   `neovex-core`, that can represent current coarse-to-fine
+   `nimbus-core`, that can represent current coarse-to-fine
    dependency forms such as:
    - table-level reads
    - document-level reads
@@ -1408,18 +1408,18 @@ and provides the substrate for journal-driven matching later.
 
 #### Files to change
 
-- `crates/neovex-core/src/` for the shared dependency-set types
-- `crates/neovex-engine/src/subscriptions.rs`
-- `crates/neovex-engine/src/service/subscriptions.rs`
-- `crates/neovex-engine/src/service/mutations.rs`
-- `crates/neovex-server/src/runtime/read_tracking/`
-- `crates/neovex-server/src/adapters/convex/subscriptions/transforms/runtime/`
+- `crates/nimbus-core/src/` for the shared dependency-set types
+- `crates/nimbus-engine/src/subscriptions.rs`
+- `crates/nimbus-engine/src/service/subscriptions.rs`
+- `crates/nimbus-engine/src/service/mutations.rs`
+- `crates/nimbus-server/src/runtime/read_tracking/`
+- `crates/nimbus-server/src/adapters/convex/subscriptions/transforms/runtime/`
 
 #### Existing tests to extend
 
-- engine subscription tests in `crates/neovex-engine/src/tests.rs`
-- runtime read-tracking tests in `crates/neovex-server/src/runtime/read_tracking/tests.rs`
-- Convex reactive subscription tests in `crates/neovex-server/tests/reactive_loop.rs`
+- engine subscription tests in `crates/nimbus-engine/src/tests.rs`
+- runtime read-tracking tests in `crates/nimbus-server/src/runtime/read_tracking/tests.rs`
+- Convex reactive subscription tests in `crates/nimbus-server/tests/reactive_loop.rs`
 
 #### New tests
 
@@ -1448,9 +1448,9 @@ part of the query path instead of a route-specific convention.
 #### Current verified state
 
 - the current codebase authenticates Convex requests in
-  `crates/neovex-server/src/adapters/convex/auth/` and passes
+  `crates/nimbus-server/src/adapters/convex/auth/` and passes
   `InvocationAuth` into runtime handlers
-- Neovex-native routes do not currently prescribe a built-in authentication or
+- Nimbus-native routes do not currently prescribe a built-in authentication or
   authorization model
 - there is no schema-level declarative authorization layer enforced inside
   engine reads, writes, or subscription re-evaluation
@@ -1465,7 +1465,7 @@ part of the query path instead of a route-specific convention.
    becomes an engine and planner responsibility that cannot be bypassed by
    route shape.
 
-2. Introduce declarative access-policy types directly in `neovex-core` so
+2. Introduce declarative access-policy types directly in `nimbus-core` so
    policy can be defined alongside schema rather than inside ad hoc handler
    code.
 
@@ -1507,23 +1507,23 @@ part of the query path instead of a route-specific convention.
 
 #### Files to change
 
-- `crates/neovex-core/src/schema.rs`
-- `crates/neovex-core/src/` for new principal and policy types
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/service/mutations.rs`
-- `crates/neovex-engine/src/service/subscriptions.rs`
-- `crates/neovex-engine/src/subscriptions.rs`
-- `crates/neovex-engine/src/tenant.rs`
-- `crates/neovex-engine/src/evaluator.rs`
-- `crates/neovex-server/src/adapters/convex/auth/`
-- `crates/neovex-server/src/adapters/convex/host_bridge/`
+- `crates/nimbus-core/src/schema.rs`
+- `crates/nimbus-core/src/` for new principal and policy types
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/service/subscriptions.rs`
+- `crates/nimbus-engine/src/subscriptions.rs`
+- `crates/nimbus-engine/src/tenant.rs`
+- `crates/nimbus-engine/src/evaluator.rs`
+- `crates/nimbus-server/src/adapters/convex/auth/`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- engine query tests in `crates/neovex-engine/src/tests.rs`
-- auth tests in `crates/neovex-server/src/tests/auth/`
-- reactive loop tests in `crates/neovex-server/tests/reactive_loop.rs`
+- engine query tests in `crates/nimbus-engine/src/tests.rs`
+- auth tests in `crates/nimbus-server/src/tests/auth/`
+- reactive loop tests in `crates/nimbus-server/tests/reactive_loop.rs`
 
 #### New tests
 
@@ -1555,7 +1555,7 @@ part of the query path instead of a route-specific convention.
 - Started 2026-04-01 after completing 3D.
 - Completed 2026-04-01.
 - `PrincipalContext`, principal snapshots, declarative table access policies,
-  and policy-revision hashing now live in `neovex-core`.
+  and policy-revision hashing now live in `nimbus-core`.
 - Engine reads compile policy into planner-aware filters plus residual
   predicates, `get` hides unauthorized rows as not-found, mutation
   authorization is enforced atomically around storage writes, and subscriptions
@@ -1612,18 +1612,18 @@ using read and write sets for both invalidation and conflict detection.
 
 #### Files to change
 
-- `crates/neovex-core/src/` for shared transaction and dependency metadata
-- `crates/neovex-engine/src/service/mutations.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/service/` for new transaction coordination code
-- `crates/neovex-server/src/adapters/convex/host_bridge/`
+- `crates/nimbus-core/src/` for shared transaction and dependency metadata
+- `crates/nimbus-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/service/` for new transaction coordination code
+- `crates/nimbus-server/src/adapters/convex/host_bridge/`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- engine service tests in `crates/neovex-engine/src/tests.rs`
+- engine service tests in `crates/nimbus-engine/src/tests.rs`
 - runtime read-tracking tests in
-  `crates/neovex-server/src/runtime/read_tracking/tests.rs`
+  `crates/nimbus-server/src/runtime/read_tracking/tests.rs`
 
 #### New tests
 
@@ -1638,7 +1638,7 @@ using read and write sets for both invalidation and conflict detection.
 
 #### Acceptance criteria
 
-- Neovex has a concrete serializable OCC path rather than only "future-ready"
+- Nimbus has a concrete serializable OCC path rather than only "future-ready"
   dependency tracking
 - read and write sets drive both invalidation and conflict detection
 - read paths remain non-blocking
@@ -1661,9 +1661,9 @@ slips.
 
 #### Current verified state
 
-- `RequestCancellationGuard` already exists in `crates/neovex-server/src/state.rs`
+- `RequestCancellationGuard` already exists in `crates/nimbus-server/src/state.rs`
 - Convex handlers already share `registry_and_auth(...)` in
-  `crates/neovex-server/src/adapters/convex/handlers/common.rs`
+  `crates/nimbus-server/src/adapters/convex/handlers/common.rs`
 - request cancellation, auth lookup, and usage recording are still repeated
   across several handler paths
 
@@ -1679,31 +1679,31 @@ slips.
 
 3. Keep usage recording tied to successful auth verification.
 
-4. Compose Convex-only middleware in `crates/neovex-server/src/router.rs`, not
+4. Compose Convex-only middleware in `crates/nimbus-server/src/router.rs`, not
    `lib.rs`.
 
-5. Keep generic Neovex-native routes separate. Do not accidentally require
+5. Keep generic Nimbus-native routes separate. Do not accidentally require
    Convex auth middleware on routes that should remain auth-agnostic.
 
 #### Files to change
 
-- `crates/neovex-server/src/state.rs`
-- `crates/neovex-server/src/router.rs`
-- `crates/neovex-server/src/adapters/convex/handlers/`
-- `crates/neovex-server/src/adapters/convex/http_actions/`
+- `crates/nimbus-server/src/state.rs`
+- `crates/nimbus-server/src/router.rs`
+- `crates/nimbus-server/src/adapters/convex/handlers/`
+- `crates/nimbus-server/src/adapters/convex/http_actions/`
 
 #### Existing tests to extend
 
-- auth tests in `crates/neovex-server/src/tests/auth/`
+- auth tests in `crates/nimbus-server/src/tests/auth/`
 - request-drop cancellation tests in
-  `crates/neovex-server/src/tests/convex_runtime/cancellation/request_drops/`
+  `crates/nimbus-server/src/tests/convex_runtime/cancellation/request_drops/`
 
 #### New tests
 
 - add an integration test proving the shared Convex middleware or extractor path
   preserves auth, usage-recording, and cancellation behavior across query,
   mutation, action, and `httpAction` routes
-- add a regression test proving Neovex-native routes remain reachable without
+- add a regression test proving Nimbus-native routes remain reachable without
   accidentally requiring Convex-specific middleware
 
 #### Acceptance criteria
@@ -1724,14 +1724,14 @@ slips.
 Detached child tasks are spawned in several connection-scoped paths:
 
 - generic WebSocket path:
-  `crates/neovex-server/src/ws/socket.rs`
+  `crates/nimbus-server/src/ws/socket.rs`
 - Convex subscription forwarding:
-  `crates/neovex-server/src/adapters/convex/subscriptions/socket/forwarding.rs`
+  `crates/nimbus-server/src/adapters/convex/subscriptions/socket/forwarding.rs`
 - runtime subscription bridge:
-  `crates/neovex-server/src/runtime/subscriptions.rs`
+  `crates/nimbus-server/src/runtime/subscriptions.rs`
 
 Top-level scheduler lifecycle is separate and owned by
-`crates/neovex-bin/src/main.rs`.
+`crates/nimbus-bin/src/main.rs`.
 
 #### Implementation plan
 
@@ -1749,15 +1749,15 @@ Top-level scheduler lifecycle is separate and owned by
 
 #### Files to change
 
-- `crates/neovex-server/src/ws/socket.rs`
-- `crates/neovex-server/src/adapters/convex/subscriptions/socket/forwarding.rs`
-- `crates/neovex-server/src/runtime/subscriptions.rs`
-- optionally `crates/neovex-bin/src/main.rs` for top-level lifecycle cleanup
+- `crates/nimbus-server/src/ws/socket.rs`
+- `crates/nimbus-server/src/adapters/convex/subscriptions/socket/forwarding.rs`
+- `crates/nimbus-server/src/runtime/subscriptions.rs`
+- optionally `crates/nimbus-bin/src/main.rs` for top-level lifecycle cleanup
 
 #### Existing tests to extend
 
-- reactive loop socket tests in `crates/neovex-server/tests/reactive_loop/`
-- Convex subscription tests in `crates/neovex-server/src/tests/convex_functions/`
+- reactive loop socket tests in `crates/nimbus-server/tests/reactive_loop/`
+- Convex subscription tests in `crates/nimbus-server/src/tests/convex_functions/`
 
 #### New tests
 
@@ -1800,15 +1800,15 @@ current in-process metrics model.
 
 #### Files to change
 
-- `crates/neovex-server/src/http/metadata.rs`
+- `crates/nimbus-server/src/http/metadata.rs`
 - new exporter module location if external export is added
-- `crates/neovex-runtime/src/metrics.rs` only if a small export helper is needed
+- `crates/nimbus-runtime/src/metrics.rs` only if a small export helper is needed
 
 #### Existing tests to extend
 
-- diagnostics endpoint tests in `crates/neovex-server/src/tests/`
+- diagnostics endpoint tests in `crates/nimbus-server/src/tests/`
 - runtime metrics tests in
-  `crates/neovex-server/src/adapters/convex/tests/metrics.rs`
+  `crates/nimbus-server/src/adapters/convex/tests/metrics.rs`
 
 #### New tests
 
@@ -1881,17 +1881,17 @@ reproducible verification environment.
 
 #### Files to change
 
-- `crates/neovex-storage/src/` for new journal and checkpoint seam types
-- `crates/neovex-engine/src/` where new time or fault seams are needed
-- `crates/neovex-test-support/src/`
-- `crates/neovex-server/tests/` if socket or transport replay harnesses are added
+- `crates/nimbus-storage/src/` for new journal and checkpoint seam types
+- `crates/nimbus-engine/src/` where new time or fault seams are needed
+- `crates/nimbus-test-support/src/`
+- `crates/nimbus-server/tests/` if socket or transport replay harnesses are added
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- storage tests in `crates/neovex-storage/src/tests.rs`
-- engine tests in `crates/neovex-engine/src/tests.rs`
-- any later journal or materializer tests added under `crates/neovex-storage/src/`
+- storage tests in `crates/nimbus-storage/src/tests.rs`
+- engine tests in `crates/nimbus-engine/src/tests.rs`
+- any later journal or materializer tests added under `crates/nimbus-storage/src/`
 
 #### New tests
 
@@ -1939,21 +1939,21 @@ execution and real cancellation propagation.
 
 - `Service::call_blocking(...)` and
   `Service::call_blocking_cancellable(...)` in
-  `crates/neovex-engine/src/service/mod.rs` still wrap synchronous engine work
+  `crates/nimbus-engine/src/service/mod.rs` still wrap synchronous engine work
   in `spawn_blocking(...)`
 - those wrappers are still used throughout service read and control paths:
-  - `crates/neovex-engine/src/service/queries.rs`
-  - `crates/neovex-engine/src/service/tenants.rs`
-  - `crates/neovex-engine/src/service/schema.rs`
-  - `crates/neovex-engine/src/service/scheduler.rs`
-  - `crates/neovex-engine/src/service/subscriptions.rs`
-  - `crates/neovex-engine/src/service/usage.rs`
+  - `crates/nimbus-engine/src/service/queries.rs`
+  - `crates/nimbus-engine/src/service/tenants.rs`
+  - `crates/nimbus-engine/src/service/schema.rs`
+  - `crates/nimbus-engine/src/service/scheduler.rs`
+  - `crates/nimbus-engine/src/service/subscriptions.rs`
+  - `crates/nimbus-engine/src/service/usage.rs`
 - the underlying storage implementation is still synchronous and concrete:
-  - `crates/neovex-storage/src/store.rs`
-  - `crates/neovex-storage/src/index.rs`
-  - `crates/neovex-storage/src/scheduler.rs`
-  - `crates/neovex-storage/src/schema_store.rs`
-  - `crates/neovex-storage/src/usage_store.rs`
+  - `crates/nimbus-storage/src/store.rs`
+  - `crates/nimbus-storage/src/index.rs`
+  - `crates/nimbus-storage/src/scheduler.rs`
+  - `crates/nimbus-storage/src/schema_store.rs`
+  - `crates/nimbus-storage/src/usage_store.rs`
 
 #### Design rules
 
@@ -1991,7 +1991,7 @@ execution and real cancellation propagation.
 
 #### Implementation plan
 
-1. Add internal async storage traits in `neovex-storage` or an adjacent
+1. Add internal async storage traits in `nimbus-storage` or an adjacent
    storage-boundary module, using native async traits for internal boundaries.
 
 2. Implement a redb-backed async adapter behind a dedicated async execution
@@ -2022,21 +2022,21 @@ execution and real cancellation propagation.
 
 #### Files to change
 
-- `crates/neovex-storage/src/`
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/service/tenants.rs`
-- `crates/neovex-engine/src/service/schema.rs`
-- `crates/neovex-engine/src/service/scheduler.rs`
-- `crates/neovex-engine/src/service/subscriptions.rs`
-- `crates/neovex-engine/src/service/usage.rs`
+- `crates/nimbus-storage/src/`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/service/tenants.rs`
+- `crates/nimbus-engine/src/service/schema.rs`
+- `crates/nimbus-engine/src/service/scheduler.rs`
+- `crates/nimbus-engine/src/service/subscriptions.rs`
+- `crates/nimbus-engine/src/service/usage.rs`
 
 #### Existing tests to extend
 
-- query and pagination tests in `crates/neovex-engine/src/tests.rs`
-- storage read and scheduler tests in `crates/neovex-storage/src/tests.rs`
+- query and pagination tests in `crates/nimbus-engine/src/tests.rs`
+- storage read and scheduler tests in `crates/nimbus-storage/src/tests.rs`
 - request-drop and cancellation tests in
-  `crates/neovex-server/src/tests/convex_runtime/cancellation/request_drops/`
+  `crates/nimbus-server/src/tests/convex_runtime/cancellation/request_drops/`
 
 #### New tests
 
@@ -2078,14 +2078,14 @@ execution and real cancellation propagation.
   cancellation wired into scan and index loops instead of funneling all tenant
   work through one serialized actor lane.
 - Landed as:
-  `async_storage.rs` in `neovex-storage`, async tenant load or usage read
+  `async_storage.rs` in `nimbus-storage`, async tenant load or usage read
   wiring in `Service`, async query or pagination or subscription bootstrap
   execution over the storage boundary, and deterministic storage plus engine
   tests for queued cancellation, in-flight scan or index cancellation, and
   concurrent same-tenant reads.
 - Follow-up hardening on 2026-04-01 switched the embedder onto Deno's
   unprotected V8 platform mode and shared one bootstrap snapshot across all
-  runtime executors so the default parallel `neovex-server` suite can exercise
+  runtime executors so the default parallel `nimbus-server` suite can exercise
   the async read path without sibling-thread V8 aborts.
 
 ---
@@ -2141,7 +2141,7 @@ semantics, and correct cancellation behavior.
    - failed before commit for non-cancellation reasons
 
 3. Move mutation-path storage plumbing in
-   `crates/neovex-engine/src/service/mutations.rs` onto that transaction model.
+   `crates/nimbus-engine/src/service/mutations.rs` onto that transaction model.
 
 4. Move scheduler state transitions and schema/index rebuild writes onto the
    same async transaction model where they mutate durable state.
@@ -2155,18 +2155,18 @@ semantics, and correct cancellation behavior.
 
 #### Files to change
 
-- `crates/neovex-storage/src/store.rs`
-- `crates/neovex-storage/src/index.rs`
-- `crates/neovex-storage/src/scheduler.rs`
-- `crates/neovex-storage/src/schema_store.rs`
-- `crates/neovex-engine/src/service/mutations.rs`
-- `crates/neovex-engine/src/service/scheduler.rs`
-- `crates/neovex-engine/src/service/schema.rs`
+- `crates/nimbus-storage/src/store.rs`
+- `crates/nimbus-storage/src/index.rs`
+- `crates/nimbus-storage/src/scheduler.rs`
+- `crates/nimbus-storage/src/schema_store.rs`
+- `crates/nimbus-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/service/scheduler.rs`
+- `crates/nimbus-engine/src/service/schema.rs`
 
 #### Existing tests to extend
 
-- mutation, scheduler, and schema tests in `crates/neovex-engine/src/tests.rs`
-- storage atomicity tests in `crates/neovex-storage/src/tests.rs`
+- mutation, scheduler, and schema tests in `crates/nimbus-engine/src/tests.rs`
+- storage atomicity tests in `crates/nimbus-storage/src/tests.rs`
 
 #### New tests
 
@@ -2192,7 +2192,7 @@ semantics, and correct cancellation behavior.
 
 - Completed 2026-04-01.
 - `TenantWriteTransaction` now owns the explicit durable write boundary in
-  `neovex-storage`, with `TenantWriteCommit` and `TenantWriteOutcome`
+  `nimbus-storage`, with `TenantWriteCommit` and `TenantWriteOutcome`
   distinguishing committed writes from cancellation before commit.
 - Storage commit visibility now has deterministic pre-commit and post-commit
   fault seams so tests can prove that cancellation only aborts before redb
@@ -2215,12 +2215,12 @@ and runtime host-call path.
 #### Current verified state
 
 - `execute_async_blocking_host_call(...)` in
-  `crates/neovex-server/src/runtime/host_calls/async_calls.rs` still wraps host
+  `crates/nimbus-server/src/runtime/host_calls/async_calls.rs` still wraps host
   work in `spawn_blocking(...)`
 - engine service methods still expose blocking-wrapper helpers in
-  `crates/neovex-engine/src/service/mod.rs`
+  `crates/nimbus-engine/src/service/mod.rs`
 - tenant lifecycle still synchronously touches filesystem and store state in
-  `crates/neovex-engine/src/service/tenants.rs`
+  `crates/nimbus-engine/src/service/tenants.rs`
 
 #### Implementation plan
 
@@ -2239,7 +2239,7 @@ and runtime host-call path.
    - async-safe lifecycle guards
    - delete/shutdown behavior coordinated with in-flight async storage work
 
-5. Keep top-level scheduler lifecycle ownership in `crates/neovex-bin/src/main.rs`,
+5. Keep top-level scheduler lifecycle ownership in `crates/nimbus-bin/src/main.rs`,
    but make the scheduler call true async service/storage methods.
 
 6. Update `ARCHITECTURE.md` once the server no longer treats the engine/storage
@@ -2247,21 +2247,21 @@ and runtime host-call path.
 
 #### Files to change
 
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-engine/src/service/tenants.rs`
-- `crates/neovex-engine/src/scheduler.rs`
-- `crates/neovex-server/src/runtime/host_calls/async_calls.rs`
-- `crates/neovex-server/src/adapters/convex/`
-- `crates/neovex-server/src/http/`
-- `crates/neovex-bin/src/main.rs`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-engine/src/service/tenants.rs`
+- `crates/nimbus-engine/src/scheduler.rs`
+- `crates/nimbus-server/src/runtime/host_calls/async_calls.rs`
+- `crates/nimbus-server/src/adapters/convex/`
+- `crates/nimbus-server/src/http/`
+- `crates/nimbus-bin/src/main.rs`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- direct HTTP query tests in `crates/neovex-server/src/tests/`
+- direct HTTP query tests in `crates/nimbus-server/src/tests/`
 - runtime-backed request-drop tests in
-  `crates/neovex-server/src/tests/convex_runtime/cancellation/request_drops/`
-- tenant lifecycle tests in `crates/neovex-engine/src/tests.rs`
+  `crates/nimbus-server/src/tests/convex_runtime/cancellation/request_drops/`
+- tenant lifecycle tests in `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -2301,7 +2301,7 @@ and runtime host-call path.
 - Direct HTTP document reads and runtime-backed async host calls now propagate
   disconnect and cooperative cancellation to the real async storage work.
 - The earlier parallel V8 test abort remains resolved: the default parallel
-  `cargo test -p neovex-server` suite passes with the 5A Deno-aligned bootstrap
+  `cargo test -p nimbus-server` suite passes with the 5A Deno-aligned bootstrap
   hardening still in place.
 
 ---
@@ -2337,29 +2337,29 @@ compensating for a missing storage WAL. It introduces an application-level
 durable mutation journal because we need an ordered history for replay,
 dependency-driven invalidation, streaming, and later replica consumption.
 
-If Neovex later adds a custom write-optimized layer such as an LSM-style
+If Nimbus later adds a custom write-optimized layer such as an LSM-style
 memtable plus SST materializer, this durable journal should become the
 log-before-materialization contract for that layer. The roadmap should not
-assume a second Neovex-owned WAL by default. A future third-party storage engine
-may still keep its own internal WAL or journal, but the Neovex architecture
+assume a second Nimbus-owned WAL by default. A future third-party storage engine
+may still keep its own internal WAL or journal, but the Nimbus architecture
 should prefer one logical ordered-history contract rather than two competing
 application-level logs.
 
 #### Architectural decision
 
-For this roadmap, Neovex will implement and own the durable logical journal
-inside the existing `neovex-core` and `neovex-storage` architecture. Agents
+For this roadmap, Nimbus will implement and own the durable logical journal
+inside the existing `nimbus-core` and `nimbus-storage` architecture. Agents
 must not reopen this decision while executing Phase 6 work.
 
 Why this is the project decision:
 
 - redb already provides crash-safe atomic commit, so Phase 6 is not trying to
   patch a missing storage-engine WAL
-- Neovex needs a logical ordered history for replay, invalidation, streaming,
+- Nimbus needs a logical ordered history for replay, invalidation, streaming,
   and future replicas, not just a physical recovery log
-- that logical history must align with Neovex mutation semantics, dependency
+- that logical history must align with Nimbus mutation semantics, dependency
   matching, visibility rules, and tenant-scoped replay
-- building the journal as a Neovex-owned layer keeps the storage contract
+- building the journal as a Nimbus-owned layer keeps the storage contract
   stable even if a future materializer or storage engine changes underneath it
 
 External systems are references, not substitutes:
@@ -2376,13 +2376,13 @@ Explicit non-decisions for Phase 6:
   abstraction layer for a single-node per-tenant logical journal
 - do not swap the storage engine to Fjall, RocksDB, or another LSM as part of
   this phase; that is a separate architecture project
-- do not reduce the journal to a thin byte-log crate that lacks Neovex replay,
+- do not reduce the journal to a thin byte-log crate that lacks Nimbus replay,
   visibility, and dependency-tracking semantics
 
 #### Implementation plan
 
 1. Implement the project-level durable-journal decision.
-   Build the Phase 6 journal as a Neovex-owned logical ordered-history layer in
+   Build the Phase 6 journal as a Nimbus-owned logical ordered-history layer in
    the current redb-backed architecture. Do not spend execution PRs revisiting
    storage-engine adoption or journal ownership.
 
@@ -2446,15 +2446,15 @@ Explicit non-decisions for Phase 6:
 
 #### Files to change
 
-- `crates/neovex-core/src/mutation.rs` or a new adjacent durable-record module
-- `crates/neovex-storage/src/`
-- `crates/neovex-engine/src/service/mutations.rs`
-- `crates/neovex-engine/src/service/queries.rs`
+- `crates/nimbus-core/src/mutation.rs` or a new adjacent durable-record module
+- `crates/nimbus-storage/src/`
+- `crates/nimbus-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
 
 #### Existing tests to extend
 
-- storage tests in `crates/neovex-storage/src/tests.rs`
-- engine mutation and commit-log tests in `crates/neovex-engine/src/tests.rs`
+- storage tests in `crates/nimbus-storage/src/tests.rs`
+- engine mutation and commit-log tests in `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -2490,25 +2490,25 @@ Explicit non-decisions for Phase 6:
 - journal records support both replay/materialization and dependency-driven
   invalidation use cases
 - the implementation follows the project-level decision to keep the journal
-  Neovex-owned and does not silently replace the storage engine architecture
+  Nimbus-owned and does not silently replace the storage engine architecture
 - journal records remain logical enough to support future alternate
   materializers or storage engines without redefining the ordered-history
   contract
 - the roadmap remains compatible with a future custom LSM-style materializer
-  without requiring a second Neovex-owned application WAL
+  without requiring a second Nimbus-owned application WAL
 - startup recovery can reapply durable journal entries safely
 
 #### Implementation checkpoint
 
 - Completed 2026-04-01.
-- `neovex-core` now defines a first-class `DurableMutationRecord` with
+- `nimbus-core` now defines a first-class `DurableMutationRecord` with
   versioning, integrity hashing, replay payloads, and normalized write-set
   metadata so the on-disk journal format is explicit rather than implicit in
   `CommitEntry` serialization.
-- `neovex-storage` now tracks durable versus applied sequence watermarks per
+- `nimbus-storage` now tracks durable versus applied sequence watermarks per
   tenant, appends and replays durable records in no-hole order, and recovers
   durable-but-unapplied work before a tenant serves reads again.
-- `neovex-engine` now routes immediate and scheduled async mutations through a
+- `nimbus-engine` now routes immediate and scheduled async mutations through a
   tenant-local journal queue that durably appends first, acknowledges only
   after ordered append, and then applies document, index, cache, and reactive
   visibility in commit order behind the applied watermark.
@@ -2563,18 +2563,18 @@ Explicit non-decisions for Phase 6:
 
 #### Files to change
 
-- `crates/neovex-core/src/mutation.rs` or the adjacent durable-record module
-- `crates/neovex-storage/src/`
-- `crates/neovex-engine/src/service/mutations.rs`
-- `crates/neovex-engine/src/service/queries.rs`
+- `crates/nimbus-core/src/mutation.rs` or the adjacent durable-record module
+- `crates/nimbus-storage/src/`
+- `crates/nimbus-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
 - `ARCHITECTURE.md` once the durable journal becomes the documented canonical
   per-tenant history
 
 #### Existing tests to extend
 
-- storage tests in `crates/neovex-storage/src/tests.rs`
+- storage tests in `crates/nimbus-storage/src/tests.rs`
 - engine mutation, replay, and commit-log tests in
-  `crates/neovex-engine/src/tests.rs`
+  `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -2595,7 +2595,7 @@ Explicit non-decisions for Phase 6:
 #### Implementation checkpoint
 
 - Completed 2026-04-01.
-- `neovex-storage` now exports materialized journal snapshots, restores an
+- `nimbus-storage` now exports materialized journal snapshots, restores an
   empty tenant store from a snapshot boundary, and rebuilds document/index
   state to a chosen sequence from that snapshot plus an authoritative journal
   tail.
@@ -2605,10 +2605,10 @@ Explicit non-decisions for Phase 6:
   when a snapshot is taken during apply lag.
 - the Phase 6 journal surfaces are now split into dedicated modules so the
   engine's journal worker, batching, and ordered-apply queue logic lives in
-  `crates/neovex-engine/src/service/mutations/journal.rs`, while snapshot,
+  `crates/nimbus-engine/src/service/mutations/journal.rs`, while snapshot,
   restore, and rebuild logic lives in
-  `crates/neovex-storage/src/store/journal_snapshot.rs`.
-- `neovex-engine` now exposes direct durable-journal reads so downstream
+  `crates/nimbus-storage/src/store/journal_snapshot.rs`.
+- `nimbus-engine` now exposes direct durable-journal reads so downstream
   consumers can use the authoritative record vocabulary without routing through
   `CommitEntry` compatibility projections first.
 - `read_commit_log*` remains only as a compatibility wrapper over the
@@ -2631,7 +2631,7 @@ Explicit non-decisions for Phase 6:
 #### Current verified state
 
 - runtime concurrency is enforced primarily through the global isolate semaphore
-  in `crates/neovex-runtime/src/limits.rs`
+  in `crates/nimbus-runtime/src/limits.rs`
 - queue wait and execution time are already tracked per tenant
 - nested runtime calls can bypass the policy limit via
   `RuntimeConcurrencyMode::BypassPolicyLimit`
@@ -2663,19 +2663,19 @@ Explicit non-decisions for Phase 6:
 
 #### Files to change
 
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-runtime/src/limits.rs`
-- `crates/neovex-runtime/src/metrics.rs`
-- `crates/neovex-server/src/adapters/convex/execution/`
-- `crates/neovex-server/src/runtime/invocations/`
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/limits.rs`
+- `crates/nimbus-runtime/src/metrics.rs`
+- `crates/nimbus-server/src/adapters/convex/execution/`
+- `crates/nimbus-server/src/runtime/invocations/`
 
 #### Existing tests to extend
 
-- runtime executor tests in `crates/neovex-runtime/src/executor.rs`
+- runtime executor tests in `crates/nimbus-runtime/src/executor.rs`
 - runtime metrics tests in
-  `crates/neovex-server/src/adapters/convex/tests/metrics.rs`
+  `crates/nimbus-server/src/adapters/convex/tests/metrics.rs`
 - request-drop and runtime HTTP tests in
-  `crates/neovex-server/src/tests/convex_runtime/`
+  `crates/nimbus-server/src/tests/convex_runtime/`
 
 #### New tests
 
@@ -2698,7 +2698,7 @@ future immutable-artifact verification optimizations.
 #### Current verified state
 
 - runtime bundle loading currently relies on `.sha256` sidecars read in
-  `crates/neovex-server/src/adapters/convex/registry/loading.rs`
+  `crates/nimbus-server/src/adapters/convex/registry/loading.rs`
 - `RuntimeBundle::verify_integrity()` still performs content verification at
   invocation time
 
@@ -2732,16 +2732,16 @@ This remains blocked on deploy identity and auth design.
 
 #### Files to change
 
-- `crates/neovex-server/src/adapters/convex/registry/loading.rs`
+- `crates/nimbus-server/src/adapters/convex/registry/loading.rs`
 - new deployment-provenance manifest module
-- `crates/neovex-runtime/src/runtime.rs` only as needed to accept verified
+- `crates/nimbus-runtime/src/runtime.rs` only as needed to accept verified
   identity metadata
 
 #### Existing tests to extend
 
 - registry loading tests in
-  `crates/neovex-server/src/tests/registry_and_license/registry.rs`
-- runtime bundle integrity tests in `crates/neovex-runtime/src/runtime.rs`
+  `crates/nimbus-server/src/tests/registry_and_license/registry.rs`
+- runtime bundle integrity tests in `crates/nimbus-runtime/src/runtime.rs`
 
 #### New tests
 
@@ -2803,16 +2803,16 @@ feed instead of stopping at internal CDC readiness.
 
 #### Files to change
 
-- `crates/neovex-storage/src/`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-server/src/http/`
-- `crates/neovex-server/src/protocol.rs`
+- `crates/nimbus-storage/src/`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-server/src/http/`
+- `crates/nimbus-server/src/protocol.rs`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- commit-log and sequence-read tests in `crates/neovex-engine/src/tests.rs`
-- server HTTP tests in `crates/neovex-server/src/tests/`
+- commit-log and sequence-read tests in `crates/nimbus-engine/src/tests.rs`
+- server HTTP tests in `crates/nimbus-server/src/tests/`
 
 #### New tests
 
@@ -2832,15 +2832,15 @@ feed instead of stopping at internal CDC readiness.
 #### Implementation checkpoint
 
 - Completed 2026-04-01.
-- `neovex-storage` now owns the authoritative journal streaming contract with
+- `nimbus-storage` now owns the authoritative journal streaming contract with
   bounded page reads, explicit cursor-floor validation for future retention or
   compaction, and a bootstrap response that pairs a materialized snapshot with
   `resume_after` plus `bootstrap_cut` metadata instead of inventing a separate
   bootstrap tail format.
-- `neovex-engine` now exposes sync and async journal stream plus bootstrap
+- `nimbus-engine` now exposes sync and async journal stream plus bootstrap
   helpers directly from the authoritative durable journal path so higher layers
   do not need to reconstruct cursor semantics themselves.
-- `neovex-server` now serves `/api/tenants/{tenant_id}/journal` and
+- `nimbus-server` now serves `/api/tenants/{tenant_id}/journal` and
   `/api/tenants/{tenant_id}/journal/bootstrap`, while `/commits` remains a
   compatibility projection over the same underlying journal history.
 - storage, engine, and server tests now cover cursor resume behavior, retention
@@ -2887,15 +2887,15 @@ replica-local reads for selected workloads.
 #### Files to change
 
 - new replica or sync-consumer module location
-- `crates/neovex-engine/src/service/queries.rs` as needed for replica-comparison
+- `crates/nimbus-engine/src/service/queries.rs` as needed for replica-comparison
   helpers
-- `crates/neovex-server/src/` for bootstrap or streaming integration
+- `crates/nimbus-server/src/` for bootstrap or streaming integration
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- engine replay and rebuild tests in `crates/neovex-engine/src/tests.rs`
-- server integration tests in `crates/neovex-server/src/tests/`
+- engine replay and rebuild tests in `crates/nimbus-engine/src/tests.rs`
+- server integration tests in `crates/nimbus-server/src/tests/`
 
 #### New tests
 
@@ -2917,7 +2917,7 @@ replica-local reads for selected workloads.
 #### Implementation checkpoint
 
 - Completed 2026-04-01.
-- `neovex-engine` now exposes a narrow read-only `EmbeddedReplica` that
+- `nimbus-engine` now exposes a narrow read-only `EmbeddedReplica` that
   bootstraps from the 8A snapshot-plus-stream contract into a local
   materialized store, catches up by replaying more authoritative
   `DurableMutationRecord` pages, and evaluates queries or pagination locally
@@ -2952,13 +2952,13 @@ materializer without weakening the current redb-backed correctness path.
 #### Current verified state
 
 - redb document and index tables remain the only materialized serving state
-- there is no custom Neovex materializer consuming the durable journal
+- there is no custom Nimbus materializer consuming the durable journal
 - TigerBeetle's LSM and checkpoint model are now an explicit design reference,
   but not yet represented in the codebase
 
 #### Architectural decision
 
-If Neovex builds a custom materializer, the first version should:
+If Nimbus builds a custom materializer, the first version should:
 
 - consume the authoritative durable journal from Phase 6
 - use deterministic compaction principles inspired by TigerBeetle
@@ -2976,7 +2976,7 @@ Deterministic compaction here means:
 
 #### Implementation plan
 
-1. Add a journal-driven materializer module under `crates/neovex-storage/src/materializer/`
+1. Add a journal-driven materializer module under `crates/nimbus-storage/src/materializer/`
    or a closely adjacent storage-owned location. Keep the first version clearly
    subordinate to the redb-backed serving path.
 
@@ -3000,16 +3000,16 @@ Deterministic compaction here means:
 
 #### Files to change
 
-- `crates/neovex-storage/src/materializer/`
-- `crates/neovex-storage/src/`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/tests.rs`
+- `crates/nimbus-storage/src/materializer/`
+- `crates/nimbus-storage/src/`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/tests.rs`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- storage replay and commit-log tests in `crates/neovex-storage/src/tests.rs`
-- engine query tests in `crates/neovex-engine/src/tests.rs`
+- storage replay and commit-log tests in `crates/nimbus-storage/src/tests.rs`
+- engine query tests in `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -3032,7 +3032,7 @@ Deterministic compaction here means:
 #### Implementation checkpoint
 
 - Completed 2026-04-01.
-- `neovex-storage` now has a storage-owned `ShadowMaterializer` module that
+- `nimbus-storage` now has a storage-owned `ShadowMaterializer` module that
   rebuilds from `MaterializedJournalSnapshot` plus ordered
   `DurableMutationRecord` tail, tracks explicit manifest state, and triggers
   compaction from an explicit record-count threshold instead of timers or
@@ -3042,7 +3042,7 @@ Deterministic compaction here means:
   sequence, and buffered-tail length on recovery, and mirrors durable replay
   semantics closely enough to surface conflicting journal or checkpoint state
   loudly instead of silently drifting.
-- `neovex-engine` now exposes an async helper that bootstraps the shadow
+- `nimbus-engine` now exposes an async helper that bootstraps the shadow
   materializer from the authoritative journal bootstrap plus ordered stream,
   and storage or engine tests now prove rebuild parity, deterministic
   compaction, checkpoint-boundary recovery, and representative shadow query
@@ -3089,16 +3089,16 @@ crash, and corruption robustness rather than benchmark-first optimism.
 
 #### Files to change
 
-- `crates/neovex-storage/src/materializer/`
-- `crates/neovex-storage/src/tests.rs`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-test-support/`
+- `crates/nimbus-storage/src/materializer/`
+- `crates/nimbus-storage/src/tests.rs`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-test-support/`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- storage replay tests in `crates/neovex-storage/src/tests.rs`
-- engine query parity tests in `crates/neovex-engine/src/tests.rs`
+- storage replay tests in `crates/nimbus-storage/src/tests.rs`
+- engine query parity tests in `crates/nimbus-engine/src/tests.rs`
 
 #### New tests
 
@@ -3137,7 +3137,7 @@ crash, and corruption robustness rather than benchmark-first optimism.
 
 This phase is intentionally after the core OCC, journal, and materializer work.
 It exists to preserve the research guide's MVCC extension path without
-pretending Neovex needs time-travel reads immediately.
+pretending Nimbus needs time-travel reads immediately.
 
 ### 10A. Layer optional snapshot and historical reads on top of OCC and the durable journal
 
@@ -3149,7 +3149,7 @@ time-travel queries without replacing OCC as the primary transaction model.
 
 - `redb` already provides internal copy-on-write MVCC snapshots for storage
   correctness
-- the Neovex engine does not yet expose snapshot, historical, or time-travel
+- the Nimbus engine does not yet expose snapshot, historical, or time-travel
   query semantics as a product feature
 - the roadmap now commits to OCC as the primary concurrency model, with the
   durable journal as the longer-term ordered history substrate
@@ -3178,15 +3178,15 @@ time-travel queries without replacing OCC as the primary transaction model.
 
 #### Files to change
 
-- `crates/neovex-core/src/query.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-storage/src/`
+- `crates/nimbus-core/src/query.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-storage/src/`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- engine query tests in `crates/neovex-engine/src/tests.rs`
-- storage replay tests in `crates/neovex-storage/src/tests.rs`
+- engine query tests in `crates/nimbus-engine/src/tests.rs`
+- storage replay tests in `crates/nimbus-storage/src/tests.rs`
 
 #### New tests
 
@@ -3214,18 +3214,18 @@ this roadmap because the engine must first gain planner-enforced authorization,
 shared dependency semantics, and a stable enough internal contract to expose a
 generated native API safely.
 
-### 11A. Add a schema-generated Neovex-native API surface
+### 11A. Add a schema-generated Nimbus-native API surface
 
 **Priority:** low, after 3B and 3E  
-**Expected impact:** gives Neovex a first-class schema-generated developer
+**Expected impact:** gives Nimbus a first-class schema-generated developer
 surface for CRUD, pagination, and subscriptions instead of relying only on
 hand-written native routes or the Convex compatibility path.
 
 #### Current verified state
 
-- Neovex-native routes are currently hand-written server endpoints
+- Nimbus-native routes are currently hand-written server endpoints
 - Convex compatibility exposes a function-oriented JavaScript surface through
-  V8 and generated manifests, but Neovex does not yet expose a schema-generated
+  V8 and generated manifests, but Nimbus does not yet expose a schema-generated
   native API
 - planner-enforced authorization is scheduled earlier in the roadmap and should
   become the policy substrate for any generated API
@@ -3244,13 +3244,13 @@ opaque layer:
   surface rather than the only way to reach database behavior
 
 There is no single Rust library that solves this entire product surface for
-Neovex. The generated API contract, schema exposure rules, and auth semantics
-should remain Neovex-owned.
+Nimbus. The generated API contract, schema exposure rules, and auth semantics
+should remain Nimbus-owned.
 
 #### Implementation plan
 
 1. Define an explicit public schema exposure model.
-   The generated API should be derived from the schema objects Neovex marks as
+   The generated API should be derived from the schema objects Nimbus marks as
    public or exposed, not from every internal storage structure automatically.
 
 2. Generate a typed API contract for:
@@ -3268,22 +3268,22 @@ should remain Neovex-owned.
    and storage layout without making every internal change a wire-breaking API
    change.
 
-5. Keep the generated Neovex-native API distinct from the Convex compatibility
+5. Keep the generated Nimbus-native API distinct from the Convex compatibility
    layer.
    Shared engine semantics are desirable; forced contract unification is not.
 
 #### Files to change
 
-- `crates/neovex-core/src/schema.rs`
-- `crates/neovex-server/src/`
-- `packages/codegen/` or a new Neovex-native codegen package
-- `packages/neovex/`
+- `crates/nimbus-core/src/schema.rs`
+- `crates/nimbus-server/src/`
+- `packages/codegen/` or a new Nimbus-native codegen package
+- `packages/nimbus/`
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- server route tests in `crates/neovex-server/src/tests/`
-- JS package tests in `packages/neovex/`
+- server route tests in `crates/nimbus-server/src/tests/`
+- JS package tests in `packages/nimbus/`
 
 #### New tests
 
@@ -3297,14 +3297,14 @@ should remain Neovex-owned.
 
 #### Acceptance criteria
 
-- Neovex has a schema-generated native API surface distinct from the Convex
+- Nimbus has a schema-generated native API surface distinct from the Convex
   compatibility layer
 - generated routes remain planner-enforced and authorization-safe
 - the public generated contract is explicit, versionable, and deterministic
 
 ---
 
-### 11B. Add a typed WASM plugin ABI for Neovex-native extensions
+### 11B. Add a typed WASM plugin ABI for Nimbus-native extensions
 
 **Priority:** low, after 11A  
 **Expected impact:** creates a database-native extension surface for tightly
@@ -3313,7 +3313,7 @@ bounded custom logic without overloading the Convex compatibility runtime.
 #### Current verified state
 
 - the current extensibility surface is the V8-based Convex compatibility path
-- there is no Wasmtime- or WIT-based plugin ABI for Neovex-native extensions
+- there is no Wasmtime- or WIT-based plugin ABI for Nimbus-native extensions
 - the roadmap already treats future WASM support as additive rather than a
   replacement for V8
 
@@ -3341,7 +3341,7 @@ escape hatch:
    capability handles for the host services a plugin may use.
 
 3. Embed Wasmtime at the server or engine integration boundary, not inside
-   `neovex-runtime`.
+   `nimbus-runtime`.
    Keep the existing V8 compatibility runtime independent and separate.
 
 4. Version the plugin ABI explicitly so host and plugin mismatches fail fast
@@ -3354,15 +3354,15 @@ escape hatch:
 #### Files to change
 
 - new Wasmtime integration module location
-- `crates/neovex-core/src/` for plugin ABI metadata
-- `crates/neovex-server/src/` or `crates/neovex-engine/src/` at the chosen host
+- `crates/nimbus-core/src/` for plugin ABI metadata
+- `crates/nimbus-server/src/` or `crates/nimbus-engine/src/` at the chosen host
   boundary
 - `ARCHITECTURE.md`
 
 #### Existing tests to extend
 
-- engine tests in `crates/neovex-engine/src/tests.rs`
-- server integration tests in `crates/neovex-server/src/tests/`
+- engine tests in `crates/nimbus-engine/src/tests.rs`
+- server integration tests in `crates/nimbus-server/src/tests/`
 
 #### New tests
 
@@ -3375,7 +3375,7 @@ escape hatch:
 
 #### Acceptance criteria
 
-- Neovex has a typed, versioned WASM plugin ABI that is separate from the V8
+- Nimbus has a typed, versioned WASM plugin ABI that is separate from the V8
   compatibility runtime
 - Wasmtime is used as the plugin runtime rather than a generic untyped wasm
   loader
@@ -3499,6 +3499,6 @@ Phase 11:
 21. 9A
 22. 9B
 23. 10A if snapshot or historical reads become a product requirement
-24. 11A if the Neovex-native generated API becomes a product priority
+24. 11A if the Nimbus-native generated API becomes a product priority
 25. 11B after 11A if a typed WASM plugin ABI becomes a product priority
 26. 7B when deploy identity exists

@@ -14,18 +14,18 @@ Reviewed against:
 - `AGENTS.md`
 - `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
 - `docs/plans/archive/codebase-modularity-and-maintainability-follow-on-plan.md`
-- `crates/neovex-bin/src/machine/tests.rs`
-- `crates/neovex-bin/src/service/tests.rs`
-- `crates/neovex-bin/src/machine/manager/tests.rs`
-- `crates/neovex-engine/benches/embedded-provider-benchmarks.rs`
-- `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs`
-- `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs`
-- `crates/neovex-engine/benches/mysql_provider_benchmarks/workloads.rs`
-- `crates/neovex-sandbox/src/backends/container/runtime.rs`
-- `crates/neovex-sandbox/src/backends/oci/builder.rs`
-- `crates/neovex-bin/src/machine/client.rs`
-- `crates/neovex-engine/src/tests/materialized_serving.rs`
-- `crates/neovex-storage/src/libsql.rs`
+- `crates/nimbus-bin/src/machine/tests.rs`
+- `crates/nimbus-bin/src/service/tests.rs`
+- `crates/nimbus-bin/src/machine/manager/tests.rs`
+- `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs`
+- `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs`
+- `crates/nimbus-engine/benches/postgres_provider_benchmarks/workloads.rs`
+- `crates/nimbus-engine/benches/mysql_provider_benchmarks/workloads.rs`
+- `crates/nimbus-sandbox/src/backends/container/runtime.rs`
+- `crates/nimbus-sandbox/src/backends/oci/builder.rs`
+- `crates/nimbus-bin/src/machine/client.rs`
+- `crates/nimbus-engine/src/tests/materialized_serving.rs`
+- `crates/nimbus-storage/src/libsql.rs`
 - the current git worktree on `main`
 
 Baseline verification status for this plan:
@@ -106,11 +106,11 @@ already clear.
 This plan covers:
 
 - scenario-owned repackaging of the oversized regression files
-  `crates/neovex-bin/src/machine/tests.rs`,
-  `crates/neovex-bin/src/service/tests.rs`, and
-  `crates/neovex-bin/src/machine/manager/tests.rs`
+  `crates/nimbus-bin/src/machine/tests.rs`,
+  `crates/nimbus-bin/src/service/tests.rs`, and
+  `crates/nimbus-bin/src/machine/manager/tests.rs`
 - further provider benchmark modularization in
-  `crates/neovex-engine/benches/`, especially the remaining
+  `crates/nimbus-engine/benches/`, especially the remaining
   1,500-to-1,999-line workload and benchmark-root files
 - packaging cleanup for the active `ARCHITECTURE.md` document so the stable
   architecture root stays concise and deeper reference material moves into
@@ -144,8 +144,8 @@ These rules are mandatory for every item in this plan.
    records otherwise.
 
 2. Keep the core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -189,20 +189,20 @@ These rules are mandatory for every item in this plan.
   verification-architecture reference material moved into
   `docs/reference/provider-topologies.md` and
   `docs/reference/verification-architecture.md`
-- `crates/neovex-bin/src/machine/tests.rs` has already been repackaged into a
+- `crates/nimbus-bin/src/machine/tests.rs` has already been repackaged into a
   19-line composition root over scenario-owned `machine/tests/` modules, so it
   no longer counts as an active hotspot.
-- `crates/neovex-bin/src/service/tests.rs` has already been repackaged into a
+- `crates/nimbus-bin/src/service/tests.rs` has already been repackaged into a
   39-line composition root over scenario-owned `service/tests/` modules for
   parse/help, rendered state, logs/process helpers, lifecycle, forwarded
   machine API behavior, and support ownership.
-- `crates/neovex-bin/src/machine/manager/tests.rs` has already been repackaged
+- `crates/nimbus-bin/src/machine/manager/tests.rs` has already been repackaged
   into a 57-line composition root over lifecycle-owned `machine/manager/tests/`
   modules for provider/bootstrap, launch/image, helper resolution,
   readiness/startup, stop/cleanup, ports/state, SSH/SCP, attestation, and
   support ownership.
 - The provider-local Postgres and MySQL workload packaging has landed.
-  `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs`
+  `crates/nimbus-engine/benches/postgres_provider_benchmarks/workloads.rs`
   and `mysql_provider_benchmarks/workloads.rs` are now 27-line composition
   roots over workload-family modules:
   - Postgres: `crud.rs` (153), `journal.rs` (226), `reads.rs` (493),
@@ -214,12 +214,12 @@ These rules are mandatory for every item in this plan.
   and provider-owned workload logic in single roots that are harder to extend
   than they need to be.
 - The embedded provider benchmark root has also been repackaged.
-  `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` is now a
+  `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs` is now a
   79-line composition root over `config.rs` (168), `models.rs` (180),
   `suite.rs` (97), `workloads.rs` (700), `fixtures.rs` (412),
   `scenarios.rs` (248), `support.rs` (152), and `report.rs` (208).
 - The libsql-replica benchmark root has now been repackaged as well.
-  `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` is now
+  `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs` is now
   a 90-line composition root over `config.rs` (240), `models.rs` (126),
   `suite.rs` (50), `workloads.rs` (670), `fixtures.rs` (669),
   `scenarios.rs` (240), `support.rs` (232), and `report.rs` (269).
@@ -258,11 +258,11 @@ These rules are mandatory for every item in this plan.
    libsql-replica benchmark modules are all below the hard threshold and now
    read as cohesive ownership surfaces, so they do not need further breakup in
    this wave.
-   `crates/neovex-sandbox/src/backends/container/runtime.rs`,
-   `crates/neovex-sandbox/src/backends/oci/builder.rs`,
-   `crates/neovex-bin/src/machine/client.rs`,
-   `crates/neovex-engine/src/tests/materialized_serving.rs`, and
-   `crates/neovex-storage/src/libsql.rs` are all below the threshold and read
+   `crates/nimbus-sandbox/src/backends/container/runtime.rs`,
+   `crates/nimbus-sandbox/src/backends/oci/builder.rs`,
+   `crates/nimbus-bin/src/machine/client.rs`,
+   `crates/nimbus-engine/src/tests/materialized_serving.rs`, and
+   `crates/nimbus-storage/src/libsql.rs` are all below the threshold and read
    as more cohesive than the selected hotspots above.
 
 ---
@@ -287,16 +287,16 @@ This plan is successful only when all of the following are true:
 
 ## Assessed But Not Selected
 
-- `crates/neovex-engine/src/tests/materialized_serving.rs` at 1,389 lines is
+- `crates/nimbus-engine/src/tests/materialized_serving.rs` at 1,389 lines is
   below the threshold and already reads as a single concept-owned proof surface
   for materialized-serving behavior. Revisit only if later work pushes new
   unrelated ownership into it.
-- `crates/neovex-storage/src/libsql.rs` at 1,471 lines is below the threshold
+- `crates/nimbus-storage/src/libsql.rs` at 1,471 lines is below the threshold
   and already reads as a concept-owned replica freshness composition root over
   its existing submodules.
-- `crates/neovex-sandbox/src/backends/container/runtime.rs` at 1,328 lines,
-  `crates/neovex-sandbox/src/backends/oci/builder.rs` at 1,199 lines, and
-  `crates/neovex-bin/src/machine/client.rs` at 1,120 lines are notable but
+- `crates/nimbus-sandbox/src/backends/container/runtime.rs` at 1,328 lines,
+  `crates/nimbus-sandbox/src/backends/oci/builder.rs` at 1,199 lines, and
+  `crates/nimbus-bin/src/machine/client.rs` at 1,120 lines are notable but
   below the threshold and less urgent than the selected proof and docs
   hotspots.
 - Archived plan documents above the threshold are historical control-plane
@@ -341,11 +341,11 @@ Every implementation item in this plan must run its focused verification, plus:
 
 Use these focused lanes as appropriate:
 
-- `cargo test -p neovex-bin machine`
-- `cargo test -p neovex-bin service`
-- `cargo check -p neovex-engine --benches`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo test -p nimbus-bin machine`
+- `cargo test -p nimbus-bin service`
+- `cargo check -p nimbus-engine --benches`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 Before this whole workstream can be considered complete, run and record:
 
@@ -369,12 +369,12 @@ If environment restrictions block a command, do not silently skip it:
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | CMH0 | `done` | reviewed the live post-follow-on codebase, applied the current 1,500/2,000-line threshold rules, and promoted this hotspot maintainability control plane | none | docs-only review and planning pass on 2026-04-19 |
-| CMH1 | `done` | split `crates/neovex-bin/src/machine/tests.rs` into scenario-owned machine CLI regression modules | CMH0 | completed on 2026-04-19 with a 19-line composition root over parse/help, records/state, render, OS/image, transfer/SSH, forwarded machine API, startup-failure, and support modules |
-| CMH2 | `done` | split `crates/neovex-bin/src/service/tests.rs` into scenario-owned service CLI regression modules | CMH0 | completed on 2026-04-19 with a 39-line composition root over parse/help, rendered state, logs/process, lifecycle, forwarded machine API, and support modules |
-| CMH3 | `done` | split `crates/neovex-bin/src/machine/manager/tests.rs` into lifecycle-owned manager regression modules | CMH0 | completed on 2026-04-19 with a 57-line composition root over provider/bootstrap, launch/image, helper resolution, readiness/startup, stop/cleanup, ports/state, SSH/SCP, attestation, and support modules |
-| CMH4 | `done` | split `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs` and `mysql_provider_benchmarks/workloads.rs` into provider-owned workload module trees | CMH0 | completed on 2026-04-19 with 27-line composition roots over workload-family modules for CRUD, reads, journal, subscription, and tenant behavior |
-| CMH5 | `done` | split `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` into a thinner benchmark root plus concept-owned modules | CMH4 | completed on 2026-04-19 with a 79-line composition root over config, models, suite, workloads, fixtures, scenarios, support, and report modules |
-| CMH6 | `done` | split `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` into a thinner benchmark root plus concept-owned modules | CMH4 | completed on 2026-04-19 with a 90-line composition root over config, models, suite, workloads, fixtures, scenarios, support, and report modules |
+| CMH1 | `done` | split `crates/nimbus-bin/src/machine/tests.rs` into scenario-owned machine CLI regression modules | CMH0 | completed on 2026-04-19 with a 19-line composition root over parse/help, records/state, render, OS/image, transfer/SSH, forwarded machine API, startup-failure, and support modules |
+| CMH2 | `done` | split `crates/nimbus-bin/src/service/tests.rs` into scenario-owned service CLI regression modules | CMH0 | completed on 2026-04-19 with a 39-line composition root over parse/help, rendered state, logs/process, lifecycle, forwarded machine API, and support modules |
+| CMH3 | `done` | split `crates/nimbus-bin/src/machine/manager/tests.rs` into lifecycle-owned manager regression modules | CMH0 | completed on 2026-04-19 with a 57-line composition root over provider/bootstrap, launch/image, helper resolution, readiness/startup, stop/cleanup, ports/state, SSH/SCP, attestation, and support modules |
+| CMH4 | `done` | split `crates/nimbus-engine/benches/postgres_provider_benchmarks/workloads.rs` and `mysql_provider_benchmarks/workloads.rs` into provider-owned workload module trees | CMH0 | completed on 2026-04-19 with 27-line composition roots over workload-family modules for CRUD, reads, journal, subscription, and tenant behavior |
+| CMH5 | `done` | split `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs` into a thinner benchmark root plus concept-owned modules | CMH4 | completed on 2026-04-19 with a 79-line composition root over config, models, suite, workloads, fixtures, scenarios, support, and report modules |
+| CMH6 | `done` | split `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs` into a thinner benchmark root plus concept-owned modules | CMH4 | completed on 2026-04-19 with a 90-line composition root over config, models, suite, workloads, fixtures, scenarios, support, and report modules |
 | CMH7 | `done` | repackage `ARCHITECTURE.md` into a thinner stable architecture root plus focused reference docs | CMH1 through CMH6 | completed on 2026-04-19 by extracting provider-topology and verification-architecture detail into `docs/reference/` while keeping the architecture root canonical and explicitly justified above 1,500 lines |
 | CMH8 | `done` | updated docs, ran the full verification sweep, and archived this completed hotspot plan cleanly | CMH1 through CMH7 | completed on 2026-04-19 with a green closeout sweep, archive-state pointer reconciliation, and explicit carry-forward guidance to promote a new active plan before another broad maintainability wave |
 
@@ -417,13 +417,13 @@ If environment restrictions block a command, do not silently skip it:
 
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
-| CMH0 | done | start `CMH1` by mapping the scenario families currently mixed together in `crates/neovex-bin/src/machine/tests.rs` and extracting a local `machine/tests/` module tree without changing the machine CLI contract |
-| CMH1 | done | split `crates/neovex-bin/src/machine/tests.rs` into a 19-line composition root plus `tests/parse_help.rs` (784 lines), `records_state.rs` (699), `render.rs` (752), `os_image.rs` (256), `transfer_ssh.rs` (167), `forwarded_api.rs` (337), `startup_failures.rs` (230), and `support.rs` (98), preserving machine CLI behavior while eliminating the old 3,323-line mixed proof surface |
-| CMH2 | done | split `crates/neovex-bin/src/service/tests.rs` into a 39-line composition root plus `tests/parse_help.rs` (304 lines), `render_state.rs` (139), `logs_process.rs` (187), `lifecycle.rs` (133), `forwarded_api.rs` (607), and `support.rs` (375), preserving service CLI behavior while eliminating the old 1,765-line mixed proof surface |
-| CMH3 | done | split `crates/neovex-bin/src/machine/manager/tests.rs` into a 57-line composition root plus `tests/provider_bootstrap.rs` (138 lines), `launch_image.rs` (342), `helper_resolution.rs` (136), `readiness_startup.rs` (265), `stop_cleanup.rs` (164), `ports_state.rs` (135), `ssh_scp.rs` (195), `attestation.rs` (53), and `support.rs` (215), preserving manager semantics while eliminating the old 1,678-line mixed proof surface |
+| CMH0 | done | start `CMH1` by mapping the scenario families currently mixed together in `crates/nimbus-bin/src/machine/tests.rs` and extracting a local `machine/tests/` module tree without changing the machine CLI contract |
+| CMH1 | done | split `crates/nimbus-bin/src/machine/tests.rs` into a 19-line composition root plus `tests/parse_help.rs` (784 lines), `records_state.rs` (699), `render.rs` (752), `os_image.rs` (256), `transfer_ssh.rs` (167), `forwarded_api.rs` (337), `startup_failures.rs` (230), and `support.rs` (98), preserving machine CLI behavior while eliminating the old 3,323-line mixed proof surface |
+| CMH2 | done | split `crates/nimbus-bin/src/service/tests.rs` into a 39-line composition root plus `tests/parse_help.rs` (304 lines), `render_state.rs` (139), `logs_process.rs` (187), `lifecycle.rs` (133), `forwarded_api.rs` (607), and `support.rs` (375), preserving service CLI behavior while eliminating the old 1,765-line mixed proof surface |
+| CMH3 | done | split `crates/nimbus-bin/src/machine/manager/tests.rs` into a 57-line composition root plus `tests/provider_bootstrap.rs` (138 lines), `launch_image.rs` (342), `helper_resolution.rs` (136), `readiness_startup.rs` (265), `stop_cleanup.rs` (164), `ports_state.rs` (135), `ssh_scp.rs` (195), `attestation.rs` (53), and `support.rs` (215), preserving manager semantics while eliminating the old 1,678-line mixed proof surface |
 | CMH4 | done | split the Postgres and MySQL provider workload roots into 27-line composition surfaces over workload-family modules: Postgres `crud.rs` (153), `journal.rs` (226), `reads.rs` (493), `subscription.rs` (391), `tenant.rs` (343); MySQL `crud.rs` (153), `journal.rs` (220), `reads.rs` (493), `subscription.rs` (391), `tenant.rs` (388). Benchmark slugs, workload semantics, and markdown report shape remained unchanged while removing both 1,600-line mixed-owner workload files. |
-| CMH5 | done | split `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` into a 79-line composition root over `config.rs` (168), `models.rs` (180), `suite.rs` (97), `workloads.rs` (700), `fixtures.rs` (412), `scenarios.rs` (248), `support.rs` (152), and `report.rs` (208). The old 1,817-line mixed-owner benchmark root is gone, every new embedded benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. |
-| CMH6 | done | split `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` into a 90-line composition root over `config.rs` (240), `models.rs` (126), `suite.rs` (50), `workloads.rs` (670), `fixtures.rs` (669), `scenarios.rs` (240), `support.rs` (232), and `report.rs` (269). The old 1,987-line mixed-owner benchmark root is gone, every new libsql-replica benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. |
+| CMH5 | done | split `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs` into a 79-line composition root over `config.rs` (168), `models.rs` (180), `suite.rs` (97), `workloads.rs` (700), `fixtures.rs` (412), `scenarios.rs` (248), `support.rs` (152), and `report.rs` (208). The old 1,817-line mixed-owner benchmark root is gone, every new embedded benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. |
+| CMH6 | done | split `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs` into a 90-line composition root over `config.rs` (240), `models.rs` (126), `suite.rs` (50), `workloads.rs` (670), `fixtures.rs` (669), `scenarios.rs` (240), `support.rs` (232), and `report.rs` (269). The old 1,987-line mixed-owner benchmark root is gone, every new libsql-replica benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. |
 | CMH7 | done | extracted the deepest provider-topology and verification-harness material out of `ARCHITECTURE.md` into `docs/reference/provider-topologies.md` and `docs/reference/verification-architecture.md`, updated `docs/README.md` to surface those new references, and reduced the architecture root from 1,997 lines to 1,694. The root remains above the 1,500-line review threshold, but that is now explicitly justified because it still owns the crate map, invariants, key data flows, persistence engine layouts, and durable design-decision record as the canonical stable architecture document. |
 | CMH8 | done | completed the closeout sweep, reconciled `AGENTS.md` plus `docs/plans/README.md` to treat this hotspot wave as archived historical context, and archived the control plane cleanly after recording the green verification bundle (`make check`, `make test`, `make clippy`, `npm run test --workspaces --if-present`, `npm run build --workspaces --if-present`, and `make ci`) |
 
@@ -442,7 +442,7 @@ If environment restrictions block a command, do not silently skip it:
 #### Implementation plan
 
 1. Keep the machine production root and its current public surface unchanged.
-2. Replace the flat `crates/neovex-bin/src/machine/tests.rs` proof surface with
+2. Replace the flat `crates/nimbus-bin/src/machine/tests.rs` proof surface with
    a local module tree grouped by clear scenario ownership.
 3. Expected seams:
    - CLI parse and help coverage
@@ -455,10 +455,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-bin machine`
+- `cargo test -p nimbus-bin machine`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -471,7 +471,7 @@ If environment restrictions block a command, do not silently skip it:
 #### Implementation plan
 
 1. Keep the service production root and its current public surface unchanged.
-2. Replace the flat `crates/neovex-bin/src/service/tests.rs` proof surface with
+2. Replace the flat `crates/nimbus-bin/src/service/tests.rs` proof surface with
    a local module tree grouped by clear scenario ownership.
 3. Expected seams:
    - CLI parse and help coverage
@@ -483,10 +483,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-bin service`
+- `cargo test -p nimbus-bin service`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -501,7 +501,7 @@ If environment restrictions block a command, do not silently skip it:
 1. Keep the machine manager production tree and its current public surface
    unchanged.
 2. Replace the flat
-   `crates/neovex-bin/src/machine/manager/tests.rs` proof surface with a local
+   `crates/nimbus-bin/src/machine/manager/tests.rs` proof surface with a local
    module tree grouped by lifecycle or helper ownership.
 3. Expected seams:
    - provider capability and bootstrap contract behavior
@@ -516,10 +516,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo test -p neovex-bin machine`
+- `cargo test -p nimbus-bin machine`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -534,7 +534,7 @@ If environment restrictions block a command, do not silently skip it:
 #### Implementation plan
 
 1. Keep the provider benchmark suite under
-   `crates/neovex-engine/benches/`.
+   `crates/nimbus-engine/benches/`.
 2. Replace
    `postgres_provider_benchmarks/workloads.rs`
    and
@@ -551,10 +551,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo check -p neovex-engine --benches`
+- `cargo check -p nimbus-engine --benches`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -569,8 +569,8 @@ If environment restrictions block a command, do not silently skip it:
 #### Implementation plan
 
 1. Keep the embedded benchmark entrypoint under
-   `crates/neovex-engine/benches/`.
-2. Thin `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` by
+   `crates/nimbus-engine/benches/`.
+2. Thin `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs` by
    moving non-entrypoint ownership into local modules.
 3. Expected seams:
    - CLI/config parsing
@@ -582,10 +582,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo check -p neovex-engine --benches`
+- `cargo check -p nimbus-engine --benches`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -599,9 +599,9 @@ If environment restrictions block a command, do not silently skip it:
 #### Implementation plan
 
 1. Keep the libsql-replica benchmark entrypoint under
-   `crates/neovex-engine/benches/`.
+   `crates/nimbus-engine/benches/`.
 2. Thin
-   `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs`
+   `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs`
    by moving non-entrypoint ownership into local modules.
 3. Expected seams:
    - CLI/config parsing
@@ -614,10 +614,10 @@ If environment restrictions block a command, do not silently skip it:
 
 #### Focused verification
 
-- `cargo check -p neovex-engine --benches`
+- `cargo check -p nimbus-engine --benches`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -679,19 +679,19 @@ If environment restrictions block a command, do not silently skip it:
 
 | Date | Item | Status | Notes | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
-| 2026-04-19 | CMH0 | `done` | Reviewed the live repo after the completed follow-on maintainability wave and promoted this hotspot-focused plan as the new active control plane. The review found that the strongest remaining active hotspots are now `crates/neovex-bin/src/machine/tests.rs` at 3,323 lines, `crates/neovex-bin/src/service/tests.rs` at 1,765 lines, `crates/neovex-bin/src/machine/manager/tests.rs` at 1,678 lines, the remaining provider benchmark files from 1,602 through 1,987 lines, and `ARCHITECTURE.md` at 1,997 lines. The review also confirmed that notable production files below the threshold are not yet as urgent as the selected proof, benchmark, and doc surfaces. | docs-only review; no new code verification claimed | start `CMH1` by mapping the scenario families currently mixed into `crates/neovex-bin/src/machine/tests.rs` and extracting a local `machine/tests/` module tree |
-| 2026-04-19 | CMH1 | `in_progress` | Reconciled the clean worktree and resumed the first eligible hotspot item from the live control plan. Began the machine CLI proof-surface split by mapping the scenario clusters currently mixed into `crates/neovex-bin/src/machine/tests.rs` so the replacement `machine/tests/` tree can follow real ownership boundaries instead of line-count-only chunks. | `git status --short --branch`; plan reconciliation; targeted `sed` and `rg` reads over `crates/neovex-bin/src/machine/tests.rs` and the owning machine module | extract the local `machine/tests/` module tree, wire the new support module, and then run the focused `neovex-bin` verification lanes |
-| 2026-04-19 | CMH1 | `done` | Repackaged `crates/neovex-bin/src/machine/tests.rs` into a 19-line composition root over `tests/parse_help.rs`, `records_state.rs`, `render.rs`, `os_image.rs`, `transfer_ssh.rs`, `forwarded_api.rs`, `startup_failures.rs`, and `support.rs`. The old 3,323-line mixed proof surface is gone, every new machine test file is below the hard threshold, and the split now follows the intended scenario families without changing machine CLI behavior. | `cargo fmt --all`; `cargo test -p neovex-bin machine`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH2` by mapping the scenario families currently mixed into `crates/neovex-bin/src/service/tests.rs` and extracting a local `service/tests/` module tree |
-| 2026-04-19 | CMH2 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH1`. The target is `crates/neovex-bin/src/service/tests.rs`, which still mixes CLI parse/help coverage, rendered config and tenant resolution, log and process helpers, lifecycle flows, backend loading, and forwarded machine API behavior in one file. | plan reconciliation after closing `CMH1`; upcoming targeted `sed` and `rg` reads over `crates/neovex-bin/src/service/tests.rs` and the owning service modules | extract the local `service/tests/` module tree and run the focused `neovex-bin` service verification lanes |
-| 2026-04-19 | CMH2 | `done` | Repackaged `crates/neovex-bin/src/service/tests.rs` into a 39-line composition root over `tests/parse_help.rs`, `render_state.rs`, `logs_process.rs`, `lifecycle.rs`, `forwarded_api.rs`, and `support.rs`. The old 1,765-line mixed proof surface is gone, every new service test file is below the hard threshold, and the split now follows the intended service scenario families without changing the service CLI contract. | `cargo fmt --all`; `cargo test -p neovex-bin service`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH3` by mapping the scenario families currently mixed into `crates/neovex-bin/src/machine/manager/tests.rs` and extracting a local `machine/manager/tests/` module tree |
-| 2026-04-19 | CMH3 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH2`. The target is `crates/neovex-bin/src/machine/manager/tests.rs`, which now stands as the clearest remaining proof-surface hotspot and still mixes provider capability contracts, bootstrap identity, image materialization, helper resolution, readiness or startup interruption, stop or cleanup behavior, SSH or SCP coverage, port allocation or state refresh, attestation metadata, and local support helpers in one file. | plan reconciliation after closing `CMH2`; upcoming targeted `sed` and `rg` reads over `crates/neovex-bin/src/machine/manager/tests.rs` and the owning manager modules | extract the local `machine/manager/tests/` module tree and run the focused manager-side `neovex-bin` verification lanes |
-| 2026-04-19 | CMH3 | `done` | Repackaged `crates/neovex-bin/src/machine/manager/tests.rs` into a 57-line composition root over `tests/provider_bootstrap.rs`, `launch_image.rs`, `helper_resolution.rs`, `readiness_startup.rs`, `stop_cleanup.rs`, `ports_state.rs`, `ssh_scp.rs`, `attestation.rs`, and `support.rs`. The old 1,678-line mixed proof surface is gone, every new manager test file is below the hard threshold, and the split now follows the manager’s real lifecycle seams without changing machine-manager semantics. | `cargo fmt --all`; `cargo test -p neovex-bin machine`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH4` by mapping the workload families currently mixed into the Postgres and MySQL provider benchmark files and extracting provider-local module trees |
-| 2026-04-19 | CMH4 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH3`. The target is the pair of provider workload files `crates/neovex-engine/benches/postgres_provider_benchmarks/workloads.rs` and `crates/neovex-engine/benches/mysql_provider_benchmarks/workloads.rs`, which still mix CRUD, point-read, indexed-query, mixed-load, fixture or seed ownership, measurement recording, and local helpers in single provider files. | plan reconciliation after closing `CMH3`; upcoming targeted `sed` and `rg` reads over the Postgres/MySQL benchmark modules | extract provider-local workload module trees and run the focused benchmark verification lanes |
-| 2026-04-19 | CMH4 | `done` | Repackaged both provider workload hotspots into 27-line composition roots over provider-local workload-family modules. Postgres now routes through `workloads/crud.rs`, `journal.rs`, `reads.rs`, `subscription.rs`, and `tenant.rs`; MySQL now mirrors the same family layout. The old 1,602-line and 1,641-line mixed-owner workload files are gone, every new workload-family file is below the hard threshold, and benchmark slugs plus markdown output shape stayed unchanged. | `cargo fmt --all`; `cargo check -p neovex-engine --benches`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH5` by mapping the ownership seams currently mixed together in `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` |
-| 2026-04-19 | CMH5 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH4`. The target is `crates/neovex-engine/benches/embedded-provider-benchmarks.rs`, which still mixes CLI and config parsing, workload and lane models, report or measurement types, suite orchestration, fixtures or seed ownership, and provider-owned workload helpers in one 1,817-line benchmark root. | plan reconciliation after closing `CMH4`; upcoming targeted `sed` and `rg` reads over the embedded benchmark entrypoint and its existing sibling benchmark modules | extract a thinner embedded benchmark root plus concept-owned local modules, then run the focused benchmark verification lanes |
-| 2026-04-19 | CMH5 | `done` | Repackaged `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` into a 79-line composition root over `embedded_provider_benchmarks/config.rs`, `models.rs`, `suite.rs`, `workloads.rs`, `fixtures.rs`, `scenarios.rs`, `support.rs`, and `report.rs`. The old 1,817-line mixed-owner benchmark root is gone, every new embedded benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. | `cargo fmt --all`; `cargo check -p neovex-engine --benches`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH6` by mapping the ownership seams currently mixed together in `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` |
-| 2026-04-19 | CMH6 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH5`. The target is `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs`, which still mixes CLI and config parsing, environment and admin-API setup, workload and lane models, report or measurement types, suite orchestration, fixtures or tenant resources, and replica-specific coordination in one 1,987-line benchmark root. | plan reconciliation after closing `CMH5`; upcoming targeted `sed` and `rg` reads over the libsql-replica benchmark entrypoint and its existing sibling benchmark modules | extract a thinner libsql-replica benchmark root plus concept-owned local modules, then run the focused benchmark verification lanes |
-| 2026-04-19 | CMH6 | `done` | Repackaged `crates/neovex-engine/benches/libsql-replica-provider-benchmarks.rs` into a 90-line composition root over `libsql_replica_provider_benchmarks/config.rs`, `models.rs`, `suite.rs`, `workloads.rs`, `fixtures.rs`, `scenarios.rs`, `support.rs`, and `report.rs`. The old 1,987-line mixed-owner benchmark root is gone, every new libsql-replica benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. | `cargo fmt --all`; `cargo check -p neovex-engine --benches`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH7` by mapping the stable-vs-reference ownership seams currently mixed together in `ARCHITECTURE.md` |
+| 2026-04-19 | CMH0 | `done` | Reviewed the live repo after the completed follow-on maintainability wave and promoted this hotspot-focused plan as the new active control plane. The review found that the strongest remaining active hotspots are now `crates/nimbus-bin/src/machine/tests.rs` at 3,323 lines, `crates/nimbus-bin/src/service/tests.rs` at 1,765 lines, `crates/nimbus-bin/src/machine/manager/tests.rs` at 1,678 lines, the remaining provider benchmark files from 1,602 through 1,987 lines, and `ARCHITECTURE.md` at 1,997 lines. The review also confirmed that notable production files below the threshold are not yet as urgent as the selected proof, benchmark, and doc surfaces. | docs-only review; no new code verification claimed | start `CMH1` by mapping the scenario families currently mixed into `crates/nimbus-bin/src/machine/tests.rs` and extracting a local `machine/tests/` module tree |
+| 2026-04-19 | CMH1 | `in_progress` | Reconciled the clean worktree and resumed the first eligible hotspot item from the live control plan. Began the machine CLI proof-surface split by mapping the scenario clusters currently mixed into `crates/nimbus-bin/src/machine/tests.rs` so the replacement `machine/tests/` tree can follow real ownership boundaries instead of line-count-only chunks. | `git status --short --branch`; plan reconciliation; targeted `sed` and `rg` reads over `crates/nimbus-bin/src/machine/tests.rs` and the owning machine module | extract the local `machine/tests/` module tree, wire the new support module, and then run the focused `nimbus-bin` verification lanes |
+| 2026-04-19 | CMH1 | `done` | Repackaged `crates/nimbus-bin/src/machine/tests.rs` into a 19-line composition root over `tests/parse_help.rs`, `records_state.rs`, `render.rs`, `os_image.rs`, `transfer_ssh.rs`, `forwarded_api.rs`, `startup_failures.rs`, and `support.rs`. The old 3,323-line mixed proof surface is gone, every new machine test file is below the hard threshold, and the split now follows the intended scenario families without changing machine CLI behavior. | `cargo fmt --all`; `cargo test -p nimbus-bin machine`; `cargo check --workspace`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH2` by mapping the scenario families currently mixed into `crates/nimbus-bin/src/service/tests.rs` and extracting a local `service/tests/` module tree |
+| 2026-04-19 | CMH2 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH1`. The target is `crates/nimbus-bin/src/service/tests.rs`, which still mixes CLI parse/help coverage, rendered config and tenant resolution, log and process helpers, lifecycle flows, backend loading, and forwarded machine API behavior in one file. | plan reconciliation after closing `CMH1`; upcoming targeted `sed` and `rg` reads over `crates/nimbus-bin/src/service/tests.rs` and the owning service modules | extract the local `service/tests/` module tree and run the focused `nimbus-bin` service verification lanes |
+| 2026-04-19 | CMH2 | `done` | Repackaged `crates/nimbus-bin/src/service/tests.rs` into a 39-line composition root over `tests/parse_help.rs`, `render_state.rs`, `logs_process.rs`, `lifecycle.rs`, `forwarded_api.rs`, and `support.rs`. The old 1,765-line mixed proof surface is gone, every new service test file is below the hard threshold, and the split now follows the intended service scenario families without changing the service CLI contract. | `cargo fmt --all`; `cargo test -p nimbus-bin service`; `cargo check --workspace`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH3` by mapping the scenario families currently mixed into `crates/nimbus-bin/src/machine/manager/tests.rs` and extracting a local `machine/manager/tests/` module tree |
+| 2026-04-19 | CMH3 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH2`. The target is `crates/nimbus-bin/src/machine/manager/tests.rs`, which now stands as the clearest remaining proof-surface hotspot and still mixes provider capability contracts, bootstrap identity, image materialization, helper resolution, readiness or startup interruption, stop or cleanup behavior, SSH or SCP coverage, port allocation or state refresh, attestation metadata, and local support helpers in one file. | plan reconciliation after closing `CMH2`; upcoming targeted `sed` and `rg` reads over `crates/nimbus-bin/src/machine/manager/tests.rs` and the owning manager modules | extract the local `machine/manager/tests/` module tree and run the focused manager-side `nimbus-bin` verification lanes |
+| 2026-04-19 | CMH3 | `done` | Repackaged `crates/nimbus-bin/src/machine/manager/tests.rs` into a 57-line composition root over `tests/provider_bootstrap.rs`, `launch_image.rs`, `helper_resolution.rs`, `readiness_startup.rs`, `stop_cleanup.rs`, `ports_state.rs`, `ssh_scp.rs`, `attestation.rs`, and `support.rs`. The old 1,678-line mixed proof surface is gone, every new manager test file is below the hard threshold, and the split now follows the manager’s real lifecycle seams without changing machine-manager semantics. | `cargo fmt --all`; `cargo test -p nimbus-bin machine`; `cargo check --workspace`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH4` by mapping the workload families currently mixed into the Postgres and MySQL provider benchmark files and extracting provider-local module trees |
+| 2026-04-19 | CMH4 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH3`. The target is the pair of provider workload files `crates/nimbus-engine/benches/postgres_provider_benchmarks/workloads.rs` and `crates/nimbus-engine/benches/mysql_provider_benchmarks/workloads.rs`, which still mix CRUD, point-read, indexed-query, mixed-load, fixture or seed ownership, measurement recording, and local helpers in single provider files. | plan reconciliation after closing `CMH3`; upcoming targeted `sed` and `rg` reads over the Postgres/MySQL benchmark modules | extract provider-local workload module trees and run the focused benchmark verification lanes |
+| 2026-04-19 | CMH4 | `done` | Repackaged both provider workload hotspots into 27-line composition roots over provider-local workload-family modules. Postgres now routes through `workloads/crud.rs`, `journal.rs`, `reads.rs`, `subscription.rs`, and `tenant.rs`; MySQL now mirrors the same family layout. The old 1,602-line and 1,641-line mixed-owner workload files are gone, every new workload-family file is below the hard threshold, and benchmark slugs plus markdown output shape stayed unchanged. | `cargo fmt --all`; `cargo check -p nimbus-engine --benches`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH5` by mapping the ownership seams currently mixed together in `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs` |
+| 2026-04-19 | CMH5 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH4`. The target is `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs`, which still mixes CLI and config parsing, workload and lane models, report or measurement types, suite orchestration, fixtures or seed ownership, and provider-owned workload helpers in one 1,817-line benchmark root. | plan reconciliation after closing `CMH4`; upcoming targeted `sed` and `rg` reads over the embedded benchmark entrypoint and its existing sibling benchmark modules | extract a thinner embedded benchmark root plus concept-owned local modules, then run the focused benchmark verification lanes |
+| 2026-04-19 | CMH5 | `done` | Repackaged `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs` into a 79-line composition root over `embedded_provider_benchmarks/config.rs`, `models.rs`, `suite.rs`, `workloads.rs`, `fixtures.rs`, `scenarios.rs`, `support.rs`, and `report.rs`. The old 1,817-line mixed-owner benchmark root is gone, every new embedded benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. | `cargo fmt --all`; `cargo check -p nimbus-engine --benches`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH6` by mapping the ownership seams currently mixed together in `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs` |
+| 2026-04-19 | CMH6 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH5`. The target is `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs`, which still mixes CLI and config parsing, environment and admin-API setup, workload and lane models, report or measurement types, suite orchestration, fixtures or tenant resources, and replica-specific coordination in one 1,987-line benchmark root. | plan reconciliation after closing `CMH5`; upcoming targeted `sed` and `rg` reads over the libsql-replica benchmark entrypoint and its existing sibling benchmark modules | extract a thinner libsql-replica benchmark root plus concept-owned local modules, then run the focused benchmark verification lanes |
+| 2026-04-19 | CMH6 | `done` | Repackaged `crates/nimbus-engine/benches/libsql-replica-provider-benchmarks.rs` into a 90-line composition root over `libsql_replica_provider_benchmarks/config.rs`, `models.rs`, `suite.rs`, `workloads.rs`, `fixtures.rs`, `scenarios.rs`, `support.rs`, and `report.rs`. The old 1,987-line mixed-owner benchmark root is gone, every new libsql-replica benchmark module is below the hard threshold, and benchmark semantics plus markdown output stayed unchanged. | `cargo fmt --all`; `cargo check -p nimbus-engine --benches`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings`; `cargo fmt --all --check` | start `CMH7` by mapping the stable-vs-reference ownership seams currently mixed together in `ARCHITECTURE.md` |
 | 2026-04-19 | CMH7 | `in_progress` | Began the next eligible hotspot item immediately after closing `CMH6`. The target is `ARCHITECTURE.md`, which still mixes the canonical crate map and invariants with deeper provider-topology and verification-architecture reference detail that can move into focused docs without weakening the stable architecture root. | plan reconciliation after closing `CMH6`; upcoming targeted `sed` and `rg` reads over `ARCHITECTURE.md`, `docs/reference/`, and the plan/readme indexes that discover architecture docs | extract focused reference docs, cross-link them, and then run the focused workspace verification lanes for doc packaging |
 | 2026-04-19 | CMH7 | `done` | Repackaged `ARCHITECTURE.md` into a thinner stable architecture root and two focused reference docs: `docs/reference/provider-topologies.md` and `docs/reference/verification-architecture.md`. The architecture root dropped from 1,997 lines to 1,694 lines, `docs/README.md` now surfaces the extracted references directly, and the remaining root length is explicitly justified because it still owns the canonical crate map, invariants, key data flows, persistence engine layouts, and durable design-decision record. | `cargo fmt --all --check`; `cargo check --workspace` | start `CMH8` by reconciling plan indexes and running the full verification sweep before archiving this control plane |
 | 2026-04-19 | CMH8 | `in_progress` | Began the final closeout item immediately after closing `CMH7`. The remaining work is to reconcile doc indexes and control-plane pointers, run the full verification sweep, record any environmental limits, archive this completed hotspot plan, and leave the repo with no plan/code mismatch for the maintainability hotspot workstream. | plan reconciliation after closing `CMH7`; upcoming reads over `docs/plans/README.md`, `AGENTS.md`, and the active plan index plus the full verification command list | update doc indexes and active-plan pointers, run the closeout verification sweep, archive the completed plan, and reconcile final status fields |

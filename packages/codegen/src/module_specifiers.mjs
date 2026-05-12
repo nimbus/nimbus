@@ -7,7 +7,7 @@ const BUILTIN_MODULES = new Set(
   }),
 );
 
-const MANAGED_PACKAGE_NAMES = new Set(["convex", "neovex"]);
+const MANAGED_PACKAGE_NAMES = new Set(["convex", "nimbus"]);
 
 function collectModuleSpecifiers(source) {
   const specifiers = [];

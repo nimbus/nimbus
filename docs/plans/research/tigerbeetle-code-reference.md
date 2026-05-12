@@ -1,11 +1,11 @@
-# TigerBeetle Code Reference For Neovex
+# TigerBeetle Code Reference For Nimbus
 
-This note maps the TigerBeetle codebase to the Neovex roadmap, especially
+This note maps the TigerBeetle codebase to the Nimbus roadmap, especially
 Phase 6 durable-journal work.
 
 It is a reference guide, not an execution plan and not a request to copy
-TigerBeetle literally. Neovex remains a redb-backed reactive database with a
-Neovex-owned logical durable journal.
+TigerBeetle literally. Nimbus remains a redb-backed reactive database with a
+Nimbus-owned logical durable journal.
 
 ## Local Checkout
 
@@ -31,7 +31,7 @@ What to take from it:
 - determinism is treated as a storage and recovery feature, not just a testing
   convenience
 
-For Neovex:
+For Nimbus:
 
 - this is the best reference for why Phase `6A/6B` should produce one logical
   ordered-history contract
@@ -47,14 +47,14 @@ This is the architectural export surface. It shows the major seams clearly:
 - `aof`
 - `testing/*`
 
-For Neovex:
+For Nimbus:
 
 - use this file to understand how TigerBeetle separates ordered history,
   materialized state, and verification tooling
 
 ### 3. `src/vsr/journal.zig`
 
-This is the most relevant low-level log file for Neovex journal work.
+This is the most relevant low-level log file for Nimbus journal work.
 
 What to study:
 
@@ -63,11 +63,11 @@ What to study:
 - overlap handling for concurrent writes
 - careful treatment of torn writes and misdirected reads or writes
 
-For Neovex:
+For Nimbus:
 
 - borrow the discipline around visible order, durability boundaries, and
   recovery assumptions
-- do not copy the exact physical ring-buffer layout; Neovex needs a logical
+- do not copy the exact physical ring-buffer layout; Nimbus needs a logical
   tenant journal, not TigerBeetle's replica WAL structure
 
 ### 4. `src/state_machine.zig`
@@ -82,7 +82,7 @@ What to study:
 - explicit batch encoders and decoders
 - typed data model on top of general storage primitives
 
-For Neovex:
+For Nimbus:
 
 - this is the reference for making redb tables a materialized view of the
   durable journal in Phase `6B`
@@ -99,7 +99,7 @@ What to study:
 - explicit resource and memory budgeting
 - deterministic tree-id and schema organization
 
-For Neovex:
+For Nimbus:
 
 - useful if we later add a custom write-optimized materializer
 - especially relevant for thinking about journal-to-materialized-state
@@ -118,7 +118,7 @@ What to study:
 - `scope_open` / `scope_close` persist-vs-discard semantics
 - lookup and key-range discipline
 
-For Neovex:
+For Nimbus:
 
 - useful only if we later build our own materializer
 - not a reason to replace redb in Phase `6A`
@@ -135,7 +135,7 @@ What to study:
 - how compaction work is paced in explicit beats rather than ad hoc background
   timing
 
-For Neovex:
+For Nimbus:
 
 - this is the most important TigerBeetle file for a future deterministic
   materializer
@@ -153,7 +153,7 @@ What to study:
 - rules about not dropping the latest visible state
 - interaction between checkpointing and manifest persistence
 
-For Neovex:
+For Nimbus:
 
 - this is the best reference for journal-driven materializer metadata,
   checkpoint-safe manifest updates, and compaction bookkeeping
@@ -169,7 +169,7 @@ What to study:
 - manifest references in checkpoint state
 - rules about what recovery is allowed to reconstruct
 
-For Neovex:
+For Nimbus:
 
 - this is the main reference for explicit checkpoint metadata and rebuild
   boundaries around a future custom materializer
@@ -184,10 +184,10 @@ What to study:
 - explicit `write`, `sync`, and `checkpoint` boundaries
 - the statement that AOF borrows durability from the WAL
 
-For Neovex:
+For Nimbus:
 
 - helpful when reasoning about secondary logs and export formats
-- a good reminder that Neovex should avoid inventing extra application-level
+- a good reminder that Nimbus should avoid inventing extra application-level
   logs unless they serve a distinct purpose
 
 ## Verification Files To Study
@@ -199,7 +199,7 @@ Why it matters:
 - tests storage reads and writes under injected sector faults
 - good reference for corruption-aware storage testing
 
-For Neovex:
+For Nimbus:
 
 - inspires journal read/write corruption tests and recovery validation
 
@@ -209,7 +209,7 @@ Why it matters:
 
 - looks for valid operations that crash on replay and cause crash loops
 
-For Neovex:
+For Nimbus:
 
 - inspires replay-safety fuzzing for journal records and materialization logic
 
@@ -219,7 +219,7 @@ Why it matters:
 
 - large simulation harness for protocol, failure, and recovery behavior
 
-For Neovex:
+For Nimbus:
 
 - we should not copy the distributed simulator literally
 - we should copy the mindset of harsh, failure-heavy, deterministic testing
@@ -230,12 +230,12 @@ Why they matter:
 
 - concrete end-to-end and state-machine correctness references
 
-For Neovex:
+For Nimbus:
 
 - useful for shaping Phase `6A/6B` integration tests around replay,
   visibility, and ordering
 
-## What Neovex Should Borrow
+## What Nimbus Should Borrow
 
 1. One ordered durable history should govern recovery and derived state.
 2. Acknowledgment must follow durable ordering, not just in-memory acceptance.
@@ -245,7 +245,7 @@ For Neovex:
 5. Deterministic and fuzz-style tests should validate log ordering, replay, and
    crash behavior.
 
-## What Neovex Should Not Copy Literally
+## What Nimbus Should Not Copy Literally
 
 1. The six-replica distributed consensus architecture.
 2. The exact WAL ring-buffer and file-zone layout.
@@ -273,7 +273,7 @@ For those topics, the stronger references remain the research guide's Postgres
 RLS, Firebase Rules, Convex, FoundationDB, Hasura, PostgREST, and Wasmtime
 sources.
 
-## Neovex Mapping
+## Nimbus Mapping
 
 ### Phase 6A: Durable mutation journal
 
@@ -332,17 +332,17 @@ Borrow:
 
 ## Project Decision Reminder
 
-TigerBeetle is a design and verification reference for Neovex.
+TigerBeetle is a design and verification reference for Nimbus.
 
 It is not:
 
 - the implementation we are porting
 - permission to replace redb in Phase `6`
-- permission to replace the Neovex logical journal with a generic external log
+- permission to replace the Nimbus logical journal with a generic external log
 
-The Neovex architecture decision remains:
+The Nimbus architecture decision remains:
 
 - keep redb as the storage engine for this roadmap
-- implement a Neovex-owned logical durable journal
+- implement a Nimbus-owned logical durable journal
 - use TigerBeetle to sharpen ordering, durability, replay, and verification
   design

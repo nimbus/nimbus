@@ -1,0 +1,12 @@
+[Unit]
+Description=Signal Nimbus machine readiness to the host
+After=network-online.target sshd.service
+Wants=network-online.target sshd.service
+Requires=dev-virtio\x2dports-vsock.device
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/bin/echo Ready | /usr/bin/socat - VSOCK-CONNECT:2:{ready_vsock_port}'
+
+[Install]
+WantedBy=multi-user.target

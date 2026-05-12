@@ -1,7 +1,7 @@
 # Plan: Runtime Capability And Adapter Boundary
 
 Canonical execution control plane for restoring the intended
-"adapters-as-shims over shared Neovex primitives" architecture after the
+"adapters-as-shims over shared Nimbus primitives" architecture after the
 Firebase and Cloud Functions waves. This plan exists because the recent
 multi-adapter work correctly promoted many shared data primitives, but one
 important boundary was still crossed in the wrong direction: provider-specific
@@ -20,11 +20,11 @@ Reviewed against:
 - `docs/plans/archive/multi-adapter-boundary-hardening-plan.md`
 - `docs/plans/archive/runtime-provider-boundary-hardening-plan.md`
 - `docs/plans/native-transport-evolution-plan.md`
-- `crates/neovex-server/src/runtime_host/mod.rs`
-- `crates/neovex-server/src/adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`
-- `crates/neovex-server/src/adapters/cloud_functions/execution.rs`
-- `crates/neovex-server/src/adapters/cloud_functions/http.rs`
-- `crates/neovex-server/src/adapters/convex/host_bridge/db_ops/mod.rs`
+- `crates/nimbus-server/src/runtime_host/mod.rs`
+- `crates/nimbus-server/src/adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`
+- `crates/nimbus-server/src/adapters/cloud_functions/execution.rs`
+- `crates/nimbus-server/src/adapters/cloud_functions/http.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/db_ops/mod.rs`
 - `docs/architecture/runtime/adapter-boundary.md`
 - `packages/codegen/src/cloud_functions.mjs`
 - the current git worktree on `2026-04-26`
@@ -44,15 +44,15 @@ Reviewed against:
 
 ## Why This Exists
 
-Neovex now has multiple adapter families, which was the point of the Firebase
+Nimbus now has multiple adapter families, which was the point of the Firebase
 and Cloud Functions work. That effort successfully promoted many reusable
-database and trigger primitives into `neovex-core`, `neovex-engine`, and
-`neovex-storage`.
+database and trigger primitives into `nimbus-core`, `nimbus-engine`, and
+`nimbus-storage`.
 
 The remaining problem is higher in the stack:
 
 - a runtime compatibility shim for `firebase-admin/firestore` now lives under
-  `crates/neovex-server/src/runtime_host/`,
+  `crates/nimbus-server/src/runtime_host/`,
 - that same shim still depends directly on `ConvexHostBridge` and
   `ConvexRuntimeResponseEnvelope`,
 - and the "shared" runtime host path is still implemented as a thin Convex
@@ -62,7 +62,7 @@ That is the opposite of the intended architecture.
 
 The correct model is:
 
-1. shared Neovex primitives live in core, engine, storage, and provider-neutral
+1. shared Nimbus primitives live in core, engine, storage, and provider-neutral
    server capability layers
 2. adapters own provider-specific shims, including runtime API compatibility
    shims
@@ -149,23 +149,23 @@ This plan does not cover:
 ## Current Assessed State
 
 - The covered `firebase-admin/firestore` runtime shim now lives under
-  `crates/neovex-server/src/adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`,
+  `crates/nimbus-server/src/adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`,
   which is the correct ownership layer for provider-specific runtime
   compatibility translation.
 - The reusable document-read, staged-write, standalone-write, and runtime
   session-validation primitives now live in
-  `crates/neovex-server/src/runtime_host/capabilities.rs` and are generic over
+  `crates/nimbus-server/src/runtime_host/capabilities.rs` and are generic over
   a narrow `RuntimeCapabilityHost` trait instead of depending directly on
   `ConvexHostBridge`.
-- `crates/neovex-server/src/runtime_host/mod.rs`,
+- `crates/nimbus-server/src/runtime_host/mod.rs`,
   `runtime_host/abi/document_calls.rs`, and `runtime_host/responses.rs` now
   define server-owned runtime-host scope, invocation, context, host-call
   execution, and neutral response-envelope helpers without importing
   `ConvexHostBridge`, `ConvexRegistry`, or `ConvexRuntimeResponseEnvelope`.
-- `crates/neovex-server/src/adapters/cloud_functions/host_bridge.rs` now owns
+- `crates/nimbus-server/src/adapters/cloud_functions/host_bridge.rs` now owns
   the Cloud Functions runtime bridge and adapts the shared runtime-host
   capabilities plus the adapter-owned `firebase-admin/firestore` shim.
-- `crates/neovex-server/src/adapters/convex/host_bridge/db_ops/mod.rs` no
+- `crates/nimbus-server/src/adapters/convex/host_bridge/db_ops/mod.rs` no
   longer dispatches `FirebaseAdminFirestore*` host calls. Convex host-bridge
   roots now own Convex behavior only plus explicit adaptation to shared
   provider-neutral capabilities.
@@ -246,7 +246,7 @@ Goal: extract the actual reusable primitives that provider shims should call.
 - Implement these as server-owned runtime capability modules under
   `runtime_host/` with provider-neutral names
 - Decide which data crosses that seam:
-  - likely Neovex document locators, field maps, atomic write batches, and
+  - likely Nimbus document locators, field maps, atomic write batches, and
     provider-neutral result structs
   - not Firestore document paths, database IDs, or provider-shaped JSON
     envelopes
@@ -376,11 +376,11 @@ Each implementation item should record focused verification before it closes.
 Expected lanes include the narrowest proofs that match the touched surface, for
 example:
 
-- `cargo test -p neovex-server cloud_functions --lib`
-- focused Convex host-bridge lanes under `cargo test -p neovex-server ...`
-- `cargo check -p neovex-server`
+- `cargo test -p nimbus-server cloud_functions --lib`
+- focused Convex host-bridge lanes under `cargo test -p nimbus-server ...`
+- `cargo check -p nimbus-server`
 - `cargo fmt --all --check`
-- focused `@neovex/codegen` tests when the Cloud Functions runtime shim surface
+- focused `@nimbus/codegen` tests when the Cloud Functions runtime shim surface
   changes
 
 Use broader workspace verification only after the focused boundary proofs are
@@ -392,10 +392,10 @@ green.
 | --- | --- | --- | --- |
 | 2026-04-26 | plan authoring | `done` | Created this control-plane plan after the architecture review clarified that `firestore_admin.rs` is a provider-specific runtime compatibility shim, not a shared primitive module. Registered the plan as the next active owner for adapter/runtime boundary cleanup before native transport promotion. No code verification ran because this pass only authored the plan and updated plan-control docs. |
 | 2026-04-26 | RCAB1 | `done` | Published `docs/architecture/runtime/adapter-boundary.md` as the canonical ownership reference for adapter-owned runtime shims versus provider-neutral `runtime_host/*` capabilities, and linked it from `docs/README.md`. This records the exact anti-patterns that the runtime-capability wave is correcting without reopening the architecture debate each pass. Verification: reviewed the new reference doc and docs index entries with focused `sed` and `rg` checks. |
-| 2026-04-26 | RCAB2 | `done` | Added `crates/neovex-server/src/runtime_host/capabilities.rs` with a provider-neutral `RuntimeCapabilityHost` trait plus shared document-read, async document-read, write-batch execution, and session/cancellation validation helpers. `ConvexHostBridge` now implements that narrow trait, and the Firestore admin shim consumes the generic helpers instead of directly expressing the primitive behavior in Convex terms. Verification: `cargo fmt --all --check`; `cargo check -p neovex-server`; `cargo test -p neovex-server cloud_functions --lib`; `cargo test -p neovex-server adapters::convex::tests::authorization --lib`. |
-| 2026-04-26 | RCAB3 | `done` | Moved the covered `firebase-admin/firestore` runtime shim out of `runtime_host/*` and into `crates/neovex-server/src/adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`, with a new adapter-owned runtime API module tree under `adapters/cloud_functions/`. `runtime_host/*` now retains only the provider-neutral capability layer while the Cloud Functions adapter clearly owns the provider-specific runtime translation shim. Verification: `cargo fmt --all --check`; `cargo check -p neovex-server`; `cargo test -p neovex-server cloud_functions --lib`; `cargo test -p neovex-server adapters::convex::tests::authorization --lib`. |
-| 2026-04-26 | RCAB4 | `done` | Replaced the Convex-backed shared wrapper in `runtime_host/mod.rs` with server-owned `RuntimeHostScope`, `RuntimeHostInvocation`, and `RuntimeHostContext` types, and added provider-neutral `runtime_host/abi/document_calls.rs` plus `runtime_host/responses.rs` so shared runtime-host code no longer imports `ConvexHostBridge`, `ConvexRegistry`, or `ConvexRuntimeResponseEnvelope`. Verification: `cargo fmt --all --check`; `cargo check -p neovex-server`; `cargo test -p neovex-server cloud_functions --lib`; `cargo test -p neovex-server adapters::convex::tests::authorization --lib`. |
-| 2026-04-26 | RCAB5 | `done` | Narrowed the Convex host bridge back to adapter-owned concerns: Convex runtime-backed invocation now constructs `ConvexHostBridge` directly, while Cloud Functions owns `adapters/cloud_functions/host_bridge.rs` and `adapters/convex/host_bridge/db_ops/mod.rs` no longer dispatches `FirebaseAdminFirestore*` host calls. Verification: `cargo fmt --all --check`; `cargo check -p neovex-server`; `cargo test -p neovex-server cloud_functions --lib`; `cargo test -p neovex-server adapters::convex::tests::authorization --lib`. |
-| 2026-04-26 | RCAB6 | `done` | Landed the naming and module-layout cleanup that makes the final tree read honestly: shared runtime primitives now live under neutral `runtime_host/*` modules, provider-specific `firebase-admin/firestore` translation lives under `adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`, and Cloud Functions now owns its own adapter bridge root. Verification: `cargo fmt --all --check`; `cargo check -p neovex-server`; `cargo test -p neovex-server cloud_functions --lib`. |
-| 2026-04-26 | RCAB7 | `done` | Closed the focused proof bundle for the corrected boundary: Cloud Functions compatibility still passes through the adapter-owned Firestore shim, Convex authorization lanes still pass after the bridge narrowing, and the shared runtime-host path compiles and runs without adapter-owned bridge types in the touched surfaces. Verification: `cargo fmt --all --check`; `cargo check -p neovex-server`; `cargo test -p neovex-server cloud_functions --lib`; `cargo test -p neovex-server adapters::convex::tests::authorization --lib`. |
+| 2026-04-26 | RCAB2 | `done` | Added `crates/nimbus-server/src/runtime_host/capabilities.rs` with a provider-neutral `RuntimeCapabilityHost` trait plus shared document-read, async document-read, write-batch execution, and session/cancellation validation helpers. `ConvexHostBridge` now implements that narrow trait, and the Firestore admin shim consumes the generic helpers instead of directly expressing the primitive behavior in Convex terms. Verification: `cargo fmt --all --check`; `cargo check -p nimbus-server`; `cargo test -p nimbus-server cloud_functions --lib`; `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`. |
+| 2026-04-26 | RCAB3 | `done` | Moved the covered `firebase-admin/firestore` runtime shim out of `runtime_host/*` and into `crates/nimbus-server/src/adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`, with a new adapter-owned runtime API module tree under `adapters/cloud_functions/`. `runtime_host/*` now retains only the provider-neutral capability layer while the Cloud Functions adapter clearly owns the provider-specific runtime translation shim. Verification: `cargo fmt --all --check`; `cargo check -p nimbus-server`; `cargo test -p nimbus-server cloud_functions --lib`; `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`. |
+| 2026-04-26 | RCAB4 | `done` | Replaced the Convex-backed shared wrapper in `runtime_host/mod.rs` with server-owned `RuntimeHostScope`, `RuntimeHostInvocation`, and `RuntimeHostContext` types, and added provider-neutral `runtime_host/abi/document_calls.rs` plus `runtime_host/responses.rs` so shared runtime-host code no longer imports `ConvexHostBridge`, `ConvexRegistry`, or `ConvexRuntimeResponseEnvelope`. Verification: `cargo fmt --all --check`; `cargo check -p nimbus-server`; `cargo test -p nimbus-server cloud_functions --lib`; `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`. |
+| 2026-04-26 | RCAB5 | `done` | Narrowed the Convex host bridge back to adapter-owned concerns: Convex runtime-backed invocation now constructs `ConvexHostBridge` directly, while Cloud Functions owns `adapters/cloud_functions/host_bridge.rs` and `adapters/convex/host_bridge/db_ops/mod.rs` no longer dispatches `FirebaseAdminFirestore*` host calls. Verification: `cargo fmt --all --check`; `cargo check -p nimbus-server`; `cargo test -p nimbus-server cloud_functions --lib`; `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`. |
+| 2026-04-26 | RCAB6 | `done` | Landed the naming and module-layout cleanup that makes the final tree read honestly: shared runtime primitives now live under neutral `runtime_host/*` modules, provider-specific `firebase-admin/firestore` translation lives under `adapters/cloud_functions/runtime_api/firebase_admin/firestore.rs`, and Cloud Functions now owns its own adapter bridge root. Verification: `cargo fmt --all --check`; `cargo check -p nimbus-server`; `cargo test -p nimbus-server cloud_functions --lib`. |
+| 2026-04-26 | RCAB7 | `done` | Closed the focused proof bundle for the corrected boundary: Cloud Functions compatibility still passes through the adapter-owned Firestore shim, Convex authorization lanes still pass after the bridge narrowing, and the shared runtime-host path compiles and runs without adapter-owned bridge types in the touched surfaces. Verification: `cargo fmt --all --check`; `cargo check -p nimbus-server`; `cargo test -p nimbus-server cloud_functions --lib`; `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`. |
 | 2026-04-26 | RCAB8 | `done` | Refreshed the control-plane docs to treat this plan as the latest completed adapter/runtime ownership baseline: updated `docs/plans/README.md`, `AGENTS.md`, `docs/architecture/runtime/adapter-boundary.md`, and `docs/plans/native-transport-evolution-plan.md` so future work starts from the corrected boundary instead of the intermediate extraction history. Verification: focused `sed` / `rg` review of the updated plan index, AGENTS references, runtime-boundary reference, and native-transport gate text. |

@@ -9,7 +9,7 @@
 > This plan is preserved as research context only. Do not promote it.
 
 Deferred design plan for a future raw-V8 warm-execution backend in
-`neovex-runtime`.
+`nimbus-runtime`.
 
 This document preserves the reference implementation analysis, architecture
 boundary research, and proposed configuration surface from the original raw-V8
@@ -36,7 +36,7 @@ as the current public runtime surface.
 - Use this plan's reference inventory and strengths matrix as research context.
 - Do not promote this plan unless the fork approach is proven infeasible.
 - Treat local reference implementations, upstream/runtime constraints, and
-  measured Neovex behavior as equal inputs.
+  measured Nimbus behavior as equal inputs.
 - If the activation gate is met, promote exactly one implementation slice at a
   time and keep this plan as the canonical control plane for that workstream.
 
@@ -76,22 +76,22 @@ of leaving the evidence only in chat.
 | System | Local review paths | GitHub / public review URLs | What it contributes |
 |--------|--------------------|-----------------------------|---------------------|
 | OpenWorkers runtime | `/Users/jack/src/github.com/openworkers/openworkers-runtime-v8/README.md`, `/Users/jack/src/github.com/openworkers/openworkers-runtime-v8/docs/execution_modes.md`, `/Users/jack/src/github.com/openworkers/openworkers-runtime-v8/src/pool.rs`, `/Users/jack/src/github.com/openworkers/openworkers-runtime-v8/src/execution_context.rs`, `/Users/jack/src/github.com/openworkers/openworkers-runtime-v8/src/async_waiter.rs` | `https://github.com/openworkers/openworkers-runtime-v8`, `https://github.com/openworkers/openworkers-runtime-v8/blob/main/docs/execution_modes.md` | strongest Rust reference for warm execution contexts, worker-local pools, FIFO waiter fairness, warm-hit reset, and code-cache-first user-code startup |
-| OpenWorkers runner | `/Users/jack/src/github.com/openworkers/openworkers-runner/src/task_executor.rs`, `/Users/jack/src/github.com/openworkers/openworkers-runner/src/worker_pool.rs` | `https://github.com/openworkers/openworkers-runner` | concrete dispatch and warm-hit host-state refresh pattern; useful as a reference for request-local ops patching but not a direct fit for Neovex routing |
+| OpenWorkers runner | `/Users/jack/src/github.com/openworkers/openworkers-runner/src/task_executor.rs`, `/Users/jack/src/github.com/openworkers/openworkers-runner/src/worker_pool.rs` | `https://github.com/openworkers/openworkers-runner` | concrete dispatch and warm-hit host-state refresh pattern; useful as a reference for request-local ops patching but not a direct fit for Nimbus routing |
 | OpenWorkers core / V8 forks | `/Users/jack/src/github.com/openworkers/openworkers-core/Cargo.toml`, `/Users/jack/src/github.com/openworkers/rusty-v8/Cargo.toml`, `/Users/jack/src/github.com/openworkers/serde-v8`, `/Users/jack/src/github.com/openworkers/glue-v8` | `https://github.com/openworkers/openworkers-core`, `https://github.com/openworkers/rusty-v8`, `https://github.com/openworkers/serde-v8`, `https://github.com/openworkers/glue-v8` | shows the current stack split: raw-V8 runtime path, helper crates around V8 interop, and the fact that their main runtime no longer centers on `deno_core` |
 | Cloudflare workerd | `/Users/jack/src/github.com/cloudflare/workerd/src/workerd/io/worker.c++` | `https://github.com/cloudflare/workerd`, `https://github.com/cloudflare/workerd/blob/main/src/workerd/io/worker.c%2B%2B` | canonical large-scale reference for RAII async lock handoff, waiter fairness, deferred cleanup, and long-lived loaded workers |
 | Upstream `deno_core` | `/Users/jack/src/github.com/denoland/deno_core/ARCHITECTURE.md`, `/Users/jack/src/github.com/denoland/deno_core/core/runtime/jsruntime.rs`, `/Users/jack/src/github.com/denoland/deno_core/core/runtime/jsrealm.rs` | `https://github.com/denoland/deno_core`, `https://github.com/denoland/deno_core/blob/main/ARCHITECTURE.md` | keeps the current backend honest: great embedder runtime engine, snapshots, module-loader code cache, and extension model, but not the canonical place to force warm loaded-code semantics |
-| Agentstation `deno_core` fork | local cargo checkout under `/Users/jack/.cargo/git/checkouts/deno_core-*/` and the repaired tag consumed by Neovex | `https://github.com/agentstation/deno_core/tree/locker-v0.395`, `https://github.com/agentstation/deno_core/releases/tag/0.395.0-locker.1` | proves the current locker-enabled fresh-realm reuse surface we should preserve while building any future raw backend separately |
-| Agentstation `rusty_v8` fork | local cargo checkout under `/Users/jack/.cargo/git/checkouts/rusty_v8-*/` and the repaired tag consumed by Neovex | `https://github.com/agentstation/rusty_v8/tree/locker-v147`, `https://github.com/agentstation/rusty_v8/releases/tag/v147.0.0-locker.2` | current V8 substrate for Neovex; useful both for the current `deno_core` path and any future raw-V8 backend |
+| Nimbus `deno_core` fork | local cargo checkout under `/Users/jack/.cargo/git/checkouts/deno_core-*/` and the repaired tag consumed by Nimbus | `https://github.com/nimbus/deno/tree/locker-v0.395`, `https://github.com/nimbus/deno/releases/tag/0.395.0-locker.1` | proves the current locker-enabled fresh-realm reuse surface we should preserve while building any future raw backend separately |
+| Nimbus `rusty_v8` fork | local cargo checkout under `/Users/jack/.cargo/git/checkouts/rusty_v8-*/` and the repaired tag consumed by Nimbus | `https://github.com/nimbus/rusty_v8/tree/locker-v147`, `https://github.com/nimbus/rusty_v8/releases/tag/v147.0.0-locker.2` | current V8 substrate for Nimbus; useful both for the current `deno_core` path and any future raw-V8 backend |
 | Official V8 guidance | not stored locally in this repo; review externally when tuning startup paths | `https://v8.dev/`, `https://v8.dev/blog/custom-startup-snapshots`, `https://v8.dev/blog/code-caching-for-devs` | official reference for code cache vs startup snapshots and where each is appropriate |
 
 ## Strengths And Fit Matrix
 
-| System | Best at | Weak fit for | Net lesson for Neovex |
+| System | Best at | Weak fit for | Net lesson for Nimbus |
 |--------|---------|--------------|-----------------------|
 | `deno_core` | embedder ergonomics, extensions/ops, startup snapshots, module-loader hooks, stable fresh-realm lifecycle | true warm loaded-code execution | keep as the default safe backend |
-| OpenWorkers | warm context reuse, warm-hit request-state refresh, worker-local pools, code-cache-first user code, bounded warm reuse | direct drop-in dependency for Neovex host/runtime contract | copy patterns, not crate boundaries |
+| OpenWorkers | warm context reuse, warm-hit request-state refresh, worker-local pools, code-cache-first user code, bounded warm reuse | direct drop-in dependency for Nimbus host/runtime contract | copy patterns, not crate boundaries |
 | workerd | battle-tested fairness, long-lived loaded workers, RAII lock handoff, deferred destruction discipline | direct implementation template in Rust | copy scheduling and lifecycle ideas |
-| current Neovex | worker-loop seam, admission controls, affinity routing, metrics/diagnostics, dual backend vocabulary | low-level raw-V8 warm runtime details | keep this as the top-level control plane and slot a raw backend underneath it |
+| current Nimbus | worker-loop seam, admission controls, affinity routing, metrics/diagnostics, dual backend vocabulary | low-level raw-V8 warm runtime details | keep this as the top-level control plane and slot a raw backend underneath it |
 
 ### What each implementation is especially good for
 
@@ -104,7 +104,7 @@ of leaving the evidence only in chat.
 - **workerd** is best as the long-term concurrency and lifecycle north star:
   fairness, waiter discipline, deferred cleanup, and clear separation between
   scheduling and request-local execution state.
-- **Neovex itself** already has the right outer architecture: worker-loop seam,
+- **Nimbus itself** already has the right outer architecture: worker-loop seam,
   admission/metrics policy, and runtime-agnostic settings should remain the
   top-level contract.
 
@@ -133,7 +133,7 @@ What **not** to copy blindly:
 
 - their host API surface
 - their exact runner/thread-dispatch layer
-- their crate boundaries as direct Neovex dependencies
+- their crate boundaries as direct Nimbus dependencies
 
 ### Cloudflare workerd
 
@@ -152,7 +152,7 @@ What **not** to copy literally:
 
 - C++ object model
 - KJ event-loop ownership patterns
-- Cloudflare-specific product/runtime concepts that do not map to Neovex host
+- Cloudflare-specific product/runtime concepts that do not map to Nimbus host
   semantics
 
 ### Upstream `deno_core`
@@ -173,11 +173,11 @@ Why it still matters:
 
 Reasoning:
 
-- Neovex has a different host bridge, policy surface, bundle lifecycle, and
+- Nimbus has a different host bridge, policy surface, bundle lifecycle, and
   diagnostics contract.
 - Depending directly on OpenWorkers would import another project's runtime
-  lifecycle, request semantics, and compatibility constraints into Neovex.
-- The safer path is to copy proven ideas and keep the Neovex worker-loop seam
+  lifecycle, request semantics, and compatibility constraints into Nimbus.
+- The safer path is to copy proven ideas and keep the Nimbus worker-loop seam
   as the top-level contract.
 
 ### Do not push warm-loaded-context semantics into the `deno_core` fork
@@ -193,17 +193,17 @@ Reasoning:
 
 Reasoning:
 
-- EO5 already gave Neovex the right seam for this: `WorkerLoopFactory`,
+- EO5 already gave Nimbus the right seam for this: `WorkerLoopFactory`,
   `WorkerLoop`, and explicit runtime settings.
 - A raw backend can adopt warm execution on purpose without weakening the
   current `deno_core` guarantees.
 
-## Recommended Hybrid For Neovex
+## Recommended Hybrid For Nimbus
 
-The best combination for Neovex is not “pick one reference and copy it
+The best combination for Nimbus is not “pick one reference and copy it
 verbatim.” It is a hybrid:
 
-### Keep from current Neovex
+### Keep from current Nimbus
 
 - `WorkerLoopFactory` / `WorkerLoop` as the primary runtime seam
 - existing admission controls and tenant-aware routing policy
@@ -234,7 +234,7 @@ verbatim.” It is a hybrid:
 
 ### Resulting recommendation
 
-For Neovex’s use case, the best combined architecture is:
+For Nimbus’s use case, the best combined architecture is:
 
 1. **`deno_core` backend remains the default** for the current product
    contract.
@@ -243,7 +243,7 @@ For Neovex’s use case, the best combined architecture is:
 3. **Both backends share the same outer scheduler/admission/metrics seam.**
 4. **No cross-thread shared isolate pool** in either backend.
 
-This gives Neovex the strengths of all three systems without inheriting their
+This gives Nimbus the strengths of all three systems without inheriting their
 mismatched assumptions wholesale.
 
 ## Hard Technical Risks To Solve Explicitly
@@ -254,7 +254,7 @@ design itself rather than discovered late in implementation:
 ### HostBridge adaptation without `deno_core` ops
 
 The future raw backend must preserve the current `HostBridge` contract from
-`crates/neovex-runtime/src/host.rs` instead of inventing a second host API.
+`crates/nimbus-runtime/src/host.rs` instead of inventing a second host API.
 That means:
 
 - raw V8 bindings should still terminate in the same `HostBridge::call`,
@@ -271,7 +271,7 @@ That means:
 
 The recommended implementation direction is:
 
-1. keep `HostBridge` and `HostCallRequest` as the stable Neovex contract
+1. keep `HostBridge` and `HostCallRequest` as the stable Nimbus contract
 2. build a small raw-V8 callback layer around `v8::FunctionCallbackInfo`
 3. store request-local bridge state beside the active invocation, not in the
    persistent warm context
@@ -281,7 +281,7 @@ The recommended implementation direction is:
 ### Module and bundle loading without `deno_core`'s loader
 
 The raw backend should continue consuming the same `RuntimeBundle` contract from
-`crates/neovex-runtime/src/runtime/bundle.rs`:
+`crates/nimbus-runtime/src/runtime/bundle.rs`:
 
 - same entrypoint identity
 - same SHA-256 integrity checks
@@ -382,7 +382,7 @@ These are starting points for experiments, not committed product defaults:
 - idle-only LRU eviction
 - `max_context_reuses = 1000` before forced retirement
 - no cross-thread pool sharing
-- fail-fast on pool saturation; rely on existing Neovex admission controls and
+- fail-fast on pool saturation; rely on existing Nimbus admission controls and
   queueing above the backend
 
 Notes:
@@ -402,15 +402,15 @@ These are grouped by confidence level so the plan stays grounded.
 
 ### Proven patterns to adopt early
 
-| Pattern | Source | Why it fits Neovex |
+| Pattern | Source | Why it fits Nimbus |
 |---------|--------|--------------------|
-| Worker-local pools only | OpenWorkers, workerd, current Neovex seam | avoids cross-thread contention and keeps ownership simple |
+| Worker-local pools only | OpenWorkers, workerd, current Nimbus seam | avoids cross-thread contention and keeps ownership simple |
 | FIFO waiter fairness | OpenWorkers `AsyncWaiter`, workerd `AsyncWaiter` | battle-tested way to serialize V8 lock ownership without starvation |
-| Idle-only LRU eviction | OpenWorkers, current Neovex retained pool | simple, observable, and good enough at low pool sizes |
+| Idle-only LRU eviction | OpenWorkers, current Nimbus retained pool | simple, observable, and good enough at low pool sizes |
 | Reuse retirement cap | OpenWorkers | limits fragmentation and long-tail retained-state risk |
 | Warm-hit callback for request-local host state | OpenWorkers | exactly the mechanism we will need to refresh per-request host bindings cleanly |
-| Code cache for user code | OpenWorkers, official V8 guidance, current Neovex `deno_core` path | best near-term compile-cost optimization without changing semantics |
-| Bootstrap snapshot for runtime API boot only | current Neovex, `deno_core`, V8 guidance | good cold-start optimization without coupling user code into snapshot format |
+| Code cache for user code | OpenWorkers, official V8 guidance, current Nimbus `deno_core` path | best near-term compile-cost optimization without changing semantics |
+| Bootstrap snapshot for runtime API boot only | current Nimbus, `deno_core`, V8 guidance | good cold-start optimization without coupling user code into snapshot format |
 | Deferred destruction queue | workerd, OpenWorkers | protects cleanup ordering around V8 handle destruction |
 
 ### Strong candidates after the first raw backend slice
@@ -427,16 +427,16 @@ These are grouped by confidence level so the plan stays grounded.
 | Pattern | Potential upside | Why not default |
 |---------|------------------|-----------------|
 | W-TinyLFU / SLRU-style admission for warm contexts | better cache admission under high churn and many one-hit scripts | too complex for the initial bounded pool; LRU is easier to reason about |
-| Weighted fair queueing / deficit round robin across runnable warm contexts | more nuanced fairness than FIFO under mixed tenants or long-running contexts | Neovex already has admission controls; do not stack complexity before proving FIFO is insufficient |
+| Weighted fair queueing / deficit round robin across runnable warm contexts | more nuanced fairness than FIFO under mixed tenants or long-running contexts | Nimbus already has admission controls; do not stack complexity before proving FIFO is insufficient |
 | Speculative prewarming by tenant/function popularity | lower tail latency for hot tenants | can waste memory and hide bugs in reset semantics |
 | Cross-worker compile artifact sharing | could reduce duplicate compile work across threads | easier to get wrong than bundle-local cache; start worker-local first |
 
-### What is innovative for Neovex specifically
+### What is innovative for Nimbus specifically
 
 The potentially innovative part is not a novel scheduler algorithm by itself.
 It is the combination:
 
-- Neovex’s runtime-agnostic worker-loop seam
+- Nimbus’s runtime-agnostic worker-loop seam
 - a safe `deno_core` backend for fresh semantics
 - a separate raw-V8 warm backend for hot loaded-code workloads
 - shared admission/routing/metrics above both
@@ -481,9 +481,9 @@ that gap without changing semantics.
 Minimum report contents:
 
 - benchmark inputs, including the existing
-  `crates/neovex-runtime/benches/runtime_pool_modes.rs` harness plus any added
+  `crates/nimbus-runtime/benches/runtime_pool_modes.rs` harness plus any added
   warm-hit workload benchmark
-- the exact Neovex configuration under test
+- the exact Nimbus configuration under test
 - absolute target metrics for the intended workload
 - measured `deno_core` results after Phase 5 reliability/code-cache work
 - the remaining relative gap that justifies a raw backend
@@ -551,7 +551,7 @@ The research and reference inventory remain valuable:
 - The workerd/OpenWorkers patterns (FIFO fairness, warm-hit callbacks, bounded
   retirement, selective reset) were implemented in the fork approach
 - The separation between scheduling and request-local state was preserved
-- The "build, do not adopt" recommendation held — Neovex copied patterns, not
+- The "build, do not adopt" recommendation held — Nimbus copied patterns, not
   crate dependencies
 
 ### What this plan got wrong

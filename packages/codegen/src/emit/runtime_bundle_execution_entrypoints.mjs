@@ -18,7 +18,7 @@ function executePaginatedQueryDefinition(definition, request) {
           if (typeof request.page_size !== "number") {
             throw new Error("paginated runtime invocation missing page_size");
           }
-          return globalThis.__neovexAsyncHostValue("op_neovex_ctx_query_paginate", {
+          return globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query_paginate", {
             builder_id: result.__builderId,
             page_size: request.page_size,
             cursor: request.cursor ?? null,
@@ -32,7 +32,7 @@ function executePaginatedQueryDefinition(definition, request) {
   if (typeof request.page_size !== "number") {
     throw new Error("paginated runtime invocation missing page_size");
   }
-  return globalThis.__neovexAsyncHostValue("op_neovex_ctx_paginated_query", {
+  return globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_paginated_query", {
     query: plan,
     page_size: request.page_size,
     cursor: request.cursor ?? null,

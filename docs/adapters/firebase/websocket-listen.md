@@ -1,6 +1,6 @@
 # Firebase WebSocket Listen
 
-Neovex exposes a browser-oriented Firestore `Listen` transport at the same
+Nimbus exposes a browser-oriented Firestore `Listen` transport at the same
 route family as native gRPC:
 
 ```text
@@ -31,12 +31,12 @@ subscription cleanup follow the same semantics across both transports.
 - The WebSocket upgrade uses the same Firebase route-family middleware as REST,
   gRPC, and gRPC-Web.
 - Browser SDK clients offer the fixed subprotocol
-  `neovex.firebase.listen.v1` so the server can explicitly select the binary
+  `nimbus.firebase.listen.v1` so the server can explicitly select the binary
   Firestore Listen session contract without taking ownership of the native
   WebSocket protocol plan's general version-negotiation work.
 - Browser auth tokens must not move into URL query strings. When the SDK has a
   bearer token, it offers an additional
-  `neovex.firebase.auth.<base64url-token>` entry in `Sec-WebSocket-Protocol`.
+  `nimbus.firebase.auth.<base64url-token>` entry in `Sec-WebSocket-Protocol`.
   The server validates that offer against any conventional `Authorization`
   header but only echoes the fixed Listen protocol, so the auth token never
   comes back in the selected protocol string.

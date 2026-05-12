@@ -1,6 +1,6 @@
 # Runtimes
 
-Neovex executes user code inside explicit runtime targets. Runtime docs explain
+Nimbus executes user code inside explicit runtime targets. Runtime docs explain
 what a developer can select, what the runtime is allowed to expose, and what
 evidence backs each support claim.
 
@@ -17,13 +17,13 @@ Runtime compatibility and runtime permissions are separate axes. A Node target
 does not imply ambient host access, and a broader permission mode does not
 change the JavaScript compatibility target.
 
-Neovex uses three permission modes:
+Nimbus uses three permission modes:
 
 | Mode | Meaning |
 | --- | --- |
 | `Restricted` | Least-privilege execution for explicitly sandboxed, tenant-supplied, or generated code surfaces. |
 | `Standard` | Normal bounded backend/runtime execution with explicit grants. This is the current platform baseline. |
-| `Privileged` | Highest Neovex-approved permission ceiling for explicitly trusted operator or enterprise workloads. |
+| `Privileged` | Highest Nimbus-approved permission ceiling for explicitly trusted operator or enterprise workloads. |
 
 Fine-grained grants define the actual resource surface: filesystem roots,
 network hosts, environment names, secret handles, service bindings, identities,
@@ -33,7 +33,7 @@ to `RuntimeMode + RuntimeGrants`; they are not permission modes.
 
 ## Evidence Posture
 
-Neovex does not use runtime names as blanket compatibility claims. A runtime
+Nimbus does not use runtime names as blanket compatibility claims. A runtime
 surface is documented as supported only when it has fixture, canary, oracle, or
 classification evidence.
 

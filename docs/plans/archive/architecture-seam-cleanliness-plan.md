@@ -98,15 +98,15 @@ No remaining high-priority findings are still live after this wave.
 
 | ID | Finding | Current evidence |
 | --- | --- | --- |
-| `ASC-M4` | Trigger-delivery and trigger-invocation persistence still duplicate backend-specific SQL and row encoding across SQLite/Postgres/MySQL, but this wave now documents that duplication as an explicit provider-owned dialect seam instead of accidental shared debt | `crates/neovex-storage/src/{sqlite,postgres,mysql}/trigger_*.rs` |
-| `ASC-M7` | `RuntimePolicy` still owns limits, admission semaphore, and metrics together; accepted current trade-off because it remains one coherent runtime admission object | `crates/neovex-runtime/src/limits.rs` |
+| `ASC-M4` | Trigger-delivery and trigger-invocation persistence still duplicate backend-specific SQL and row encoding across SQLite/Postgres/MySQL, but this wave now documents that duplication as an explicit provider-owned dialect seam instead of accidental shared debt | `crates/nimbus-storage/src/{sqlite,postgres,mysql}/trigger_*.rs` |
+| `ASC-M7` | `RuntimePolicy` still owns limits, admission semaphore, and metrics together; accepted current trade-off because it remains one coherent runtime admission object | `crates/nimbus-runtime/src/limits.rs` |
 
 ### Low
 
 | ID | Finding | Current evidence |
 | --- | --- | --- |
 | `ASC-L2` | Oversized non-generated harness roots still exist: `start/tests.rs` (`1676`) remains explicitly justified in this plan, and `packages/firebase/src/selftest.mjs` (`3925`) remains a strong ownership-based exception until a future JS harness wave owns its decomposition | live line counts |
-| `ASC-L3` | `neovex-testing` still depends directly on `neovex-storage`; retained and documented so deterministic harnesses can exercise real provider-backed stores without engine/server backedges | `crates/neovex-testing/Cargo.toml` |
+| `ASC-L3` | `nimbus-testing` still depends directly on `nimbus-storage`; retained and documented so deterministic harnesses can exercise real provider-backed stores without engine/server backedges | `crates/nimbus-testing/Cargo.toml` |
 
 ## Retired Or Reframed Findings
 
@@ -116,7 +116,7 @@ form and should not be treated as current debt:
 - the original `TenantRuntime` “~4,900 LOC single god file” claim is stale;
   the problem is now ownership breadth, not one huge file
 - the older oversized-test list is stale; the current hotspots are different
-- the old `neovex-bin machine/` oversized-submodule finding is stale in the
+- the old `nimbus-bin machine/` oversized-submodule finding is stale in the
   current tree
 - `execution_units/batch.rs` is still substantial but no longer above the
   control-plan hard threshold by itself
@@ -182,18 +182,18 @@ Completion gate:
 
 ### ASC2 — Gate `test-hooks` Out Of Production Dependency Paths
 
-Goal: keep test-only engine hooks out of the production `neovex-server`
+Goal: keep test-only engine hooks out of the production `nimbus-server`
 dependency edge.
 
 - remove `features = ["test-hooks"]` from the production
-  `neovex-server -> neovex-engine` dependency edge
+  `nimbus-server -> nimbus-engine` dependency edge
 - if tests still need those hooks, re-enable them only through dev-only
   dependency resolution or another explicitly test-only path
 - verify release/no-dev dependency graphs do not include the feature
 
 Completion gate:
 
-- release-oriented `neovex-server` builds do not pull `test-hooks`
+- release-oriented `nimbus-server` builds do not pull `test-hooks`
 
 ### ASC3 — Runtime Invocation And Session Seam Cleanup
 
@@ -244,7 +244,7 @@ Completion gate:
 
 Goal: make provider boundaries tighter and duplication more deliberate.
 
-- narrow provider-specific public exports in `neovex-storage`
+- narrow provider-specific public exports in `nimbus-storage`
 - decide whether persistence provider dispatch should stay macro-based or move
   to a narrower object seam, and implement or document that choice
 - standardize the async write-boundary pattern where practical
@@ -265,8 +265,8 @@ Goal: remove or justify the remaining low-priority seam smells.
 - document shared adapter expectations
 - split or justify the live oversized non-generated test roots
 - inject backend choice into run-to-completion worker-loop construction
-- evaluate whether `neovex-testing` should continue depending directly on
-  `neovex-storage` or whether that dependency needs narrowing/documentation
+- evaluate whether `nimbus-testing` should continue depending directly on
+  `nimbus-storage` or whether that dependency needs narrowing/documentation
 
 Completion gate:
 
@@ -297,20 +297,20 @@ Completion gate:
 - `2026-04-27`: `ASC1` completed. Repo guidance in `AGENTS.md` and
   `docs/plans/README.md` now points broad architecture/modularity cleanup at
   this plan while it is active.
-- `2026-04-27`: `ASC2` completed. `neovex-server` no longer enables
-  `neovex-engine` `test-hooks` on its production dependency edge; the feature
+- `2026-04-27`: `ASC2` completed. `nimbus-server` no longer enables
+  `nimbus-engine` `test-hooks` on its production dependency edge; the feature
   is now dev-only for server tests. Verified with
-  `cargo tree -p neovex-server -e features --no-dev-dependencies | rg 'test-hooks|neovex-engine'`,
-  `cargo check -p neovex-server`, and
-  `cargo test -p neovex-server cloud_functions --lib`.
+  `cargo tree -p nimbus-server -e features --no-dev-dependencies | rg 'test-hooks|nimbus-engine'`,
+  `cargo check -p nimbus-server`, and
+  `cargo test -p nimbus-server cloud_functions --lib`.
 - `2026-04-27`: `ASC3` started. Landed invocation-scoped concurrency bypass in
   `RuntimeInvocationContext`, removed `bypass_concurrency_limit` from
-  `NeovexRuntime`, added centralized `HostCallPayload::session_id()` access,
+  `NimbusRuntime`, added centralized `HostCallPayload::session_id()` access,
   and began renaming the shared query host ABI from Convex-shaped
   `CtxDbQuery*` names to generic `QueryBuilder*` / `QueryRead*` names.
   Focused proof so far:
-  `cargo test -p neovex-runtime host_call --lib` and
-  `cargo check -p neovex-runtime -p neovex-server`.
+  `cargo test -p nimbus-runtime host_call --lib` and
+  `cargo check -p nimbus-runtime -p nimbus-server`.
 - `2026-04-27`: `ASC3` completed and `ASC4` completed. Runtime concurrency
   bypass is now invocation-scoped, host-call payloads expose centralized
   `session_id()` access, the shared query host ABI now uses generic
@@ -319,11 +319,11 @@ Completion gate:
   now private behind owned accessors, direct `bridge.*` reach-in was removed
   from the Convex host-bridge tree, and shared versus Convex-specific
   read-tracking ownership is now documented inline. Verified with
-  `cargo check -p neovex-runtime -p neovex-server`,
-  `cargo test -p neovex-runtime host_call --lib`,
-  `cargo test -p neovex-server adapters::convex::tests::contracts --lib`,
-  `cargo test -p neovex-server adapters::convex::tests::metrics --lib`, and
-  `cargo test -p neovex-server cloud_functions --lib`.
+  `cargo check -p nimbus-runtime -p nimbus-server`,
+  `cargo test -p nimbus-runtime host_call --lib`,
+  `cargo test -p nimbus-server adapters::convex::tests::contracts --lib`,
+  `cargo test -p nimbus-server adapters::convex::tests::metrics --lib`, and
+  `cargo test -p nimbus-server cloud_functions --lib`.
 - `2026-04-27`: `ASC5` started. Current confirmed scope: `TenantRuntime` is no
   longer a single god file, but it still acts as a broad subsystem hub, and
   `service/mutations/direct/api.rs` still exposes a wide sync/async/cancellable
@@ -333,42 +333,42 @@ Completion gate:
   subsystem-oriented accessors, schema replacement moved behind a named
   method, and the direct mutation API was narrowed around `MutationActor` and
   `AsyncMutationContext` instead of preserving the older principal/cancellable
-  method matrix. Verified with `cargo check -p neovex-engine -p neovex-server`,
-  `cargo test -p neovex-engine mutation_journal --lib`,
-  `cargo test -p neovex-engine policy --lib`,
-  `cargo test -p neovex-server cloud_functions --lib`, and
-  `cargo test -p neovex-server adapters::convex::tests::contracts --lib`.
+  method matrix. Verified with `cargo check -p nimbus-engine -p nimbus-server`,
+  `cargo test -p nimbus-engine mutation_journal --lib`,
+  `cargo test -p nimbus-engine policy --lib`,
+  `cargo test -p nimbus-server cloud_functions --lib`, and
+  `cargo test -p nimbus-server adapters::convex::tests::contracts --lib`.
 - `2026-04-27`: `ASC6` completed. Embedded blocking-store write execution is
   now shared between redb and SQLite through `async_storage::write`,
   provider-specific `Opened*Tenant` shapes are no longer re-exported from the
-  top-level `neovex-storage` facade, and persistence provider dispatch is now
+  top-level `nimbus-storage` facade, and persistence provider dispatch is now
   explicitly documented as a deliberate typed-provider seam rather than an
   accidental macro pile. Remaining trigger cursor/invocation SQL duplication is
   now documented inline as a provider-owned dialect seam instead of implied
   generic debt. Verified with
-  `cargo check -p neovex-storage -p neovex-engine -p neovex-server`,
-  `cargo test -p neovex-storage --lib`,
-  `cargo test -p neovex-engine mutation_journal --lib`, and
-  `cargo test -p neovex-server cloud_functions --lib`.
+  `cargo check -p nimbus-storage -p nimbus-engine -p nimbus-server`,
+  `cargo test -p nimbus-storage --lib`,
+  `cargo test -p nimbus-engine mutation_journal --lib`, and
+  `cargo test -p nimbus-server cloud_functions --lib`.
 - `2026-04-27`: `ASC7` completed. Removed the blanket Cloud Functions
   `dead_code` allowance, documented shared adapter expectations in
   `docs/architecture/server/adapter-expectations.md`, made run-to-completion backend
-  selection injectable, documented the intentional `neovex-testing ->
-  neovex-storage` dependency, and split Firebase Listen WebSocket tests out of
+  selection injectable, documented the intentional `nimbus-testing ->
+  nimbus-storage` dependency, and split Firebase Listen WebSocket tests out of
   `tests/firebase/listen.rs`, reducing the root from `1741` lines to `1342`.
-  `crates/neovex-bin/src/start/tests.rs` (`1676`) is explicitly justified as a
+  `crates/nimbus-bin/src/start/tests.rs` (`1676`) is explicitly justified as a
   CLI/start harness root for this wave, and `packages/firebase/src/selftest.mjs`
   (`3925`) is recorded as a strong ownership-based exception until a future JS
   harness wave owns that decomposition. Verified with
-  `cargo check -p neovex-runtime -p neovex-server`,
-  `cargo test -p neovex-server firebase_listen_websocket --lib`, and
-  `cargo test -p neovex-server cloud_functions --lib`.
+  `cargo check -p nimbus-runtime -p nimbus-server`,
+  `cargo test -p nimbus-server firebase_listen_websocket --lib`, and
+  `cargo test -p nimbus-server cloud_functions --lib`.
 - `2026-04-27`: `ASC8` completed. The plan ledger is now truthful, repo docs
   and guidance are aligned with the landed seams, and the final focused proof
   set passed: `cargo fmt --all --check`,
-  `cargo check -p neovex-storage -p neovex-engine -p neovex-runtime -p neovex-server`,
-  `cargo test -p neovex-storage --lib`,
-  `cargo test -p neovex-engine mutation_journal --lib`,
-  `cargo test -p neovex-server firebase_listen_websocket --lib`,
-  `cargo test -p neovex-server cloud_functions --lib`, and
-  `cargo clippy -p neovex-server --lib --tests -- -D warnings`.
+  `cargo check -p nimbus-storage -p nimbus-engine -p nimbus-runtime -p nimbus-server`,
+  `cargo test -p nimbus-storage --lib`,
+  `cargo test -p nimbus-engine mutation_journal --lib`,
+  `cargo test -p nimbus-server firebase_listen_websocket --lib`,
+  `cargo test -p nimbus-server cloud_functions --lib`, and
+  `cargo clippy -p nimbus-server --lib --tests -- -D warnings`.

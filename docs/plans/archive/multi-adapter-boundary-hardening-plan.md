@@ -1,7 +1,7 @@
 # Plan: Multi-Adapter Boundary Hardening
 
 Canonical execution control plane for the post-Firebase, post-Cloud-Functions
-architecture hardening wave. This plan exists to validate that Neovex now
+architecture hardening wave. This plan exists to validate that Nimbus now
 truly has multiple adapter families sharing canonical primitives, and to clean
 up the remaining boundary leaks before activating the deferred native transport
 evolution work.
@@ -22,12 +22,12 @@ Reviewed against:
 - `docs/reference/firebase-compatibility.md`
 - `docs/reference/firebase-migration-guide.md`
 - `docs/reference/firebase-upstream-test-catalog.md`
-- `crates/neovex-server/src/adapters/firebase/mod.rs`
-- `crates/neovex-server/src/adapters/firebase/grpc/{mod,listen_stream,listen_websocket,write_stream}.rs`
-- `crates/neovex-server/src/adapters/cloud_functions/execution.rs`
-- `crates/neovex-server/src/adapters/convex/host_bridge/db_ops/firestore_admin.rs`
-- `crates/neovex-server/src/ws/negotiation.rs`
-- `crates/neovex-server/src/tests.rs`
+- `crates/nimbus-server/src/adapters/firebase/mod.rs`
+- `crates/nimbus-server/src/adapters/firebase/grpc/{mod,listen_stream,listen_websocket,write_stream}.rs`
+- `crates/nimbus-server/src/adapters/cloud_functions/execution.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/db_ops/firestore_admin.rs`
+- `crates/nimbus-server/src/ws/negotiation.rs`
+- `crates/nimbus-server/src/tests.rs`
 - `packages/firebase/src/firestore.ts`
 - `packages/firebase/src/internal/{grpc-web,listen-websocket}.ts`
 - the current git worktree on 2026-04-26
@@ -49,7 +49,7 @@ Reviewed against:
 ## Why This Exists
 
 The Firebase and Cloud Functions waves accomplished the main goal of forcing a
-second adapter family into Neovex and hardening many shared primitives:
+second adapter family into Nimbus and hardening many shared primitives:
 
 - resource paths
 - atomic write batches
@@ -75,7 +75,7 @@ adapter-specific leakage:
   behavior
 - several new adapter roots violate the repo’s modularity thresholds
 
-This plan closes those gaps before Neovex starts another cross-cutting wave
+This plan closes those gaps before Nimbus starts another cross-cutting wave
 such as native transport evolution.
 
 ## Relationship To Other Plans
@@ -153,7 +153,7 @@ This plan does not cover:
 - Shared database primitives are in meaningfully better shape than before the
   Firebase wave: resource paths, structured queries, atomic write batches,
   transaction sessions, and durable trigger invocation records now exist in
-  `neovex-core`, `neovex-engine`, and `neovex-storage` rather than only inside
+  `nimbus-core`, `nimbus-engine`, and `nimbus-storage` rather than only inside
   adapter code.
 - Firebase server execution now resolves and propagates principals on the
   covered REST, gRPC, `Write`, and `Listen` paths, but the public docs and
@@ -172,9 +172,9 @@ This plan does not cover:
   shims” posture.
 - The largest new hotspots from these landed waves are currently:
   - `packages/firebase/src/firestore.ts` — 1975 lines after the ownership split
-  - `crates/neovex-server/src/tests.rs` — 7614 lines
-  - `crates/neovex-server/src/adapters/cloud_functions/execution.rs` — 1420 lines
-  - `crates/neovex-server/src/adapters/firebase/mod.rs` — 672 lines after the
+  - `crates/nimbus-server/src/tests.rs` — 7614 lines
+  - `crates/nimbus-server/src/adapters/cloud_functions/execution.rs` — 1420 lines
+  - `crates/nimbus-server/src/adapters/firebase/mod.rs` — 672 lines after the
     route/response/operation split; the Firebase server ownership wave is now
     spread across `mod.rs`, `operations.rs`, `response.rs`, and `errors.rs`
   These do not all need the same treatment, but the first two now clearly
@@ -209,8 +209,8 @@ Rule:
 | `MAB6` | Stock Firestore `Write` truth pass: fix or narrow claim | `MAB2`, `MAB3` | `L` | `done` |
 | `MAB7` | Prelaunch WebSocket legacy-path removal | `MAB6` | `M` | `done` |
 | `MAB8` | Split `packages/firebase/src/firestore.ts` by ownership | `MAB2`, `MAB3` | `XL` | `done` |
-| `MAB9` | Split `crates/neovex-server/src/adapters/firebase/mod.rs` by ownership | `MAB2`, `MAB3` | `L` | `done` |
-| `MAB10` | Split `crates/neovex-server/src/tests.rs` into concept-owned suites | `MAB6`, `MAB7`, `MAB9` | `XL` | `done` |
+| `MAB9` | Split `crates/nimbus-server/src/adapters/firebase/mod.rs` by ownership | `MAB2`, `MAB3` | `L` | `done` |
+| `MAB10` | Split `crates/nimbus-server/src/tests.rs` into concept-owned suites | `MAB6`, `MAB7`, `MAB9` | `XL` | `done` |
 | `MAB11` | Closeout docs, plan-index, and native-transport gate refresh | `MAB5`, `MAB6`, `MAB7`, `MAB8`, `MAB9`, `MAB10` | `S` | `done` |
 
 ## Roadmap
@@ -296,7 +296,7 @@ Completion gate:
 
 Focused verification:
 
-- focused `@neovex/firebase` selftest lanes
+- focused `@nimbus/firebase` selftest lanes
 - focused server auth/listen contract lanes
 
 ### MAB4 — Shared Runtime-Host Seam Extraction
@@ -371,7 +371,7 @@ Completion gate:
 Focused verification:
 
 - representative upstream Firestore node repro
-- focused Neovex server lanes for the actual root cause
+- focused Nimbus server lanes for the actual root cause
 
 ### MAB7 — Prelaunch WebSocket Legacy-Path Removal
 
@@ -421,7 +421,7 @@ Focused verification:
 - package typecheck, tests, and build
 - focused smoke for CRUD, query, watch, batch, and transaction paths
 
-### MAB9 — Split `crates/neovex-server/src/adapters/firebase/mod.rs`
+### MAB9 — Split `crates/nimbus-server/src/adapters/firebase/mod.rs`
 
 Decompose the server Firebase adapter root by ownership.
 
@@ -442,10 +442,10 @@ Completion gate:
 
 Focused verification:
 
-- focused `cargo test -p neovex-server firebase --lib`
+- focused `cargo test -p nimbus-server firebase --lib`
 - focused gRPC and REST lanes covering touched modules
 
-### MAB10 — Split `crates/neovex-server/src/tests.rs`
+### MAB10 — Split `crates/nimbus-server/src/tests.rs`
 
 Move the Firebase, Cloud Functions, and related compatibility proofs into
 concept-owned test modules.
@@ -458,7 +458,7 @@ Scope:
 
 Completion gate:
 
-- `crates/neovex-server/src/tests.rs` is no longer a multi-thousand-line proof
+- `crates/nimbus-server/src/tests.rs` is no longer a multi-thousand-line proof
   catch-all
 - proof ownership is clearer and narrower
 - no focused verification lane becomes harder to run
@@ -513,17 +513,17 @@ Run this plan in six passes:
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 2026-04-26 | Plan authored | `done` | Created from the post-Firebase / post-Cloud-Functions / post-WebSocket architecture review. The active findings are: Firebase identity is still dropped to anonymous on the server, Cloud Functions still depends on Convex-namespaced runtime-host seams, raw Firestore `Write` compatibility claims are ahead of the upstream evidence, prelaunch WebSocket v1 fallback still exists, and the largest new adapter/test roots need ownership-based decomposition. |
-| 2026-04-26 | `MAB1` Firebase auth contract and principal-entry baseline | `done` | Added `docs/reference/firebase-auth-contract.md` and updated `AGENTS.md`, the Firebase compatibility docs, the migration guide, and the browser `Listen` reference so the repo now says one exact thing: `@neovex/firebase` can emit bearer-shaped auth inputs, but the current Firebase server routes still resolve covered requests as `PrincipalContext::anonymous()`. This closes the docs/contract gap and gives `MAB2` one explicit principal-entry target. |
-| 2026-04-26 | `MAB2` Firebase principal propagation across all server paths | `done` | Added one shared Firebase application-auth resolver in `crates/neovex-server/src/application_auth.rs` and threaded the resolved `PrincipalContext` through covered REST handlers, gRPC unary methods, native `Write`, native `Listen`, and browser WebSocket `Listen`. Covered Firebase reads/writes/transactions/listeners no longer hardcode `PrincipalContext::anonymous()`, and focused server tests plus the `@neovex/firebase` smoke lane now prove authenticated versus anonymous behavior across unary, write-stream, and watch flows. |
-| 2026-04-26 | `MAB3` Firebase auth proofs and published compatibility truth | `done` | Reconciled the published Firebase docs with the landed principal flow in `docs/reference/firebase-auth-contract.md`, `firebase-compatibility.md`, `firebase-migration-guide.md`, and `firebase-websocket-listen.md`. The current public story is now consistent: covered Firebase CRUD/query/transaction/`Write`/`Listen` paths enforce the resolved principal contract, while broader upstream Firebase/Admin parity remains explicitly unclaimed. Focused verification came from the server auth/listen contract tests and the `@neovex/firebase` selftest smoke lane. |
-| 2026-04-26 | `MAB4` Shared runtime-host seam extraction | `done` | Added a new server-owned `crates/neovex-server/src/runtime_host/mod.rs` seam with `RuntimeHostEnvironment`, `RuntimeHostBridgeScope`, `RuntimeHostBridgeInvocation`, and `RuntimeHostBridge`, then switched Cloud Functions trigger/http execution and the top-level Convex runtime invocation context to build through that shared seam instead of constructing `ConvexHostBridge*` types directly. The initial verification was temporarily blocked by unrelated MongoDB compile churn, but the focused proofs are now green: `cargo test -p neovex-server cloud_functions --lib` and `cargo test -p neovex-server adapters::convex::tests::authorization --lib` both pass. |
-| 2026-04-26 | `MAB5` Rehome `firebase-admin/firestore` runtime ops onto shared seam | `done` | Moved the covered admin Firestore host-call implementation out of `adapters/convex/host_bridge/db_ops/firestore_admin.rs` into `crates/neovex-server/src/runtime_host/firestore_admin.rs`, rewired Convex document host-call dispatch through that shared module, and exposed only the minimal server-owned imports needed to keep the runtime ABI stable. Focused proof comes from the shared Cloud Functions lane, including the generated Firebase bundle path that exercises `firebase-admin/firestore` reads and writes end to end. |
-| 2026-04-26 | `MAB6` Stock Firestore `Write` truth pass | `done` | Chose the narrow-truth path instead of inventing a broader compatibility claim. Updated `docs/reference/firebase-compatibility.md` and `docs/reference/firebase-migration-guide.md` so the public contract is now explicit: the first-party `@neovex/firebase` path is supported, but raw stock upstream Firestore `Write` streaming compatibility remains unclaimed while the upstream Node smoke catalog still records `GrpcConnection RPC 'Write' stream ... 12 UNIMPLEMENTED`. The compatibility matrix and upstream catalog no longer disagree. |
-| 2026-04-26 | `MAB7` Prelaunch WebSocket legacy-path removal | `done` | Removed implicit no-subprotocol fallback and explicit `neovex.v1` negotiation from the server, updated local server discovery and public error metadata to advertise only `neovex.v2`, switched the first-party JS client and the shared demo subscription client to explicit `neovex.v2` plus `client_hello`, and updated the WebSocket protocol/error docs to match the single supported prelaunch baseline. Focused verification is green across `cargo test -p neovex-server websocket_protocol --lib`, `cargo test -p neovex-server cloud_functions --lib`, `cargo test -p neovex-server adapters::convex::tests::authorization --lib`, and `npm run typecheck --workspace neovex`. |
+| 2026-04-26 | `MAB1` Firebase auth contract and principal-entry baseline | `done` | Added `docs/reference/firebase-auth-contract.md` and updated `AGENTS.md`, the Firebase compatibility docs, the migration guide, and the browser `Listen` reference so the repo now says one exact thing: `@nimbus/firebase` can emit bearer-shaped auth inputs, but the current Firebase server routes still resolve covered requests as `PrincipalContext::anonymous()`. This closes the docs/contract gap and gives `MAB2` one explicit principal-entry target. |
+| 2026-04-26 | `MAB2` Firebase principal propagation across all server paths | `done` | Added one shared Firebase application-auth resolver in `crates/nimbus-server/src/application_auth.rs` and threaded the resolved `PrincipalContext` through covered REST handlers, gRPC unary methods, native `Write`, native `Listen`, and browser WebSocket `Listen`. Covered Firebase reads/writes/transactions/listeners no longer hardcode `PrincipalContext::anonymous()`, and focused server tests plus the `@nimbus/firebase` smoke lane now prove authenticated versus anonymous behavior across unary, write-stream, and watch flows. |
+| 2026-04-26 | `MAB3` Firebase auth proofs and published compatibility truth | `done` | Reconciled the published Firebase docs with the landed principal flow in `docs/reference/firebase-auth-contract.md`, `firebase-compatibility.md`, `firebase-migration-guide.md`, and `firebase-websocket-listen.md`. The current public story is now consistent: covered Firebase CRUD/query/transaction/`Write`/`Listen` paths enforce the resolved principal contract, while broader upstream Firebase/Admin parity remains explicitly unclaimed. Focused verification came from the server auth/listen contract tests and the `@nimbus/firebase` selftest smoke lane. |
+| 2026-04-26 | `MAB4` Shared runtime-host seam extraction | `done` | Added a new server-owned `crates/nimbus-server/src/runtime_host/mod.rs` seam with `RuntimeHostEnvironment`, `RuntimeHostBridgeScope`, `RuntimeHostBridgeInvocation`, and `RuntimeHostBridge`, then switched Cloud Functions trigger/http execution and the top-level Convex runtime invocation context to build through that shared seam instead of constructing `ConvexHostBridge*` types directly. The initial verification was temporarily blocked by unrelated MongoDB compile churn, but the focused proofs are now green: `cargo test -p nimbus-server cloud_functions --lib` and `cargo test -p nimbus-server adapters::convex::tests::authorization --lib` both pass. |
+| 2026-04-26 | `MAB5` Rehome `firebase-admin/firestore` runtime ops onto shared seam | `done` | Moved the covered admin Firestore host-call implementation out of `adapters/convex/host_bridge/db_ops/firestore_admin.rs` into `crates/nimbus-server/src/runtime_host/firestore_admin.rs`, rewired Convex document host-call dispatch through that shared module, and exposed only the minimal server-owned imports needed to keep the runtime ABI stable. Focused proof comes from the shared Cloud Functions lane, including the generated Firebase bundle path that exercises `firebase-admin/firestore` reads and writes end to end. |
+| 2026-04-26 | `MAB6` Stock Firestore `Write` truth pass | `done` | Chose the narrow-truth path instead of inventing a broader compatibility claim. Updated `docs/reference/firebase-compatibility.md` and `docs/reference/firebase-migration-guide.md` so the public contract is now explicit: the first-party `@nimbus/firebase` path is supported, but raw stock upstream Firestore `Write` streaming compatibility remains unclaimed while the upstream Node smoke catalog still records `GrpcConnection RPC 'Write' stream ... 12 UNIMPLEMENTED`. The compatibility matrix and upstream catalog no longer disagree. |
+| 2026-04-26 | `MAB7` Prelaunch WebSocket legacy-path removal | `done` | Removed implicit no-subprotocol fallback and explicit `nimbus.v1` negotiation from the server, updated local server discovery and public error metadata to advertise only `nimbus.v2`, switched the first-party JS client and the shared demo subscription client to explicit `nimbus.v2` plus `client_hello`, and updated the WebSocket protocol/error docs to match the single supported prelaunch baseline. Focused verification is green across `cargo test -p nimbus-server websocket_protocol --lib`, `cargo test -p nimbus-server cloud_functions --lib`, `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`, and `npm run typecheck --workspace nimbus`. |
 | 2026-04-26 | `MAB8` Firebase SDK `firestore.ts` decomposition sizing and first split | `in_progress` | The next active slice is the 3.5k-line `packages/firebase/src/firestore.ts` ownership split. Start by sizing the module into public surface, path/reference modeling, watch transport/session handling, write lowering, transaction control flow, and snapshot/query shaping so the first split can move one coherent ownership block instead of carving mechanically by line count. |
-| 2026-04-26 | `MAB8` Firebase SDK ownership decomposition progress | `done` | Completed the `packages/firebase/src/firestore.ts` ownership split without behavior drift. Added `packages/firebase/src/internal/watch.ts`, `internal/auth.ts`, `internal/document-data.ts`, `internal/writes.ts`, `internal/unary.ts`, and `internal/watch-snapshots.ts`, so browser `Listen`, auth/subprotocol shaping, document value helpers, write lowering, unary/query/transaction transport execution, and watched-query snapshot shaping now live in concept-owned children instead of the public root. Focused verification stayed green throughout with `npm run typecheck --workspace @neovex/firebase`, `npm run test --workspace @neovex/firebase`, and `npm run build --workspace @neovex/firebase`, and `firestore.ts` now sits at 1975 lines. That keeps it below the hard 2000-line threshold; the remaining size is the public API/entrypoint composition surface, which is intentionally retained under this plan as the last unsplit SDK root. |
-| 2026-04-26 | `MAB9` Firebase server `mod.rs` decomposition sizing | `in_progress` | The next active slice is the 1553-line `crates/neovex-server/src/adapters/firebase/mod.rs` composition root. Start by sizing the ownership blocks into HTTP handlers, shared execution helpers, resource mapping, serializer/error mapping, transaction helpers, and query/aggregation helpers so the first split can move one coherent server concept family without duplicating REST and gRPC behavior. |
-| 2026-04-26 | `MAB9` Firebase server ownership decomposition progress | `done` | Completed the Firebase server root split in two coherent cuts. Moved REST and gRPC error/status shaping into `crates/neovex-server/src/adapters/firebase/errors.rs`, moved REST response/document serialization into `response.rs`, then moved shared database-operation helpers into `operations.rs`. `crates/neovex-server/src/adapters/firebase/mod.rs` is now a 672-line route/composition root instead of a 1.5k mixed adapter switchboard. Focused verification is green with `cargo fmt --all --check`, `cargo check -p neovex-server`, and `cargo test -p neovex-server cloud_functions --lib`, which also proves the Firebase refactor did not bleed across the second adapter family. |
-| 2026-04-26 | `MAB10` server proof-surface split sizing | `in_progress` | The next active slice is the 7614-line `crates/neovex-server/src/tests.rs` proof root. It already delegates many concept suites through bottom-of-file `mod` declarations, which means the remaining work should start by separating shared fixture/helper families and any still-inline Firebase/WebSocket/local-server proofs into concept-owned children instead of carving blindly by line count. |
-| 2026-04-26 | `MAB10` server proof-surface decomposition progress | `done` | Split the remaining inline Firebase proof slab out of `crates/neovex-server/src/tests.rs` into seven concept-owned suites under `crates/neovex-server/src/tests/firebase/`: `rest_and_cors.rs`, `grpc_unary.rs`, `write_stream.rs`, `listen.rs`, `auth_and_availability.rs`, `rest_crud.rs`, and `rest_query.rs`. The root proof file now sits at 1057 lines, and every extracted Firebase suite stays below the hard 2000-line threshold. Focused verification is green with `cargo fmt --all --check`, `cargo check -p neovex-server`, `cargo test -p neovex-server cloud_functions --lib`, and `cargo test -p neovex-server firebase_grpc_commit_executes_atomic_batch_and_consumes_transaction_token --lib`. |
+| 2026-04-26 | `MAB8` Firebase SDK ownership decomposition progress | `done` | Completed the `packages/firebase/src/firestore.ts` ownership split without behavior drift. Added `packages/firebase/src/internal/watch.ts`, `internal/auth.ts`, `internal/document-data.ts`, `internal/writes.ts`, `internal/unary.ts`, and `internal/watch-snapshots.ts`, so browser `Listen`, auth/subprotocol shaping, document value helpers, write lowering, unary/query/transaction transport execution, and watched-query snapshot shaping now live in concept-owned children instead of the public root. Focused verification stayed green throughout with `npm run typecheck --workspace @nimbus/firebase`, `npm run test --workspace @nimbus/firebase`, and `npm run build --workspace @nimbus/firebase`, and `firestore.ts` now sits at 1975 lines. That keeps it below the hard 2000-line threshold; the remaining size is the public API/entrypoint composition surface, which is intentionally retained under this plan as the last unsplit SDK root. |
+| 2026-04-26 | `MAB9` Firebase server `mod.rs` decomposition sizing | `in_progress` | The next active slice is the 1553-line `crates/nimbus-server/src/adapters/firebase/mod.rs` composition root. Start by sizing the ownership blocks into HTTP handlers, shared execution helpers, resource mapping, serializer/error mapping, transaction helpers, and query/aggregation helpers so the first split can move one coherent server concept family without duplicating REST and gRPC behavior. |
+| 2026-04-26 | `MAB9` Firebase server ownership decomposition progress | `done` | Completed the Firebase server root split in two coherent cuts. Moved REST and gRPC error/status shaping into `crates/nimbus-server/src/adapters/firebase/errors.rs`, moved REST response/document serialization into `response.rs`, then moved shared database-operation helpers into `operations.rs`. `crates/nimbus-server/src/adapters/firebase/mod.rs` is now a 672-line route/composition root instead of a 1.5k mixed adapter switchboard. Focused verification is green with `cargo fmt --all --check`, `cargo check -p nimbus-server`, and `cargo test -p nimbus-server cloud_functions --lib`, which also proves the Firebase refactor did not bleed across the second adapter family. |
+| 2026-04-26 | `MAB10` server proof-surface split sizing | `in_progress` | The next active slice is the 7614-line `crates/nimbus-server/src/tests.rs` proof root. It already delegates many concept suites through bottom-of-file `mod` declarations, which means the remaining work should start by separating shared fixture/helper families and any still-inline Firebase/WebSocket/local-server proofs into concept-owned children instead of carving blindly by line count. |
+| 2026-04-26 | `MAB10` server proof-surface decomposition progress | `done` | Split the remaining inline Firebase proof slab out of `crates/nimbus-server/src/tests.rs` into seven concept-owned suites under `crates/nimbus-server/src/tests/firebase/`: `rest_and_cors.rs`, `grpc_unary.rs`, `write_stream.rs`, `listen.rs`, `auth_and_availability.rs`, `rest_crud.rs`, and `rest_query.rs`. The root proof file now sits at 1057 lines, and every extracted Firebase suite stays below the hard 2000-line threshold. Focused verification is green with `cargo fmt --all --check`, `cargo check -p nimbus-server`, `cargo test -p nimbus-server cloud_functions --lib`, and `cargo test -p nimbus-server firebase_grpc_commit_executes_atomic_batch_and_consumes_transaction_token --lib`. |
 | 2026-04-26 | `MAB11` closeout docs and native-transport gate refresh | `done` | Closed the wave by refreshing this plan to `done`, moving it out of the active-plan posture in `docs/plans/README.md`, updating `AGENTS.md` so Firebase/Cloud Functions work treats this plan as the completed multi-adapter baseline instead of the current owner, and tightening `docs/plans/native-transport-evolution-plan.md` so its deferred posture explicitly depends on the now-complete boundary-hardening wave. The repo’s adapter-boundary guidance, active-plan registry, and deferred native-transport gate now agree. |

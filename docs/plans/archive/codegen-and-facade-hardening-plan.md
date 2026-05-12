@@ -5,7 +5,7 @@ Status: completed
 This plan owns the remaining architecture-review follow-up for:
 
 - `packages/codegen` compile-time planning and source loading
-- the public Rust facade in `crates/neovex`
+- the public Rust facade in `crates/nimbus`
 - workspace-level JavaScript typecheck and build script curation
 
 It is the active owner for the remaining items from the April 2026 review that
@@ -28,9 +28,9 @@ boundary waves landed.
 - `packages/codegen/src/schema.mjs`
 - `packages/codegen/src/emit/runtime_bundle_preamble.mjs`
 - `packages/convex/package.json`
-- `packages/neovex/package.json`
+- `packages/nimbus/package.json`
 - `package.json`
-- `crates/neovex/src/lib.rs`
+- `crates/nimbus/src/lib.rs`
 
 ## Purpose
 
@@ -44,7 +44,7 @@ tooling and public-surface slice:
   APIs, low-level server helpers, and rapidly changing implementation-owned
   types
 - the JS workspace still lacks one clear, repo-owned typecheck/build contract
-  for `packages/codegen`, `packages/convex`, and `packages/neovex`
+  for `packages/codegen`, `packages/convex`, and `packages/nimbus`
 
 This plan exists to finish that wave as one deliberate ownership pass instead
 of another pile of disconnected cleanup commits.
@@ -61,14 +61,14 @@ of another pile of disconnected cleanup commits.
   `new Function`, but that is part of emitted runtime-bundle execution glue
   rather than compile-time planning. It is not in scope for this plan unless a
   later item explicitly promotes runtime-bundle loader changes.
-- `crates/neovex/src/lib.rs` currently re-exports a broad cross-section of
+- `crates/nimbus/src/lib.rs` currently re-exports a broad cross-section of
   engine, runtime, sandbox, server, storage, local-server security, and router
   builder helpers rather than a curated embedder-first facade.
 - the root workspace now owns canonical `npm run typecheck`, `npm run test`,
   and `npm run build` entrypoints, while package-owned scripts provide the
   package-specific verification lanes those root commands fan out to
 - `docs/plans/archive/codegen-cli-plan.md` and
-  `docs/plans/archive/neovex-source-root-plan.md` are historical records only;
+  `docs/plans/archive/nimbus-source-root-plan.md` are historical records only;
   neither owns the remaining architecture follow-up
 
 ## Non-Goals
@@ -94,7 +94,7 @@ This plan is complete only when:
 2. supported planning and schema/server-definition loading flow through a
    typed AST-based parser or a similarly constrained evaluator with explicit
    ownership and documented limits
-3. `crates/neovex/src/lib.rs` is narrowed to an embedder-oriented public
+3. `crates/nimbus/src/lib.rs` is narrowed to an embedder-oriented public
    surface instead of re-exporting low-level server/local-admin/security
    helpers by default
 4. low-level callers can still reach owning-crate APIs directly without a
@@ -110,7 +110,7 @@ This plan is complete only when:
 | --- | --- | --- |
 | CF1 | `done` | Planner-time resolver evaluation now lowers through a planner-owned TypeScript AST interpreter instead of `new Function`, while preserving the existing supported compile-time subset and runtime fallback behavior |
 | CF2 | `done` | Schema loading and server-definition validator parsing now use the same AST-owned compile-time interpreter rather than `new Function`, keeping validator/schema loading inside an explicit supported subset |
-| CF3 | `done` | Curated `crates/neovex/src/lib.rs` into an embedder-first facade by removing low-level localhost-security and router-builder re-exports; the CLI now imports those owning-crate surfaces from `neovex-server` directly |
+| CF3 | `done` | Curated `crates/nimbus/src/lib.rs` into an embedder-first facade by removing low-level localhost-security and router-builder re-exports; the CLI now imports those owning-crate surfaces from `nimbus-server` directly |
 | CF4 | `done` | Added canonical root `npm run typecheck`, `npm run test`, and `npm run build` entrypoints, gave the typed JS packages dedicated `typecheck` scripts, and updated contributor docs to point at the settled contract |
 
 ## Implementation Checkpoints
@@ -140,7 +140,7 @@ Expected outcome:
 
 Focused verification:
 
-- `npm run test --workspace @neovex/codegen`
+- `npm run test --workspace @nimbus/codegen`
 - `npm run test --workspace convex`
 
 ### CF2: Schema And Server Definition Loading
@@ -158,13 +158,13 @@ Expected outcome:
 
 Focused verification:
 
-- `npm run test --workspace @neovex/codegen`
+- `npm run test --workspace @nimbus/codegen`
 - `npm run test --workspace convex`
 - `npm run build --workspace convex`
 
 ### CF3: Rust Facade Curation
 
-Goal: `crates/neovex/src/lib.rs` becomes a stable embedder-first facade rather
+Goal: `crates/nimbus/src/lib.rs` becomes a stable embedder-first facade rather
 than a broad re-export bucket.
 
 Expected outcome:
@@ -177,8 +177,8 @@ Expected outcome:
 
 Focused verification:
 
-- `cargo check -p neovex`
-- `cargo clippy -p neovex --all-targets -- -D warnings`
+- `cargo check -p nimbus`
+- `cargo clippy -p nimbus --all-targets -- -D warnings`
 
 ### CF4: JS Script Contract
 
@@ -217,9 +217,9 @@ Each roadmap item must record its focused verification before it is marked
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 2026-04-23 | Plan promotion | `done` | Promoted this plan as the active owner for the remaining architecture-review follow-up after localhost/server security and runtime/provider boundary hardening landed. Corrected the plan index so `install-script-plan.md` remains listed as active, and updated `AGENTS.md` plus `docs/plans/README.md` so future CLI/codegen/facade work starts from this plan instead of archived history or floating review notes. |
-| 2026-04-23 | CF1 | `done` | Replaced planner-time `new Function` evaluation in `packages/codegen/src/planner/evaluate.mjs` with a planner-owned TypeScript AST interpreter (now shared from `packages/codegen/src/compile_time_interpreter.mjs`). The interpreter now owns resolver parameter binding, block statements, local variables, object/array literals, method calls, query-builder callbacks, and request/response compile helpers for the supported subset, while keeping existing unsafe-identifier rejection and runtime-only fallback behavior. Tightened the compile-time request proxy to return synchronous request markers and added a focused selftest for a compileable block-body server handler. Verification: `npm run test --workspace @neovex/codegen`; `npm run test --workspace convex`. Next: start CF2 and remove `new Function` from `packages/codegen/src/schema.mjs` and `packages/codegen/src/parser/server_definition.mjs`. |
-| 2026-04-23 | CF2 | `done` | Reused the same AST-owned compile-time interpreter for schema loading and server-definition validator parsing. `packages/codegen/src/schema.mjs` now evaluates `defineSchema(...)` through interpreter-owned bindings for `defineSchema`, `defineTable`, and `v`, and `packages/codegen/src/parser/server_definition.mjs` now evaluates `args` and `returns` validators through the same constrained expression path instead of `new Function`. The shared interpreter now lives at `packages/codegen/src/compile_time_interpreter.mjs` so later codegen work can reuse one explicit compile-time evaluation surface instead of multiplying evaluators. Verification: `npm run test --workspace @neovex/codegen`; `npm run test --workspace convex`; `npm run build --workspace convex`. Next: start CF3 and audit `crates/neovex/src/lib.rs` re-export consumers before narrowing the facade. |
-| 2026-04-23 | CF3 | `done` | Narrowed `crates/neovex/src/lib.rs` to keep the embedder-facing server surface while removing low-level localhost-security records, token and discovery helpers, and router-builder overloads from the top-level facade. `neovex-bin` now depends on `neovex-server` directly for those owning-crate APIs, which keeps the CLI working without keeping implementation-heavy server internals on the public facade. Updated `ARCHITECTURE.md` to document that router-construction and localhost-security helpers stay owned by `neovex-server`. Verification: `cargo check -p neovex`; `cargo check -p neovex-bin`; `cargo clippy -p neovex --all-targets -- -D warnings`; `cargo clippy -p neovex-bin --all-targets -- -D warnings`. Next: start CF4 and settle the canonical JS build/test/typecheck contract. |
-| 2026-04-23 | CF4 | `done` | Added canonical root `npm run typecheck`, `npm run test`, and `npm run build` entrypoints in the workspace package, kept the older `convex:*` aliases as thin forwards, and added dedicated `typecheck` scripts for the typed `convex` and `neovex` packages by teaching their selftests a `--typecheck-only` mode. Updated `AGENTS.md`, `docs/reference/cli.md`, and `docs/convex/compatibility.md` so contributors now see the same repo-owned JS verification contract in the docs and the agent entrypoint. Verification: `npm run typecheck`; `npm run test`; `npm run build`. Next: run the plan closeout verification bundle and retire this workstream cleanly. |
+| 2026-04-23 | CF1 | `done` | Replaced planner-time `new Function` evaluation in `packages/codegen/src/planner/evaluate.mjs` with a planner-owned TypeScript AST interpreter (now shared from `packages/codegen/src/compile_time_interpreter.mjs`). The interpreter now owns resolver parameter binding, block statements, local variables, object/array literals, method calls, query-builder callbacks, and request/response compile helpers for the supported subset, while keeping existing unsafe-identifier rejection and runtime-only fallback behavior. Tightened the compile-time request proxy to return synchronous request markers and added a focused selftest for a compileable block-body server handler. Verification: `npm run test --workspace @nimbus/codegen`; `npm run test --workspace convex`. Next: start CF2 and remove `new Function` from `packages/codegen/src/schema.mjs` and `packages/codegen/src/parser/server_definition.mjs`. |
+| 2026-04-23 | CF2 | `done` | Reused the same AST-owned compile-time interpreter for schema loading and server-definition validator parsing. `packages/codegen/src/schema.mjs` now evaluates `defineSchema(...)` through interpreter-owned bindings for `defineSchema`, `defineTable`, and `v`, and `packages/codegen/src/parser/server_definition.mjs` now evaluates `args` and `returns` validators through the same constrained expression path instead of `new Function`. The shared interpreter now lives at `packages/codegen/src/compile_time_interpreter.mjs` so later codegen work can reuse one explicit compile-time evaluation surface instead of multiplying evaluators. Verification: `npm run test --workspace @nimbus/codegen`; `npm run test --workspace convex`; `npm run build --workspace convex`. Next: start CF3 and audit `crates/nimbus/src/lib.rs` re-export consumers before narrowing the facade. |
+| 2026-04-23 | CF3 | `done` | Narrowed `crates/nimbus/src/lib.rs` to keep the embedder-facing server surface while removing low-level localhost-security records, token and discovery helpers, and router-builder overloads from the top-level facade. `nimbus-bin` now depends on `nimbus-server` directly for those owning-crate APIs, which keeps the CLI working without keeping implementation-heavy server internals on the public facade. Updated `ARCHITECTURE.md` to document that router-construction and localhost-security helpers stay owned by `nimbus-server`. Verification: `cargo check -p nimbus`; `cargo check -p nimbus-bin`; `cargo clippy -p nimbus --all-targets -- -D warnings`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings`. Next: start CF4 and settle the canonical JS build/test/typecheck contract. |
+| 2026-04-23 | CF4 | `done` | Added canonical root `npm run typecheck`, `npm run test`, and `npm run build` entrypoints in the workspace package, kept the older `convex:*` aliases as thin forwards, and added dedicated `typecheck` scripts for the typed `convex` and `nimbus` packages by teaching their selftests a `--typecheck-only` mode. Updated `AGENTS.md`, `docs/reference/cli.md`, and `docs/convex/compatibility.md` so contributors now see the same repo-owned JS verification contract in the docs and the agent entrypoint. Verification: `npm run typecheck`; `npm run test`; `npm run build`. Next: run the plan closeout verification bundle and retire this workstream cleanly. |
 | 2026-04-24 | Closeout | `done` | Ran the final closeout verification sweep, updated the repo entrypoints so this plan is no longer treated as active, and archived the control plane as a completed execution record. The first sandboxed `make ci` attempt failed for an environment-only reason because `cargo deny` could not lock `/Users/jack/.cargo/advisory-dbs/db.lock` on a read-only path; the unrestricted retry passed, confirming that the remaining `cargo deny` output is limited to pre-existing duplicate-crate warnings rather than a new verification failure. Verification: `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `npm run typecheck`; `npm run test`; `npm run build`; `make ci` (passed on unrestricted retry after the sandbox-only advisory-db lock failure). Next: promote a new active plan before the next CLI/codegen/facade architecture wave. |
-| 2026-04-24 | Follow-up hardening | `done` | Moved compile-time unsafe-reference and prototype-constructor property guards into the shared `packages/codegen/src/compile_time_interpreter.mjs` path so schema and server-definition validator expressions receive the same protection as resolver planning. Added runtime property-read denial for computed keys such as `"con" + "structor"`, adversarial schema/args/returns fixtures, and a `@neovex/codegen` JS parser plus codegen-boundary guardrail lane wired into root `npm run typecheck`. Documented that generated runtime bundles still use `new Function` inside the Neovex V8 runtime boundary, while compile-time planning does not execute user source in Node. Verification: `npm run typecheck --workspace @neovex/codegen`; `npm run test --workspace @neovex/codegen`; `npm run typecheck`; `npm run test`; `npm run build`; direct schema constructor-escape probe rejected. |
+| 2026-04-24 | Follow-up hardening | `done` | Moved compile-time unsafe-reference and prototype-constructor property guards into the shared `packages/codegen/src/compile_time_interpreter.mjs` path so schema and server-definition validator expressions receive the same protection as resolver planning. Added runtime property-read denial for computed keys such as `"con" + "structor"`, adversarial schema/args/returns fixtures, and a `@nimbus/codegen` JS parser plus codegen-boundary guardrail lane wired into root `npm run typecheck`. Documented that generated runtime bundles still use `new Function` inside the Nimbus V8 runtime boundary, while compile-time planning does not execute user source in Node. Verification: `npm run typecheck --workspace @nimbus/codegen`; `npm run test --workspace @nimbus/codegen`; `npm run typecheck`; `npm run test`; `npm run build`; direct schema constructor-escape probe rejected. |

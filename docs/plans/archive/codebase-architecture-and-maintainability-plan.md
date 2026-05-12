@@ -22,29 +22,29 @@ Reviewed against:
 - `docs/plans/archive/codebase-modularity-and-maintainability-hotspots-plan.md`
 - `docs/plans/archive/codebase-modularity-and-maintainability-follow-on-plan.md`
 - `docs/plans/archive/codebase-modularity-and-maintainability-plan.md`
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-engine/src/service/queries/query_api.rs`
-- `crates/neovex-engine/src/service/mutations/direct/api.rs`
-- `crates/neovex-engine/src/service/mutations/direct/execution.rs`
-- `crates/neovex-engine/src/service/mutations/journal.rs`
-- `crates/neovex-engine/src/service/subscriptions/bootstrap.rs`
-- `crates/neovex-engine/src/service/tenants.rs`
-- `crates/neovex-engine/src/persistence/provider.rs`
-- `crates/neovex-engine/src/persistence/executor.rs`
-- `crates/neovex-engine/src/persistence/query.rs`
-- `crates/neovex-engine/src/persistence/tenant.rs`
-- `crates/neovex-engine/src/persistence/tenant/writes.rs`
-- `crates/neovex-runtime/src/host.rs`
-- `crates/neovex-server/src/lib.rs`
-- `crates/neovex-server/src/router.rs`
-- `crates/neovex-server/src/state.rs`
-- `crates/neovex-server/src/adapters/convex/mod.rs`
-- `crates/neovex-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`
-- `crates/neovex-server/src/execution/invocations/mod.rs`
-- `crates/neovex-bin/src/service/mod.rs`
-- `crates/neovex-bin/src/service/execution.rs`
-- `crates/neovex/src/lib.rs`
-- `packages/neovex/src/server.ts`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-engine/src/service/queries/query_api.rs`
+- `crates/nimbus-engine/src/service/mutations/direct/api.rs`
+- `crates/nimbus-engine/src/service/mutations/direct/execution.rs`
+- `crates/nimbus-engine/src/service/mutations/journal.rs`
+- `crates/nimbus-engine/src/service/subscriptions/bootstrap.rs`
+- `crates/nimbus-engine/src/service/tenants.rs`
+- `crates/nimbus-engine/src/persistence/provider.rs`
+- `crates/nimbus-engine/src/persistence/executor.rs`
+- `crates/nimbus-engine/src/persistence/query.rs`
+- `crates/nimbus-engine/src/persistence/tenant.rs`
+- `crates/nimbus-engine/src/persistence/tenant/writes.rs`
+- `crates/nimbus-runtime/src/host.rs`
+- `crates/nimbus-server/src/lib.rs`
+- `crates/nimbus-server/src/router.rs`
+- `crates/nimbus-server/src/state.rs`
+- `crates/nimbus-server/src/adapters/convex/mod.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`
+- `crates/nimbus-server/src/execution/invocations/mod.rs`
+- `crates/nimbus-bin/src/service/mod.rs`
+- `crates/nimbus-bin/src/service/execution.rs`
+- `crates/nimbus/src/lib.rs`
+- `packages/nimbus/src/server.ts`
 - `packages/convex/src/server.ts`
 - the current git worktree on 2026-04-21
 
@@ -63,10 +63,10 @@ Baseline verification status for this plan:
 
 The current architecture is real and worth preserving:
 
-- `neovex-runtime` still owns a narrow workspace-independent runtime contract
-- `neovex-server` still owns transport and compatibility integration
-- `neovex-engine` still owns the central coordination layer
-- `neovex-storage` still owns persistence semantics and backend behavior
+- `nimbus-runtime` still owns a narrow workspace-independent runtime contract
+- `nimbus-server` still owns transport and compatibility integration
+- `nimbus-engine` still owns the central coordination layer
+- `nimbus-storage` still owns persistence semantics and backend behavior
 - `TenantRuntime` still groups tenant-local operational state coherently
 
 The better reading of the codebase today is not "the crate split failed."
@@ -80,7 +80,7 @@ Instead, the repo is paying coordination cost at the seams:
   multiple files
 - Convex host-call dispatch still carries a triple-entry update burden across
   sync, cancellable, and async routing
-- the `neovex service ...` surface still spreads command declaration,
+- the `nimbus service ...` surface still spreads command declaration,
   orchestration, and presentation concerns across a broad subsystem
 - `ARCHITECTURE.md` remains above the 1,500-line review threshold and needs an
   active owner rather than an implicit exception
@@ -148,7 +148,7 @@ This plan covers:
   setup behind clearer typed internal builders
 - cleanup of Convex host-call dispatch and runtime integration so operation
   families have one canonical home
-- cleanup of the `neovex service ...` subsystem so command declaration,
+- cleanup of the `nimbus service ...` subsystem so command declaration,
   orchestration, platform dispatch, and rendering are easier to navigate
 - architecture-document packaging, public-facade curation, and governance
   updates needed to keep repo-wide cleanup resumable through handoff and
@@ -177,8 +177,8 @@ These rules are mandatory for every item in this plan.
    specific item explicitly records otherwise.
 
 2. Keep the core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    Every mutation still flows through the engine-owned mutation path.
    Storage atomicity stays unchanged.
 
@@ -232,21 +232,21 @@ These rules are mandatory for every item in this plan.
   repeated seam patterns and coordination width across adjacent modules.
 - Representative current hotspot counts from the live tree:
   - `ARCHITECTURE.md` at 1,745 lines
-  - `crates/neovex-engine/src/persistence_config.rs` at 810 lines
-  - `crates/neovex-bin/src/service/mod.rs` at 770 lines
-  - `crates/neovex-bin/src/service/execution.rs` at 616 lines
-  - `crates/neovex-engine/src/service/queries/query_api.rs` at 478 lines
-  - `crates/neovex-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`
+  - `crates/nimbus-engine/src/persistence_config.rs` at 810 lines
+  - `crates/nimbus-bin/src/service/mod.rs` at 770 lines
+  - `crates/nimbus-bin/src/service/execution.rs` at 616 lines
+  - `crates/nimbus-engine/src/service/queries/query_api.rs` at 478 lines
+  - `crates/nimbus-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`
     at 296 lines
-  - `packages/neovex/src/server.ts` at 548 lines
+  - `packages/nimbus/src/server.ts` at 548 lines
   - `packages/convex/src/server.ts` at 391 lines
 - The largest active Rust production files above 1,000 lines are still mostly
   concept-cohesive backend or sandbox modules rather than the central roots:
-  - `crates/neovex-storage/src/mysql/backend.rs` at 1,236 lines
-  - `crates/neovex-sandbox/src/backends/oci/builder.rs` at 1,199 lines
-  - `crates/neovex-storage/src/postgres/write.rs` at 1,188 lines
-  - `crates/neovex-sandbox/src/backends/oci/network.rs` at 1,150 lines
-  - `crates/neovex-storage/src/postgres/backend.rs` at 1,122 lines
+  - `crates/nimbus-storage/src/mysql/backend.rs` at 1,236 lines
+  - `crates/nimbus-sandbox/src/backends/oci/builder.rs` at 1,199 lines
+  - `crates/nimbus-storage/src/postgres/write.rs` at 1,188 lines
+  - `crates/nimbus-sandbox/src/backends/oci/network.rs` at 1,150 lines
+  - `crates/nimbus-storage/src/postgres/backend.rs` at 1,122 lines
 - The persistence provider seam is explicit, but still edit-wide:
   `PersistenceProvider`, `TenantPersistenceExecutor`, and
   `TenantPersistence` all require repeated variant dispatch across multiple
@@ -281,7 +281,7 @@ These rules are mandatory for every item in this plan.
 4. Server and Convex integration currently lean on overload and dispatch
    matrices more than on builder- or operation-owned shapes.
 
-5. The `neovex service ...` subsystem is usable, but its declaration,
+5. The `nimbus service ...` subsystem is usable, but its declaration,
    resolution, orchestration, and presentation responsibilities still span a
    broad surface that is harder to read than it needs to be.
 
@@ -301,11 +301,11 @@ These rules are mandatory for every item in this plan.
 
 Primary targets:
 
-- `crates/neovex-engine/src/persistence/provider.rs`
-- `crates/neovex-engine/src/persistence/executor.rs`
-- `crates/neovex-engine/src/persistence/query.rs`
-- `crates/neovex-engine/src/persistence/tenant.rs`
-- `crates/neovex-engine/src/persistence/tenant/writes.rs`
+- `crates/nimbus-engine/src/persistence/provider.rs`
+- `crates/nimbus-engine/src/persistence/executor.rs`
+- `crates/nimbus-engine/src/persistence/query.rs`
+- `crates/nimbus-engine/src/persistence/tenant.rs`
+- `crates/nimbus-engine/src/persistence/tenant/writes.rs`
 - adjacent provider-local capability seams as needed
 
 Desired outcome:
@@ -318,13 +318,13 @@ Desired outcome:
 
 Primary targets:
 
-- `crates/neovex-engine/src/service/queries/query_api.rs`
-- `crates/neovex-engine/src/service/mutations/direct/api.rs`
-- `crates/neovex-engine/src/service/mutations/direct/execution.rs`
-- `crates/neovex-engine/src/service/mutations/journal.rs`
-- `crates/neovex-engine/src/service/subscriptions/bootstrap.rs`
-- `crates/neovex-engine/src/service/scheduler/access.rs`
-- `crates/neovex-engine/src/service/tenants.rs`
+- `crates/nimbus-engine/src/service/queries/query_api.rs`
+- `crates/nimbus-engine/src/service/mutations/direct/api.rs`
+- `crates/nimbus-engine/src/service/mutations/direct/execution.rs`
+- `crates/nimbus-engine/src/service/mutations/journal.rs`
+- `crates/nimbus-engine/src/service/subscriptions/bootstrap.rs`
+- `crates/nimbus-engine/src/service/scheduler/access.rs`
+- `crates/nimbus-engine/src/service/tenants.rs`
 
 Desired outcome:
 
@@ -337,9 +337,9 @@ Desired outcome:
 
 Primary targets:
 
-- `crates/neovex-server/src/lib.rs`
-- `crates/neovex-server/src/router.rs`
-- `crates/neovex-server/src/state.rs`
+- `crates/nimbus-server/src/lib.rs`
+- `crates/nimbus-server/src/router.rs`
+- `crates/nimbus-server/src/state.rs`
 
 Desired outcome:
 
@@ -351,11 +351,11 @@ Desired outcome:
 
 Primary targets:
 
-- `crates/neovex-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`
-- `crates/neovex-server/src/adapters/convex/mod.rs`
-- `crates/neovex-server/src/execution/invocations/mod.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`
+- `crates/nimbus-server/src/adapters/convex/mod.rs`
+- `crates/nimbus-server/src/execution/invocations/mod.rs`
 - adjacent `adapters/convex/host_bridge/` operation families
-- `crates/neovex-runtime/src/host.rs` only as needed to preserve a narrow,
+- `crates/nimbus-runtime/src/host.rs` only as needed to preserve a narrow,
   stable contract
 
 Desired outcome:
@@ -368,11 +368,11 @@ Desired outcome:
 
 Primary targets:
 
-- `crates/neovex-bin/src/service/mod.rs`
-- `crates/neovex-bin/src/service/execution.rs`
-- `crates/neovex-bin/src/service/lifecycle.rs`
-- `crates/neovex-bin/src/service/project.rs`
-- `crates/neovex-bin/src/service/render.rs`
+- `crates/nimbus-bin/src/service/mod.rs`
+- `crates/nimbus-bin/src/service/execution.rs`
+- `crates/nimbus-bin/src/service/lifecycle.rs`
+- `crates/nimbus-bin/src/service/project.rs`
+- `crates/nimbus-bin/src/service/render.rs`
 
 Desired outcome:
 
@@ -387,10 +387,10 @@ Desired outcome:
 Primary targets:
 
 - `ARCHITECTURE.md`
-- `crates/neovex/src/lib.rs`
+- `crates/nimbus/src/lib.rs`
 - `AGENTS.md`
 - `docs/plans/README.md`
-- `packages/neovex/src/server.ts` and `packages/convex/src/server.ts` only if
+- `packages/nimbus/src/server.ts` and `packages/convex/src/server.ts` only if
   touched by related cleanup
 
 Desired outcome:
@@ -412,7 +412,7 @@ This plan is successful only when all of the following are true:
 - persistence/provider capability changes require fewer wide switchboard edits
 - server construction and Convex host-call wiring are easier to extend without
   overload or dispatch sprawl
-- the `neovex service ...` subsystem has clearer concept ownership
+- the `nimbus service ...` subsystem has clearer concept ownership
 - `ARCHITECTURE.md` is either thinner for a reason or explicitly justified in
   the threshold ledger
 - active files between 1,500 and 1,999 lines, if any remain, have explicit
@@ -430,10 +430,10 @@ This plan is successful only when all of the following are true:
 | --- | --- |
 | Engine mutation and query semantics | service coordination, mutation ordering, tenant lifecycle, and read visibility stay unchanged while internal helpers are simplified |
 | Storage semantics | document writes, index updates, journal behavior, scheduler behavior, and durable commit rules stay unchanged while provider and persistence facades are thinned |
-| Runtime inversion seam | `HostBridge` stays the runtime contract and `neovex-runtime` keeps zero workspace dependencies |
+| Runtime inversion seam | `HostBridge` stays the runtime contract and `nimbus-runtime` keeps zero workspace dependencies |
 | Native server routes | HTTP and WebSocket behavior stays unchanged unless a specific item explicitly records a behavior change |
 | Convex compatibility behavior | runtime-backed query, mutation, action, scheduler, and subscription behavior stays unchanged while internal dispatch and construction surfaces are simplified |
-| CLI behavior | `neovex service ...` behavior stays unchanged unless a specific item explicitly records and justifies a pre-launch cleanup |
+| CLI behavior | `nimbus service ...` behavior stays unchanged unless a specific item explicitly records and justifies a pre-launch cleanup |
 | Public facade surfaces | facade exports may become more intentional, but any breaking cleanup must be explicit and justified rather than accidental |
 
 ---
@@ -469,15 +469,15 @@ Every implementation item in this plan must run:
 Use these focused lanes as appropriate:
 
 - for persistence/provider cleanup:
-  `cargo test -p neovex-engine`
-  `cargo test -p neovex-storage`
+  `cargo test -p nimbus-engine`
+  `cargo test -p nimbus-storage`
 - for engine service-flow cleanup:
-  `cargo test -p neovex-engine`
+  `cargo test -p nimbus-engine`
 - for server-construction or Convex host-call cleanup:
-  `cargo test -p neovex-server`
-  `cargo test -p neovex-runtime`
+  `cargo test -p nimbus-server`
+  `cargo test -p nimbus-runtime`
 - for service CLI cleanup:
-  `cargo test -p neovex-bin`
+  `cargo test -p nimbus-bin`
 - for JS or facade cleanup:
   `npm run test --workspaces --if-present`
   `npm run build --workspaces --if-present`
@@ -561,11 +561,11 @@ If environment restrictions block a command, do not silently skip it:
 | --- | --- | --- |
 | ACM0 | done; completed the live architectural review, promoted this document as the active generic maintainability owner, and updated `docs/plans/README.md` plus `AGENTS.md` to point future work here first | start `ACM1` by inventorying repeated capability delegation across `persistence/provider.rs`, `executor.rs`, `query.rs`, and `tenant/*.rs` and choosing the smallest concept-owned cleanup that reduces edit width without changing storage behavior |
 | ACM1 | done; persistence-owned match macros now centralize provider, executor, store, and snapshot delegation, provider open/create flows normalize through typed opened-tenant adapters, and provider/store mismatch checking now lives with `TenantPersistence` instead of being re-expanded across multiple files | start `ACM2` by inventorying repeated sync/async/cancellable wrapper shapes across `service/queries/query_api.rs`, `service/mutations/direct/{api,execution}.rs`, `service/mutations/journal.rs`, `service/subscriptions/bootstrap.rs`, `service/scheduler/access.rs`, and `service/tenants.rs` and choose the first concept-owned convergence helper |
-| ACM2 | done; engine service-flow setup now reuses shared tenant-operation helpers in `service/tenants.rs`, mutation wrapper helpers in `service/mutations/direct/api.rs`, query runtime loaders in `service/queries/query_api.rs`, and one snapshot-evaluation helper in `service/subscriptions/bootstrap.rs`, which reduces repeated sync/async/cancellable setup without hiding behavior | start `ACM3` by inventorying the current `build_router*` and `serve*` overload families across `crates/neovex-server/src/{lib,router,state}.rs` and selecting the typed internal build pipeline that can own route and serve construction |
+| ACM2 | done; engine service-flow setup now reuses shared tenant-operation helpers in `service/tenants.rs`, mutation wrapper helpers in `service/mutations/direct/api.rs`, query runtime loaders in `service/queries/query_api.rs`, and one snapshot-evaluation helper in `service/subscriptions/bootstrap.rs`, which reduces repeated sync/async/cancellable setup without hiding behavior | start `ACM3` by inventorying the current `build_router*` and `serve*` overload families across `crates/nimbus-server/src/{lib,router,state}.rs` and selecting the typed internal build pipeline that can own route and serve construction |
 | ACM3 | done; `AppState` now builds from one typed `AppStateConfig`, router construction now flows through `RouterBuildConfig` and its capability-owned builder methods, and `serve*` wrappers now all funnel through one internal `serve_with_router_config` path so new route or serve features can plug into a single typed pipeline instead of another overload family | start `ACM4` by inventorying the remaining sync, cancellable, and async host-call dispatch seams across `adapters/convex/host_bridge/async_bridge/dispatch.rs`, `adapters/convex/mod.rs`, and `execution/invocations/mod.rs` and selecting the first operation-owned extraction |
-| ACM4 | done; host-call routing now classifies operations into function, query-builder, query-read, document, and scheduler families, each family owns its own sync/cancellable/async dispatch surface, and runtime invocation options plus nested cross-runtime invocation setup now flow through smaller canonical helpers instead of inline mode reconstruction | start `ACM5` by inventorying the current responsibility split across `crates/neovex-bin/src/service/{mod,execution,lifecycle,project,render}.rs` and choosing the first concept-owned extraction that makes command declaration versus orchestration easier to follow |
-| ACM5 | done; `commands.rs` now owns the `neovex service ...` CLI surface, `service/mod.rs` has shrunk into the orchestration root, and service-local models now live beside execution, lifecycle, process, and render code so the subsystem is easier to navigate by concept ownership instead of root-file accretion | start `ACM6` by inventorying what must stay in `ARCHITECTURE.md`, what `crates/neovex/src/lib.rs` should still re-export, and whether `AGENTS.md` plus `docs/plans/README.md` already point future maintainability work at the right live owner |
-| ACM6 | done; `ARCHITECTURE.md` now keeps the crate map and invariant-level architecture while persistence-engine depth lives in `docs/reference/persistence-engine-baseline.md`, `docs/README.md` points at that new reference, and `crates/neovex/src/lib.rs` now groups facade exports by concern so the public surface reads more intentionally without changing behavior | start `ACM7` by running the full closeout verification sweep, then archive or retire this plan only after `docs/plans/README.md`, `AGENTS.md`, and the active-plan index all match the landed state |
+| ACM4 | done; host-call routing now classifies operations into function, query-builder, query-read, document, and scheduler families, each family owns its own sync/cancellable/async dispatch surface, and runtime invocation options plus nested cross-runtime invocation setup now flow through smaller canonical helpers instead of inline mode reconstruction | start `ACM5` by inventorying the current responsibility split across `crates/nimbus-bin/src/service/{mod,execution,lifecycle,project,render}.rs` and choosing the first concept-owned extraction that makes command declaration versus orchestration easier to follow |
+| ACM5 | done; `commands.rs` now owns the `nimbus service ...` CLI surface, `service/mod.rs` has shrunk into the orchestration root, and service-local models now live beside execution, lifecycle, process, and render code so the subsystem is easier to navigate by concept ownership instead of root-file accretion | start `ACM6` by inventorying what must stay in `ARCHITECTURE.md`, what `crates/nimbus/src/lib.rs` should still re-export, and whether `AGENTS.md` plus `docs/plans/README.md` already point future maintainability work at the right live owner |
+| ACM6 | done; `ARCHITECTURE.md` now keeps the crate map and invariant-level architecture while persistence-engine depth lives in `docs/reference/persistence-engine-baseline.md`, `docs/README.md` points at that new reference, and `crates/nimbus/src/lib.rs` now groups facade exports by concern so the public surface reads more intentionally without changing behavior | start `ACM7` by running the full closeout verification sweep, then archive or retire this plan only after `docs/plans/README.md`, `AGENTS.md`, and the active-plan index all match the landed state |
 | ACM7 | done; `make check`, `make test`, `make clippy`, the JS workspace test/build lanes, and an escalated `make ci` rerun are green, `AGENTS.md` plus `docs/plans/README.md` now treat this document as an archived baseline instead of the live owner, and this plan now lives under `docs/plans/archive/` as the closeout record | promote a new active maintainability plan before the next repo-wide cleanup wave unless another active plan already owns the slice |
 
 ---
@@ -597,12 +597,12 @@ Acceptance criteria:
 
 #### Focused verification
 
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-storage`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
-- `cargo clippy -p neovex-storage --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-storage --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -622,10 +622,10 @@ Acceptance criteria:
 
 #### Focused verification
 
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -644,12 +644,12 @@ Acceptance criteria:
 
 #### Focused verification
 
-- `cargo test -p neovex-server`
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-server`
+- `cargo test -p nimbus-runtime`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-server --all-targets -- -D warnings`
-- `cargo clippy -p neovex-runtime --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-server --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -669,12 +669,12 @@ Acceptance criteria:
 
 #### Focused verification
 
-- `cargo test -p neovex-server`
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-server`
+- `cargo test -p nimbus-runtime`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-server --all-targets -- -D warnings`
-- `cargo clippy -p neovex-runtime --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-server --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -693,10 +693,10 @@ Acceptance criteria:
 
 #### Focused verification
 
-- `cargo test -p neovex-bin`
+- `cargo test -p nimbus-bin`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-bin --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-bin --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -759,17 +759,17 @@ Acceptance criteria:
 | Date | Item | Outcome | Verification | Next Step |
 | --- | --- | --- | --- | --- |
 | 2026-04-21 | ACM0 | `documented` | Authored a new active codebase architecture and maintainability control plane from a live review of the current repo, selected the next six high-signal cleanup moves, updated `docs/plans/README.md` so the plan index treats this document as the active generic cleanup owner, and updated `AGENTS.md` so future agents open this plan before relying on archived maintainability history | docs-only review; no code verification claimed for the planning pass | Start `ACM1` by inventorying repeated provider capability delegation and selecting the first smallest cleanup slice that reduces edit width without changing storage semantics |
-| 2026-04-21 | ACM1 | `in_progress` | Completed the required startup procedure against `AGENTS.md`, `README.md`, `ARCHITECTURE.md`, `docs/README.md`, `docs/plans/README.md`, this active plan, and the reliability references; reconciled `git status` to the promoted docs baseline (`AGENTS.md`, `docs/plans/README.md`, and this plan) and resumed from that worktree state instead of assuming a clean tree | startup doc review plus `git status --short` reconciliation; no code verification yet | Inspect `crates/neovex-engine/src/persistence/provider.rs`, `executor.rs`, `query.rs`, `tenant.rs`, and `tenant/writes.rs` and implement the first concept-owned capability cleanup slice for `ACM1` |
-| 2026-04-21 | ACM1 | `done` | Centralized repeated persistence/provider delegation into persistence-owned match macros, replaced repeated opened-tenant mapping helpers with typed `From<Opened*Tenant>` adapters, normalized provider create/open flows through one opened-tenant helper contract, and moved provider/store mismatch-to-executor pairing onto `TenantPersistence` so backend capability edits no longer require the same hand-written switch pattern across provider, executor, query, snapshot, and tenant capability files | `cargo test -p neovex-engine`; `cargo test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`; `cargo clippy -p neovex-storage --all-targets -- -D warnings` | Start `ACM2` by inventorying the duplicated sync/async/cancellable wrapper shapes across the selected engine service modules and extracting the first concept-owned convergence helper |
+| 2026-04-21 | ACM1 | `in_progress` | Completed the required startup procedure against `AGENTS.md`, `README.md`, `ARCHITECTURE.md`, `docs/README.md`, `docs/plans/README.md`, this active plan, and the reliability references; reconciled `git status` to the promoted docs baseline (`AGENTS.md`, `docs/plans/README.md`, and this plan) and resumed from that worktree state instead of assuming a clean tree | startup doc review plus `git status --short` reconciliation; no code verification yet | Inspect `crates/nimbus-engine/src/persistence/provider.rs`, `executor.rs`, `query.rs`, `tenant.rs`, and `tenant/writes.rs` and implement the first concept-owned capability cleanup slice for `ACM1` |
+| 2026-04-21 | ACM1 | `done` | Centralized repeated persistence/provider delegation into persistence-owned match macros, replaced repeated opened-tenant mapping helpers with typed `From<Opened*Tenant>` adapters, normalized provider create/open flows through one opened-tenant helper contract, and moved provider/store mismatch-to-executor pairing onto `TenantPersistence` so backend capability edits no longer require the same hand-written switch pattern across provider, executor, query, snapshot, and tenant capability files | `cargo test -p nimbus-engine`; `cargo test -p nimbus-storage`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings`; `cargo clippy -p nimbus-storage --all-targets -- -D warnings` | Start `ACM2` by inventorying the duplicated sync/async/cancellable wrapper shapes across the selected engine service modules and extracting the first concept-owned convergence helper |
 | 2026-04-21 | ACM2 | `in_progress` | Selected the next eligible item immediately after the `ACM1` closeout and promoted the engine service-flow convergence pass to active work so the control plan stays aligned with the live codebase and worktree | `ACM1` focused verification bundle already green; `ACM2` implementation verification not started yet | Inspect `service/queries/query_api.rs`, `service/mutations/direct/api.rs`, `service/mutations/direct/execution.rs`, `service/mutations/journal.rs`, `service/subscriptions/bootstrap.rs`, `service/scheduler/access.rs`, and `service/tenants.rs` and choose the first canonical internal helper shape for duplicated sync/async/cancellable orchestration |
-| 2026-04-21 | ACM2 | `done` | Added a shared `with_tenant_runtime_operation` helper for operation-guard setup, rewired scheduler access and direct mutation execution through that helper, collapsed direct mutation wrapper boilerplate into shared immediate versus scheduled execution helpers, introduced shared query runtime loaders for query and pagination setup, and reused one snapshot-evaluation helper across sync and async subscription bootstrap paths so the engine service surface now reads with one more canonical flow shape across sync/async/cancellable entrypoints | `cargo test -p neovex-engine`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings` | Start `ACM3` by inventorying the `build_router*` and `serve*` overload surface across `crates/neovex-server/src/lib.rs`, `router.rs`, and `state.rs` and extracting the typed internal build pipeline |
-| 2026-04-21 | ACM3 | `in_progress` | Selected the next eligible item immediately after the `ACM2` closeout and promoted the server-construction cleanup pass to active work so the control plan stays synchronized before the next code changes land | `ACM2` focused verification bundle already green; `ACM3` implementation verification not started yet | Inspect `crates/neovex-server/src/lib.rs`, `router.rs`, and `state.rs` and choose the internal build-pipeline extraction that can own route and serve construction while preserving the current public wrappers |
-| 2026-04-21 | ACM3 | `done` | Introduced a typed `AppStateConfig`, collapsed router construction behind `RouterBuildConfig` and capability-owned builder methods, and routed every public `serve*` entrypoint through one internal `serve_with_router_config` path so route and serve construction now read as one typed internal pipeline rather than a growing overload matrix | `cargo test -p neovex-server`; `cargo test -p neovex-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-server --all-targets -- -D warnings`; `cargo clippy -p neovex-runtime --all-targets -- -D warnings` | Start `ACM4` by inventorying repeated host-call dispatch structure across `crates/neovex-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`, `adapters/convex/mod.rs`, and `execution/invocations/mod.rs` and extracting the first operation-owned convergence seam |
-| 2026-04-21 | ACM4 | `in_progress` | Selected the next eligible item immediately after the `ACM3` closeout and promoted the Convex host-call dispatch cleanup pass to active work so the control plan stays synchronized before host-bridge wiring changes land | `ACM3` focused verification bundle already green; `ACM4` implementation verification not started yet | Inspect `crates/neovex-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`, `adapters/convex/mod.rs`, and `crates/neovex-server/src/execution/invocations/mod.rs` and choose the first operation-owned extraction that reduces sync/async/cancellable dispatch width without widening `HostBridge` |
-| 2026-04-21 | ACM4 | `done` | Reclassified Convex host calls into function, query-builder, query-read, document, and scheduler families, moved sync/cancellable/async dispatch behind those family-owned bridge methods instead of one giant central matrix, added canonical `RuntimeBundleInvocationOptions` constructors, and collapsed nested cross-runtime invocation setup behind one preparation helper so host-call routing and runtime invocation wiring are easier to extend without widening `HostBridge` | `cargo test -p neovex-server`; `cargo test -p neovex-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-server --all-targets -- -D warnings`; `cargo clippy -p neovex-runtime --all-targets -- -D warnings` | Start `ACM5` by inventorying responsibility sprawl across `crates/neovex-bin/src/service/{mod,execution,lifecycle,project,render}.rs` and extracting the first concept-owned command-ownership seam |
-| 2026-04-21 | ACM5 | `in_progress` | Selected the next eligible item immediately after the `ACM4` closeout and promoted the `neovex service ...` subsystem cleanup pass to active work so the control plan stays synchronized before service-command ownership changes land | `ACM4` focused verification bundle already green; `ACM5` implementation verification not started yet | Inspect `crates/neovex-bin/src/service/mod.rs`, `execution.rs`, `lifecycle.rs`, `project.rs`, and `render.rs` and choose the first extraction that clarifies command declaration versus orchestration ownership without changing CLI behavior |
-| 2026-04-21 | ACM5 | `done` | Moved the CLI surface into a new `crates/neovex-bin/src/service/commands.rs`, shrank `service/mod.rs` from 770 lines to 465 by leaving it as the orchestration root, and relocated execution, lifecycle, process, and render-owned models into the modules that actually own those behaviors so the `neovex service ...` subsystem now reads by concept family rather than cross-file root accretion | `cargo test -p neovex-bin`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-bin --all-targets -- -D warnings` | Start `ACM6` by inventorying `ARCHITECTURE.md`, `crates/neovex/src/lib.rs`, `AGENTS.md`, and `docs/plans/README.md` and deciding which doc/facade cleanup or threshold-justification slice lands first |
-| 2026-04-21 | ACM6 | `in_progress` | Selected the next eligible item immediately after the `ACM5` closeout and promoted the architecture-doc and facade sweep to active work so the control plan stays synchronized before documentation-entrypoint or export cleanup lands | `ACM5` focused verification bundle already green; `ACM6` implementation verification not started yet | Inspect `ARCHITECTURE.md`, `crates/neovex/src/lib.rs`, `AGENTS.md`, and `docs/plans/README.md` and choose the first focused change that reconciles public facades and repo entrypoints with the landed maintainability ownership map |
-| 2026-04-21 | ACM6 | `done` | Trimmed `ARCHITECTURE.md` from 1,745 lines to 1,384 by moving persistence-engine, durable-journal, and serving-snapshot depth into the new `docs/reference/persistence-engine-baseline.md`, updated `docs/README.md` to point at that reference, and added concern-grouped facade comments in `crates/neovex/src/lib.rs` so the public export surface reads more intentionally while the active threshold-exception ledger clears | `cargo test -p neovex-bin`; `cargo fmt --all --check`; `cargo check --workspace`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present` | Start `ACM7` by running the repo-wide closeout verification sweep, reconciling plan indexes and agent entrypoints, and archiving or retiring this plan only after the docs match the landed state |
+| 2026-04-21 | ACM2 | `done` | Added a shared `with_tenant_runtime_operation` helper for operation-guard setup, rewired scheduler access and direct mutation execution through that helper, collapsed direct mutation wrapper boilerplate into shared immediate versus scheduled execution helpers, introduced shared query runtime loaders for query and pagination setup, and reused one snapshot-evaluation helper across sync and async subscription bootstrap paths so the engine service surface now reads with one more canonical flow shape across sync/async/cancellable entrypoints | `cargo test -p nimbus-engine`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings` | Start `ACM3` by inventorying the `build_router*` and `serve*` overload surface across `crates/nimbus-server/src/lib.rs`, `router.rs`, and `state.rs` and extracting the typed internal build pipeline |
+| 2026-04-21 | ACM3 | `in_progress` | Selected the next eligible item immediately after the `ACM2` closeout and promoted the server-construction cleanup pass to active work so the control plan stays synchronized before the next code changes land | `ACM2` focused verification bundle already green; `ACM3` implementation verification not started yet | Inspect `crates/nimbus-server/src/lib.rs`, `router.rs`, and `state.rs` and choose the internal build-pipeline extraction that can own route and serve construction while preserving the current public wrappers |
+| 2026-04-21 | ACM3 | `done` | Introduced a typed `AppStateConfig`, collapsed router construction behind `RouterBuildConfig` and capability-owned builder methods, and routed every public `serve*` entrypoint through one internal `serve_with_router_config` path so route and serve construction now read as one typed internal pipeline rather than a growing overload matrix | `cargo test -p nimbus-server`; `cargo test -p nimbus-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-server --all-targets -- -D warnings`; `cargo clippy -p nimbus-runtime --all-targets -- -D warnings` | Start `ACM4` by inventorying repeated host-call dispatch structure across `crates/nimbus-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`, `adapters/convex/mod.rs`, and `execution/invocations/mod.rs` and extracting the first operation-owned convergence seam |
+| 2026-04-21 | ACM4 | `in_progress` | Selected the next eligible item immediately after the `ACM3` closeout and promoted the Convex host-call dispatch cleanup pass to active work so the control plan stays synchronized before host-bridge wiring changes land | `ACM3` focused verification bundle already green; `ACM4` implementation verification not started yet | Inspect `crates/nimbus-server/src/adapters/convex/host_bridge/async_bridge/dispatch.rs`, `adapters/convex/mod.rs`, and `crates/nimbus-server/src/execution/invocations/mod.rs` and choose the first operation-owned extraction that reduces sync/async/cancellable dispatch width without widening `HostBridge` |
+| 2026-04-21 | ACM4 | `done` | Reclassified Convex host calls into function, query-builder, query-read, document, and scheduler families, moved sync/cancellable/async dispatch behind those family-owned bridge methods instead of one giant central matrix, added canonical `RuntimeBundleInvocationOptions` constructors, and collapsed nested cross-runtime invocation setup behind one preparation helper so host-call routing and runtime invocation wiring are easier to extend without widening `HostBridge` | `cargo test -p nimbus-server`; `cargo test -p nimbus-runtime`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-server --all-targets -- -D warnings`; `cargo clippy -p nimbus-runtime --all-targets -- -D warnings` | Start `ACM5` by inventorying responsibility sprawl across `crates/nimbus-bin/src/service/{mod,execution,lifecycle,project,render}.rs` and extracting the first concept-owned command-ownership seam |
+| 2026-04-21 | ACM5 | `in_progress` | Selected the next eligible item immediately after the `ACM4` closeout and promoted the `nimbus service ...` subsystem cleanup pass to active work so the control plan stays synchronized before service-command ownership changes land | `ACM4` focused verification bundle already green; `ACM5` implementation verification not started yet | Inspect `crates/nimbus-bin/src/service/mod.rs`, `execution.rs`, `lifecycle.rs`, `project.rs`, and `render.rs` and choose the first extraction that clarifies command declaration versus orchestration ownership without changing CLI behavior |
+| 2026-04-21 | ACM5 | `done` | Moved the CLI surface into a new `crates/nimbus-bin/src/service/commands.rs`, shrank `service/mod.rs` from 770 lines to 465 by leaving it as the orchestration root, and relocated execution, lifecycle, process, and render-owned models into the modules that actually own those behaviors so the `nimbus service ...` subsystem now reads by concept family rather than cross-file root accretion | `cargo test -p nimbus-bin`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-bin --all-targets -- -D warnings` | Start `ACM6` by inventorying `ARCHITECTURE.md`, `crates/nimbus/src/lib.rs`, `AGENTS.md`, and `docs/plans/README.md` and deciding which doc/facade cleanup or threshold-justification slice lands first |
+| 2026-04-21 | ACM6 | `in_progress` | Selected the next eligible item immediately after the `ACM5` closeout and promoted the architecture-doc and facade sweep to active work so the control plan stays synchronized before documentation-entrypoint or export cleanup lands | `ACM5` focused verification bundle already green; `ACM6` implementation verification not started yet | Inspect `ARCHITECTURE.md`, `crates/nimbus/src/lib.rs`, `AGENTS.md`, and `docs/plans/README.md` and choose the first focused change that reconciles public facades and repo entrypoints with the landed maintainability ownership map |
+| 2026-04-21 | ACM6 | `done` | Trimmed `ARCHITECTURE.md` from 1,745 lines to 1,384 by moving persistence-engine, durable-journal, and serving-snapshot depth into the new `docs/reference/persistence-engine-baseline.md`, updated `docs/README.md` to point at that reference, and added concern-grouped facade comments in `crates/nimbus/src/lib.rs` so the public export surface reads more intentionally while the active threshold-exception ledger clears | `cargo test -p nimbus-bin`; `cargo fmt --all --check`; `cargo check --workspace`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present` | Start `ACM7` by running the repo-wide closeout verification sweep, reconciling plan indexes and agent entrypoints, and archiving or retiring this plan only after the docs match the landed state |
 | 2026-04-21 | ACM7 | `in_progress` | Selected the final closeout item immediately after the `ACM6` doc and facade sweep so the workstream stays active until repo-wide verification and archive bookkeeping are complete | `ACM6` focused verification bundle already green; `ACM7` closeout verification not started yet | Run `make check`, `make test`, `make clippy`, `npm run test --workspaces --if-present`, `npm run build --workspaces --if-present`, and `make ci` if practical, then archive or retire this plan only after `docs/plans/README.md` and `AGENTS.md` reflect the final state |
 | 2026-04-21 | ACM7 | `done` | Ran the final closeout verification sweep (`make check`, `make test`, `make clippy`, `npm run test --workspaces --if-present`, `npm run build --workspaces --if-present`, and `make ci`), recorded that the first sandboxed `make ci` attempt stopped at `cargo deny check` because `/Users/jack/.cargo/advisory-dbs/db.lock` was read-only, reran `make ci` successfully with escalation, updated `AGENTS.md` plus `docs/plans/README.md` to treat this work as archived baseline, and moved this control plane into `docs/plans/archive/` | `make check`; `make test`; `make clippy`; `npm run test --workspaces --if-present`; `npm run build --workspaces --if-present`; `make ci` (passed on escalated rerun after the sandbox-only advisory-db lock failure) | Promote a new active maintainability plan before the next repo-wide cleanup wave unless another active plan already owns the slice |

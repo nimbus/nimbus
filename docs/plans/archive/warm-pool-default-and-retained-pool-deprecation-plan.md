@@ -2,7 +2,7 @@
 
 Make `WarmPool` + `CooperativeLocker` the default production runtime path.
 Remove `RetainedJsRuntimePool` and all `reset_main_realm`-based code across
-neovex, deno_core, and rusty_v8. Keep `RunToCompletion` +
+nimbus, deno_core, and rusty_v8. Keep `RunToCompletion` +
 `StartupSnapshotCache` as a user-selectable per-bundle execution mode for
 bundles that need guaranteed fresh-per-invocation isolation.
 
@@ -75,7 +75,7 @@ pool benchmark was the first to exercise this path.
 
 ### Root cause
 
-`crates/neovex-runtime/src/worker_loop/cooperative/run.rs` `next_slot()`
+`crates/nimbus-runtime/src/worker_loop/cooperative/run.rs` `next_slot()`
 greedily drains the queue before polling any slot:
 
 ```rust
@@ -115,10 +115,10 @@ allowing new slots to be admitted between park/resume cycles.
 
 ### Key files
 
-- `crates/neovex-runtime/src/worker_loop/cooperative/run.rs:9-44` — **fix site**
-- `crates/neovex-runtime/src/worker_loop/cooperative/execution.rs` — `admit_job`
-- `crates/neovex-runtime/src/executor/admission/permit.rs` — semaphore lifecycle
-- `crates/neovex-runtime/src/runtime/tests/cooperative.rs` — working sequential test
+- `crates/nimbus-runtime/src/worker_loop/cooperative/run.rs:9-44` — **fix site**
+- `crates/nimbus-runtime/src/worker_loop/cooperative/execution.rs` — `admit_job`
+- `crates/nimbus-runtime/src/executor/admission/permit.rs` — semaphore lifecycle
+- `crates/nimbus-runtime/src/runtime/tests/cooperative.rs` — working sequential test
 
 ---
 
@@ -151,7 +151,7 @@ allowing new slots to be admitted between park/resume cycles.
 | Helper methods (clear_traces, etc.) | various | ~16 | `reset_request_state` | **Keep** |
 | Warm reuse tests | `runtime/tests/jsrealm.rs` | ~200 | Testing warm APIs | **Keep** |
 
-### neovex (~300+ lines)
+### nimbus (~300+ lines)
 
 | Item | File(s) | Approx lines | Remove? |
 |------|---------|-------------|---------|
@@ -175,7 +175,7 @@ allowing new slots to be admitted between park/resume cycles.
 | D0 | `done` | Fix cooperative worker loop greedy admission deadlock | None — blocker for all subsequent phases |
 | D1 | `done` | Remove `detach_all_slots` from rusty_v8 fork | None |
 | D2 | `done` | Remove `reset_main_realm` and `destroy_for_reset` from deno_core fork | D0 (proves warm pool handles all workloads) |
-| D3 | `done` | Remove `RetainedJsRuntimePool` from neovex | D2 |
+| D3 | `done` | Remove `RetainedJsRuntimePool` from nimbus | D2 |
 | D4 | `done` | Make `CooperativeLocker` + `WarmPool` the default; keep `RunToCompletion` + `StartupSnapshotCache` as per-bundle option | D3 |
 | D5 | `done` | Update docs, benchmarks, and plan index | D4 |
 
@@ -184,7 +184,7 @@ allowing new slots to be admitted between park/resume cycles.
 1. D0 — fix the hang (unblocks everything)
 2. D1 — rusty_v8 cleanup (independent, quick)
 3. D2 — deno_core cleanup (biggest fork simplification)
-4. D3 — neovex retained pool removal
+4. D3 — nimbus retained pool removal
 5. D4 — defaults change
 6. D5 — docs and cleanup
 
@@ -195,7 +195,7 @@ allowing new slots to be admitted between park/resume cycles.
 | D0 | Fix implemented and verified: `while let` → `if let` + `continue`; test `cooperative_concurrent_dispatch_does_not_deadlock` added; WarmPool re-enabled in async batch benchmark | Proceed to D1 |
 | D1 | Removed `detach_all_slots` (34 lines) + test (42 lines) from rusty_v8; tagged `v147.0.0-locker.2` at f3f4e5a | Proceed to D2 |
 | D2 | Removed `reset_main_realm`, `destroy_for_reset`, `shared_array_buffers`, and ~540 lines of tests (1,053 lines total) from deno_core; tagged `0.395.0-locker.2` at b302dea | Proceed to D3 |
-| D3 | Removed RetainedJsRuntimePool variant, retained pool logic, metrics, tests, benchmarks from neovex; fixed downstream neovex-server references | Proceed to D4 |
+| D3 | Removed RetainedJsRuntimePool variant, retained pool logic, metrics, tests, benchmarks from nimbus; fixed downstream nimbus-server references | Proceed to D4 |
 | D4 | Changed `RuntimeLimits::default()` to CooperativeLocker + WarmPool; fixed 4 tests that assumed old defaults | Proceed to D5 |
 | D5 | Updated ARCHITECTURE.md, docs/plans/README.md, plan execution log. All phases complete. | Plan done |
 
@@ -206,7 +206,7 @@ allowing new slots to be admitted between park/resume cycles.
 | D0 | Async batch with 4 concurrent threads + CooperativeLocker completes without hanging for all pool kinds; existing `warm_pool_cooperative_async_host_two_cycles` still passes; new concurrent dispatch test exercises the fixed path |
 | D1 | rusty_v8 `cargo test` passes; CI build succeeds; existing `clear_all_context_slots` and `context_slots` tests still pass |
 | D2 | deno_core `cargo test --lib` passes (423+ tests); warm reuse tests (8) still pass; `reset_main_realm` tests removed; no references to `reset_main_realm` or `destroy_for_reset` remain |
-| D3 | neovex `cargo test -p neovex-runtime --lib` passes; no references to `RetainedJsRuntimePool` or `reset_retained_runtime` remain; warm pool tests pass |
+| D3 | nimbus `cargo test -p nimbus-runtime --lib` passes; no references to `RetainedJsRuntimePool` or `reset_retained_runtime` remain; warm pool tests pass |
 | D4 | `RuntimeLimits::default()` returns `CooperativeLocker` + `WarmPool`; `RunToCompletion` + `StartupSnapshotCache` works when explicitly configured per-bundle; both execution models pass integration tests |
 | D5 | `ARCHITECTURE.md` reflects dual-mode production model (warm pool default + RTC option); `docs/plans/README.md` updated; `warm-module-pool-plan.md` and `raw-v8-warm-backend-plan.md` archived |
 
@@ -216,7 +216,7 @@ allowing new slots to be admitted between park/resume cycles.
 |------|-------|---------|---------|--------------|-----------|
 | 2026-04-08 | D0 | `done` | Fixed greedy `while let` → `if let` + `continue` in `next_slot()`; deadlock was isolate semaphore exhaustion when admitting concurrent jobs before polling. Added `cooperative_concurrent_dispatch_does_not_deadlock` test (4 threads × 2 pool kinds). Re-enabled WarmPool in async batch benchmark. | 96/96 lib tests pass, clippy clean, fmt clean | D1: remove `detach_all_slots` from rusty_v8 |
 | 2026-04-08 | D1 | `done` | Removed `Context::detach_all_slots()` (34 lines) and its test (42 lines) from rusty_v8 fork. Tagged `v147.0.0-locker.2` at f3f4e5a. | 9/9 slot tests pass; `clear_all_context_slots` and `context_slots` still pass | D2: remove `reset_main_realm` from deno_core |
-| 2026-04-08 | D2 | `done` | Removed `reset_main_realm`, `destroy_for_reset`, `shared_array_buffers`, 540 lines of tests (1,053 lines total) from deno_core fork. Tagged `0.395.0-locker.2` at b302dea. | 412/413 tests pass (1 pre-existing failure unrelated); 8/8 warm reuse tests pass; no references to `reset_main_realm` or `destroy_for_reset` remain | D3: remove RetainedJsRuntimePool from neovex |
-| 2026-04-08 | D3 | `done` | Removed RetainedJsRuntimePool variant, retained pool entry/eviction/retirement logic, retained metrics (realm resets, bootstrap replays), retained pool tests, retained benchmark scenarios. Fixed neovex-server protocol/metadata/test references. | 82/82 lib tests pass; clippy clean; full workspace compiles | D4 |
+| 2026-04-08 | D2 | `done` | Removed `reset_main_realm`, `destroy_for_reset`, `shared_array_buffers`, 540 lines of tests (1,053 lines total) from deno_core fork. Tagged `0.395.0-locker.2` at b302dea. | 412/413 tests pass (1 pre-existing failure unrelated); 8/8 warm reuse tests pass; no references to `reset_main_realm` or `destroy_for_reset` remain | D3: remove RetainedJsRuntimePool from nimbus |
+| 2026-04-08 | D3 | `done` | Removed RetainedJsRuntimePool variant, retained pool entry/eviction/retirement logic, retained metrics (realm resets, bootstrap replays), retained pool tests, retained benchmark scenarios. Fixed nimbus-server protocol/metadata/test references. | 82/82 lib tests pass; clippy clean; full workspace compiles | D4 |
 | 2026-04-08 | D4 | `done` | Changed `RuntimeLimits::default()` to CooperativeLocker + WarmPool. Fixed 4 tests that assumed old RTC+SSC defaults by making them explicit. | 82/82 lib tests pass; clippy clean; fmt clean | D5 |
 | 2026-04-08 | D5 | `done` | Updated ARCHITECTURE.md (cooperative worker loop description), docs/plans/README.md (moved deprecation plan to archived, updated warm-module-pool-plan description). All phases complete. | — | Plan complete |

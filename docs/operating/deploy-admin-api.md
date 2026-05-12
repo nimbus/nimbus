@@ -1,8 +1,8 @@
 # Deploy Admin API
 
-The deploy admin API is the server-side contract behind `neovex deploy`. It is
+The deploy admin API is the server-side contract behind `nimbus deploy`. It is
 available at a stable route, but it is disabled unless the server was started
-with `NEOVEX_DEPLOY_TOKEN`.
+with `NIMBUS_DEPLOY_TOKEN`.
 
 ## Route
 
@@ -13,11 +13,11 @@ with `NEOVEX_DEPLOY_TOKEN`.
 Clients must send:
 
 ```http
-Authorization: Bearer <NEOVEX_DEPLOY_TOKEN>
+Authorization: Bearer <NIMBUS_DEPLOY_TOKEN>
 Content-Type: application/json
 ```
 
-If `NEOVEX_DEPLOY_TOKEN` was not present when the server started, the route
+If `NIMBUS_DEPLOY_TOKEN` was not present when the server started, the route
 returns `401` and no deploy is possible through this API. Invalid or missing
 bearer tokens also return `401`.
 
@@ -45,7 +45,7 @@ must be supplied.
 This request shape is the **current Convex-compatible artifact family**. The
 Cloud Functions plan keeps the same staging, integrity, and generation-swap
 guarantees, but uses a sibling internal artifact family under
-`.neovex/firebase/` with its own manifest envelope rather than forcing Cloud
+`.nimbus/firebase/` with its own manifest envelope rather than forcing Cloud
 Functions metadata through the Convex manifest schema. See
 [Cloud Functions artifact contract](cloud-functions-artifact-contract.md) and
 [Cloud Functions target binding contract](cloud-functions-target-binding-contract.md).
@@ -53,7 +53,7 @@ Functions metadata through the Convex manifest schema. See
 ## Server Behavior
 
 The server stages uploaded artifacts into a temporary app directory and loads
-them through the same Convex registry path used by `neovex start --app-dir`.
+them through the same Convex registry path used by `nimbus start --app-dir`.
 That staging step validates manifest readability, optional HTTP routes, schema
 and index definitions, auth config readability, and runtime bundle integrity.
 
@@ -64,7 +64,7 @@ already captured, while new requests observe the new generation after the swap.
 
 Activation-time rollback is internal only in v1. If staging or validation
 fails, the previous generation remains live. There is no user-facing rollback
-command until Neovex defines retained generation history and operator intent.
+command until Nimbus defines retained generation history and operator intent.
 
 ## Response
 

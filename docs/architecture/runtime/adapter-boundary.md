@@ -2,7 +2,7 @@
 
 This reference defines the intended ownership boundary between adapter-owned
 runtime compatibility shims and provider-neutral runtime capabilities inside
-`crates/neovex-server/`.
+`crates/nimbus-server/`.
 
 It complements:
 
@@ -14,13 +14,13 @@ It complements:
 
 ## Why This Boundary Exists
 
-Neovex now supports multiple adapter families. That only stays maintainable if
+Nimbus now supports multiple adapter families. That only stays maintainable if
 provider-specific compatibility logic remains adapter-owned and the reusable
 execution behavior below it stays provider-neutral.
 
 The intended model is:
 
-1. `neovex-core`, `neovex-engine`, and `neovex-storage` own canonical data and
+1. `nimbus-core`, `nimbus-engine`, and `nimbus-storage` own canonical data and
    execution primitives.
 2. `runtime_host/*` owns provider-neutral server-side runtime capabilities.
 3. `adapters/*` own provider-specific compatibility shims, including runtime
@@ -64,7 +64,7 @@ payloads, names, or response shapes.
 
 Provider shims may translate:
 
-- Firestore document paths into Neovex document locators
+- Firestore document paths into Nimbus document locators
 - provider request payloads into generic field maps or write batches
 - provider options into generic execution flags
 
@@ -102,13 +102,13 @@ These examples capture the kinds of ownership mistakes this boundary is meant to
 prevent:
 
 - historical extraction mistake:
-  `crates/neovex-server/src/runtime_host/firestore_admin.rs`
+  `crates/nimbus-server/src/runtime_host/firestore_admin.rs`
   - provider-specific `firebase-admin/firestore` shim logic was temporarily
     placed under the shared runtime-host tree instead of adapter ownership
-- `crates/neovex-server/src/runtime_host/mod.rs`
+- `crates/nimbus-server/src/runtime_host/mod.rs`
   - a nominally shared runtime host implemented as a thin wrapper around
     Convex-owned bridge and registry types
-- `crates/neovex-server/src/adapters/convex/host_bridge/db_ops/mod.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/db_ops/mod.rs`
   - Convex host-bridge dispatch carrying `FirebaseAdminFirestore*` host calls
 
 These examples are not the target architecture.

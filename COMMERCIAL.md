@@ -1,6 +1,6 @@
 # Commercial Licensing
 
-Neovex offers a free source-available license for developers, nonprofits,
+Nimbus offers a free source-available license for developers, nonprofits,
 education, and many smaller or bounded internal deployments. A commercial
 license is required for the cases listed below.
 
@@ -10,7 +10,7 @@ You need a commercial license if:
 
 - your organization exceeds both `$10M` USD annual revenue and `500` monthly
   active users, and your `90-day` trial has ended
-- you want to offer Neovex itself, or a materially similar managed backend,
+- you want to offer Nimbus itself, or a materially similar managed backend,
   database, or developer platform, as a hosted service
 - you want OEM, embedded, white-label, or redistribution rights beyond the
   community license
@@ -36,6 +36,6 @@ license.
 
 ## Contact
 
-To request commercial terms, contact the current repository owner or Neovex
+To request commercial terms, contact the current repository owner or Nimbus
 maintainers through the project's published commercial or maintainer contact
 channel.

@@ -3,12 +3,12 @@ name: copr-srpms
 on:
   workflow_call:
     inputs:
-      neovex_version:
-        description: Release version or tag from agentstation/neovex
+      nimbus_version:
+        description: Release version or tag from nimbus/nimbus
         required: true
         type: string
-      neovex_crun_version:
-        description: Release version or tag from agentstation/neovex-crun
+      nimbus_crun_version:
+        description: Release version or tag from nimbus/nimbus-crun
         required: false
         default: ""
         type: string
@@ -24,11 +24,11 @@ on:
         type: boolean
   workflow_dispatch:
     inputs:
-      neovex_version:
-        description: Release version or tag from agentstation/neovex
+      nimbus_version:
+        description: Release version or tag from nimbus/nimbus
         required: true
-      neovex_crun_version:
-        description: Release version or tag from agentstation/neovex-crun (defaults to packaging/linux-distribution-contract.env)
+      nimbus_crun_version:
+        description: Release version or tag from nimbus/nimbus-crun (defaults to packaging/linux-distribution-contract.env)
         required: false
         default: ""
       copr_project:
@@ -56,29 +56,29 @@ jobs:
         id: contract
         shell: bash
         env:
-          INPUT_NEOVEX_VERSION: ${{ inputs.neovex_version }}
-          INPUT_NEOVEX_CRUN_VERSION: ${{ inputs.neovex_crun_version }}
+          INPUT_NIMBUS_VERSION: ${{ inputs.nimbus_version }}
+          INPUT_NIMBUS_CRUN_VERSION: ${{ inputs.nimbus_crun_version }}
           INPUT_COPR_PROJECT: ${{ inputs.copr_project }}
         run: |
           set -euo pipefail
           source packaging/linux-distribution-contract.env
 
-          neovex_version="${INPUT_NEOVEX_VERSION#v}"
-          neovex_crun_version="${INPUT_NEOVEX_CRUN_VERSION:-}"
+          nimbus_version="${INPUT_NIMBUS_VERSION#v}"
+          nimbus_crun_version="${INPUT_NIMBUS_CRUN_VERSION:-}"
           copr_project="${INPUT_COPR_PROJECT:-}"
-          if [[ -z "${neovex_crun_version}" ]]; then
-            neovex_crun_version="${NEOVEX_CRUN_VERSION}"
+          if [[ -z "${nimbus_crun_version}" ]]; then
+            nimbus_crun_version="${NIMBUS_CRUN_VERSION}"
           fi
           if [[ -z "${copr_project}" ]]; then
             copr_project="${COPR_PROJECT}"
           fi
-          neovex_crun_version="${neovex_crun_version#v}"
+          nimbus_crun_version="${nimbus_crun_version#v}"
 
           {
-            echo "neovex_version=${neovex_version}"
-            echo "neovex_release_tag=v${neovex_version}"
-            echo "neovex_crun_version=${neovex_crun_version}"
-            echo "neovex_crun_release_tag=v${neovex_crun_version}"
+            echo "nimbus_version=${nimbus_version}"
+            echo "nimbus_release_tag=v${nimbus_version}"
+            echo "nimbus_crun_version=${nimbus_crun_version}"
+            echo "nimbus_crun_release_tag=v${nimbus_crun_version}"
             echo "copr_project=${copr_project}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -89,15 +89,15 @@ jobs:
           set -euo pipefail
 
           mkdir -p dist/copr/assets
-          gh release download "${{ steps.contract.outputs.neovex_release_tag }}" \
-            --repo agentstation/neovex \
-            --pattern 'neovex_linux_x86_64.tar.gz' \
-            --pattern 'neovex_linux_arm64.tar.gz' \
+          gh release download "${{ steps.contract.outputs.nimbus_release_tag }}" \
+            --repo nimbus/nimbus \
+            --pattern 'nimbus_linux_x86_64.tar.gz' \
+            --pattern 'nimbus_linux_arm64.tar.gz' \
             --dir dist/copr/assets
-          gh release download "${{ steps.contract.outputs.neovex_crun_release_tag }}" \
-            --repo agentstation/neovex-crun \
-            --pattern 'neovex-crun-linux-amd64' \
-            --pattern 'neovex-crun-linux-arm64' \
+          gh release download "${{ steps.contract.outputs.nimbus_crun_release_tag }}" \
+            --repo nimbus/nimbus-crun \
+            --pattern 'nimbus-crun-linux-amd64' \
+            --pattern 'nimbus-crun-linux-arm64' \
             --dir dist/copr/assets
 
       - name: Build SRPMs inside Fedora userspace
@@ -116,12 +116,12 @@ jobs:
 
               bash scripts/build-fedora-release-srpms.sh \
                 --output-dir /work/dist/copr/output \
-                --neovex-version "${{ steps.contract.outputs.neovex_version }}" \
-                --neovex-linux-amd64-tarball /work/dist/copr/assets/neovex_linux_x86_64.tar.gz \
-                --neovex-linux-arm64-tarball /work/dist/copr/assets/neovex_linux_arm64.tar.gz \
-                --neovex-crun-version "${{ steps.contract.outputs.neovex_crun_version }}" \
-                --neovex-crun-linux-amd64 /work/dist/copr/assets/neovex-crun-linux-amd64 \
-                --neovex-crun-linux-arm64 /work/dist/copr/assets/neovex-crun-linux-arm64
+                --nimbus-version "${{ steps.contract.outputs.nimbus_version }}" \
+                --nimbus-linux-amd64-tarball /work/dist/copr/assets/nimbus_linux_x86_64.tar.gz \
+                --nimbus-linux-arm64-tarball /work/dist/copr/assets/nimbus_linux_arm64.tar.gz \
+                --nimbus-crun-version "${{ steps.contract.outputs.nimbus_crun_version }}" \
+                --nimbus-crun-linux-amd64 /work/dist/copr/assets/nimbus-crun-linux-amd64 \
+                --nimbus-crun-linux-arm64 /work/dist/copr/assets/nimbus-crun-linux-arm64
 
               chown -R "${HOST_UID}:${HOST_GID}" /work/dist/copr
             '
@@ -129,7 +129,7 @@ jobs:
       - name: Upload SRPM artifact bundle
         uses: actions/upload-artifact@v7
         with:
-          name: copr-srpms-${{ steps.contract.outputs.neovex_version }}
+          name: copr-srpms-${{ steps.contract.outputs.nimbus_version }}
           path: dist/copr/output
           compression-level: 0
 
@@ -162,5 +162,5 @@ jobs:
         run: |
           set -euo pipefail
 
-          copr-cli build "${{ steps.contract.outputs.copr_project }}" dist/copr/output/srpms/neovex-*.src.rpm
-          copr-cli build "${{ steps.contract.outputs.copr_project }}" dist/copr/output/srpms/neovex-crun-*.src.rpm
+          copr-cli build "${{ steps.contract.outputs.copr_project }}" dist/copr/output/srpms/nimbus-*.src.rpm
+          copr-cli build "${{ steps.contract.outputs.copr_project }}" dist/copr/output/srpms/nimbus-crun-*.src.rpm

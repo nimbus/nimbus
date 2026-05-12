@@ -9,7 +9,7 @@ belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 Source corpus:
 
 - current Deno-family implementation baseline:
-  `~/src/github.com/agentstation/deno @ v2.7.14-locker.37 (b748ccc7f66b89dd5a1048e4dcfd152e35bd9682)`
+  `~/src/github.com/nimbus/deno @ v2.7.14-locker.37 (b748ccc7f66b89dd5a1048e4dcfd152e35bd9682)`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
 - pinned official Node20 supported corpus:
@@ -50,7 +50,7 @@ servers, requests, sockets, and the heavier `tls` / `http2` families.
 ## Current Manifested Official Subset
 
 The manifested `NLC6` batch is now live in
-[`NETWORKING_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node/mod.rs).
+[`NETWORKING_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs).
 
 Current manifested batch counts:
 
@@ -491,7 +491,7 @@ the shared `test-https-client-resume.js` and
 `test-https-agent-keylog.js` files all now pass in-family on the published
 `v2.7.14-locker.36` Deno baseline. The follow-on PFX, unix-socket, and
 strict-auth remainder is green now too after the canonical Deno
-certificate-verifier fix plus the Neovex-owned short-path `PIPE` harness
+certificate-verifier fix plus the Nimbus-owned short-path `PIPE` harness
 cleanup. The next shared-LTS `http2` header/status/options wave is green now
 too: status-code acceptance and rejection, content-length single-value
 enforcement, response-splitting stripping, custom `Http2ServerRequest` /

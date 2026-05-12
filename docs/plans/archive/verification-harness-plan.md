@@ -1,9 +1,9 @@
 # Archived Verification Harness Plan
 
-This archived document was the canonical execution roadmap for Neovex's next
+This archived document was the canonical execution roadmap for Nimbus's next
 verification and reliability cycle. It takes the architecture review findings
 from the completed performance and architecture work and records the dedicated
-plan that drove the testing harness Neovex's native apps and supported
+plan that drove the testing harness Nimbus's native apps and supported
 Convex-compatible apps rely on.
 
 Reviewed against:
@@ -13,10 +13,10 @@ Reviewed against:
 - `docs/plans/archive/performance-and-architecture-plan.md`
 - `docs/convex/compatibility.md`
 - `docs/research/reactive-database-research-guide.md`
-- `crates/neovex-test-support/src/simulation.rs`
-- `crates/neovex-storage/src/tests.rs`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-server/tests/reactive_loop.rs`
+- `crates/nimbus-test-support/src/simulation.rs`
+- `crates/nimbus-storage/src/tests.rs`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-server/tests/reactive_loop.rs`
 - FoundationDB simulation docs
 - TigerBeetle safety and VOPR references
 - CockroachDB randomized testing and verification references
@@ -26,7 +26,7 @@ Reviewed against:
 
 ## Purpose
 
-Neovex now has strong targeted correctness coverage for the architecture cycle
+Nimbus now has strong targeted correctness coverage for the architecture cycle
 that just landed:
 
 - durable journal integrity and recovery regressions
@@ -91,7 +91,7 @@ the prior implementation roadmap.
 
 This plan is successful only when all of the following are true:
 
-1. Mission-critical Neovex invariants are executable as seeded, reproducible
+1. Mission-critical Nimbus invariants are executable as seeded, reproducible
    properties rather than mostly hand-authored examples.
 
 2. The same generated workload can be replayed across at least:
@@ -102,7 +102,7 @@ This plan is successful only when all of the following are true:
    - embedded replica catch-up behavior
 
 3. The supported Convex surface has a differential corpus that exercises the
-   same behaviors against Neovex and a real Convex backend or equivalent local
+   same behaviors against Nimbus and a real Convex backend or equivalent local
    backend target.
 
 4. Crash, restart, apply-lag, and cancellation scenarios are reproducible from
@@ -147,7 +147,7 @@ The current system still lacks:
 - broader generated-history differential oracles beyond the current first slice
 - broader crash and restart campaigns beyond the current journal and scheduler
   recovery slice
-- a supported Convex differential corpus outside Neovex's own test universe
+- a supported Convex differential corpus outside Nimbus's own test universe
 - online verification that authoritative and derived state still agree
 
 ---
@@ -187,7 +187,7 @@ Use Convex as a semantic oracle for the supported public app model:
 - query, mutation, pagination, subscription, auth, and scheduling behavior
 - local deployment and self-hosted backend targets for differential coverage
 
-Convex is not the durability oracle for Neovex internals. It is the behavioral
+Convex is not the durability oracle for Nimbus internals. It is the behavioral
 oracle for the supported compatibility surface.
 
 ---
@@ -241,9 +241,9 @@ Use this section as the default operating procedure for every item below.
 For items that touch runtime, engine, storage, or server behavior in a
 cross-cutting way, also run:
 
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-server`
 
 ---
 
@@ -296,7 +296,7 @@ simulation harness rather than a set of isolated test helpers.
 - `Clock` and `FaultInjector` already exist as production-owned seams
 - `Service::new_with_simulation(...)` and `TenantStore::*_with_simulation(...)`
   already thread those seams through core paths
-- the shared harness wrapper in `neovex-test-support` is still minimal
+- the shared harness wrapper in `nimbus-test-support` is still minimal
 
 #### Implementation checkpoint
 
@@ -311,7 +311,7 @@ simulation harness rather than a set of isolated test helpers.
 
 #### Implementation plan
 
-1. Expand `neovex-test-support` with a seeded harness type that owns:
+1. Expand `nimbus-test-support` with a seeded harness type that owns:
    - deterministic time
    - fault schedules
    - repro seed and scenario metadata
@@ -333,10 +333,10 @@ simulation harness rather than a set of isolated test helpers.
 
 #### Files to change
 
-- `crates/neovex-test-support/src/`
-- `crates/neovex-storage/src/simulation.rs`
-- `crates/neovex-engine/src/`
-- `crates/neovex-server/src/tests/`
+- `crates/nimbus-test-support/src/`
+- `crates/nimbus-storage/src/simulation.rs`
+- `crates/nimbus-engine/src/`
+- `crates/nimbus-server/src/tests/`
 - `ARCHITECTURE.md`
 
 #### Acceptance criteria
@@ -348,7 +348,7 @@ simulation harness rather than a set of isolated test helpers.
 
 #### Verification
 
-- add targeted harness unit tests in `neovex-test-support`
+- add targeted harness unit tests in `nimbus-test-support`
 - convert at least one existing storage, engine, and server test each to the
   new shared harness
 - run crate suites for storage, engine, and server
@@ -407,10 +407,10 @@ replayable properties and cross-surface convergence.
 
 #### Files to change
 
-- `crates/neovex-test-support/src/`
-- `crates/neovex-storage/src/tests.rs`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-server/src/tests/`
+- `crates/nimbus-test-support/src/`
+- `crates/nimbus-storage/src/tests.rs`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-server/src/tests/`
 
 #### Acceptance criteria
 
@@ -460,9 +460,9 @@ systematic restart and replay campaigns.
 
 #### Files to change
 
-- `crates/neovex-test-support/src/`
-- `crates/neovex-storage/src/tests.rs`
-- `crates/neovex-engine/src/tests.rs`
+- `crates/nimbus-test-support/src/`
+- `crates/nimbus-storage/src/tests.rs`
+- `crates/nimbus-engine/src/tests.rs`
 - `ARCHITECTURE.md`
 
 #### Acceptance criteria
@@ -512,10 +512,10 @@ example-based happy paths and isolated cancellation regressions.
 
 #### Files to change
 
-- `crates/neovex-test-support/src/`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-server/src/tests/`
-- `crates/neovex-runtime/src/`
+- `crates/nimbus-test-support/src/`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-server/src/tests/`
+- `crates/nimbus-runtime/src/`
 
 #### Acceptance criteria
 
@@ -534,12 +534,12 @@ example-based happy paths and isolated cancellation regressions.
 ### VH5. Add a supported Convex differential corpus
 
 **Priority:** high  
-**Expected impact:** validates Neovex's supported Convex surface against a real
+**Expected impact:** validates Nimbus's supported Convex surface against a real
 external semantic oracle rather than only against internal expectations.
 
 #### Current verified state
 
-- Neovex has broad in-repo supported Convex tests
+- Nimbus has broad in-repo supported Convex tests
 - compatibility docs explicitly scope support to a partial evolving subset
 
 #### Implementation plan
@@ -553,7 +553,7 @@ external semantic oracle rather than only against internal expectations.
    - supported auth shapes
 
 2. Build runners that execute the same corpus against:
-   - Neovex with the in-repo `packages/convex` client
+   - Nimbus with the in-repo `packages/convex` client
    - a real Convex local deployment or self-hosted backend target
 
 3. Normalize result comparison where transport-level differences are allowed
@@ -564,7 +564,7 @@ external semantic oracle rather than only against internal expectations.
 
 #### Files to change
 
-- `crates/neovex-server/src/tests/`
+- `crates/nimbus-server/src/tests/`
 - `packages/convex/`
 - test-support utilities as needed
 - `docs/convex/compatibility.md`
@@ -573,7 +573,7 @@ external semantic oracle rather than only against internal expectations.
 
 - at least one real external Convex-backed differential suite exists
 - the suite is limited to the documented supported subset
-- failures clearly state whether Neovex diverged from the supported contract or
+- failures clearly state whether Nimbus diverged from the supported contract or
   the case is outside scope
 
 #### Verification
@@ -618,9 +618,9 @@ authoritative and derived state.
 
 #### Files to change
 
-- `crates/neovex-storage/src/`
-- `crates/neovex-engine/src/`
-- `crates/neovex-server/src/`
+- `crates/nimbus-storage/src/`
+- `crates/nimbus-engine/src/`
+- `crates/nimbus-server/src/`
 - `ARCHITECTURE.md`
 - operator docs if new debug routes or CLI commands are added
 
@@ -667,7 +667,7 @@ locally impressive.
 #### Files to change
 
 - CI config
-- `crates/neovex-test-support/src/`
+- `crates/nimbus-test-support/src/`
 - `docs/README.md` or other operator/developer docs if needed
 
 #### Acceptance criteria
@@ -688,13 +688,13 @@ locally impressive.
 | Date | Item | Outcome | Notes | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-01 | plan | drafted | Created a dedicated follow-on verification harness plan after the architecture review concluded that the current test matrix is solid but still missing a whole-system deterministic simulator, multi-surface generated oracles, and external Convex differential coverage. | `cargo test --workspace` | begin `VH1` |
-| 2026-04-01 | VH1 | in_progress | Started the first harness-core slice. The dirty worktree already contains the completed architecture-cycle fixes and docs; this item now owns the follow-on expansion of `neovex-test-support::DeterministicHarness` into a scenario-oriented harness with seed metadata plus cancellation, disconnect, and restart markers, followed by representative storage, engine, and server test conversions. | worktree reconciliation and code review | land the shared harness core, convert representative tests, and run targeted plus crate-level verification |
-| 2026-04-01 | VH1 | done | Moved the shared harness core into `neovex-storage::simulation` so storage, engine, server, and `neovex-test-support` all consume the same scenario type without dependency cycles. The harness now carries explicit scenario metadata plus named cancellation, disconnect, and restart markers, supports scripted and seeded fault schedules, and exposes a generic `ServiceFixture::new_with_harness(...)` helper. Converted representative storage, engine, and server tests to the shared harness and updated architecture notes to reflect the broader deterministic seam surface. | `cargo test -p neovex-storage scenario_signal_wait_returns_after_trigger_even_if_triggered_first -- --nocapture`; `cargo test -p neovex-test-support new_with_harness_passes_scenario_context_to_the_builder -- --nocapture`; `cargo test -p neovex-storage injected_fault_before_visibility_rolls_back_the_write_deterministically -- --nocapture`; `cargo test -p neovex-engine manual_clock_advances_scheduled_work_without_wall_clock_sleep -- --nocapture`; `cargo test -p neovex-server journal_bootstrap_route_returns_snapshot_and_durable_cut -- --nocapture`; `cargo test -p neovex-storage -p neovex-test-support -p neovex-engine -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | begin `VH2` |
+| 2026-04-01 | VH1 | in_progress | Started the first harness-core slice. The dirty worktree already contains the completed architecture-cycle fixes and docs; this item now owns the follow-on expansion of `nimbus-test-support::DeterministicHarness` into a scenario-oriented harness with seed metadata plus cancellation, disconnect, and restart markers, followed by representative storage, engine, and server test conversions. | worktree reconciliation and code review | land the shared harness core, convert representative tests, and run targeted plus crate-level verification |
+| 2026-04-01 | VH1 | done | Moved the shared harness core into `nimbus-storage::simulation` so storage, engine, server, and `nimbus-test-support` all consume the same scenario type without dependency cycles. The harness now carries explicit scenario metadata plus named cancellation, disconnect, and restart markers, supports scripted and seeded fault schedules, and exposes a generic `ServiceFixture::new_with_harness(...)` helper. Converted representative storage, engine, and server tests to the shared harness and updated architecture notes to reflect the broader deterministic seam surface. | `cargo test -p nimbus-storage scenario_signal_wait_returns_after_trigger_even_if_triggered_first -- --nocapture`; `cargo test -p nimbus-test-support new_with_harness_passes_scenario_context_to_the_builder -- --nocapture`; `cargo test -p nimbus-storage injected_fault_before_visibility_rolls_back_the_write_deterministically -- --nocapture`; `cargo test -p nimbus-engine manual_clock_advances_scheduled_work_without_wall_clock_sleep -- --nocapture`; `cargo test -p nimbus-server journal_bootstrap_route_returns_snapshot_and_durable_cut -- --nocapture`; `cargo test -p nimbus-storage -p nimbus-test-support -p nimbus-engine -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | begin `VH2` |
 | 2026-04-01 | VH2 | in_progress | Started the first generated-history slice. This item now owns a reusable domain-aware task-history model with logical document slots, a shared replay helper for insert/update/delete histories across different surfaces, and the first multi-surface oracle tests for final state, filtered ordered queries, and pagination. | worktree reconciliation and code review | land the reusable history model, cover storage + service/shadow/replica + native HTTP, then run targeted and crate-level verification |
-| 2026-04-01 | VH2 | done | Landed the first generated-history oracle slice in `neovex-storage::simulation`: `GeneratedTaskHistory` now owns logical-slot insert/update/delete scenarios, canonical query and pagination builders, plus sync and async replay helpers. Storage, engine, and native HTTP now replay the same seeded history and compare final state, filtered ordered queries, and pagination against one local model; the engine surface also checks shadow materializer snapshots and embedded replica reads against that same oracle. | `cargo test -p neovex-storage generated_task_history_is_reproducible_for_the_same_seed -- --nocapture`; `cargo test -p neovex-storage generated_task_history_async_replay_preserves_slot_bindings -- --nocapture`; `cargo test -p neovex-storage generated_task_history_matches_model_on_storage_surface -- --nocapture`; `cargo test -p neovex-engine generated_task_history_matches_model_across_live_shadow_and_embedded_replica_surfaces -- --nocapture`; `cargo test -p neovex-server generated_task_history_matches_model_on_native_http_surface -- --nocapture`; `cargo test -p neovex-storage -p neovex-test-support -p neovex-engine -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | begin `VH3` |
-| 2026-04-01 | VH3 | done | Added recovery-oriented restart scheduling to `neovex-storage::simulation` via `ScriptedRestartSchedule`, `RestartBoundary`, and `RestartPoint`, then used that shared vocabulary to land the first restart campaigns. Storage now runs a seeded repeated-restart durable-journal recovery scenario that keeps unapplied durable records invisible before recovery, verifies authoritative convergence after each restart, and rebuilds shadow state from checkpoints after recovery. Engine now runs a scheduler campaign that crosses claim and completion restart boundaries without losing pending jobs or double-applying completed ones. | `cargo test -p neovex-storage scripted_restart_schedule_is_reproducible_for_the_same_seed -- --nocapture`; `cargo test -p neovex-storage generated_recovery_campaign_replays_durable_journal_across_repeated_restarts_and_rebuilds_shadow_state -- --nocapture`; `cargo test -p neovex-engine scheduler_recovery_campaign_survives_claim_and_completion_restart_boundaries -- --nocapture`; `cargo test -p neovex-storage -p neovex-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | begin `VH4` |
-| 2026-04-01 | VH4 | done | Added the first transport and runtime liveness campaigns on top of the shared scenario vocabulary. `neovex-test-support` now exposes a reusable `BlockingFaultInjector` so server tests can deterministically pause at a storage fault point and then heal. Native transport coverage now includes a seeded WebSocket reconnect/resubscribe scenario that drops a subscription during durable-but-unapplied lag, proves the resubscribe waits for applied visibility, then proves the healed connection catches up and keeps receiving pushes. Runtime coverage now includes a seeded queued-request-drop campaign that cancels both queued and in-flight work under isolate pressure, heals the runtime, and proves fresh work is served exactly once afterward. | `cargo test -p neovex-test-support blocking_fault_injector_waits_until_release -- --nocapture`; `cargo test -p neovex-server --test reactive_loop websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keeps_pushing -- --nocapture`; `cargo test -p neovex-server dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears -- --nocapture`; `cargo test -p neovex-engine -p neovex-runtime -p neovex-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | begin `VH5` |
-| 2026-04-02 | VH5 | in_progress | Started the first supported Convex differential slice in `packages/convex`. Added a shared fixture app for a stable messages workload, a differential runner that compares Neovex against the supported subset across mutation/query/paginated-query/subscription behavior, and package self-tests for the normalization and scope guardrails. The external-oracle path now resolves the official Convex browser client from an override or a nearby `convex-backend` checkout instead of a machine-specific hardcoded path. Compatibility docs now describe how to export the shared fixture app and run the Neovex-only or external comparison modes. | `npm run test --workspace convex`; `npm run test:differential --workspace convex -- --neovex-only` | run the external differential mode against a provisioned Convex deployment, then extend the corpus to scheduling and supported auth shapes |
-| 2026-04-02 | VH5 | done | Completed the first supported Convex differential corpus and closed the external-oracle gaps it exposed. `packages/convex/src/differential.mjs` can now export the shared fixture, automatically start an official local Convex deployment from a nearby `convex-backend` checkout, compare Neovex and official results across named semantic slices, and report all mismatches from one run instead of only the first diff. To support the shared official-style fixture, `@neovex/codegen` now parses imported server validators such as `paginationOptsValidator`, the Convex registry bootstraps emitted schema manifests into newly created Convex tenants, and runtime query-builder `paginate(...)` now preserves the official manual-pagination continuation contract for full terminal pages. | `npm run test --workspace @neovex/codegen`; `npm run test --workspace convex`; `cargo test -p neovex-runtime runtime_query_paginate -- --nocapture`; `cargo test -p neovex-server convex_runtime_only_query_paginate_keeps_continuation_cursor_for_full_terminal_page -- --nocapture`; `cargo test -p neovex-server convex_app_schema_manifest_bootstraps_indexed_queries_for_new_tenants -- --nocapture`; `npm run test:differential --workspace convex -- --require-external`; `cargo fmt --all --check` | begin `VH6`; separately extend the Convex differential corpus to scheduling and supported auth shapes |
-| 2026-04-02 | VH6 | done | Added the first online consistency-verifier slice to the engine and server. `Service::verify_consistency_async(...)` now captures one durable bootstrap cut, rebuilds an authoritative in-memory projection to that cut, compares it against a shadow-materializer replay and an embedded replica built from the same snapshot plus journal suffix, fingerprints each surface canonically, and reports deterministic pairwise mismatches with first-diff paths. The verifier also checks raw bootstrap metadata invariants separately so applied-lag snapshots are validated without being mistaken for divergence. Server debug routing now exposes the same report at `GET /debug/tenants/{tenant_id}/consistency`, and targeted regressions cover both the green live-state path and explicit snapshot/bootstrap mismatch diagnostics. | `cargo test -p neovex-engine online_consistency_verifier_matches_authoritative_shadow_and_replica_state -- --nocapture`; `cargo test -p neovex-engine snapshot_comparison_reports_document_field_differences_with_identifier -- --nocapture`; `cargo test -p neovex-engine durable_journal_bootstrap_verifier_reports_resume_after_mismatch -- --nocapture`; `cargo test -p neovex-server tenant_consistency_route_returns_green_report_for_live_state -- --nocapture` | begin `VH7`; optionally add periodic/operator automation around the on-demand verifier |
-| 2026-04-02 | VH7 | done | Added an operational verification-harness layer on top of the seeded simulation work. `neovex-storage::simulation` now defines named generated-history seed corpora for explicit `pr` and `nightly` modes, including stable regression case ids plus deterministic one-command repro strings that pin `NEOVEX_VERIFY_CASE`. Storage, engine, and native HTTP now each expose ignored corpus tests for both modes, `scripts/verification-harness.sh` wraps `pr`, `nightly`, and exact-case `repro` runs, the `Makefile` exposes matching `verify-harness-*` targets, and CI now runs a focused per-surface PR matrix separately from a heavier scheduled nightly matrix. Docs now explain where the corpus lives and how historically valuable bug-finding seeds graduate into stable named regressions. | `cargo test -p neovex-storage verification_harness_seed_corpus -- --nocapture`; `bash scripts/verification-harness.sh pr storage`; `bash scripts/verification-harness.sh repro engine pr regression-two-page-pagination-41`; `cargo test -p neovex-server verification_harness_pr_generated_history_seed_corpus_matches_model -- --ignored --nocapture` (outside sandbox for local port binding); `bash scripts/verification-harness.sh nightly engine`; `make verify-harness-repro SURFACE=engine MODE=pr CASE=regression-two-page-pagination-41`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | verification-harness plan complete; next work should start from a fresh follow-on plan or a new architecture review |
+| 2026-04-01 | VH2 | done | Landed the first generated-history oracle slice in `nimbus-storage::simulation`: `GeneratedTaskHistory` now owns logical-slot insert/update/delete scenarios, canonical query and pagination builders, plus sync and async replay helpers. Storage, engine, and native HTTP now replay the same seeded history and compare final state, filtered ordered queries, and pagination against one local model; the engine surface also checks shadow materializer snapshots and embedded replica reads against that same oracle. | `cargo test -p nimbus-storage generated_task_history_is_reproducible_for_the_same_seed -- --nocapture`; `cargo test -p nimbus-storage generated_task_history_async_replay_preserves_slot_bindings -- --nocapture`; `cargo test -p nimbus-storage generated_task_history_matches_model_on_storage_surface -- --nocapture`; `cargo test -p nimbus-engine generated_task_history_matches_model_across_live_shadow_and_embedded_replica_surfaces -- --nocapture`; `cargo test -p nimbus-server generated_task_history_matches_model_on_native_http_surface -- --nocapture`; `cargo test -p nimbus-storage -p nimbus-test-support -p nimbus-engine -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | begin `VH3` |
+| 2026-04-01 | VH3 | done | Added recovery-oriented restart scheduling to `nimbus-storage::simulation` via `ScriptedRestartSchedule`, `RestartBoundary`, and `RestartPoint`, then used that shared vocabulary to land the first restart campaigns. Storage now runs a seeded repeated-restart durable-journal recovery scenario that keeps unapplied durable records invisible before recovery, verifies authoritative convergence after each restart, and rebuilds shadow state from checkpoints after recovery. Engine now runs a scheduler campaign that crosses claim and completion restart boundaries without losing pending jobs or double-applying completed ones. | `cargo test -p nimbus-storage scripted_restart_schedule_is_reproducible_for_the_same_seed -- --nocapture`; `cargo test -p nimbus-storage generated_recovery_campaign_replays_durable_journal_across_repeated_restarts_and_rebuilds_shadow_state -- --nocapture`; `cargo test -p nimbus-engine scheduler_recovery_campaign_survives_claim_and_completion_restart_boundaries -- --nocapture`; `cargo test -p nimbus-storage -p nimbus-engine`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | begin `VH4` |
+| 2026-04-01 | VH4 | done | Added the first transport and runtime liveness campaigns on top of the shared scenario vocabulary. `nimbus-test-support` now exposes a reusable `BlockingFaultInjector` so server tests can deterministically pause at a storage fault point and then heal. Native transport coverage now includes a seeded WebSocket reconnect/resubscribe scenario that drops a subscription during durable-but-unapplied lag, proves the resubscribe waits for applied visibility, then proves the healed connection catches up and keeps receiving pushes. Runtime coverage now includes a seeded queued-request-drop campaign that cancels both queued and in-flight work under isolate pressure, heals the runtime, and proves fresh work is served exactly once afterward. | `cargo test -p nimbus-test-support blocking_fault_injector_waits_until_release -- --nocapture`; `cargo test -p nimbus-server --test reactive_loop websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keeps_pushing -- --nocapture`; `cargo test -p nimbus-server dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears -- --nocapture`; `cargo test -p nimbus-engine -p nimbus-runtime -p nimbus-server`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | begin `VH5` |
+| 2026-04-02 | VH5 | in_progress | Started the first supported Convex differential slice in `packages/convex`. Added a shared fixture app for a stable messages workload, a differential runner that compares Nimbus against the supported subset across mutation/query/paginated-query/subscription behavior, and package self-tests for the normalization and scope guardrails. The external-oracle path now resolves the official Convex browser client from an override or a nearby `convex-backend` checkout instead of a machine-specific hardcoded path. Compatibility docs now describe how to export the shared fixture app and run the Nimbus-only or external comparison modes. | `npm run test --workspace convex`; `npm run test:differential --workspace convex -- --nimbus-only` | run the external differential mode against a provisioned Convex deployment, then extend the corpus to scheduling and supported auth shapes |
+| 2026-04-02 | VH5 | done | Completed the first supported Convex differential corpus and closed the external-oracle gaps it exposed. `packages/convex/src/differential.mjs` can now export the shared fixture, automatically start an official local Convex deployment from a nearby `convex-backend` checkout, compare Nimbus and official results across named semantic slices, and report all mismatches from one run instead of only the first diff. To support the shared official-style fixture, `@nimbus/codegen` now parses imported server validators such as `paginationOptsValidator`, the Convex registry bootstraps emitted schema manifests into newly created Convex tenants, and runtime query-builder `paginate(...)` now preserves the official manual-pagination continuation contract for full terminal pages. | `npm run test --workspace @nimbus/codegen`; `npm run test --workspace convex`; `cargo test -p nimbus-runtime runtime_query_paginate -- --nocapture`; `cargo test -p nimbus-server convex_runtime_only_query_paginate_keeps_continuation_cursor_for_full_terminal_page -- --nocapture`; `cargo test -p nimbus-server convex_app_schema_manifest_bootstraps_indexed_queries_for_new_tenants -- --nocapture`; `npm run test:differential --workspace convex -- --require-external`; `cargo fmt --all --check` | begin `VH6`; separately extend the Convex differential corpus to scheduling and supported auth shapes |
+| 2026-04-02 | VH6 | done | Added the first online consistency-verifier slice to the engine and server. `Service::verify_consistency_async(...)` now captures one durable bootstrap cut, rebuilds an authoritative in-memory projection to that cut, compares it against a shadow-materializer replay and an embedded replica built from the same snapshot plus journal suffix, fingerprints each surface canonically, and reports deterministic pairwise mismatches with first-diff paths. The verifier also checks raw bootstrap metadata invariants separately so applied-lag snapshots are validated without being mistaken for divergence. Server debug routing now exposes the same report at `GET /debug/tenants/{tenant_id}/consistency`, and targeted regressions cover both the green live-state path and explicit snapshot/bootstrap mismatch diagnostics. | `cargo test -p nimbus-engine online_consistency_verifier_matches_authoritative_shadow_and_replica_state -- --nocapture`; `cargo test -p nimbus-engine snapshot_comparison_reports_document_field_differences_with_identifier -- --nocapture`; `cargo test -p nimbus-engine durable_journal_bootstrap_verifier_reports_resume_after_mismatch -- --nocapture`; `cargo test -p nimbus-server tenant_consistency_route_returns_green_report_for_live_state -- --nocapture` | begin `VH7`; optionally add periodic/operator automation around the on-demand verifier |
+| 2026-04-02 | VH7 | done | Added an operational verification-harness layer on top of the seeded simulation work. `nimbus-storage::simulation` now defines named generated-history seed corpora for explicit `pr` and `nightly` modes, including stable regression case ids plus deterministic one-command repro strings that pin `NIMBUS_VERIFY_CASE`. Storage, engine, and native HTTP now each expose ignored corpus tests for both modes, `scripts/verification-harness.sh` wraps `pr`, `nightly`, and exact-case `repro` runs, the `Makefile` exposes matching `verify-harness-*` targets, and CI now runs a focused per-surface PR matrix separately from a heavier scheduled nightly matrix. Docs now explain where the corpus lives and how historically valuable bug-finding seeds graduate into stable named regressions. | `cargo test -p nimbus-storage verification_harness_seed_corpus -- --nocapture`; `bash scripts/verification-harness.sh pr storage`; `bash scripts/verification-harness.sh repro engine pr regression-two-page-pagination-41`; `cargo test -p nimbus-server verification_harness_pr_generated_history_seed_corpus_matches_model -- --ignored --nocapture` (outside sandbox for local port binding); `bash scripts/verification-harness.sh nightly engine`; `make verify-harness-repro SURFACE=engine MODE=pr CASE=regression-two-page-pagination-41`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | verification-harness plan complete; next work should start from a fresh follow-on plan or a new architecture review |

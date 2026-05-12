@@ -1,7 +1,7 @@
 # Bundle Distribution from Object Storage
 
 Research document for remote runtime bundle fetching and caching. This
-feature enables multi-node Neovex deployments to pull V8 runtime bundles
+feature enables multi-node Nimbus deployments to pull V8 runtime bundles
 (codegen output) from a central object store instead of requiring local
 filesystem copies on every node.
 
@@ -18,7 +18,7 @@ Today, `--app-dir` points at a local directory containing the codegen
 output:
 
 ```
-.neovex/convex/
+.nimbus/convex/
   functions.json       # function manifest
   bundle.mjs           # ESM entrypoint
   bundle.sha256        # integrity hash
@@ -35,15 +35,15 @@ distribute bundles from a central store.
 ### Current Loading Path
 
 ```
-neovex-bin/src/main.rs:96-103
+nimbus-bin/src/main.rs:96-103
   → ConvexRegistry::from_app_dir(path)
-    → neovex-server/src/adapters/convex/registry/loading.rs:8-14
-      → reads .neovex/convex/functions.json        (std::fs::read_to_string)
-      → reads .neovex/convex/bundle.mjs            (load_runtime_bundle)
-      → reads .neovex/convex/bundle.sha256         (std::fs::read_to_string)
-      → reads .neovex/convex/http_routes.json      (optional)
-      → reads .neovex/convex/auth.config.json      (optional)
-      → reads .neovex/convex/schema.json           (optional)
+    → nimbus-server/src/adapters/convex/registry/loading.rs:8-14
+      → reads .nimbus/convex/functions.json        (std::fs::read_to_string)
+      → reads .nimbus/convex/bundle.mjs            (load_runtime_bundle)
+      → reads .nimbus/convex/bundle.sha256         (std::fs::read_to_string)
+      → reads .nimbus/convex/http_routes.json      (optional)
+      → reads .nimbus/convex/auth.config.json      (optional)
+      → reads .nimbus/convex/schema.json           (optional)
 ```
 
 All reads are synchronous `std::fs` calls at startup. The
@@ -73,25 +73,25 @@ lifetime of the server.
 
 ```bash
 # Local development (unchanged)
-neovex serve --app-dir ./my-app
+nimbus serve --app-dir ./my-app
 
 # Single node, local bundles (unchanged)
-neovex serve --app-dir /opt/bundles/my-app
+nimbus serve --app-dir /opt/bundles/my-app
 
 # Remote bundles from S3
-neovex serve --app-dir s3://my-bucket/my-app
+nimbus serve --app-dir s3://my-bucket/my-app
 
 # Remote bundles from GCS
-neovex serve --app-dir gs://my-bucket/my-app
+nimbus serve --app-dir gs://my-bucket/my-app
 
 # Remote bundles from Azure Blob Storage
-neovex serve --app-dir az://my-container/my-app
+nimbus serve --app-dir az://my-container/my-app
 
 # Remote bundles from Cloudflare R2
-neovex serve --app-dir s3://my-r2-bucket/my-app  # R2 is S3-compatible
+nimbus serve --app-dir s3://my-r2-bucket/my-app  # R2 is S3-compatible
 
 # Explicit cache directory (optional, defaults to {data-dir}/bundle-cache)
-neovex serve --app-dir s3://bucket/app --bundle-cache-dir /data/cache
+nimbus serve --app-dir s3://bucket/app --bundle-cache-dir /data/cache
 ```
 
 Credentials follow standard cloud SDK conventions:
@@ -108,13 +108,13 @@ Credentials follow standard cloud SDK conventions:
 
 ```
 ┌──────────────────────────────────────────────┐
-│  neovex-bin (CLI)                            │
+│  nimbus-bin (CLI)                            │
 │  --app-dir s3://bucket/app                   │
 └──────────────┬───────────────────────────────┘
                │ parse URI scheme
                ▼
 ┌──────────────────────────────────────────────┐
-│  BundleSource (neovex-server)                │
+│  BundleSource (nimbus-server)                │
 │                                              │
 │  enum BundleSourceConfig {                   │
 │    Local { path: PathBuf },                  │
@@ -160,7 +160,7 @@ Credentials follow standard cloud SDK conventions:
     .bundle-fetched-at    # timestamp of last fetch
 ```
 
-The cache directory mirrors the `.neovex/convex/` layout exactly so that
+The cache directory mirrors the `.nimbus/convex/` layout exactly so that
 `ConvexRegistry::from_app_dir()` works unchanged.
 
 ### Reload Endpoint
@@ -278,13 +278,13 @@ ships first and alone, `object_store` is simpler.
 
 | File | Change |
 |---|---|
-| `crates/neovex-server/src/bundles/mod.rs` | New module: `BundleSource`, `LocalBundleSource`, `RemoteBundleSource` |
-| `crates/neovex-server/src/bundles/remote.rs` | Object storage fetch, local cache, ETag tracking |
-| `crates/neovex-server/src/adapters/convex/registry/loading.rs` | No change — receives resolved local path |
-| `crates/neovex-server/src/router.rs` | Add `/api/bundles/reload` endpoint |
-| `crates/neovex-server/src/state.rs` | `AppState` holds `BundleSource` + supports `ConvexRegistry` swap |
-| `crates/neovex-bin/src/main.rs` | Parse URI scheme, construct `BundleSource`, resolve before registry |
-| `crates/neovex-server/Cargo.toml` | Add `object_store` with feature flags for desired backends |
+| `crates/nimbus-server/src/bundles/mod.rs` | New module: `BundleSource`, `LocalBundleSource`, `RemoteBundleSource` |
+| `crates/nimbus-server/src/bundles/remote.rs` | Object storage fetch, local cache, ETag tracking |
+| `crates/nimbus-server/src/adapters/convex/registry/loading.rs` | No change — receives resolved local path |
+| `crates/nimbus-server/src/router.rs` | Add `/api/bundles/reload` endpoint |
+| `crates/nimbus-server/src/state.rs` | `AppState` holds `BundleSource` + supports `ConvexRegistry` swap |
+| `crates/nimbus-bin/src/main.rs` | Parse URI scheme, construct `BundleSource`, resolve before registry |
+| `crates/nimbus-server/Cargo.toml` | Add `object_store` with feature flags for desired backends |
 | `Cargo.toml` (workspace) | Add `object_store` to workspace dependencies |
 
 ### Cargo Dependencies
@@ -294,7 +294,7 @@ ships first and alone, `object_store` is simpler.
 [workspace.dependencies]
 object_store = { version = "0.13", features = ["aws", "gcp", "azure"] }
 
-# In neovex-server/Cargo.toml
+# In nimbus-server/Cargo.toml
 [dependencies]
 object_store = { workspace = true }
 ```
@@ -314,7 +314,7 @@ modules from the distributed store on demand.
 
 ### How It Would Work
 
-Neovex already has `RestrictedModuleLoader` (module_loader.rs) which
+Nimbus already has `RestrictedModuleLoader` (module_loader.rs) which
 restricts imports to the bundle root and uses `std::fs::read_to_string()`
 to load module source. A distributed variant would:
 
@@ -380,7 +380,7 @@ operators who don't want cloud vendor dependency, the deploy model becomes:
 
 ```bash
 # Self-hosted
-neovex serve --app-dir s3://localhost:3900/bundles \
+nimbus serve --app-dir s3://localhost:3900/bundles \
   --env AWS_ACCESS_KEY_ID=garage-key \
   --env AWS_SECRET_ACCESS_KEY=garage-secret
 ```
@@ -393,7 +393,7 @@ neovex serve --app-dir s3://localhost:3900/bundles \
 
 The `/api/bundles/reload` endpoint triggers a re-fetch and hot-swap. In
 production, this should probably require an admin token or be restricted to
-localhost. The current Neovex HTTP API has no built-in auth for native routes.
+localhost. The current Nimbus HTTP API has no built-in auth for native routes.
 
 **Options:**
 - (a) Restrict to localhost by default, configurable via flag
@@ -434,7 +434,7 @@ directory is overwritten mid-invocation, the hash check could fail.
 
 ### Q5: How does this interact with the license file?
 
-The license file (`--license-file` or `~/.config/neovex/license.json`) is loaded once
+The license file (`--license-file` or `~/.config/nimbus/license.json`) is loaded once
 at startup and is not part of the bundle. It should remain separate from
 bundle distribution. No change needed.
 
@@ -453,17 +453,17 @@ it.
 
 ```bash
 # 1. Developer builds the bundle
-npx @neovex/codegen --app ./my-app --output .neovex/convex/
+npx @nimbus/codegen --app ./my-app --output .nimbus/convex/
 
 # 2. Upload to object storage
-aws s3 sync .neovex/convex/ s3://my-bucket/my-app/.neovex/convex/
+aws s3 sync .nimbus/convex/ s3://my-bucket/my-app/.nimbus/convex/
 
-# 3. Tell Neovex nodes to reload
-curl -X POST http://neovex-node-1:8080/api/bundles/reload
-curl -X POST http://neovex-node-2:8080/api/bundles/reload
+# 3. Tell Nimbus nodes to reload
+curl -X POST http://nimbus-node-1:8080/api/bundles/reload
+curl -X POST http://nimbus-node-2:8080/api/bundles/reload
 
 # Or from CI/CD:
-for node in $NEOVEX_NODES; do
+for node in $NIMBUS_NODES; do
   curl -X POST http://$node:8080/api/bundles/reload
 done
 ```
@@ -478,8 +478,8 @@ distribution — push to central store, notify consumers.
 - `object_store` crate: <https://docs.rs/object_store/latest/object_store/>
 - `object_store` GitHub: <https://github.com/apache/arrow-rs-object-store>
 - OpenDAL: <https://github.com/apache/opendal>
-- Current bundle loading: `crates/neovex-server/src/adapters/convex/registry/loading.rs`
-- Current CLI: `crates/neovex-bin/src/main.rs`
-- `ConvexRegistry` struct: `crates/neovex-server/src/adapters/convex/mod.rs:55-63`
-- `RuntimeBundle` integrity: `crates/neovex-runtime/src/runtime.rs:283-299`
-- `RestrictedModuleLoader`: `crates/neovex-runtime/src/module_loader.rs`
+- Current bundle loading: `crates/nimbus-server/src/adapters/convex/registry/loading.rs`
+- Current CLI: `crates/nimbus-bin/src/main.rs`
+- `ConvexRegistry` struct: `crates/nimbus-server/src/adapters/convex/mod.rs:55-63`
+- `RuntimeBundle` integrity: `crates/nimbus-runtime/src/runtime.rs:283-299`
+- `RestrictedModuleLoader`: `crates/nimbus-runtime/src/module_loader.rs`

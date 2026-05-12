@@ -1,0 +1,40 @@
+{
+  "functions": [
+    {
+      "name": "messages:list",
+      "export": "list",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "table": "messages",
+        "filters": [],
+        "order": null,
+        "limit": null
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:send",
+      "export": "send",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "public",
+      "schedulable": true,
+      "plan": {
+        "type": "insert",
+        "table": "messages",
+        "fields": {
+          "author": {
+            "$arg": "author"
+          },
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    }
+  ]
+}

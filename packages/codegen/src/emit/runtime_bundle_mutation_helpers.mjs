@@ -40,7 +40,7 @@ function runtimeBundleMutationHelpers() {
   if (isQueryShape(plan)) {
     return await executeResolvedQueryPlan(ctx, plan);
   }
-  return await globalThis.__neovexAsyncHostValue("op_neovex_ctx_mutation", {
+  return await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_mutation", {
     mutation: plan,
     session_id: "convex-runtime-mutation-plan",
   });

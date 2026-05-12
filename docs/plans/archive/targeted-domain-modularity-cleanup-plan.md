@@ -15,14 +15,14 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `crates/neovex-runtime/src/runtime.rs`
-- `crates/neovex-runtime/src/runtime/tests/cooperative.rs`
-- `crates/neovex-runtime/src/runtime/tests/locker.rs`
-- `crates/neovex-runtime/src/runtime/tests/warm_pool.rs`
-- `crates/neovex-engine/src/tenant.rs`
-- `crates/neovex-core/src/auth.rs`
-- `packages/neovex/src/browser.ts`
-- `packages/neovex/package.json`
+- `crates/nimbus-runtime/src/runtime.rs`
+- `crates/nimbus-runtime/src/runtime/tests/cooperative.rs`
+- `crates/nimbus-runtime/src/runtime/tests/locker.rs`
+- `crates/nimbus-runtime/src/runtime/tests/warm_pool.rs`
+- `crates/nimbus-engine/src/tenant.rs`
+- `crates/nimbus-core/src/auth.rs`
+- `packages/nimbus/src/browser.ts`
+- `packages/nimbus/package.json`
 
 Baseline verification status for this plan:
 
@@ -73,12 +73,12 @@ to be.
 This plan covers:
 
 - extraction of the remaining inline runtime tests from
-  `crates/neovex-runtime/src/runtime.rs`
-- domain-facade extraction from `crates/neovex-engine/src/tenant.rs`
-- conversion of `crates/neovex-core/src/auth.rs` into a directory module with
+  `crates/nimbus-runtime/src/runtime.rs`
+- domain-facade extraction from `crates/nimbus-engine/src/tenant.rs`
+- conversion of `crates/nimbus-core/src/auth.rs` into a directory module with
   clearer principal-versus-access ownership
 - extraction of the HTTP client and browser utilities from
-  `packages/neovex/src/browser.ts`
+  `packages/nimbus/src/browser.ts`
 - follow-on doc, verification, and archive cleanup for this pass
 
 This plan does not cover:
@@ -101,8 +101,8 @@ These rules are mandatory for every item in this plan.
    unless a specific item explicitly records otherwise.
 
 2. Keep the core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -131,18 +131,18 @@ These rules are mandatory for every item in this plan.
 ## Current Assessed State
 
 - The repo no longer has many top-level production god files, but one true
-  outlier remains: `crates/neovex-runtime/src/runtime.rs` at 2718 lines.
+  outlier remains: `crates/nimbus-runtime/src/runtime.rs` at 2718 lines.
 - That runtime root is no longer large because of production complexity alone.
   Most of its size is still inline test ownership that already has a proven
-  extraction pattern under `crates/neovex-runtime/src/runtime/tests/`.
-- `crates/neovex-engine/src/tenant.rs` is no longer an architectural monolith,
+  extraction pattern under `crates/nimbus-runtime/src/runtime/tests/`.
+- `crates/nimbus-engine/src/tenant.rs` is no longer an architectural monolith,
   but its main `impl TenantRuntime` block is still a dense flat facade that can
   be grouped cleanly by already-existing subsystem ownership.
-- `crates/neovex-core/src/auth.rs` still mixes principal identity, policy
+- `crates/nimbus-core/src/auth.rs` still mixes principal identity, policy
   structures, predicate evaluation, read-planner compilation, and tests in one
   file even though principal context and access-policy evaluation are distinct
   concepts.
-- `packages/neovex/src/browser.ts` still combines two largely separate browser
+- `packages/nimbus/src/browser.ts` still combines two largely separate browser
   client concerns: stateless HTTP request handling and stateful WebSocket/live
   query orchestration, plus a tail of browser utility helpers.
 
@@ -150,13 +150,13 @@ These rules are mandatory for every item in this plan.
 
 ## Current Review Findings
 
-1. `crates/neovex-runtime/src/runtime.rs` is the remaining must-fix god file.
+1. `crates/nimbus-runtime/src/runtime.rs` is the remaining must-fix god file.
    It is 2718 lines long, with a small production entrypoint and a very large
    inline `#[cfg(test)]` module. The repo already has the right extraction
    pattern in `runtime/tests/cooperative.rs`, `runtime/tests/locker.rs`, and
    `runtime/tests/warm_pool.rs`; the remaining inline tests should follow it.
 
-2. `crates/neovex-engine/src/tenant.rs` is a good domain-facade extraction
+2. `crates/nimbus-engine/src/tenant.rs` is a good domain-facade extraction
    target.
    The file is only 523 lines, but it contains a 62-method flat `impl
    TenantRuntime` block. Most of those methods are already pure delegation into
@@ -164,28 +164,28 @@ These rules are mandatory for every item in this plan.
    or `query_planning` subsystems, so grouped facade files are a natural next
    step.
 
-3. `crates/neovex-core/src/auth.rs` still mixes two different domains.
+3. `crates/nimbus-core/src/auth.rs` still mixes two different domains.
    `PrincipalContext` and principal snapshotting are conceptually independent
    from access-policy evaluation and read-planner compilation, but they share
    one file today. A directory module split can separate principal identity from
    access control without changing public re-exports.
 
-4. `packages/neovex/src/browser.ts` still holds two clients and several helpers
+4. `packages/nimbus/src/browser.ts` still holds two clients and several helpers
    in one file.
-   `NeovexHttpClient` is a stateless request layer. `NeovexClient` is a
+   `NimbusHttpClient` is a stateless request layer. `NimbusClient` is a
    stateful WebSocket/live-query orchestrator. The bottom-of-file browser
    helpers are independent utility concerns. That separation is already visible
    in the code and should become explicit in the module layout.
 
 5. Several other large files were reviewed and are not the right next targets
    for this pass.
-   `crates/neovex-runtime/src/executor.rs` remains large, but it is tied more
+   `crates/nimbus-runtime/src/executor.rs` remains large, but it is tied more
    directly to ongoing runtime scheduler and Locker work.
-   `crates/neovex-runtime/src/metrics.rs` already delegates to submodules.
-   `crates/neovex-engine/src/service/queries/planner/mod.rs` is already a
+   `crates/nimbus-runtime/src/metrics.rs` already delegates to submodules.
+   `crates/nimbus-engine/src/service/queries/planner/mod.rs` is already a
    composition root over planner submodules.
-   `crates/neovex-engine/src/evaluator/tests.rs` is large but cohesive.
-   `crates/neovex-engine/src/service/scheduler/tests.rs` is large but stable and
+   `crates/nimbus-engine/src/evaluator/tests.rs` is large but cohesive.
+   `crates/nimbus-engine/src/service/scheduler/tests.rs` is large but stable and
    not the highest-value maintenance seam right now.
 
 ---
@@ -207,17 +207,17 @@ This plan is successful only when all of the following are true:
 
 ## Assessed But Not Selected
 
-- `crates/neovex-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/executor.rs`
   still large, but overlaps more directly with runtime scheduler and Locker
   work than this cleanup pass should
-- `crates/neovex-runtime/src/metrics.rs`
+- `crates/nimbus-runtime/src/metrics.rs`
   already decomposed into concept-owned submodules and no longer the highest
   value target
-- `crates/neovex-engine/src/service/queries/planner/mod.rs`
+- `crates/nimbus-engine/src/service/queries/planner/mod.rs`
   already functions as a composition root over planner submodules
-- `crates/neovex-engine/src/evaluator/tests.rs`
+- `crates/nimbus-engine/src/evaluator/tests.rs`
   large but cohesive as a single-subject evaluator regression surface
-- `crates/neovex-engine/src/service/scheduler/tests.rs`
+- `crates/nimbus-engine/src/service/scheduler/tests.rs`
   borderline large but stable, already concept-owned, and not the best
   maintainability return for this pass
 
@@ -268,7 +268,7 @@ Every Rust implementation item in this plan must:
 
 The browser-client item in this plan must:
 
-1. run `npm run test --workspace neovex`
+1. run `npm run test --workspace nimbus`
 2. run any package or workspace build/typecheck entrypoint that becomes
    available or relevant as part of the split
 3. record any environment limitation explicitly in `Execution Log`
@@ -278,7 +278,7 @@ Before archiving this plan, also run:
 - `make check`
 - `make test`
 - `make clippy`
-- `npm run test --workspace neovex`
+- `npm run test --workspace nimbus`
 - `npm run build --workspaces --if-present`
 - `make ci` if practical
 
@@ -293,10 +293,10 @@ silently skipping it.
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | TD0 | `done` | reviewed the current post-queue-and-test-surface architecture and identified the next high-value targeted cleanup seams in `runtime.rs`, `tenant.rs`, `auth.rs`, and `browser.ts` | none | docs-only review and planning pass on 2026-04-08 |
-| TD1 | `done` | extracted the remaining inline runtime tests from `crates/neovex-runtime/src/runtime.rs` into concept-owned `runtime/tests/*.rs` modules and reduced `runtime.rs` to the shared harness plus module declarations | none | completed on 2026-04-08 with focused runtime verification |
-| TD2 | `done` | split `crates/neovex-engine/src/tenant.rs` into grouped domain-facade modules and reduced the root to tenant structure, constructors, lifecycle, and cross-domain diagnostics | TD1 recommended first | completed on 2026-04-08 with focused engine verification |
-| TD3 | `done` | converted `crates/neovex-core/src/auth.rs` into an `auth/` directory module with principal identity in `mod.rs`, access-policy ownership in `access.rs`, and extracted tests in `tests.rs` | TD1 and TD2 recommended first | completed on 2026-04-08 with focused core verification |
-| TD4 | `done` | extracted the browser HTTP client into `packages/neovex/src/http-client.ts` and shared browser helpers into `packages/neovex/src/browser-utils.ts` while keeping `browser.ts` as the browser-client entrypoint and public re-export surface | TD1 through TD3 recommended first | completed on 2026-04-08 with JS selftest and workspace build verification |
+| TD1 | `done` | extracted the remaining inline runtime tests from `crates/nimbus-runtime/src/runtime.rs` into concept-owned `runtime/tests/*.rs` modules and reduced `runtime.rs` to the shared harness plus module declarations | none | completed on 2026-04-08 with focused runtime verification |
+| TD2 | `done` | split `crates/nimbus-engine/src/tenant.rs` into grouped domain-facade modules and reduced the root to tenant structure, constructors, lifecycle, and cross-domain diagnostics | TD1 recommended first | completed on 2026-04-08 with focused engine verification |
+| TD3 | `done` | converted `crates/nimbus-core/src/auth.rs` into an `auth/` directory module with principal identity in `mod.rs`, access-policy ownership in `access.rs`, and extracted tests in `tests.rs` | TD1 and TD2 recommended first | completed on 2026-04-08 with focused core verification |
+| TD4 | `done` | extracted the browser HTTP client into `packages/nimbus/src/http-client.ts` and shared browser helpers into `packages/nimbus/src/browser-utils.ts` while keeping `browser.ts` as the browser-client entrypoint and public re-export surface | TD1 through TD3 recommended first | completed on 2026-04-08 with JS selftest and workspace build verification |
 | TD5 | `done` | updated the docs, completed the full verification sweep, and archived the completed plan cleanly | TD1 through TD4 | completed on 2026-04-08; `make ci` hit an environment-only `cargo deny` advisory-db lock limitation on a read-only path |
 
 ---
@@ -330,9 +330,9 @@ silently skipping it.
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
 | TD0 | done | start `TD1` by mapping the remaining inline runtime tests into six concept-owned files that match the existing `runtime/tests/` pattern |
-| TD1 | done | start `TD2` by mapping the existing `TenantRuntime` delegation methods into grouped facade files under `crates/neovex-engine/src/tenant/` |
-| TD2 | done | start `TD3` by separating the principal-identity surface from the access-policy and read-filter compilation surface in `crates/neovex-core/src/auth.rs` |
-| TD3 | done | start `TD4` by separating the stateless request layer and shared browser helpers from the stateful `NeovexClient` entrypoint |
+| TD1 | done | start `TD2` by mapping the existing `TenantRuntime` delegation methods into grouped facade files under `crates/nimbus-engine/src/tenant/` |
+| TD2 | done | start `TD3` by separating the principal-identity surface from the access-policy and read-filter compilation surface in `crates/nimbus-core/src/auth.rs` |
+| TD3 | done | start `TD4` by separating the stateless request layer and shared browser helpers from the stateful `NimbusClient` entrypoint |
 | TD4 | done | start `TD5` by reconciling the docs, rerunning the repo-wide verification sweep, and archiving the completed plan |
 | TD5 | done | workstream closed; keep this record archived and start any future cleanup pass from a newly promoted active plan instead of reviving this one |
 
@@ -350,10 +350,10 @@ silently skipping it.
 
 #### Implementation plan
 
-1. Keep `crates/neovex-runtime/src/runtime.rs` as the production entrypoint plus
+1. Keep `crates/nimbus-runtime/src/runtime.rs` as the production entrypoint plus
    the shared `#[cfg(test)]` helpers and mock hosts.
 2. Extract the remaining inline tests into six concept-owned files under
-   `crates/neovex-runtime/src/runtime/tests/`:
+   `crates/nimbus-runtime/src/runtime/tests/`:
    `basic_invocation.rs`,
    `timeout_cancellation.rs`,
    `pool_reuse.rs`,
@@ -366,14 +366,14 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime --lib`
+- `cargo test -p nimbus-runtime --lib`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-runtime --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
-- `crates/neovex-runtime/src/runtime.rs` is no longer a 2700-line test-owned
+- `crates/nimbus-runtime/src/runtime.rs` is no longer a 2700-line test-owned
   god file
 - runtime tests live in obvious concept-owned files under `runtime/tests/`
 - runtime behavior is unchanged
@@ -383,8 +383,8 @@ silently skipping it.
 #### Implementation plan
 
 1. Keep `TenantRuntime`, guard structs, constructors, lifecycle, and
-   cross-domain diagnostics in `crates/neovex-engine/src/tenant.rs`.
-2. Extract grouped facade files under `crates/neovex-engine/src/tenant/` for:
+   cross-domain diagnostics in `crates/nimbus-engine/src/tenant.rs`.
+2. Extract grouped facade files under `crates/nimbus-engine/src/tenant/` for:
    document cache,
    materialized reads,
    mutation,
@@ -395,10 +395,10 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-engine --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-engine --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -410,7 +410,7 @@ silently skipping it.
 
 #### Implementation plan
 
-1. Convert `crates/neovex-core/src/auth.rs` into `crates/neovex-core/src/auth/`
+1. Convert `crates/nimbus-core/src/auth.rs` into `crates/nimbus-core/src/auth/`
    with `mod.rs` as the public entrypoint.
 2. Keep principal identity, principal snapshotting, and policy revision helpers
    in `auth/mod.rs`.
@@ -421,10 +421,10 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-core`
+- `cargo test -p nimbus-core`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
-- `cargo clippy -p neovex-core --all-targets -- -D warnings`
+- `cargo clippy -p nimbus-core --all-targets -- -D warnings`
 
 #### Acceptance criteria
 
@@ -436,18 +436,18 @@ silently skipping it.
 
 #### Implementation plan
 
-1. Move `NeovexHttpClient` and its related types into
-   `packages/neovex/src/http-client.ts`.
+1. Move `NimbusHttpClient` and its related types into
+   `packages/nimbus/src/http-client.ts`.
 2. Move the browser utility helpers into
-   `packages/neovex/src/browser-utils.ts`.
-3. Keep `packages/neovex/src/browser.ts` as the browser-client entrypoint that
-   owns `NeovexClient`, `NeovexReactClient`, and the public re-export surface.
+   `packages/nimbus/src/browser-utils.ts`.
+3. Keep `packages/nimbus/src/browser.ts` as the browser-client entrypoint that
+   owns `NimbusClient`, `NimbusReactClient`, and the public re-export surface.
 4. Preserve exports so `packages/convex` and other consumers continue to import
-   from `neovex/browser`.
+   from `nimbus/browser`.
 
 #### Focused verification
 
-- `npm run test --workspace neovex`
+- `npm run test --workspace nimbus`
 - `npm run build --workspaces --if-present`
 
 #### Acceptance criteria
@@ -473,7 +473,7 @@ silently skipping it.
 - `make check`
 - `make test`
 - `make clippy`
-- `npm run test --workspace neovex`
+- `npm run test --workspace nimbus`
 - `npm run build --workspaces --if-present`
 - `make ci` if practical
 
@@ -488,9 +488,9 @@ silently skipping it.
 
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
-| 2026-04-08 | TD0 | done | Reviewed the live post-queue-and-test-surface architecture and validated the next targeted cleanup seams in `runtime.rs`, `tenant.rs`, `auth.rs`, and `packages/neovex/src/browser.ts`. Confirmed that these are real domain splits rather than arbitrary line-count targets, and authored this new active cleanup control plane to own the next pass. | docs-only review and planning pass; no new code verification claimed in this handoff | start `TD1` by mapping the remaining inline runtime tests into six concept-owned files under `crates/neovex-runtime/src/runtime/tests/` |
-| 2026-04-08 | TD1 | done | Extracted the remaining inline runtime tests into six concept-owned files under `crates/neovex-runtime/src/runtime/tests/` and reduced `runtime.rs` from 2718 lines to a 502-line shared-harness root. | `cargo test -p neovex-runtime --lib`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-runtime --all-targets -- -D warnings` | start `TD2` by grouping the `TenantRuntime` delegation methods into domain facades under `crates/neovex-engine/src/tenant/` |
-| 2026-04-08 | TD2 | done | Extracted grouped `TenantRuntime` delegation methods into five tenant facade files and reduced `tenant.rs` to the tenant structure, constructors, lifecycle, and cross-domain diagnostics root. Updated `ARCHITECTURE.md` to reflect the new tenant facade layer. | `cargo test -p neovex-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-engine --all-targets -- -D warnings` | start `TD3` by converting `crates/neovex-core/src/auth.rs` into an `auth/` module tree with stable public re-exports |
-| 2026-04-08 | TD3 | done | Converted the flat auth file into `auth/mod.rs`, `auth/access.rs`, and `auth/tests.rs`, keeping principal identity and policy-revision helpers at the module root while moving access-policy evaluation behind `access.rs`. Updated `ARCHITECTURE.md` to reflect the new core auth ownership map. | `cargo test -p neovex-core`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p neovex-core --all-targets -- -D warnings` | start `TD4` by extracting `NeovexHttpClient` and browser helpers from `packages/neovex/src/browser.ts` |
-| 2026-04-08 | TD4 | done | Extracted the stateless HTTP request layer into `packages/neovex/src/http-client.ts` and the shared socket/auth/subscribe helpers into `packages/neovex/src/browser-utils.ts`, leaving `browser.ts` as the stateful browser-client entrypoint and public re-export surface. | `npm run test --workspace neovex`; `npm run build --workspaces --if-present` | start `TD5` by running the repo-wide verification sweep and archiving the completed plan cleanly |
-| 2026-04-08 | TD5 | done | Completed the full closure sweep, verified the Rust and JS workspaces, updated the plan index and `AGENTS.md`, and archived this control plane as a completed historical record. | `make check`; `make test`; `make clippy`; `npm run test --workspace neovex`; `npm run build --workspaces --if-present`; `make ci` failed for an environment-only reason because `cargo deny` could not lock `/Users/jack/.cargo/advisory-dbs/db.lock` on a read-only path | no further action in this plan; promote a new active plan for any future cleanup pass |
+| 2026-04-08 | TD0 | done | Reviewed the live post-queue-and-test-surface architecture and validated the next targeted cleanup seams in `runtime.rs`, `tenant.rs`, `auth.rs`, and `packages/nimbus/src/browser.ts`. Confirmed that these are real domain splits rather than arbitrary line-count targets, and authored this new active cleanup control plane to own the next pass. | docs-only review and planning pass; no new code verification claimed in this handoff | start `TD1` by mapping the remaining inline runtime tests into six concept-owned files under `crates/nimbus-runtime/src/runtime/tests/` |
+| 2026-04-08 | TD1 | done | Extracted the remaining inline runtime tests into six concept-owned files under `crates/nimbus-runtime/src/runtime/tests/` and reduced `runtime.rs` from 2718 lines to a 502-line shared-harness root. | `cargo test -p nimbus-runtime --lib`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-runtime --all-targets -- -D warnings` | start `TD2` by grouping the `TenantRuntime` delegation methods into domain facades under `crates/nimbus-engine/src/tenant/` |
+| 2026-04-08 | TD2 | done | Extracted grouped `TenantRuntime` delegation methods into five tenant facade files and reduced `tenant.rs` to the tenant structure, constructors, lifecycle, and cross-domain diagnostics root. Updated `ARCHITECTURE.md` to reflect the new tenant facade layer. | `cargo test -p nimbus-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings` | start `TD3` by converting `crates/nimbus-core/src/auth.rs` into an `auth/` module tree with stable public re-exports |
+| 2026-04-08 | TD3 | done | Converted the flat auth file into `auth/mod.rs`, `auth/access.rs`, and `auth/tests.rs`, keeping principal identity and policy-revision helpers at the module root while moving access-policy evaluation behind `access.rs`. Updated `ARCHITECTURE.md` to reflect the new core auth ownership map. | `cargo test -p nimbus-core`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy -p nimbus-core --all-targets -- -D warnings` | start `TD4` by extracting `NimbusHttpClient` and browser helpers from `packages/nimbus/src/browser.ts` |
+| 2026-04-08 | TD4 | done | Extracted the stateless HTTP request layer into `packages/nimbus/src/http-client.ts` and the shared socket/auth/subscribe helpers into `packages/nimbus/src/browser-utils.ts`, leaving `browser.ts` as the stateful browser-client entrypoint and public re-export surface. | `npm run test --workspace nimbus`; `npm run build --workspaces --if-present` | start `TD5` by running the repo-wide verification sweep and archiving the completed plan cleanly |
+| 2026-04-08 | TD5 | done | Completed the full closure sweep, verified the Rust and JS workspaces, updated the plan index and `AGENTS.md`, and archived this control plane as a completed historical record. | `make check`; `make test`; `make clippy`; `npm run test --workspace nimbus`; `npm run build --workspaces --if-present`; `make ci` failed for an environment-only reason because `cargo deny` could not lock `/Users/jack/.cargo/advisory-dbs/db.lock` on a read-only path | no further action in this plan; promote a new active plan for any future cleanup pass |

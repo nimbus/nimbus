@@ -1,7 +1,7 @@
 # VM Lifecycle Probes and Graceful Shutdown
 
 Research into canonical lifecycle probe patterns, health check models, and
-graceful shutdown mechanisms for neovex's microVM runtime.
+graceful shutdown mechanisms for nimbus's microVM runtime.
 
 **Date:** 2026-04-10
 **Status:** Research complete
@@ -150,7 +150,7 @@ with child's exit code.
 
 ---
 
-## Graceful Shutdown in libkrun (Neovex-Specific)
+## Graceful Shutdown in libkrun (Nimbus-Specific)
 
 ### What libkrun provides (and doesn't)
 
@@ -171,7 +171,7 @@ Modeled on Kata Containers (ttrpc over vsock) and libkrun's own AWS Nitro
 signal proxy (`src/aws_nitro/src/enclave/proxy/proxies/signal_handler.rs`).
 
 ```
-neovex (host)                              Guest VM
+nimbus (host)                              Guest VM
      │                                          │
      │  1. Connect to vsock port 10000          │
      ├─────────────────────────────────────────►│
@@ -179,7 +179,7 @@ neovex (host)                              Guest VM
      │  2. Send: SHUTDOWN {grace_period: 30s}   │
      ├─────────────────────────────────────────►│
      │                                          │
-     │                        3. neovex-init receives message
+     │                        3. nimbus-init receives message
      │                        4. SIGTERM → workload process group
      │                        5. waitpid with timeout (grace_period)
      │                        6. If timeout: SIGKILL remaining
@@ -193,7 +193,7 @@ neovex (host)                              Guest VM
      │   total timeout, SIGKILL the helper]     │
 ```
 
-### Why this requires a custom guest init (neovex-init)
+### Why this requires a custom guest init (nimbus-init)
 
 libkrun's built-in `init.c` (at `init/init.c:1230-1275`):
 - Forks and execs the workload
@@ -203,10 +203,10 @@ libkrun's built-in `init.c` (at `init/init.c:1230-1275`):
 - **Does NOT handle any signals**
 - **Has no grace period logic**
 
-neovex needs a custom init that adds: vsock listener, signal forwarding
+nimbus needs a custom init that adds: vsock listener, signal forwarding
 (tini/dumb-init style), grace period, and zombie reaping.
 
-### neovex-init design (~200 lines Rust, musl static binary)
+### nimbus-init design (~200 lines Rust, musl static binary)
 
 ```rust
 // Simplified structure
@@ -259,7 +259,7 @@ Result: ~1-2MB static binary, zero runtime dependencies.
 
 ---
 
-## Recommended Probe Model for Neovex
+## Recommended Probe Model for Nimbus
 
 ### VM States
 
@@ -374,7 +374,7 @@ handle.shutdown(grace_period: 30s)
     └── 4. Clean up: remove temp rootfs if ephemeral
 ```
 
-Inside the guest (neovex-init):
+Inside the guest (nimbus-init):
 ```
 Receive SHUTDOWN on vsock port 10000
     │

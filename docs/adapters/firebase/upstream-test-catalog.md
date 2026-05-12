@@ -1,7 +1,7 @@
 # Firebase Upstream Test Catalog
 
 This catalog tracks the upstream Firebase JS SDK Firestore integration corpus
-as a compatibility score for Neovex. It is not a blanket claim that the stock
+as a compatibility score for Nimbus. It is not a blanket claim that the stock
 Firebase browser or Node SDKs are already supported; it is the concrete list of
 which upstream tests look like early pass candidates, which ones are expected
 to fail on currently documented gaps, and which ones are deferred because they
@@ -26,7 +26,7 @@ These command surfaces come directly from
 | Firestore Lite node tests | `yarn test:lite` |
 | Firestore Lite browser tests | `yarn test:lite:browser` |
 
-The first Neovex compatibility target should stay narrow:
+The first Nimbus compatibility target should stay narrow:
 
 ```bash
 cd ~/src/github.com/firebase/firebase-js-sdk/packages/firestore
@@ -53,7 +53,7 @@ signal, but it needed a few local setup steps on 2026-04-25:
 
 3. `yarn build:deps` was required before the Firestore package could load its
    built dependency artifacts such as `@firebase/app/dist/index.cjs.js`.
-4. A Firebase-supported runtime was still needed after install/build. Neovex
+4. A Firebase-supported runtime was still needed after install/build. Nimbus
    installed `node@22` locally and ran the upstream node lane with:
 
    ```bash
@@ -66,10 +66,10 @@ signal, but it needed a few local setup steps on 2026-04-25:
    the Firestore test corpus hits Node's strip-only TypeScript parser on
    parameter properties before execution.
 
-5. A live local Neovex server was started for the smoke lane with:
+5. A live local Nimbus server was started for the smoke lane with:
 
    ```bash
-   target/debug/neovex start --port 8080 --data-dir /tmp/neovex-firebase-upstream
+   target/debug/nimbus start --port 8080 --data-dir /tmp/nimbus-firebase-upstream
    ```
 
 The result is no longer an environment-only blocker: representative upstream
@@ -116,7 +116,7 @@ Result:
 
 ### Representative fail lane
 
-The focused stock-Firebase smoke lane now reaches Neovex's live protocol
+The focused stock-Firebase smoke lane now reaches Nimbus's live protocol
 surface and fails for a real compatibility reason rather than for harness
 setup:
 
@@ -129,7 +129,7 @@ PATH="/opt/homebrew/opt/node@22/bin:$PATH" \
   test/integration/api/smoke.test.ts
 ```
 
-Observed result against the local Neovex server on `127.0.0.1:8080`:
+Observed result against the local Nimbus server on `127.0.0.1:8080`:
 
 - repeated `GrpcConnection RPC 'Write' stream ... Code: 12 Message: 12 UNIMPLEMENTED`
 - smoke failures reached at least:
@@ -144,7 +144,7 @@ setup issue.
 
 | File | Bucket | Why |
 |------|--------|-----|
-| `smoke.test.ts` | `expected fail` | The stock Node Firestore SDK reaches Neovex successfully, but current smoke runs fail on the upstream `Write` bidi RPC with `12 UNIMPLEMENTED`. |
+| `smoke.test.ts` | `expected fail` | The stock Node Firestore SDK reaches Nimbus successfully, but current smoke runs fail on the upstream `Write` bidi RPC with `12 UNIMPLEMENTED`. |
 | `batch_writes.test.ts` | `pass candidate` | Maps directly to the implemented atomic `Commit` path and client batch surface. |
 | `cursor.test.ts` | `pass candidate` | Exercises ordering/cursor query behavior that now exists in shared structured-query execution. |
 | `transactions.test.ts` | `pass candidate` | Matches the landed transaction-session manager plus transactional query read support. |
@@ -152,18 +152,18 @@ setup issue.
 | `numeric_transforms.test.ts` | `pass candidate` | Lines up with shared numeric transform behavior already exercised end to end. |
 | `server_timestamp.test.ts` | `mixed` | Core server timestamp support exists, but offline/network subsections should not be used as an early gate. |
 | `query.test.ts` | `mixed` | Large file with many supported query cases, but it also includes cache/offline-oriented subsections that should be split from the first gate. |
-| `aggregation.test.ts` | `mixed` | Count is a good candidate; `sum` / `average` remain explicitly unsupported in Neovex today, so those subsections should start in the expected-fail bucket. |
-| `composite_index_query.test.ts` | `expected fail` | Neovex now surfaces missing-index errors, but this file also covers richer aggregation and enterprise/index permutations beyond the current claim. |
-| `fields.test.ts` | `expected fail` | Upstream nested-field/path helper coverage is broader than the current `@neovex/firebase` field-path surface. |
+| `aggregation.test.ts` | `mixed` | Count is a good candidate; `sum` / `average` remain explicitly unsupported in Nimbus today, so those subsections should start in the expected-fail bucket. |
+| `composite_index_query.test.ts` | `expected fail` | Nimbus now surfaces missing-index errors, but this file also covers richer aggregation and enterprise/index permutations beyond the current claim. |
+| `fields.test.ts` | `expected fail` | Upstream nested-field/path helper coverage is broader than the current `@nimbus/firebase` field-path surface. |
 | `validation.test.ts` | `mixed` | The narrow `Collection paths` subset passes under the upstream node harness; broader persistence/network/emulator timing coverage still exceeds the present claim. |
 | `database.test.ts` | `mixed` | Narrow local/reference subsets pass (for example auto-ID generation), but the file also mixes CRUD, persistence, `onSnapshotsInSync`, `waitForPendingWrites`, vector APIs, and named database behavior. |
-| `get_options.test.ts` | `expected fail` | Depends on cache-only and network-toggle APIs that Neovex does not implement yet. |
+| `get_options.test.ts` | `expected fail` | Depends on cache-only and network-toggle APIs that Nimbus does not implement yet. |
 | `bundle.test.ts` | `deferred` | Requires bundle loading and `namedQuery`, which are outside the current scope. |
 | `snapshot_listener_source.test.ts` | `deferred` | Depends on source/cache-aware listener semantics that are not part of the current watch claim. |
 | `provider.test.ts` | `deferred` | Focuses on provider/cache/persistence configuration, not current protocol parity. |
 | `persistent_cache_index_manager.test.ts` | `deferred` | Persistent cache index management is outside scope. |
 | `index_configuration.test.ts` | `deferred` | Persistent/local index configuration is outside scope. |
-| `pipeline.test.ts` | `deferred` | Exercises Firestore pipeline/vector/search APIs that Neovex does not claim. |
+| `pipeline.test.ts` | `deferred` | Exercises Firestore pipeline/vector/search APIs that Nimbus does not claim. |
 | `query_to_pipeline.test.ts` | `deferred` | Same as `pipeline.test.ts`; not part of the current Firestore adapter target. |
 | `type.test.ts` | `deferred` | Type-surface checks are useful later, but not the first protocol-compatibility gate. |
 

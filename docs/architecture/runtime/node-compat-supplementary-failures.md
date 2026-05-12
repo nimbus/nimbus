@@ -9,7 +9,7 @@ Green slice:
 - `supplementary-module-resolution-bridge`
 - `supplementary-global-injection-fidelity`
 
-Configured slice pending Neovex runtime verification:
+Configured slice pending Nimbus runtime verification:
 
 - none
 
@@ -21,9 +21,9 @@ Green runtime supplementary slice:
 Active measured failure slice:
 
 - `supplementary-process-release-shape`
-  - `node20`: reports `v22.0.0-neovex` instead of a Node20 version line
+  - `node20`: reports `v22.0.0-nimbus` instead of a Node20 version line
   - `node22`: omits the expected `process.release.lts` label
-  - `node24`: reports `v22.0.0-neovex` instead of a Node24 version line
+  - `node24`: reports `v22.0.0-nimbus` instead of a Node24 version line
 - `supplementary-signal-listener-lifecycle`
   - `node20`: `process.on('SIGINT', ...)` reaches unavailable
     `Deno.addSignalListener`

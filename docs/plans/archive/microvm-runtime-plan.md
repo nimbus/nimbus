@@ -1,12 +1,12 @@
 # Plan: MicroVM Runtime — OCI Image Execution in Hardware-Isolated VMs
 
-Canonical plan for adding a microVM-based runtime to neovex that runs
+Canonical plan for adding a microVM-based runtime to nimbus that runs
 OCI/Docker images in hardware-isolated microVMs, enabling V8 isolates to
 interact with containerized services via TSI networking.
 
 Builds on `vmm-infrastructure-plan.md` (patched crun, conmon, system deps).
 
-**Platform scope: Linux.** On macOS, the neovex server runs inside a Linux
+**Platform scope: Linux.** On macOS, the nimbus server runs inside a Linux
 machine VM (see `distribution-plan.md` Channel 4). Services run as standard
 containers (crun, no krun handler) — the same way Podman runs containers on
 macOS. The API surface is identical. MicroVM isolation is a Linux production
@@ -25,7 +25,7 @@ supports the same conclusion from source.
 - **Activation gate:** met on 2026-04-12 after
   `vmm-infrastructure-plan.md` reached V3 closeout on a real Linux host and
   `docs/plans/archive/runtime-sandbox-architecture-plan.md` had already landed
-  the canonical `neovex-sandbox` seam
+  the canonical `nimbus-sandbox` seam
 - **Related plans:**
   - `docs/plans/archive/runtime-sandbox-architecture-plan.md` — completed
     baseline that owns the canonical sandbox crate naming and the server-facing
@@ -33,7 +33,7 @@ supports the same conclusion from source.
   - `docs/plans/archive/service-control-plane-plan.md` — completed companion
     plan for
     the Compose-backed service control plane: project identity, control-root
-    layout, backend-owned lifecycle state, and `neovex service ...` command
+    layout, backend-owned lifecycle state, and `nimbus service ...` command
     semantics
   - `vmm-infrastructure-plan.md` — completed VMM foundation (crun fork,
     conmon, deps, Linux validation evidence)
@@ -45,7 +45,7 @@ supports the same conclusion from source.
   Debian 13 validation for patched `crun`, `conmon`, libkrun/libkrunfw,
   host-to-guest TSI connectivity, manifest-backed restart recovery, and log
   persistence.
-- `crates/neovex-sandbox/src/backends/krun/` already owns the first concrete
+- `crates/nimbus-sandbox/src/backends/krun/` already owns the first concrete
   backend skeleton: `bundle.rs`, `command.rs`, `conmon.rs`, `buildah.rs`, and
   `vm.rs`.
 - `buildah.rs` now owns the first typed `BuildahCli` wrapper for pull/build/
@@ -109,7 +109,7 @@ supports the same conclusion from source.
   recovers to `Ready` with endpoints and HTTP connectivity restored.
 - The companion `service-control-plane-plan.md` is now complete. Project-
   scoped control roots, backend-owned persisted-state discovery, explicit
-  `neovex service ...` commands, and the compose-backed main serve path are
+  `nimbus service ...` commands, and the compose-backed main serve path are
   all implemented and Linux-verified, so M5 is closed rather than awaiting
   further lifecycle wiring.
 - The restart-policy slice is now Linux-verified. `SandboxSpec` carries a
@@ -130,17 +130,17 @@ supports the same conclusion from source.
   starting httpd takes ~10s total (visible backoff), reaches `Ready` on port
   18088, with `restart_count: 2` and 3 boots confirmed in rootfs marker.
 - Guest-side user switching is now Linux-verified. The krun backend rewrites
-  execute args to launch a statically-linked `neovex-guest-user-switch` helper
+  execute args to launch a statically-linked `nimbus-guest-user-switch` helper
   (built via musl) only when image metadata carries a resolved numeric `USER`.
-  It injects `NEOVEX_GUEST_UID` / `NEOVEX_GUEST_GID` into the guest env, and
-  bind-mounts a backend-owned helper root into `/.neovex` so the host-side VMM
+  It injects `NIMBUS_GUEST_UID` / `NIMBUS_GUEST_GID` into the guest env, and
+  bind-mounts a backend-owned helper root into `/.nimbus` so the host-side VMM
   stays root while the guest workload drops to the image user. Linux proof
   (2026-04-13): a BusyBox image with `USER www-data` → guest `id -u` reports
   `33`, `id -g` reports `33` (via ctr.log), HTTP on port 18089 confirmed.
   Key finding: virtiofs in rootless krun VMs maps guest uid through the host
   user namespace, so non-root guests cannot write to the rootfs overlay;
   proof was captured via stderr/ctr.log instead of rootfs files.
-- `neovex-server` now owns the M4 service-registry seam. `SandboxCatalog`
+- `nimbus-server` now owns the M4 service-registry seam. `SandboxCatalog`
   lists tenant sandboxes, `service_registry.rs` projects ready sandboxes'
   published endpoints into serializable `InvocationServices`, and runtime
   invocations carry that snapshot into V8 as `ctx.services.*`. The same server
@@ -157,14 +157,14 @@ supports the same conclusion from source.
   still benefit from per-invocation `ctx.services` caching.
 - The sandbox seam now exposes generic source-specific launch nouns alongside
   `SandboxSpec`: `SandboxImageLaunchSpec`, `SandboxBuildLaunchSpec`, and
-  `SandboxImageProcessOverrides` are public `neovex-sandbox` types, and
+  `SandboxImageProcessOverrides` are public `nimbus-sandbox` types, and
   `SandboxBackend` now has matching `start_from_image(...)` /
   `start_from_build(...)` entrypoints. `SandboxSpec` remains the resolved
   filesystem/process/resources/port intent instead of being overloaded with
   image/build-source concerns, so krun-specific image launch is no longer
   trapped behind backend-local public types.
 - M4 now has a real server-owned manager implementation, not just a registry
-  seam. `neovex-server` exports `SandboxServiceManager` plus
+  seam. `nimbus-server` exports `SandboxServiceManager` plus
   `SandboxServiceCatalog` / `SandboxServiceLaunch` nouns, and the manager owns
   declared sandbox-backed services, starts them through the generic
   `SandboxBackend` entrypoints on first `ctx.services.<name>` access, polls for
@@ -173,7 +173,7 @@ supports the same conclusion from source.
   declared `db` service starts exactly once through a fake backend, waits for
   readiness, returns port `15432`, remains visible in later snapshots, and is
   stopped when the tenant is deleted through the HTTP API.
-- M5 is complete under `service-control-plane-plan.md`. In `neovex-bin`, the
+- M5 is complete under `service-control-plane-plan.md`. In `nimbus-bin`, the
   `service/compose.rs` adapter parses `compose.yaml`,
   resolves image/build source, env + env_file, ports, restart policy, and
   CPU/memory limits into a typed service plan, validates lowerable
@@ -181,7 +181,7 @@ supports the same conclusion from source.
   lowerable lifecycle config (`restart` plus `stop_grace_period`) against the
   generic `SandboxLifecycleSpec` seam, validates the declared-service catalog
   handoff into the server-owned manager seam, and now has an explicit
-  `neovex --compose-file ...` serve-path hook that builds a
+  `nimbus --compose-file ...` serve-path hook that builds a
   `SandboxServiceManager` with the default krun backend config. The service
   CLI now exposes `config`, `up`, `down`, `list`, `inspect`, `logs`, and `ps`
   through the same project/control-root derivation plus the same
@@ -202,7 +202,7 @@ supports the same conclusion from source.
   host user namespace can't switch to arbitrary UIDs. The correct path is
   guest-side user switching via an explicit guest helper/wrapper seam. The
   image USER is resolved, stored in manifest metadata, and lowered into
-  guest helper env (`NEOVEX_GUEST_UID` / `NEOVEX_GUEST_GID`) plus a mounted
+  guest helper env (`NIMBUS_GUEST_UID` / `NIMBUS_GUEST_GID`) plus a mounted
   static helper binary. Linux proof complete: www-data (33:33) confirmed via
   ctr.log capture. M3 is complete.
 - The `STOPSIGNAL` path is fully verified: the backend sends the
@@ -273,8 +273,8 @@ supports the same conclusion from source.
   `libpod/sqlite_state.go`, `pkg/domain/infra/abi/containers.go`) and read
   inspect/log data from runtime-owned container records plus persistent
   `StaticDir` content (`container_config.go`, `runtime_ctr.go`,
-  `container_inspect.go`, `container_log.go`). Neovex should mirror that split:
-  Compose stays an input and translation layer, while `neovex service
+  `container_inspect.go`, `container_log.go`). Nimbus should mirror that split:
+  Compose stays an input and translation layer, while `nimbus service
   up/down/list/logs/inspect` should resolve against backend-owned sandbox
   manifests/logs under a project-scoped control root. Do not add a second
   CLI-owned project state file; if richer operator UX is needed, add a
@@ -292,7 +292,7 @@ supports the same conclusion from source.
   override semantics before a runnable sandbox spec exists. Local proof now
   covers both image-backed and build-backed launches through the public
   `SandboxBackend` trait surface.
-- The service-manager design is now explicit in code: `neovex-server`
+- The service-manager design is now explicit in code: `nimbus-server`
   separates declared services (`SandboxServiceCatalog` / `SandboxServiceLaunch`)
   from active handles (`SandboxCatalog`), validates tenant/service/backend
   alignment before start, and reuses active handles once a service has been
@@ -300,9 +300,9 @@ supports the same conclusion from source.
   `ctx.services` startup, and tenant-delete stop/cleanup with a fake backend.
   Linux-host end-to-end proof with a real krun-backed service under the
   manager is complete.
-- M5 is now complete: `neovex-bin` owns the Compose translation and CLI seam
-  instead of pushing YAML parsing into `neovex-sandbox` or `neovex-server`.
-  `neovex service config` validates the supported Compose subset and prints a
+- M5 is now complete: `nimbus-bin` owns the Compose translation and CLI seam
+  instead of pushing YAML parsing into `nimbus-sandbox` or `nimbus-server`.
+  `nimbus service config` validates the supported Compose subset and prints a
   resolved service plan, while `--services` lists service names only. That
   validation now reaches down into the actual launch seam for lowerable
   process overrides: Compose `command`, `entrypoint`, `working_dir`, and
@@ -313,7 +313,7 @@ supports the same conclusion from source.
   timeout overrides before falling back to the backend default. The same
   adapter now lowers validated services into a typed declared-service catalog
   that implements `SandboxServiceCatalog`, so the server manager handoff is no
-  longer hypothetical. `neovex-bin` now also has an explicit `--compose-file`
+  longer hypothetical. `nimbus-bin` now also has an explicit `--compose-file`
   startup hook that constructs a real `SandboxServiceManager`; with Convex
   enabled, the main serve path can now carry that manager into the runtime
   registry seam without additional glue. Fractional
@@ -347,12 +347,12 @@ Source of truth:
 
 ## Problem Statement
 
-Developers provide Dockerfiles, registry refs, or local images. neovex runs
+Developers provide Dockerfiles, registry refs, or local images. nimbus runs
 them as long-running services in hardware-isolated microVMs. V8 isolates
 interact with those services via TCP (through TSI).
 
 ```
-Developer provides:              neovex does:
+Developer provides:              nimbus does:
   Dockerfile                 →   buildah bud (build)
   registry ref (postgres:16) →   buildah from (pull)
   local image                →   buildah from (import)
@@ -397,7 +397,7 @@ SIGQUIT during shutdown.
 
 ```text
 crates/
-  neovex-sandbox/             # NEW: isolation/orchestration crate
+  nimbus-sandbox/             # NEW: isolation/orchestration crate
     src/
       lib.rs                  # Stable sandbox API, launch specs, handles
       spec.rs                 # SandboxSpec / service-level launch config
@@ -418,12 +418,12 @@ crates/
 
 ### Crate dependency rules
 
-- **`neovex-sandbox` depends on `neovex-core` only** — types and config
+- **`nimbus-sandbox` depends on `nimbus-core` only** — types and config
 - **No OCI image crates needed** — buildah handles everything
 - **No C dependencies** — crun/conmon/buildah are system binaries
-- Server wires `neovex-sandbox` to the engine via dependency inversion
+- Server wires `nimbus-sandbox` to the engine via dependency inversion
 
-### What `neovex-sandbox`'s first `krun` backend does NOT implement
+### What `nimbus-sandbox`'s first `krun` backend does NOT implement
 
 | Capability | Handled by |
 |-----------|-----------|
@@ -454,7 +454,7 @@ serde_yaml = "0.9"     # parse compose.yaml (Compose Spec)
 ```
 
 No `oci-client`. No `oci-spec`. No `flate2`. No `tar`. No `sha2`. buildah
-handles image management. `neovex-sandbox`'s first `krun` backend is a thin
+handles image management. `nimbus-sandbox`'s first `krun` backend is a thin
 orchestration layer that:
 - Parses `compose.yaml` (serde_yaml)
 - Shells out to buildah (image pull/build/mount)
@@ -467,12 +467,12 @@ orchestration layer that:
 
 ### Phase M1: buildah Integration
 
-**Goal:** neovex can pull, build, mount, inspect, and clean up OCI images via
+**Goal:** nimbus can pull, build, mount, inspect, and clean up OCI images via
 buildah through a typed Rust wrapper instead of ad hoc command strings.
 
 **Scope:**
 
-`crates/neovex-sandbox/src/backends/krun/buildah.rs`:
+`crates/nimbus-sandbox/src/backends/krun/buildah.rs`:
 ```rust
 pub struct BuildahCli { /* binary path + rootless wrapping policy */ }
 
@@ -519,7 +519,7 @@ impl BuildahCli {
 
 **Scope:**
 
-`crates/neovex-sandbox/src/backends/krun/bundle.rs`:
+`crates/nimbus-sandbox/src/backends/krun/bundle.rs`:
 - Generate OCI `config.json` per the runtime spec
 - Set `process.args` from image Entrypoint + Cmd
 - Set `process.env` from image Env + service-level overrides
@@ -536,7 +536,7 @@ impl BuildahCli {
 - Materialize backend-owned `/.krun_vm.json` when explicit whole-vCPU counts
   are requested so crun's krun handler can call `krun_set_vm_config()`
 
-`crates/neovex-sandbox/src/backends/krun/port_manager.rs`:
+`crates/nimbus-sandbox/src/backends/krun/port_manager.rs`:
 ```rust
 pub struct PortManager {
     range: RangeInclusive<u16>,   // default: 15000..=16000
@@ -561,7 +561,7 @@ get different host ports (e.g., 15000 and 15001).
 
 **Scope:**
 
-`crates/neovex-sandbox/src/backends/krun/lifecycle.rs`:
+`crates/nimbus-sandbox/src/backends/krun/lifecycle.rs`:
 
 ```rust
 pub enum VmState {
@@ -612,12 +612,12 @@ Any → [shutdown] → ShuttingDown → Exited/Crashed
 
 Shutdown (same as Podman):
 ```
-neovex requests stop
+nimbus requests stop
   → conmon sends StopSignal to crun/VMM process
   → wait shutdown_grace (default 30s)
   → conmon sends SIGKILL
   → VM dies, conmon writes exit file
-  → neovex reads exit status
+  → nimbus reads exit status
 ```
 
 **Implementation references:**
@@ -637,16 +637,16 @@ neovex requests stop
 **Goal:** V8 isolates can access VM services.
 
 **Scope:**
-- `neovex-sandbox` owns the generic backend and launch nouns
+- `nimbus-sandbox` owns the generic backend and launch nouns
   (`SandboxSpec`, `SandboxImageLaunchSpec`, `SandboxBuildLaunchSpec`,
   `SandboxBackend`)
-- `neovex-server` owns the service manager, service registry, and
+- `nimbus-server` owns the service manager, service registry, and
   `ctx.services.<name>` projection so the sandbox crate does not become a
   second server layer
 - V8 adapter wiring exposes `ctx.services.<name>.port` from the server-managed
   service registry
 - V8 connects to services via standard TCP (through TSI)
-- neovex does NOT implement protocol-specific clients — V8 uses JS driver
+- nimbus does NOT implement protocol-specific clients — V8 uses JS driver
   libraries (pg, ioredis, fetch)
 
 ```javascript
@@ -660,8 +660,8 @@ await client.connect();
 const result = await client.query("SELECT 1");
 ```
 
-**Future (v2):** Add a TCP proxy in neovex for tenant isolation, audit
-logging, rate limiting. Same TSI transport, neovex in the data path.
+**Future (v2):** Add a TCP proxy in nimbus for tenant isolation, audit
+logging, rate limiting. Same TSI transport, nimbus in the data path.
 
 **Acceptance criteria:**
 - V8 function connects to postgres VM via TSI port, runs query
@@ -684,10 +684,10 @@ definition format. Do not invent a custom format. Developers already know
 Compose, tooling exists (VS Code, `docker compose config` validation), and
 the same file works with `docker compose up` for local testing.
 
-neovex-specific extensions use the Compose Spec's official `x-` extension
+nimbus-specific extensions use the Compose Spec's official `x-` extension
 mechanism.
 
-**Example `compose.yaml` (works with both Docker and neovex):**
+**Example `compose.yaml` (works with both Docker and nimbus):**
 
 ```yaml
 services:
@@ -738,7 +738,7 @@ volumes:
   pgdata:
 ```
 
-**Compose fields neovex supports:**
+**Compose fields nimbus supports:**
 
 | Compose field | Maps to | Notes |
 |---|---|---|
@@ -765,7 +765,7 @@ volumes:
 | `working_dir` | OCI config `process.cwd` | Directory path |
 | `labels` | Service metadata | Key-value map |
 
-**Compose fields neovex ignores (with warnings):**
+**Compose fields nimbus ignores (with warnings):**
 
 | Compose field | Why ignored |
 |---|---|
@@ -774,26 +774,26 @@ volumes:
 | `cap_add` / `cap_drop` | VM provides isolation |
 | `privileged` | VM provides isolation |
 | `logging.driver` | conmon handles logging |
-| `deploy.replicas` | neovex handles scaling separately |
+| `deploy.replicas` | nimbus handles scaling separately |
 | `deploy.placement` | Single-node for now |
 
-**neovex extensions (`x-neovex`):**
+**nimbus extensions (`x-nimbus`):**
 
 ```yaml
 services:
   db:
     image: postgres:16
-    x-neovex:
+    x-nimbus:
       idle_timeout: 5m          # stop VM after idle (future)
       snapshot: true             # enable snapshot/restore (future)
 ```
 
 **Parsing:** Use `serde_yaml` to parse `compose.yaml`. The Compose Spec is
 well-defined YAML. Unknown fields are ignored (forward compatibility).
-`x-neovex` fields are parsed into a neovex-specific struct.
+`x-nimbus` fields are parsed into a nimbus-specific struct.
 
 ```toml
-# crates/neovex-sandbox/Cargo.toml — add:
+# crates/nimbus-sandbox/Cargo.toml — add:
 [dependencies]
 serde_yaml = "0.9"
 ```
@@ -810,60 +810,60 @@ serde_yaml = "0.9"
 
 ```bash
 # Service management
-neovex service up                    # start all services from compose.yaml
-neovex service up db                 # start specific service
-neovex service down                  # stop all services
-neovex service down db               # stop specific service
-neovex service list                  # show running VMs with state and ports
-neovex service logs db               # tail conmon log files
-neovex service logs db --follow      # stream logs
-neovex service restart db            # stop + start
-neovex service ps                    # show VM process tree
+nimbus service up                    # start all services from compose.yaml
+nimbus service up db                 # start specific service
+nimbus service down                  # stop all services
+nimbus service down db               # stop specific service
+nimbus service list                  # show running VMs with state and ports
+nimbus service logs db               # tail conmon log files
+nimbus service logs db --follow      # stream logs
+nimbus service restart db            # stop + start
+nimbus service ps                    # show VM process tree
 
 # Compose file management
-neovex service config                # validate and print resolved config
-neovex service config --services     # list service names
+nimbus service config                # validate and print resolved config
+nimbus service config --services     # list service names
 
 # Diagnostics
-neovex service inspect db            # show VM details (ports, state, resources)
-neovex service health db             # show health check status
+nimbus service inspect db            # show VM details (ports, state, resources)
+nimbus service health db             # show health check status
 ```
 
-**CLI naming convention:** `neovex service <verb>` mirrors `docker compose <verb>`.
+**CLI naming convention:** `nimbus service <verb>` mirrors `docker compose <verb>`.
 Developers can use muscle memory.
 
-| neovex command | Docker equivalent |
+| nimbus command | Docker equivalent |
 |---|---|
-| `neovex service up` | `docker compose up` |
-| `neovex service down` | `docker compose down` |
-| `neovex service logs` | `docker compose logs` |
-| `neovex service ps` | `docker compose ps` |
-| `neovex service config` | `docker compose config` |
+| `nimbus service up` | `docker compose up` |
+| `nimbus service down` | `docker compose down` |
+| `nimbus service logs` | `docker compose logs` |
+| `nimbus service ps` | `docker compose ps` |
+| `nimbus service config` | `docker compose config` |
 
 #### Error messages
 
 | Error | Message |
 |---|---|
-| `/dev/kvm` missing | `Error: /dev/kvm not found. Enable VT-x in BIOS (bare metal) or nested virtualization (cloud VM). See https://neovex.dev/docs/kvm` |
-| crun not installed | `Error: crun not found. Install with: apt install agentstation-crun (Debian) or dnf install agentstation-crun (Fedora). See https://neovex.dev/install` |
+| `/dev/kvm` missing | `Error: /dev/kvm not found. Enable VT-x in BIOS (bare metal) or nested virtualization (cloud VM). See https://github.com/nimbus/nimbus/blob/main/docs/operating/kvm.md` |
+| crun not installed | `Error: crun not found. Install with: apt install nimbus-crun (Debian) or dnf install nimbus-crun (Fedora). See https://github.com/nimbus/nimbus/blob/main/docs/operating/install.md` |
 | conmon not installed | `Error: conmon not found. Install with: apt install conmon` |
 | buildah not installed | `Error: buildah not found. Install with: apt install buildah` |
-| libkrun not installed | `Error: libkrun.so not found. See https://neovex.dev/install` |
+| libkrun not installed | `Error: libkrun.so not found. See https://github.com/nimbus/nimbus/blob/main/docs/operating/install.md` |
 | Image pull failed | `Error: failed to pull postgres:16 — auth required. Run: buildah login docker.io` |
 | Dockerfile build failed | `Error: buildah build failed (exit code 1). See build output above.` |
-| VM crashed | `Error: service 'db' crashed (exit code 137, signal SIGKILL). Check logs: neovex service logs db` |
+| VM crashed | `Error: service 'db' crashed (exit code 137, signal SIGKILL). Check logs: nimbus service logs db` |
 | Health check failed | `Warning: service 'db' health check failing (3/3 retries). State: NotReady` |
 | Port conflict | `Error: host port 15432 already in use. Choose a different port mapping.` |
 | compose.yaml invalid | `Error: compose.yaml: services.db.deploy.resources.limits.memory: invalid value "abc". Expected format: 256M, 1G, etc.` |
-| Unsupported Compose field | `Warning: compose.yaml: services.db.networks: ignored (neovex uses TSI networking)` |
+| Unsupported Compose field | `Warning: compose.yaml: services.db.networks: ignored (nimbus uses TSI networking)` |
 
 **Acceptance criteria:**
 - `compose.yaml` with postgres + custom API service works end-to-end
 - Same `compose.yaml` also works with `docker compose up` for local testing
-- `neovex service up/down/logs/ps/config` commands work
+- `nimbus service up/down/logs/ps/config` commands work
 - Clear errors for every failure mode
 - Unknown Compose fields produce warnings, not errors
-- `x-neovex` extensions are parsed and applied
+- `x-nimbus` extensions are parsed and applied
 
 ---
 
@@ -875,24 +875,24 @@ Developers can use muscle memory.
 | M2: OCI bundle generation | `done` | M1 | All M2 components Linux-verified on Debian 13: image USER resolved and stored in manifest (bundle forces root for VMM /dev/kvm), image STOPSIGNAL honored during shutdown, auto-port-assignment from image EXPOSE proven with distinct allocation and reuse after stop, resource limits lowered into OCI `linux.resources.memory.limit` and `/.krun_vm.json` for both direct-rootfs and image-backed paths. Guest-side user switching deferred to M3 |
 | M3: Lifecycle management | `done` | M2 | Startup-readiness, liveness (NotReady/Ready transitions), restart policy (OnFailure crash-then-recover), and exponential restart backoff are Linux-verified. Guest-side user switching is Linux-verified via a statically-linked guest helper that drops to image uid:gid (www-data 33:33 proven via ctr.log). Key finding: virtiofs in rootless krun VMs maps guest uid through host user namespace so non-root guests cannot write to the rootfs overlay |
 | M4: Engine integration | `done` | M3 | local slices landed: server-owned service-registry projection to `ctx.services.*`, lazy per-name lookup/caching, an activation-capable blocking `ensure_service_binding(...)` seam, generic sandbox image/build launch entrypoints on `SandboxBackend`, and a server-owned `SandboxServiceManager` that starts declared services on first reference and stops them on tenant deletion in local tests. A checked-in ignored Linux-host smoke lane now exists for the real krun-backed manager path; Linux-verified on Debian 13 (2026-04-13): V8 function ctx.services.db.port triggered real krun service activation via SandboxServiceManager, HTTP connectivity confirmed on TSI port 18090, tenant deletion stopped service and released port. Sandbox db-01kp3ktd3gy7gjsbqwrxbaeant reached Ready then Stopped with exit code 137 after clean teardown |
-| M5: Developer experience | `done` | M4 | local Compose/CLI seam is active in `neovex-bin`: `neovex service config` parses/validates Compose YAML, prints a resolved typed service plan, supports `--services`, warns on ignored fields, resolves env_file + resource limits locally, validates lowerable process overrides (`command`, `entrypoint`, `working_dir`, `user`) against the sandbox launch seam, validates lifecycle overrides (`restart`, `stop_grace_period`) against `SandboxLifecycleSpec` with per-sandbox krun stop-timeout support, lowers validated services into a typed `SandboxServiceCatalog` bridge for the server manager, exposes an explicit `--compose-file` startup hook in the main binary, and now has backend-owned persisted-state plus local `service up` / `service down` / `service list` / `service inspect` / `service logs` / `service ps` wiring under the service-control-plane plan. Linux-verified on Debian 13 (2026-04-13) using hardened helpers from `81cf133`: compose-serve passed (~6.9s), recovery drill all checks passed. Evidence: project_key=`smoke-app-cf079a18bd54`, sandbox=`db-01kp3yamn6rb2dtwbk0wn1t8tz`, status=stopped, shutdown_requested=True, exit_code=137, no leaked ports, no orphan processes, ctr+oci logs persist |
+| M5: Developer experience | `done` | M4 | local Compose/CLI seam is active in `nimbus-bin`: `nimbus service config` parses/validates Compose YAML, prints a resolved typed service plan, supports `--services`, warns on ignored fields, resolves env_file + resource limits locally, validates lowerable process overrides (`command`, `entrypoint`, `working_dir`, `user`) against the sandbox launch seam, validates lifecycle overrides (`restart`, `stop_grace_period`) against `SandboxLifecycleSpec` with per-sandbox krun stop-timeout support, lowers validated services into a typed `SandboxServiceCatalog` bridge for the server manager, exposes an explicit `--compose-file` startup hook in the main binary, and now has backend-owned persisted-state plus local `service up` / `service down` / `service list` / `service inspect` / `service logs` / `service ps` wiring under the service-control-plane plan. Linux-verified on Debian 13 (2026-04-13) using hardened helpers from `81cf133`: compose-serve passed (~6.9s), recovery drill all checks passed. Evidence: project_key=`smoke-app-cf079a18bd54`, sandbox=`db-01kp3yamn6rb2dtwbk0wn1t8tz`, status=stopped, shutdown_requested=True, exit_code=137, no leaked ports, no orphan processes, ctr+oci logs persist |
 
 ---
 
 ## Open Questions
 
-1. **buildah mount persistence:** Does `buildah mount` survive neovex restart?
-   If not, neovex must remount on startup.
+1. **buildah mount persistence:** Does `buildah mount` survive nimbus restart?
+   If not, nimbus must remount on startup.
 2. **Volume persistence:** Compose `volumes:` maps to virtiofs additional
-   mounts. Named volumes need host-side storage managed by neovex.
-3. **conmon log rotation:** Does conmon rotate logs, or does neovex need to
+   mounts. Named volumes need host-side storage managed by nimbus.
+3. **conmon log rotation:** Does conmon rotate logs, or does nimbus need to
    manage log file size?
 4. **Compose fractional CPU values:** The current M5 config adapter rounds
    fractional values like `cpus: "0.5"` up to the next whole guest vCPU with a
    warning because krun only accepts whole vCPU counts today. The remaining
    question is whether a later quota abstraction should replace or refine that
    policy.
-5. **`depends_on: condition: service_healthy`:** neovex must start services
+5. **`depends_on: condition: service_healthy`:** nimbus must start services
    in dependency order and wait for health checks. How to handle circular deps?
 6. **Inter-service networking:** In Compose, `db` resolves to the db
    service's IP. With TSI, services connect via `localhost:port`. How do we
@@ -908,7 +908,7 @@ Before M5, keep verification split across four lanes:
   lifecycle state transitions
 - integration tests for `buildah`, `conmon`, patched `crun`, and libkrun on a
   KVM-capable host
-- recovery drills for neovex restart, orphan detection, log persistence, and
+- recovery drills for nimbus restart, orphan detection, log persistence, and
   port release after crash or forced stop
 - distribution probes on supported packaging targets before calling the stack
   production-ready
@@ -922,18 +922,18 @@ Before M5, keep verification split across four lanes:
   `--test-threads=1` because the two tests use different default ports
   (`18080` rootfs-only, `18081` image-backed).
 - Required environment for the ignored suite:
-  - `NEOVEX_KRUN_SMOKE_ROOTFS` — extracted BusyBox rootfs directory
-  - `NEOVEX_KRUN_SMOKE_WORKDIR` — scratch directory for bundle/state
-  - `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`
-  - `NEOVEX_KRUN_SMOKE_CONMON=$(command -v conmon)`
-  - `NEOVEX_KRUN_SMOKE_BUILDAH=$(command -v buildah)`
+  - `NIMBUS_KRUN_SMOKE_ROOTFS` — extracted BusyBox rootfs directory
+  - `NIMBUS_KRUN_SMOKE_WORKDIR` — scratch directory for bundle/state
+  - `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`
+  - `NIMBUS_KRUN_SMOKE_CONMON=$(command -v conmon)`
+  - `NIMBUS_KRUN_SMOKE_BUILDAH=$(command -v buildah)`
 - **M2 Linux verification is complete** (2026-04-13). Resource limits verified
   via `scripts/verify-microvm-m2-resource-limits-helper.sh`:
   - direct-rootfs: `/.krun_vm.json` = `{"cpus":2,"ram_mib":256}`,
     `linux.resources.memory.limit = 268435456`, TSI HTTP OK on port 18083
   - image-backed: `/.krun_vm.json` = `{"cpus":2,"ram_mib":256}`,
     `linux.resources.memory.limit = 268435456`, TSI HTTP OK on port 18084
-  - Logs at `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`
+  - Logs at `${NIMBUS_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`
 - **M3 is complete** (2026-04-13). Startup-readiness, liveness, restart
   policy, restart backoff, and guest-side user switching are all Linux-verified.
 - **M3 startup-readiness gate Linux-verified** (2026-04-13): the
@@ -957,29 +957,29 @@ Before M5, keep verification split across four lanes:
 - **M3 guest-user-switch Linux-verified** (2026-04-13): the
   `krun_backend_m3_guest_user_switch_applies_image_user_inside_guest` smoke
   test passes on Debian 13. Key evidence:
-  - helper root: `/tmp/neovex-guest-user-switch-root`
+  - helper root: `/tmp/nimbus-guest-user-switch-root`
   - bundle `process.user` stays root (`uid: 0`, `gid: 0`) for `/dev/kvm`
-  - bundle `process.args[0] = "/.neovex/neovex-guest-user-switch"`
-  - guest uid/gid proof comes from `ctr.log` (`NEOVEX_UID=33`, `NEOVEX_GID=33`)
+  - bundle `process.args[0] = "/.nimbus/nimbus-guest-user-switch"`
+  - guest uid/gid proof comes from `ctr.log` (`NIMBUS_UID=33`, `NIMBUS_GID=33`)
     because virtiofs/rootless uid mapping prevents reliable non-root writes
     back into the overlay rootfs
   - sandbox reaches `Ready` and answers HTTP on port `18089`
   - manifest preserves `image_metadata.user = "33:33"`
 - **M4 is complete** (2026-04-13). The sandbox seam now exposes generic
-  image/build launch entrypoints, `neovex-server` now has a real
+  image/build launch entrypoints, `nimbus-server` now has a real
   `SandboxServiceManager`, and both the local M4 slices plus the Linux-host
   krun-backed manager smoke are recorded here:
-  - `cargo test -p neovex-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`
-  - `cargo test -p neovex-runtime runtime_lazily_looks_up_missing_service_bindings_and_caches_them -- --nocapture`
-  - `cargo test -p neovex-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`
-  - `cargo test -p neovex-server convex_runtime_query_lazily_resolves_missing_service_bindings -- --nocapture`
-  - `cargo test -p neovex-server convex_runtime_query_waits_for_activation_capable_service_lookup_once -- --nocapture`
-  - `cargo test -p neovex-server ensure_service_binding_ -- --nocapture`
-  - `cargo test -p neovex-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`
-  - `cargo test -p neovex-server delete_tenant_stops_manager_owned_sandbox_services -- --nocapture`
-  - `cargo test -p neovex-server convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down -- --ignored --exact --nocapture`
-  - `cargo test -p neovex-sandbox plan_only_backend_lowers_image_launch_through_generic_trait_surface -- --nocapture`
-  - `cargo test -p neovex-sandbox plan_only_backend_lowers_build_launch_through_generic_trait_surface -- --nocapture`
+  - `cargo test -p nimbus-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`
+  - `cargo test -p nimbus-runtime runtime_lazily_looks_up_missing_service_bindings_and_caches_them -- --nocapture`
+  - `cargo test -p nimbus-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`
+  - `cargo test -p nimbus-server convex_runtime_query_lazily_resolves_missing_service_bindings -- --nocapture`
+  - `cargo test -p nimbus-server convex_runtime_query_waits_for_activation_capable_service_lookup_once -- --nocapture`
+  - `cargo test -p nimbus-server ensure_service_binding_ -- --nocapture`
+  - `cargo test -p nimbus-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`
+  - `cargo test -p nimbus-server delete_tenant_stops_manager_owned_sandbox_services -- --nocapture`
+  - `cargo test -p nimbus-server convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down -- --ignored --exact --nocapture`
+  - `cargo test -p nimbus-sandbox plan_only_backend_lowers_image_launch_through_generic_trait_surface -- --nocapture`
+  - `cargo test -p nimbus-sandbox plan_only_backend_lowers_build_launch_through_generic_trait_surface -- --nocapture`
   - What this proves locally:
     - invocation requests can carry server-projected `InvocationServices`
     - V8 exposes those bindings as `ctx.services.<name>`
@@ -998,8 +998,8 @@ Before M5, keep verification split across four lanes:
     - tenant deletion now routes through the same server-owned manager and
       stops manager-owned sandboxes before the tenant is removed from storage
     - the real Linux-host manager smoke path is checked in, uses the existing
-      `NEOVEX_KRUN_SMOKE_*` environment contract plus
-      `NEOVEX_KRUN_SMOKE_M4_HOST_PORT` / `NEOVEX_KRUN_SMOKE_M4_GUEST_PORT`,
+      `NIMBUS_KRUN_SMOKE_*` environment contract plus
+      `NIMBUS_KRUN_SMOKE_M4_HOST_PORT` / `NIMBUS_KRUN_SMOKE_M4_GUEST_PORT`,
       and now passes on Linux
   - **M4 Linux verification is complete** (2026-04-13). The ignored Linux-host
     smoke `tests::convex_functions::runtime_queries::execution::services::convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down`
@@ -1010,16 +1010,16 @@ Before M5, keep verification split across four lanes:
     - sandbox `db-01kp3ktd3gy7gjsbqwrxbaeant` reached Ready then Stopped
     - tenant deletion stopped the service (`shutdown_requested: true`,
       `last_exit_code: 137`) and released port 18090
-    - state produced at `/tmp/neovex-sandbox-smoke/m4-manager-state/`
+    - state produced at `/tmp/nimbus-sandbox-smoke/m4-manager-state/`
 - **M5 is complete** (2026-04-13). The developer-experience and service-control
   closeout now lives in `service-control-plane-plan.md`, and the Linux-host
   verification there is complete:
-  - `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex`
-  - `cargo test -p neovex-bin`
+  - `cargo check -p nimbus-sandbox -p nimbus-server -p nimbus-bin -p nimbus`
+  - `cargo test -p nimbus-bin`
   - `bash scripts/verify-microvm-m5-compose-serve-helper.sh`
   - `bash scripts/verify-microvm-m5-recovery-drill-helper.sh`
   - Verified outcomes:
-    - `neovex service config` parses the supported Compose subset and lowers it
+    - `nimbus service config` parses the supported Compose subset and lowers it
       into the typed `SandboxServiceCatalog` bridge
     - `service up` / `service down` / `service list` / `service inspect` /
       `service logs` / `service ps` share the same project identity and
@@ -1056,11 +1056,11 @@ services:
 ```
 
 ```bash
-# Start neovex with the compose file
-neovex service up
+# Start nimbus with the compose file
+nimbus service up
 
 # Verify service is running
-neovex service list
+nimbus service list
 # NAME  IMAGE         STATE  PORTS              HEALTH
 # db    postgres:16   Ready  5432→15432/tcp     healthy
 
@@ -1073,8 +1073,8 @@ docker compose up -d
 docker compose exec db psql -U postgres -c "SELECT 1"
 docker compose down
 
-# Stop neovex services
-neovex service down
+# Stop nimbus services
+nimbus service down
 
 # Verify cleanup: no orphan processes, no leaked ports
 ps aux | grep -E "conmon|crun|krun" | grep -v grep  # should be empty
@@ -1096,21 +1096,21 @@ ss -tlnp | grep 15432                                 # should be empty
   resolve names/IDs against libpod runtime state and read inspect/log data from
   runtime-owned state plus persistent per-container files under `StaticDir`.
   Quadlet/systemd is Podman's native declarative service layer on Linux, but it
-  still targets the same runtime-owned state model. Neovex M5 should mirror
+  still targets the same runtime-owned state model. Nimbus M5 should mirror
   that split: keep Compose as the input format, avoid a CLI-owned service state
-  file, and implement `neovex service up/down/list/logs/inspect` on top of
+  file, and implement `nimbus service up/down/list/logs/inspect` on top of
   backend-owned sandbox manifests/logs under a deterministic project-scoped
   control root.
 - 2026-04-13: Landed the first local M5 developer-experience slice in
-  `neovex-bin`. Added a `service` CLI family with
-  `neovex service config [--file compose.yaml] [--services]`, added
-  `crates/neovex-bin/src/service/compose.rs`, and taught it to parse and render
+  `nimbus-bin`. Added a `service` CLI family with
+  `nimbus service config [--file compose.yaml] [--services]`, added
+  `crates/nimbus-bin/src/service/compose.rs`, and taught it to parse and render
   a supported Compose subset into a typed service plan. The current adapter
   resolves image/build source, env + env_file, ports, restart policy, and
   CPU/memory limits; validates lowerable process overrides
   (`command`, `entrypoint`, `working_dir`, `user`) against the actual sandbox
   launch seam; preserves `depends_on`, `healthcheck`, `volumes`, labels, and
-  `x-neovex`; and warns on ignored fields such as `networks`, `privileged`,
+  `x-nimbus`; and warns on ignored fields such as `networks`, `privileged`,
   and `logging`. `SandboxImageProcessOverrides` now also carries an explicit
   `user` override, and the buildah-backed krun launch preparation path
   resolves that override ahead of image USER metadata so Compose `user:` can
@@ -1118,25 +1118,25 @@ ss -tlnp | grep 15432                                 # should be empty
   to the next whole guest vCPU with a warning because krun only accepts whole
   guest CPU counts today. Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-bin`,
-  `cargo test -p neovex-bin`,
-  `cargo test -p neovex-sandbox prepare_image_launch_prefers_process_user_override_over_image_user -- --nocapture`.
+  `cargo check -p nimbus-bin`,
+  `cargo test -p nimbus-bin`,
+  `cargo test -p nimbus-sandbox prepare_image_launch_prefers_process_user_override_over_image_user -- --nocapture`.
   M5 is now `in_progress`; remaining work is lifecycle wiring
   (`up/down`) and manager-backed catalog integration.
 - 2026-04-13: Landed the next local M5 lifecycle-lowering slice. The generic
   `SandboxLifecycleSpec` now carries an optional per-sandbox `stop_timeout`
   override, serialized durably in manifests as milliseconds. The krun backend
   stop path now honors `spec.lifecycle.stop_timeout` before falling back to the
-  backend default timeout, and `neovex service config` now validates Compose
+  backend default timeout, and `nimbus service config` now validates Compose
   `stop_grace_period` against that real lifecycle seam instead of treating it
   as inert metadata. Added local tests for lifecycle serialization,
   per-sandbox stop-timeout precedence, Compose stop-grace lowering
   (`1m30s` -> `Duration::from_secs(90)`), and invalid stop-grace errors.
   Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox -p neovex-bin`,
-  `cargo test -p neovex-sandbox configured_stop_timeout_prefers_sandbox_lifecycle_and_falls_back_to_backend_default -- --exact`,
-  `cargo test -p neovex-bin`.
+  `cargo check -p nimbus-sandbox -p nimbus-bin`,
+  `cargo test -p nimbus-sandbox configured_stop_timeout_prefers_sandbox_lifecycle_and_falls_back_to_backend_default -- --exact`,
+  `cargo test -p nimbus-bin`.
 - 2026-04-13: Landed the next local M5 catalog-bridge slice. The Compose
   adapter now lowers validated services into a typed `ComposeServiceCatalog`
   that implements `SandboxServiceCatalog` with tenant-parametric launch
@@ -1144,15 +1144,15 @@ ss -tlnp | grep 15432                                 # should be empty
   and build-backed services lower into `SandboxServiceLaunch` values with the
   generic `SandboxSpec` carrying ports, restart policy, stop timeout, and
   resource limits, while image/build launch specs carry the lowerable process
-  overrides. `neovex service config` now validates this manager-handoff seam on
+  overrides. `nimbus service config` now validates this manager-handoff seam on
   every run by constructing the catalog through the same lowerer used by the
   main binary. Added local tests covering image + build catalog lowering and
   tenant-parametric launch generation.
   Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox -p neovex-bin`,
-  `cargo test -p neovex-bin`.
-- 2026-04-13: Landed the next local M5 serve-path slice. `neovex-bin` now
+  `cargo check -p nimbus-sandbox -p nimbus-bin`,
+  `cargo test -p nimbus-bin`.
+- 2026-04-13: Landed the next local M5 serve-path slice. `nimbus-bin` now
   accepts an explicit `--compose-file` flag on the main server path, loads the
   validated Compose catalog through the same M5 adapter, and constructs a real
   `SandboxServiceManager` backed by the default krun backend config. With
@@ -1165,12 +1165,12 @@ ss -tlnp | grep 15432                                 # should be empty
   serve path and a CLI parse test for `--compose-file`.
   Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex`,
-  `cargo test -p neovex-bin`.
+  `cargo check -p nimbus-sandbox -p nimbus-server -p nimbus-bin -p nimbus`,
+  `cargo test -p nimbus-bin`.
 - 2026-04-13: Landed the next local M5 lifecycle-control slice under the
-  service-control-plane plan. `neovex-bin` now exposes
-  `neovex service up [service] [--tenant <tenant-id>]` and
-  `neovex service down [service] [--tenant <tenant-id>]`. Both commands reparse
+  service-control-plane plan. `nimbus-bin` now exposes
+  `nimbus service up [service] [--tenant <tenant-id>]` and
+  `nimbus service down [service] [--tenant <tenant-id>]`. Both commands reparse
   Compose through the same `ComposeProjectContext`, derive the same
   deterministic project key / local tenant / project-scoped krun backend root
   as `--compose-file`, and consume the same `SandboxServiceCatalog` lowering
@@ -1181,18 +1181,18 @@ ss -tlnp | grep 15432                                 # should be empty
   manifest history before stop or `already_stopped` reporting. Verification
   evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox -p neovex-bin -p neovex`,
-  `cargo test -p neovex-bin service:: -- --nocapture`.
+  `cargo check -p nimbus-sandbox -p nimbus-bin -p nimbus`,
+  `cargo test -p nimbus-bin service:: -- --nocapture`.
 - 2026-04-13: Added the checked-in Linux-host M5 compose-backed serve helper:
   `scripts/verify-microvm-m5-compose-serve-helper.sh`. The helper replays the
   full local verification lane (`cargo fmt`, focused `cargo check`,
-  `cargo test -p neovex-bin`) and then runs the new ignored Linux smoke
+  `cargo test -p nimbus-bin`) and then runs the new ignored Linux smoke
   `tests::convex_runtime_query_starts_real_krun_service_from_compose_file_and_tears_it_down`
   with `--ignored --exact --nocapture --test-threads=1`. It writes durable
   artifacts under
-  `${NEOVEX_KRUN_SMOKE_WORKDIR}/m5-compose-serve-verification/`, including
+  `${NIMBUS_KRUN_SMOKE_WORKDIR}/m5-compose-serve-verification/`, including
   `compose-serve.log` and `summary.txt`, and uses
-  `NEOVEX_KRUN_SMOKE_M5_HOST_PORT` / `NEOVEX_KRUN_SMOKE_M5_GUEST_PORT`
+  `NIMBUS_KRUN_SMOKE_M5_HOST_PORT` / `NIMBUS_KRUN_SMOKE_M5_GUEST_PORT`
   (defaults: 18091 / 8091). Local verification:
   `bash -n scripts/verify-microvm-m5-compose-serve-helper.sh`.
 - 2026-04-13: Added the checked-in Linux-host M4 smoke lane for the real
@@ -1203,7 +1203,7 @@ ss -tlnp | grep 15432                                 # should be empty
   activation for a BusyBox-backed service, proves HTTP reachability on the
   returned TSI host port, then deletes the tenant and waits for both the
   service snapshot and host port to disappear. The test compiles locally via
-  `cargo test -p neovex-server convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down -- --exact`;
+  `cargo test -p nimbus-server convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down -- --exact`;
   the remaining M4 blocker is now executing that exact ignored lane
   successfully on a Linux KVM host and recording the evidence here.
 - 2026-04-13: Landed the fifth local M4 engine-integration slice: tenant
@@ -1212,33 +1212,33 @@ ss -tlnp | grep 15432                                 # should be empty
   tenant-delete route to call it before deleting tenant storage, and made
   `SandboxServiceManager` override it by stopping tracked sandboxes through the
   generic backend and clearing later snapshots. Verification evidence:
-  `cargo check -p neovex-server -p neovex`,
+  `cargo check -p nimbus-server -p nimbus`,
   `cargo fmt --all --check`,
-  `cargo test -p neovex-server teardown_tenant_ -- --nocapture`,
-  `cargo test -p neovex-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`,
-  `cargo test -p neovex-server delete_tenant_stops_manager_owned_sandbox_services -- --nocapture`.
+  `cargo test -p nimbus-server teardown_tenant_ -- --nocapture`,
+  `cargo test -p nimbus-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`,
+  `cargo test -p nimbus-server delete_tenant_stops_manager_owned_sandbox_services -- --nocapture`.
   M4 remains `in_progress`: local start/stop lifecycle under the manager is now
   real, but Linux-host end-to-end proof with a real krun-backed service still
   remains.
 - 2026-04-13: Landed the fourth local M4 engine-integration slice: a real
   server-owned `SandboxServiceManager`. Added public
   `SandboxServiceCatalog` / `SandboxServiceLaunch` nouns plus
-  `SandboxServiceManager` in `neovex-server`, added router builders that accept
+  `SandboxServiceManager` in `nimbus-server`, added router builders that accept
   the manager directly, and implemented first-reference activation through the
   existing blocking `RuntimeServiceRegistry::ensure_service_binding(...)`
   boundary. The manager validates tenant/service/backend alignment, starts
   declared services through the generic `SandboxBackend` image/build
   entrypoints, polls `inspect()` until the service becomes bindable, and
   reuses the active handle on later lookups. Verification evidence:
-  `cargo check -p neovex-server -p neovex`,
-  `cargo test -p neovex-server ensure_service_binding_ -- --nocapture`,
-  `cargo test -p neovex-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`,
-  `cargo test -p neovex-server convex_runtime_query_ -- --nocapture`.
+  `cargo check -p nimbus-server -p nimbus`,
+  `cargo test -p nimbus-server ensure_service_binding_ -- --nocapture`,
+  `cargo test -p nimbus-server convex_runtime_query_starts_declared_service_on_first_reference -- --nocapture`,
+  `cargo test -p nimbus-server convex_runtime_query_ -- --nocapture`.
   M4 remained `in_progress`: local start-on-first-reference was real at this
   point, but tenant-teardown stop/cleanup validation and Linux-host proof still
   remained.
 - 2026-04-13: Promoted krun's image/build launch surface into the generic
-  `neovex-sandbox` API. Added public
+  `nimbus-sandbox` API. Added public
   `SandboxImageLaunchSpec` / `SandboxBuildLaunchSpec` /
   `SandboxImageProcessOverrides` nouns, extended `SandboxBackend` with generic
   `start_from_image(...)` and `start_from_build(...)` entrypoints, migrated the
@@ -1246,9 +1246,9 @@ ss -tlnp | grep 15432                                 # should be empty
   added focused trait-surface coverage proving both image-backed and
   build-backed launches lower through `Box<dyn SandboxBackend>`. Verification
   evidence:
-  `cargo check -p neovex-sandbox -p neovex`,
-  `cargo test -p neovex-sandbox plan_only_backend_lowers_image_launch_through_generic_trait_surface -- --nocapture`,
-  `cargo test -p neovex-sandbox plan_only_backend_lowers_build_launch_through_generic_trait_surface -- --nocapture`.
+  `cargo check -p nimbus-sandbox -p nimbus`,
+  `cargo test -p nimbus-sandbox plan_only_backend_lowers_image_launch_through_generic_trait_surface -- --nocapture`,
+  `cargo test -p nimbus-sandbox plan_only_backend_lowers_build_launch_through_generic_trait_surface -- --nocapture`.
   M4 remains `in_progress`: the generic launch seam is now available to a
   future service manager, but no real activation/start-on-first-reference flow
   or Linux-host end-to-end proof has landed yet.
@@ -1262,16 +1262,16 @@ ss -tlnp | grep 15432                                 # should be empty
   not start real sandboxes yet, but it establishes the contract a real
   activation-capable service manager must implement. Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-server -p neovex-runtime -p neovex`,
-  `cargo test -p neovex-server convex_runtime_query_waits_for_activation_capable_service_lookup_once -- --nocapture`.
+  `cargo check -p nimbus-server -p nimbus-runtime -p nimbus`,
+  `cargo test -p nimbus-server convex_runtime_query_waits_for_activation_capable_service_lookup_once -- --nocapture`.
   M4 remains `in_progress`: the blocking activation seam is now explicit, but
   a real sandbox-starting registry and Linux-host end-to-end proof still
   remain.
 - 2026-04-13: Landed the second local M4 engine-integration slice. The V8
   bootstrap now exposes `ctx.services` through a lazy proxy instead of a pure
   frozen snapshot, successful missing-name lookups are resolved through the new
-  `op_neovex_ctx_service_lookup` sync host op and cached for the rest of the
-  invocation, and `neovex-server` now routes that host op through an internal
+  `op_nimbus_ctx_service_lookup` sync host op and cached for the rest of the
+  invocation, and `nimbus-server` now routes that host op through an internal
   `RuntimeServiceRegistry` trait instead of reaching directly into
   `SandboxCatalog`. Added a test-only router seam that accepts an explicit
   runtime service registry so server tests can verify lazy lookup without
@@ -1279,29 +1279,29 @@ ss -tlnp | grep 15432                                 # should be empty
   lookup/caching and for server-side lazy resolution with an empty initial
   snapshot. Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-server -p neovex-runtime -p neovex`,
-  `cargo test -p neovex-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`,
-  `cargo test -p neovex-runtime runtime_lazily_looks_up_missing_service_bindings_and_caches_them -- --nocapture`,
-  `cargo test -p neovex-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`,
-  `cargo test -p neovex-server convex_runtime_query_lazily_resolves_missing_service_bindings -- --nocapture`.
+  `cargo check -p nimbus-server -p nimbus-runtime -p nimbus`,
+  `cargo test -p nimbus-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`,
+  `cargo test -p nimbus-runtime runtime_lazily_looks_up_missing_service_bindings_and_caches_them -- --nocapture`,
+  `cargo test -p nimbus-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`,
+  `cargo test -p nimbus-server convex_runtime_query_lazily_resolves_missing_service_bindings -- --nocapture`.
   M4 remains `in_progress`: lazy lookup is local-proof complete, but true
   service activation/start-on-first-reference and Linux-host end-to-end proof
   still remain.
 - 2026-04-13: Landed the first local M4 engine-integration slice. Added
   `InvocationServices` / `InvocationServiceBinding` to the runtime invocation
   contract, taught the V8 bootstrap to expose a frozen `ctx.services` object,
-  and introduced `crates/neovex-server/src/service_registry.rs` so the server
+  and introduced `crates/nimbus-server/src/service_registry.rs` so the server
   can project ready sandbox handles into that runtime-facing shape while
-  keeping `neovex-sandbox` generic. Top-level HTTP/runtime routes now snapshot
+  keeping `nimbus-sandbox` generic. Top-level HTTP/runtime routes now snapshot
   those bindings from `SandboxCatalog`, `ConvexHostBridge` preserves the same
   snapshot for nested runtime calls, and runtime-subscription transforms now
   carry the snapshot forward for re-evaluation. Added focused coverage for the
   raw runtime projection and for server-side propagation through nested runtime
   calls. Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-server -p neovex-runtime -p neovex`,
-  `cargo test -p neovex-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`,
-  `cargo test -p neovex-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`.
+  `cargo check -p nimbus-server -p nimbus-runtime -p nimbus`,
+  `cargo test -p nimbus-runtime runtime_exposes_service_bindings_from_invocation_request -- --nocapture`,
+  `cargo test -p nimbus-server convex_runtime_query_exposes_service_bindings_and_preserves_them_for_nested_calls -- --nocapture`.
   M4 remains `in_progress`: the current slice is snapshot-only and still needs
   lazy activation / "start on first reference" plus Linux-host end-to-end
   validation against a real krun-backed service.
@@ -1313,13 +1313,13 @@ ss -tlnp | grep 15432                                 # should be empty
   implementation by replacing the low-level buildah command stubs with a typed
   CLI wrapper, inspect translation, and unit-level verification.
 - 2026-04-12: Landed `BuildahCli` in
-  `crates/neovex-sandbox/src/backends/krun/buildah.rs`, corrected the buildah
+  `crates/nimbus-sandbox/src/backends/krun/buildah.rs`, corrected the buildah
   inspect command shape to use default JSON output with `--type container`
   instead of template mode, and added script-backed unit tests for pull/build/
   mount/inspect/cleanup lowering. Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox`,
-  and `cargo test -p neovex-sandbox` all passed on the current host.
+  `cargo check -p nimbus-sandbox`,
+  and `cargo test -p nimbus-sandbox` all passed on the current host.
 - 2026-04-12: Extended `OciImageConfig` with backend-local launch lowering:
   `resolve_process_spec()` now merges image defaults plus overrides into a
   generic `SandboxProcessSpec`, and `exposed_port_bindings()` parses typed
@@ -1327,15 +1327,15 @@ ss -tlnp | grep 15432                                 # should be empty
   default-command lowering, override precedence, invalid empty commands,
   exposed-port parsing, and invalid port-shape rejection. Verification
   evidence: `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox`,
-  and `cargo test -p neovex-sandbox` all passed on the current host.
+  `cargo check -p nimbus-sandbox`,
+  and `cargo test -p nimbus-sandbox` all passed on the current host.
 - 2026-04-12: Added `OciImageLaunchDefaults` so inspected image metadata,
   mounted rootfs, parsed ports, stop signal, healthcheck, labels, and lowered
   process defaults travel together as one backend-local handoff object.
   Added unit coverage for that combined launch-default resolution. Verification
   evidence: `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox`,
-  and `cargo test -p neovex-sandbox` all passed on the current host.
+  `cargo check -p nimbus-sandbox`,
+  and `cargo test -p nimbus-sandbox` all passed on the current host.
 - 2026-04-12: Taught `vm.rs` to consume backend-local launch defaults during
   planning via a new resolved-launch seam. `plan_start_with_launch_defaults()`
   now materializes sparse generic specs from image defaults, preserves explicit
@@ -1343,16 +1343,16 @@ ss -tlnp | grep 15432                                 # should be empty
   config from the resolved launch spec. Added unit coverage for sparse-spec
   materialization and explicit-override preservation. Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox`,
-  and `cargo test -p neovex-sandbox` all passed on the current host.
+  `cargo check -p nimbus-sandbox`,
+  and `cargo test -p nimbus-sandbox` all passed on the current host.
 - 2026-04-12: Extended `BuildahCli` with `prepare_image_launch()` and
   `prepare_built_image_launch()` so the buildah wrapper can now produce a
   fully prepared `PreparedImageLaunch` from real pull/build + mount + inspect
   command sequences. Added script-backed unit coverage for both registry-image
   and Dockerfile-build materialization paths. Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox`,
-  and `cargo test -p neovex-sandbox` all passed on the current host.
+  `cargo check -p nimbus-sandbox`,
+  and `cargo test -p nimbus-sandbox` all passed on the current host.
 - 2026-04-12: Wired the prepared launch seam into `vm.rs` through backend-local
   `start_from_image()` / `start_from_build()` helpers. The krun backend now
   tracks buildah container metadata in the manifest, uses the resolved launch
@@ -1360,8 +1360,8 @@ ss -tlnp | grep 15432                                 # should be empty
   on stop. Added a plan-only integration test that proves image-backed
   start-then-stop persists buildah metadata while running and clears it after
   cleanup. Verification evidence: `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox`,
-  and `cargo test -p neovex-sandbox` all passed on the current host.
+  `cargo check -p nimbus-sandbox`,
+  and `cargo test -p nimbus-sandbox` all passed on the current host.
 - 2026-04-12: Ran both the rootfs-only and image-backed Linux smoke tests on
   Debian 13 x86_64 and fixed four issues. (1) `OciImageConfig` field
   deserialization: OCI images frequently have `"Entrypoint": null` rather than
@@ -1384,17 +1384,17 @@ ss -tlnp | grep 15432                                 # should be empty
   full M1 integration path.
   Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox -p neovex`,
-  `cargo test -p neovex-sandbox` (25 pass),
-  `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored --test-threads=1` (2 pass).
+  `cargo check -p nimbus-sandbox -p nimbus`,
+  `cargo test -p nimbus-sandbox` (25 pass),
+  `cargo test -p nimbus-sandbox --test krun_linux_smoke -- --ignored --test-threads=1` (2 pass).
   Env:
-  `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
-  `NEOVEX_KRUN_SMOKE_HOST_PORT=18080`,
-  `NEOVEX_KRUN_SMOKE_GUEST_PORT=8080`.
+  `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
+  `NIMBUS_KRUN_SMOKE_HOST_PORT=18080`,
+  `NIMBUS_KRUN_SMOKE_GUEST_PORT=8080`.
   Remaining readiness gap: OCI runtime state `"running"` still maps to
   `SandboxStatus::Ready` before the guest service binds its TSI port (one
   initial TCP connection refused observed in both smoke tests). This must be
@@ -1409,15 +1409,15 @@ ss -tlnp | grep 15432                                 # should be empty
   numeric-user fallback without `/etc/passwd`, bundle rendering of lowered
   uid/gid, and stop-signal selection. Verification evidence:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox`,
-  `cargo test -p neovex-sandbox` (30 pass).
+  `cargo check -p nimbus-sandbox`,
+  `cargo test -p nimbus-sandbox` (30 pass).
 - 2026-04-13: Ran M2 Linux-host verification for image USER and STOPSIGNAL on
   Debian 13 x86_64. Created a custom BusyBox image with `USER www-data` and
   `STOPSIGNAL SIGQUIT` via buildah config/commit. Key findings:
   (1) krun bundles must always use root for `process.user` because the crun VMM
   needs `/dev/kvm` access. Setting uid:33 in the OCI config crashes with
   `Error creating the Kvm object: Error(13)` — confirmed this also affects
-  Podman (`podman --runtime /usr/libexec/neovex/crun run --rm --annotation
+  Podman (`podman --runtime /usr/libexec/nimbus/crun run --rm --annotation
   run.oci.handler=krun localhost/user-test:latest /bin/busybox id` → same crash).
   (2) Attempted a crun patch using `krun_setuid()`/`krun_setgid()` libkrun APIs
   to defer user switching to after VMM init, but these fail in rootless mode with
@@ -1433,11 +1433,11 @@ ss -tlnp | grep 15432                                 # should be empty
   exit code 137. Manifest records `stop_signal: SIGQUIT` and
   `shutdown_requested: true`.
   (5) Added `krun_backend_m2_user_and_stop_signal_lowering` ignored smoke test
-  and updated `build-neovex-crun.sh` to apply all patches from `patches/crun/`
+  and updated `build-nimbus-crun.sh` to apply all patches from `patches/crun/`
   in sorted order.
-  Verification: `cargo fmt --all --check`, `cargo check -p neovex-sandbox -p neovex`,
-  `cargo test -p neovex-sandbox` (29 pass),
-  `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored --test-threads=1`
+  Verification: `cargo fmt --all --check`, `cargo check -p nimbus-sandbox -p nimbus`,
+  `cargo test -p nimbus-sandbox` (29 pass),
+  `cargo test -p nimbus-sandbox --test krun_linux_smoke -- --ignored --test-threads=1`
   (3 pass, ~21s total).
 - 2026-04-13: Started the next M2 slice for host-port auto-assignment. Added
   backend-local `port_manager.rs` that scans active manifests under
@@ -1452,8 +1452,8 @@ ss -tlnp | grep 15432                                 # should be empty
   proving image-backed starts auto-assign `5432/tcp`, allocate unique ports
   across two live sandboxes, and reuse a released port after stop.
   Verification: `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox`,
-  `cargo test -p neovex-sandbox` (32 pass).
+  `cargo check -p nimbus-sandbox`,
+  `cargo test -p nimbus-sandbox` (32 pass).
 - 2026-04-13: Ran M2 Linux-host verification for auto-port assignment from image
   EXPOSE metadata on Debian 13 x86_64. Created a custom BusyBox image with
   `EXPOSE 8080/tcp` via buildah config/commit. Launched three sandboxes via
@@ -1469,15 +1469,15 @@ ss -tlnp | grep 15432                                 # should be empty
   This proves: auto-assignment from the backend-owned range, distinct ports for
   concurrent sandboxes, port release on stop, and port reuse after release —
   all end-to-end on a real Linux host with real krun VMs and TSI networking.
-  Verification: `cargo fmt --all --check`, `cargo check -p neovex-sandbox -p neovex`,
-  `cargo test -p neovex-sandbox` (32 pass),
-  `cargo test -p neovex-sandbox --test krun_linux_smoke -- --ignored --test-threads=1`
+  Verification: `cargo fmt --all --check`, `cargo check -p nimbus-sandbox -p nimbus`,
+  `cargo test -p nimbus-sandbox` (32 pass),
+  `cargo test -p nimbus-sandbox --test krun_linux_smoke -- --ignored --test-threads=1`
   (4 pass, ~41s total).
-  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  Env: `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
   Auto-port-assignment is now Linux-verified.
 - 2026-04-12: Implemented the remaining M2 resource-limits seam locally on the
   macOS development workspace. `SandboxSpec` now carries generic
@@ -1492,13 +1492,13 @@ ss -tlnp | grep 15432                                 # should be empty
   write/remove behavior, image-backed unshare prelude generation, and the
   backend launch-plan seam. Verification:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox -p neovex`,
-  `cargo test -p neovex-sandbox` (39 pass).
+  `cargo check -p nimbus-sandbox -p nimbus`,
+  `cargo test -p nimbus-sandbox` (39 pass).
   M2 remains `in_progress` because the new resource-limits path is only
   unit/local-verified; Linux host promotion is still required before this
   phase can move to `done`.
 - 2026-04-12: Added the Linux-host proof harness for the remaining M2
-  promotion gate. `crates/neovex-sandbox/tests/krun_linux_smoke.rs` now
+  promotion gate. `crates/nimbus-sandbox/tests/krun_linux_smoke.rs` now
   includes:
   (1) `krun_backend_m2_direct_rootfs_resource_limits_lowering`, which boots a
   real rootfs-backed BusyBox service with `memory_limit_bytes=268435456` and
@@ -1511,17 +1511,17 @@ ss -tlnp | grep 15432                                 # should be empty
   verifies the same bundle memory limit, and confirms TSI-backed HTTP reachability.
   Added `scripts/verify-microvm-m2-resource-limits-helper.sh` as the checked-in
   Linux execution entrypoint for those tests; it captures durable logs at
-  `${NEOVEX_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`.
+  `${NIMBUS_KRUN_SMOKE_WORKDIR}/m2-resource-limit-verification/`.
   Local verification after adding those host-only tests:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox -p neovex`,
-  `cargo test -p neovex-sandbox` (39 pass),
+  `cargo check -p nimbus-sandbox -p nimbus`,
+  `cargo test -p nimbus-sandbox` (39 pass),
   `bash -n scripts/verify-microvm-m2-resource-limits-helper.sh`.
 - 2026-04-13: Ran M2 resource-limits Linux-host verification on Debian 13 x86_64
   via `bash scripts/verify-microvm-m2-resource-limits-helper.sh`. Both the
   direct-rootfs and image-backed lanes passed on the first attempt:
   (1) direct-rootfs (`krun_backend_m2_direct_rootfs_resource_limits_lowering`):
-  `/.krun_vm.json` at rootfs `/tmp/neovex-sandbox-smoke-rootfs/.krun_vm.json`
+  `/.krun_vm.json` at rootfs `/tmp/nimbus-sandbox-smoke-rootfs/.krun_vm.json`
   contained `{"cpus":2,"ram_mib":256}`, bundle `config.json` had
   `linux.resources.memory.limit = 268435456`, TSI HTTP on port 18083 confirmed.
   (2) image-backed (`krun_backend_m2_image_backed_resource_limits_lowering`):
@@ -1529,19 +1529,19 @@ ss -tlnp | grep 15432                                 # should be empty
   `{"cpus":2,"ram_mib":256}` (read via `buildah unshare -- cat`), bundle
   `config.json` had `linux.resources.memory.limit = 268435456`, TSI HTTP on
   port 18084 confirmed. Verification logs at
-  `/tmp/neovex-sandbox-smoke/m2-resource-limit-verification/direct-rootfs.log`,
-  `/tmp/neovex-sandbox-smoke/m2-resource-limit-verification/image-backed.log`,
-  `/tmp/neovex-sandbox-smoke/m2-resource-limit-verification/summary.txt`.
-  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
-  Verification: `cargo fmt --all --check` pass, `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (39 pass), both resource-limit smoke tests pass.
+  `/tmp/nimbus-sandbox-smoke/m2-resource-limit-verification/direct-rootfs.log`,
+  `/tmp/nimbus-sandbox-smoke/m2-resource-limit-verification/image-backed.log`,
+  `/tmp/nimbus-sandbox-smoke/m2-resource-limit-verification/summary.txt`.
+  Env: `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  Verification: `cargo fmt --all --check` pass, `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (39 pass), both resource-limit smoke tests pass.
   M2 is now `done`. M3 promoted to `in_progress`.
 - 2026-04-12: Started the first concrete M3 implementation slice on the macOS
-  development workspace. `crates/neovex-sandbox/src/backends/krun/vm.rs` no
+  development workspace. `crates/nimbus-sandbox/src/backends/krun/vm.rs` no
   longer maps OCI runtime state `"running"` directly to `SandboxStatus::Ready`
   in execute mode. Instead it now derives a backend-local readiness probe from
   published endpoints, prefers HTTP endpoints over raw TCP when both exist,
@@ -1550,8 +1550,8 @@ ss -tlnp | grep 15432                                 # should be empty
   unit coverage for HTTP probe success, probe-target selection, failure-to-
   `Starting` behavior, and endpoint gating while booting. Verification:
   `cargo fmt --all --check`,
-  `cargo check -p neovex-sandbox -p neovex`,
-  `cargo test -p neovex-sandbox` (43 pass).
+  `cargo check -p nimbus-sandbox -p nimbus`,
+  `cargo test -p nimbus-sandbox` (43 pass).
   This closes the first local M3 readiness gap but still needs Linux-host smoke
   promotion before the plan can claim end-to-end proof for the new startup gate.
 - 2026-04-13: Ran M3 startup-readiness gate Linux-host verification on Debian 13
@@ -1569,20 +1569,20 @@ ss -tlnp | grep 15432                                 # should be empty
   Full regression run of all 7 ignored smoke tests passed in ~60s with no
   regressions. Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (43 pass),
-  `cargo test -p neovex-sandbox --test krun_linux_smoke krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints -- --ignored --exact --test-threads=1` pass.
-  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (43 pass),
+  `cargo test -p nimbus-sandbox --test krun_linux_smoke krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints -- --ignored --exact --test-threads=1` pass.
+  Env: `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
   M3 startup-readiness gate is now Linux-verified. Remaining M3 work: liveness
   probes, restart policy, guest-side user switching.
 - 2026-04-12: Landed the next local M3 lifecycle slice on the macOS workspace.
-  `crates/neovex-sandbox/src/instance.rs` now exposes a generic
+  `crates/nimbus-sandbox/src/instance.rs` now exposes a generic
   `SandboxStatus::NotReady` state, and
-  `crates/neovex-sandbox/src/backends/krun/vm.rs` now uses that state when an
+  `crates/nimbus-sandbox/src/backends/krun/vm.rs` now uses that state when an
   execute-mode sandbox has already proven readiness once but later stops
   answering its endpoint-derived probe. This gives krun a clean
   `Ready -> NotReady -> Ready` lifecycle without conflating a degraded running
@@ -1598,8 +1598,8 @@ ss -tlnp | grep 15432                                 # should be empty
   that scripts a BusyBox guest through `Ready -> NotReady -> Ready` without
   killing the VM. Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (46 pass).
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (46 pass).
   This local liveness slice is ready for Linux-host promotion; restart policy
   and guest-side user switching remain after that proof.
 - 2026-04-13: Ran M3 liveness probe Linux-host verification on Debian 13 x86_64.
@@ -1621,22 +1621,22 @@ ss -tlnp | grep 15432                                 # should be empty
   (5) stop succeeded normally.
   All 46 unit tests pass. Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (46 pass),
-  exact test: `cargo test -p neovex-sandbox --test krun_linux_smoke
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (46 pass),
+  exact test: `cargo test -p nimbus-sandbox --test krun_linux_smoke
   krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart
   -- --ignored --exact --test-threads=1` pass.
-  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  Env: `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
   M3 liveness probe slice is now Linux-verified. Remaining M3 work: restart
   policy and guest-side user switching.
 - 2026-04-13: Landed the next local M3 lifecycle slice on the macOS workspace:
-  restart policy. `crates/neovex-sandbox/src/spec.rs` now exposes the generic
+  restart policy. `crates/nimbus-sandbox/src/spec.rs` now exposes the generic
   `SandboxLifecycleSpec` and `SandboxRestartPolicy` surface, re-exported
-  through `neovex-sandbox` and the `neovex` facade. The krun backend now
+  through `nimbus-sandbox` and the `nimbus` facade. The krun backend now
   persists `restart_count` in the manifest and performs an inspect-driven
   restart when a crashed execute-mode sandbox has a policy that allows
   relaunch. The current slice is intentionally bounded: it supports
@@ -1653,8 +1653,8 @@ ss -tlnp | grep 15432                                 # should be empty
   with `restart_count == 1` and `last_exit_code == 42` recorded in the
   manifest. Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (48 pass).
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (48 pass).
   This restart slice is ready for Linux-host promotion. Exponential backoff
   and guest-side user switching remain after the basic restart path is proven.
 - 2026-04-13: Ran M3 restart-policy Linux-host verification on Debian 13 x86_64.
@@ -1675,20 +1675,20 @@ ss -tlnp | grep 15432                                 # should be empty
   (8) marker file in rootfs confirms 2 boots.
   All 48 unit tests pass. Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (48 pass),
-  exact test: `cargo test -p neovex-sandbox --test krun_linux_smoke
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (48 pass),
+  exact test: `cargo test -p nimbus-sandbox --test krun_linux_smoke
   krun_backend_m3_restart_policy_restarts_failed_vm
   -- --ignored --exact --test-threads=1` pass.
-  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  Env: `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
   M3 restart-policy slice is now Linux-verified. Remaining M3 work: guest-side
   user switching and exponential backoff refinement.
 - 2026-04-13: Landed the next local M3 restart refinement on the macOS
-  workspace: exponential backoff. `crates/neovex-sandbox/src/backends/krun/vm.rs`
+  workspace: exponential backoff. `crates/nimbus-sandbox/src/backends/krun/vm.rs`
   now persists `next_restart_at_millis` in the manifest, computes a capped
   restart delay of 1s, 2s, 4s, ... up to 60s, and keeps crashing sandboxes in
   `Starting` until the scheduled retry time is reached. The relaunch still
@@ -1700,8 +1700,8 @@ ss -tlnp | grep 15432                                 # should be empty
   failed boots before a third successful HTTP boot on port 18088 and verifies
   the restart marker plus manifest restart count. Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (49 pass).
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (49 pass).
   This backoff slice is ready for Linux-host promotion. Guest-side user
   switching remains after that proof.
 - 2026-04-13: Ran M3 restart-backoff Linux-host verification on Debian 13 x86_64.
@@ -1725,81 +1725,81 @@ ss -tlnp | grep 15432                                 # should be empty
   to the backoff changes.
   All 49 unit tests pass on clean rerun. Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (49 pass),
-  exact test: `cargo test -p neovex-sandbox --test krun_linux_smoke
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (49 pass),
+  exact test: `cargo test -p nimbus-sandbox --test krun_linux_smoke
   krun_backend_m3_restart_backoff_delays_repeated_restarts
   -- --ignored --exact --test-threads=1` pass.
-  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
+  Env: `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`.
   M3 restart backoff slice is now Linux-verified. Guest-side user switching
   remains the last M3 item.
 - 2026-04-13: Landed the local M3 guest-user-switch slice on the macOS
   workspace. Key design finding: upstream `containers/libkrun` `init/init.c`
   does not parse or apply OCI `user`, so preserving `process.user` in
   `/.krun_config.json` is insufficient. The krun backend now rewrites guest
-  process args to call `/.neovex/neovex-guest-user-switch` only when
-  `image_metadata.user` is present, injects `NEOVEX_GUEST_UID` /
-  `NEOVEX_GUEST_GID`, and bind-mounts `guest_user_helper_root` into `/.neovex`
+  process args to call `/.nimbus/nimbus-guest-user-switch` only when
+  `image_metadata.user` is present, injects `NIMBUS_GUEST_UID` /
+  `NIMBUS_GUEST_GID`, and bind-mounts `guest_user_helper_root` into `/.nimbus`
   in the OCI bundle. Added the guest helper binary at
-  `crates/neovex-sandbox/src/bin/neovex-guest-user-switch.rs`, a Linux helper
-  builder script at `scripts/build-neovex-guest-user-switch.sh`, and a new
+  `crates/nimbus-sandbox/src/bin/nimbus-guest-user-switch.rs`, a Linux helper
+  builder script at `scripts/build-nimbus-guest-user-switch.sh`, and a new
   ignored smoke `krun_backend_m3_guest_user_switch_applies_image_user_inside_guest`
   that expects a BusyBox image with `USER www-data` to write uid/gid marker
   files containing `33` before serving HTTP on port 18089. Local verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` pass (`52` library tests + `2` helper-binary
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` pass (`52` library tests + `2` helper-binary
   tests). Linux-host verification is now the remaining step before M3 can move
   to `done`.
 - 2026-04-13: Ran M3 guest-side user switching Linux-host verification on
   Debian 13 x86_64.
-  Build: `bash scripts/build-neovex-guest-user-switch.sh` — fixed two issues:
+  Build: `bash scripts/build-nimbus-guest-user-switch.sh` — fixed two issues:
   (1) changed from glibc `+crt-static` to musl target
   (`x86_64-unknown-linux-musl`) for a truly static binary; (2) fixed ldd check
   to accept "statically linked" in addition to "not a dynamic executable";
   (3) redirected cargo output to stderr so `$()` capture only gets the output
-  path. Helper built at `/tmp/neovex-guest-user-switch-root/neovex-guest-user-switch`
+  path. Helper built at `/tmp/nimbus-guest-user-switch-root/nimbus-guest-user-switch`
   (459KB, static-pie, musl-linked).
   First smoke attempt: test failed because the guest script wrote uid/gid to
-  `/.neovex-m3-user-uid` and `/.neovex-m3-user-gid` inside the rootfs, but
+  `/.nimbus-m3-user-uid` and `/.nimbus-m3-user-gid` inside the rootfs, but
   uid 33 (www-data) got "Permission denied". Root cause: the OCI config mounts
   the rootfs root `./` as writable, but the BusyBox rootfs root directory is
   `dr-xr-xr-x` (no write for non-root).
-  Second attempt: changed to `/tmp/.neovex-m3-user-uid` — still failed with
+  Second attempt: changed to `/tmp/.nimbus-m3-user-uid` — still failed with
   "Operation not permitted". Root cause: virtiofs maps guest uid through the
   host user namespace. Guest uid 33 maps to a host uid that lacks write access
   to the overlay.
   Fix: changed the test to capture uid/gid via stderr (ctr.log) instead of
-  rootfs files. Guest script: `echo NEOVEX_UID=$(id -u) >&2; echo
-  NEOVEX_GID=$(id -g) >&2; exec /bin/busybox httpd -f -p 8089`.
+  rootfs files. Guest script: `echo NIMBUS_UID=$(id -u) >&2; echo
+  NIMBUS_GID=$(id -g) >&2; exec /bin/busybox httpd -f -p 8089`.
   After fix, the smoke test
   `krun_backend_m3_guest_user_switch_applies_image_user_inside_guest` passed
   in ~7.6s:
   (1) buildah fixture image created with `USER www-data`;
   (2) bundle `process.user` = `{uid:0, gid:0}` (root for VMM /dev/kvm);
-  (3) bundle `process.args[0]` = `/.neovex/neovex-guest-user-switch`;
-  (4) ctr.log reports `NEOVEX_UID=33` and `NEOVEX_GID=33`;
+  (3) bundle `process.args[0]` = `/.nimbus/nimbus-guest-user-switch`;
+  (4) ctr.log reports `NIMBUS_UID=33` and `NIMBUS_GID=33`;
   (5) sandbox reached `Ready` with 1 published endpoint on host port 18089;
   (6) HTTP probe on 127.0.0.1:18089 returned BusyBox httpd response;
   (7) manifest `image_metadata.user` preserved as `33:33`.
   Unused variable `guest_port_str` also removed from the test.
   All 54 tests pass (52 unit + 2 integration). Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-sandbox -p neovex` pass,
-  `cargo test -p neovex-sandbox` (54 pass on clean rerun),
-  exact test: `cargo test -p neovex-sandbox --test krun_linux_smoke
+  `cargo check -p nimbus-sandbox -p nimbus` pass,
+  `cargo test -p nimbus-sandbox` (54 pass on clean rerun),
+  exact test: `cargo test -p nimbus-sandbox --test krun_linux_smoke
   krun_backend_m3_guest_user_switch_applies_image_user_inside_guest
   -- --ignored --exact --test-threads=1` pass.
-  Env: `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
-  `NEOVEX_KRUN_GUEST_USER_HELPER_ROOT=/tmp/neovex-guest-user-switch-root`.
+  Env: `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
+  `NIMBUS_KRUN_GUEST_USER_HELPER_ROOT=/tmp/nimbus-guest-user-switch-root`.
   M3 is now done. All five M3 slices are Linux-verified: startup readiness,
   liveness, restart policy, exponential backoff, and guest-side user switching.
   M4 promoted to in_progress.
@@ -1822,22 +1822,22 @@ ss -tlnp | grep 15432                                 # should be empty
   port 18090 released.
   Note: the exact test name requires the full module prefix
   `tests::convex_functions::runtime_queries::execution::services::` when using
-  `--exact` with `cargo test -p neovex-server`.
+  `--exact` with `cargo test -p nimbus-server`.
   Verification:
   `cargo fmt --all --check` pass,
-  `cargo check -p neovex-runtime -p neovex-sandbox -p neovex-server -p neovex` pass,
-  exact command: `cargo test -p neovex-server
+  `cargo check -p nimbus-runtime -p nimbus-sandbox -p nimbus-server -p nimbus` pass,
+  exact command: `cargo test -p nimbus-server
   'tests::convex_functions::runtime_queries::execution::services::convex_runtime_query_starts_real_krun_service_under_manager_and_tears_it_down'
   -- --ignored --exact --nocapture` pass.
   Env:
-  `NEOVEX_KRUN_SMOKE_WORKDIR=/tmp/neovex-sandbox-smoke`,
-  `NEOVEX_KRUN_SMOKE_RUNTIME=/usr/libexec/neovex/crun`,
-  `NEOVEX_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
-  `NEOVEX_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
-  `NEOVEX_KRUN_SMOKE_ROOTFS=/tmp/neovex-sandbox-smoke-rootfs`,
-  `NEOVEX_KRUN_SMOKE_M4_HOST_PORT=18090`,
-  `NEOVEX_KRUN_SMOKE_M4_GUEST_PORT=8090`.
-  State: `/tmp/neovex-sandbox-smoke/m4-manager-state/containers/db-01kp3ktd3gy7gjsbqwrxbaeant/manifest.json`.
+  `NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-sandbox-smoke`,
+  `NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun`,
+  `NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon`,
+  `NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah`,
+  `NIMBUS_KRUN_SMOKE_ROOTFS=/tmp/nimbus-sandbox-smoke-rootfs`,
+  `NIMBUS_KRUN_SMOKE_M4_HOST_PORT=18090`,
+  `NIMBUS_KRUN_SMOKE_M4_GUEST_PORT=8090`.
+  State: `/tmp/nimbus-sandbox-smoke/m4-manager-state/containers/db-01kp3ktd3gy7gjsbqwrxbaeant/manifest.json`.
   M4 is now done. M5 remains `todo`.
 - 2026-04-13: Ran initial M5/SCP5 Linux-host verification on Debian 13 x86_64.
   Compose-serve smoke (`bash scripts/verify-microvm-m5-compose-serve-helper.sh`)
@@ -1845,14 +1845,14 @@ ss -tlnp | grep 15432                                 # should be empty
   tenant deletion teardown. Recovery drill
   (`bash scripts/verify-microvm-m5-recovery-drill-helper.sh`) also reported
   success and wrote
-  `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`.
+  `/tmp/nimbus-sandbox-smoke/m5-recovery-drill/summary.txt`.
 - 2026-04-13: Post-review hardening found two durability gaps in the initial
   M5 closeout:
   - the bin smoke had widened public API surface by making
     `RuntimeServiceRegistry` public even though the test could assert through
     the already-public `SandboxCatalog` surface on `SandboxServiceManager`
   - the recovery helper could validate stale manifests/logs from the shared
-    `${NEOVEX_KRUN_SMOKE_WORKDIR}` and could miss orphaned conmon/crun
+    `${NIMBUS_KRUN_SMOKE_WORKDIR}` and could miss orphaned conmon/crun
     processes by grepping the host port rather than the sandbox identity
   The current code now keeps `RuntimeServiceRegistry` internal again, records
   the exact current-run project root/key in the compose-serve helper, clears
@@ -1868,33 +1868,33 @@ ss -tlnp | grep 15432                                 # should be empty
   `grep -o 'M5_PROJECT_ROOT=[^ ]*'` to extract mid-line markers reliably.
   Commands run:
   1. `cargo fmt --all --check` — passed
-  2. `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex` — passed
-  3. `cargo test -p neovex-bin` — 39 passed, 1 ignored
+  2. `cargo check -p nimbus-sandbox -p nimbus-server -p nimbus-bin -p nimbus` — passed
+  3. `cargo test -p nimbus-bin` — 39 passed, 1 ignored
   4. `bash scripts/verify-microvm-m5-compose-serve-helper.sh` — passed (~6.9s)
   5. `bash scripts/verify-microvm-m5-recovery-drill-helper.sh` — all checks passed
   Evidence:
   - project_key: `smoke-app-cf079a18bd54`
-  - project_root: `/tmp/neovex-sandbox-smoke/m5-compose-control/services/projects/smoke-app-cf079a18bd54`
+  - project_root: `/tmp/nimbus-sandbox-smoke/m5-compose-control/services/projects/smoke-app-cf079a18bd54`
   - sandbox_id: `db-01kp3yamn6rb2dtwbk0wn1t8tz`
   - manifest.status: stopped, shutdown_requested: True, last_exit_code: 137
   - port.18091.released: ok, orphan.processes: ok (none)
   - logs.ctr.persists: ok (1/1), logs.oci.persists: ok (1/1)
   - project.layout: ok (key=smoke-app-cf079a18bd54)
   - Artifacts: compose-serve summary at
-    `/tmp/neovex-sandbox-smoke/m5-compose-serve-verification/summary.txt`,
+    `/tmp/nimbus-sandbox-smoke/m5-compose-serve-verification/summary.txt`,
     recovery-drill summary at
-    `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`
+    `/tmp/nimbus-sandbox-smoke/m5-recovery-drill/summary.txt`
   M5 is now `done`.
 - 2026-04-13: Post-closeout helper hardening removed the remaining cargo-output
   parsing seam from the M5 compose-backed smoke. The ignored Linux smoke in
-  `crates/neovex-bin/src/main.rs` now writes machine-readable project metadata
-  to `NEOVEX_KRUN_SMOKE_M5_METADATA_FILE` when requested, and
+  `crates/nimbus-bin/src/main.rs` now writes machine-readable project metadata
+  to `NIMBUS_KRUN_SMOKE_M5_METADATA_FILE` when requested, and
   `scripts/verify-microvm-m5-compose-serve-helper.sh` now reads
   `${log_root}/metadata.json` for `project_root` / `project_key` instead of
   scraping those values from test stdout. Local verification only:
   1. `cargo fmt --all --check` — passed
-  2. `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex` — passed
-  3. `cargo test -p neovex-bin service:: -- --nocapture` — passed
+  2. `cargo check -p nimbus-sandbox -p nimbus-server -p nimbus-bin -p nimbus` — passed
+  3. `cargo test -p nimbus-bin service:: -- --nocapture` — passed
   4. `bash -n scripts/verify-microvm-m5-compose-serve-helper.sh` — passed
   5. `bash -n scripts/verify-microvm-m5-recovery-drill-helper.sh` — passed
   This did not change the recorded Debian 13 Linux evidence; it hardened the

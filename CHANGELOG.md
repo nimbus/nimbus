@@ -29,13 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.21...v0.1.22
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.21...v0.1.22
 
 ## [0.1.21] - 2026-04-23
 
 ### Added
 
-- Support native neovex source roots by @jackspirou
+- Support native nimbus source roots by @jackspirou
 
 ### Build
 
@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.20...v0.1.21
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.20...v0.1.21
 
 ## [0.1.20] - 2026-04-19
 
@@ -76,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.19...v0.1.20
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.19...v0.1.20
 
 ## [0.1.19] - 2026-04-19
 
@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.18...v0.1.19
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.18...v0.1.19
 
 ## [0.1.18] - 2026-04-19
 
@@ -100,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.17...v0.1.18
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.17...v0.1.18
 
 ## [0.1.17] - 2026-04-19
 
@@ -111,13 +111,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.16...v0.1.17
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.16...v0.1.17
 
 ## [0.1.16] - 2026-04-19
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.15...v0.1.16
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.15...v0.1.16
 
 ## [0.1.15] - 2026-04-19
 
@@ -127,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.14...v0.1.15
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.14...v0.1.15
 
 ## [0.1.14] - 2026-04-18
 
@@ -137,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.13...v0.1.14
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.13...v0.1.14
 
 ## [0.1.13] - 2026-04-18
 
@@ -153,7 +153,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.12...v0.1.13
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.12...v0.1.13
 
 ## [0.1.12] - 2026-04-18
 
@@ -163,7 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.11...v0.1.12
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.11...v0.1.12
 
 ## [0.1.11] - 2026-04-18
 
@@ -207,7 +207,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.10...v0.1.11
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.10...v0.1.11
 
 ## [0.1.10] - 2026-04-17
 
@@ -228,7 +228,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.9...v0.1.10
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.9...v0.1.10
 
 ## [0.1.9] - 2026-04-17
 
@@ -250,7 +250,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.8...v0.1.9
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.8...v0.1.9
 
 ## [0.1.8] - 2026-04-16
 
@@ -264,7 +264,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.7...v0.1.8
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.7...v0.1.8
 
 ## [0.1.7] - 2026-04-16
 
@@ -280,17 +280,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.6...v0.1.7
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.6...v0.1.7
 
 ## [0.1.6] - 2026-04-16
 
 ### CI/CD
 
-- Release machine-os before neovex by @jackspirou
+- Release machine-os before nimbus by @jackspirou
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.5...v0.1.6
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.5...v0.1.6
 
 ## [0.1.5] - 2026-04-15
 
@@ -304,7 +304,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.4...v0.1.5
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.4...v0.1.5
 
 ## [0.1.4] - 2026-04-15
 
@@ -348,7 +348,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * @github-actions[bot] made their first contribution
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.3...v0.1.4
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.3...v0.1.4
 
 ## [0.1.3] - 2026-04-15
 
@@ -359,7 +359,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.2...v0.1.3
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.2...v0.1.3
 
 ## [0.1.2] - 2026-04-15
 
@@ -373,7 +373,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.1...v0.1.2
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.1...v0.1.2
 
 ## [0.1.1] - 2026-04-15
 
@@ -388,7 +388,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/v0.1.0...v0.1.1
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.0...v0.1.1
 
 ## [0.1.0] - 2026-04-15
 
@@ -402,19 +402,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/machine-os/v0.1.2...v0.1.0
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/machine-os/v0.1.2...v0.1.0
 
 ## [machine-os/v0.1.2] - 2026-04-14
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/machine-os/v0.1.1...machine-os/v0.1.2
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/machine-os/v0.1.1...machine-os/v0.1.2
 
 ## [machine-os/v0.1.1] - 2026-04-14
 
 
 
-**Full Changelog**: https://github.com/agentstation/neovex/compare/machine-os/v0.1.0...machine-os/v0.1.1
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/machine-os/v0.1.0...machine-os/v0.1.1
 
 ## [machine-os/v0.1.0] - 2026-04-14
 

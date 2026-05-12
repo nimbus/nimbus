@@ -13,13 +13,13 @@ record the same evidence paths every time.
 options:
   --bundle-dir <path>      OCI bundle directory (must already contain config.json)
   --state-root <path>      Root directory for pid/log/exit/persist state
-                           (default: ${TMPDIR:-/tmp}/neovex-conmon-drill)
-  --container-id <id>      Container ID for conmon/crun (default: neovex-krun-probe)
+                           (default: ${TMPDIR:-/tmp}/nimbus-conmon-drill)
+  --container-id <id>      Container ID for conmon/crun (default: nimbus-krun-probe)
   --name <name>            Human-readable container name (default: container ID)
   --conmon <path>          conmon binary path to embed in the run script
                            (default: conmon)
   --runtime <path>         private runtime path for conmon -r
-                           (default: /usr/libexec/neovex/crun)
+                           (default: /usr/libexec/nimbus/crun)
   --log-level <level>      conmon log level (default: debug)
   --command-file <path>    Override the generated run script path
   --terminal               Include -t in the generated conmon command
@@ -27,16 +27,16 @@ options:
 
 examples:
   bash scripts/prepare-conmon-krun-drill.sh \
-    --bundle-dir /tmp/neovex-krun-probe \
-    --state-root /tmp/neovex-conmon-drill
+    --bundle-dir /tmp/nimbus-krun-probe \
+    --state-root /tmp/nimbus-conmon-drill
 
   bash scripts/prepare-conmon-krun-drill.sh \
-    --bundle-dir /tmp/neovex-krun-probe \
-    --state-root /tmp/neovex-conmon-drill \
-    --container-id neovex-http \
-    --name neovex-http \
+    --bundle-dir /tmp/nimbus-krun-probe \
+    --state-root /tmp/nimbus-conmon-drill \
+    --container-id nimbus-http \
+    --name nimbus-http \
     --conmon /usr/bin/conmon \
-    --runtime /usr/libexec/neovex/crun
+    --runtime /usr/libexec/nimbus/crun
 EOF
 }
 
@@ -85,11 +85,11 @@ resolve_file_path() {
 }
 
 bundle_dir=""
-state_root="${TMPDIR:-/tmp}/neovex-conmon-drill"
-container_id="neovex-krun-probe"
+state_root="${TMPDIR:-/tmp}/nimbus-conmon-drill"
+container_id="nimbus-krun-probe"
 container_name=""
 conmon_path="conmon"
-runtime_path="/usr/libexec/neovex/crun"
+runtime_path="/usr/libexec/nimbus/crun"
 log_level="debug"
 command_file=""
 terminal=0

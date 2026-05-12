@@ -5,14 +5,14 @@ set -euo pipefail
 # This script is run AFTER verify-microvm-m5-compose-serve-helper.sh and checks
 # the exact project root recorded by that helper.
 
-if [[ -z "${NEOVEX_KRUN_SMOKE_WORKDIR:-}" ]]; then
-  echo "missing required environment variable: NEOVEX_KRUN_SMOKE_WORKDIR" >&2
+if [[ -z "${NIMBUS_KRUN_SMOKE_WORKDIR:-}" ]]; then
+  echo "missing required environment variable: NIMBUS_KRUN_SMOKE_WORKDIR" >&2
   exit 64
 fi
 
-host_port="${NEOVEX_KRUN_SMOKE_M5_HOST_PORT:-18091}"
-compose_summary="${NEOVEX_KRUN_SMOKE_WORKDIR%/}/m5-compose-serve-verification/summary.txt"
-log_root="${NEOVEX_KRUN_SMOKE_WORKDIR%/}/m5-recovery-drill"
+host_port="${NIMBUS_KRUN_SMOKE_M5_HOST_PORT:-18091}"
+compose_summary="${NIMBUS_KRUN_SMOKE_WORKDIR%/}/m5-compose-serve-verification/summary.txt"
+log_root="${NIMBUS_KRUN_SMOKE_WORKDIR%/}/m5-recovery-drill"
 mkdir -p "${log_root}"
 summary_file="${log_root}/summary.txt"
 failures=0

@@ -1,6 +1,6 @@
 # Runtime Execution Architecture Rationale
 
-Why Neovex embeds V8 via a `deno_core` fork, why the workerd multi-threaded
+Why Nimbus embeds V8 via a `deno_core` fork, why the workerd multi-threaded
 warm-isolate model is not pursued as-is, and what future paths exist.
 
 This document captures the evaluated tradeoff space as of 2026-04-08 so that
@@ -19,8 +19,8 @@ below.
 
 ## The Decision We Made
 
-Neovex embeds V8 through a forked `deno_core` (`agentstation/deno_core`) and a
-forked `rusty_v8` (`agentstation/rusty_v8`). The forks add V8 Locker API
+Nimbus embeds V8 through a forked `deno_core` (`nimbus/deno`) and a
+forked `rusty_v8` (`nimbus/rusty_v8`). The forks add V8 Locker API
 support for cooperative multi-isolate scheduling on shared worker threads.
 
 User-defined functions run inside V8 isolates that are **thread-pinned** —
@@ -38,7 +38,7 @@ concurrent V8 isolate slots.
 
 ### 1. Process memory layout (shared context for all models)
 
-The Neovex process has two major memory regions: the Rust data path (engine,
+The Nimbus process has two major memory regions: the Rust data path (engine,
 storage, subscriptions) and the V8 execution pool. The data path memory
 scales with tenant count and data size. The V8 pool memory scales with
 concurrent isolate count and per-isolate heap size. The threading model only
@@ -46,7 +46,7 @@ affects how the V8 pool region is organized.
 
 ```mermaid
 flowchart LR
-    subgraph Process["neovex process -- single binary"]
+    subgraph Process["nimbus process -- single binary"]
         direction TB
         subgraph DataPath["Rust data path -- shared across all threads"]
             Engine["Engine: Service, scheduler, subscriptions"]
@@ -144,7 +144,7 @@ flowchart TB
     class I1A,I1B,I2A,I2B,I3A isolate
 ```
 
-**The problem at Neovex's scale:** 50 active tenants across 12 threads means
+**The problem at Nimbus's scale:** 50 active tenants across 12 threads means
 ~4 active tenants per thread on average. During V8 bursts (10-50ms each),
 head-of-line blocking is frequent -- one tenant's execution delays the 3+
 other active tenants on the same thread while other threads sit idle.
@@ -203,8 +203,8 @@ flowchart TB
     class Iso isolate
 ```
 
-**Why this does not apply to Neovex:** This tests single-tenant saturation.
-Neovex has 300+ tenants per server. Concurrent requests almost always target
+**Why this does not apply to Nimbus:** This tests single-tenant saturation.
+Nimbus has 300+ tenants per server. Concurrent requests almost always target
 different tenants, so different isolates, so different Locker mutexes with
 zero contention.
 
@@ -383,17 +383,17 @@ matters.
 Run user functions in a separate Deno or Node process. Communicate over
 stdin/stdout or local socket.
 
-- **Loses sandbox control.** Neovex requires per-tenant isolate-level
+- **Loses sandbox control.** Nimbus requires per-tenant isolate-level
   isolation with configurable heap limits, per-invocation timeout interrupts,
   and fine-grained admission control. A sidecar delegates all of this to the
-  external runtime's internal management, which Neovex cannot configure.
-- **Breaks single-binary deployment.** Neovex ships as one binary. A sidecar
+  external runtime's internal management, which Nimbus cannot configure.
+- **Breaks single-binary deployment.** Nimbus ships as one binary. A sidecar
   requires Deno/Node installed or bundled alongside.
 - **IPC overhead on every host call.** A mutation's `ctx.db.query()` currently
   resolves in-process through the `HostBridge` trait. A sidecar adds
   serialization + syscall + deserialization per host call. With 5-10 host calls
   per mutation, this adds measurable latency.
-- **Loses warm isolate management.** Neovex controls affinity, eviction policy,
+- **Loses warm isolate management.** Nimbus controls affinity, eviction policy,
   reuse limits, and pool sizing. A sidecar makes these Deno's black box.
 
 The sidecar model trades sandbox control and performance for reduced maintenance.
@@ -412,7 +412,7 @@ Request → pick any thread → Locker enters shared warm isolate → execute �
 → isolate returns to shared pool → any thread can take it next
 ```
 
-Neovex does not pursue this model today because of one hard constraint and
+Nimbus does not pursue this model today because of one hard constraint and
 one pragmatic consequence.
 
 ### The hard constraint: deno_core's JsRuntime is !Send
@@ -430,7 +430,7 @@ make upstream tracking effectively impossible. It would also add
 synchronization overhead to every op dispatch, every module resolution, and
 every event loop tick, even on the single-threaded path.
 
-The Neovex `deno_core` fork adds Locker-aware cooperative scheduling (multiple
+The Nimbus `deno_core` fork adds Locker-aware cooperative scheduling (multiple
 isolates sharing a thread with explicit lock handoff) without making `JsRuntime`
 `Send`. This is a pragmatic middle ground: isolates on the same thread can
 cooperatively yield, but isolates do not migrate between threads.
@@ -458,13 +458,13 @@ pathological scenario does not reflect real multi-tenant traffic patterns.
 In a realistic deployment with many tenants and distributed requests, the
 shared pool model would perform well — as Cloudflare demonstrates at scale.
 
-Thread-pinned affinity is what Neovex uses because it is the best architecture
+Thread-pinned affinity is what Nimbus uses because it is the best architecture
 available given the `!Send` constraint, not because it is inherently superior
 to the shared pool model.
 
-### Why cross-thread sharing matters more on Neovex's target hardware
+### Why cross-thread sharing matters more on Nimbus's target hardware
 
-Neovex's target deployment is a single-binary on a 6-16 thread bare metal
+Nimbus's target deployment is a single-binary on a 6-16 thread bare metal
 server (Hetzner EX44/AX52, OVHcloud Advance-1) hosting 300-2,000 tenants.
 This profile makes the `!Send` constraint more costly than it would be on
 larger hardware:
@@ -486,7 +486,7 @@ uncontended mutex is ~20-50ns — negligible relative to the milliseconds of
 JS execution per call. The single-process architecture eliminates any
 distributed coordination overhead.
 
-The cross-thread shared pool is arguably **more valuable** on Neovex's
+The cross-thread shared pool is arguably **more valuable** on Nimbus's
 low-thread, high-density target than on Cloudflare's massive edge fleet
 where load naturally distributes across thousands of threads. Resolving
 the `!Send` constraint should be treated as meaningful technical debt, not
@@ -564,7 +564,7 @@ tool (esbuild, swc) at bundle time rather than at runtime.
 
 ### If V8 becomes the wrong tradeoff entirely
 
-Two scenarios where Neovex would move away from V8:
+Two scenarios where Nimbus would move away from V8:
 
 1. **The npm ecosystem moves to WASM-native.** If toolchains emerge that
    compile JS/TS + npm dependencies to Wasm components with acceptable
@@ -589,7 +589,7 @@ The path to true cross-thread warm isolates would be:
    path.
 
 2. **Build a custom C++ V8 host.** Similar to workerd but purpose-built for
-   Neovex's needs. Lower integration overhead than full workerd but requires
+   Nimbus's needs. Lower integration overhead than full workerd but requires
    C++ V8 expertise. This is the "build the thing" path.
 
 3. **Make deno_core `Send`.** The most invasive option. Replace `Rc` with

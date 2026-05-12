@@ -1,22 +1,22 @@
 # MongoDB Adapter
 
 ```bash
-neovex start --port 8080
+nimbus start --port 8080
 mongosh mongodb://127.0.0.1:27017/default?directConnection=true
 ```
 
 ```javascript
-db.messages.insertOne({ author: "Alice", body: "Hello from Neovex" })
+db.messages.insertOne({ author: "Alice", body: "Hello from Nimbus" })
 db.messages.find()
 ```
 
 That's it. Stock MongoDB drivers, any language, no codegen, no schema files.
-Data lives in Neovex (SQLite by default), not MongoDB. ~2 minutes from install to query.
+Data lives in Nimbus (SQLite by default), not MongoDB. ~2 minutes from install to query.
 
 ## How it works
 
 The adapter speaks the MongoDB binary protocol (OP_MSG) natively. Any standard
-MongoDB client connects to Neovex as if it were a MongoDB instance.
+MongoDB client connects to Nimbus as if it were a MongoDB instance.
 See [Compatible Drivers](drivers.md) for the full list by language.
 
 ```
@@ -31,7 +31,7 @@ See [Compatible Drivers](drivers.md) for the full list by language.
                 │  (BSON over TCP, port 27017)
                 ▼
 ┌──────────────────────────────────────┐
-│        Neovex Server                 │
+│        Nimbus Server                 │
 │                                      │
 │  ┌──────────┐    ┌────────────────┐  │
 │  │ Wire     │    │ BSON Bridge    │  │
@@ -54,7 +54,7 @@ See [Compatible Drivers](drivers.md) for the full list by language.
 └──────────────────────────────────────┘
 ```
 
-The adapter shares the same engine mutation path as Neovex's HTTP and
+The adapter shares the same engine mutation path as Nimbus's HTTP and
 WebSocket interfaces. A document inserted via `mongosh` is immediately
 visible through the HTTP API and vice versa.
 
@@ -63,7 +63,7 @@ visible through the HTTP API and vice versa.
 ### mongosh (zero install)
 
 ```bash
-neovex start --port 8080
+nimbus start --port 8080
 mongosh mongodb://127.0.0.1:27017/default?directConnection=true
 ```
 
@@ -77,18 +77,18 @@ db.messages.find()
 ```bash
 mkdir my-app && cd my-app
 npm init -y
-npm install mongodb @neovex/mongodb
+npm install mongodb @nimbus/mongodb
 ```
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@neovex/mongodb";
+import { uri } from "@nimbus/mongodb";
 
 const client = new MongoClient(uri());
 await client.connect();
 
 const db = client.db("default");
-await db.collection("messages").insertOne({ author: "Alice", text: "Hello from Neovex" });
+await db.collection("messages").insertOne({ author: "Alice", text: "Hello from Nimbus" });
 console.log(await db.collection("messages").find().toArray());
 
 await client.close();
@@ -120,24 +120,24 @@ print(list(db.messages.find()))
 
 ## Client Package
 
-`@neovex/mongodb` is a URI builder that produces a correct `mongodb://`
-connection string for Neovex. It does not wrap the MongoDB driver -- you
+`@nimbus/mongodb` is a URI builder that produces a correct `mongodb://`
+connection string for Nimbus. It does not wrap the MongoDB driver -- you
 create and manage the `MongoClient` yourself.
 
 ```bash
-npm install @neovex/mongodb mongodb
+npm install @nimbus/mongodb mongodb
 ```
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@neovex/mongodb";
+import { uri } from "@nimbus/mongodb";
 
 const client = new MongoClient(uri({ database: "myapp" }));
 await client.connect();
 const db = client.db("myapp");
 ```
 
-The helper exists because Neovex is not a MongoDB replica set. Without
+The helper exists because Nimbus is not a MongoDB replica set. Without
 `directConnection=true`, drivers attempt topology discovery and fail with a
 confusing timeout. `uri()` always includes it, along with sensible defaults
 (`127.0.0.1:27017`, database `"default"`).
@@ -150,14 +150,14 @@ authentication patterns in multiple languages.
 ## Project Layout
 
 No special directory structure is required. The MongoDB adapter does not use
-a `.neovex` directory, codegen, or schema files. You bring your own project
+a `.nimbus` directory, codegen, or schema files. You bring your own project
 layout and use the standard MongoDB driver API.
 
 ```
 my-mongo-app/
 ├── src/
 │   └── index.ts        # your application code
-├── package.json        # depends on "mongodb" or "@neovex/mongodb"
+├── package.json        # depends on "mongodb" or "@nimbus/mongodb"
 └── tsconfig.json
 ```
 

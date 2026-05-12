@@ -1,6 +1,6 @@
 # Plan: Localhost Server Security
 
-Canonical execution plan for hardening `neovex start` as a localhost service:
+Canonical execution plan for hardening `nimbus start` as a localhost service:
 token-based authentication, origin allowlist, session cookie bootstrap,
 Content Security Policy, server discovery, and audit logging. These
 protections apply regardless of whether a UI exists — any localhost-exposed
@@ -8,14 +8,14 @@ server needs them.
 
 Reviewed against:
 
-- `crates/neovex-server/src/router.rs` — current route tree (no auth
+- `crates/nimbus-server/src/router.rs` — current route tree (no auth
   middleware exists today)
-- `crates/neovex-server/src/ws/mod.rs` — WebSocket upgrade handler (no
+- `crates/nimbus-server/src/ws/mod.rs` — WebSocket upgrade handler (no
   origin check, no auth gating)
-- `crates/neovex-bin/src/main.rs` — CLI subcommands (`start`, `machine`,
+- `crates/nimbus-bin/src/main.rs` — CLI subcommands (`start`, `machine`,
   `compose`); no `token` subcommand exists
-- `crates/neovex-bin/src/machine/mod.rs:2206-2246` — established XDG path
-  convention (`$XDG_CONFIG_HOME/neovex/machine/`, etc.)
+- `crates/nimbus-bin/src/machine/mod.rs:2206-2246` — established XDG path
+  convention (`$XDG_CONFIG_HOME/nimbus/machine/`, etc.)
 - `docs/architecture/sandbox/macos-machine-flow.md:232-237` — settled XDG convention
 - `Cargo.toml` — `ring` 0.17 already a workspace dependency
 
@@ -37,7 +37,7 @@ Reviewed against:
 | Item | Status | Notes |
 | --- | --- | --- |
 | LS1 | `done` | Landed server-owned platform path resolver plus `server.json` lifecycle and stale-file recovery |
-| LS2 | `done` | Landed local admin token storage, in-memory security state, live/offline rotation, and `neovex token rotate` |
+| LS2 | `done` | Landed local admin token storage, in-memory security state, live/offline rotation, and `nimbus token rotate` |
 | LS3 | `done` | Landed loopback-only origin enforcement, route-family local-admin gates, distinct deploy header handling, and Convex app auth separation coverage |
 | LS4 | `done` | Landed minimal `/ui/*` bootstrap routes, signed session cookies, and CSP enforcement |
 | LS5 | `done` | Security audit log |
@@ -78,7 +78,7 @@ Reviewed against:
 
 ## Control Plan Rules
 
-1. File paths follow the established XDG convention — no `~/.neovex/`.
+1. File paths follow the established XDG convention — no `~/.nimbus/`.
 2. No custom crypto. Session cookies are signed using `ring::hmac` with a
    key derived from the token file. Token comparison uses constant-time byte
    comparison.
@@ -103,9 +103,9 @@ Each roadmap item must satisfy before closing:
 
 | Purpose | Linux / XDG | macOS | Windows |
 | --- | --- | --- | --- |
-| Auth token | `$XDG_DATA_HOME/neovex/auth/token` (fallback `~/.local/share/neovex/auth/token`) | `~/Library/Application Support/neovex/auth/token` | `%LOCALAPPDATA%\neovex\auth\token.json` |
-| Server run state | `$XDG_RUNTIME_DIR/neovex/server.json` (fallback `$XDG_STATE_HOME/neovex/run/server.json`) | `$TMPDIR/neovex/server.json` when `$TMPDIR` is set, otherwise `~/Library/Application Support/neovex/run/server.json` | `%LOCALAPPDATA%\neovex\run\server.json` |
-| Audit log | `$XDG_STATE_HOME/neovex/logs/access.jsonl` (fallback `~/.local/state/neovex/logs/access.jsonl`) | `~/Library/Logs/neovex/access.jsonl` | `%LOCALAPPDATA%\neovex\logs\access.jsonl` |
+| Auth token | `$XDG_DATA_HOME/nimbus/auth/token` (fallback `~/.local/share/nimbus/auth/token`) | `~/Library/Application Support/nimbus/auth/token` | `%LOCALAPPDATA%\nimbus\auth\token.json` |
+| Server run state | `$XDG_RUNTIME_DIR/nimbus/server.json` (fallback `$XDG_STATE_HOME/nimbus/run/server.json`) | `$TMPDIR/nimbus/server.json` when `$TMPDIR` is set, otherwise `~/Library/Application Support/nimbus/run/server.json` | `%LOCALAPPDATA%\nimbus\run\server.json` |
+| Audit log | `$XDG_STATE_HOME/nimbus/logs/access.jsonl` (fallback `~/.local/state/nimbus/logs/access.jsonl`) | `~/Library/Logs/nimbus/access.jsonl` | `%LOCALAPPDATA%\nimbus\logs\access.jsonl` |
 
 Parent directories that contain auth or run-state files are created user-only
 (`0700` on Unix, current-user ACL on Windows). Token files are `0600` on Unix
@@ -113,22 +113,22 @@ and current-user only on Windows.
 
 ### Token file
 
-`$XDG_DATA_HOME/neovex/auth/token` (`0600`, user-only ACL on Windows):
+`$XDG_DATA_HOME/nimbus/auth/token` (`0600`, user-only ACL on Windows):
 
 ```json
 {
   "version": 1,
-  "token": "neovex_at_<base64url-256bit>",
+  "token": "nimbus_at_<base64url-256bit>",
   "generation": 1,
   "issuedAt": "2026-04-18T...",
   "scope": "local-admin"
 }
 ```
 
-Generated on first `neovex start` if absent. Token writes are serialized with
+Generated on first `nimbus start` if absent. Token writes are serialized with
 an auth-file lock and committed through an atomic temp-file-and-rename flow.
 
-`neovex token rotate` first discovers a running local server from
+`nimbus token rotate` first discovers a running local server from
 `server.json`. If the server is live, the CLI authenticates with the current
 token and calls a local rotate endpoint so the process updates its in-memory
 HMAC key and generation before the token file is rewritten. If no live server
@@ -148,10 +148,10 @@ exists, the CLI may perform an offline atomic rewrite. Rotation bumps
 This plan protects the local server surface. It must not duplicate or replace
 application authentication.
 
-Neovex has two separate auth layers:
+Nimbus has two separate auth layers:
 
-1. **Server access auth** proves the caller may use local Neovex control
-   surfaces. Sources are the local admin token, signed `neovex_session`
+1. **Server access auth** proves the caller may use local Nimbus control
+   surfaces. Sources are the local admin token, signed `nimbus_session`
    cookie, one-time browser launch tickets, and the deploy-specific token.
    Server access auth authorizes route families such as native REST,
    diagnostics, deploy admin, and the desktop/system UI. It never populates
@@ -160,7 +160,7 @@ Neovex has two separate auth layers:
 2. **Application auth** proves the end-user identity for a tenant/app
    invocation. Today the Convex adapter verifies JWT/OIDC/custom JWT tokens
    from `convex/auth.config.ts` and normalizes them into `InvocationAuth` plus
-   `PrincipalContext`. Future Neovex-native application auth should reuse the
+   `PrincipalContext`. Future Nimbus-native application auth should reuse the
    same provider-neutral verifier and identity normalization path, then map to
    Convex-compatible shapes at the Convex adapter boundary. Do not add a
    second JWT/OIDC verifier for the local server token/session system.
@@ -172,15 +172,15 @@ Tenant scope is explicit:
 - an application identity is scoped to that tenant/app auth configuration
 - a local admin token or UI session is server-wide and is not a user-tenant
   application identity
-- the reserved `_neovex` system tenant may receive an explicit system
+- the reserved `_nimbus` system tenant may receive an explicit system
   principal derived from server access auth for management UI functions, but
-  that projection is limited to `_neovex` and must not bleed into user tenants
+  that projection is limited to `_nimbus` and must not bleed into user tenants
 
 Header ownership is also explicit. `Authorization: Bearer ...` on
 Convex-compatible app routes belongs to application auth. Local admin bearer
 tokens are accepted on server-control route families; if a future app route
 also needs server access auth, use the signed cookie or a distinct
-`X-Neovex-Admin-Token` header instead of stealing the application's bearer JWT.
+`X-Nimbus-Admin-Token` header instead of stealing the application's bearer JWT.
 
 ### Session cookie bootstrap
 
@@ -198,7 +198,7 @@ these proofs:
   token-authenticated local CLI call; tickets are single-use, expire within 60
   seconds, and are never accepted from query strings
 
-The server sets a signed `neovex_session` cookie
+The server sets a signed `nimbus_session` cookie
 (`HttpOnly; SameSite=Strict; Path=/`) with fields `{session_id, generation,
 issued_at, expires_at}` plus an HMAC. Session TTL is 12 hours by default. A
 token-generation mismatch returns `401 auth.token_revoked`.
@@ -212,11 +212,11 @@ and extensions that may not preserve fetch metadata headers.
 | Route family | Server access auth | Application auth | Origin / CORS | Notes |
 | --- | --- | --- | --- | --- |
 | `GET /health` | none | none | no credentials, no CORS credentials | Liveness only; must not expose tenant, runtime, license, machine, or path state |
-| `GET /ui/*` | signed session cookie, redirect to `/ui/auth` when missing | `_neovex` system principal only when a system-tenant function is invoked | same-origin only | LS4 owns minimal bootstrap routes; DU1 later replaces static assets without weakening middleware |
-| `POST /ui/auth/session` | local admin token in POST body or one-time CLI launch ticket | none | same-origin or no-origin localhost form POST only | Sets `neovex_session`; never accepts query-string credentials |
+| `GET /ui/*` | signed session cookie, redirect to `/ui/auth` when missing | `_nimbus` system principal only when a system-tenant function is invoked | same-origin only | LS4 owns minimal bootstrap routes; DU1 later replaces static assets without weakening middleware |
+| `POST /ui/auth/session` | local admin token in POST body or one-time CLI launch ticket | none | same-origin or no-origin localhost form POST only | Sets `nimbus_session`; never accepts query-string credentials |
 | `/api/tenants/*`, `/api/tenants`, `/api/*/documents`, `/api/*/query`, scheduler, cron, journal | local admin bearer token or signed session cookie | none unless route explicitly delegates into a tenant app | localhost allowlist only; credentialed CORS disabled unless explicitly configured | Native admin/data surface; local admin token is not a tenant principal |
 | `/debug/*` | local admin bearer token or signed session cookie | none | localhost allowlist only | Diagnostics can leak local state and provider topology |
-| `POST /api/admin/deploy` | existing deploy token plus local admin auth when bound to loopback; deploy token remains required | none | localhost allowlist only | `NEOVEX_DEPLOY_TOKEN` remains the deploy-specific capability |
+| `POST /api/admin/deploy` | existing deploy token plus local admin auth when bound to loopback; deploy token remains required | none | localhost allowlist only | `NIMBUS_DEPLOY_TOKEN` remains the deploy-specific capability |
 | `/convex/{tenant}/query`, `/mutation`, `/action`, `/schedule/*`, `/http/*` | none by default for Convex-compatible app API | tenant/app `Authorization: Bearer <JWT>` verified by the selected Convex registry when configured; otherwise anonymous | localhost allowlist only | Preserves Convex semantics. Local server auth must not consume the app bearer token or populate `ctx.auth`. |
 | `/ws` | local admin bearer token or signed session cookie before protocol selection/upgrade | none | WebSocket `Origin` must be absent or in allowlist | Native server WebSocket surface |
 | `/convex/{tenant}/ws` | none by default for Convex-compatible app API | tenant/app auth follows the Convex WebSocket protocol and selected registry | WebSocket `Origin` must be absent or in allowlist | Bad origin must return `403` before any local or app token validation |
@@ -263,7 +263,7 @@ No `'unsafe-eval'` in production. Gate dev-mode relaxation behind
 
 ### Server discovery file
 
-`$XDG_RUNTIME_DIR/neovex/server.json`:
+`$XDG_RUNTIME_DIR/nimbus/server.json`:
 
 ```json
 {
@@ -271,7 +271,7 @@ No `'unsafe-eval'` in production. Gate dev-mode relaxation behind
   "address": "127.0.0.1:6789",
   "startedAt": "2026-04-18T12:34:56Z",
   "version": "0.2.3",
-  "protocolVersions": ["neovex.v1"]
+  "protocolVersions": ["nimbus.v1"]
 }
 ```
 
@@ -287,7 +287,7 @@ All active simultaneously:
 - Bind loopback only (`127.0.0.1` / `::1`)
 - Origin allowlist on WebSocket upgrade
 - Private Network Access preflight denial for non-loopback origins
-- Audit log at `$XDG_STATE_HOME/neovex/logs/access.jsonl`
+- Audit log at `$XDG_STATE_HOME/nimbus/logs/access.jsonl`
 - No tokens in URLs
 - `ring::hmac` for session cookie signing
 
@@ -297,7 +297,7 @@ All active simultaneously:
 
 Implement XDG-compliant path resolution for auth, run state, and logs —
 consistent with the existing machine manager convention. Write
-`server.json` on `neovex start` bind with `RemoveOnDrop` guard. PID
+`server.json` on `nimbus start` bind with `RemoveOnDrop` guard. PID
 liveness check on startup for stale file recovery.
 
 **Verification:** (a) `server.json` written on bind with correct PID/address,
@@ -309,8 +309,8 @@ next startup, (d) paths respect `$XDG_DATA_HOME`, `$XDG_RUNTIME_DIR`,
 
 ### LS2 — Token file lifecycle and CLI subcommand
 
-Generate 256-bit token on first `neovex start`, write to
-`$XDG_DATA_HOME/neovex/auth/token` with `0600` permissions (ACL on
+Generate 256-bit token on first `nimbus start`, write to
+`$XDG_DATA_HOME/nimbus/auth/token` with `0600` permissions (ACL on
 Windows). Add `Command::Token(TokenCommand)` to the CLI with
 `TokenSubcommand::Rotate` that bumps `generation`.
 
@@ -320,7 +320,7 @@ and HMAC key before writing the new token file. Offline rotation is allowed
 only when `server.json` is absent or stale.
 
 **Verification:** (a) token file created on first start, (b) permissions
-are 0600, (c) `neovex token rotate` increments generation, (d) token
+are 0600, (c) `nimbus token rotate` increments generation, (d) token
 file is reused across restarts, (e) Windows ACL restricts to current user,
 (f) live-server rotation invalidates an existing cookie without restart,
 (g) offline rotation refuses to race a live server.
@@ -372,7 +372,7 @@ release builds.
 ### LS5 — Audit log
 
 Write append-only JSONL audit records to
-`$XDG_STATE_HOME/neovex/logs/access.jsonl` for security-relevant localhost
+`$XDG_STATE_HOME/nimbus/logs/access.jsonl` for security-relevant localhost
 server events. Record route family, tenant id when applicable, auth scope
 (`server_access` versus `application`), coarse auth method, success or
 failure, origin, and a coarse reason string. Do not log tokens, cookie values,
@@ -398,9 +398,9 @@ directory posture.
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 2026-04-18 | Plan authored | — | Extracted from desktop-ui-plan.md as prerequisite |
-| 2026-04-23 | LS1 | `done` | Added a server-owned `local_server` path/discovery module in `neovex-server`, re-exported it through the facade, and wired `neovex start` to write `server.json` on bind, replace stale discovery files after dead-PID cleanup, and remove the file on clean shutdown while preserving later overwrites from newer processes. Platform path resolution now covers Linux/XDG, macOS `TMPDIR` or Application Support plus Logs, and Windows `LOCALAPPDATA` with `USERPROFILE` fallback. Verification: `cargo test -p neovex-server local_server -- --nocapture`; `cargo test -p neovex-bin start -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS2 token lifecycle, secure token storage, and live/offline rotation semantics. |
-| 2026-04-23 | LS2 | `done` | Added server-owned token storage and in-memory security state, generated and reused a versioned 256-bit local admin token on `neovex start`, exposed authenticated live rotation at `POST /api/admin/token/rotate`, and added `neovex token rotate` with live-server and offline-refusal behavior plus constant-time token verification. Verification: `cargo test -p neovex-server local_server -- --nocapture`; `cargo test -p neovex-server local_admin -- --nocapture`; `cargo test -p neovex-bin token -- --nocapture`; `cargo test -p neovex-bin start -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS3 origin allowlists, route-family middleware, and server-access gating without disturbing Convex application auth. |
-| 2026-04-23 | LS3 | `done` | Split the router into public, local-admin, deploy-admin, and Convex app route families; added loopback-only origin middleware ahead of CORS/auth; enforced local-admin access on native CRUD, debug, deploy, and native WebSocket routes; required `X-Neovex-Admin-Token` alongside the deploy bearer on `/api/admin/deploy`; and kept Convex app HTTP/WebSocket routes on tenant-selected application auth. Verification: `cargo test -p neovex-server local_server_security -- --nocapture`; `cargo test -p neovex-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS4 minimal `/ui/*` bootstrap routes, signed session cookies, and CSP headers. |
-| 2026-04-23 | LS4 | `done` | Added minimal server-owned `/ui/`, `/ui/auth`, and `POST /ui/auth/session` routes; bootstrapped signed `neovex_session` cookies from a local admin token or single-use launch ticket; allowed local UI and native WebSocket access through the signed session cookie; and applied a release-safe CSP header across `/ui/*` without introducing `unsafe-eval`. Verification: `cargo test -p neovex-server local_ui -- --nocapture`; `cargo test -p neovex-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS5 audit logging for origin, local-admin, session, rotation, and tenant-app auth events. |
-| 2026-04-23 | LS5 | `done` | Added a server-owned append-only JSONL audit log for security-relevant localhost events; recorded origin rejections, local-admin auth successes and failures, UI session bootstrap, rotation-driven session invalidation, and tenant-scoped Convex application-auth outcomes without logging tokens, cookies, or session identifiers. Verification: `cargo test -p neovex-server local_audit -- --nocapture`; `cargo test -p neovex-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: close the control plan and leave the landed security contract as baseline input for the desktop UI plan. |
+| 2026-04-23 | LS1 | `done` | Added a server-owned `local_server` path/discovery module in `nimbus-server`, re-exported it through the facade, and wired `nimbus start` to write `server.json` on bind, replace stale discovery files after dead-PID cleanup, and remove the file on clean shutdown while preserving later overwrites from newer processes. Platform path resolution now covers Linux/XDG, macOS `TMPDIR` or Application Support plus Logs, and Windows `LOCALAPPDATA` with `USERPROFILE` fallback. Verification: `cargo test -p nimbus-server local_server -- --nocapture`; `cargo test -p nimbus-bin start -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS2 token lifecycle, secure token storage, and live/offline rotation semantics. |
+| 2026-04-23 | LS2 | `done` | Added server-owned token storage and in-memory security state, generated and reused a versioned 256-bit local admin token on `nimbus start`, exposed authenticated live rotation at `POST /api/admin/token/rotate`, and added `nimbus token rotate` with live-server and offline-refusal behavior plus constant-time token verification. Verification: `cargo test -p nimbus-server local_server -- --nocapture`; `cargo test -p nimbus-server local_admin -- --nocapture`; `cargo test -p nimbus-bin token -- --nocapture`; `cargo test -p nimbus-bin start -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS3 origin allowlists, route-family middleware, and server-access gating without disturbing Convex application auth. |
+| 2026-04-23 | LS3 | `done` | Split the router into public, local-admin, deploy-admin, and Convex app route families; added loopback-only origin middleware ahead of CORS/auth; enforced local-admin access on native CRUD, debug, deploy, and native WebSocket routes; required `X-Nimbus-Admin-Token` alongside the deploy bearer on `/api/admin/deploy`; and kept Convex app HTTP/WebSocket routes on tenant-selected application auth. Verification: `cargo test -p nimbus-server local_server_security -- --nocapture`; `cargo test -p nimbus-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS4 minimal `/ui/*` bootstrap routes, signed session cookies, and CSP headers. |
+| 2026-04-23 | LS4 | `done` | Added minimal server-owned `/ui/`, `/ui/auth`, and `POST /ui/auth/session` routes; bootstrapped signed `nimbus_session` cookies from a local admin token or single-use launch ticket; allowed local UI and native WebSocket access through the signed session cookie; and applied a release-safe CSP header across `/ui/*` without introducing `unsafe-eval`. Verification: `cargo test -p nimbus-server local_ui -- --nocapture`; `cargo test -p nimbus-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: implement LS5 audit logging for origin, local-admin, session, rotation, and tenant-app auth events. |
+| 2026-04-23 | LS5 | `done` | Added a server-owned append-only JSONL audit log for security-relevant localhost events; recorded origin rejections, local-admin auth successes and failures, UI session bootstrap, rotation-driven session invalidation, and tenant-scoped Convex application-auth outcomes without logging tokens, cookies, or session identifiers. Verification: `cargo test -p nimbus-server local_audit -- --nocapture`; `cargo test -p nimbus-server -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy`; `make test`. Next: close the control plan and leave the landed security contract as baseline input for the desktop UI plan. |
 | 2026-04-23 | Closeout | `done` | Completed the localhost/server security workstream end to end and retired this plan from active-control-plane status. Final workspace verification: `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `make ci`. Next: treat this document as the settled localhost security contract and use it as baseline input for follow-on desktop UI work. |

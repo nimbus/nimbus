@@ -1,4 +1,4 @@
-$ /input/neovex encryption export --source /tmp/tmp.MaQeNseUjR/tenant.encrypted.sqlite3 --target /tmp/tmp.MaQeNseUjR/tenant.roundtrip.sqlite3 --provider sqlite --tenant-id package-proof
+$ /input/nimbus encryption export --source /tmp/tmp.MaQeNseUjR/tenant.encrypted.sqlite3 --target /tmp/tmp.MaQeNseUjR/tenant.roundtrip.sqlite3 --provider sqlite --tenant-id package-proof
 Exporting encrypted SQLite database to plaintext...
   Source: /tmp/tmp.MaQeNseUjR/tenant.encrypted.sqlite3
   Target: /tmp/tmp.MaQeNseUjR/tenant.roundtrip.sqlite3

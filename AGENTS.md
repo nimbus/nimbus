@@ -4,7 +4,7 @@ This project implements a [Convex](https://convex.dev)-compatible backend server
 When working on Convex-compatible code (`packages/convex/`, `demos/convex/`, or any Convex API surface), **always read `docs/adapters/convex/ai-guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
 <!-- convex-ai-end -->
 
-# Neovex
+# Nimbus
 
 The role of this file is to capture common mistakes and recurring confusion points for agents working in this repo.
 
@@ -82,11 +82,11 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/adapters/cloud-functions/migration.md`,
   `docs/architecture/runtime/adapter-boundary.md`,
   `docs/architecture/server/auth-runtime-trust.md`
-- Convex or Neovex CLI/codegen workflow:
+- Convex or Nimbus CLI/codegen workflow:
   `docs/adapters/convex/ai-guidelines.md`,
   `docs/operating/cli.md`,
   `docs/adapters/convex/compatibility.md`,
-  `docs/plans/archive/neovex-init-plan.md`
+  `docs/plans/archive/nimbus-init-plan.md`
 - Node-compatible runtime / `deno_core` / `rusty_v8` / embedded-codegen:
   `docs/architecture/runtime/adapter-boundary.md` and
   `docs/architecture/server/auth-runtime-trust.md` after the top-level docs.
@@ -96,24 +96,24 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/plans/archive/node-compat-future-lanes-and-correctness-plan.md` as completed
   baselines. If new Node-compat roadmap work is needed beyond those completed
   plans, create or adopt a fresh active plan before starting a new wave.
-  `~/src/github.com/agentstation/deno` as the canonical Deno-family fork,
-  `~/src/github.com/agentstation/rusty_v8` as the matching V8 fork,
-  `~/src/github.com/agentstation/deno_core` only as historical delta context,
+  `~/src/github.com/nimbus/deno` as the canonical Deno-family fork,
+  `~/src/github.com/nimbus/rusty_v8` as the matching V8 fork,
+  `~/src/github.com/nimbus/deno` only as historical delta context,
   `~/src/github.com/denoland/deno` for upstream comparison, and
   `~/src/github.com/nodejs/node` for upstream Node source/tests.
   Prefer working and verifying against those canonical worktrees with normal
   sandbox approval when needed. Do not make `/private/tmp` checkout copies or
   alternate Cargo-source workspaces the default workflow.
-  For Deno-owner changes, temporarily unpin Neovex from the published
-  `agentstation/deno` tag and point the Deno-family dependencies at the
-  canonical `~/src/github.com/agentstation/deno` worktree while proving the
+  For Deno-owner changes, temporarily unpin Nimbus from the published
+  `nimbus/deno` tag and point the Deno-family dependencies at the
+  canonical `~/src/github.com/nimbus/deno` worktree while proving the
   fix. Do not create shadow checkout copies to mimic the pin.
   Once the fork change is verified, commit/tag/push it in
-  `~/src/github.com/agentstation/deno`, then repin `Cargo.toml` and
-  `Cargo.lock` back to the published tag/revision and rerun Neovex
+  `~/src/github.com/nimbus/deno`, then repin `Cargo.toml` and
+  `Cargo.lock` back to the published tag/revision and rerun Nimbus
   verification on that repinned baseline before updating the control plane.
-  Keep Neovex-specific bootstrap/profile/capability fixes local. Promote a fix
-  to `agentstation/deno` when the local alternative would duplicate Deno/Node
+  Keep Nimbus-specific bootstrap/profile/capability fixes local. Promote a fix
+  to `nimbus/deno` when the local alternative would duplicate Deno/Node
   builtin semantics, shadow internal behavior long-term, or add avoidable
   hot-path overhead. For one-off macOS fork verification that must bypass the
   checked-in `-fuse-ld=lld` target flag, prefer `CARGO_ENCODED_RUSTFLAGS`.
@@ -126,18 +126,18 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
 
 | Name | Path | What it is |
 | --- | --- | --- |
-| `neovex` (facade crate) | `crates/neovex/` | Re-exports public types for embedders |
-| `neovex-bin` | `crates/neovex-bin/` | CLI binary entry point |
-| `neovex-core` | `crates/neovex-core/` | Shared types and validation (zero I/O) |
-| `neovex-engine` | `crates/neovex-engine/` | Central coordinator (`Service`) |
-| `neovex-runtime` | `crates/neovex-runtime/` | V8 execution (zero workspace deps) |
-| `neovex-sandbox` | `crates/neovex-sandbox/` | Generic sandbox and isolation seam |
-| `neovex-server` | `crates/neovex-server/` | HTTP/WebSocket transport |
-| `neovex-storage` | `crates/neovex-storage/` | Persistence layer |
-| `neovex-testing` | `crates/neovex-testing/` | Shared test fixtures and deterministic harness helpers |
-| `neovex` (JS SDK) | `packages/neovex/` | Neovex-native JavaScript SDK |
+| `nimbus` (facade crate) | `crates/nimbus/` | Re-exports public types for embedders |
+| `nimbus-bin` | `crates/nimbus-bin/` | CLI binary entry point |
+| `nimbus-core` | `crates/nimbus-core/` | Shared types and validation (zero I/O) |
+| `nimbus-engine` | `crates/nimbus-engine/` | Central coordinator (`Service`) |
+| `nimbus-runtime` | `crates/nimbus-runtime/` | V8 execution (zero workspace deps) |
+| `nimbus-sandbox` | `crates/nimbus-sandbox/` | Generic sandbox and isolation seam |
+| `nimbus-server` | `crates/nimbus-server/` | HTTP/WebSocket transport |
+| `nimbus-storage` | `crates/nimbus-storage/` | Persistence layer |
+| `nimbus-testing` | `crates/nimbus-testing/` | Shared test fixtures and deterministic harness helpers |
+| `nimbus` (JS SDK) | `packages/nimbus/` | Nimbus-native JavaScript SDK |
 | `convex` (JS compat) | `packages/convex/` | Convex compatibility package |
-| `@neovex/codegen` | `packages/codegen/` | Code generation tool |
+| `@nimbus/codegen` | `packages/codegen/` | Code generation tool |
 
 ### Rust target layout
 
@@ -145,7 +145,7 @@ The repo is a Rust workspace + npm monorepo. Names overlap — know which you me
 - Put internal benchmark or evaluation runners under `benches/` with explicit
   custom-harness targets when they are driven through `cargo bench`.
 - Keep integration tests in `tests/` and support helpers beside the owning
-  crate unless they are shared widely enough to justify `neovex-testing`.
+  crate unless they are shared widely enough to justify `nimbus-testing`.
 
 ### Modularity thresholds
 
@@ -194,8 +194,8 @@ improved later."
 
 These are architecture invariants — do not violate them:
 
-- **`neovex-core` has zero I/O.** Types and validation only. No file reads, no network calls.
-- **`neovex-runtime` has zero workspace dependencies.** It defines the V8 surface and `HostBridge` trait. All Neovex-specific integration lives in the server's bridge implementation.
+- **`nimbus-core` has zero I/O.** Types and validation only. No file reads, no network calls.
+- **`nimbus-runtime` has zero workspace dependencies.** It defines the V8 surface and `HostBridge` trait. All Nimbus-specific integration lives in the server's bridge implementation.
 
 ### Mutation path
 
@@ -219,8 +219,8 @@ A table without a schema accepts any document. Setting a schema adds constraints
 
 ### JavaScript package naming
 
-`packages/neovex` is the JS SDK. `crates/neovex` is the Rust facade. When discussing "neovex" clarify which.
-- `packages/neovex` is the canonical JS implementation. Keep `packages/convex`
+`packages/nimbus` is the JS SDK. `crates/nimbus` is the Rust facade. When discussing "nimbus" clarify which.
+- `packages/nimbus` is the canonical JS implementation. Keep `packages/convex`
   as a compatibility wrapper via thin adapters, aliases, or re-exports when
   behavior matches instead of copy-forwarding parallel logic.
 

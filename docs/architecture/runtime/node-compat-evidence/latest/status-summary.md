@@ -31,7 +31,7 @@ Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that d
 ## Rust Ignored Test Inventory
 
 - ignored Rust node_compat tests: 61
-- source: `crates/neovex-runtime/src/runtime/tests/node/mod.rs`
+- source: `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`
 
 ## Expectation Catalog
 

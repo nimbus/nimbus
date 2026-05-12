@@ -56,7 +56,7 @@ Reviewed against:
 
 ## Why This Exists
 
-Neovex now has the right high-level layering:
+Nimbus now has the right high-level layering:
 
 - `core` owns shared semantics
 - `engine` owns execution and coordination
@@ -74,7 +74,7 @@ The remaining problems are narrower and more structural:
   surfaces
 - architecture docs should not trail the landed contract
 
-These are exactly the kinds of changes Neovex should make before launch while
+These are exactly the kinds of changes Nimbus should make before launch while
 breaking changes are still preferred over compatibility layers.
 
 ## Relationship To Other Plans
@@ -297,23 +297,23 @@ Completion gate:
   coherent `DeploymentState` snapshot instead of several live cells, request
   paths read auth/config/registries from that snapshot, and application auth is
   now wired explicitly by server build/deploy flows instead of piggybacking on
-  `with_convex(...)`. Verified with `cargo check -p neovex-server`,
-  `cargo test -p neovex-server state --lib`,
-  `cargo test -p neovex-server cloud_functions --lib`,
-  `cargo test -p neovex-server adapters::convex::tests::authorization --lib`,
-  `cargo test -p neovex-server firebase_rest_commit_and_batch_get_respect_bearer_principal --lib`,
-  `cargo test -p neovex-server local_server_security --lib`,
-  `cargo test -p neovex-server deploy --lib`, and
-  `cargo test -p neovex-server firebase_auth_and_availability --lib`.
+  `with_convex(...)`. Verified with `cargo check -p nimbus-server`,
+  `cargo test -p nimbus-server state --lib`,
+  `cargo test -p nimbus-server cloud_functions --lib`,
+  `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`,
+  `cargo test -p nimbus-server firebase_rest_commit_and_batch_get_respect_bearer_principal --lib`,
+  `cargo test -p nimbus-server local_server_security --lib`,
+  `cargo test -p nimbus-server deploy --lib`, and
+  `cargo test -p nimbus-server firebase_auth_and_availability --lib`.
 - `2026-04-27`: `DARB4` completed. The shared runtime ABI document lane now
   uses provider-neutral `DocumentGet` / `DocumentInsert` / `DocumentPatch` /
   `DocumentDelete` names, Convex keeps `convex.ctx.db.*` only at the adapter
   contract edge, Cloud Functions routes the generic payloads directly, and the
   runtime bootstrap source now issues the renamed generic host ops. Verified
-  with `cargo check -p neovex-runtime -p neovex-server`,
-  `cargo test -p neovex-runtime host_call --lib`,
-  `cargo test -p neovex-server adapters::convex::tests::contracts --lib`, and
-  `cargo test -p neovex-server cloud_functions --lib`.
+  with `cargo check -p nimbus-runtime -p nimbus-server`,
+  `cargo test -p nimbus-runtime host_call --lib`,
+  `cargo test -p nimbus-server adapters::convex::tests::contracts --lib`, and
+  `cargo test -p nimbus-server cloud_functions --lib`.
 - `2026-04-27`: `DARB5` and `DARB6` completed. The remaining Firestore public
   model implementation family moved into
   `packages/firebase/src/internal/firestore-models.ts`, shrinking
@@ -322,7 +322,7 @@ Completion gate:
   boundary docs were updated to reflect `_updateTime`, active deployment
   snapshots, and the generic document runtime ABI, and repo guidance was moved
   from active-owner language to completed-baseline language. Verified with
-  `npm run typecheck --workspace @neovex/firebase`,
-  `npm run build --workspace @neovex/firebase`,
-  `npm run test --workspace @neovex/firebase`, and
+  `npm run typecheck --workspace @nimbus/firebase`,
+  `npm run build --workspace @nimbus/firebase`,
+  `npm run test --workspace @nimbus/firebase`, and
   `cargo fmt --all --check`.

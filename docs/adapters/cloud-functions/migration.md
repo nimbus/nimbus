@@ -1,36 +1,36 @@
 # Cloud Functions Migration Guide
 
 This guide is the practical migration path for teams moving Firebase Cloud
-Functions or standalone Functions Framework handlers onto Neovex today.
+Functions or standalone Functions Framework handlers onto Nimbus today.
 
 For the exact support matrix, see
 [Cloud Functions compatibility](cloud-functions-compatibility.md).
 
 ## Who This Covers
 
-Neovex currently supports two migration audiences:
+Nimbus currently supports two migration audiences:
 
 1. Firebase v2 authors using `firebase-functions/v2/*`
 2. Standalone authors using `@google-cloud/functions-framework`
 
 The goal is unchanged source imports for the covered slices, not a second
-Neovex-specific handler API.
+Nimbus-specific handler API.
 
 ## Recommended Migration Path
 
 1. Keep your existing handler modules and imports for the covered surface.
-2. Run Neovex from the existing Firebase repo root or standalone package root.
-3. Let Neovex auto-detect the app root in the common case.
+2. Run Nimbus from the existing Firebase repo root or standalone package root.
+3. Let Nimbus auto-detect the app root in the common case.
 4. Use `--app-dir` only when the repo layout is ambiguous or nonstandard.
-5. Generate and validate artifacts with `neovex codegen`.
-6. Run locally with `neovex start`.
-7. Deploy with `neovex deploy` once the local path is verified.
+5. Generate and validate artifacts with `nimbus codegen`.
+6. Run locally with `nimbus start`.
+7. Deploy with `nimbus deploy` once the local path is verified.
 
 ## Project Layouts That Work Today
 
 ### Firebase project
 
-Neovex preserves the conventional Firebase layout:
+Nimbus preserves the conventional Firebase layout:
 
 ```text
 my-app/
@@ -45,7 +45,7 @@ my-app/
 Generated outputs land under:
 
 ```text
-.neovex/firebase/
+.nimbus/firebase/
   artifact.json
   targets.json
   bundle.mjs
@@ -54,14 +54,14 @@ Generated outputs land under:
 
 ### Standalone Functions Framework package
 
-Neovex also supports the common standalone package-root shape:
+Nimbus also supports the common standalone package-root shape:
 
 ```text
 my-functions/
   package.json
   src/
     index.ts
-  .neovex/
+  .nimbus/
     firebase/
       targets.json
 ```
@@ -75,25 +75,25 @@ their Firestore or HTTP binding metadata in source.
 Local codegen:
 
 ```bash
-neovex codegen
+nimbus codegen
 ```
 
 Local server:
 
 ```bash
-neovex start
+nimbus start
 ```
 
 Explicit override when needed:
 
 ```bash
-neovex start --app-dir ./packages/functions
+nimbus start --app-dir ./packages/functions
 ```
 
 Deploy:
 
 ```bash
-neovex deploy --url http://127.0.0.1:8080 --token <deploy-token>
+nimbus deploy --url http://127.0.0.1:8080 --token <deploy-token>
 ```
 
 ## Covered Source-Compatible Imports
@@ -121,14 +121,14 @@ These covered imports can stay unchanged:
 | Surface | Migration posture |
 | --- | --- |
 | `onDocumentCreated`, `onDocumentUpdated`, `onDocumentDeleted`, `onDocumentWritten` | Keep imports and handler bodies for the covered first slice. |
-| `functions.cloudEvent(name, handler)` | Keep source, but ensure `.neovex/firebase/targets.json` binds the named target. |
-| `functions.http(name, handler)` | Keep source, but ensure `.neovex/firebase/targets.json` binds the named target and path. |
+| `functions.cloudEvent(name, handler)` | Keep source, but ensure `.nimbus/firebase/targets.json` binds the named target. |
+| `functions.http(name, handler)` | Keep source, but ensure `.nimbus/firebase/targets.json` binds the named target and path. |
 | `onRequest(handler)` / `onRequest({}, handler)` | Keep source for the covered base overloads. |
 | `onCall(handler)` / `onCall({}, handler)` | Keep source for the covered base overloads. |
 
 ## HTTP Path Rules
 
-Neovex keeps path derivation explicit:
+Nimbus keeps path derivation explicit:
 
 | Surface | Path rule |
 | --- | --- |
@@ -152,7 +152,7 @@ is served at:
 
 ## Trigger Delivery Behavior
 
-Cloud Functions-compatible Firestore triggers on Neovex use:
+Cloud Functions-compatible Firestore triggers on Nimbus use:
 
 - durable at-least-once delivery
 - journal-backed crash/restart replay
@@ -184,7 +184,7 @@ parity.
 
 ## Option Boundaries
 
-Neovex is intentionally strict about unsupported options.
+Nimbus is intentionally strict about unsupported options.
 
 ### Covered today
 
@@ -242,12 +242,12 @@ Do not currently assume:
 
 For most teams:
 
-1. Confirm your app root auto-detects with `neovex codegen`.
+1. Confirm your app root auto-detects with `nimbus codegen`.
 2. Add `targets.json` for standalone Functions Framework targets if needed.
-3. Run `neovex start` locally and verify trigger/HTTP flows.
+3. Run `nimbus start` locally and verify trigger/HTTP flows.
 4. Confirm any `firebase-admin` usage stays inside the documented subset.
 5. Make handler writes idempotent with at-least-once delivery in mind.
-6. Deploy with `neovex deploy`.
+6. Deploy with `nimbus deploy`.
 
 ## See Also
 

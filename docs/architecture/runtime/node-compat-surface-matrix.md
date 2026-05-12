@@ -3,7 +3,7 @@
 Status: snapshot (updated 2026-05-11)
 
 This matrix is the checked-in source of truth for the currently supported
-Node-facing surface in `crates/neovex-runtime`.
+Node-facing surface in `crates/nimbus-runtime`.
 
 It complements, but does not replace, the generated Node LTS artifact set in
 [`node-lts-compat/`](node-lts-compat/node-lts-compat-summary.md):
@@ -13,7 +13,7 @@ It complements, but does not replace, the generated Node LTS artifact set in
 - the supporting `node20` / `node22` / Deno inventory CSVs in the same folder
 
 Use the generated baseline for broad built-in coverage truth. Use this
-document for the narrower, fixture-backed Neovex runtime contract.
+document for the narrower, fixture-backed Nimbus runtime contract.
 
 The important rule is simple:
 
@@ -22,7 +22,7 @@ The important rule is simple:
 
 ## Current Baseline
 
-Neovex currently has one runtime backend (`V8DenoCore`) and these compatibility
+Nimbus currently has one runtime backend (`V8DenoCore`) and these compatibility
 targets:
 
 - `WebStandardIsolate`
@@ -48,13 +48,13 @@ scoped CommonJS/package-resolution bridge, but it is still well short of
 general Node parity and should be read as an explicit contract, not an
 implication of future support.
 
-Neovex's default compatibility baseline is `Node22`. Convex-compatible Node
+Nimbus's default compatibility baseline is `Node22`. Convex-compatible Node
 actions can select `Node20`, `Node22`, or `Node24` through `convex.json`, while
 Node22 remains the default until a deliberate Node24-default migration.
 
 ## Public Support-State Vocabulary
 
-Neovex uses these support-state labels in its public Node-facing contract:
+Nimbus uses these support-state labels in its public Node-facing contract:
 
 - `Supported`
 - `SupportedToolingOnly`
@@ -69,7 +69,7 @@ Current public contract:
 - `Node20` and `Node24` are supported compatibility lanes with lane-local
   measured evidence and product runtime selection for Convex-compatible
   `"use node"` actions.
-- Neovex does **not** currently claim full Node built-in compatibility for any
+- Nimbus does **not** currently claim full Node built-in compatibility for any
   runtime preset or grant bundle.
 - Any built-in that is `SupportedToolingOnly`, `Partial`, `StubOnly`,
   `NotSupported`, or `NeedsVerification` prevents a blanket "full Node built-in
@@ -91,8 +91,8 @@ Current public contract:
 | `process.cwd()` | unsupported | supported, scoped to the generated bundle root | supported, scoped to the app root | `runtime::tests::basic_invocation::application_node22_reads_local_files_hides_non_allowlisted_env_and_denies_escape_writes`, `runtime::tests::basic_invocation::tooling_node22_allows_allowlisted_env_and_tmp_writes` |
 | `process.env` | unsupported | explicit allowlist-only capability surface: the `Application` preset grants `NODE_TLS_REJECT_UNAUTHORIZED`, while non-allowlisted names resolve as `undefined` instead of throwing | allowlist-only (`PATH`, `HOME`, `PWD`, `TMPDIR`, `TEMP`, `TMP`, `NODE_ENV`, `NODE_TLS_REJECT_UNAUTHORIZED`, `npm_config_cache`, `npm_config_user_agent`, `npm_execpath`, `ESBUILD_BINARY_PATH`, `ESBUILD_MAX_BUFFER`, `NODE_V8_COVERAGE`) | `runtime::tests::basic_invocation::application_node22_reads_local_files_hides_non_allowlisted_env_and_denies_escape_writes`, `runtime::tests::basic_invocation::application_node22_allows_tls_reject_unauthorized_env_lookup`, `runtime::tests::basic_invocation::tooling_node22_allows_allowlisted_env_and_tmp_writes` |
 | `process.loadEnvFile()` | unsupported | supported for staged local env files under the generated bundle root, with Node-style missing-file and permission errors and loaded keys surfaced through the explicit runtime env overlay | supported by same bootstrap contract | `runtime::tests::basic_invocation::node22_target_load_env_file_missing_file_surfaces_node_not_found_error`, `runtime::tests::node_compat::node22_default_lane_executes_manifested_process_and_timing_subset`, `runtime::tests::node_compat::node20_supported_lane_executes_official_process_and_timing_subset`, `docs/architecture/runtime/node-lts-compat/manifests/process-and-timing.md`, `docs/architecture/runtime/node-lts-compat/failures/process-and-timing.md` |
-| `node:fs/promises.readFile` | unsupported | supported inside the generated bundle root only | supported inside scoped runtime roots (`app_root`, `generated_root`, `.neovex/tmp`, `.neovex/cache`) | `runtime::tests::basic_invocation::application_node22_reads_local_files_hides_non_allowlisted_env_and_denies_escape_writes`, `runtime::tests::basic_invocation::tooling_node22_allows_allowlisted_env_and_tmp_writes`, `runtime::tests::node_compat::node22_default_lane_executes_manifested_streams_and_local_io_subset`, `runtime::tests::node_compat::node20_supported_lane_executes_official_streams_and_local_io_subset` |
-| `node:fs/promises.writeFile` | unsupported | denied by the scoped Deno-family permission contract when the path escapes approved roots | supported only inside pre-existing directories under approved write roots (`generated_root`, `.neovex/tmp`, `.neovex/cache`) | `runtime::tests::basic_invocation::application_node22_reads_local_files_hides_non_allowlisted_env_and_denies_escape_writes`, `runtime::tests::basic_invocation::tooling_node22_allows_allowlisted_env_and_tmp_writes`, `runtime::tests::basic_invocation::tooling_node22_write_file_requires_preexisting_parent_directory`, `runtime::tests::node_compat::node22_default_lane_executes_manifested_streams_and_local_io_subset`, `runtime::tests::node_compat::node20_supported_lane_executes_official_streams_and_local_io_subset` |
+| `node:fs/promises.readFile` | unsupported | supported inside the generated bundle root only | supported inside scoped runtime roots (`app_root`, `generated_root`, `.nimbus/tmp`, `.nimbus/cache`) | `runtime::tests::basic_invocation::application_node22_reads_local_files_hides_non_allowlisted_env_and_denies_escape_writes`, `runtime::tests::basic_invocation::tooling_node22_allows_allowlisted_env_and_tmp_writes`, `runtime::tests::node_compat::node22_default_lane_executes_manifested_streams_and_local_io_subset`, `runtime::tests::node_compat::node20_supported_lane_executes_official_streams_and_local_io_subset` |
+| `node:fs/promises.writeFile` | unsupported | denied by the scoped Deno-family permission contract when the path escapes approved roots | supported only inside pre-existing directories under approved write roots (`generated_root`, `.nimbus/tmp`, `.nimbus/cache`) | `runtime::tests::basic_invocation::application_node22_reads_local_files_hides_non_allowlisted_env_and_denies_escape_writes`, `runtime::tests::basic_invocation::tooling_node22_allows_allowlisted_env_and_tmp_writes`, `runtime::tests::basic_invocation::tooling_node22_write_file_requires_preexisting_parent_directory`, `runtime::tests::node_compat::node22_default_lane_executes_manifested_streams_and_local_io_subset`, `runtime::tests::node_compat::node20_supported_lane_executes_official_streams_and_local_io_subset` |
 | Core `node:stream`, bundle-root-safe `node:fs`, `node:readline`, `node:tty`, and `node:os` subset: constructor/state primitives, non-socket pipeline/promises helpers, callback/promise file I/O inside approved roots, `fs.glob()`, `fs.watch()` / `fs.promises.watch()` / `watchFile()`, classic `readline.Interface`, `readline/promises.Interface`, `tty_wrap` backwards-API compatibility, and `os.EOL` | unsupported | supported for the currently manifested `NLC5` subset, with `Application` preset root restrictions and the documented later-family/networking watchpoints kept explicit | supported by the same bootstrap and approved-roots contract | `runtime::tests::node_compat::node22_default_lane_executes_manifested_streams_and_local_io_subset`, `runtime::tests::node_compat::node20_supported_lane_executes_official_streams_and_local_io_subset`, `runtime::tests::node_compat::node24_supported_lane_executes_manifested_streams_and_local_io_subset`, `docs/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md`, `docs/architecture/runtime/node-lts-compat/failures/streams-and-local-io.md` |
 | Initial networking subset: `node:dns` `Resolver#getServers()` and default-result-order semantics, `node:net` IP helpers plus the first local listen/server lifecycle, no-arg `server.unref()` listen behavior, socket lifecycle, timeout, local-address, and pre-connect `end(cb)` semantics, `node:http` `http.Agent` helper behavior plus the first keepalive/socket-pool/scheduling and lifecycle/removal/abort waves, the first basic client/server request, timeout, no-arg `http.Server` option hooks, response/head, broader response/status handling (`close`, `cork`, repeated headers, multi-content-length rejection, over-the-wire status messages, invalid status-message character rejection, invalid status-code request-loop handling, `writeHead()` object/array overrides, and response-splitting protection), the first promoted crypto-gated `node:https` helper/server wave plus the follow-on `https.Agent` connection/session/global-agent wave, the next local request/server/timeout/property wave, the follow-on local `https` server lifecycle/socket wave, the next `https` client/server semantics wave, the follow-on TLS/cert-material wave (`test-https-selfsigned-no-keycertsign-no-crash.js` in all lanes plus `test-https-hwm.js` in Node22/Node24), the widened pure `node:tls` helper/local-server wave (`test-tls-basic-validations.js`, `test-tls-check-server-identity.js`, `test-tls-connect-abort-controller.js`, `test-tls-connect-allow-half-open-option.js`, `test-tls-connect-hwm-option.js` in Node22/Node24, `test-tls-connect-no-host.js`, `test-tls-connect-simple.js`, `test-tls-connect-timeout-option.js`, `test-tls-options-boolean-check.js`, and `test-tls-server-parent-constructor-options.js`), the follow-on TLS session/ticket/keylog wave (`test-https-client-resume.js`, `test-https-resume-after-renew.js`, Node22 `test-https-agent-session-reuse.js`, and Node22/Node24 `test-https-agent-keylog.js`), the follow-on shared-LTS TLS credential/local-socket/strict-auth wave (`test-https-pfx.js`, `test-https-unix-socket-self-signed.js`, and `test-https-strict.js`), the next shared-LTS pure `node:http2` header/status/options wave (`test-http2-status-code.js`, `test-http2-status-code-invalid.js`, `test-http2-multi-content-length.js`, `test-http2-response-splitting.js`, `test-http2-options-server-request.js`, `test-http2-options-server-response.js`, `test-http2-zero-length-header.js`, `test-http2-multiheaders.js`, and `test-http2-multiheaders-raw.js`), the follow-on shared-LTS `node:http2` compat request/response core wave (`test-http2-compat-serverresponse.js`, `test-http2-compat-serverresponse-end.js`, `test-http2-compat-serverresponse-write.js`, `test-http2-compat-serverresponse-writehead.js`, `test-http2-compat-serverresponse-writehead-array.js`, `test-http2-compat-serverresponse-statuscode.js`, `test-http2-compat-serverresponse-statusmessage.js`, `test-http2-compat-serverresponse-statusmessage-property.js`, `test-http2-compat-serverresponse-statusmessage-property-set.js`, `test-http2-compat-serverresponse-headers.js`, `test-http2-compat-serverrequest.js`, `test-http2-compat-serverrequest-end.js`, `test-http2-compat-serverrequest-headers.js`, `test-http2-compat-serverrequest-host.js`, `test-http2-compat-serverrequest-pause.js`, `test-http2-compat-serverrequest-pipe.js`, `test-http2-compat-serverrequest-settimeout.js`, and `test-http2-compat-serverrequest-trailers.js`), the follow-on shared-LTS `node:http2` compat server-response lifecycle wave (`test-http2-compat-serverresponse-close.js`, `test-http2-compat-serverresponse-destroy.js`, `test-http2-compat-serverresponse-drain.js`, `test-http2-compat-serverresponse-end-after-statuses-without-body.js`, `test-http2-compat-serverresponse-finished.js`, `test-http2-compat-serverresponse-flushheaders.js`, `test-http2-compat-serverresponse-headers-after-destroy.js`, `test-http2-compat-serverresponse-headers-send-date.js`, `test-http2-compat-serverresponse-settimeout.js`, `test-http2-compat-serverresponse-trailers.js`, `test-http2-compat-write-early-hints.js`, `test-http2-compat-write-early-hints-invalid-argument-type.js`, `test-http2-compat-write-early-hints-invalid-argument-value.js`, and `test-http2-compat-write-head-destroyed.js`), the follow-on shared-LTS compat request-control, push, and socket wave (`test-http2-compat-aborted.js`, `test-http2-compat-client-upload-reject.js`, `test-http2-compat-errors.js`, `test-http2-compat-expect-continue-check.js`, `test-http2-compat-expect-continue.js`, `test-http2-compat-expect-handling.js`, `test-http2-compat-method-connect.js`, `test-http2-compat-serverresponse-createpushresponse.js`, `test-http2-compat-short-stream-client-server.js`, `test-http2-compat-socket-destroy-delayed.js`, `test-http2-compat-socket-set.js`, and `test-http2-compat-socket.js`), the first pure `node:http2` utility helpers including pseudoheader validation, `getPackedSettings()`, headers-list, options-buffer, and misc util coverage, the first five pure `node:dgram` waves covering helper/argument-validation, bind/address/lifecycle/ref, connected-send/default-host, broader send/callback/default-host/`sendto` semantics, and the broader local-socket/fd/multicast/error wave, callback-style local-TCP `stream.finished()`, and shared-LTS callback-style `stream.pipeline()` request/server/socket behavior plus pinned `Application`-preset package canaries for `express`, `fastify`, `socket.io`, `undici`, and `axios` in the Node22 default lane and `express` / `fastify` in the Node20 supported lane | unsupported | supported for the currently manifested `NLC6` subset, with the explicit `dgram` cluster/process, host/preset, and `reusePort` boundaries, the cross-family `process.report` / embedded `process.exit()` dependency in `test-http-agent-reuse-drained-socket-only.js`, the Node20-only `https-hwm` and `tls-connect-hwm-option` validation divergences, the legacy TLSv1.1 `https-agent-additional-options` watchpoint, and supported-lane drift kept explicit | supported by the same bootstrap contract | `runtime::tests::node_compat::node22_default_lane_executes_manifested_networking_subset`, `runtime::tests::node_compat::node20_supported_lane_executes_official_networking_subset`, `runtime::tests::node_compat::node24_supported_lane_executes_manifested_networking_subset`, `runtime::tests::basic_invocation::application_node22_networking_package_canary_batch`, `runtime::tests::basic_invocation::application_node20_networking_supported_canary_batch`, `runtime::tests::node_compat::node20_tls_connect_hwm_option_watchpoint`, `docs/architecture/runtime/node-lts-compat/manifests/networking.md`, `docs/architecture/runtime/node-lts-compat/failures/networking.md` |
 | Core semantics builtin imports: `node:assert`, `node:assert/strict`, `node:buffer`, `node:console`, `node:events`, `node:punycode`, `node:querystring`, `node:string_decoder`, `node:path/posix`, `node:path/win32` | unsupported | supported | supported by the same Node22 bootstrap contract | `runtime::tests::basic_invocation::node22_target_supports_core_semantics_builtins_and_subpaths`, `runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset`, `docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md` |
@@ -254,7 +254,7 @@ dependency appears to expose pieces of them upstream.
   proves import-and-basic-behavior support for a concrete set of builtins and
   subpaths, but it does not yet close the whole `NLC3` family or imply a
   Node-upstream pass-rate claim on its own.
-- The current pinned upstream `NLC3` subset from `agentstation/deno`
+- The current pinned upstream `NLC3` subset from `nimbus/deno`
   `v2.7.14-locker.19` is now green for a manifest-driven `120`-file Node22
   core-semantics batch covering `assert`, `buffer`, `console`, `events`,
   `path`, `punycode`, `querystring`, `string_decoder`, and `url`. The buffer
@@ -305,12 +305,12 @@ dependency appears to expose pieces of them upstream.
 - The local `~/src/github.com/nodejs/node` checkout is now the canonical
   code-first source review worktree for Node20/Node22 fixture drift analysis.
   When official Node20 and official Node22 still share one fixture body,
-  Neovex stages that shared official LTS source in both lanes instead of
+  Nimbus stages that shared official LTS source in both lanes instead of
   keeping a fake version split or treating the Deno-vendored corpus as the
   default truth.
 - A code-first drift review of official `nodejs/node v20.20.2` and
   `nodejs/node v22.15.0` `lib/url.js` showed that the legacy parser core still
-  matches across both LTS lines for the invalid-port seam. Neovex now stages
+  matches across both LTS lines for the invalid-port seam. Nimbus now stages
   explicit official `node22/` fixture overrides for `test-url-parse-format.js`
   and `test-url-parse-invalid-input.js`, because the Deno-vendored corpus had
   already drifted ahead to hard-throw semantics that do not match either LTS
@@ -320,14 +320,14 @@ dependency appears to expose pieces of them upstream.
 - The same drift review also showed that official Node20 and official Node22
   still share the exact fixture bodies for `test-url-domain-ascii-unicode.js`,
   `test-url-pathtofileurl.js`, and `test-url-fileurltopath.js`, even though the
-  pinned Deno-vendored copies lag those files. Neovex now executes one shared
+  pinned Deno-vendored copies lag those files. Nimbus now executes one shared
   official LTS source body for those cases in both lanes, which keeps the URL
   conversion contract aligned without reintroducing per-version drift.
 - The same shared-official-LTS rule now covers `test-assert-async.js`,
   `test-assert-calltracker-report.js`, `test-assert-calltracker-verify.js`,
   `test-assert-fail-deprecation.js`, `test-assert-fail.js`,
   `test-assert-first-line.js`, and `test-assert-if-error.js`. In particular,
-  `test-assert-async.js` proves the current Neovex harness can drain at least
+  `test-assert-async.js` proves the current Nimbus harness can drain at least
   one upstream top-level async `node:assert` flow, `test-assert-fail-deprecation.js`
   proves `DEP0094` warning delivery through the shared `expectWarning()` path,
   and `test-assert-first-line.js` proves the bundle runner can stage checked-in
@@ -343,19 +343,19 @@ dependency appears to expose pieces of them upstream.
   either lane.
 - The first explicit split-LTS assert bodies now cover
   `test-assert-calltracker-getCalls.js`, `test-assert-checktag.js`, and
-  `test-assert-typedarray-deepequal.js`. Neovex stages both official LTS
+  `test-assert-typedarray-deepequal.js`. Nimbus stages both official LTS
   copies for those files directly, and the checked-in `test/common` shim
   intercepts only the harness-owned `TEST_PARALLEL` probe so the official
   Node22 `CallTracker.getCalls()` file can execute without broadening the
   public `Application` preset `process.env` contract.
 - The checked-in `esbuild` package is still not a Node-API case in this repo.
   The verified `Tooling` preset path is a staged JavaScript package plus a
-  staged platform binary, not a claim that Neovex now supports general native
+  staged platform binary, not a claim that Nimbus now supports general native
   addon loading. Current explicit evidence:
   `runtime::tests::basic_invocation::tooling_node22_executes_esbuild_style_staged_binary`.
 - The `Tooling` preset subprocess contract is intentionally narrower than
   general Node host access: only exact pre-existing staged binaries under
-  approved tooling roots are runnable, and the published `agentstation/deno`
+  approved tooling roots are runnable, and the published `nimbus/deno`
   `v2.7.14-locker.19` family keeps subprocess env inheritance aligned with the
   explicit JS-visible runtime env instead of re-merging hidden host env.
 - The completed `NLC10` Tooling canary registry now also carries pinned package

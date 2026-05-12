@@ -26,9 +26,9 @@ primitives.
 
 Those belong in:
 
-- `neovex-core` for zero-I/O types and validation
-- `neovex-engine` for canonical execution and mutation/query orchestration
-- `neovex-storage` for persistence and durable transaction semantics
+- `nimbus-core` for zero-I/O types and validation
+- `nimbus-engine` for canonical execution and mutation/query orchestration
+- `nimbus-storage` for persistence and durable transaction semantics
 - `provider_family/*` for shared provider-family translation seams
 - `runtime_host/*` for provider-neutral runtime capabilities
 

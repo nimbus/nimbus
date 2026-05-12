@@ -1,7 +1,7 @@
-repo=agentstation/neovex
+repo=nimbus/nimbus
 run_id=24905210213
 artifact_prefixes=sqlcipher-proof- sqlcipher-package-proof- 
-output_dir=/Users/jack/src/github.com/agentstation/neovex/docs/plans/research/sqlcipher-release-proof-24905210213
+output_dir=/Users/jack/src/github.com/nimbus/nimbus/docs/plans/research/sqlcipher-release-proof-24905210213
 artifact_count=4
 artifacts:
   - sqlcipher-proof-x86_64-pc-windows-msvc

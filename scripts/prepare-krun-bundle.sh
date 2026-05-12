@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 usage: prepare-krun-bundle.sh --bundle-dir <path> --rootfs <path> --host-port <port> --guest-port <port> [options]
 
-Prepare an OCI bundle config for the neovex krun validation flow. By default,
+Prepare an OCI bundle config for the nimbus krun validation flow. By default,
 the helper runs "<runtime> spec" inside the bundle directory, then updates
 config.json so the krun handler and krun.port_map annotation are present in the
 expected "host:guest" form.
@@ -24,13 +24,13 @@ options:
 
 examples:
   bash scripts/prepare-krun-bundle.sh \
-    --bundle-dir /tmp/neovex-krun-probe \
+    --bundle-dir /tmp/nimbus-krun-probe \
     --rootfs /var/lib/containers/storage/overlay/.../merged \
     --host-port 18080 \
     --guest-port 8080
 
   bash scripts/prepare-krun-bundle.sh \
-    --config-path /tmp/neovex-krun-probe/config.json \
+    --config-path /tmp/nimbus-krun-probe/config.json \
     --skip-spec \
     --rootfs /srv/rootfs \
     --host-port 15432 \

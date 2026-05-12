@@ -1,6 +1,6 @@
 # Plan: MySQL Tenant Persistence Provider
 
-This plan owns the first concrete implementation of a MySQL-backed Neovex
+This plan owns the first concrete implementation of a MySQL-backed Nimbus
 tenant persistence provider.
 
 It is promoted from
@@ -15,12 +15,12 @@ Reviewed against:
 - `docs/plans/README.md`
 - `docs/plans/archive/external-sql-storage-backends-plan.md`
 - `docs/plans/archive/postgres-storage-provider-plan.md`
-- `crates/neovex-engine/src/persistence.rs`
-- `crates/neovex-engine/src/persistence_config.rs`
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-bin/src/main.rs`
-- `crates/neovex-storage/src/async_storage/traits.rs`
-- `crates/neovex-storage/src/postgres.rs`
+- `crates/nimbus-engine/src/persistence.rs`
+- `crates/nimbus-engine/src/persistence_config.rs`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-bin/src/main.rs`
+- `crates/nimbus-storage/src/async_storage/traits.rs`
+- `crates/nimbus-storage/src/postgres.rs`
 
 Primary external references:
 
@@ -46,7 +46,7 @@ Primary external references:
 
 ## Purpose
 
-Land a production-quality MySQL provider on top of the settled Neovex seam
+Land a production-quality MySQL provider on top of the settled Nimbus seam
 without weakening transaction semantics, turning the engine contract into
 chatty CRUD, or importing Postgres-specific assumptions where MySQL needs a
 different physical design.
@@ -61,7 +61,7 @@ different physical design.
 - The first external provider implementation, `PostgresProvider`, is complete
   and archived at `docs/plans/archive/postgres-storage-provider-plan.md`.
 - `PersistenceDialect::MySql` already exists in
-  `crates/neovex-engine/src/persistence_config.rs`, so the typed config model
+  `crates/nimbus-engine/src/persistence_config.rs`, so the typed config model
   already anticipates MySQL, but there is no `TenantProviderConfig::mysql`,
   no runtime CLI/env/config lowering for MySQL, no `PersistenceProvider`
   branch for MySQL, and no storage-side MySQL provider implementation.
@@ -75,14 +75,14 @@ different physical design.
 
 ## Current Review Findings
 
-- The best first-fit Rust connector stack for Neovex MySQL work is
+- The best first-fit Rust connector stack for Nimbus MySQL work is
   `mysql_async` directly. It is Tokio-native, already ships with an async
   pool, and keeps transaction control, locking reads, and dynamic fully
   qualified SQL explicit.
 - `sqlx` remains a valid Rust option in the abstract, but it is not the best
   first fit here. Its strongest advantage is the `query!` macro family, and
   those checks require a build-time database or metadata plus string-literal
-  SQL. A Neovex MySQL provider will rely on dynamic `tenant_db.table_name`
+  SQL. A Nimbus MySQL provider will rely on dynamic `tenant_db.table_name`
   SQL and provider-owned maintenance statements, so it would give up most of
   the macro advantage.
 - `diesel-async` also remains valid in the abstract, but it is still centered
@@ -118,7 +118,7 @@ different physical design.
 - the MySQL provider owns tenant registry, routing, lifecycle, pooling, and
   database-per-tenant layout
 - query reads, mutation writes, scheduler state, schema persistence, durable
-  journal behavior, and snapshot/bootstrap behavior preserve Neovex semantics
+  journal behavior, and snapshot/bootstrap behavior preserve Nimbus semantics
 - runtime startup can construct the MySQL mode from the canonical typed
   CLI/env/config surface without abusing embedded-only constructors
 - the benchmark and operational gate is run and recorded
@@ -196,7 +196,7 @@ different physical design.
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
 | MY0 | Complete. Typed MySQL runtime construction now exists through `ServicePersistenceConfig::mysql`, `TenantProviderConfig::mysql`, `TenantRoutingConfig::DatabasePerTenant`, runtime CLI/env/config lowering, and a service-level MySQL config branch that preserves the explicit local redb control plane while returning a clear “not implemented yet” provider error until `MY1` lands. | start `MY1` by adding the storage-side `mysql_async` provider foundation and deterministic tenant-lifecycle coverage |
-| MY1 | Complete. `mysql_async` is now wired into a concrete storage-side `MySqlProvider` with provider metadata bootstrap, deterministic database-per-tenant routing, lifecycle operations, `OpenedMySqlTenant`, and container-backed lifecycle coverage using the canonical `NEOVEX_MYSQL_URL` override path. | start `MY2` by extending the engine seam and giving `MySqlTenantStore` a real read foundation instead of identity-only accessors |
+| MY1 | Complete. `mysql_async` is now wired into a concrete storage-side `MySqlProvider` with provider metadata bootstrap, deterministic database-per-tenant routing, lifecycle operations, `OpenedMySqlTenant`, and container-backed lifecycle coverage using the canonical `NIMBUS_MYSQL_URL` override path. | start `MY2` by extending the engine seam and giving `MySqlTenantStore` a real read foundation instead of identity-only accessors |
 | MY2 | Complete. The engine seam now accepts MySQL, `MySqlTenantStore` exposes snapshot-backed query reads, empty bootstrap/journal behavior, and deterministic tenant lifecycle through `Service`, and focused engine coverage proves async create/list/reopen/query behavior against a live MySQL target. | start `MY3` by replacing the temporary MySQL write-path stubs with real transactional schema, mutation, scheduler, journal, and generated-column index behavior |
 | MY3 | Complete. `MySqlTenantStore` now preserves direct-write, schema, scheduler, durable-journal, generated-column index, and recovery semantics through a real transactional path; the async engine seam consumes the same MySQL write contract without stubbed “not implemented yet” branches. | start `MY4` by adding the MySQL-native steady-state catch-up worker and cross-service scheduler loading behavior |
 | MY4 | Complete. The engine now starts a MySQL-native background poller instead of pretending MySQL has Postgres-style notifications; the poller refreshes loaded schema/journal state, loads unloaded tenants with scheduled work, and wakes the scheduler when the observed next-due frontier changes. | start `MY5` by building and running the MySQL benchmark and operational gate |
@@ -208,10 +208,10 @@ different physical design.
 | Date | Phase | Outcome | Summary | Verification | Next Step |
 |------|-------|---------|---------|--------------|-----------|
 | 2026-04-10 | meta | created | Promoted the first MySQL provider implementation into its own active control plane after the umbrella provider-topology plan was completed. This plan inherits the settled `TenantPersistence` / `PersistenceProvider` seam, the explicit local redb control-plane split, and the MySQL-specific design decision from the umbrella baseline. | docs review against `ARCHITECTURE.md`, `docs/plans/README.md`, `docs/plans/archive/external-sql-storage-backends-plan.md`, and `docs/plans/archive/postgres-storage-provider-plan.md`; `git diff --check` | start `MY0` by wiring MySQL into the typed service/runtime config surface without changing the control-plane boundary |
-| 2026-04-10 | MY0 | done | Added `ServicePersistenceConfig::mysql`, `TenantProviderConfig::mysql`, and `TenantRoutingConfig::DatabasePerTenant`; extended the runtime CLI/env/config surface with canonical MySQL resource and routing inputs; and wired a service-level MySQL persistence branch that preserves the explicit local redb control plane while failing clearly until the provider foundation lands. | `cargo fmt --all --check`; `cargo test -p neovex-bin -- --nocapture`; `cargo check --workspace`; `git diff --check` | start `MY1` with a storage-side `mysql_async` provider foundation, deterministic tenant database naming, and container-backed lifecycle coverage |
-| 2026-04-10 | MY1 | done | Added a concrete `MySqlProvider` on `mysql_async` with a shared no-default-database pool, provider metadata bootstrap, deterministic database-per-tenant naming, registry/lifecycle operations, `OpenedMySqlTenant`, and identity/read-executor foundations; added container-backed lifecycle tests that use `NEOVEX_MYSQL_URL` as the canonical external override and otherwise start a testcontainers MySQL instance. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p neovex-storage`; `cargo test -p neovex-storage mysql_provider -- --nocapture`; `cargo check --workspace`; `git diff --check` | start `MY2` by wiring MySQL into the engine persistence seam and replacing the identity-only tenant store with planner-ready read and snapshot foundations |
-| 2026-04-10 | MY2 | done | Wired MySQL through `PersistenceProvider`, `TenantPersistence`, and the service construction path; expanded `MySqlTenantStore` into a snapshot-backed read surface with schema/doc/journal bootstrap loading and planner-facing query operations; added focused engine coverage proving async create/list/reopen/query/bootstrap behavior through `Service` against a live MySQL target while keeping writes explicitly deferred to the next slice. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p neovex-storage mysql_provider -- --nocapture`; `cargo test -p neovex-engine mysql_provider -- --nocapture`; `cargo check -p neovex-storage`; `cargo check -p neovex-engine`; `cargo check --workspace`; `git diff --check` | start `MY3` by replacing the temporary MySQL write-path stubs with real transactional schema, mutation, scheduler, journal, and generated-column index behavior |
-| 2026-04-10 | MY3 | done | Replaced the temporary MySQL write-path stubs with a real transactional `MySqlWriteTransaction`, async write executor, generated-column index DDL, scheduler/cron persistence, durable journal append/replay, recovery behavior, and engine-side MySQL write delegation; added focused storage coverage for direct writes, execution-unit batches, durable replay, and MySQL-specific generated-column/index lifecycle. | `cargo test -p neovex-storage mysql_provider -- --nocapture`; `cargo test -p neovex-engine mysql_provider -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace` | start `MY4` by wiring a MySQL-native steady-state catch-up strategy through the engine background-worker seam |
-| 2026-04-10 | MY4 | done | Added a MySQL-native provider background poller instead of borrowing Postgres notification assumptions; the engine now refreshes loaded MySQL tenants’ schema/journal state, loads unloaded tenants with scheduled work, and wakes the scheduler when the observed MySQL next-due frontier changes. Added cross-service MySQL engine tests for loaded-runtime catch-up and unloaded scheduled-work pickup. | `cargo test -p neovex-engine mysql_provider -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace` | start `MY5` by building the dedicated MySQL benchmark and operational report |
-| 2026-04-10 | MY5 | done | Completed the MySQL benchmark and operational gate, wrote `docs/research/mysql-provider-benchmark-report.md`, and fixed the cold-start/reconnect wedge that had stalled the mixed-load lane by routing async tenant startup, poll-worker refresh, scheduler recovery, and mutation-journal recovery paths back through `TenantPersistenceExecutor` instead of blocking synchronous store calls on Tokio runtime threads. The recorded report shows SQLite winning all local loopback contrast lanes, near-parity only on steady-state point reads, and pronounced RTT sensitivity for MySQL (for example 46.46x on CRUD and 42.34x on mixed-load) while pool-pressure observation kept provider-attributed MySQL threads capped at the configured pool bound of 2. | `cargo test -p neovex-engine mysql_provider -- --nocapture`; `cargo bench -p neovex-engine --bench mysql-provider-benchmarks -- --workload mixed-load`; `make bench-mysql-provider REPORT=docs/research/mysql-provider-benchmark-report.md`; `cargo fmt --all --check`; `cargo check --workspace` | start `MY6` by running the repo-wide verification contract and then archive the completed MySQL plan |
-| 2026-04-10 | MY6 | done | Closed the MySQL workstream with the full repo-wide verification contract and archival cleanup. Repo-wide verification surfaced one broader correctness issue: already-loaded scheduler wake/reconnect paths were incorrectly rerunning `recover_running_jobs`, which could requeue claimed work after provider wake or reconnect. The fix keeps recovery on unloaded/startup activation only and leaves live claim ownership with the running scheduler. | `cargo test -p neovex-engine postgres_restart_recovers_due_scheduler_work_after_reopen -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `make ci` | archive this plan and activate `docs/plans/sqlite-replica-provider-plan.md` at `RS0` |
+| 2026-04-10 | MY0 | done | Added `ServicePersistenceConfig::mysql`, `TenantProviderConfig::mysql`, and `TenantRoutingConfig::DatabasePerTenant`; extended the runtime CLI/env/config surface with canonical MySQL resource and routing inputs; and wired a service-level MySQL persistence branch that preserves the explicit local redb control plane while failing clearly until the provider foundation lands. | `cargo fmt --all --check`; `cargo test -p nimbus-bin -- --nocapture`; `cargo check --workspace`; `git diff --check` | start `MY1` with a storage-side `mysql_async` provider foundation, deterministic tenant database naming, and container-backed lifecycle coverage |
+| 2026-04-10 | MY1 | done | Added a concrete `MySqlProvider` on `mysql_async` with a shared no-default-database pool, provider metadata bootstrap, deterministic database-per-tenant naming, registry/lifecycle operations, `OpenedMySqlTenant`, and identity/read-executor foundations; added container-backed lifecycle tests that use `NIMBUS_MYSQL_URL` as the canonical external override and otherwise start a testcontainers MySQL instance. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p nimbus-storage`; `cargo test -p nimbus-storage mysql_provider -- --nocapture`; `cargo check --workspace`; `git diff --check` | start `MY2` by wiring MySQL into the engine persistence seam and replacing the identity-only tenant store with planner-ready read and snapshot foundations |
+| 2026-04-10 | MY2 | done | Wired MySQL through `PersistenceProvider`, `TenantPersistence`, and the service construction path; expanded `MySqlTenantStore` into a snapshot-backed read surface with schema/doc/journal bootstrap loading and planner-facing query operations; added focused engine coverage proving async create/list/reopen/query/bootstrap behavior through `Service` against a live MySQL target while keeping writes explicitly deferred to the next slice. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p nimbus-storage mysql_provider -- --nocapture`; `cargo test -p nimbus-engine mysql_provider -- --nocapture`; `cargo check -p nimbus-storage`; `cargo check -p nimbus-engine`; `cargo check --workspace`; `git diff --check` | start `MY3` by replacing the temporary MySQL write-path stubs with real transactional schema, mutation, scheduler, journal, and generated-column index behavior |
+| 2026-04-10 | MY3 | done | Replaced the temporary MySQL write-path stubs with a real transactional `MySqlWriteTransaction`, async write executor, generated-column index DDL, scheduler/cron persistence, durable journal append/replay, recovery behavior, and engine-side MySQL write delegation; added focused storage coverage for direct writes, execution-unit batches, durable replay, and MySQL-specific generated-column/index lifecycle. | `cargo test -p nimbus-storage mysql_provider -- --nocapture`; `cargo test -p nimbus-engine mysql_provider -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace` | start `MY4` by wiring a MySQL-native steady-state catch-up strategy through the engine background-worker seam |
+| 2026-04-10 | MY4 | done | Added a MySQL-native provider background poller instead of borrowing Postgres notification assumptions; the engine now refreshes loaded MySQL tenants’ schema/journal state, loads unloaded tenants with scheduled work, and wakes the scheduler when the observed MySQL next-due frontier changes. Added cross-service MySQL engine tests for loaded-runtime catch-up and unloaded scheduled-work pickup. | `cargo test -p nimbus-engine mysql_provider -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace` | start `MY5` by building the dedicated MySQL benchmark and operational report |
+| 2026-04-10 | MY5 | done | Completed the MySQL benchmark and operational gate, wrote `docs/research/mysql-provider-benchmark-report.md`, and fixed the cold-start/reconnect wedge that had stalled the mixed-load lane by routing async tenant startup, poll-worker refresh, scheduler recovery, and mutation-journal recovery paths back through `TenantPersistenceExecutor` instead of blocking synchronous store calls on Tokio runtime threads. The recorded report shows SQLite winning all local loopback contrast lanes, near-parity only on steady-state point reads, and pronounced RTT sensitivity for MySQL (for example 46.46x on CRUD and 42.34x on mixed-load) while pool-pressure observation kept provider-attributed MySQL threads capped at the configured pool bound of 2. | `cargo test -p nimbus-engine mysql_provider -- --nocapture`; `cargo bench -p nimbus-engine --bench mysql-provider-benchmarks -- --workload mixed-load`; `make bench-mysql-provider REPORT=docs/research/mysql-provider-benchmark-report.md`; `cargo fmt --all --check`; `cargo check --workspace` | start `MY6` by running the repo-wide verification contract and then archive the completed MySQL plan |
+| 2026-04-10 | MY6 | done | Closed the MySQL workstream with the full repo-wide verification contract and archival cleanup. Repo-wide verification surfaced one broader correctness issue: already-loaded scheduler wake/reconnect paths were incorrectly rerunning `recover_running_jobs`, which could requeue claimed work after provider wake or reconnect. The fix keeps recovery on unloaded/startup activation only and leaves live claim ownership with the running scheduler. | `cargo test -p nimbus-engine postgres_restart_recovers_due_scheduler_work_after_reopen -- --nocapture`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `make ci` | archive this plan and activate `docs/plans/sqlite-replica-provider-plan.md` at `RS0` |

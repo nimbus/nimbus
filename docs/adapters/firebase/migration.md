@@ -1,12 +1,12 @@
-# Firebase To Neovex Migration Guide
+# Firebase To Nimbus Migration Guide
 
 This guide is the practical migration path for teams moving Firestore-backed
-JavaScript apps onto Neovex today.
+JavaScript apps onto Nimbus today.
 
-The current supported target is **`@neovex/firebase`**, not the stock
-`firebase/firestore` browser package. Neovex implements the Firestore server
+The current supported target is **`@nimbus/firebase`**, not the stock
+`firebase/firestore` browser package. Nimbus implements the Firestore server
 surface plus a first-party Firebase-shaped SDK, but upstream browser
-drop-in still depends on WebChannel, which Neovex intentionally defers for
+drop-in still depends on WebChannel, which Nimbus intentionally defers for
 now. Raw stock upstream Firestore `Write` streaming compatibility is also not
 yet claimed, so use the first-party package path instead of assuming stock Node
 or browser SDK transport parity.
@@ -21,25 +21,25 @@ browser `Listen` transport contract, see
 ## Recommended Migration Path
 
 1. Keep your Firestore data model and query shapes.
-2. Replace browser or Node Firestore imports with `@neovex/firebase`.
-3. Point the SDK at your Neovex host with `connectFirestoreEmulator(...)` for
+2. Replace browser or Node Firestore imports with `@nimbus/firebase`.
+3. Point the SDK at your Nimbus host with `connectFirestoreEmulator(...)` for
    local work or `initializeFirestore(...)` settings for hosted environments.
 4. Keep unary calls on REST first; opt into gRPC-Web only where you want that
    transport explicitly.
 5. Read the current
    [Firebase application auth contract](firebase-auth-contract.md) before
    depending on Firebase-route identity or authorization behavior.
-6. Move Firestore Security Rules intent into Neovex-owned application auth and
+6. Move Firestore Security Rules intent into Nimbus-owned application auth and
    authorization checks instead of expecting a rules DSL on the database.
 
 ## Import Mapping
 
-| Firebase today | Neovex migration target |
+| Firebase today | Nimbus migration target |
 | --- | --- |
-| `firebase/app` | `@neovex/firebase/app` |
-| `firebase/firestore` | `@neovex/firebase/firestore` |
+| `firebase/app` | `@nimbus/firebase/app` |
+| `firebase/firestore` | `@nimbus/firebase/firestore` |
 
-Common Firestore helpers keep the same names on the Neovex package:
+Common Firestore helpers keep the same names on the Nimbus package:
 
 - `initializeApp`
 - `getFirestore`
@@ -58,13 +58,13 @@ Common Firestore helpers keep the same names on the Neovex package:
 Install the package:
 
 ```bash
-npm install @neovex/firebase
+npm install @nimbus/firebase
 ```
 
-Initialize the app and connect it to a local Neovex server:
+Initialize the app and connect it to a local Nimbus server:
 
 ```ts
-import { initializeApp } from "@neovex/firebase/app";
+import { initializeApp } from "@nimbus/firebase/app";
 import {
   addDoc,
   collection,
@@ -72,7 +72,7 @@ import {
   getDocs,
   getFirestore,
   onSnapshot,
-} from "@neovex/firebase/firestore";
+} from "@nimbus/firebase/firestore";
 
 const app = initializeApp({
   projectId: "demo-project",
@@ -84,7 +84,7 @@ connectFirestoreEmulator(db, "127.0.0.1", 8080);
 const messages = collection(db, "messages");
 
 await addDoc(messages, {
-  body: "hello from neovex",
+  body: "hello from nimbus",
   createdAt: new Date().toISOString(),
 });
 
@@ -100,7 +100,7 @@ If you want unary RPCs to use gRPC-Web instead of REST, initialize Firestore
 explicitly:
 
 ```ts
-import { initializeFirestore } from "@neovex/firebase/firestore";
+import { initializeFirestore } from "@nimbus/firebase/firestore";
 
 const db = initializeFirestore(app, {
   experimentalUnaryTransport: "grpc-web",
@@ -109,12 +109,12 @@ connectFirestoreEmulator(db, "127.0.0.1", 8080);
 ```
 
 REST remains the default because it is the broadest browser-safe baseline.
-`onSnapshot(...)` does **not** use gRPC-Web; it uses Neovex's documented
+`onSnapshot(...)` does **not** use gRPC-Web; it uses Nimbus's documented
 binary-protobuf WebSocket `Listen` bridge.
 
 ## Local Demo
 
-Neovex ships a runnable browser demo at
+Nimbus ships a runnable browser demo at
 [`demos/firebase/html/`](../../demos/firebase/html/).
 
 Run the local server:
@@ -147,9 +147,9 @@ The demo exercises:
 
 ## Transport Differences
 
-Neovex intentionally keeps transport behavior explicit:
+Nimbus intentionally keeps transport behavior explicit:
 
-| Concern | Neovex today |
+| Concern | Nimbus today |
 | --- | --- |
 | Default unary transport | REST |
 | Optional unary transport | gRPC-Web via `experimentalUnaryTransport: "grpc-web"` |
@@ -160,7 +160,7 @@ Neovex intentionally keeps transport behavior explicit:
 
 Implications:
 
-- Browser apps should migrate to `@neovex/firebase`, not assume stock
+- Browser apps should migrate to `@nimbus/firebase`, not assume stock
   `firebase/firestore` transport behavior.
 - Node callers can use the same package surface, but watch flows may need an
   explicit `experimentalWebSocketFactory` when no global WebSocket exists.
@@ -169,13 +169,13 @@ Implications:
 
 ## Data Model And Query Notes
 
-The Firestore-shaped resource model is live in Neovex, including nested
+The Firestore-shaped resource model is live in Nimbus, including nested
 document paths and collection-group query metadata, but there are still
 important boundaries to keep in mind:
 
 - Only the default database, `(default)`, is supported end to end.
 - Collection groups are supported on the server and through the current
-  `@neovex/firebase` query surface.
+  `@nimbus/firebase` query surface.
 - Aggregation queries, `BatchWrite`, and `ListCollectionIds` are server-capable
   today, but the first-party SDK does not yet wrap all of those helpers.
 - Offline persistence, cache-only reads, bundles, `namedQuery`,
@@ -185,25 +185,25 @@ important boundaries to keep in mind:
 
 ## Security Rules Migration
 
-Neovex does **not** implement the Firestore Security Rules DSL today.
+Nimbus does **not** implement the Firestore Security Rules DSL today.
 
 That means migration is about preserving the **intent** of your rules, not
 copying rules text unchanged. Treat the rules layer as application
-authorization logic that should move into your Neovex-owned auth and mutation /
+authorization logic that should move into your Nimbus-owned auth and mutation /
 query boundaries.
 
 Common translations:
 
-| Firestore rules pattern | Neovex migration direction |
+| Firestore rules pattern | Nimbus migration direction |
 | --- | --- |
 | `request.auth != null` | Require authenticated callers before serving the read or write path. |
 | `request.auth.uid == resource.data.ownerId` | Persist owner identity in the document and enforce ownership in your server-side authorization checks. |
 | `request.resource.data.ownerId == request.auth.uid` | Validate write input before commit so callers cannot claim another owner's identity. |
-| role or claim checks on `request.auth.token.*` | Map the same claims into your Neovex auth context and check them in the application/runtime layer. |
+| role or claim checks on `request.auth.token.*` | Map the same claims into your Nimbus auth context and check them in the application/runtime layer. |
 
 Two practical rules help keep this migration clean:
 
-1. Keep localhost server-access auth separate from application auth. Neovex's
+1. Keep localhost server-access auth separate from application auth. Nimbus's
    local-origin and server-access protections are not a replacement for tenant
    or user authorization.
 2. Put authorization where the mutation or query meaning lives. Do not rely on
@@ -215,7 +215,7 @@ One current caveat matters here:
   CRUD/query/transaction/`Write`/`Listen` paths, but only within the explicit
   contract documented in
   [Firebase application auth contract](firebase-auth-contract.md). Verified
-  bearer tokens now reach the shared Neovex principal path on those covered
+  bearer tokens now reach the shared Nimbus principal path on those covered
   routes. JSON-object emulator `mockUserToken` values require explicit
   server-side opt-in for the emulator-only auth contract. Do not assume broader
   upstream Firebase/Auth/Admin parity outside that documented contract.
@@ -225,7 +225,7 @@ follow-on work instead of assuming parity from the Firestore transport alone.
 
 ## Current Compatibility Boundaries
 
-Use `@neovex/firebase` when you want the supported path today.
+Use `@nimbus/firebase` when you want the supported path today.
 
 Do **not** currently assume:
 
@@ -243,7 +243,7 @@ Those boundaries are intentional and documented, not accidental gaps.
 
 For a typical app migration:
 
-1. Move imports to `@neovex/firebase`.
+1. Move imports to `@nimbus/firebase`.
 2. Redirect local development with `connectFirestoreEmulator(...)`.
 3. Keep REST unary first and confirm CRUD/query/watch parity.
 4. Migrate transactions, write batches, and `FieldValue` usage.

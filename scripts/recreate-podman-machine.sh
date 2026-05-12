@@ -44,10 +44,10 @@ options:
 
 examples:
   TMPDIR=/tmp bash scripts/recreate-podman-machine.sh \
-    --machine neovex-libkrun-users-only \
+    --machine nimbus-libkrun-users-only \
     --provider libkrun \
     --tmp-root /tmp/podman \
-    --output-dir /tmp/neovex-libkrun-users-only-recreate
+    --output-dir /tmp/nimbus-libkrun-users-only-recreate
 EOF
 }
 

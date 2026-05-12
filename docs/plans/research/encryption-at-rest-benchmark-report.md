@@ -4,7 +4,7 @@ Generated from the repo-owned benchmark harness and evidence collector:
 
 ```bash
 make collect-encryption-benchmark-evidence \
-  OUTPUT_DIR=/tmp/neovex-encryption-benchmark-evidence
+  OUTPUT_DIR=/tmp/nimbus-encryption-benchmark-evidence
 ```
 
 This report summarizes the representative local embedded-provider results from
@@ -138,10 +138,10 @@ optimizations:
 Representative diagnostic command shape:
 
 ```bash
-NEOVEX_BENCH_COLD_OPEN_BREAKDOWN=1 \
-NEOVEX_TENANT_LOAD_PROFILE=1 \
-NEOVEX_QUERY_PROFILE=1 \
-cargo bench -p neovex-engine --bench embedded-provider-benchmarks \
+NIMBUS_BENCH_COLD_OPEN_BREAKDOWN=1 \
+NIMBUS_TENANT_LOAD_PROFILE=1 \
+NIMBUS_QUERY_PROFILE=1 \
+cargo bench -p nimbus-engine --bench embedded-provider-benchmarks \
   -- --workload indexed-query --local-encryption <disabled|temp-master-key-file>
 ```
 
@@ -206,7 +206,7 @@ requirements or a fresh full benchmark capture, rather than assumed.
 The follow-up note now closes out the most obvious SQLite warmup branch as
 well. Benchmark-only service-query warmups (`limit1` and `full`) slightly
 regressed end-to-end cold latency, and the next lower-level raw probe
-(`NEOVEX_SQLITE_INDEX_QUERY_WARMUP=raw-id-only`) regressed it sharply: on the
+(`NIMBUS_SQLITE_INDEX_QUERY_WARMUP=raw-id-only`) regressed it sharply: on the
 reduced-round rerun, SQLite cold median moved from `1.63 ms/op` to
 `4.79 ms/op`, and two measured cold samples saw the first service query spike
 into the `69-79 ms` range. That means the next cold-open step should not be
@@ -280,7 +280,7 @@ encrypted slot I/O path; it is redb's allocator-header reconstruction plus the
 immediate writable-open sync step.
 
 We also tested the obvious product-side format experiment,
-`Builder::create_with_file_format_v3(true)`, on the real Neovex redb store
+`Builder::create_with_file_format_v3(true)`, on the real Nimbus redb store
 surfaces. That change was intentionally reverted because it made encrypted cold
 reopen worse rather than better:
 
@@ -297,7 +297,7 @@ levers on this path:
 - encrypted slot I/O cleanup helped the backend but did not eliminate the main
   reopen cost center
 - `redb::Builder::set_cache_size(...)` did not improve the retained cold path
-- `Builder::create_with_file_format_v3(true)` made the real Neovex reopen path
+- `Builder::create_with_file_format_v3(true)` made the real Nimbus reopen path
   worse
 
 The next cold-open optimization should therefore be framed as either upstream
@@ -346,7 +346,7 @@ follow-up should be an explicit read-first or read-only open contract with
 clear warmup and durability semantics, not a blind "skip eager writable mode"
 patch.
 
-We also rechecked the live Neovex seam and the pinned `redb 2.6.3` API after
+We also rechecked the live Nimbus seam and the pinned `redb 2.6.3` API after
 that experiment. The repo-owned open path is already down to
 `TenantStore::open_* -> redb::Database::builder().create(...)`, and upstream
 `Database::new()` still eagerly calls `mem.begin_writable()` and then restores
@@ -356,7 +356,7 @@ delivers this win. The next serious step is either an upstream/local `redb`
 open-mode change or a deliberate decision to stop here and shift effort to the
 remaining libsql and release-proof evidence.
 
-For the current roadmap, Neovex is choosing the second path. We are not
+For the current roadmap, Nimbus is choosing the second path. We are not
 pursuing a deliberate redb read-first/open contract via local patch or upstream
 work right now, so this remains a documented future lever rather than active
 implementation scope.
@@ -365,7 +365,7 @@ Under v3, `TransactionalMemory::new()` itself became tiny, but
 `get_allocator_state_table()` plus `load_allocator_state()` consumed
 `8.5-10.1 ms`, which more than erased the v2 header-load savings. So the next
 redb cold-open optimization target should stay on the current v2 reopen path
-and `begin_writable()` behavior, not on flipping Neovex to redb v3 by default.
+and `begin_writable()` behavior, not on flipping Nimbus to redb v3 by default.
 
 ### Journal Bootstrap Attribution
 
@@ -375,9 +375,9 @@ tenant reopen from the bootstrap export itself.
 
 This workload is product-real, but it is not the common tenant reopen path. In
 the checked-in service graph, `export_durable_journal_bootstrap_async()` is used
-for replica/bootstrap surfaces such as [EmbeddedReplica bootstrap](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-engine/src/replica.rs:37),
-[shadow materializer verification](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-engine/src/service/queries/verification.rs:17),
-and the HTTP [journal bootstrap endpoint](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-server/src/http/queries.rs:76).
+for replica/bootstrap surfaces such as [EmbeddedReplica bootstrap](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-engine/src/replica.rs:37),
+[shadow materializer verification](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-engine/src/service/queries/verification.rs:17),
+and the HTTP [journal bootstrap endpoint](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-server/src/http/queries.rs:76).
 Ordinary tenant lazy-load and query reopen do not export the full bootstrap
 snapshot.
 

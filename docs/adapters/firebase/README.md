@@ -1,10 +1,10 @@
 # Firebase / Firestore Adapter
 
 ```typescript
-import { initializeApp } from "@neovex/firebase/app";
+import { initializeApp } from "@nimbus/firebase/app";
 import { initializeFirestore, connectFirestoreEmulator,
   collection, addDoc, getDocs, onSnapshot, query, orderBy, limit,
-} from "@neovex/firebase/firestore";
+} from "@nimbus/firebase/firestore";
 
 const app = initializeApp({ apiKey: "local", projectId: "my-project" });
 const db = initializeFirestore(app, { experimentalUnaryTransport: "rest" });
@@ -15,22 +15,22 @@ await addDoc(messages, { author: "Alice", body: "Hello" });
 const snapshot = await getDocs(query(messages, orderBy("_creationTime", "desc"), limit(10)));
 ```
 
-Firestore-compatible SDK pointed at a local Neovex server. No codegen, no
+Firestore-compatible SDK pointed at a local Nimbus server. No codegen, no
 special project layout. Your existing Firestore patterns work -- just swap
-the import from `firebase` to `@neovex/firebase`. ~3 minutes from install to query.
+the import from `firebase` to `@nimbus/firebase`. ~3 minutes from install to query.
 
 ## Quick start
 
-**1. Start Neovex:**
+**1. Start Nimbus:**
 
 ```bash
-neovex start --port 8080
+nimbus start --port 8080
 ```
 
 **2. Install the SDK:**
 
 ```bash
-npm install @neovex/firebase
+npm install @nimbus/firebase
 ```
 
 **3. Write your app** (shown at the top of this page).
@@ -44,14 +44,14 @@ npm run dev
 ## How it works
 
 Firestore-compatible REST, gRPC-Web, and WebSocket Listen surface. Applications
-use the `@neovex/firebase` SDK -- API-compatible with `firebase/firestore` --
-pointed at a local Neovex server.
+use the `@nimbus/firebase` SDK -- API-compatible with `firebase/firestore` --
+pointed at a local Nimbus server.
 
 ## Client package
 
-`@neovex/firebase`
+`@nimbus/firebase`
 
-- Exports: `@neovex/firebase/app`, `@neovex/firebase/firestore`
+- Exports: `@nimbus/firebase/app`, `@nimbus/firebase/firestore`
 
 ## Project layout
 
@@ -80,7 +80,7 @@ const unsubscribe = onSnapshot(
 ### Transactions
 
 ```typescript
-import { runTransaction, increment, arrayUnion } from "@neovex/firebase/firestore";
+import { runTransaction, increment, arrayUnion } from "@nimbus/firebase/firestore";
 
 await runTransaction(db, async (tx) => {
   const snap = await tx.get(query(messages, orderBy("_creationTime", "desc"), limit(1)));
@@ -93,7 +93,7 @@ await runTransaction(db, async (tx) => {
 ### Batch writes
 
 ```typescript
-import { writeBatch, doc, serverTimestamp } from "@neovex/firebase/firestore";
+import { writeBatch, doc, serverTimestamp } from "@nimbus/firebase/firestore";
 
 const batch = writeBatch(db);
 batch.set(doc(messages, "msg-1"), { author: "Batch", body: "First", createdAt: serverTimestamp() });

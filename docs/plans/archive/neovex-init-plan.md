@@ -1,7 +1,7 @@
-# Plan: `neovex init` + `neovex dev` Onboarding
+# Plan: `nimbus init` + `nimbus dev` Onboarding
 
-Canonical execution plan for zero-friction Neovex onboarding. The goal: a
-developer who has never seen Neovex can go from `brew install` to live
+Canonical execution plan for zero-friction Nimbus onboarding. The goal: a
+developer who has never seen Nimbus can go from `brew install` to live
 reactive data in under 3 minutes.
 
 ## Status
@@ -16,16 +16,16 @@ reactive data in under 3 minutes.
 
 ## Plan Ownership And Canonical Inputs
 
-This plan owns `neovex init`, `neovex dev` adapter detection, dev-mode
+This plan owns `nimbus init`, `nimbus dev` adapter detection, dev-mode
 auto-tenant creation, and adapter-specific npm install orchestration.
 
 Hard deps (all landed):
-- `neovex dev` watch loop
-- `neovex codegen` (handles both Convex and Cloud Functions in a single pass)
-- `@neovex/codegen` package (v0.1.22)
+- `nimbus dev` watch loop
+- `nimbus codegen` (handles both Convex and Cloud Functions in a single pass)
+- `@nimbus/codegen` package (v0.1.22)
 
 Soft deps:
-- `neovex/` source root (experimental, not required)
+- `nimbus/` source root (experimental, not required)
 
 Implementation work must keep these source inputs open:
 
@@ -36,39 +36,39 @@ Implementation work must keep these source inputs open:
   `docs/adapters/convex/ai-guidelines.md`.
 - Cloud Functions compatibility: `docs/adapters/cloud-functions/compatibility.md`,
   `docs/adapters/cloud-functions/README.md`.
-- Module structure: `crates/neovex-bin/src/` (dev.rs, init.rs, node.rs,
+- Module structure: `crates/nimbus-bin/src/` (dev.rs, init.rs, node.rs,
   start/, codegen.rs, main.rs).
 - JS packages: `packages/convex/package.json`, `packages/codegen/package.json`.
-- Server tenant API: `crates/neovex-server/src/http/tenants.rs`,
-  `crates/neovex-server/src/router.rs`.
+- Server tenant API: `crates/nimbus-server/src/http/tenants.rs`,
+  `crates/nimbus-server/src/router.rs`.
 
 ---
 
 ## Current Implementation
 
-### `neovex init <ADAPTER> [DIRECTORY]`
+### `nimbus init <ADAPTER> [DIRECTORY]`
 
-Scaffolds a new Neovex project for the selected adapter. The adapter argument
+Scaffolds a new Nimbus project for the selected adapter. The adapter argument
 is a required positional argument — there is no silent default.
 
 ```bash
-neovex init <ADAPTER> [DIRECTORY] [--source-root convex] [--install]
+nimbus init <ADAPTER> [DIRECTORY] [--source-root convex] [--install]
 ```
 
 | Argument / Flag | Default | Meaning |
 |------|---------|---------|
 | `ADAPTER` | *(required)* | Adapter to scaffold: `convex`, `cloud-functions` |
 | `DIRECTORY` | `.` (current directory) | Target directory (created if absent) |
-| `--source-root` | `convex` | Source root directory name (convex adapter only); `neovex` exits with advisory |
+| `--source-root` | `convex` | Source root directory name (convex adapter only); `nimbus` exits with advisory |
 | `--install` | `false` | Bootstrap adapter dependencies after scaffolding |
 
 #### Behavior
 
-1. If adapter is `convex`, validate `--source-root` (reject `neovex` as
+1. If adapter is `convex`, validate `--source-root` (reject `nimbus` as
    experimental).
 2. Create target directory if it does not exist.
 3. Check for adapter-specific "already exists" markers:
-   - **Convex:** `convex/` or `neovex/` directory → error
+   - **Convex:** `convex/` or `nimbus/` directory → error
    - **Cloud Functions:** `firebase.json` file → error
 4. Select adapter-specific template set.
 5. Write template files with per-file skip logic (never overwrites existing
@@ -81,9 +81,9 @@ neovex init <ADAPTER> [DIRECTORY] [--source-root convex] [--install]
      the npm lockfile (`package-lock.json` or `npm-shrinkwrap.json` when
      present)
    The install flow records its current dependency fingerprint in
-   `.neovex/cache/node/dependency-state.json`. For Cloud Functions, npm install
+   `.nimbus/cache/node/dependency-state.json`. For Cloud Functions, npm install
    runs in the `functions/` subdirectory.
-7. Print next steps (`cd` + `neovex dev`).
+7. Print next steps (`cd` + `nimbus dev`).
 
 #### Convex adapter templates
 
@@ -92,8 +92,8 @@ my-app/
 ├── convex/
 │   ├── schema.ts          # messages table with author + body
 │   └── messages.ts        # list query + send mutation
-├── .gitignore             # .neovex/, .env.local, node_modules/
-├── package.json           # convex + @neovex/codegen
+├── .gitignore             # .nimbus/, .env.local, node_modules/
+├── package.json           # convex + @nimbus/codegen
 └── tsconfig.json          # ESNext/bundler
 ```
 
@@ -106,11 +106,11 @@ placeholders substituted at compile time via `build.rs`.
 my-app/
 ├── firebase.json          # points to functions/ source
 ├── functions/
-│   ├── package.json       # firebase-functions, firebase-admin, @neovex/codegen
+│   ├── package.json       # firebase-functions, firebase-admin, @nimbus/codegen
 │   ├── tsconfig.json      # Node.js TypeScript config
 │   └── src/
 │       └── index.ts       # starter HTTP + Firestore trigger handlers
-└── .gitignore             # .neovex/, .env.local, node_modules/, lib/
+└── .gitignore             # .nimbus/, .env.local, node_modules/, lib/
 ```
 
 `functions/package.json` uses `{{PROJECT_NAME}}` and `{{CODEGEN_VERSION}}`
@@ -118,18 +118,18 @@ placeholders. Firebase dependency versions (`firebase-functions ^6.3.0`,
 `firebase-admin ^13.0.0`) are hardcoded in the template since they are
 third-party packages, not build-system-tracked.
 
-### `neovex dev` adapter detection
+### `nimbus dev` adapter detection
 
-`neovex dev` does **not** auto-scaffold. When no compatible adapter is
+`nimbus dev` does **not** auto-scaffold. When no compatible adapter is
 detected and `--skip-codegen` is not set, it exits with guidance:
 
 ```
 No compatible adapter detected.
 
 To get started:
-  neovex init convex          # Convex adapter
-  neovex init cloud-functions # Cloud Functions adapter
-  neovex dev
+  nimbus init convex          # Convex adapter
+  nimbus init cloud-functions # Cloud Functions adapter
+  nimbus dev
 ```
 
 #### `DevAdapter` enum
@@ -144,7 +144,7 @@ enum DevAdapter {
 ```
 
 Detection priority (first match wins):
-1. `neovex/` directory → `DevAdapter::Convex`
+1. `nimbus/` directory → `DevAdapter::Convex`
 2. `convex/` directory → `DevAdapter::Convex`
 3. `firebase.json` file → `DevAdapter::CloudFunctions` (source dir from
    `functions.source` field, defaults to `functions/`)
@@ -160,15 +160,15 @@ Each adapter variant provides:
 #### App directory detection
 
 `detect_app_dir` walks up ancestor directories looking for:
-- `neovex/` or `convex/` directory
-- `.neovex/convex/functions.json` file
+- `nimbus/` or `convex/` directory
+- `.nimbus/convex/functions.json` file
 - `firebase.json` file
 
 Falls back to the current working directory.
 
 ### Shared npm install (`node.rs`)
 
-`crates/neovex-bin/src/node.rs` is the single source of truth for adapter
+`crates/nimbus-bin/src/node.rs` is the single source of truth for adapter
 Node.js dependency management:
 
 - `Adapter::needs_node_dependencies()` — returns `true` for `Convex` and
@@ -177,22 +177,22 @@ Node.js dependency management:
   `package.json` declares packages that are missing from the local
   `node_modules/` tree.
 
-`neovex dev` always uses this shared module for authoring flows. `neovex init`
+`nimbus dev` always uses this shared module for authoring flows. `nimbus init`
 only calls it when `--install` is passed. The adapter determines which
 directory to pass (project root vs `functions/`).
 
 ### Auto-tenant creation
 
-`neovex dev` auto-creates a `demo` tenant on startup via server-internal
+`nimbus dev` auto-creates a `demo` tenant on startup via server-internal
 boot path. `auto_tenant: Option<String>` on `StartCommand` with
-`#[arg(skip)]` — not exposed on `neovex start`. The tenant is created after
+`#[arg(skip)]` — not exposed on `nimbus start`. The tenant is created after
 `Service::new_with_persistence_config` and before the HTTP listener binds.
 If the tenant already exists, the error is silently ignored.
 
 ### Template system
 
 Templates are embedded via `include_str!()` from
-`crates/neovex-bin/templates/`. Two content types:
+`crates/nimbus-bin/templates/`. Two content types:
 
 - `TemplateContent::Static(&'static str)` — written verbatim
 - `TemplateContent::Template(&'static str)` — placeholder substitution via
@@ -210,26 +210,26 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
 
 ## Decisions
 
-1. **Default source root: `convex/`.** The `neovex/` source root is
-   experimental. Scaffold into `convex/` until `neovex/` is promoted.
+1. **Default source root: `convex/`.** The `nimbus/` source root is
+   experimental. Scaffold into `convex/` until `nimbus/` is promoted.
 
-2. **`init` scaffolds; `dev` bootstraps.** `neovex init` stops after
+2. **`init` scaffolds; `dev` bootstraps.** `nimbus init` stops after
    scaffolding by default so the command is deterministic and leaves a clean
-   project behind even when the Node toolchain is unavailable. `neovex dev`
-   owns automatic dependency bootstrap, and `neovex init --install` is an
+   project behind even when the Node toolchain is unavailable. `nimbus dev`
+   owns automatic dependency bootstrap, and `nimbus init --install` is an
    opt-in convenience for teams that want a one-command setup.
 
 3. **Node.js 22 is the verified authoring baseline, not a runtime-only requirement.**
-   `neovex dev`, `neovex codegen`, and `neovex init --install` call external
+   `nimbus dev`, `nimbus codegen`, and `nimbus init --install` call external
    Node.js tooling today, so Convex and Cloud Functions authoring still
-   requires Node.js 22 with `npm`. Runtime-only `neovex start` workflows such
+   requires Node.js 22 with `npm`. Runtime-only `nimbus start` workflows such
    as MongoDB, Firebase client, or native HTTP/WebSocket access do not require
    the Node toolchain. Upstream Convex and Firebase / Cloud Functions stacks
-   still support Node 20, but Neovex does not yet claim a separate verified
+   still support Node 20, but Nimbus does not yet claim a separate verified
    Node 20 compatibility target.
 
-4. **Adapter argument is required and positional.** `neovex init convex`
-   not `neovex init --template convex`. No silent defaults — the developer
+4. **Adapter argument is required and positional.** `nimbus init convex`
+   not `nimbus init --template convex`. No silent defaults — the developer
    makes an explicit choice. This scales cleanly as adapters are added.
 
 5. **Template versions baked in at compile time.** `build.rs` reads versions
@@ -237,14 +237,14 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
    Third-party versions (firebase-functions, firebase-admin) are hardcoded
    in templates since they are not build-system-tracked.
 
-6. **`--source-root neovex` is deferred.** Accepted but exits with advisory.
+6. **`--source-root nimbus` is deferred.** Accepted but exits with advisory.
 
 7. **Scaffold skips files that already exist.** Per-file check, not
    all-or-nothing. Skipped files are reported to the developer.
 
-8. **`neovex dev` does not auto-scaffold.** It detects adapters and runs
+8. **`nimbus dev` does not auto-scaffold.** It detects adapters and runs
    codegen/watch/server. If no adapter is found, it exits with guidance to
-   use `neovex init`. This keeps `dev` predictable — it never creates files
+   use `nimbus init`. This keeps `dev` predictable — it never creates files
    the developer didn't ask for.
 
 9. **Cloud Functions npm install targets `functions/` subdirectory.** Firebase
@@ -260,7 +260,7 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
 11. **Firebase.json parsing for source directory.** `read_firebase_functions_source()`
     handles the three firebase.json shapes: `functions` as object with
     `source` key, as array of descriptors, or absent (defaults to
-    `"functions"`). Uses `serde_json` (already a neovex-bin dependency).
+    `"functions"`). Uses `serde_json` (already a nimbus-bin dependency).
 
 ---
 
@@ -270,13 +270,13 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
 |-------|--------|-------|-----------|
 | P1: Build infrastructure | `done` | I1 | `build.rs` emits package versions as compile-time env vars |
 | P2: Scaffold module | `done` | I2 | Shared scaffold module with embedded templates, per-file skip logic, safety checks |
-| P3: `neovex dev` auto-init | `done` | I3, I4 | `neovex dev` scaffolded when no source root (later replaced by adapter guidance in I9) |
-| P4: `neovex init` command | `done` | I5 | Standalone `neovex init` command using shared scaffold module |
-| P5: Auto-tenant | `done` | I6 | `neovex dev` auto-creates `demo` tenant via server-internal boot path |
+| P3: `nimbus dev` auto-init | `done` | I3, I4 | `nimbus dev` scaffolded when no source root (later replaced by adapter guidance in I9) |
+| P4: `nimbus init` command | `done` | I5 | Standalone `nimbus init` command using shared scaffold module |
+| P5: Auto-tenant | `done` | I6 | `nimbus dev` auto-creates `demo` tenant via server-internal boot path |
 | P6: Documentation | `done` | I7 | README, getting-started, and Convex adapter docs updated |
-| P7: CLI reference | `done` | I8 | `docs/operating/cli.md` updated with `neovex init` and dev behavior |
+| P7: CLI reference | `done` | I8 | `docs/operating/cli.md` updated with `nimbus init` and dev behavior |
 | P8: Dev refactor | `done` | I9 | Remove auto-scaffold from dev, add auto npm install, explicit adapter detection |
-| P9: Multi-adapter init | `done` | I10, I11 | `neovex init` requires adapter arg, Cloud Functions templates and scaffold |
+| P9: Multi-adapter init | `done` | I10, I11 | `nimbus init` requires adapter arg, Cloud Functions templates and scaffold |
 | P10: Cloud Functions detection | `done` | I12 | `DevAdapter::CloudFunctions` with firebase.json parsing and framework detection |
 | P11: Shared npm install | `done` | I13 | `node.rs` module, adapter-specific npm install directories |
 
@@ -286,11 +286,11 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
 
 | Item | Status | Description |
 |------|--------|-------------|
-| I1 | `done` | `build.rs` version embedding for `NEOVEX_CONVEX_VERSION` and `NEOVEX_CODEGEN_VERSION` |
+| I1 | `done` | `build.rs` version embedding for `NIMBUS_CONVEX_VERSION` and `NIMBUS_CODEGEN_VERSION` |
 | I2 | `done` | Shared scaffold module with embedded templates, per-file skip, safety checks |
-| I3 | `done` | `neovex dev` scaffold integration (later superseded by I9) |
-| I4 | `done` | `neovex dev --app-dir` edge cases |
-| I5 | `done` | `neovex init` standalone command |
+| I3 | `done` | `nimbus dev` scaffold integration (later superseded by I9) |
+| I4 | `done` | `nimbus dev --app-dir` edge cases |
+| I5 | `done` | `nimbus init` standalone command |
 | I6 | `done` | Dev-mode auto-tenant creation (`demo` tenant) |
 | I7 | `done` | Onboarding docs update (README, getting-started, Convex adapter) |
 | I8 | `done` | CLI reference update (`docs/operating/cli.md`) |
@@ -299,11 +299,11 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
 
 | Item | Status | Description |
 |------|--------|-------------|
-| I9 | `done` | Remove auto-scaffold from `neovex dev`; add auto npm install via shared `node.rs`; add `DevAdapter` enum replacing implicit source root detection; drop `npm create neovex` from Phase 2 |
-| I10 | `done` | Make `neovex init` require explicit adapter positional arg (`convex`, `cloud-functions`); replace `--template` with adapter arg; generalize `TemplateContent::PackageJson` to `TemplateContent::Template(&'static str)` |
+| I9 | `done` | Remove auto-scaffold from `nimbus dev`; add auto npm install via shared `node.rs`; add `DevAdapter` enum replacing implicit source root detection; drop `npm create nimbus` from Phase 2 |
+| I10 | `done` | Make `nimbus init` require explicit adapter positional arg (`convex`, `cloud-functions`); replace `--template` with adapter arg; generalize `TemplateContent::PackageJson` to `TemplateContent::Template(&'static str)` |
 | I11 | `done` | Create Cloud Functions template files (`firebase.json`, `functions/package.json.tmpl`, `functions/tsconfig.json`, `functions/src/index.ts`, `gitignore`); add `CLOUD_FUNCTIONS_TEMPLATE` and adapter-specific scaffold logic |
 | I12 | `done` | Add `DevAdapter::CloudFunctions` detection: parse `firebase.json` for source dir, detect `@google-cloud/functions-framework` in `package.json`; update `detect_app_dir` for `firebase.json`; adapter-specific `npm_install_dir()` |
-| I13 | `done` | Extend `node::Adapter::needs_node_dependencies()` to cover Cloud Functions; update CLI docs and Cloud Functions adapter README with `neovex init cloud-functions` path |
+| I13 | `done` | Extend `node::Adapter::needs_node_dependencies()` to cover Cloud Functions; update CLI docs and Cloud Functions adapter README with `nimbus init cloud-functions` path |
 
 ---
 
@@ -313,14 +313,14 @@ Safety checks refuse to scaffold into `$HOME`, `/`, `/tmp`, or
 
 1. Add `--template react` with Vite + React + ConvexProvider scaffold
 2. The template includes a working `App.tsx` with `useQuery` and `useMutation`
-3. `npm run dev` starts Vite alongside `neovex dev`
-4. `--source-root neovex` template support
+3. `npm run dev` starts Vite alongside `nimbus dev`
+4. `--source-root nimbus` template support
 
 ### Future adapters
 
-Adding a new adapter to `neovex init` requires:
+Adding a new adapter to `nimbus init` requires:
 
-1. Template files under `crates/neovex-bin/templates/<adapter>/`
+1. Template files under `crates/nimbus-bin/templates/<adapter>/`
 2. Template constant array in `init.rs` (like `CLOUD_FUNCTIONS_TEMPLATE`)
 3. Add adapter string to `InitCommand` value_parser and `adapter_templates()`
 4. Add `check_adapter_already_exists()` case
@@ -337,13 +337,13 @@ Adding a new adapter to `neovex init` requires:
 |------|------|--------|-------------|
 | 2026-04-27 | I1 | `done` | `build.rs` version embedding |
 | 2026-04-27 | I2 | `done` | Shared scaffold module with per-file skip logic and safety checks |
-| 2026-04-27 | I3 | `done` | `neovex dev` scaffold integration |
-| 2026-04-27 | I4 | `done` | `neovex dev --app-dir` edge cases |
-| 2026-04-27 | I5 | `done` | `neovex init` standalone command |
+| 2026-04-27 | I3 | `done` | `nimbus dev` scaffold integration |
+| 2026-04-27 | I4 | `done` | `nimbus dev --app-dir` edge cases |
+| 2026-04-27 | I5 | `done` | `nimbus init` standalone command |
 | 2026-04-27 | I6 | `done` | Dev-mode auto-tenant creation |
 | 2026-04-27 | I7 | `done` | Onboarding docs update |
 | 2026-04-27 | I8 | `done` | CLI reference update |
-| 2026-04-27 | I9 | `done` | Remove auto-scaffold from dev, add auto npm install, `DevAdapter` enum, drop `npm create neovex` |
+| 2026-04-27 | I9 | `done` | Remove auto-scaffold from dev, add auto npm install, `DevAdapter` enum, drop `npm create nimbus` |
 | 2026-04-27 | I10 | `done` | Multi-adapter init: required adapter arg, generalized template system |
 | 2026-04-27 | I11 | `done` | Cloud Functions templates and scaffold support |
 | 2026-04-27 | I12 | `done` | `DevAdapter::CloudFunctions` detection with firebase.json parsing |

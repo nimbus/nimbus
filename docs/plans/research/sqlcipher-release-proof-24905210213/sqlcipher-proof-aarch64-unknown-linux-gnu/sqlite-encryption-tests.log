@@ -1,4 +1,4 @@
-$ cargo test -p neovex-storage sqlite::encryption -- --nocapture
+$ cargo test -p nimbus-storage sqlite::encryption -- --nocapture
 [1m[92m Downloading[0m crates ...
 [1m[92m  Downloaded[0m dyn-clone v1.0.20
 [1m[92m  Downloaded[0m darling_macro v0.23.0
@@ -365,16 +365,16 @@ $ cargo test -p neovex-storage sqlite::encryption -- --nocapture
 [1m[92m   Compiling[0m aes-gcm-siv v0.11.1
 [1m[92m   Compiling[0m libsql v0.9.30
 [1m[92m   Compiling[0m hkdf v0.12.4
-[1m[92m   Compiling[0m neovex-core v0.1.22 (/home/runner/work/neovex/neovex/crates/neovex-core)
+[1m[92m   Compiling[0m nimbus-core v0.1.22 (/home/runner/work/nimbus/nimbus/crates/nimbus-core)
 [1m[92m   Compiling[0m deadpool-postgres v0.14.1
 [1m[92m   Compiling[0m testcontainers-modules v0.15.0
 [1m[92m   Compiling[0m tokio-native-tls v0.3.1
 [1m[92m   Compiling[0m hyper-tls v0.6.0
 [1m[92m   Compiling[0m reqwest v0.12.28
 [1m[92m   Compiling[0m rusqlite v0.32.1
-[1m[92m   Compiling[0m neovex-storage v0.1.22 (/home/runner/work/neovex/neovex/crates/neovex-storage)
+[1m[92m   Compiling[0m nimbus-storage v0.1.22 (/home/runner/work/nimbus/nimbus/crates/nimbus-storage)
 [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 2m 19s
-[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/neovex_storage-bf4da83bfce9bb14)
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/nimbus_storage-bf4da83bfce9bb14)
 
 running 7 tests
 test sqlite::encryption::tests::test_path_with_quote_is_rejected ... ok

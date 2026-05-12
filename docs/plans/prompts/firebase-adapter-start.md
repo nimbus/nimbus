@@ -8,13 +8,13 @@ current repo state. Copy the full text below into a fresh Codex agent.
 
 ## Prompt
 
-You are Codex working in the Neovex repository:
+You are Codex working in the Nimbus repository:
 
-`/Users/jack/src/github.com/agentstation/neovex`
+`/Users/jack/src/github.com/nimbus/nimbus`
 
-Neovex is a Rust workspace plus npm monorepo that implements a
+Nimbus is a Rust workspace plus npm monorepo that implements a
 Convex-compatible backend server. The current work is the Firebase/Firestore
-compatibility adapter and the Neovex core primitive hardening needed to keep
+compatibility adapter and the Nimbus core primitive hardening needed to keep
 database semantics out of compatibility adapters.
 
 Your source of truth is the archived control-plane plan:
@@ -125,11 +125,11 @@ before designing the change.
 
 For `F0.3`, begin with:
 
-- `crates/neovex-core/src/mutation.rs`
-- `crates/neovex-engine/src/service/execution_units/`
-- `crates/neovex-engine/src/service/mutations/`
-- `crates/neovex-storage/src/store/write/`
-- `crates/neovex-storage/src/index/`
+- `crates/nimbus-core/src/mutation.rs`
+- `crates/nimbus-engine/src/service/execution_units/`
+- `crates/nimbus-engine/src/service/mutations/`
+- `crates/nimbus-storage/src/store/write/`
+- `crates/nimbus-storage/src/index/`
 - Any new path/resource metadata added for `F0.2`
 - Firebase protocol sources listed in the plan's Source Evidence Map,
   especially `write.proto`, `firestore.proto`, and the Firebase JS SDK
@@ -137,8 +137,8 @@ For `F0.3`, begin with:
 
 ## Architectural Constraints
 
-- `neovex-core` remains zero I/O: shared types and validation only.
-- `neovex-runtime` keeps zero workspace dependencies.
+- `nimbus-core` remains zero I/O: shared types and validation only.
+- `nimbus-runtime` keeps zero workspace dependencies.
 - Every mutation path continues through the engine-owned mutation path and
   queued journal path. Do not create a Firebase-specific write path.
 - Document write, index effects, and commit-log append must remain one storage
@@ -168,14 +168,14 @@ For each completed item:
   touched crates first.
 - Run `cargo fmt --all --check`.
 - Run `make clippy` when the item broadly affects shared primitives across
-  `neovex-core`, `neovex-engine`, `neovex-storage`, or `neovex-server`, or if
+  `nimbus-core`, `nimbus-engine`, `nimbus-storage`, or `nimbus-server`, or if
   you are preparing a PR.
 - Record every command and result in the execution log before moving on.
 
 ## Working Style
 
 - Implement the active item end to end when feasible.
-- Add abstractions only when they clarify the Neovex core primitive boundary.
+- Add abstractions only when they clarify the Nimbus core primitive boundary.
 - Add tests proportional to the blast radius.
 - Use `rg` / `rg --files` for search.
 - Use `apply_patch` for manual file edits.

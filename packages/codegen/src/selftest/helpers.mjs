@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const cliPath = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 
 async function createAppFixture(files, { sourceDir = "convex", rootFiles = {} } = {}) {
-  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex_codegen_"));
+  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus_codegen_"));
   await fs.mkdir(path.join(appDir, sourceDir), { recursive: true });
   for (const [fileName, source] of Object.entries(rootFiles)) {
     const filePath = path.join(appDir, fileName);
@@ -33,7 +33,7 @@ async function readGeneratedFile(appDir, fileName, { sourceDir = "convex" } = {}
 }
 
 async function readConvexFile(appDir, fileName) {
-  return fs.readFile(path.join(appDir, ".neovex", "convex", fileName), "utf8");
+  return fs.readFile(path.join(appDir, ".nimbus", "convex", fileName), "utf8");
 }
 
 async function readConvexJson(appDir, fileName) {
@@ -41,7 +41,7 @@ async function readConvexJson(appDir, fileName) {
 }
 
 async function readCloudFunctionsFile(appDir, fileName) {
-  return fs.readFile(path.join(appDir, ".neovex", "firebase", fileName), "utf8");
+  return fs.readFile(path.join(appDir, ".nimbus", "firebase", fileName), "utf8");
 }
 
 async function readCloudFunctionsJson(appDir, fileName) {

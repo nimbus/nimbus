@@ -1,18 +1,18 @@
 # Firebase Application Auth Contract
 
-This reference defines the current Neovex application-auth contract for the
+This reference defines the current Nimbus application-auth contract for the
 Firebase / Firestore-compatible route family.
 
 It intentionally separates two different questions:
 
 1. Which auth-shaped inputs can reach a Firebase transport today?
 2. Which of those inputs currently resolve into a shared
-   `PrincipalContext` inside Neovex?
+   `PrincipalContext` inside Nimbus?
 
 As of 2026-04-26, those answers are now aligned for the covered Firebase data
-paths. The first-party `@neovex/firebase` SDK can emit bearer tokens across its
+paths. The first-party `@nimbus/firebase` SDK can emit bearer tokens across its
 covered transports, and the current Firebase adapter resolves those inputs
-through the shared Neovex principal path on covered reads, writes,
+through the shared Nimbus principal path on covered reads, writes,
 transactions, and listeners.
 
 For the broader support matrix, see
@@ -30,7 +30,7 @@ produce the shared engine-facing shape:
 - `PrincipalContext.claims`
 - `PrincipalContext.verified_claims`
 
-That is the same principal contract used by the rest of Neovex. Firebase must
+That is the same principal contract used by the rest of Nimbus. Firebase must
 not invent a parallel adapter-local auth shape.
 
 ## Current Baseline
@@ -41,7 +41,7 @@ Today, the Firebase route family has one honest auth baseline:
 - covered bearer inputs resolve once at the server edge through one shared
   helper
 - covered Firebase reads, writes, transactions, and listeners pass the
-  resolved principal into the same engine APIs used elsewhere in Neovex
+  resolved principal into the same engine APIs used elsewhere in Nimbus
 
 That applies to:
 
@@ -60,14 +60,14 @@ explicit boundaries documented below.
 
 | Surface | Client input today | Server handling today | Principal outcome today | Notes |
 | --- | --- | --- | --- | --- |
-| `@neovex/firebase` REST unary | `Authorization: Bearer <token>` when `experimentalAuthToken` or emulator `mockUserToken` is set | The server extracts the bearer once and resolves it through the shared Firebase application-auth helper | `authenticated` for covered verified JWT bearers; JSON-object emulator tokens authenticate only when the server explicitly enables mock-user-token auth; otherwise requests fail closed | `x-goog-api-key` and `x-firebase-gmpid` may also be sent for compatibility shape, but they are not auth. |
-| `@neovex/firebase` gRPC-Web unary | `Authorization: Bearer <token>` through the shared gRPC-Web fetch path | Same shared bearer extraction and resolution path as REST unary | Same as REST unary | Same bearer emission and retry shape as REST unary. |
-| Browser WebSocket `Listen` | fixed `neovex.firebase.listen.v1` plus optional `neovex.firebase.auth.<base64url-token>` subprotocol; optional matching `Authorization` header | The server validates that subprotocol-carried and header-carried bearer values match when both are present, then routes the bearer through the same shared resolver | Same as REST unary | The selected protocol stays `neovex.firebase.listen.v1`; the auth token is never echoed back in the accepted protocol string. |
+| `@nimbus/firebase` REST unary | `Authorization: Bearer <token>` when `experimentalAuthToken` or emulator `mockUserToken` is set | The server extracts the bearer once and resolves it through the shared Firebase application-auth helper | `authenticated` for covered verified JWT bearers; JSON-object emulator tokens authenticate only when the server explicitly enables mock-user-token auth; otherwise requests fail closed | `x-goog-api-key` and `x-firebase-gmpid` may also be sent for compatibility shape, but they are not auth. |
+| `@nimbus/firebase` gRPC-Web unary | `Authorization: Bearer <token>` through the shared gRPC-Web fetch path | Same shared bearer extraction and resolution path as REST unary | Same as REST unary | Same bearer emission and retry shape as REST unary. |
+| Browser WebSocket `Listen` | fixed `nimbus.firebase.listen.v1` plus optional `nimbus.firebase.auth.<base64url-token>` subprotocol; optional matching `Authorization` header | The server validates that subprotocol-carried and header-carried bearer values match when both are present, then routes the bearer through the same shared resolver | Same as REST unary | The selected protocol stays `nimbus.firebase.listen.v1`; the auth token is never echoed back in the accepted protocol string. |
 | Native gRPC unary / `Write` / `Listen` | upstream clients may send auth metadata such as `authorization: Bearer <token>` | The server extracts native gRPC auth metadata and resolves it through the same shared helper used by REST and browser `Listen` | Same as REST unary | No separate gRPC-only auth shape is allowed. |
 
 ## Emulator And Mock Token Boundary
 
-`@neovex/firebase` can source auth material from:
+`@nimbus/firebase` can source auth material from:
 
 - `experimentalAuthToken`
 - `experimentalAuthToken({ forceRefresh })`
@@ -94,7 +94,7 @@ The Firebase application-auth contract does **not** currently include:
 - Firebase Security Rules evaluation
 - local admin / localhost server-access tokens on Firebase application routes
 - stock upstream SDK parity for auth behavior outside the first-party
-  `@neovex/firebase` path
+  `@nimbus/firebase` path
 
 If a doc or test implies any of those are live on Firebase-compatible routes,
 that claim is ahead of the current implementation.

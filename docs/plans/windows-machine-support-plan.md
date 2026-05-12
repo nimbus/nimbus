@@ -1,6 +1,6 @@
 # Plan: Windows Machine Support — Podman-Aligned Developer Machines
 
-Canonical execution plan for finishing Neovex Windows support for engineers who
+Canonical execution plan for finishing Nimbus Windows support for engineers who
 develop on Windows and deploy to Linux production hosts.
 
 Reviewed against:
@@ -9,11 +9,11 @@ Reviewed against:
 - `docs/architecture/sandbox/macos-machine-flow.md`
 - `docs/plans/archive/macos-machine-support-plan.md`
 - `docs/plans/distribution-plan.md`
-- `crates/neovex-bin/src/machine/mod.rs`
-- `crates/neovex-bin/src/machine/stub/`
-- `crates/neovex-bin/src/compose/mod.rs`
-- `crates/neovex-sandbox/src/backends/`
-- `.github/workflows/release.yml` — confirms `neovex.exe` already builds on
+- `crates/nimbus-bin/src/machine/mod.rs`
+- `crates/nimbus-bin/src/machine/stub/`
+- `crates/nimbus-bin/src/compose/mod.rs`
+- `crates/nimbus-sandbox/src/backends/`
+- `.github/workflows/release.yml` — confirms `nimbus.exe` already builds on
   `windows-latest` with `x86_64-pc-windows-msvc` and ships in every release
 - Podman Windows provider source (source-backed review, not documentation):
   - `pkg/machine/provider/platform_windows.go` — provider selection, VMType
@@ -99,17 +99,17 @@ Reviewed against:
 
 - Linux production support is complete and stable in the landed baseline.
 - macOS support is in progress and owns the hybrid control-plane architecture
-  that Windows will reuse: host-resident Neovex server, guest-resident narrow
+  that Windows will reuse: host-resident Nimbus server, guest-resident narrow
   machine API, forwarded socket transport, standard guest containers.
 - Windows support does not exist as a developer platform. However, the repo
-  **already builds and ships `neovex.exe`** for `x86_64-pc-windows-msvc` in
+  **already builds and ships `nimbus.exe`** for `x86_64-pc-windows-msvc` in
   every release (`.github/workflows/release.yml`). V8/deno_core compiles on
   Windows today via GitHub Actions `windows-latest` runners. The remaining work
   is machine lifecycle, transport, and developer workflow — not compilation.
 - Shared machine-image policy is now more explicit too: the active macOS/MAC4
   decision is FCOS-first for raw-disk VM providers, but that does not change
   WSL2's provider-specific tarball and shell-bootstrap contract. The shared
-  `agentstation/neovex-machine-os` repo may carry separate artifact families
+  `nimbus/nimbus-machine-os` repo may carry separate artifact families
   for FCOS raw/vhdx providers, WSL tar roots, and future `fedora-bootc`
   experiments without collapsing them into one runtime contract.
 - The machine module stubs all lifecycle operations with explicit errors on
@@ -123,10 +123,10 @@ Reviewed against:
 
 ## Current Review Findings
 
-- Podman remains the canonical implementation reference for Neovex's Windows
+- Podman remains the canonical implementation reference for Nimbus's Windows
   machine architecture, just as it is for macOS.
 - Podman on Windows supports **two VM provider backends**: WSL2 (default) and
-  Hyper-V. The key distinction for Neovex is provider behavior and transport:
+  Hyper-V. The key distinction for Nimbus is provider behavior and transport:
   WSL2 owns its networking/bootstrap path, while Hyper-V is closer to the
   Apple/libkrun family and remains deferred.
 
@@ -151,7 +151,7 @@ type VMProvider interface {
 }
 ```
 
-This maps to Neovex's `SandboxBackend` trait pattern. The
+This maps to Nimbus's `SandboxBackend` trait pattern. The
 `UseProviderNetworkSetup()` and `RequireExclusiveActive()` capability flags are
 the most architecturally important: they determine whether the shim layer runs
 gvproxy or delegates networking to the provider, and whether multiple machines
@@ -216,9 +216,9 @@ return "", nil`). WSL bootstrap is synchronous — the `StartVM` return value
 includes a trivial ready function (`nil, readyFunc, nil`) because the distro
 is considered ready once the bootstrap shell commands complete.
 
-**Neovex-specific implication: WSL auto-mounts do not eliminate path work.**
+**Nimbus-specific implication: WSL auto-mounts do not eliminate path work.**
 WSL makes Windows files visible inside the guest at `/mnt/<drive>/...`, but
-because Neovex keeps compose parsing and service planning on the Windows host,
+because Nimbus keeps compose parsing and service planning on the Windows host,
 Windows support still needs an explicit host-path translation seam for build
 contexts, Dockerfiles, env files, bind mounts, and working directories. Reuse
 WSL's mounts; do not invent a second file-sharing layer.
@@ -226,7 +226,7 @@ WSL's mounts; do not invent a second file-sharing layer.
 ### Hyper-V provider — source-backed architecture (deferred)
 
 The Hyper-V provider (`pkg/machine/hyperv/`) is architecturally closer to
-the Apple/LibKrun providers. Deferred for Neovex, documented here for future
+the Apple/LibKrun providers. Deferred for Nimbus, documented here for future
 reference only:
 
 - Uses ignition, delivered via Windows Registry chunks (not vsock)
@@ -350,7 +350,7 @@ future Hyper-V support.
 ### Podman WSL2 exact startup sequence — source-backed
 
 The exact ordering of events during `podman machine start` for WSL is
-critical. Neovex must mirror this sequence:
+critical. Nimbus must mirror this sequence:
 
 ```text
 1. Lock acquisition (mc.Lock())
@@ -392,7 +392,7 @@ critical. Neovex must mirror this sequence:
    └── wslInvoke(dist, "/usr/local/bin/enterns", "systemctl", "exit", "0")
    └── 60-second timeout waiting for systemd to exit
 2. Terminate WSL distribution:
-   └── wsl --terminate neovex-{name}
+   └── wsl --terminate nimbus-{name}
 3. Stop win-sshproxy:
    └── Read TID from {stateDir}/win-sshproxy.tid
    └── PostThreadMessageW(tid, WM_QUIT)
@@ -436,12 +436,12 @@ cmd.Env = append(os.Environ(), "WSL_UTF8=1")
 cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}  // CREATE_NO_WINDOW
 ```
 
-Neovex must set `WSL_UTF8=1` on every `wsl.exe` invocation and use
+Nimbus must set `WSL_UTF8=1` on every `wsl.exe` invocation and use
 `CREATE_NO_WINDOW` for background WSL commands to suppress console windows.
 
-### Neovex machine module — current patterns to extend
+### Nimbus machine module — current patterns to extend
 
-The existing neovex machine module uses these patterns that Windows support
+The existing nimbus machine module uses these patterns that Windows support
 must follow:
 
 **Cfg gating**: `#[cfg(unix)]` for macOS/Linux, `#[cfg(not(unix))]` for stubs.
@@ -478,13 +478,13 @@ for HTTP-over-Unix-socket. Windows needs HTTP-over-named-pipe using
 request/response format stays identical — only the underlying transport
 changes.
 
-**Directory layout on Windows**: macOS uses `/tmp/neovex` (short runtime root)
-and `~/.config/neovex/machine`. Windows should use:
-- Config: `%APPDATA%\neovex\machine\` (or `%LOCALAPPDATA%`)
-- State: `%LOCALAPPDATA%\neovex\machine\`
-- Runtime: `%LOCALAPPDATA%\neovex\machine\run\` (no Unix socket path length
+**Directory layout on Windows**: macOS uses `/tmp/nimbus` (short runtime root)
+and `~/.config/nimbus/machine`. Windows should use:
+- Config: `%APPDATA%\nimbus\machine\` (or `%LOCALAPPDATA%`)
+- State: `%LOCALAPPDATA%\nimbus\machine\`
+- Runtime: `%LOCALAPPDATA%\nimbus\machine\run\` (no Unix socket path length
   concern on Windows since named pipes have their own namespace)
-- WSL distro data: `%LOCALAPPDATA%\neovex\machine\wsldist\{name}\`
+- WSL distro data: `%LOCALAPPDATA%\nimbus\machine\wsldist\{name}\`
 
 **ServiceHostPlatform**: Currently `Macos | Linux | Other`. Replace `Other`
 with `Windows`:
@@ -498,19 +498,19 @@ enum ServiceHostPlatform {
 
 **Default volumes**: macOS defaults to `[/Users -> /Users]` via virtiofs.
 WSL2 auto-mounts Windows drives at `/mnt/c/`, `/mnt/d/`, etc. via Plan9/9P.
-That means Neovex does **not** need an extra VM file-sharing mechanism for the
+That means Nimbus does **not** need an extra VM file-sharing mechanism for the
 default Windows path story. It *does* still need explicit Windows-host-path →
 WSL-guest-path translation for compose-backed guest operations because the
-host-resident Neovex control plane currently keeps those paths as host
+host-resident Nimbus control plane currently keeps those paths as host
 `PathBuf`s.
 
-**Guest image artifact**: neovex-machine-os may ship multiple provider-specific
+**Guest image artifact**: nimbus-machine-os may ship multiple provider-specific
 artifact families. macOS currently targets a Raw FCOS-based artifact; WSL2
 still needs a Tar rootfs artifact. The cross-repo build contract therefore
 needs a WSL-specific image variant
 that includes:
-- the `neovex` Linux binary (for guest machine API)
-- `neovex.socket` and `neovex.service` systemd units
+- the `nimbus` Linux binary (for guest machine API)
+- `nimbus.socket` and `nimbus.service` systemd units
 - standard container runtime: `buildah`, `conmon`, `crun`, `netavark`,
   `aardvark-dns`, `fuse-overlayfs`
 - SSH server (`sshd`)
@@ -518,27 +518,27 @@ that includes:
 
 ## Podman Alignment Matrix
 
-| Concern | Podman on Windows | Neovex target on Windows | Alignment decision |
+| Concern | Podman on Windows | Nimbus target on Windows | Alignment decision |
 | --- | --- | --- | --- |
-| Host topology | `podman.exe` manages one or more Linux machine VMs | `neovex.exe` plus `neovex machine ...` manage one Linux machine VM | match machine topology, deliberate DX divergence on control-plane placement |
-| Host application/runtime | no host-resident app/runtime analogue | authoritative Neovex API, V8 runtime, and storage stay on the Windows host | deliberate divergence for local DX (same rationale as macOS) |
+| Host topology | `podman.exe` manages one or more Linux machine VMs | `nimbus.exe` plus `nimbus machine ...` manage one Linux machine VM | match machine topology, deliberate DX divergence on control-plane placement |
+| Host application/runtime | no host-resident app/runtime analogue | authoritative Nimbus API, V8 runtime, and storage stay on the Windows host | deliberate divergence for local DX (same rationale as macOS) |
 | Provider interface | common `VMProvider` interface with capability flags | extend the existing machine provider abstraction with `Wsl2` capability values | match the provider-abstraction pattern without inventing a second provider model |
 | VM provider | WSL2 (default, `UseProviderNetworkSetup=true`) or Hyper-V (`=false`) | WSL2 only; Hyper-V deferred | match default provider, defer secondary |
 | Guest bootstrap | WSL: shell commands (no ignition); Hyper-V: ignition via registry | WSL: shell commands matching Podman's pattern | match WSL bootstrap model, not macOS ignition model |
-| Guest systemd | nested namespace via `unshare --kill-child --fork --pid ...` | same nested namespace pattern for `neovex.service` | match WSL systemd pattern |
-| Guest control plane | guest `podman.socket` / Podman API | guest `neovex.socket` exposing `/run/neovex/neovex.sock` | match socket-naming pattern, narrower API (same as macOS) |
+| Guest systemd | nested namespace via `unshare --kill-child --fork --pid ...` | same nested namespace pattern for `nimbus.service` | match WSL systemd pattern |
+| Guest control plane | guest `podman.socket` / Podman API | guest `nimbus.socket` exposing `/run/nimbus/nimbus.sock` | match socket-naming pattern, narrower API (same as macOS) |
 | Guest workload implementation | standard guest containers | standard guest containers | match |
-| API forwarding | win-sshproxy creates named pipes, tunnels via SSH (both providers) | win-sshproxy (from `containers/gvisor-tap-vsock`) or Neovex-owned equivalent | match transport pattern |
-| Named pipe naming | `\\.\pipe\podman-{machineName}` (machine) + optional `docker_engine` (global) | `\\.\pipe\neovex-machine-{machineName}` (machine only, no Docker compat) | match naming convention, narrower scope |
+| API forwarding | win-sshproxy creates named pipes, tunnels via SSH (both providers) | win-sshproxy (from `containers/gvisor-tap-vsock`) or Nimbus-owned equivalent | match transport pattern |
+| Named pipe naming | `\\.\pipe\podman-{machineName}` (machine) + optional `docker_engine` (global) | `\\.\pipe\nimbus-machine-{machineName}` (machine only, no Docker compat) | match naming convention, narrower scope |
 | Container port forwarding | WSL: native WSL2 networking; Hyper-V: gvproxy via vsock | WSL: native WSL2 networking (no gvproxy needed) | match per-provider networking split |
 | Optional user-mode networking | separate `podman-net-usermode` WSL2 distro with gvproxy/gvforwarder | defer — only add if WSL2 native networking proves insufficient | match architecture, defer implementation |
 | Machine concurrency | WSL: multiple allowed; Hyper-V: single active | WSL: multiple allowed | match `RequireExclusiveActive` per-provider behavior |
-| Machine image format | WSL: Tar; Hyper-V: VHDX | WSL: Tar (derived from neovex-machine-os) | match per-provider image format |
+| Machine image format | WSL: Tar; Hyper-V: VHDX | WSL: Tar (derived from nimbus-machine-os) | match per-provider image format |
 | Filesystem sharing | WSL: Plan9/9P auto-mount at `/mnt/c/`; Hyper-V: 9P via hvsock per-mount | WSL: reuse Plan9/9P auto-mounts; do not add a second sharing layer | match default provider |
-| Host path translation | WSL guest sees Windows drives under `/mnt/<drive>/...` | explicit Windows-host-path → WSL-guest-path translation for compose build contexts, env files, working dirs, and bind mounts | Neovex-specific seam required by the host-resident control plane |
+| Host path translation | WSL guest sees Windows drives under `/mnt/<drive>/...` | explicit Windows-host-path → WSL-guest-path translation for compose build contexts, env files, working dirs, and bind mounts | Nimbus-specific seam required by the host-resident control plane |
 | SSH port management | global file-locked port allocation (10000-65535), conflict reassignment | same global allocation pattern | match |
 | Readiness model | 3-layer check: VM state → SSH port → SSH exec, exponential backoff | same layered readiness pattern | match |
-| Machine config persistence | JSON + lockfile atomic writes, provider-specific nullable fields | same pattern as existing neovex machine config | match |
+| Machine config persistence | JSON + lockfile atomic writes, provider-specific nullable fields | same pattern as existing nimbus machine config | match |
 | Elevation/permissions | Hyper-V: admin for first machine; WSL: no special permissions | WSL: no special permissions needed | match WSL simplicity |
 | Docker compatibility | optional `\\.\pipe\docker_engine` claim | not targeted | intentionally narrower |
 | Linux production model | standard containers | krun-backed per-service microVMs | intentionally different (same as macOS) |
@@ -553,11 +553,11 @@ Durable rules:
   path where Podman does not use it
 - reuse WSL's built-in `/mnt/<drive>` filesystem visibility instead of adding
   a second sharing mechanism, but add a narrow Windows-host-path →
-  WSL-guest-path translation seam for Neovex's host-resident compose/build
+  WSL-guest-path translation seam for Nimbus's host-resident compose/build
   flow
 - mirror the WSL2 shell-script bootstrap model. Do not attempt to use
   ignition/FCOS for the WSL2 provider — that is not how Podman does it
-- keep Neovex's guest API, Linux production runtime, and user-facing service
+- keep Nimbus's guest API, Linux production runtime, and user-facing service
   abstraction product-specific
 - prefer WSL2 as the default and initially only provider; defer Hyper-V until
   WSL2 is proven and there is a concrete need for stronger isolation
@@ -566,7 +566,7 @@ Durable rules:
 
 ### Why Windows-native (mirrors Podman's approach)
 
-Neovex already builds and ships `neovex.exe` for `x86_64-pc-windows-msvc` in
+Nimbus already builds and ships `nimbus.exe` for `x86_64-pc-windows-msvc` in
 every release. V8/deno_core compiles on Windows today. The Windows binary is
 not a future aspiration — it is a shipped artifact. The remaining work is
 machine lifecycle, transport, and developer workflow.
@@ -578,54 +578,54 @@ choice:
   same win-sshproxy + named pipe pattern, same readiness layering.
 - **Mirrors the macOS pattern.** Same hybrid control-plane architecture:
   host-resident server, guest-resident machine API, forwarded socket transport.
-- **True Windows-native DX.** `neovex.exe` in PowerShell/cmd.exe, no WSL2
+- **True Windows-native DX.** `nimbus.exe` in PowerShell/cmd.exe, no WSL2
   terminal required.
-- **Machine lifecycle is explicit.** `neovex machine init/start/stop/rm`
+- **Machine lifecycle is explicit.** `nimbus machine init/start/stop/rm`
   gives the developer a clear mental model consistent across macOS and Windows.
 - **One developer-facing workflow on all platforms.** Linux, macOS, and Windows
-  developers all use the same `neovex start` + `neovex compose ...` commands.
+  developers all use the same `nimbus start` + `nimbus compose ...` commands.
 
 ### Accepted architecture
 
 ```text
 Windows host
-  └── neovex.exe (Windows binary — already built and shipped)
-        ├── neovex machine init
-        │     ├── downloads Tar rootfs from neovex-machine-os
-        │     ├── wsl --import neovex-{name} {path} {tarball} --version 2
+  └── nimbus.exe (Windows binary — already built and shipped)
+        ├── nimbus machine init
+        │     ├── downloads Tar rootfs from nimbus-machine-os
+        │     ├── wsl --import nimbus-{name} {path} {tarball} --version 2
         │     ├── configures SSH, user, systemd namespace (shell commands)
-        │     ├── installs neovex guest binary + neovex.socket/service units
+        │     ├── installs nimbus guest binary + nimbus.socket/service units
         │     └── allocates SSH port from global pool
-        ├── neovex machine start
+        ├── nimbus machine start
         │     ├── check SSH port availability (reassign if conflict)
-        │     ├── wslInvoke(neovex-{name}, /root/bootstrap)
+        │     ├── wslInvoke(nimbus-{name}, /root/bootstrap)
         │     │     └── idempotent: exits if systemd already running
         │     │     └── unshare --kill-child ... /lib/systemd/systemd
         │     ├── PostStartNetworking: launches win-sshproxy
-        │     │     ├── creates \\.\pipe\neovex-machine-{name}
-        │     │     ├── tunnels to guest /run/neovex/neovex.sock via SSH
+        │     │     ├── creates \\.\pipe\nimbus-machine-{name}
+        │     │     ├── tunnels to guest /run/nimbus/nimbus.sock via SSH
         │     │     └── polls for pipe existence (80 retries × 250ms)
         │     └── conducts 3-layer readiness check (AFTER win-sshproxy)
         │           ├── WSL distro state == Running
         │           ├── SSH port accepting connections
         │           └── ssh user@localhost:port true
-        ├── neovex machine stop
+        ├── nimbus machine stop
         │     ├── graceful systemd shutdown:
-        │     │     └── wsl -u root -d neovex-{name} enterns systemctl exit 0
+        │     │     └── wsl -u root -d nimbus-{name} enterns systemctl exit 0
         │     │     └── 60s timeout waiting for systemd to exit
-        │     ├── wsl --terminate neovex-{name}
+        │     ├── wsl --terminate nimbus-{name}
         │     └── stops win-sshproxy (read TID file, PostThreadMessageW + WM_QUIT)
-        ├── neovex machine rm
-        │     └── wsl --unregister neovex-{name}
-        ├── neovex start
+        ├── nimbus machine rm
+        │     └── wsl --unregister nimbus-{name}
+        ├── nimbus start
         │     ├── authoritative API/runtime/storage on Windows host
         │     └── guest machine-API client over named pipe
-        └── neovex compose ...
+        └── nimbus compose ...
               └── same guest machine-API client
 
-WSL2 Linux guest (neovex-{name} distro)
+WSL2 Linux guest (nimbus-{name} distro)
   ├── systemd in nested namespace (unshare --kill-child ...)
-  ├── neovex.socket / neovex.service (narrow machine API)
+  ├── nimbus.socket / nimbus.service (narrow machine API)
   ├── SSH configured via shell commands (not ignition)
   ├── buildah + conmon + crun (standard containers)
   └── services run as standard containers
@@ -634,13 +634,13 @@ WSL2 Linux guest (neovex-{name} distro)
 
 ### Control-plane boundary
 
-Neovex on Windows follows the same hybrid control-plane architecture as macOS,
+Nimbus on Windows follows the same hybrid control-plane architecture as macOS,
 with named pipes replacing Unix sockets on the host side:
 
-- the **host binary** (`neovex.exe`) is the authoritative Neovex
+- the **host binary** (`nimbus.exe`) is the authoritative Nimbus
   API/runtime/storage loop on Windows
-- the **guest binary/service** (`neovex.socket`/`neovex.service`) is a narrow
-  machine API for service execution, not a second public Neovex control plane
+- the **guest binary/service** (`nimbus.socket`/`nimbus.service`) is a narrow
+  machine API for service execution, not a second public Nimbus control plane
 - the **guest** owns container lifecycle, observed container state, logs,
   readiness checks inside the guest, and published guest ports
 - the **host** owns machine lifecycle (WSL2 distro management), image
@@ -666,38 +666,38 @@ with named pipes replacing Unix sockets on the host side:
 ```text
 Windows host
   └── WSL2 distribution
-        └── neovex (Linux binary running inside WSL2)
+        └── nimbus (Linux binary running inside WSL2)
 ```
 
 Rejected because:
-- Neovex already ships `neovex.exe` — there is no compilation barrier
+- Nimbus already ships `nimbus.exe` — there is no compilation barrier
 - Running inside WSL2 gives up Windows-native DX for no benefit
 - Podman chose the Windows-native path for good reason; we should too
-- The `neovex machine` abstraction does not exist in this model
+- The `nimbus machine` abstraction does not exist in this model
 - Diverges from the macOS hybrid control-plane pattern
 
 ### Target command flows
 
-#### `neovex machine init` on Windows
+#### `nimbus machine init` on Windows
 
 ```text
 PowerShell / cmd.exe
-  -> neovex.exe machine init [--name default] [--cpus 4] [--memory 4096]
-      -> download Tar rootfs from neovex-machine-os (OCI or URL)
-      -> wsl --import neovex-{name} {dataDir}\wsldist\{name} {tarball} --version 2
+  -> nimbus.exe machine init [--name default] [--cpus 4] [--memory 4096]
+      -> download Tar rootfs from nimbus-machine-os (OCI or URL)
+      -> wsl --import nimbus-{name} {dataDir}\wsldist\{name} {tarball} --version 2
          (all WSL commands use WSL_UTF8=1 env, CREATE_NO_WINDOW for background)
-      -> wsl -u root -d neovex-{name} rpm --restore shadow-utils (fix newuidmap)
-      -> wsl -u root -d neovex-{name} mkdir -p /usr/local/bin
-      -> configureSystem (wsl -u root -d neovex-{name} sh -c ...):
+      -> wsl -u root -d nimbus-{name} rpm --restore shadow-utils (fix newuidmap)
+      -> wsl -u root -d nimbus-{name} mkdir -p /usr/local/bin
+      -> configureSystem (wsl -u root -d nimbus-{name} sh -c ...):
            1. append SSH port to /etc/ssh/sshd_config
-           2. enable sshd.service + neovex.socket symlinks
+           2. enable sshd.service + nimbus.socket symlinks
            3. disable getty, resolved, oom services
            4. add user to wheel group, sudoers NOPASSWD
            5. override systemd-sysusers (WSL kernel lacks sg/crypto_user)
            6. enable user linger
            7. install containers.conf (cgroup_manager = "cgroupfs")
-           8. install neovex.socket + neovex.service units
-      -> installScripts (wsl -u root -d neovex-{name}):
+           8. install nimbus.socket + nimbus.service units
+      -> installScripts (wsl -u root -d nimbus-{name}):
            1. /usr/local/bin/enterns (chmod 755) — nsenter wrapper
            2. /etc/profile.d/enterns.sh — auto-enter namespace on login
            3. /root/bootstrap (chmod 755) — idempotent systemd launcher
@@ -707,16 +707,16 @@ PowerShell / cmd.exe
            3. install to /home/{user}/.ssh/authorized_keys
       -> allocate SSH port from global pool (file-locked)
       -> persist machine config (JSON + lockfile)
-      -> wsl --terminate neovex-{name} (recycle distro after config)
+      -> wsl --terminate nimbus-{name} (recycle distro after config)
 ```
 
-#### `neovex machine start` on Windows
+#### `nimbus machine start` on Windows
 
 Mirrors Podman's exact startup sequence from `shim/host.go`:
 
 ```text
 PowerShell / cmd.exe
-  -> neovex.exe machine start [--name default]
+  -> nimbus.exe machine start [--name default]
       -> acquire machine lock
       -> validate machine not already running
       -> setup signal handler (SIGINT/SIGTERM → mark Starting=false)
@@ -724,7 +724,7 @@ PowerShell / cmd.exe
            check SSH port availability (reassign if conflict)
            provider.StartNetworking() → no-op for WSL default networking
       -> StartVM:
-           wslInvoke(neovex-{name}, "/root/bootstrap")
+           wslInvoke(nimbus-{name}, "/root/bootstrap")
            └── bootstrap checks if systemd already running → exit 0
            └── if not: unshare --kill-child --fork --pid ... systemd
       -> WaitForReady:
@@ -733,9 +733,9 @@ PowerShell / cmd.exe
            get API socket path
            build WinProxyOpts (name, identity, SSH port, rootful, socket)
            LaunchWinProxy:
-             check \\.\pipe\neovex-machine-{name} available (5s timeout)
+             check \\.\pipe\nimbus-machine-{name} available (5s timeout)
              find win-sshproxy.exe binary
-             build args: name, stateDir, pipe path, ssh://root@localhost:{port}/run/neovex/neovex.sock, identity
+             build args: name, stateDir, pipe path, ssh://root@localhost:{port}/run/nimbus/nimbus.sock, identity
              start win-sshproxy.exe process
              poll for pipe existence (80 retries × 250ms = 20s max)
       -> conductVMReadinessCheck:            ← AFTER win-sshproxy
@@ -746,17 +746,17 @@ PowerShell / cmd.exe
       -> cleanup signal handler
 ```
 
-#### `neovex start` on Windows
+#### `nimbus start` on Windows
 
 ```text
 PowerShell / cmd.exe
-  -> neovex.exe start
+  -> nimbus.exe start
       -> load machine config
       -> ensure machine is started (or auto-start)
-      -> verify named pipe \\.\pipe\neovex-machine-{name} is answering
-      -> verify guest neovex.sock health/capabilities behind the pipe
+      -> verify named pipe \\.\pipe\nimbus-machine-{name} is answering
+      -> verify guest nimbus.sock health/capabilities behind the pipe
       -> build the remote guest machine-API client (over named pipe)
-      -> start the authoritative host Neovex API/runtime/storage loop
+      -> start the authoritative host Nimbus API/runtime/storage loop
       -> expose the developer-facing API on localhost
       -> on ctx.services.*, call the guest machine API and wait for guest
          service readiness
@@ -768,8 +768,8 @@ PowerShell / cmd.exe
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    Linux (Production)                               │
 │                                                                     │
-│  neovex start (native Linux binary)                                 │
-│    └── neovex-sandbox krun backend                                  │
+│  nimbus start (native Linux binary)                                 │
+│    └── nimbus-sandbox krun backend                                  │
 │          └── conmon → crun → libkrun (per-service microVMs)         │
 │                                                                     │
 │  No VM. No proxy. Direct kernel access.                             │
@@ -779,13 +779,13 @@ PowerShell / cmd.exe
 │                    macOS (Developer)                                 │
 │                                                                     │
 │  macOS host                                                         │
-│    ├── neovex start (host-resident, authoritative)                  │
-│    ├── neovex machine ... (krunkit + gvproxy)                       │
+│    ├── nimbus start (host-resident, authoritative)                  │
+│    ├── nimbus machine ... (krunkit + gvproxy)                       │
 │    │     └── gvproxy: API forwarding AND port forwarding            │
 │    └── forwarded <machine>-api.sock (Unix socket via gvproxy/SSH)   │
 │                                                                     │
 │  Linux guest VM (krunkit, FCOS + ignition bootstrap)                │
-│    ├── neovex.socket / neovex.service (narrow machine API)          │
+│    ├── nimbus.socket / nimbus.service (narrow machine API)          │
 │    └── buildah + conmon + crun (standard containers)                │
 └─────────────────────────────────────────────────────────────────────┘
 
@@ -794,17 +794,17 @@ PowerShell / cmd.exe
 │                    Mirrors Podman WSL2 provider                      │
 │                                                                     │
 │  Windows host                                                       │
-│    ├── neovex.exe serve (host-resident, authoritative)              │
-│    ├── neovex.exe machine ...                                       │
-│    │     ├── wsl --import neovex-{name} (Tar rootfs, shell config)  │
+│    ├── nimbus.exe serve (host-resident, authoritative)              │
+│    ├── nimbus.exe machine ...                                       │
+│    │     ├── wsl --import nimbus-{name} (Tar rootfs, shell config)  │
 │    │     ├── win-sshproxy: API forwarding via named pipe            │
-│    │     │     └── \\.\pipe\neovex-machine-{name} → SSH → guest     │
+│    │     │     └── \\.\pipe\nimbus-machine-{name} → SSH → guest     │
 │    │     └── NO gvproxy (WSL2 owns networking)                      │
 │    └── named pipe client for machine-API                            │
 │                                                                     │
-│  WSL2 Linux guest (neovex-{name} distro)                            │
+│  WSL2 Linux guest (nimbus-{name} distro)                            │
 │    ├── systemd in nested namespace (unshare --kill-child ...)       │
-│    ├── neovex.socket / neovex.service (narrow machine API)          │
+│    ├── nimbus.socket / nimbus.service (narrow machine API)          │
 │    ├── SSH configured via shell commands (not ignition)             │
 │    └── buildah + conmon + crun (standard containers)                │
 │    Port forwarding: WSL2 native networking (same as Podman)         │
@@ -817,11 +817,11 @@ PowerShell / cmd.exe
 | --- | --- | --- | --- | --- |
 | Service isolation | per-service krun microVMs | one machine VM + standard guest containers | one WSL2 distro + standard guest containers | same server/service API |
 | Host runtime stack | `conmon → patched crun → libkrun` | `krunkit + gvproxy` on host, `buildah/conmon/crun` in guest | `win-sshproxy` on host, `buildah/conmon/crun` in WSL2 guest | Linux path stays unchanged |
-| Host app/runtime locality | local Neovex server owns runtime + storage | host Neovex server still owns runtime + storage on macOS | host `neovex.exe` server owns runtime + storage on Windows | fast local edit-run-observe loop |
+| Host app/runtime locality | local Nimbus server owns runtime + storage | host Nimbus server still owns runtime + storage on macOS | host `nimbus.exe` server owns runtime + storage on Windows | fast local edit-run-observe loop |
 | Remote control seam | n/a | host talks to guest machine API via forwarded Unix socket | host talks to guest machine API via named pipe (win-sshproxy) | do not grow a generic remote engine |
 | Service networking | krun TSI host:guest ports | host localhost → gvproxy → guest container ports | WSL2 native networking → Windows localhost | `ctx.services.<name>.port` semantics |
 | Readiness model | server waits for actual service reachability | same layered contract across host and guest | same layered readiness contract (3-layer + machine-API + service) | no "running means ready" regression |
-| Compose/service UX | landed `neovex start --compose-file ...` and `neovex compose ...` | same commands from mac host | same commands from Windows PowerShell/cmd.exe | one developer-facing workflow |
+| Compose/service UX | landed `nimbus start --compose-file ...` and `nimbus compose ...` | same commands from mac host | same commands from Windows PowerShell/cmd.exe | one developer-facing workflow |
 
 ## Transport Reality Matrix
 
@@ -838,7 +838,7 @@ PowerShell / cmd.exe
 ## Lifecycle and Probe Layers
 
 The probe model mirrors Podman's 3-layer readiness check
-(`conductVMReadinessCheck`), extended with Neovex-specific machine-API
+(`conductVMReadinessCheck`), extended with Nimbus-specific machine-API
 verification:
 
 | Layer | What it answers | Podman parallel | Target status |
@@ -846,20 +846,20 @@ verification:
 | W0: WSL2 distro state | is the WSL2 distribution running? | `provider.State()` returns `Running` | to implement |
 | W1: SSH port listening | is the SSH port accepting TCP connections? | `isListening(mc.SSH.Port)` | to implement |
 | W2: SSH command execution | can the host execute a command inside the guest via SSH? | `LocalhostSSHSilent(..., "true")` | to implement |
-| W3: named pipe reachability | is `\\.\pipe\neovex-machine-{name}` answering? | `WaitPipeExists` (80 retries × 250ms) | to implement |
-| W4: guest machine-API health | does the forwarded guest `neovex.sock` answer health/capabilities? | Neovex-specific (narrower than Podman API) | to implement |
-| W5: host Neovex readiness | is host `neovex.exe start` ready with its guest machine-API client wired? | Neovex-specific | to implement |
-| W6: guest service readiness | are published guest services reachable from Windows localhost? | Neovex-specific | to implement |
+| W3: named pipe reachability | is `\\.\pipe\nimbus-machine-{name}` answering? | `WaitPipeExists` (80 retries × 250ms) | to implement |
+| W4: guest machine-API health | does the forwarded guest `nimbus.sock` answer health/capabilities? | Nimbus-specific (narrower than Podman API) | to implement |
+| W5: host Nimbus readiness | is host `nimbus.exe start` ready with its guest machine-API client wired? | Nimbus-specific | to implement |
+| W6: guest service readiness | are published guest services reachable from Windows localhost? | Nimbus-specific | to implement |
 
 Windows architectural rule:
 
 - WSL2 distro readiness, SSH readiness, named pipe readiness, guest machine-API
-  readiness, host Neovex readiness, and service readiness are all separate
+  readiness, host Nimbus readiness, and service readiness are all separate
 - a running WSL2 distro is not enough to declare SSH reachable
 - a reachable SSH is not enough to declare the named pipe answering
 - a reachable named pipe is not enough to declare the guest machine API healthy
-- a healthy guest machine API is not enough to declare host `neovex start` ready
-- a ready host `neovex start` is not enough to declare every declared guest
+- a healthy guest machine API is not enough to declare host `nimbus start` ready
+- a ready host `nimbus start` is not enough to declare every declared guest
   service ready
 
 ## Podman Source Reference for Implementation
@@ -867,7 +867,7 @@ Windows architectural rule:
 These are the exact Podman source files to use as implementation references,
 with the specific patterns to mirror:
 
-| Neovex concern | Podman source file | Pattern to mirror |
+| Nimbus concern | Podman source file | Pattern to mirror |
 | --- | --- | --- |
 | WSL2 provider abstraction | `pkg/machine/wsl/stubber.go` | `WSLStubber` type, capability flags, `StartVM` return signature |
 | WSL distro import | `pkg/machine/wsl/stubber.go` `CreateVM` | `wsl --import {name} {path} {tarball} --version 2` |
@@ -913,7 +913,7 @@ General rules:
   Tar image format. Do not apply macOS/Hyper-V patterns to the WSL2 provider.
 - When writing "named pipe" in code or docs, name the exact pipe path and
   purpose. Do not use "named pipe" as a fuzzy synonym for all Windows IPC.
-- Do not target native Windows containers. Neovex on Windows is a Linux
+- Do not target native Windows containers. Nimbus on Windows is a Linux
   container story, same as Podman.
 - win-sshproxy is the API-forwarding component. gvproxy is the networking
   component. On WSL2, only win-sshproxy is needed (Podman does not use gvproxy
@@ -923,7 +923,7 @@ General rules:
 
 ## Problem Statement
 
-Some Neovex engineers and users will develop on Windows and deploy to Linux.
+Some Nimbus engineers and users will develop on Windows and deploy to Linux.
 We need a Windows developer experience that is reliable without creating a
 third product architecture.
 
@@ -931,10 +931,10 @@ Target experience:
 
 ```text
 Windows host (PowerShell / cmd.exe / Windows Terminal)
-  -> neovex.exe machine init    (wsl --import neovex-default ...)
-  -> neovex.exe machine start   (starts WSL distro + win-sshproxy)
-  -> neovex.exe serve            (host-resident server + named pipe client)
-  -> neovex.exe service up/list/logs/down
+  -> nimbus.exe machine init    (wsl --import nimbus-default ...)
+  -> nimbus.exe machine start   (starts WSL distro + win-sshproxy)
+  -> nimbus.exe serve            (host-resident server + named pipe client)
+  -> nimbus.exe service up/list/logs/down
   -> same compose.yaml as Linux and macOS
   -> host-local V8/runtime/storage/debug loop (on Windows host)
   -> remote guest service execution through forwarded machine API
@@ -947,13 +947,13 @@ Windows host (PowerShell / cmd.exe / Windows Terminal)
 This plan covers:
 
 - the canonical Windows-native developer machine architecture
-- `neovex.exe machine ...` WSL2 provider: distro import, shell-script
+- `nimbus.exe machine ...` WSL2 provider: distro import, shell-script
   bootstrap, nested systemd, SSH, lifecycle management
 - win-sshproxy integration for named-pipe API forwarding
 - host machine-API client over named pipes
-- transparent `neovex.exe serve` and `neovex.exe service ...` paths
+- transparent `nimbus.exe serve` and `nimbus.exe service ...` paths
 - WSL2 networking characterization and port forwarding validation
-- WSL2-format Tar image from neovex-machine-os
+- WSL2-format Tar image from nimbus-machine-os
 - source-backed Podman reference mapping for every implementation seam
 
 This plan does not cover:
@@ -977,18 +977,18 @@ This plan does not cover:
 ### Required verification lanes
 
 - **Windows host lane**
-  - `neovex.exe machine init` imports a WSL2 distro via `wsl --import`
-  - `neovex.exe machine start` starts the distro and launches win-sshproxy
-  - named pipe `\\.\pipe\neovex-machine-{name}` reachable and answering
+  - `nimbus.exe machine init` imports a WSL2 distro via `wsl --import`
+  - `nimbus.exe machine start` starts the distro and launches win-sshproxy
+  - named pipe `\\.\pipe\nimbus-machine-{name}` reachable and answering
   - 3-layer readiness check passes (WSL distro state, SSH port, SSH exec)
   - guest machine-API health/capabilities answering over the named pipe
-  - `neovex.exe serve` reaches readiness with guest machine-API client wired
+  - `nimbus.exe serve` reaches readiness with guest machine-API client wired
   - published ports reachable from Windows localhost via WSL2 networking
-  - `neovex.exe machine stop/rm` clean shutdown and cleanup
+  - `nimbus.exe machine stop/rm` clean shutdown and cleanup
   - clean recreate-from-stale-state
 
 - **WSL2 guest lane inside the Windows machine**
-  - the guest machine API boots predictably behind `neovex.socket`
+  - the guest machine API boots predictably behind `nimbus.socket`
   - guest standard-container backend can drive buildah/conmon/crun
   - Compose-backed service flows work through the guest machine API
   - guest container networking and published ports match the host-facing claims
@@ -1010,7 +1010,7 @@ This plan does not cover:
 | WIN3 | todo | win-sshproxy integration: named pipe creation, TID lifecycle, pipe-to-SSH tunnel, 3-layer readiness check, stale process cleanup | WIN2 |
 | WIN4 | todo | Host machine-API client over named pipe: `ForwardedMachineApiSandboxBackend` with named pipe transport, `ServiceHostPlatform::Windows` backend loader | WIN3 |
 | WIN5 | todo | WSL2 networking: characterize NAT vs mirrored mode, validate published ports reach Windows localhost, document user-mode networking fallback | WIN2 |
-| WIN6 | todo | Transparent developer UX: Windows-aware `neovex.exe serve` path, `neovex.exe service ...` path, Windows-host-path → WSL-guest-path integration, end-to-end compose-backed flow validation | WIN3, WIN4, WIN5 |
+| WIN6 | todo | Transparent developer UX: Windows-aware `nimbus.exe serve` path, `nimbus.exe service ...` path, Windows-host-path → WSL-guest-path integration, end-to-end compose-backed flow validation | WIN3, WIN4, WIN5 |
 | WIN7 | todo | Packaging and closeout: MSI/WinGet/Scoop packaging, distribution-plan alignment, install docs, final verification summary | WIN2, WIN3, WIN4, WIN5, WIN6 |
 
 ## Implementation Checkpoints
@@ -1035,27 +1035,27 @@ Acceptance criteria:
 
 Repo outputs:
 
-- WSL2-specific machine modules in `crates/neovex-bin/src/machine/wsl/`
+- WSL2-specific machine modules in `crates/nimbus-bin/src/machine/wsl/`
   behind `#[cfg(target_os = "windows")]`, replacing the current stubs
 - `MachineProvider::Wsl2` variant added to the existing enum
 - WSL command wrapper that sets `WSL_UTF8=1` env and `CREATE_NO_WINDOW`
   (0x08000000) creation flags on every invocation
-- Tar rootfs image artifact from neovex-machine-os (WSL-specific format,
+- Tar rootfs image artifact from nimbus-machine-os (WSL-specific format,
   separate from the macOS Raw artifact)
 - WSL distro lifecycle:
-  - `wsl --import neovex-{name} {path} {tarball} --version 2`
-  - `wsl -d neovex-{name}` (start)
-  - `wsl --terminate neovex-{name}` (stop)
-  - `wsl --unregister neovex-{name}` (remove)
-- Shell-script bootstrap via `wsl -u root -d neovex-{name}`, mirroring
+  - `wsl --import nimbus-{name} {path} {tarball} --version 2`
+  - `wsl -d nimbus-{name}` (start)
+  - `wsl --terminate nimbus-{name}` (stop)
+  - `wsl --unregister nimbus-{name}` (remove)
+- Shell-script bootstrap via `wsl -u root -d nimbus-{name}`, mirroring
   Podman's exact `configureSystem` + `installScripts` + `createKeys` sequence:
   - `rpm --restore shadow-utils` (fix newuidmap)
   - SSH port config and key installation (root + user authorized_keys)
   - user creation with wheel group, sudoers NOPASSWD
-  - systemd service symlinks (sshd, neovex.socket), disable getty/resolved/oom
+  - systemd service symlinks (sshd, nimbus.socket), disable getty/resolved/oom
   - systemd-sysusers override (WSL kernel lacks sg/crypto_user)
   - `containers.conf` with `cgroup_manager = "cgroupfs"`
-  - `neovex.socket` + `neovex.service` unit installation
+  - `nimbus.socket` + `nimbus.service` unit installation
   - `/root/bootstrap` script (idempotent systemd launcher via `unshare`)
   - `/usr/local/bin/enterns` script (nsenter wrapper)
   - `/etc/profile.d/enterns.sh` (auto-enter namespace on login)
@@ -1070,35 +1070,35 @@ Repo outputs:
   - normalize drive-letter casing and separators consistently
   - reject unsupported path forms with explicit errors until support is added
 - Windows directory layout:
-  - Config: `%APPDATA%\neovex\machine\`
-  - State: `%LOCALAPPDATA%\neovex\machine\`
-  - WSL distro data: `%LOCALAPPDATA%\neovex\machine\wsldist\{name}\`
-- `neovex.exe machine init/start/stop/status/ssh/rm` wired for Windows
+  - Config: `%APPDATA%\nimbus\machine\`
+  - State: `%LOCALAPPDATA%\nimbus\machine\`
+  - WSL distro data: `%LOCALAPPDATA%\nimbus\machine\wsldist\{name}\`
+- `nimbus.exe machine init/start/stop/status/ssh/rm` wired for Windows
 - Graceful stop sequence: `enterns systemctl exit 0` (60s timeout) → 
   `wsl --terminate` → stop win-sshproxy
 
 Acceptance criteria:
 
-- `neovex.exe machine init` downloads a Tar rootfs and imports it as a WSL2
-  distribution named `neovex-{machineName}`
+- `nimbus.exe machine init` downloads a Tar rootfs and imports it as a WSL2
+  distribution named `nimbus-{machineName}`
 - shell-script bootstrap mirrors Podman's exact configuration sequence: SSH,
-  user, systemd namespace, `neovex.socket`/`neovex.service`, containers.conf
+  user, systemd namespace, `nimbus.socket`/`nimbus.service`, containers.conf
   with cgroupfs (NOT ignition, NOT FCOS)
 - `/root/bootstrap` is idempotent (exits immediately if systemd already running)
-- `neovex.exe machine start` follows Podman's exact startup sequence:
+- `nimbus.exe machine start` follows Podman's exact startup sequence:
   SSH port check → bootstrap → PostStartNetworking → readiness check
-- `neovex.exe machine stop` follows Podman's exact stop sequence:
+- `nimbus.exe machine stop` follows Podman's exact stop sequence:
   `enterns systemctl exit 0` → `wsl --terminate` → stop win-sshproxy
-- `neovex.exe machine rm` runs `wsl --unregister neovex-{name}`
+- `nimbus.exe machine rm` runs `wsl --unregister nimbus-{name}`
 - SSH port allocated from global pool, conflict detection and reassignment
   on startup
 - Windows compose/build/bind paths are translated into guest-valid WSL paths
-  before Neovex asks the guest to use them
+  before Nimbus asks the guest to use them
 - unsupported path forms fail with clear validation errors instead of
   surfacing as opaque guest-side path failures
-- `neovex.exe machine ssh` connects to the guest via localhost SSH with
+- `nimbus.exe machine ssh` connects to the guest via localhost SSH with
   host-key bypass (same pattern as macOS)
-- `neovex.exe machine status` reports WSL distro state and win-sshproxy
+- `nimbus.exe machine status` reports WSL distro state and win-sshproxy
   named pipe reachability separately
 - all WSL commands use `WSL_UTF8=1` and `CREATE_NO_WINDOW`
 
@@ -1107,10 +1107,10 @@ Acceptance criteria:
 Repo outputs:
 
 - win-sshproxy binary sourced from `containers/gvisor-tap-vsock` releases
-  (same binary Podman uses) or Neovex-owned equivalent
-- Named pipe creation: `\\.\pipe\neovex-machine-{name}`
+  (same binary Podman uses) or Nimbus-owned equivalent
+- Named pipe creation: `\\.\pipe\nimbus-machine-{name}`
 - TID file lifecycle: `{stateDir}/win-sshproxy.tid` with `{pid}:{tid}` format
-- Pipe-to-SSH tunnel: named pipe → SSH → guest `/run/neovex/neovex.sock`
+- Pipe-to-SSH tunnel: named pipe → SSH → guest `/run/nimbus/nimbus.sock`
 - Startup verification: pipe existence polling (80 retries × 250ms)
 - Shutdown: `PostThreadMessageW` with `WM_QUIT`, fallback to
   `TerminateProcess`
@@ -1119,10 +1119,10 @@ Repo outputs:
 
 Acceptance criteria:
 
-- win-sshproxy launches and creates the named pipe during `neovex machine start`
-- the named pipe tunnels API requests to the guest `neovex.sock` via SSH
+- win-sshproxy launches and creates the named pipe during `nimbus machine start`
+- the named pipe tunnels API requests to the guest `nimbus.sock` via SSH
 - the 3-layer readiness check mirrors Podman's `conductVMReadinessCheck`
-- clean shutdown via TID-based `PostThreadMessageW` during `neovex machine stop`
+- clean shutdown via TID-based `PostThreadMessageW` during `nimbus machine stop`
 - stale win-sshproxy processes from crashed sessions are detected and cleaned up
 
 ### WIN4 — Host machine-API client over named pipe
@@ -1139,7 +1139,7 @@ Repo outputs:
 - `ServiceHostPlatform::Windows` variant replacing `Other` in the enum
 - `load_forwarded_machine_api_backend` extended with a `Windows` arm that
   builds a `MachineApiClient` targeting the named pipe
-  `\\.\pipe\neovex-machine-{name}` instead of a Unix socket
+  `\\.\pipe\nimbus-machine-{name}` instead of a Unix socket
 - host-aware service-manager loader that selects the named-pipe-forwarded guest
   backend for container-backed Compose projects on Windows
 
@@ -1176,8 +1176,8 @@ Acceptance criteria:
 
 Repo outputs:
 
-- Windows-aware host-resident `neovex.exe serve` path
-- Windows-aware `neovex.exe service ...` path
+- Windows-aware host-resident `nimbus.exe serve` path
+- Windows-aware `nimbus.exe service ...` path
 - Windows-host-path → WSL-guest-path translation integrated into the
   compose-backed service flow (build context, Dockerfile, env file,
   working_dir, bind mounts)
@@ -1186,8 +1186,8 @@ Repo outputs:
 Required host-local outputs:
 
 - one clean end-to-end project root on a Windows machine
-- `neovex.exe serve` startup log showing machine-API client connection
-- `neovex.exe service up/list/logs/down` transcript
+- `nimbus.exe serve` startup log showing machine-API client connection
+- `nimbus.exe service up/list/logs/down` transcript
 
 Acceptance criteria:
 
@@ -1195,19 +1195,19 @@ Acceptance criteria:
   compose-backed workflow they use on Linux without manually SSHing into the
   WSL2 guest
 - the end-to-end flow proves WSL2 distro readiness, SSH readiness, named pipe
-  readiness, guest machine-API readiness, host Neovex readiness, and guest
+  readiness, guest machine-API readiness, host Nimbus readiness, and guest
   service readiness as separate steps
 - compose-backed guest operations use translated guest-valid WSL paths rather
   than raw Windows host paths
 - `ctx.services.<name>.port` behavior matches the Linux UX contract
 - pure runtime/storage edits on Windows do not require moving the authoritative
-  Neovex server into the WSL2 guest
+  Nimbus server into the WSL2 guest
 
 ### WIN7 — Packaging and closeout
 
 Repo outputs:
 
-- MSI installer and/or WinGet/Scoop package for `neovex.exe` + win-sshproxy
+- MSI installer and/or WinGet/Scoop package for `nimbus.exe` + win-sshproxy
 - distribution-plan alignment for the Windows row
 - install documentation
 - final verification summary
@@ -1249,26 +1249,26 @@ Acceptance criteria:
 
 - 2026-04-15: Created the Windows machine-support plan. Initial version
   included two options: WSL2-native (Option A, run Linux binary inside WSL2)
-  and Windows-native (Option B, mirrors Podman's approach with `neovex.exe`).
+  and Windows-native (Option B, mirrors Podman's approach with `nimbus.exe`).
 - 2026-04-15: Performed source-backed review against the actual Podman source at
   `/Users/jack/src/github.com/containers/podman/`. Key corrections: WSL2
   provider uses `UseProviderNetworkSetup() = true` (no gvproxy); WSL2 bootstrap
   is shell-script-based (not ignition); systemd runs in nested namespace; WSL2
   allows multiple concurrent machines; Tar image format; no ready signal unit.
 - 2026-04-15: Removed Option A and committed to Windows-native (Option B).
-  Rationale: the release workflow already builds and ships `neovex.exe` for
+  Rationale: the release workflow already builds and ships `nimbus.exe` for
   `x86_64-pc-windows-msvc` on every release — V8/deno_core compiles on Windows
   today. The "V8 on Windows is a non-trivial verification burden" concern that
   motivated Option A was based on a false premise. With the binary already
   shipping, there is no reason to diverge from Podman's proven Windows-native
   pattern. The Windows-native approach also mirrors the macOS hybrid
   control-plane architecture (host-resident server, guest-resident machine API)
-  and gives developers a consistent `neovex machine` + `neovex start` workflow
+  and gives developers a consistent `nimbus machine` + `nimbus start` workflow
   across all platforms. Renumbered roadmap items from WIN1-WIN7 with clear
   separation of WSL2 provider, win-sshproxy, named pipe client, networking,
   developer UX, and packaging.
 - 2026-04-15: Deep review against Podman WSL2 source (stubber.go, machine.go,
-  declares.go, usermodenet.go, wutil.go) and existing neovex machine module.
+  declares.go, usermodenet.go, wutil.go) and existing nimbus machine module.
   Key additions from the deep review:
   - Added exact Podman WSL2 startup sequence (10-step ordering from
     shim/host.go): lock → state check → signal handler → startNetworking →
@@ -1282,7 +1282,7 @@ Acceptance criteria:
     (cgroup_manager = cgroupfs).
   - Added WSL command wrapping requirements: WSL_UTF8=1 env and
     CREATE_NO_WINDOW (0x08000000) creation flags on every invocation.
-  - Added neovex machine module integration details: cfg gating strategy
+  - Added nimbus machine module integration details: cfg gating strategy
     (#[cfg(target_os = "windows")] alongside existing unix/stub split),
     MachineProvider::Wsl2 variant, MachineGuestConfig divergence (no ignition
     fields), MachineApiClient transport abstraction (HTTP protocol stays
@@ -1294,17 +1294,17 @@ Acceptance criteria:
   - Expanded WIN4 checkpoint with MachineApiClient transport abstraction
     details (same HTTP protocol, different byte stream).
 - 2026-04-15: Tightened the plan after comparing it against the current
-  Neovex compose/machine code as well as Podman's Windows provider sources.
+  Nimbus compose/machine code as well as Podman's Windows provider sources.
   Removed the stale "21-method" `VMProvider` wording, clarified that WSL
   auto-mounts remove the need for an extra sharing layer but do **not** remove
   the need for explicit Windows-host-path → WSL-guest-path translation, and
   made that translation a first-class requirement of the Windows compose-backed
   developer flow. This keeps the Windows plan Podman-aligned on machine
-  topology and transport while remaining tailored to Neovex's host-resident
+  topology and transport while remaining tailored to Nimbus's host-resident
   control plane.
 - 2026-04-16: The shared machine-lifecycle hardening control plan completed
   `MLH3` through `MLH7`, which materially advances `WIN2` even though the
-  Windows provider implementation itself is still pending. Neovex now has the
+  Windows provider implementation itself is still pending. Nimbus now has the
   shared file-locked SSH port allocator, atomic/versioned machine records,
   explicit state rebuild policy, provider capability contract
   (`uses_provider_networking`, `requires_exclusive_active`, `image_format`,
@@ -1313,7 +1313,7 @@ Acceptance criteria:
   Windows-specific WSL2 provider, named-transport, and bootstrap plumbing
   instead of re-solving shared lifecycle seams. Verification inherited from the
   shared hardening closeout: `cargo fmt --all --check`;
-  `cargo check -p neovex-bin`; `cargo test -p neovex-bin machine::`.
+  `cargo check -p nimbus-bin`; `cargo test -p nimbus-bin machine::`.
 - 2026-04-16: Updated the Windows companion plan after the macOS machine-image
   decision was locked. Durable rule: the shared machine-os repo may ship
   different artifact families per provider, but WSL2 remains Tar plus shell

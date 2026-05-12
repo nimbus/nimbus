@@ -18,7 +18,7 @@
 | Setting | Description |
 |---|---|
 | Authentication | SCRAM-SHA-256 with configurable credentials. |
-| Storage backend | Configured at the Neovex server level (`NEOVEX_TENANT_PROVIDER`). The MongoDB adapter inherits whatever backend is active. |
+| Storage backend | Configured at the Nimbus server level (`NIMBUS_TENANT_PROVIDER`). The MongoDB adapter inherits whatever backend is active. |
 
 ## Known Limitations
 

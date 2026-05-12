@@ -1,4 +1,4 @@
-# Firecracker Container Runtime for Neovex
+# Firecracker Container Runtime for Nimbus
 
 Research into adding a Firecracker-based container runtime that runs OCI/Docker
 images inside microVMs, as a new execution backend alongside V8 and the planned
@@ -13,7 +13,7 @@ Hypervisor claims, added libkrun evaluation)
 
 ## Problem Statement
 
-Neovex embeds V8 isolates for running user-defined JavaScript functions. The
+Nimbus embeds V8 isolates for running user-defined JavaScript functions. The
 planned Wasmtime backend adds WASM execution. A third runtime is needed to run
 arbitrary Docker images inside hardware-isolated microVMs — enabling agent
 workloads that need a full Linux environment (filesystem, processes, networking)
@@ -22,7 +22,7 @@ without the security risks of running containers on the host.
 Fly.io pioneered the "Docker without Docker" pattern: convert OCI images to
 ext4 rootfs, boot them in Firecracker microVMs with a custom init, communicate
 over vsock. This research evaluates three approaches to implementing this in
-Neovex.
+Nimbus.
 
 ---
 
@@ -38,7 +38,7 @@ Containers. It is proven at enormous scale.
 
 **Pros:**
 - Security: Firecracker runs in its own process with jailer (chroot, seccomp,
-  cgroup isolation). A VMM bug does not compromise Neovex.
+  cgroup isolation). A VMM bug does not compromise Nimbus.
 - Simplicity: Well-documented REST API. ~10 endpoints to implement.
 - Battle-tested: Powers AWS Lambda (billions of invocations).
 - No Rust VMM expertise needed.
@@ -114,7 +114,7 @@ but the claims about easy embedding were overstated.
 - Direct Rust code (no IPC if you could embed it).
 
 **Cons:**
-- **Security:** VMM in your process. A guest escape compromises Neovex.
+- **Security:** VMM in your process. A guest escape compromises Nimbus.
 - **No stability guarantee:** Internal API, changes every release, no semver.
 - **Not published on crates.io.** Must use git dep on full repo (23 crates).
 - **Unverified embeddability.** Nobody has done this. The API surface (boxed
@@ -144,7 +144,7 @@ did.
 - Full control over API surface — design it to fit `WorkerLoopFactory`/`WorkerLoop`.
 - Uses stable, semver'd crates from crates.io.
 - Minimal compile time (~3-5 min clean).
-- Minimal code (~2,500-4,000 lines in a new `neovex-vmm` crate).
+- Minimal code (~2,500-4,000 lines in a new `nimbus-vmm` crate).
 - Can be embedded in-process OR run as a child process (your choice per deployment).
 
 **Cons:**
@@ -183,7 +183,7 @@ Google, Intel, Red Hat. Download counts in the millions.
 | Error handling, config, tests | 500-800 |
 | **Total** | **2,500-4,250** |
 
-Comparable to a single neovex crate.
+Comparable to a single nimbus crate.
 
 **Note on vmm-reference:** `rust-vmm/vmm-reference` was previously cited as a
 starting point. **Verification found it is effectively abandoned** (last commit
@@ -244,7 +244,7 @@ means slower boot than Firecracker. Consider as a future macOS backend.
 3. **Flatten layers** in order, handling whiteout files (`.wh.*` deletions)
 4. **Create ext4 image** using `mkfs.ext4 -d <source_dir>` (available in
    e2fsprogs >= 1.43, present on Debian 13)
-5. **Inject custom init** binary at `/sbin/neovex-init`
+5. **Inject custom init** binary at `/sbin/nimbus-init`
 
 ### Rust Crates (verified on crates.io 2026-04-09)
 
@@ -260,7 +260,7 @@ Use `oci-client` instead — same project, renamed and actively maintained.
 
 ### Fly.io vs firecracker-containerd
 
-**Fly.io approach (recommended for Neovex):**
+**Fly.io approach (recommended for Nimbus):**
 - Direct: OCI image → ext4 rootfs → Firecracker VM with custom init
 - No containerd, no Docker daemon at runtime
 - Init handles mounts, networking, runs entrypoint, exposes vsock API
@@ -270,7 +270,7 @@ Use `oci-client` instead — same project, renamed and actively maintained.
 - Uses containerd as orchestrator + a v2 shim that spawns Firecracker
 - Guest runs full container agent speaking containerd gRPC over vsock
 - More complex, more "standard", designed for Kubernetes integration
-- Overkill for Neovex's use case
+- Overkill for Nimbus's use case
 
 ---
 
@@ -294,7 +294,7 @@ Use `oci-client` instead — same project, renamed and actively maintained.
 
 ```bash
 rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl -p neovex-init
+cargo build --release --target x86_64-unknown-linux-musl -p nimbus-init
 # Result: statically linked binary, zero runtime dependencies
 ```
 
@@ -359,7 +359,7 @@ CONFIG_SERIAL_8250=y CONFIG_SERIAL_8250_CONSOLE=y
 
 ### Strategy
 
-Download on first use, cache at `~/.neovex/kernels/`. Verify SHA-256 checksum.
+Download on first use, cache at `~/.nimbus/kernels/`. Verify SHA-256 checksum.
 Don't bundle in the binary (15-25MB bloat).
 
 ---
@@ -387,7 +387,7 @@ For each OCI image:
 
 ## Resource Constraints (ThinkPad E550: 2c/4t, 8GB)
 
-After host OS (~1GB) and Neovex+V8 (~200-500MB), ~6.5-7GB available for VMs.
+After host OS (~1GB) and Nimbus+V8 (~200-500MB), ~6.5-7GB available for VMs.
 
 | Scenario | vCPU | RAM | Max Concurrent |
 |----------|------|-----|----------------|
@@ -422,7 +422,7 @@ After host OS (~1GB) and Neovex+V8 (~200-500MB), ~6.5-7GB available for VMs.
 
 ## Recommendation
 
-**For Neovex, Approach C (custom minimal VMM from rust-vmm crates) is the best
+**For Nimbus, Approach C (custom minimal VMM from rust-vmm crates) is the best
 fit**, with Approach A (Firecracker sidecar) as a pragmatic alternative for
 faster time-to-first-VM.
 
@@ -431,7 +431,7 @@ faster time-to-first-VM.
 1. **Phase 1:** Implement Firecracker sidecar to validate the end-to-end
    architecture (OCI pull → rootfs → boot → vsock → HostBridge). This gets a
    working system quickly.
-2. **Phase 2:** Build `neovex-vmm` crate from rust-vmm building blocks,
+2. **Phase 2:** Build `nimbus-vmm` crate from rust-vmm building blocks,
    replacing the Firecracker child process with an in-process VMM. This
    eliminates the external binary dependency and gives full API control.
 3. **Phase 3:** Add snapshot/restore for sub-10ms VM creation.

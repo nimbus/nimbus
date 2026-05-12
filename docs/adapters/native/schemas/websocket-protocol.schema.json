@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentstation.dev/neovex/reference/schemas/websocket-protocol.schema.json",
-  "title": "Neovex WebSocket protocol examples",
+  "$id": "https://github.com/nimbus/nimbus/blob/main/docs/adapters/native/schemas/websocket-protocol.schema.json",
+  "title": "Nimbus WebSocket protocol examples",
   "description": "Example-oriented schema for the public frame families documented in websocket-protocol.md.",
   "oneOf": [
     { "$ref": "#/$defs/helloFrame" },
@@ -22,7 +22,7 @@
   "$defs": {
     "protocol": {
       "type": "string",
-      "pattern": "^neovex\\.v[0-9]+$"
+      "pattern": "^nimbus\\.v[0-9]+$"
     },
     "requestId": {
       "type": "string",

@@ -1,6 +1,6 @@
 # krun CI Build and Distribution
 
-Research note capturing everything needed to build the neovex patched-crun
+Research note capturing everything needed to build the nimbus patched-crun
 stack from a bare Linux host, derived from the first successful `LH1`-`LH6`
 validation run on Debian 13 (2026-04-12). The primary audience is a GitHub
 Actions runner definition, but the same information applies to any fresh Linux
@@ -155,7 +155,7 @@ Without this, `./configure --with-libkrun` in the crun build will fail to find
 `libkrun.pc`. And without the ldconfig entry, `crun --version` and any
 `crun run` invocation will fail with a missing shared library error at runtime.
 
-## Source build: patched crun (neovex-crun)
+## Source build: patched crun (nimbus-crun)
 
 The repo-owned helper handles this:
 
@@ -163,10 +163,10 @@ The repo-owned helper handles this:
 # PKG_CONFIG_PATH must include /usr/local/lib64/pkgconfig
 export PKG_CONFIG_PATH="/usr/local/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 
-bash scripts/build-neovex-crun.sh \
+bash scripts/build-nimbus-crun.sh \
   --source ~/src/github.com/containers/crun \
-  --output /tmp/neovex-crun-stage/crun \
-  --install-path /usr/libexec/neovex/crun \
+  --output /tmp/nimbus-crun-stage/crun \
+  --install-path /usr/libexec/nimbus/crun \
   --sudo-install
 ```
 
@@ -214,7 +214,7 @@ A minimal Debian 13 / Ubuntu 24.04+ image with:
 |----------|-----------|-------------|
 | libkrun `.so` | `libkrun-{tag}-{os}-{arch}` | tag bump |
 | libkrunfw `.so` | `libkrunfw-{tag}-{os}-{arch}` | tag bump (kernel rebuild is expensive) |
-| crun patched binary | `neovex-crun-{crun-tag}-{patch-sha}-{os}-{arch}` | crun tag bump or patch change |
+| crun patched binary | `nimbus-crun-{crun-tag}-{patch-sha}-{os}-{arch}` | crun tag bump or patch change |
 | Rust build cache | `cargo-{lockfile-hash}` | dependency change |
 
 libkrunfw is the slowest to build (5-15 min for the kernel). Caching the built
@@ -227,7 +227,7 @@ libkrunfw is the slowest to build (5-15 min for the kernel). Caching the built
 | apt install (all packages) | ~30s |
 | libkrun build (from source) | ~60s |
 | libkrunfw build (from source, kernel) | 5-15 min |
-| neovex-crun build (patched crun) | ~90s |
+| nimbus-crun build (patched crun) | ~90s |
 | LH1-LH4 validation | ~10s |
 | LH5 direct krun drill | ~15s (VM boot + HTTP probe) |
 | LH6 conmon drill | ~15s |
@@ -236,8 +236,8 @@ libkrunfw is the slowest to build (5-15 min for the kernel). Caching the built
 
 ## Key lifecycle learnings
 
-These findings affect how neovex will invoke the krun stack in production and
-must inform the `neovex-sandbox` Rust backend (V3).
+These findings affect how nimbus will invoke the krun stack in production and
+must inform the `nimbus-sandbox` Rust backend (V3).
 
 ### 1. krun containers must NOT have a network namespace
 
@@ -266,7 +266,7 @@ Conmon with `--full-attach` (which is what Podman always uses) does NOT
 auto-start the container. The lifecycle is:
 
 ```
-conmon                                   client (Podman / neovex)
+conmon                                   client (Podman / nimbus)
   │                                        │
   ├── crun create ─────────────────────>   │
   │   (container enters "created" state)   │
@@ -287,7 +287,7 @@ conmon                                   client (Podman / neovex)
   └── conmon exits                         │
 ```
 
-**Implication for neovex:** The `neovex-sandbox` krun backend must connect to
+**Implication for nimbus:** The `nimbus-sandbox` krun backend must connect to
 the conmon attach socket after `conmon` has run `crun create`, before the
 container will actually start. This is not optional — it is how conmon works.
 Podman's `startOCIContainer()` method in
@@ -304,7 +304,7 @@ mapping takes effect.
 
 The working pattern is `buildah unshare`, which establishes a user namespace
 with proper UID mapping before any crun operation. Podman does the equivalent
-internally. The `neovex-sandbox` backend will need to either:
+internally. The `nimbus-sandbox` backend will need to either:
 
 - Run crun/conmon inside a pre-established user namespace (like Podman does), or
 - Run as root (which sidesteps the issue but loses rootless isolation)
@@ -349,7 +349,7 @@ run unattended on a fresh runner.
 
 | Gap | Affects | Fix needed |
 |-----|---------|-----------|
-| `PKG_CONFIG_PATH` not set in `build-neovex-crun.sh` | LH3 | Script should detect `/usr/local/lib64/pkgconfig/libkrun.pc` and set the var, or document it as a prerequisite |
+| `PKG_CONFIG_PATH` not set in `build-nimbus-crun.sh` | LH3 | Script should detect `/usr/local/lib64/pkgconfig/libkrun.pc` and set the var, or document it as a prerequisite |
 | No libkrun/libkrunfw build automation | LH3 | Either a new `scripts/build-libkrun-from-source.sh` or runner setup docs |
 | No `/etc/ld.so.conf.d/libkrun.conf` setup | LH3, LH5, LH6 | Build script or runner provisioning |
 | `buildah unshare` not in drill wrappers | LH5, LH6 | Generated `start-runtime.sh` and `run-conmon.sh` should run inside `buildah unshare` or document the requirement |
@@ -359,10 +359,10 @@ run unattended on a fresh runner.
 
 ## Distribution implications
 
-The fact that libkrun and libkrunfw are not packaged for Debian means neovex's
+The fact that libkrun and libkrunfw are not packaged for Debian means nimbus's
 distribution story must either:
 
-1. **Bundle prebuilt `.so` files** in the neovex release archive or `.deb`
+1. **Bundle prebuilt `.so` files** in the nimbus release archive or `.deb`
    package (simplest for operators)
 2. **Provide a build-from-source script** and document the process (current
    state)
@@ -385,7 +385,7 @@ sudo dnf install -y \
   yajl-devel libseccomp-devel libcap-devel systemd-devel
 
 # No source builds needed — go straight to building patched crun
-bash scripts/build-neovex-crun.sh --source ~/src/github.com/containers/crun --output /tmp/crun
+bash scripts/build-nimbus-crun.sh --source ~/src/github.com/containers/crun --output /tmp/crun
 ```
 
 This makes Fedora the lower-friction CI target for the krun validation lane.

@@ -4,16 +4,16 @@
 
 Resolved on 2026-04-15.
 
-- `crates/neovex-storage/src/postgres.rs` now bridges sync Postgres reads and
+- `crates/nimbus-storage/src/postgres.rs` now bridges sync Postgres reads and
   writes back into Tokio with `tokio::task::block_in_place` on multi-thread
   runtimes instead of spawning a fresh OS thread per bridged operation.
 - The dedicated bridge-thread fallback remains only for current-thread runtimes,
   where `block_in_place` would panic.
-- `crates/neovex-engine/src/tests/postgres_provider.rs` now pins the
+- `crates/nimbus-engine/src/tests/postgres_provider.rs` now pins the
   128-round CRUD regression to `worker_threads = 2` so the local/runtime shape
   matches the constrained GitHub Actions coverage runner.
 - `.github/workflows/ci.yml` now provisions explicit Postgres, MySQL, and
-  libsql fixtures via explicit `NEOVEX_*` fixture env vars, so the
+  libsql fixtures via explicit `NIMBUS_*` fixture env vars, so the
   coverage lane runs all three external provider suites without skip filters or
   silent testcontainer fallback.
 
@@ -51,7 +51,7 @@ bridge and the 128-round CRUD coverage test on a 2-worker Tokio runtime.
 ### Symptom
 
 The test `typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud`
-in `crates/neovex-engine/src/tests/postgres_provider.rs:225` hangs
+in `crates/nimbus-engine/src/tests/postgres_provider.rs:225` hangs
 indefinitely under `cargo llvm-cov` on GitHub Actions CI runners
 (ubuntu-latest, 2 vCPUs). It passes locally (macOS, 10+ cores) both
 with and without coverage. MySQL and libsql equivalent tests pass fine.
@@ -73,7 +73,7 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info
 
 The provider tests continue to support container-backed local fallback when no
 explicit fixture envs are set, but the coverage lane now declares
-`NEOVEX_REQUIRE_EXTERNAL_PROVIDER_FIXTURES=1` so missing explicit fixtures fail
+`NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES=1` so missing explicit fixtures fail
 honestly instead of silently downgrading to skip-and-pass behavior.
 
 ### Root cause analysis
@@ -87,7 +87,7 @@ The per-mutation write path creates a deeply nested blocking chain:
 
 2. Journal worker (tokio task) drains queue
    → tokio::task::spawn_blocking(process_queued_mutation_batch)
-     [crates/neovex-engine/src/service/mutations/journal.rs:87]
+     [crates/nimbus-engine/src/service/mutations/journal.rs:87]
 
 3. Inside spawn_blocking: process_queued_mutation_batch()
    → holds std::sync::Mutex (lock_mutation_sequence)
@@ -174,17 +174,17 @@ This bounds thread creation and avoids the scheduling pathology.
 
 ### Reference files
 
-1. `crates/neovex-engine/src/service/mutations/journal.rs` — journal
+1. `crates/nimbus-engine/src/service/mutations/journal.rs` — journal
    worker, spawn_blocking call (line 87), batch processing loop
-2. `crates/neovex-engine/src/service/mutations/direct/store.rs` — 
+2. `crates/nimbus-engine/src/service/mutations/direct/store.rs` — 
    synchronous store mutation wrappers, lock_mutation_sequence usage
-3. `crates/neovex-storage/src/postgres.rs` — PostgresTenantStore,
+3. `crates/nimbus-storage/src/postgres.rs` — PostgresTenantStore,
    execute_write (line 507), std::thread::spawn escape (line 527),
    block_on (line 1308), write transaction (line 1714), advisory lock
    (line 2417)
-4. `crates/neovex-engine/src/tests/postgres_provider.rs` — the hanging
+4. `crates/nimbus-engine/src/tests/postgres_provider.rs` — the hanging
    test (line 225), test infrastructure (line 1073)
-5. `crates/neovex-engine/src/tenant/mutation_facade.rs` —
+5. `crates/nimbus-engine/src/tenant/mutation_facade.rs` —
    lock_mutation_sequence (line 85)
 6. `.github/workflows/ci.yml` — coverage step with current --skip
    workaround

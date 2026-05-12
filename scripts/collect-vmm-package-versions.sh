@@ -137,7 +137,7 @@ fi
 check_command "tool.conmon" "conmon"
 check_command "tool.buildah" "buildah"
 check_command "tool.crun" "crun"
-check_command "tool.private_crun" "/usr/libexec/neovex/crun"
+check_command "tool.private_crun" "/usr/libexec/nimbus/crun"
 check_command "tool.podman" "podman"
 check_any_command "tool.init" "catatonit" "tini" "dumb-init"
 

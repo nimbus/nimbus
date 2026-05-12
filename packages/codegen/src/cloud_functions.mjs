@@ -50,10 +50,10 @@ async function generateCloudFunctionsArtifacts({ appDir, onInfo } = {}) {
   const bundleModule = await import(
     `${pathToFileURL(bundlePath).href}?generatedAt=${Date.now()}`
   );
-  const discoveredTargets = bundleModule.__neovexTargets;
+  const discoveredTargets = bundleModule.__nimbusTargets;
   if (!Array.isArray(discoveredTargets)) {
     throw new Error(
-      `Generated Cloud Functions runtime bundle for ${appDir} did not expose __neovexTargets.`,
+      `Generated Cloud Functions runtime bundle for ${appDir} did not expose __nimbusTargets.`,
     );
   }
   const targets = await finalizeCloudFunctionsTargets(project, discoveredTargets);

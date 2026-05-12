@@ -107,7 +107,7 @@ function compileResolver(resolverText, filePath, compileBindings = {}) {
 function parseResolverSource(resolverText, filePath) {
   const sourceFile = ts.createSourceFile(
     `${filePath}.resolver.ts`,
-    `const __neovexResolver = ${resolverText};`,
+    `const __nimbusResolver = ${resolverText};`,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,

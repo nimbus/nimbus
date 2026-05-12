@@ -60,7 +60,7 @@ indexes, schemas, the durable journal, scheduler state, and metadata:
 | `SCHEDULED_JOB_EXECUTIONS` | `job_id(16B)` | empty | Dedup guard for crash-replayed jobs |
 | `CRON_JOBS` | `cron_name` | msgpack(CronJob) | Recurring job definitions |
 
-The global `neovex-control.db` remains redb-backed and local today and contains
+The global `nimbus-control.db` remains redb-backed and local today and contains
 three tables for MAU tracking:
 
 | Table | Key | Value | Purpose |
@@ -87,14 +87,14 @@ the backend-specific read layer:
 SQLite executes the physical read path through parameterized SQL plus
 expression indexes. redb executes the physical read path through encoded
 secondary-index key scans. Residual semantics, auth, and final query meaning
-stay in Neovex.
+stay in Nimbus.
 
 ## Durable Journal Baseline
 
-### Why the durable journal is Neovex-owned
+### Why the durable journal is Nimbus-owned
 
-Neovex does not treat the durable journal as a generic storage-engine WAL
-substitute. The authoritative journal is a Neovex-defined logical ordered
+Nimbus does not treat the durable journal as a generic storage-engine WAL
+substitute. The authoritative journal is a Nimbus-defined logical ordered
 history built above backend internals because the reactive architecture needs:
 
 - logical mutation records rather than page-level recovery entries
@@ -169,7 +169,7 @@ shadow-parity evidence rather than benchmark-only confidence.
 ### Format guidance
 
 The current measured guidance is to promote materialized reads before inventing
-a new binary format. If Neovex needs another major read-path gain, it should
+a new binary format. If Nimbus needs another major read-path gain, it should
 first promote more serving paths onto existing materialized-document surfaces
 such as the serving snapshot layer or embedded replica. A new on-disk or
 zero-copy format should only be revisited if those promotions still leave
@@ -188,7 +188,7 @@ longer redb-shaped.
 ### Why usage and control state stays separate
 
 MAU tracking and other cross-tenant usage or control data are global rather
-than tenant-scoped, so they remain in a dedicated local `neovex-control.db`
+than tenant-scoped, so they remain in a dedicated local `nimbus-control.db`
 managed separately from tenant lifecycle. That is also why the first
 Postgres-first non-local activation remains tenant-scoped: the cross-tenant
 usage and control path keeps its own design and rollout boundary.
@@ -198,7 +198,7 @@ usage and control path keeps its own design and rollout boundary.
 - OpenRaft is not the local journal implementation.
 - Fjall, RocksDB, or another LSM engine are not substitutions for the current
   durable-journal contract.
-- A thin generic append-only log crate is not enough on its own because Neovex
+- A thin generic append-only log crate is not enough on its own because Nimbus
   needs logical replay payloads, dependency metadata, visibility rules, and
   tenant-scoped recovery semantics.
 

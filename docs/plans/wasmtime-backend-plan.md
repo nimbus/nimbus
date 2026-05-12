@@ -1,7 +1,7 @@
 # Plan: Wasmtime Backend
 
 Canonical deferred design and execution plan for adding a wasmtime-based WASM
-backend to `neovex-runtime` alongside the existing V8 backend implemented via
+backend to `nimbus-runtime` alongside the existing V8 backend implemented via
 `deno_core`.
 
 This document owns the durable forward-looking context for WASM Component Model
@@ -85,7 +85,7 @@ Do not rely on prior chat transcripts as progress state.
 `ARCHITECTURE.md` already names this direction:
 
 > _"a database-native WASM plugin ABI for tightly scoped extensions. WASM is
-> therefore an additive path for Neovex, not a planned replacement for the
+> therefore an additive path for Nimbus, not a planned replacement for the
 > Convex compatibility runtime."_
 
 > _"a schema-owned public API contract, planner-enforced policy, and a typed,
@@ -132,12 +132,12 @@ The key rules are:
 
 ### Strengths and fit matrix
 
-| System | Best at | Weak fit for | Net lesson for Neovex |
+| System | Best at | Weak fit for | Net lesson for Nimbus |
 |--------|---------|--------------|----------------------|
 | Spin | Component Model hosting, WIT-driven host surfaces, trigger-based dispatch | reactive subscriptions, multi-tenant V8 | copy WIT interface design and Store lifecycle patterns |
 | Viceroy | host function binding, WASI polyfill, local development | production scheduling, multi-tenant | copy host binding patterns |
 | wasmtime | engine configuration, fuel/epoch, module caching, ResourceLimiter | application-level scheduling | use directly as a dependency, not a reference |
-| workerd | multi-backend scheduling under one admission layer | Rust implementation template | copy the scheduling-above-runtime pattern (already landed in Neovex) |
+| workerd | multi-backend scheduling under one admission layer | Rust implementation template | copy the scheduling-above-runtime pattern (already landed in Nimbus) |
 
 ## Proposed Public Shape
 
@@ -172,13 +172,13 @@ Validation rules — reject at construction, not at runtime:
 
 ### Backend abstraction refactor
 
-The current `RuntimeBackendInvocation` contains `NeovexRuntime`, which should
+The current `RuntimeBackendInvocation` contains `NimbusRuntime`, which should
 remain the generic execution facade rather than being treated as V8-specific.
 The canonical refactor hardens that boundary like this:
 
 ```text
 RuntimeBackendInvocation (backend-agnostic envelope)
-  - runtime: NeovexRuntime
+  - runtime: NimbusRuntime
   - watchdog: WatchdogTimer
   - bundle: RuntimeBundle
   - request: InvocationRequest
@@ -311,21 +311,21 @@ BundleContent (enum)
   - WasmComponent { bytes, precompiled, target_world }   (new)
 
 ComponentWorld (enum)
-  - NeovexFunction     neovex:host interfaces only
-  - NeovexAgent        neovex:host + neovex:agent interfaces
+  - NimbusFunction     nimbus:host interfaces only
+  - NimbusAgent        nimbus:host + nimbus:agent interfaces
 ```
 
 `ComponentWorld` is enforced at deploy time — a tenant without agent
-capabilities cannot deploy a `NeovexAgent` component.
+capabilities cannot deploy a `NimbusAgent` component.
 
 ### WIT interface definitions
 
 The WIT interfaces are the stable contract between WASM components and the
-Neovex host. They are a typed projection of the existing `HostBridge` /
+Nimbus host. They are a typed projection of the existing `HostBridge` /
 `HostCallOperation` surface.
 
 ```text
-package neovex:host@0.1.0
+package nimbus:host@0.1.0
 
 interface database
   - get, insert, patch, delete
@@ -341,12 +341,12 @@ interface runtime
 interface context
   - tenant-id, function-name, invocation-id, invocation-kind, identity
 
-world neovex-function
+world nimbus-function
   - import database, scheduler, runtime, context
   - export handler: func(args: string) -> result<string, string>
 ```
 
-Each WIT import in the `neovex:host` package maps to a `HostCallRequest` →
+Each WIT import in the `nimbus:host` package maps to a `HostCallRequest` →
 `HostBridge::call()` or `HostBridge::call_async()` invocation. The adapter is
 built once in the `component::Linker` at engine creation time.
 
@@ -400,9 +400,9 @@ Promote this plan only if all of the following are true:
 
 | Phase | Status | Summary | Hard Dependencies | Gate Note |
 |-------|--------|---------|-------------------|-----------|
-| W1 | `todo` | Backend abstraction refactor | Locker fork plan Phase 5 `done` | keep `NeovexRuntime` as the generic execution facade while pushing V8- and wasmtime-owned state below `RuntimeBackend` / `CooperativeBackendDriver`; V8 path must remain green |
-| W2 | `todo` | wasmtime engine, WIT definitions, and `neovex:host` linker | W1 | add `wasmtime` dependency; create `wasmtime::Engine` config; define `neovex:host` WIT package; build `component::Linker<InvocationHostState>` mapping WIT imports to `HostBridge` calls |
-| W3 | `todo` | Run-to-completion wasmtime backend | W1, W2 | `WasmtimeBackendFactory`, `WasmtimeBackend`, `WasmtimeModuleCache`, Store lifecycle, `PrecompiledModuleCache` pool kind; end-to-end invocation of a `neovex-function` world component through the existing `RunToCompletionWorkerLoop` |
+| W1 | `todo` | Backend abstraction refactor | Locker fork plan Phase 5 `done` | keep `NimbusRuntime` as the generic execution facade while pushing V8- and wasmtime-owned state below `RuntimeBackend` / `CooperativeBackendDriver`; V8 path must remain green |
+| W2 | `todo` | wasmtime engine, WIT definitions, and `nimbus:host` linker | W1 | add `wasmtime` dependency; create `wasmtime::Engine` config; define `nimbus:host` WIT package; build `component::Linker<InvocationHostState>` mapping WIT imports to `HostBridge` calls |
+| W3 | `todo` | Run-to-completion wasmtime backend | W1, W2 | `WasmtimeBackendFactory`, `WasmtimeBackend`, `WasmtimeModuleCache`, Store lifecycle, `PrecompiledModuleCache` pool kind; end-to-end invocation of a `nimbus-function` world component through the existing `RunToCompletionWorkerLoop` |
 | W4 | `todo` | Bundle format extension | W2, W3 | `BundleContent::WasmComponent`, `ComponentWorld` enum, integrity checks on WASM components, pre-compilation pipeline, codegen integration for WASM component bundles |
 | W5 | `todo` | Cooperative fuel-based scheduling | W1, W2, W3 | `WasmtimeFuelDriver`, `WasmtimeFuelSlot`, `CooperativeFuel` execution model; fuel-based yield/resume through the generic `CooperativeWorkerLoop<WasmtimeFuelDriver>`; park on async host imports, resume on I/O completion |
 | W6 | `todo` | Retained Store pool | W3, W5 | `RetainedStorePool` pool kind; worker-local Store reuse with selective `InvocationHostState` reset; bounded pool with LRU eviction and retirement cap; same pool invariants as the V8 warm-pool path |
@@ -444,13 +444,13 @@ W3 lands.
 
 | Date | Phase | Outcome | Summary | Verification | Next Step |
 |------|-------|---------|---------|--------------|-----------|
-| 2026-04-05 | meta | documented | Initial plan authored. Covers backend abstraction refactor, wasmtime engine/WIT/linker, run-to-completion and cooperative-fuel backends, bundle format, retained Store pool, and observability. References existing `WorkerLoopFactory` / `CooperativeScheduler<T>` seams and `ARCHITECTURE.md` WASM direction. | document review against `ARCHITECTURE.md`, `v8-locker-fork-plan.md`, `docs/plans/archive/raw-v8-warm-backend-plan.md`, and current `neovex-runtime` source | keep deferred until Locker fork plan Phase 5 reaches `done` |
+| 2026-04-05 | meta | documented | Initial plan authored. Covers backend abstraction refactor, wasmtime engine/WIT/linker, run-to-completion and cooperative-fuel backends, bundle format, retained Store pool, and observability. References existing `WorkerLoopFactory` / `CooperativeScheduler<T>` seams and `ARCHITECTURE.md` WASM direction. | document review against `ARCHITECTURE.md`, `v8-locker-fork-plan.md`, `docs/plans/archive/raw-v8-warm-backend-plan.md`, and current `nimbus-runtime` source | keep deferred until Locker fork plan Phase 5 reaches `done` |
 
 ## Verification Expectations
 
 When promoted, the wasmtime backend should not be considered viable without:
 
-- focused WASM component invocation tests (neovex-function world)
+- focused WASM component invocation tests (nimbus-function world)
 - WIT import → HostBridge round-trip tests (database, scheduler, runtime)
 - fuel exhaustion yield/resume correctness tests
 - epoch-based timeout tests

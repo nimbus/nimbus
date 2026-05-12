@@ -13,7 +13,7 @@ function requestJson(url) {
         resolve({
           statusCode: response.statusCode ?? null,
           body: body.length === 0 ? null : JSON.parse(body),
-          traceHeader: response.headers["x-neovex-trace"] ?? null,
+          traceHeader: response.headers["x-nimbus-trace"] ?? null,
         });
       });
     });
@@ -21,10 +21,10 @@ function requestJson(url) {
   });
 }
 
-globalThis.__neovexInvoke = async function () {
+globalThis.__nimbusInvoke = async function () {
   const app = Fastify();
   app.addHook("onSend", async (_request, reply, payload) => {
-    reply.header("x-neovex-trace", "fastify-hook");
+    reply.header("x-nimbus-trace", "fastify-hook");
     return payload;
   });
   app.get("/ok", async () => ({

@@ -1,0 +1,248 @@
+{
+  "functions": [
+    {
+      "name": "messages:list",
+      "export": "list",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "table": "messages",
+        "filters": [],
+        "order": null,
+        "limit": 20
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:byAuthor",
+      "export": "byAuthor",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "table": "messages",
+        "filters": [
+          {
+            "field": "author",
+            "op": "eq",
+            "value": {
+              "$arg": "author"
+            }
+          }
+        ],
+        "order": null,
+        "limit": 20
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:maybeByAuthor",
+      "export": "maybeByAuthor",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": null,
+      "runtime_handler": "async (ctx, { author }) => {\n    const messages = author\n      ? await ctx.db\n        .query(\"messages\")\n        .withIndex(\"by_author\", (q) => q.eq(\"author\", author))\n        .take(20)\n      : await ctx.db.query(\"messages\").take(20);\n    return messages.slice(0, 20);\n  }",
+      "runtime_bindings": {
+        "internalScheduledFunctions": {
+          "type": "generated_reference_tree",
+          "visibility": "internal",
+          "reference_kind": "mutation"
+        },
+        "internal": {
+          "type": "generated_reference_tree",
+          "visibility": "internal"
+        }
+      }
+    },
+    {
+      "name": "messages:byId",
+      "export": "byId",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "type": "get",
+        "table": "messages",
+        "id": {
+          "$arg": "id"
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:uniqueByAuthor",
+      "export": "uniqueByAuthor",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "type": "unique",
+        "query": {
+          "table": "messages",
+          "filters": [
+            {
+              "field": "author",
+              "op": "eq",
+              "value": {
+                "$arg": "author"
+              }
+            }
+          ],
+          "order": null,
+          "limit": 2
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:exactByAuthorAndBody",
+      "export": "exactByAuthorAndBody",
+      "module": "messages",
+      "kind": "query",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "type": "unique",
+        "query": {
+          "table": "messages",
+          "filters": [
+            {
+              "field": "author",
+              "op": "eq",
+              "value": {
+                "$arg": "author"
+              }
+            },
+            {
+              "field": "body",
+              "op": "eq",
+              "value": {
+                "$arg": "body"
+              }
+            }
+          ],
+          "order": null,
+          "limit": 2
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:send",
+      "export": "send",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "public",
+      "schedulable": true,
+      "plan": {
+        "type": "insert",
+        "table": "messages",
+        "fields": {
+          "author": {
+            "$arg": "author"
+          },
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:sendInternal",
+      "export": "sendInternal",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "internal",
+      "schedulable": true,
+      "plan": {
+        "type": "insert",
+        "table": "messages",
+        "fields": {
+          "author": {
+            "$arg": "author"
+          },
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:sendViaAction",
+      "export": "sendViaAction",
+      "module": "messages",
+      "kind": "action",
+      "visibility": "public",
+      "schedulable": false,
+      "plan": {
+        "type": "call_mutation",
+        "name": "messages:sendInternal",
+        "visibility": "internal",
+        "args": {
+          "author": {
+            "$arg": "author"
+          },
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:scheduleSend",
+      "export": "scheduleSend",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "public",
+      "schedulable": true,
+      "plan": {
+        "type": "schedule_run_after",
+        "delay_ms": {
+          "$arg": "delayMs"
+        },
+        "name": "messages:sendInternal",
+        "visibility": "internal",
+        "args": {
+          "author": {
+            "$arg": "author"
+          },
+          "body": {
+            "$arg": "body"
+          }
+        }
+      },
+      "runtime_handler": null
+    },
+    {
+      "name": "messages:sendAndSchedule",
+      "export": "sendAndSchedule",
+      "module": "messages",
+      "kind": "mutation",
+      "visibility": "public",
+      "schedulable": true,
+      "plan": null,
+      "runtime_handler": "async (ctx, { author, body }) => {\n    const id = await ctx.db.insert(\"messages\", { author, body });\n    await ctx.scheduler.runAfter(\n      1_000,\n      internalScheduledFunctions.messages.sendInternal,\n      { author, body: `${body} (scheduled)` },\n    );\n    return id;\n  }",
+      "runtime_bindings": {
+        "internalScheduledFunctions": {
+          "type": "generated_reference_tree",
+          "visibility": "internal",
+          "reference_kind": "mutation"
+        },
+        "internal": {
+          "type": "generated_reference_tree",
+          "visibility": "internal"
+        }
+      }
+    }
+  ]
+}

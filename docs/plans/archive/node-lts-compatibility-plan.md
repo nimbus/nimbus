@@ -4,7 +4,7 @@ Status: done
 
 Canonical execution plan for completing Node.js built-in module compatibility
 on top of the landed `docs/plans/archive/node-compatible-runtime-plan.md` baseline.
-This plan owns the broad follow-on wave required to make Neovex's
+This plan owns the broad follow-on wave required to make Nimbus's
 `deno_core`/V8 runtime credibly compatible with the Node.js 22 LTS built-in
 module contract while preserving a Node.js 20 compatibility lane for upstream
 ecosystem support.
@@ -20,14 +20,14 @@ remains the latest completed baseline for:
 - one canonical `deno_core`/V8 runtime backend
 - `RuntimeProfile::Application` and `RuntimeProfile::Tooling`
 - `CompatibilityTarget::WebStandardIsolate` and `CompatibilityTarget::Node22`
-- Deno-family fork alignment through `~/src/github.com/agentstation/deno`
-  and `~/src/github.com/agentstation/rusty_v8`
+- Deno-family fork alignment through `~/src/github.com/nimbus/deno`
+  and `~/src/github.com/nimbus/rusty_v8`
 - the conservative public contract that still keeps external Node.js in the
   happy-path authoring flow
 
 This new plan owns the next wave: **full Node built-in module parity work,
 versioned compatibility truth, upstream test automation, and the public
-contract needed before Neovex can honestly claim Node LTS compatibility.**
+contract needed before Nimbus can honestly claim Node LTS compatibility.**
 
 ## Status
 
@@ -91,11 +91,11 @@ Implementation work must keep these source inputs open:
   `docs/architecture/server/auth-runtime-trust.md`,
   `docs/architecture/runtime/node-compat-surface-matrix.md`
 - Current implementation roots:
-  `crates/neovex-runtime/`, `crates/neovex-bin/`, `packages/codegen/`
+  `crates/nimbus-runtime/`, `crates/nimbus-bin/`, `packages/codegen/`
 - Canonical local fork worktrees:
-  - `~/src/github.com/agentstation/deno`
-  - `~/src/github.com/agentstation/rusty_v8`
-  - `~/src/github.com/agentstation/deno_core` as historical delta reference
+  - `~/src/github.com/nimbus/deno`
+  - `~/src/github.com/nimbus/rusty_v8`
+  - `~/src/github.com/nimbus/deno` as historical delta reference
     only
 - Upstream comparison worktree:
   `~/src/github.com/denoland/deno`
@@ -370,7 +370,7 @@ Companion-file rule:
   fake worker gate:
   - the embedded main-isolate `worker_threads.isMainThread` bootstrap seam is
     closed, so the three handed-off `async_hooks` files no longer self-skip
-  - Neovex is temporarily repointed from published `locker.39` to the
+  - Nimbus is temporarily repointed from published `locker.39` to the
     canonical local Deno sibling-proof worktree under `../deno` while the
     remaining shared `NLC8` owner seams are being proven
   - the direct `NLC8` async_hooks promise pocket is now closed: the official
@@ -437,7 +437,7 @@ Companion-file rule:
   primary lane, Node20 validation lane, and Node24 preview lane
 - Latest networking closeout pass: the checked-in package canary root under
   `tests/node-compat/networking-canaries/` is now green for the mapped
-  `Application` lanes, and the Neovex-owned compatibility fixes required to
+  `Application` lanes, and the Nimbus-owned compatibility fixes required to
   get there are closed too: non-allowlisted `process.env` reads now resolve as
   `undefined`, Application-profile package staging copies pinned
   `node_modules` into the generated bundle root, package-subpath resolution
@@ -456,7 +456,7 @@ Companion-file rule:
   - `1` legacy TLSv1.1 protocol watchpoint
   - `2` Node20 validation-only highWaterMark divergences
 - Current Deno fork posture: the closed `NLC7` family is normalized on the
-  published `agentstation/deno v2.7.14-locker.39` baseline at
+  published `nimbus/deno v2.7.14-locker.39` baseline at
   `b550a6c5fa02dd001bd0e2876201c6ba25a8597a`, but the just-closed `NLC8`
   family is still proven through the canonical sibling-proof path:
   local `../deno` sources are consumed from Deno head
@@ -471,7 +471,7 @@ Companion-file rule:
 
 ## Why This Plan Exists
 
-Neovex now has the runtime shape it wanted: a single `deno_core`/V8 backend,
+Nimbus now has the runtime shape it wanted: a single `deno_core`/V8 backend,
 versioned compatibility targets, Deno-family fork alignment, and a conservative
 public Node22 contract. What it does **not** have yet is a truthful basis for
 claiming full Node LTS compatibility.
@@ -529,10 +529,10 @@ This plan standardizes the public contract as follows:
 
 Implications:
 
-- Node 22 is the versioned built-in module contract Neovex should optimize for,
+- Node 22 is the versioned built-in module contract Nimbus should optimize for,
   document, and gate in CI.
 - Node 20 remains important because upstream Convex and Firebase ecosystems may
-  continue to support it for some time, but Neovex should treat it as a
+  continue to support it for some time, but Nimbus should treat it as a
   compatibility lane rather than the primary named baseline.
 - A successful Node 22 claim is not enough if the runtime regresses the
   preserved `WebStandardIsolate` application target.
@@ -543,9 +543,9 @@ The current visible worktree already contains relevant progress from the
 completed Node runtime wave. At the time this plan was created, the repo had
 dirty changes in:
 
-- `crates/neovex-runtime/` across bootstrap, loader, runtime capabilities,
+- `crates/nimbus-runtime/` across bootstrap, loader, runtime capabilities,
   Node22 bootstrap files, and tests
-- `crates/neovex-bin/` across codegen, `dev`, and Node integration
+- `crates/nimbus-bin/` across codegen, `dev`, and Node integration
 - `packages/codegen/` across parser and Cloud Functions support
 - runtime compatibility docs including
   `docs/architecture/runtime/node-compat-surface-matrix.md`
@@ -596,7 +596,7 @@ Use them this way:
   - good reference for Deno's own composed runtime layer and `MainWorker`
   - docs explicitly state the crate API is subject to rapid and breaking
     changes, so it is a composition reference, not a stable architectural
-    owner for Neovex
+    owner for Nimbus
 - `unenv`
   - useful for selective JS-side polyfills where the gap is genuinely
     polyfillable
@@ -632,7 +632,7 @@ Use them this way:
 Planning rule:
 
 - if one of these supplemental inputs disagrees with Node docs, Node
-  changelogs, Node upstream tests, Deno-family source, or measured Neovex
+  changelogs, Node upstream tests, Deno-family source, or measured Nimbus
   behavior, the supplemental input loses
 
 ## Generated Artifact Contract
@@ -648,7 +648,7 @@ Canonical locations:
 - generated machine-owned artifacts:
   `docs/architecture/runtime/node-lts-compat/`
 - runtime- or package-facing fixtures needed by tests:
-  `crates/neovex-runtime/tests/node_compat/` or another concept-owned test root
+  `crates/nimbus-runtime/tests/node_compat/` or another concept-owned test root
   chosen during implementation and recorded in the execution log
 
 Required artifacts:
@@ -693,7 +693,7 @@ Generation rules:
 ## Support-State Taxonomy
 
 This plan needs a richer support model than a flat
-`Supported` / `Partial` / `Not Supported` label, because Neovex already has
+`Supported` / `Partial` / `Not Supported` label, because Nimbus already has
 runtime profiles with different capability envelopes.
 
 The matrix and public docs must use these support-state labels:
@@ -709,7 +709,7 @@ The matrix and public docs must use these support-state labels:
 - `StubOnly`
   - surface exists mainly to throw or no-op
 - `NotSupported`
-  - Neovex does not support the API in the named target/profile
+  - Nimbus does not support the API in the named target/profile
 - `NeedsVerification`
   - implementation likely exists, but verification evidence is not yet strong
     enough to make a public claim
@@ -723,11 +723,11 @@ Required matrix columns beyond symbol metadata:
 
 Public-contract rule:
 
-- Neovex may only claim **full Node built-in compatibility** for a target and
+- Nimbus may only claim **full Node built-in compatibility** for a target and
   profile pair if every in-scope built-in module for that target/profile pair
   is `Supported`.
 - If any built-in module for a target/profile pair is `SupportedToolingOnly`,
-  `Partial`, `StubOnly`, `NotSupported`, or `NeedsVerification`, Neovex must
+  `Partial`, `StubOnly`, `NotSupported`, or `NeedsVerification`, Nimbus must
   use a narrower contract label such as:
   - `Node22 compatibility target with documented profile-scoped exclusions`
   - `Tooling-only Node22 support for selected built-ins`
@@ -816,7 +816,7 @@ inventory, and public docs all state the narrower support claim explicitly.
 Every item in this plan must validate against at least one of these layers:
 
 1. **Runtime unit and integration tests**
-   Local Neovex crate tests for focused behavior.
+   Local Nimbus crate tests for focused behavior.
 2. **Node upstream module tests**
    `nodejs/node/test` subsets matched to the module family under change.
 3. **Package compatibility canaries**
@@ -989,7 +989,7 @@ Verification expectations:
 
 ### NLC7-NLC8: Framework-Claim Gate
 
-These items control whether Neovex can honestly claim framework compatibility.
+These items control whether Nimbus can honestly claim framework compatibility.
 
 Before claiming success for frameworks such as Next.js, Jest, Prisma, or tsx,
 the plan must close or explicitly narrow:
@@ -1009,7 +1009,7 @@ the crypto stack."
 
 Current spike result:
 
-- Neovex's current Deno-family baseline is already substantial:
+- Nimbus's current Deno-family baseline is already substantial:
   - `deno_node_crypto` implements a large Node-facing crypto op surface
   - `deno_crypto` implements the Web Crypto base
   - the current stack is backed by `aws-lc-rs` / `aws-lc-sys` plus a broad set
@@ -1030,13 +1030,13 @@ Current spike result:
   - the current Deno-family crypto baseline is already deep enough that
     replacing it wholesale would be a major architecture decision
   - integrating `ncrypto` from Rust would introduce C++/FFI/build-system and
-    release-process complexity inside `agentstation/deno`
-  - no measured Neovex failure inventory yet proves that the remaining gaps
+    release-process complexity inside `nimbus/deno`
+  - no measured Nimbus failure inventory yet proves that the remaining gaps
     are better solved by `ncrypto` than by targeted fixes to the current stack
 
 Decision rule:
 
-- Neovex starts from the Deno-family crypto baseline already in use:
+- Nimbus starts from the Deno-family crypto baseline already in use:
   `deno_node_crypto` + `deno_crypto`
 - `nodejs/ncrypto` is a candidate **only** if measured evidence shows that the
   current Deno-family stack cannot reach the NLC7 family gate cleanly enough
@@ -1061,7 +1061,7 @@ Required outputs of the `ncrypto` spike:
   - C++/FFI boundary shape
   - CMake/Bazel build implications
   - OpenSSL/BoringSSL linkage posture
-  - impact on the `agentstation/deno` fork and release process
+  - impact on the `nimbus/deno` fork and release process
 - a written go/no-go recommendation:
   - keep fixing the existing Deno-family stack
   - adopt `ncrypto` for a narrow sub-area
@@ -1070,7 +1070,7 @@ Required outputs of the `ncrypto` spike:
 Non-goal of the first spike:
 
 - the first spike does **not** require productionizing `ncrypto`
-- it is sufficient to produce a decision memo grounded in measured Neovex
+- it is sufficient to produce a decision memo grounded in measured Nimbus
   failures and source-level feasibility
 - only if that memo recommends adoption should a follow-on implementation spike
   attempt a small proof-of-viability binding

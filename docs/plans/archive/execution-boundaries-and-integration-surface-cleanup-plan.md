@@ -13,13 +13,13 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `crates/neovex-storage/src/async_storage.rs`
-- `crates/neovex-storage/src/scheduler.rs`
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-runtime/src/runtime/driver.rs`
-- `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage.rs`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-storage/src/tests.rs`
+- `crates/nimbus-storage/src/async_storage.rs`
+- `crates/nimbus-storage/src/scheduler.rs`
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/runtime/driver.rs`
+- `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage.rs`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-storage/src/tests.rs`
 
 Baseline verification status for this plan:
 
@@ -72,17 +72,17 @@ features or tracking regressions.
 This plan covers:
 
 - async storage-boundary ownership inside
-  `crates/neovex-storage/src/async_storage.rs`
+  `crates/nimbus-storage/src/async_storage.rs`
 - scheduled-job and cron persistence ownership inside
-  `crates/neovex-storage/src/scheduler.rs`
-- runtime executor ownership inside `crates/neovex-runtime/src/executor.rs`
+  `crates/nimbus-storage/src/scheduler.rs`
+- runtime executor ownership inside `crates/nimbus-runtime/src/executor.rs`
 - runtime invocation-driver ownership inside
-  `crates/neovex-runtime/src/runtime/driver.rs`
+  `crates/nimbus-runtime/src/runtime/driver.rs`
 - movement of the highest-value remaining scenario and integration tests toward
   concept-owned surfaces, especially
-  `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage.rs`,
-  `crates/neovex-engine/src/tests.rs`, and
-  `crates/neovex-storage/src/tests.rs`
+  `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage.rs`,
+  `crates/nimbus-engine/src/tests.rs`, and
+  `crates/nimbus-storage/src/tests.rs`
 - final naming, visibility, helper-placement, and documentation cleanup that
   falls out of the new ownership map
 
@@ -107,8 +107,8 @@ These rules are mandatory for every item in this plan.
    records otherwise.
 
 2. Keep the core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -151,43 +151,43 @@ These rules are mandatory for every item in this plan.
 
 ## Current Review Findings
 
-1. `crates/neovex-storage/src/async_storage.rs` is the clearest remaining
+1. `crates/nimbus-storage/src/async_storage.rs` is the clearest remaining
    storage boundary hotspot.
    It combines trait definitions, blocking read execution, blocking write
    execution, usage-store execution, tenant directory/open/delete ownership,
    and boundary-wide error or permit helpers in one file.
 
-2. `crates/neovex-storage/src/scheduler.rs` is still a mixed storage surface.
+2. `crates/nimbus-storage/src/scheduler.rs` is still a mixed storage surface.
    Transaction-side pending/running job transitions, scheduled-job results,
    cron persistence, next-work scans, and recovery/list helpers still live
    together.
 
-3. `crates/neovex-runtime/src/executor.rs` is now the deepest runtime
+3. `crates/nimbus-runtime/src/executor.rs` is now the deepest runtime
    operational hotspot.
    Executor construction, worker startup and shutdown, async invoke APIs,
    blocking invoke wrappers, admission/dispatch integration, and a very large
    inline test inventory still live in one root.
 
-4. `crates/neovex-runtime/src/runtime/driver.rs` remains a dense invocation
+4. `crates/nimbus-runtime/src/runtime/driver.rs` remains a dense invocation
    lifecycle surface.
    Runtime acquisition, driver preparation, bundle loading, post-load settle,
    retained-runtime reset, runtime creation, and tracing/error helpers are
    still tightly coupled.
 
-5. `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage.rs`
+5. `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage.rs`
    is now the biggest remaining demo scenario hotspot.
    Fault injector arming, seeded operation selection, snapshot modeling,
    overlap orchestration, and verification-harness wrappers still live in one
    scenario root.
 
-6. `crates/neovex-engine/src/tests.rs` and
-   `crates/neovex-storage/src/tests.rs` are still the biggest remaining
+6. `crates/nimbus-engine/src/tests.rs` and
+   `crates/nimbus-storage/src/tests.rs` are still the biggest remaining
    concept-mixed integration roots.
    They now carry fewer obvious production extracts, but still own broad test
    clusters that would be easier to maintain closer to their concepts.
 
-7. `crates/neovex-runtime/src/metrics.rs` and
-   `crates/neovex-engine/src/tenant.rs` remain large, but they now mostly read
+7. `crates/nimbus-runtime/src/metrics.rs` and
+   `crates/nimbus-engine/src/tenant.rs` remain large, but they now mostly read
    as coherent public composition or diagnostics surfaces rather than the most
    urgent cleanup targets for this pass.
 
@@ -276,10 +276,10 @@ Always run:
 
 Run, as appropriate:
 
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-server`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
 Before considering the whole workstream complete, run:
@@ -300,8 +300,8 @@ and continue only when the blocker is environmental rather than architectural.
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | EB0 | `done` | reviewed the current post-stateful-cleanup architecture and identified the next meaningful cleanup hotspots in async storage, scheduler persistence, runtime executor/driver ownership, and remaining seeded/integration test roots | none | docs-only review and planning pass on 2026-04-06 |
-| EB1 | `done` | decomposed the async-storage boundary into concept-owned modules under `crates/neovex-storage/src/async_storage/` while preserving pre-commit versus committed-write semantics | none | completed on 2026-04-06 with focused storage verification recorded below |
-| EB2 | `done` | split the scheduler persistence boundary into concept-owned modules under `crates/neovex-storage/src/scheduler/` while preserving due-order, recovery, and history semantics | EB1 recommended first, but not strictly required | completed on 2026-04-06 with focused storage verification recorded below |
+| EB1 | `done` | decomposed the async-storage boundary into concept-owned modules under `crates/nimbus-storage/src/async_storage/` while preserving pre-commit versus committed-write semantics | none | completed on 2026-04-06 with focused storage verification recorded below |
+| EB2 | `done` | split the scheduler persistence boundary into concept-owned modules under `crates/nimbus-storage/src/scheduler/` while preserving due-order, recovery, and history semantics | EB1 recommended first, but not strictly required | completed on 2026-04-06 with focused storage verification recorded below |
 | EB3 | `done` | split the runtime executor production root into concept-owned facade and invoke modules while keeping the existing executor queue, admission, lifecycle, and inline test surfaces intact | EB1 and EB2 recommended first | completed on 2026-04-06; full runtime-suite abort persists outside the executor slice, but focused executor/runtime-server verification is recorded below |
 | EB4 | `done` | split the runtime invocation-driver root into concept-owned lifecycle, loading, construction, and tracing modules while preserving runtime invocation and retained-runtime semantics | EB3 recommended first | completed on 2026-04-06 with runtime, server, and workspace verification recorded below |
 | EB5 | `done` | moved the highest-value remaining seeded and integration scenario tests toward concept-owned surfaces under seeded demo-flow, execution-unit, and storage scheduler module-local test roots | EB1 through EB4 | completed on 2026-04-06 with targeted server, engine, storage, and workspace verification recorded below |
@@ -374,7 +374,7 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-storage`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -395,7 +395,7 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-storage`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -417,8 +417,8 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -440,8 +440,8 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -457,18 +457,18 @@ and continue only when the blocker is environmental rather than architectural.
 1. Move the highest-value remaining seeded and integration test clusters into
    concept-owned surfaces where it improves maintainability.
 2. Prioritize:
-   `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage.rs`,
-   `crates/neovex-engine/src/tests.rs`, and
-   `crates/neovex-storage/src/tests.rs`.
+   `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage.rs`,
+   `crates/nimbus-engine/src/tests.rs`, and
+   `crates/nimbus-storage/src/tests.rs`.
 3. Keep broad integration coverage intact while reducing the size of the
    remaining concept-mixed roots.
 
 #### Focused verification
 
 - targeted crate tests for every moved surface
-- `cargo test -p neovex-server`
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-server`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-storage`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -530,11 +530,11 @@ and continue only when the blocker is environmental rather than architectural.
 
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
-| 2026-04-06 | EB0 | done | Reviewed the live post-stateful-cleanup architecture and identified the next meaningful cleanup hotspots in async storage, scheduler persistence, runtime executor/driver ownership, and the remaining seeded/integration scenario roots. Authored this new active cleanup control plane and promoted it in the plans index and agent entrypoint. | docs-only review and planning pass; no new code verification claimed in this handoff | start `EB1` with a concept map for `crates/neovex-storage/src/async_storage.rs` |
-| 2026-04-06 | EB1 | done | Split the async storage boundary into a thin `async_storage/` composition root plus concept-owned `traits.rs`, `read.rs`, `write.rs`, `engine.rs`, and `helpers.rs` modules without changing cancellable pre-commit versus committed-write behavior. | `cargo fmt --all`; `cargo test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace` | start `EB2` with the scheduler persistence boundary |
-| 2026-04-06 | EB2 | done | Split the scheduler persistence boundary into a thin `scheduler/` composition root plus concept-owned `jobs.rs`, `results.rs`, `cron.rs`, `inspection.rs`, `recovery.rs`, and `codec.rs` modules without changing due-order, recovery, or scheduled-job result semantics. | `cargo fmt --all`; `cargo test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace` | reconcile the current runtime worktree and decide whether `EB3` can start unchanged |
-| 2026-04-06 | EB3 | done | Split the executor production root into `executor/facade.rs` for public executor construction and worker lifecycle plus `executor/invoke.rs` for direct and worker-backed invoke flows, while keeping the existing queue, admission, lifecycle, and inline executor regression surfaces stable. | `cargo fmt --all`; `cargo test -p neovex-runtime` (full suite aborts later with an order-sensitive libc++ bounds assertion outside the executor slice); `cargo test -p neovex-runtime executor::tests::`; `cargo test -p neovex-runtime runtime::tests::retained_pool::`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `EB4` on the remaining dense invocation-driver root |
-| 2026-04-06 | EB4 | done | Split the invocation-driver production root into a thin `runtime/driver.rs` composition root plus concept-owned `invocation.rs`, `loading.rs`, `construction.rs`, and `tracing.rs` modules without changing runtime invocation, retained-runtime reset, or snapshot-seeded tracing behavior. | `cargo fmt --all`; `cargo test -p neovex-runtime runtime::tests::`; `cargo test -p neovex-runtime`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `EB5` on the remaining seeded and integration test roots |
-| 2026-04-06 | EB5 | done | Moved the highest-value remaining concept-mixed test clusters into concept-owned surfaces: seeded Convex demo-flow modeling/support/scenario helpers now live under `demo_flow/seeded_usage/`, execution-unit conflict/finalization regressions now live beside `service/execution_units/`, and storage scheduler persistence regressions now live beside `scheduler/`. | `cargo fmt --all`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | continue with `EB6` to clean up leftover helper placement and visibility around the newly split surfaces |
-| 2026-04-06 | EB6 | done | Completed the local idiomatic cleanup sweep by moving shared engine-only regression fixtures into `crates/neovex-engine/src/test_support.rs` instead of re-exporting them from the giant root test file, and by deduplicating the seeded Convex demo verification-harness loops behind one local corpus runner. | `cargo fmt --all`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | finish `EB7` with docs, repo-wide verification, and archive handoff |
+| 2026-04-06 | EB0 | done | Reviewed the live post-stateful-cleanup architecture and identified the next meaningful cleanup hotspots in async storage, scheduler persistence, runtime executor/driver ownership, and the remaining seeded/integration scenario roots. Authored this new active cleanup control plane and promoted it in the plans index and agent entrypoint. | docs-only review and planning pass; no new code verification claimed in this handoff | start `EB1` with a concept map for `crates/nimbus-storage/src/async_storage.rs` |
+| 2026-04-06 | EB1 | done | Split the async storage boundary into a thin `async_storage/` composition root plus concept-owned `traits.rs`, `read.rs`, `write.rs`, `engine.rs`, and `helpers.rs` modules without changing cancellable pre-commit versus committed-write behavior. | `cargo fmt --all`; `cargo test -p nimbus-storage`; `cargo fmt --all --check`; `cargo check --workspace` | start `EB2` with the scheduler persistence boundary |
+| 2026-04-06 | EB2 | done | Split the scheduler persistence boundary into a thin `scheduler/` composition root plus concept-owned `jobs.rs`, `results.rs`, `cron.rs`, `inspection.rs`, `recovery.rs`, and `codec.rs` modules without changing due-order, recovery, or scheduled-job result semantics. | `cargo fmt --all`; `cargo test -p nimbus-storage`; `cargo fmt --all --check`; `cargo check --workspace` | reconcile the current runtime worktree and decide whether `EB3` can start unchanged |
+| 2026-04-06 | EB3 | done | Split the executor production root into `executor/facade.rs` for public executor construction and worker lifecycle plus `executor/invoke.rs` for direct and worker-backed invoke flows, while keeping the existing queue, admission, lifecycle, and inline executor regression surfaces stable. | `cargo fmt --all`; `cargo test -p nimbus-runtime` (full suite aborts later with an order-sensitive libc++ bounds assertion outside the executor slice); `cargo test -p nimbus-runtime executor::tests::`; `cargo test -p nimbus-runtime runtime::tests::retained_pool::`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `EB4` on the remaining dense invocation-driver root |
+| 2026-04-06 | EB4 | done | Split the invocation-driver production root into a thin `runtime/driver.rs` composition root plus concept-owned `invocation.rs`, `loading.rs`, `construction.rs`, and `tracing.rs` modules without changing runtime invocation, retained-runtime reset, or snapshot-seeded tracing behavior. | `cargo fmt --all`; `cargo test -p nimbus-runtime runtime::tests::`; `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `EB5` on the remaining seeded and integration test roots |
+| 2026-04-06 | EB5 | done | Moved the highest-value remaining concept-mixed test clusters into concept-owned surfaces: seeded Convex demo-flow modeling/support/scenario helpers now live under `demo_flow/seeded_usage/`, execution-unit conflict/finalization regressions now live beside `service/execution_units/`, and storage scheduler persistence regressions now live beside `scheduler/`. | `cargo fmt --all`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace` | continue with `EB6` to clean up leftover helper placement and visibility around the newly split surfaces |
+| 2026-04-06 | EB6 | done | Completed the local idiomatic cleanup sweep by moving shared engine-only regression fixtures into `crates/nimbus-engine/src/test_support.rs` instead of re-exporting them from the giant root test file, and by deduplicating the seeded Convex demo verification-harness loops behind one local corpus runner. | `cargo fmt --all`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings` | finish `EB7` with docs, repo-wide verification, and archive handoff |
 | 2026-04-06 | EB7 | done | Updated `ARCHITECTURE.md` and the repo entrypoints to reflect the landed test-surface ownership, ran the repo-wide closure sweep, and archived this completed cleanup plan as a historical record instead of an active control plane. | `make check`; `make test`; `make clippy`; `make ci` (environmentally blocked: `cargo deny` could not take `/Users/jack/.cargo/advisory-dbs/db.lock` because the advisory-db path is read-only) | keep this archived record for history; promote a new active plan instead of resuming it if further cleanup work is needed |

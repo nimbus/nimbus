@@ -34,8 +34,8 @@ __pycache__
 *.py[cod]
 .env
 .claude/settings.local.json
-.neovex
-**/.neovex
+.nimbus
+**/.nimbus
 .env.local
 **/.env.local
 demos/convex/vendor/browser.bundle.js

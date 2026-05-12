@@ -4,7 +4,7 @@ This root holds the checked-in package canaries for the `NLC6` networking
 family.
 
 These are not prerelease "canary builds". They are pinned package smoke tests
-that run real ecosystem code inside the Neovex Application runtime so the
+that run real ecosystem code inside the Nimbus Application runtime so the
 networking family closeout is backed by package-level evidence instead of only
 upstream Node unit fixtures.
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-08
 **Scope:** Research survey of how alternative JavaScript runtimes structure their Node.js
-compatibility test suites, compared with Neovex's current implementation, to inform a
+compatibility test suites, compared with Nimbus's current implementation, to inform a
 refactoring plan that is future-proof across many Node LTS versions and inspires enterprise
 trust.
 
@@ -10,8 +10,8 @@ trust.
 Node.js WPT runner
 **Local reference repos:**
 
-- Neovex: `/Users/jack/src/github.com/agentstation/neovex`
-- Deno fork: `/Users/jack/src/github.com/agentstation/deno`
+- Nimbus: `/Users/jack/src/github.com/nimbus/nimbus`
+- Deno fork: `/Users/jack/src/github.com/nimbus/deno`
 - Upstream Deno: `/Users/jack/src/github.com/denoland/deno`
 - Upstream Node: `/Users/jack/src/github.com/nodejs/node`
 
@@ -19,24 +19,24 @@ Node.js WPT runner
 
 ## Table of Contents
 
-1. [Neovex Current State](#1-neovex-current-state)
+1. [Nimbus Current State](#1-nimbus-current-state)
 2. [Deno](#2-deno)
 3. [Bun](#3-bun)
 4. [Cloudflare workerd](#4-cloudflare-workerd)
 5. [Node.js Core Harness and WPT](#5-nodejs-core-harness-and-wpt)
 6. [Tooling and Management Workflows](#6-tooling-and-management-workflows)
 7. [Comparative Analysis](#7-comparative-analysis)
-8. [Gap Analysis: Neovex vs. Industry Patterns](#8-gap-analysis-neovex-vs-industry-patterns)
+8. [Gap Analysis: Nimbus vs. Industry Patterns](#8-gap-analysis-nimbus-vs-industry-patterns)
 9. [Recommended Improvement Plan](#9-recommended-improvement-plan)
 
 ---
 
-## 1. Neovex Current State
+## 1. Nimbus Current State
 
 ### 1.1 File layout
 
 All Node compatibility tests live under
-`crates/neovex-runtime/src/runtime/tests/`. The module is declared in
+`crates/nimbus-runtime/src/runtime/tests/`. The module is declared in
 `runtime.rs` as `#[cfg(test)] mod tests { mod node_compat; ... }`.
 
 | File | Lines | Role |
@@ -44,7 +44,7 @@ All Node compatibility tests live under
 | `node_compat.rs` | 6,904 | Macros, batch constants, infrastructure, and `#[test]` functions |
 | `support.rs` | — | `RecordingHost`, test auth, invocation helpers |
 
-Source: `wc -l crates/neovex-runtime/src/runtime/tests/node/mod.rs` → 6,904.
+Source: `wc -l crates/nimbus-runtime/src/runtime/tests/node/mod.rs` → 6,904.
 
 ### 1.2 Key metrics
 
@@ -68,7 +68,7 @@ Source: measured counts from the working tree as of 2026-05-08.
 
 ### 1.3 Three-lane model
 
-Neovex tests against three Node.js versions simultaneously:
+Nimbus tests against three Node.js versions simultaneously:
 
 | Lane | Enum variant | Role | CI status |
 |------|-------------|------|-----------|
@@ -81,7 +81,7 @@ Node 22-shaped. The preview lane sets `capture_top_level_skip = true` so import
 errors become skips rather than failures.
 
 As of 2026-05-08, upstream Node lifecycle status is: Node 20 EOL as of
-2026-03-24, Node 22 LTS, and Node 24 LTS. Neovex's lane roles are harness roles,
+2026-03-24, Node 22 LTS, and Node 24 LTS. Nimbus's lane roles are harness roles,
 not upstream-support labels.
 
 Source: `node_compat.rs` lines 101–112 (enum), line 3041 (Node24 skip logic).
@@ -123,7 +123,7 @@ Source: `grep -n` analysis of function and constant boundaries.
         2. detect --pending-deprecation         (scan first 40 lines)
         3. ScopedProcessEnvVar::set()           (TERM, NODE_OPTIONS)
         4. write_node_compat_bundle()           (temp dir with ESM entry + fixtures)
-        5. NeovexRuntime::invoke_bundle()       (V8 execution)
+        5. NimbusRuntime::invoke_bundle()       (V8 execution)
         6. validate JSON: { ok: true, testPath, skipped }
 ```
 
@@ -191,8 +191,8 @@ tests/node_compat/
         └── vendor.ts         ← 20-line sync script
 ```
 
-Source: `ls ~/src/github.com/agentstation/deno/tests/node_compat/`, verified
-against the agentstation Deno fork checked out locally.
+Source: `ls ~/src/github.com/nimbus/deno/tests/node_compat/`, verified
+against the nimbus Deno fork checked out locally.
 
 ### 2.3 Manifest format (`config.jsonc`)
 
@@ -226,7 +226,7 @@ a JSON Schema:
 | `output` | string | Expected output pattern with `[WILDCARD]` |
 | `reason` | string | Explanation for skip or special config |
 
-Status breakdown (agentstation fork):
+Status breakdown (nimbus fork):
 
 | Status | Count |
 |--------|-------|
@@ -238,7 +238,7 @@ Status breakdown (agentstation fork):
 | Platform-specific (`"windows"`) | 33 |
 
 Source: `grep -c` against
-`~/src/github.com/agentstation/deno/tests/node_compat/config.jsonc`.
+`~/src/github.com/nimbus/deno/tests/node_compat/config.jsonc`.
 
 ### 2.4 Schema validation
 
@@ -259,8 +259,8 @@ struct TestConfig {
 }
 ```
 
-Source: `~/src/github.com/agentstation/deno/tests/node_compat/mod.rs` lines
-52–98; schema at `~/src/github.com/agentstation/deno/tests/node_compat/schema.json`.
+Source: `~/src/github.com/nimbus/deno/tests/node_compat/mod.rs` lines
+52–98; schema at `~/src/github.com/nimbus/deno/tests/node_compat/schema.json`.
 
 ### 2.5 Runner architecture
 
@@ -299,7 +299,7 @@ await $`cp -r node/test ./test`;
 The vendored tests live in a separate repository (`github.com/denoland/node_test`)
 managed as a git submodule.
 
-Source: `~/src/github.com/agentstation/deno/tests/node_compat/runner/suite/vendor.ts`
+Source: `~/src/github.com/nimbus/deno/tests/node_compat/runner/suite/vendor.ts`
 and `node_version.ts`.
 
 ### 2.7 CI and reporting
@@ -318,10 +318,10 @@ Reference: https://github.com/denoland/deno/blob/main/.github/workflows/node_com
 
 **Deno targets one Node.js version at a time.** When upstream Node releases a new
 version, the submodule is bumped. There is no multi-version lane system. The
-agentstation fork tracks Node 25.8.1; upstream Deno tracks ~24.x.
+nimbus fork tracks Node 25.8.1; upstream Deno tracks ~24.x.
 
-This is the key architectural divergence from Neovex: Deno accepts that their
-Node compat surface tracks the latest release, while Neovex explicitly validates
+This is the key architectural divergence from Nimbus: Deno accepts that their
+Node compat surface tracks the latest release, while Nimbus explicitly validates
 backward compatibility with previous LTS versions.
 
 ### 2.9 Supplementary tests beyond vendored Node fixtures
@@ -329,7 +329,7 @@ backward compatibility with previous LTS versions.
 Beyond the large vendored Node fixture surface in `tests/node_compat`, Deno
 also maintains substantial supplementary coverage that the Deno team wrote
 themselves. A single rolled-up count is brittle because the local
-`agentstation/deno` comparison branch and upstream `denoland/deno` `main`
+`nimbus/deno` comparison branch and upstream `denoland/deno` `main`
 already differ. The stable pattern is the important part: Deno carries dozens
 of focused `tests/unit_node/` files plus hundreds of `tests/specs/node/`
 behavioral fixtures that verify alternative-runtime behavior directly.
@@ -338,7 +338,7 @@ behavioral fixtures that verify alternative-runtime behavior directly.
 
 Measured on 2026-05-09:
 
-| Path | Local `agentstation/deno` comparison branch | Upstream `denoland/deno` `main` | Level |
+| Path | Local `nimbus/deno` comparison branch | Upstream `denoland/deno` `main` | Level |
 |------|--------------------------------------------|----------------------------------|-------|
 | `tests/unit_node/` | 83 `*_test.*` files | 82 `*_test.*` files | Unit-level module verification |
 | `tests/specs/node/` | 90 top-level spec directories / 455 files | 102 top-level spec directories / 553 files | Integration-level behavioral verification |
@@ -540,7 +540,7 @@ https://github.com/oven-sh/bun/blob/main/test/js/node/test/parallel/CLAUDE.md.
 
 workerd implements Node.js APIs natively in C++ and TypeScript within the Workers
 runtime. Tests are **adapted/rewritten** from Node.js source, not vendored
-unmodified. This is a fundamentally different approach from Neovex, Deno, and Bun.
+unmodified. This is a fundamentally different approach from Nimbus, Deno, and Bun.
 
 Reference: https://github.com/cloudflare/workerd/tree/main/src/workerd/api/node
 
@@ -594,13 +594,13 @@ Node-compatible runtime. Tests are written against the workerd implementation.
 Node.js exposes two relevant testing architectures:
 
 1. The main `test/` harness driven by `tools/test.py`, which is the closer
-   analogue for Neovex because it executes large compatibility suites with
+   analogue for Nimbus because it executes large compatibility suites with
    explicit execution classes, suite taxonomy, and status modeling.
 2. The WPT runner under `test/wpt/`, which is the canonical example of
    cross-project fixture provenance tracking and structured expected-results
    files.
 
-For Neovex, the core harness is the primary comparison for enterprise-grade
+For Nimbus, the core harness is the primary comparison for enterprise-grade
 Node compatibility execution. WPT is the secondary comparison for provenance
 and status-file discipline.
 
@@ -634,7 +634,7 @@ Selected suite types from `test/README.md`:
 | `pseudo-tty/` | capability-gated TTY semantics |
 | `pummel/` | stress / hardship lanes |
 
-This is exactly the kind of taxonomy Neovex will need once it starts making
+This is exactly the kind of taxonomy Nimbus will need once it starts making
 support claims across profiles, host capabilities, and multiple Node lines.
 
 ### 5.3 Core harness runner and status model
@@ -651,9 +651,9 @@ support claims across profiles, host capabilities, and multiple Node lines.
 Node's default harness therefore treats execution class and requirement gates as
 first-class data, not as comments or ad hoc skip reasons inside test source.
 
-### 5.4 Why the core harness is the closer analogue for Neovex
+### 5.4 Why the core harness is the closer analogue for Nimbus
 
-Neovex is not merely vendoring upstream fixtures. It is:
+Nimbus is not merely vendoring upstream fixtures. It is:
 
 - running them inside an embedded runtime instead of the host `node` process
 - classifying results by lane and profile
@@ -788,7 +788,7 @@ running, filtering, syncing, and reporting on compatibility tests. This is a
 critical dimension for day-to-day usability and for building the kind of
 operational discipline that enterprise users expect.
 
-### 6.1 Neovex (current state)
+### 6.1 Nimbus (current state)
 
 **Running tests:**
 
@@ -797,16 +797,16 @@ All node_compat tests are standard Rust `#[test]` functions, invoked through
 
 ```bash
 # Run all node_compat tests
-cargo test -p neovex-runtime -- node_compat --nocapture
+cargo test -p nimbus-runtime -- node_compat --nocapture
 
 # Run a single named test
-cargo test -p neovex-runtime -- node_compat::node22_process_env_delete --nocapture
+cargo test -p nimbus-runtime -- node_compat::node22_process_env_delete --nocapture
 
 # Run a batch
-cargo test -p neovex-runtime -- node22_primary_lane_executes_manifested_core_semantics_subset --nocapture
+cargo test -p nimbus-runtime -- node22_primary_lane_executes_manifested_core_semantics_subset --nocapture
 
 # Run all ignored tests (to check known-gap status)
-cargo test -p neovex-runtime -- node_compat --ignored --nocapture
+cargo test -p nimbus-runtime -- node_compat --ignored --nocapture
 ```
 
 The `Makefile` provides wrapped entrypoints with single-flight guards:
@@ -874,8 +874,8 @@ even tests not listed in `config.jsonc`. Without a filter, only configured tests
 run. This dual-mode design lets developers explore unconfigured tests locally
 while CI runs only the curated set.
 
-Source: `~/src/github.com/agentstation/deno/tests/node_compat/mod.rs` lines
-123–141; README at `~/src/github.com/agentstation/deno/tests/node_compat/README.md`.
+Source: `~/src/github.com/nimbus/deno/tests/node_compat/mod.rs` lines
+123–141; README at `~/src/github.com/nimbus/deno/tests/node_compat/README.md`.
 
 **CI sharding:**
 
@@ -905,7 +905,7 @@ jobs:
           # ... 9 total jobs
 ```
 
-Source: `~/src/github.com/agentstation/deno/.github/workflows/node_compat_test.generated.yml`
+Source: `~/src/github.com/nimbus/deno/.github/workflows/node_compat_test.generated.yml`
 lines 1–58.
 
 **Fixture sync:**
@@ -923,7 +923,7 @@ await $`cp -r node/test ./test`;
 To update: edit `node_version.ts` with the new version, run `vendor.ts`,
 commit the result.
 
-Source: `~/src/github.com/agentstation/deno/tests/node_compat/runner/suite/vendor.ts`.
+Source: `~/src/github.com/nimbus/deno/tests/node_compat/runner/suite/vendor.ts`.
 
 **Report generation and publishing:**
 
@@ -958,7 +958,7 @@ deltas: green/red/yellow).
 The public dashboard at `node-test-viewer.deno.dev/results/latest` renders
 these reports for anyone to inspect.
 
-Source: `~/src/github.com/agentstation/deno/tests/node_compat/report.rs` lines
+Source: `~/src/github.com/nimbus/deno/tests/node_compat/report.rs` lines
 1–80; CI workflow lines 87–102 (upload); `slack.ts` lines 1–80.
 
 **Adding a new passing test:**
@@ -973,7 +973,7 @@ The workflow: fix the compat issue → run the test with a filter
 (`cargo test --test node_compat -- test-foo`) → if it passes, add it to
 `config.jsonc` → CI now guards it.
 
-Source: `~/src/github.com/agentstation/deno/tests/node_compat/README.md`.
+Source: `~/src/github.com/nimbus/deno/tests/node_compat/README.md`.
 
 ### 6.3 Bun
 
@@ -1079,7 +1079,7 @@ three-step process:
 
 ### 6.5 Cross-runtime tooling comparison
 
-| Capability | Neovex | Deno | Bun | Node WPT |
+| Capability | Nimbus | Deno | Bun | Node WPT |
 |------------|--------|------|-----|----------|
 | **Run single test** | `cargo test -- <name>` | `cargo test --test node_compat -- <filter>` | `bun bd <file>` | `node test/wpt/test-url.js` |
 | **Run single fixture in batch** | Not possible | N/A (no batches) | N/A | N/A (per-module runners) |
@@ -1099,13 +1099,13 @@ three-step process:
 The Node core harness adds another important pattern on top of the table above:
 suite taxonomy and requirement gating are first-class concepts (`parallel`,
 `sequential`, `known_issues`, `internet`, `pseudo-tty`, `SLOW`, `FLAKY`)
-rather than free-form comments. That pattern is highly relevant to Neovex's
+rather than free-form comments. That pattern is highly relevant to Nimbus's
 embedded-runtime and multi-profile support story.
 
-### 6.6 Ideas for Neovex tooling
+### 6.6 Ideas for Nimbus tooling
 
 The following are ideas for discussion, not recommendations. They are inspired
-by patterns observed in the surveyed runtimes and adapted to Neovex's unique
+by patterns observed in the surveyed runtimes and adapted to Nimbus's unique
 multi-version, embedded-runtime architecture.
 
 #### 6.6.1 CLI for test management
@@ -1223,9 +1223,9 @@ Following Deno's pattern, emit a JSON report after each test run:
 
 This enables time-series tracking, PR-level regression detection, and
 evidence-backed compatibility claims while also making the upstream line
-status and Neovex lane role explicit.
+status and Nimbus lane role explicit.
 
-Deno uploads to S3 and renders via `node-test-viewer.deno.dev`. Neovex could
+Deno uploads to S3 and renders via `node-test-viewer.deno.dev`. Nimbus could
 follow a similar pattern or integrate with existing CI artifact storage.
 
 #### 6.6.5 CI integration patterns
@@ -1236,12 +1236,12 @@ implement: the runner reads the env vars, partitions the test list, and only
 runs its shard.
 
 **Scheduled vs. per-commit:** Deno runs node_compat daily (not per-commit)
-because the full suite is slow. A similar split could work for Neovex:
+because the full suite is slow. A similar split could work for Nimbus:
 - **Per-commit:** curated fast subset (e.g., the batch tests)
 - **Nightly/scheduled:** full suite including ignored tests in exploratory mode
   to detect unexpected passes
 
-This mirrors Neovex's existing `pr` vs. `nightly` verification-harness split.
+This mirrors Nimbus's existing `pr` vs. `nightly` verification-harness split.
 
 **Report archival:** Deno's CI workflow uploads gzipped JSON to S3, then a
 summary job aggregates daily reports into monthly summaries. This creates an
@@ -1253,7 +1253,7 @@ Deno's `node-test-viewer.deno.dev` and Cloudflare's
 `workers-nodejs-compat-matrix.pages.dev` are the two public dashboards in
 this space.
 
-A Neovex dashboard could be unique by showing **multi-version data**: three
+A Nimbus dashboard could be unique by showing **multi-version data**: three
 lanes with per-NLC-slice breakdowns, trend lines, and provenance links to the
 upstream Node tag each fixture set came from. This would be a first in the
 space — no other runtime publishes cross-version compat data.
@@ -1284,7 +1284,7 @@ This makes staleness visible without requiring manual tracking.
 
 #### 6.6.9 Version-aware runtime behavior testing
 
-If Neovex evolves to support user-selectable Node version targets (e.g., a
+If Nimbus evolves to support user-selectable Node version targets (e.g., a
 user declares their project targets Node 20), the test infrastructure must
 validate that the runtime produces version-correct behavior. Ideas for
 how this could work:
@@ -1369,7 +1369,7 @@ where a bare import silently fails or resolves to a different module than the
 prefixed form.
 
 Deno explicitly passes `--unstable-bare-node-builtins` to all node_compat
-tests to enable this. Neovex's CJS path already normalizes bare specifiers
+tests to enable this. Nimbus's CJS path already normalizes bare specifiers
 via `normalizeBuiltinSpecifier()`, but the ESM path in
 `supports_extension_backed_node_builtin()` only matches `node:`-prefixed
 specifiers (source: `module_loader.rs` lines 4012–4053). This gap should be
@@ -1381,7 +1381,7 @@ verified by tests.
 
 ### 7.1 Summary table
 
-| Dimension | Deno | Bun | workerd | Node WPT | **Neovex** |
+| Dimension | Deno | Bun | workerd | Node WPT | **Nimbus** |
 |-----------|------|-----|---------|----------|------------|
 | **Fixture source** | Git submodule (`denoland/node_test`) | Vendored (unmodified) | Adapted/rewritten | Vendored, per-module pinned | Vendored per version |
 | **Target versions** | One (25.8.1) | One (implied) | Own impl | N/A (WPT) | **Three (20, 22, 24)** |
@@ -1398,26 +1398,26 @@ verified by tests.
 
 ### 7.2 Key architectural differences
 
-**Multi-version testing:** Neovex is the only surveyed runtime that tests against
+**Multi-version testing:** Nimbus is the only surveyed runtime that tests against
 multiple Node.js versions simultaneously. Deno, Bun, and workerd all target a
 single version. This is a genuine competitive advantage but creates structural
 challenges that no other runtime has solved.
 
 **Embedded vs. spawned execution:** Deno, Bun, and workerd all spawn tests as
-separate processes. Neovex runs tests inside an embedded V8 runtime via
-`invoke_bundle()`. This means Neovex cannot use exit codes as a signal — it must
-parse JSON return values. It also means Neovex needs the prelude/postlude
+separate processes. Nimbus runs tests inside an embedded V8 runtime via
+`invoke_bundle()`. This means Nimbus cannot use exit codes as a signal — it must
+parse JSON return values. It also means Nimbus needs the prelude/postlude
 injection system to simulate process-level behavior (env vars, process.exit,
 etc.) that process-spawning runtimes get for free.
 
 **Node core harness as analogue:** Node's main `test/` harness contributes the
 canonical patterns for suite taxonomy, capability gating, and parallelism
 control. WPT contributes the canonical patterns for vendored-fixture provenance
-and expected-results files. Neovex needs both.
+and expected-results files. Nimbus needs both.
 
 **Manifest-driven vs. code-driven declaration:** Deno and Node WPT use
 structured data files (JSONC, JSON, CJS) for test configuration. Bun uses
-inclusion. Neovex encodes everything in Rust source (macros, batch constants,
+inclusion. Nimbus encodes everything in Rust source (macros, batch constants,
 `#[ignore]` attributes). The data-driven approach enables tooling, dashboards,
 and programmatic analysis. The code-driven approach provides compile-time
 guarantees but locks information inside Rust source.
@@ -1437,14 +1437,14 @@ any embedded or compatibility-focused runtime:
 | Resource safety | FD leak detection, `ArrayBuffer` detach protection, crash resistance | Safety properties depend on the alternative runtime's own host integration and engine behavior |
 | Framework regression | Specific patterns from express, hono, vitest, prisma, etc. | Framework authors validate against Node directly, not against compatibility layers |
 
-Neovex currently has no supplementary test tier — only vendored upstream
+Nimbus currently has no supplementary test tier — only vendored upstream
 fixtures. This is a significant gap: passing Node's own tests proves API
 correctness but does not prove bridge correctness, global injection fidelity,
 or real-world ecosystem compatibility.
 
 ---
 
-## 8. Gap Analysis: Neovex vs. Industry Patterns
+## 8. Gap Analysis: Nimbus vs. Industry Patterns
 
 ### 8.1 Manifest and status tracking
 
@@ -1452,7 +1452,7 @@ or real-world ecosystem compatibility.
 test entry is a structured object with machine-readable status, reason, and
 per-platform behavior.
 
-**Neovex gap:** Test status is encoded in three places:
+**Nimbus gap:** Test status is encoded in three places:
 1. Rust macro invocations choose per-lane fixture routing (~1,194 entries)
 2. `#[ignore = "reason"]` annotations document known gaps (~60)
 3. Batch constant membership determines which tests run at all (~43 arrays)
@@ -1468,7 +1468,7 @@ versions, cannot automate "what changed since last sync?" analysis.
 **Industry pattern:** Deno tracks the source Node version in `node_version.ts`.
 Node's WPT runner tracks per-module upstream commits in `versions.json`.
 
-**Neovex gap:** No record of which `nodejs/node` tag each `nodeXX/` directory
+**Nimbus gap:** No record of which `nodejs/node` tag each `nodeXX/` directory
 was pulled from. No sync dates. No way to know if fixtures are current without
 manually diffing against a guessed tag.
 
@@ -1481,7 +1481,7 @@ Audit trail is absent.
 **Industry pattern:** Deno and Bun store one copy of each fixture. Node WPT
 stores one copy per vendored module.
 
-**Neovex gap:** 1,023 files are byte-identical between node20/ and node22/. 739
+**Nimbus gap:** 1,023 files are byte-identical between node20/ and node22/. 739
 files are byte-identical across all three versions. This is ~6–8 MB of
 unnecessary duplication across 20 MB total.
 
@@ -1495,7 +1495,7 @@ content. Sync operations touch more files than necessary.
 copy from upstream. Node's `git node wpt` CLI automates per-module pulls with
 version tracking.
 
-**Neovex gap:** No sync script. Fixture updates are manual copy operations with
+**Nimbus gap:** No sync script. Fixture updates are manual copy operations with
 no automated diffing or provenance recording.
 
 **Impact:** Sync is error-prone and time-consuming. No audit trail for when
@@ -1508,7 +1508,7 @@ flaky, per-platform). Node WPT supports a three-tier outcome model (expected,
 flaky, unexpected) with bidirectional detection (unexpected passes are flagged
 alongside unexpected failures).
 
-**Neovex gap:** Two states only: pass or `#[ignore]`. No expected-failure
+**Nimbus gap:** Two states only: pass or `#[ignore]`. No expected-failure
 tracking (a test that fails in a known way is simply ignored). No flaky retry.
 No detection of unexpected passes (a previously-ignored test that now passes
 stays ignored indefinitely).
@@ -1522,7 +1522,7 @@ previously-broken tests. No protection against flaky test noise.
 **Industry pattern:** Deno's runner is 902 lines of Rust. Test configuration
 lives in a separate 3,783-line JSONC file. Clean separation of concerns.
 
-**Neovex gap:** `node_compat.rs` is 6,904 lines combining infrastructure,
+**Nimbus gap:** `node_compat.rs` is 6,904 lines combining infrastructure,
 data tables, and test declarations. This is 3.4× the repo's own 2,000-line
 modularity threshold. The Rust runner infrastructure is only a fraction of the
 file; the overwhelming majority is batch data and `#[test]` declarations.
@@ -1537,7 +1537,7 @@ understanding the test structure.
 dashboard at `node-test-viewer.deno.dev`. Cloudflare publishes a compat matrix
 at `workers-nodejs-compat-matrix.pages.dev`.
 
-**Neovex gap:** Test results are emitted to stderr during batch runs. No
+**Nimbus gap:** Test results are emitted to stderr during batch runs. No
 structured output, no time-series tracking, no dashboard.
 
 **Impact:** Cannot produce evidence-backed compatibility claims. Cannot track
@@ -1548,7 +1548,7 @@ improvement trends over time. No public trust signal.
 **Industry pattern:** Deno's manifest entries are plain JSON objects — adding a
 field is a schema change, not a code change. No macros.
 
-**Neovex gap:** 9 Rust macros handle different combinations of per-lane fixture
+**Nimbus gap:** 9 Rust macros handle different combinations of per-lane fixture
 routing and extra files. When Node 26 arrives, each macro needs a
 `node26_fixture_source_path` field, the `NodeCompatBatchEntry` struct grows
 another pair of fields, and new macro variants may be needed.
@@ -1565,7 +1565,7 @@ these divergences. Currently, Deno and Bun sidestep the problem by targeting
 a single Node version. Node's WPT runner sidesteps it by testing its own
 behavior (not cross-version).
 
-**Neovex gap:** The runtime hardcodes `process.version` to `"v22.0.0-neovex"`
+**Nimbus gap:** The runtime hardcodes `process.version` to `"v22.0.0-nimbus"`
 (source: `bootstrap/source.rs` line 761) and `RuntimeCompatibilityTarget` has
 only two variants: `WebStandardIsolate` and `Node22` (source: `limits.rs`
 lines 19–22). All three test lanes (Node 20, 22, 24) run against this single
@@ -1600,7 +1600,7 @@ multi-version runtime must handle:
 | Global references | `global` → `globalThis` in test harness code |
 | PerformanceResourceTiming | Additional fields (`deliveryType`, `responseStatus`) in Node 22 |
 
-**Impact:** If Neovex claims to support "Node 20 through 24," users deploying
+**Impact:** If Nimbus claims to support "Node 20 through 24," users deploying
 with a Node 20 target expect Node 20 behavior — including Node 20 error
 messages, Node 20 defaults, and Node 20 API surface. A single Node 22-shaped
 runtime that claims Node 20 support but produces Node 22 error messages will
@@ -1624,7 +1624,7 @@ behavior is correct for the declared target version, not just that the test
 Source: Deno's `mod.rs` lines 37 and 45 pass `--unstable-bare-node-builtins`
 to all node_compat test runs.
 
-**Neovex current state:**
+**Nimbus current state:**
 
 The CJS `createRequire` path in `module_loader.rs` uses
 `normalizeBuiltinSpecifier()` which strips the `node:` prefix for resolution:
@@ -1662,10 +1662,10 @@ A significant portion of the npm ecosystem still uses bare specifiers:
 resolution for all supported builtins. The ESM path only matches
 `node:`-prefixed specifiers. If a user's code does
 `import fs from 'fs'` (a bare ESM import of a builtin), the behavior depends
-on whether the Deno-family resolver handles this or whether Neovex's
+on whether the Deno-family resolver handles this or whether Nimbus's
 module loader intercepts it.
 
-**Impact:** An enterprise user migrating existing Node.js code to Neovex will
+**Impact:** An enterprise user migrating existing Node.js code to Nimbus will
 likely encounter bare-specifier imports. If these fail silently or produce
 confusing errors, trust is immediately eroded. The test infrastructure should
 verify both `require('fs')` and `require('node:fs')` (and the ESM
@@ -1678,9 +1678,9 @@ gating explicit through suite taxonomy (`parallel`, `sequential`,
 `known_issues`, `internet`, `pseudo-tty`, `pummel`) plus runner-owned status
 metadata. Deno's manifest adds platform-aware expectations.
 
-**Neovex gap:** The current system and the proposed manifest treat lane and
+**Nimbus gap:** The current system and the proposed manifest treat lane and
 fixture routing as the primary axes, but they do not yet model the dimensions
-Neovex actually claims against:
+Nimbus actually claims against:
 
 - `Application` vs `Tooling`
 - main-thread-only vs worker-safe execution
@@ -1703,12 +1703,12 @@ exactly the kind of fuzziness enterprise buyers do not trust.
 ecosystem validation, whether through internal dashboards, ecosystem CI, or
 checked-in smoke tests. API parity alone does not prove npm compatibility.
 
-**Neovex gap:** The survey mentions package usage patterns and Bun's ecosystem
+**Nimbus gap:** The survey mentions package usage patterns and Bun's ecosystem
 CI, but the recommended improvement plan stops at upstream Node fixtures,
 manifests, sync tooling, and reports. It does not require a stable,
 version-pinned package/framework canary set mapped to claimed support.
 
-**Impact:** Neovex could eventually claim strong Node compatibility while still
+**Impact:** Nimbus could eventually claim strong Node compatibility while still
 failing on real packages and frameworks that matter to enterprise adoption:
 HTTP servers, clients, loader tools, WebSocket stacks, test runners, and
 framework scaffolding. That would undermine trust at exactly the point where
@@ -1722,7 +1722,7 @@ signal handling, and process lifecycle are all delegated to the OS and the
 official runtime binary. Node's own harnesses also keep their runner semantics
 explicit and testable.
 
-**Neovex gap:** Neovex's compatibility runner is itself a substantial piece of
+**Nimbus gap:** Nimbus's compatibility runner is itself a substantial piece of
 infrastructure:
 
 - prelude/postlude injection
@@ -1736,7 +1736,7 @@ The research doc identifies this embedded architecture, but the recommended
 plan does not add a dedicated harness-verification layer or a periodic oracle
 comparison against real Node 20 / 22 / 24.
 
-**Impact:** Neovex could end up with excellent dashboards and polished support
+**Impact:** Nimbus could end up with excellent dashboards and polished support
 matrices built on top of a drifting harness. That is a serious trust risk,
 because it creates false precision rather than reliable evidence.
 
@@ -1764,7 +1764,7 @@ Six categories emerge consistently across both projects:
 | Framework regression | hono, vitest, fflate, pirates, yaml-ast-parser | express, various HTTP edge cases |
 | Platform/engine-specific | Permission boundary tests | JSC-vs-V8 ArrayBuffer detach, Windows env case sensitivity |
 
-**Neovex gap:** Neovex currently has zero supplementary behavioral tests. The
+**Nimbus gap:** Nimbus currently has zero supplementary behavioral tests. The
 entire Node compatibility test surface consists of vendored upstream fixtures
 executed through the embedded runtime. There is no verification of:
 
@@ -1785,7 +1785,7 @@ that cause enterprise users to hit immediate failures when deploying real code
 the perspective of an embedded alternative runtime.
 
 The supplementary test tier is where Deno and Bun have both invested
-significant engineering effort, and it is where Neovex has zero coverage today.
+significant engineering effort, and it is where Nimbus has zero coverage today.
 
 ---
 
@@ -1809,8 +1809,8 @@ each version lane:
 ```
 
 This should make the support story explicit: Node 20 is now an EOL upstream line
-but remains a deliberate Neovex validation lane for installed-base trust;
-Node 24 is upstream LTS but may still remain a Neovex preview lane until the
+but remains a deliberate Nimbus validation lane for installed-base trust;
+Node 24 is upstream LTS but may still remain a Nimbus preview lane until the
 runtime contract catches up.
 
 Precedent: Deno's `node_version.ts`, Node WPT's `versions.json`, plus Node's own
@@ -1874,7 +1874,7 @@ Shared entry fields:
 - `"platforms": [...]` — optional host OS restriction when behavior is truly
   platform-specific rather than a runtime gap
 
-This is where Neovex should directly adopt the strongest ideas from both Node
+This is where Nimbus should directly adopt the strongest ideas from both Node
 and Deno:
 
 - Node core harness: suite taxonomy and requirement gating are first-class
@@ -1987,7 +1987,7 @@ Emit a JSON report after each test run:
 
 This enables: coverage dashboards, time-series tracking, evidence-backed support
 claims, PR-level regression detection, and clear separation between upstream
-line status and Neovex lane role.
+line status and Nimbus lane role.
 
 Precedent: Deno's `report.json` → S3 → `node-test-viewer.deno.dev`.
 
@@ -1998,19 +1998,19 @@ Add a dedicated verification layer for the compatibility harness itself:
 - golden tests for manifest parsing, fixture resolution, extra-file grouping,
   skip detection, expected-failure handling, and JSON report generation
 - a shadow-oracle lane that periodically runs selected fixtures in official
-  Node 20 / 22 / 24 and compares Neovex harness outcomes against the real
+  Node 20 / 22 / 24 and compares Nimbus harness outcomes against the real
   process model
 - explicit classification of oracle drift as a harness bug until proven to be
   a legitimate runtime difference
 
-Because Neovex executes upstream fixtures inside embedded V8 with custom
+Because Nimbus executes upstream fixtures inside embedded V8 with custom
 prelude/postlude logic, this is not optional polish. It is part of the trust
 story.
 
 **3.4 Supplementary behavioral test tier**
 
 Introduce a distinct test tier between vendored upstream fixtures and framework
-canaries: Neovex-authored tests that verify behaviors Node's own test suite
+canaries: Nimbus-authored tests that verify behaviors Node's own test suite
 does not comprehensively test from the perspective of an alternative runtime.
 Initial coverage should
 include:
@@ -2042,7 +2042,7 @@ These supplementary tests should be tracked in the manifest with a `testTier`
 field distinguishing them from upstream vendored fixtures. They run per lane
 and per profile, and their results contribute to structured reporting and
 support claims. Unlike vendored fixtures, supplementary tests CAN be modified
-since Neovex authors them.
+since Nimbus authors them.
 
 ### Phase 4: Trust — Package and Framework Canaries
 
@@ -2066,7 +2066,7 @@ Every public framework or package support statement should map to:
 
 - at least one upstream Node family proof
 - at least one package/framework canary
-- the exact Neovex profile (`Application`, `Tooling`, or both)
+- the exact Nimbus profile (`Application`, `Tooling`, or both)
 - the exact supported Node lane(s)
 
 This is the minimum evidence model required to make enterprise-trustworthy
@@ -2102,7 +2102,7 @@ machine-generated report.
 
 Extend the `RuntimeCompatibilityTarget` enum with `Node20` and `Node24`
 variants. Each variant configures:
-- `process.version` (e.g., `"v20.20.2-neovex"` vs. `"v22.15.0-neovex"`)
+- `process.version` (e.g., `"v20.20.2-nimbus"` vs. `"v22.15.0-nimbus"`)
 - Stream default `highWaterMark` values (16 KiB for Node 20, 64 KiB for
   Node 22+)
 - API surface differences (`process.features.typescript` absent in Node 20)
@@ -2142,7 +2142,7 @@ The ESM path in `supports_extension_backed_node_builtin()` (source:
 `module_loader.rs` lines 4012–4053) currently only matches `node:`-prefixed
 specifiers. This should be extended to also resolve bare ESM imports of
 builtins, matching the behavior of Node.js and Bun. Deno handles this via
-the `--unstable-bare-node-builtins` flag; Neovex should handle it natively
+the `--unstable-bare-node-builtins` flag; Nimbus should handle it natively
 since enterprise users expect `import fs from 'fs'` to work.
 
 **6.3 Behavioral divergence matrix**
@@ -2172,20 +2172,20 @@ Example dimensions to track:
 
 | Reference | Path |
 |-----------|------|
-| Neovex node_compat.rs | `crates/neovex-runtime/src/runtime/tests/node/mod.rs` |
-| Neovex NLC plan | `docs/plans/archive/node-lts-compatibility-plan.md` |
-| Neovex fixture root | `crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/` |
+| Nimbus node_compat.rs | `crates/nimbus-runtime/src/runtime/tests/node/mod.rs` |
+| Nimbus NLC plan | `docs/plans/archive/node-lts-compatibility-plan.md` |
+| Nimbus fixture root | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/` |
 | Node core test harness overview | `~/src/github.com/nodejs/node/test/README.md` |
 | Node core test runner | `~/src/github.com/nodejs/node/tools/test.py` |
 | Node core status file | `~/src/github.com/nodejs/node/test/root.status` |
 | Node common harness docs | `~/src/github.com/nodejs/node/test/common/README.md` |
-| Deno config.jsonc | `~/src/github.com/agentstation/deno/tests/node_compat/config.jsonc` |
-| Deno schema.json | `~/src/github.com/agentstation/deno/tests/node_compat/schema.json` |
-| Deno mod.rs (runner) | `~/src/github.com/agentstation/deno/tests/node_compat/mod.rs` |
-| Deno vendor.ts | `~/src/github.com/agentstation/deno/tests/node_compat/runner/suite/vendor.ts` |
-| Deno node_version.ts | `~/src/github.com/agentstation/deno/tests/node_compat/runner/suite/node_version.ts` |
-| Deno unit_node tests | `~/src/github.com/agentstation/deno/tests/unit_node/` |
-| Deno specs/node tests | `~/src/github.com/agentstation/deno/tests/specs/node/` |
+| Deno config.jsonc | `~/src/github.com/nimbus/deno/tests/node_compat/config.jsonc` |
+| Deno schema.json | `~/src/github.com/nimbus/deno/tests/node_compat/schema.json` |
+| Deno mod.rs (runner) | `~/src/github.com/nimbus/deno/tests/node_compat/mod.rs` |
+| Deno vendor.ts | `~/src/github.com/nimbus/deno/tests/node_compat/runner/suite/vendor.ts` |
+| Deno node_version.ts | `~/src/github.com/nimbus/deno/tests/node_compat/runner/suite/node_version.ts` |
+| Deno unit_node tests | `~/src/github.com/nimbus/deno/tests/unit_node/` |
+| Deno specs/node tests | `~/src/github.com/nimbus/deno/tests/specs/node/` |
 | Node WPT versions.json | `~/src/github.com/nodejs/node/test/fixtures/wpt/versions.json` |
 | Node WPT status files | `~/src/github.com/nodejs/node/test/wpt/status/` |
 | Node upstream tests | `~/src/github.com/nodejs/node/test/` |

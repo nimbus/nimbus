@@ -9,11 +9,11 @@ agent's input.
 ## Prompt
 
 You are reviewing an execution plan for building a Firebase/Firestore
-compatibility adapter in a Rust + TypeScript codebase called Neovex. Neovex is
+compatibility adapter in a Rust + TypeScript codebase called Nimbus. Nimbus is
 a Convex-compatible backend server that already has a deep Convex adapter
 (~10k lines of Rust, 127 files). The Firebase adapter is the second
 compatibility layer, translating Firestore v1 gRPC and REST protocols to
-Neovex's internal engine APIs.
+Nimbus's internal engine APIs.
 
 **Your task:** Perform a thorough, independent audit of the plan at
 `docs/plans/archive/firebase-adapter-plan.md`. Evaluate the following dimensions and
@@ -26,9 +26,9 @@ Suggestion) with specific line references.
   in `adapters/mod.rs`, `with_firebase()` on `RouterBuildConfig`, and
   `ActiveFirebaseConfig` in `AppState` following the Convex adapter pattern.
   Verify this is consistent with the actual Convex adapter code in
-  `crates/neovex-server/src/adapters/convex/mod.rs`,
-  `crates/neovex-server/src/router.rs`, and
-  `crates/neovex-server/src/state.rs`. Flag any divergence.
+  `crates/nimbus-server/src/adapters/convex/mod.rs`,
+  `crates/nimbus-server/src/router.rs`, and
+  `crates/nimbus-server/src/state.rs`. Flag any divergence.
 
 - **Shared adapter logic:** The plan proposes each RPC has a single Rust
   implementation called from both the tonic gRPC trait method and the axum REST
@@ -41,7 +41,7 @@ Suggestion) with specific line references.
   `Service::begin_mutation_execution_unit()` → stage writes → `unit.commit()`.
   Verify this correctly models Firestore's atomic batch semantics. Check:
   - Does the Convex adapter use `MutationExecutionUnit` the same way?
-    (see `crates/neovex-server/src/adapters/convex/host_bridge/bridge.rs`)
+    (see `crates/nimbus-server/src/adapters/convex/host_bridge/bridge.rs`)
   - Is `MutationExecutionUnit` designed for the adapter-creates-and-commits
     pattern, or is it designed for the V8-runtime-drives-the-unit pattern?
   - Can a `MutationExecutionUnit` handle mixed insert + update + delete in
@@ -52,7 +52,7 @@ Suggestion) with specific line references.
   Evaluate: how does the adapter hold a `MutationExecutionUnit` across
   separate gRPC calls (BeginTransaction → BatchGetDocuments with transaction
   → Commit with transaction)? This requires server-side session state. Does
-  the existing Neovex architecture support this? Where is it stored? What
+  the existing Nimbus architecture support this? Where is it stored? What
   handles timeout/cleanup?
 
 - **WebSocket endpoint for Listen:** The plan adds a WebSocket endpoint
@@ -65,7 +65,7 @@ Suggestion) with specific line references.
 ### 2. Protocol Correctness
 
 - **Proto3 JSON serialization:** The plan specifies bidirectional translation
-  between Firestore typed values (`{ integerValue: "123" }`) and Neovex native
+  between Firestore typed values (`{ integerValue: "123" }`) and Nimbus native
   JSON (`123`). Verify the mapping table is complete and correct by checking
   against the Firestore Value proto definition at
   `google/firestore/v1/document.proto`. Are there any value types missing?
@@ -127,7 +127,7 @@ Suggestion) with specific line references.
 ### 4. Testing Strategy
 
 - **Layer 6 (Firebase SDK integration tests):** The plan proposes running
-  Firebase's own test suite against the Neovex adapter. Evaluate feasibility:
+  Firebase's own test suite against the Nimbus adapter. Evaluate feasibility:
   - The tests are in `~/src/github.com/firebase/firebase-js-sdk/packages/firestore/test/integration/api/`.
     Read a few test files to understand what they actually test and what
     backend capabilities they assume.
@@ -178,7 +178,7 @@ Suggestion) with specific line references.
   in some cases; recursive deletes; import/export.)
 
 - **Multi-database support:** Firestore supports named databases beyond
-  `(default)`. The plan says "Neovex is single-database-per-tenant." If a
+  `(default)`. The plan says "Nimbus is single-database-per-tenant." If a
   client sends `databases/my-custom-db`, what happens? Is this validated
   and rejected with a clear error?
 
@@ -238,8 +238,8 @@ it need another revision pass?]
 - `docs/plans/archive/firebase-adapter-plan.md` (the plan under review)
 - `CLAUDE.md` (repo conventions, architecture invariants)
 - `ARCHITECTURE.md` (system architecture)
-- `crates/neovex-server/src/router.rs` (RouterBuildConfig)
-- `crates/neovex-server/src/state.rs` (AppState, ActiveConvexRegistry)
-- `crates/neovex-server/src/adapters/convex/mod.rs` (Convex adapter structure)
-- `crates/neovex-engine/src/service/execution_units/` (MutationExecutionUnit)
-- `crates/neovex-engine/src/service/subscriptions.rs` (subscription API)
+- `crates/nimbus-server/src/router.rs` (RouterBuildConfig)
+- `crates/nimbus-server/src/state.rs` (AppState, ActiveConvexRegistry)
+- `crates/nimbus-server/src/adapters/convex/mod.rs` (Convex adapter structure)
+- `crates/nimbus-engine/src/service/execution_units/` (MutationExecutionUnit)
+- `crates/nimbus-engine/src/service/subscriptions.rs` (subscription API)

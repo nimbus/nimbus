@@ -14,7 +14,7 @@ function requestJson(url) {
         resolve({
           statusCode: response.statusCode ?? null,
           body: body.length === 0 ? null : JSON.parse(body),
-          traceHeader: response.headers["x-neovex-trace"] ?? null,
+          traceHeader: response.headers["x-nimbus-trace"] ?? null,
         });
       });
     });
@@ -22,10 +22,10 @@ function requestJson(url) {
   });
 }
 
-globalThis.__neovexInvoke = async function () {
+globalThis.__nimbusInvoke = async function () {
   const app = express();
   app.use((_request, response, next) => {
-    response.setHeader("x-neovex-trace", "middleware-hit");
+    response.setHeader("x-nimbus-trace", "middleware-hit");
     next();
   });
   app.get("/ok", (_request, response) => {

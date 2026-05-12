@@ -13,14 +13,14 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `crates/neovex-storage/src/index/scan.rs`
-- `crates/neovex-storage/src/index/maintenance.rs`
-- `crates/neovex-storage/src/tests.rs`
-- `crates/neovex-server/src/tests/core_http/documents_and_commits.rs`
-- `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/mod.rs`
-- `crates/neovex-runtime/src/runtime/bootstrap/snapshot.rs`
-- `crates/neovex-runtime/src/runtime/bootstrap/ops.rs`
-- `crates/neovex-runtime/src/executor/admission.rs`
+- `crates/nimbus-storage/src/index/scan.rs`
+- `crates/nimbus-storage/src/index/maintenance.rs`
+- `crates/nimbus-storage/src/tests.rs`
+- `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs`
+- `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/mod.rs`
+- `crates/nimbus-runtime/src/runtime/bootstrap/snapshot.rs`
+- `crates/nimbus-runtime/src/runtime/bootstrap/ops.rs`
+- `crates/nimbus-runtime/src/executor/admission.rs`
 
 Baseline verification status for this plan:
 
@@ -72,21 +72,21 @@ integration-scenario seams so future feature work lands in obvious homes.
 This plan covers:
 
 - storage index scan ownership inside
-  `crates/neovex-storage/src/index/scan.rs`
+  `crates/nimbus-storage/src/index/scan.rs`
 - storage index-maintenance ownership inside
-  `crates/neovex-storage/src/index/maintenance.rs`
+  `crates/nimbus-storage/src/index/maintenance.rs`
 - movement of the highest-value remaining generated-history, recovery, and
   native HTTP scenario roots toward concept-owned test surfaces, especially
-  `crates/neovex-storage/src/tests.rs` and
-  `crates/neovex-server/src/tests/core_http/documents_and_commits.rs`
+  `crates/nimbus-storage/src/tests.rs` and
+  `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs`
 - further decomposition of the Convex demo-flow fixture and scenario root in
-  `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/mod.rs`
+  `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/mod.rs`
 - runtime bootstrap snapshot or retained-runtime ownership inside
-  `crates/neovex-runtime/src/runtime/bootstrap/snapshot.rs`
+  `crates/nimbus-runtime/src/runtime/bootstrap/snapshot.rs`
 - runtime bootstrap host-op ownership inside
-  `crates/neovex-runtime/src/runtime/bootstrap/ops.rs`
+  `crates/nimbus-runtime/src/runtime/bootstrap/ops.rs`
 - runtime executor admission and permit ownership inside
-  `crates/neovex-runtime/src/executor/admission.rs`
+  `crates/nimbus-runtime/src/executor/admission.rs`
 - final naming, visibility, helper-placement, and documentation cleanup that
   falls out of the new ownership map
 
@@ -111,8 +111,8 @@ These rules are mandatory for every item in this plan.
    item explicitly records otherwise.
 
 2. Keep the core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -154,45 +154,45 @@ These rules are mandatory for every item in this plan.
 
 ## Current Review Findings
 
-1. `crates/neovex-storage/src/index/scan.rs` is the clearest remaining storage
+1. `crates/nimbus-storage/src/index/scan.rs` is the clearest remaining storage
    indexing hotspot.
    It combines exact, prefix, range, and composite-range scan algorithms,
    low-level document decode loops, read-transaction ownership, and
    `TenantStore` public adapters in one file.
 
-2. `crates/neovex-storage/src/index/maintenance.rs` is still a mixed write-side
+2. `crates/nimbus-storage/src/index/maintenance.rs` is still a mixed write-side
    indexing surface.
    Transaction-side insert/update/delete index maintenance, table index clear
    helpers, and `TenantStore` convenience wrappers still live together.
 
-3. `crates/neovex-runtime/src/runtime/bootstrap/snapshot.rs` is the deepest
+3. `crates/nimbus-runtime/src/runtime/bootstrap/snapshot.rs` is the deepest
    remaining runtime bootstrap hotspot.
    Startup-snapshot ownership, construction-mode vocabulary, retained-runtime
    pool state, affinity-aware reuse, LRU bounds enforcement, and test-only
    bootstrap counters still live together.
 
-4. `crates/neovex-runtime/src/runtime/bootstrap/ops.rs` still mixes every
+4. `crates/nimbus-runtime/src/runtime/bootstrap/ops.rs` still mixes every
    bootstrap host-op family in one module.
    Query-builder sync ops, async db/query terminals, mutation/action/scheduler
    ops, nested-call ops, and the shared async permit-lease glue all sit in one
    file.
 
-5. `crates/neovex-runtime/src/executor/admission.rs` remains a dense
+5. `crates/nimbus-runtime/src/executor/admission.rs` remains a dense
    operational hotspot.
    Dispatch handles, shared permit state, async host-call suspend or resume,
    queueing, and fairness bookkeeping still live in one boundary.
 
-6. `crates/neovex-server/src/tests/core_http/documents_and_commits.rs`,
-   `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/mod.rs`,
-   and `crates/neovex-storage/src/tests.rs` are the strongest remaining
+6. `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs`,
+   `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/mod.rs`,
+   and `crates/nimbus-storage/src/tests.rs` are the strongest remaining
    concept-mixed scenario roots.
    Generated-history replay helpers, blocking fault injectors, recovery
    harness glue, and broad scenario assertions still live together in a way
    that makes new cases harder to place.
 
-7. `crates/neovex-server/src/ws/socket.rs`,
-   `crates/neovex-server/src/adapters/convex/subscriptions/socket/named_subscriptions.rs`,
-   and `crates/neovex-runtime/src/metrics.rs` are no longer the right next
+7. `crates/nimbus-server/src/ws/socket.rs`,
+   `crates/nimbus-server/src/adapters/convex/subscriptions/socket/named_subscriptions.rs`,
+   and `crates/nimbus-runtime/src/metrics.rs` are no longer the right next
    targets.
    They now mostly read as facades or coherent composition roots rather than
    the most urgent cleanup seams for this pass.
@@ -285,9 +285,9 @@ Always run:
 
 Run, as appropriate:
 
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-server`
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-server`
+- `cargo test -p nimbus-runtime`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
 Before considering the whole workstream complete, run:
@@ -308,13 +308,13 @@ and continue only when the blocker is environmental rather than architectural.
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | IB0 | `done` | reviewed the current post-execution-boundaries architecture and identified the next meaningful cleanup hotspots in storage indexing, generated-history or demo scenario roots, and runtime bootstrap or admission ownership | none | docs-only review and planning pass on 2026-04-06 |
-| IB1 | `done` | split `crates/neovex-storage/src/index/scan.rs` by index-scan ownership | none | landed as a thin `scan.rs` composition root over exact, prefix, range, read, and adapter submodules |
-| IB2 | `done` | split `crates/neovex-storage/src/index/maintenance.rs` by write-side index-maintenance ownership | IB1 recommended first | landed as a thin `maintenance.rs` root over transaction, rebuild, and store-facing write wrapper submodules |
+| IB1 | `done` | split `crates/nimbus-storage/src/index/scan.rs` by index-scan ownership | none | landed as a thin `scan.rs` composition root over exact, prefix, range, read, and adapter submodules |
+| IB2 | `done` | split `crates/nimbus-storage/src/index/maintenance.rs` by write-side index-maintenance ownership | IB1 recommended first | landed as a thin `maintenance.rs` root over transaction, rebuild, and store-facing write wrapper submodules |
 | IB3 | `done` | move the highest-value remaining generated-history, recovery, and native HTTP scenario helpers toward concept-owned surfaces | IB1 and IB2 recommended first | landed as dedicated storage generated-history tests plus owned native HTTP generated-history and fault helper submodules |
 | IB4 | `done` | split the remaining Convex demo-flow fixture and scenario root by concept ownership | IB3 recommended first | the root is now a thin composition surface over manifest, bundle, registry, helpers, scenarios, and seeded-usage modules |
-| IB5 | `done` | split `crates/neovex-runtime/src/runtime/bootstrap/snapshot.rs` by startup-snapshot and retained-runtime-pool ownership | IB1 through IB4 recommended first | landed as a thin `snapshot.rs` root over `snapshot/startup.rs` and `snapshot/retained_pool.rs` |
-| IB6 | `done` | split `crates/neovex-runtime/src/runtime/bootstrap/ops.rs` by host-op family ownership | IB5 recommended first | landed as a thin `ops.rs` root over sync query-builder, async query, async effects, nested runtime, and shared host-call glue submodules |
-| IB7 | `done` | split `crates/neovex-runtime/src/executor/admission.rs` by admission, permit, and fairness ownership | IB5 and IB6 recommended first | landed as a thin `admission.rs` root over dispatch-handle, shared permit, and tenant-fairness submodules |
+| IB5 | `done` | split `crates/nimbus-runtime/src/runtime/bootstrap/snapshot.rs` by startup-snapshot and retained-runtime-pool ownership | IB1 through IB4 recommended first | landed as a thin `snapshot.rs` root over `snapshot/startup.rs` and `snapshot/retained_pool.rs` |
+| IB6 | `done` | split `crates/nimbus-runtime/src/runtime/bootstrap/ops.rs` by host-op family ownership | IB5 recommended first | landed as a thin `ops.rs` root over sync query-builder, async query, async effects, nested runtime, and shared host-call glue submodules |
+| IB7 | `done` | split `crates/nimbus-runtime/src/executor/admission.rs` by admission, permit, and fairness ownership | IB5 and IB6 recommended first | landed as a thin `admission.rs` root over dispatch-handle, shared permit, and tenant-fairness submodules |
 | IB8 | `done` | update docs, run the full verification sweep, and archive the completed plan cleanly | IB1 through IB7 | completed with repo-wide verification plus an environment-only `make ci` limitation on `cargo deny` advisory-db locking |
 
 ---
@@ -385,7 +385,7 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-storage`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -405,7 +405,7 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-storage`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -422,16 +422,16 @@ and continue only when the blocker is environmental rather than architectural.
 1. Move the highest-value remaining generated-history, recovery, and native
    HTTP scenario helpers into concept-owned surfaces where it improves
    maintainability.
-2. Prioritize `crates/neovex-storage/src/tests.rs` and
-   `crates/neovex-server/src/tests/core_http/documents_and_commits.rs`.
+2. Prioritize `crates/nimbus-storage/src/tests.rs` and
+   `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs`.
 3. Keep broad integration coverage intact while reducing the size of the
    remaining mixed roots.
 
 #### Focused verification
 
 - targeted crate tests for every moved surface
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -454,7 +454,7 @@ and continue only when the blocker is environmental rather than architectural.
 #### Focused verification
 
 - targeted demo-flow server tests
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -476,8 +476,8 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -499,8 +499,8 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -521,8 +521,8 @@ and continue only when the blocker is environmental rather than architectural.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -563,12 +563,12 @@ and continue only when the blocker is environmental rather than architectural.
 
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
-| 2026-04-06 | IB0 | done | Reviewed the live post-execution-boundaries architecture and identified the next meaningful cleanup hotspots in storage indexing, remaining generated-history and demo scenario roots, and runtime bootstrap or executor-admission ownership. Authored this new active cleanup control plane and prepared it for promotion in the plans index and agent entrypoint. | docs-only review and planning pass; no new code verification claimed in this handoff | start `IB1` with a concept map for `crates/neovex-storage/src/index/scan.rs` |
-| 2026-04-06 | IB1 | done | Reconciled the active control plane against the current dirty worktree, then split `crates/neovex-storage/src/index/scan.rs` into concept-owned `read`, `exact`, `prefix`, `range`, and `adapters` submodules while keeping `scan.rs` as the thin composition root. Public `TenantStore` and `TenantReadSnapshot` scan entrypoints stayed stable. | `cargo test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB2` by mapping transaction-side index maintenance, rebuild/clear helpers, and store-facing adapters in `crates/neovex-storage/src/index/maintenance.rs` |
-| 2026-04-06 | IB2 | done | Continued directly within the same storage indexing boundary after `IB1` and split `crates/neovex-storage/src/index/maintenance.rs` into transaction-side mutation helpers, rebuild or clear helpers, and store-facing indexed write wrappers. `maintenance.rs` is now the thin composition root for those owned surfaces. | `cargo test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB3` by mapping reusable generated-history, recovery, and native HTTP helper seams in the remaining broad scenario roots |
-| 2026-04-06 | IB3 | done | Moved the storage generated-history and recovery cluster into `crates/neovex-storage/src/tests/generated_history.rs`, and moved the native HTTP generated-history oracle plus blocking fault harness into owned submodules under `crates/neovex-server/src/tests/core_http/documents_and_commits/`. The remaining roots now read more like broad scenario surfaces instead of mixed helper piles. | `cargo test -p neovex-storage`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB4` by mapping what still belongs in the demo-flow root versus the already-split helpers, scenarios, and seeded-usage surfaces |
-| 2026-04-06 | IB4 | done | Split the remaining Convex demo-flow root so `mod.rs` is now a thin composition surface over dedicated manifest builders, runtime-bundle generation, registry composition, helpers, broad scenarios, and the already-separated seeded-usage tree. | `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | the next item is `IB5`, but only after the overlapping Locker/runtime worktree is reconciled enough for cleanup-only edits |
-| 2026-04-06 | IB5 | done | Split `crates/neovex-runtime/src/runtime/bootstrap/snapshot.rs` into a thin composition root over `snapshot/startup.rs` and `snapshot/retained_pool.rs`. Startup-snapshot construction vocabulary, build accounting, retained-runtime reuse, affinity selection, and pool-bounds enforcement now have owned runtime-bootstrap surfaces without changing the external bootstrap API. | `cargo test -p neovex-runtime`; `cargo test -p neovex-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB6` by separating host-op families and shared async permit-lease glue inside `crates/neovex-runtime/src/runtime/bootstrap/ops.rs` |
-| 2026-04-06 | IB6 | done | Split `crates/neovex-runtime/src/runtime/bootstrap/ops.rs` into a thin extension-registration root over dedicated sync query-builder, async query, async effects, nested runtime, and shared host-call glue submodules. The serialized runtime host-op contract and op registration list stayed unchanged while the owned host-op families became easier to navigate. | `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p neovex-runtime`; `cargo test -p neovex-server` (one transient failure in the snapshot-aware delayed-async subprocess harness was observed on the first full runtime-suite pass, then the exact repro reruns and a clean full rerun passed) | start `IB7` by separating dispatch handles, permit state, suspend/resume flow, and fairness bookkeeping in `crates/neovex-runtime/src/executor/admission.rs` |
-| 2026-04-06 | IB7 | done | Split `crates/neovex-runtime/src/executor/admission.rs` into a thin root over `admission/dispatch.rs`, `admission/permit.rs`, and `admission/tenant_fairness.rs`. Dispatch-handle ownership, shared permit suspend/resume lifecycle, and tenant fairness bookkeeping now live in owned executor submodules without changing the executor-facing contract. | `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p neovex-runtime`; `cargo test -p neovex-server`; `cargo clippy --workspace --all-targets -- -D warnings` | finish `IB8` with repo-wide verification, doc/index updates, and plan archiving |
+| 2026-04-06 | IB0 | done | Reviewed the live post-execution-boundaries architecture and identified the next meaningful cleanup hotspots in storage indexing, remaining generated-history and demo scenario roots, and runtime bootstrap or executor-admission ownership. Authored this new active cleanup control plane and prepared it for promotion in the plans index and agent entrypoint. | docs-only review and planning pass; no new code verification claimed in this handoff | start `IB1` with a concept map for `crates/nimbus-storage/src/index/scan.rs` |
+| 2026-04-06 | IB1 | done | Reconciled the active control plane against the current dirty worktree, then split `crates/nimbus-storage/src/index/scan.rs` into concept-owned `read`, `exact`, `prefix`, `range`, and `adapters` submodules while keeping `scan.rs` as the thin composition root. Public `TenantStore` and `TenantReadSnapshot` scan entrypoints stayed stable. | `cargo test -p nimbus-storage`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB2` by mapping transaction-side index maintenance, rebuild/clear helpers, and store-facing adapters in `crates/nimbus-storage/src/index/maintenance.rs` |
+| 2026-04-06 | IB2 | done | Continued directly within the same storage indexing boundary after `IB1` and split `crates/nimbus-storage/src/index/maintenance.rs` into transaction-side mutation helpers, rebuild or clear helpers, and store-facing indexed write wrappers. `maintenance.rs` is now the thin composition root for those owned surfaces. | `cargo test -p nimbus-storage`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB3` by mapping reusable generated-history, recovery, and native HTTP helper seams in the remaining broad scenario roots |
+| 2026-04-06 | IB3 | done | Moved the storage generated-history and recovery cluster into `crates/nimbus-storage/src/tests/generated_history.rs`, and moved the native HTTP generated-history oracle plus blocking fault harness into owned submodules under `crates/nimbus-server/src/tests/core_http/documents_and_commits/`. The remaining roots now read more like broad scenario surfaces instead of mixed helper piles. | `cargo test -p nimbus-storage`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB4` by mapping what still belongs in the demo-flow root versus the already-split helpers, scenarios, and seeded-usage surfaces |
+| 2026-04-06 | IB4 | done | Split the remaining Convex demo-flow root so `mod.rs` is now a thin composition surface over dedicated manifest builders, runtime-bundle generation, registry composition, helpers, broad scenarios, and the already-separated seeded-usage tree. | `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace` | the next item is `IB5`, but only after the overlapping Locker/runtime worktree is reconciled enough for cleanup-only edits |
+| 2026-04-06 | IB5 | done | Split `crates/nimbus-runtime/src/runtime/bootstrap/snapshot.rs` into a thin composition root over `snapshot/startup.rs` and `snapshot/retained_pool.rs`. Startup-snapshot construction vocabulary, build accounting, retained-runtime reuse, affinity selection, and pool-bounds enforcement now have owned runtime-bootstrap surfaces without changing the external bootstrap API. | `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server`; `cargo fmt --all --check`; `cargo check --workspace` | start `IB6` by separating host-op families and shared async permit-lease glue inside `crates/nimbus-runtime/src/runtime/bootstrap/ops.rs` |
+| 2026-04-06 | IB6 | done | Split `crates/nimbus-runtime/src/runtime/bootstrap/ops.rs` into a thin extension-registration root over dedicated sync query-builder, async query, async effects, nested runtime, and shared host-call glue submodules. The serialized runtime host-op contract and op registration list stayed unchanged while the owned host-op families became easier to navigate. | `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server` (one transient failure in the snapshot-aware delayed-async subprocess harness was observed on the first full runtime-suite pass, then the exact repro reruns and a clean full rerun passed) | start `IB7` by separating dispatch handles, permit state, suspend/resume flow, and fairness bookkeeping in `crates/nimbus-runtime/src/executor/admission.rs` |
+| 2026-04-06 | IB7 | done | Split `crates/nimbus-runtime/src/executor/admission.rs` into a thin root over `admission/dispatch.rs`, `admission/permit.rs`, and `admission/tenant_fairness.rs`. Dispatch-handle ownership, shared permit suspend/resume lifecycle, and tenant fairness bookkeeping now live in owned executor submodules without changing the executor-facing contract. | `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server`; `cargo clippy --workspace --all-targets -- -D warnings` | finish `IB8` with repo-wide verification, doc/index updates, and plan archiving |
 | 2026-04-06 | IB8 | done | Ran the repo-wide closure sweep, updated `ARCHITECTURE.md` plus the plan index and `AGENTS.md`, and archived this completed cleanup control plane. | `make check`; `make test`; `make clippy`; `make ci` attempted but failed only because `cargo deny` could not lock `/Users/jack/.cargo/advisory-dbs/db.lock` on a read-only path | archived |

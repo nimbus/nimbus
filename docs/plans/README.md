@@ -4,7 +4,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 - `docs/plans/system-tenant-api-plan.md`
-  - canonical execution plan for the `_neovex` system tenant and management
+  - canonical execution plan for the `_nimbus` system tenant and management
     API: machine/service state persistence as documents, HTTP lifecycle
     endpoints, Convex function bundle with typed query surface, read/write
     path split; prerequisite for the desktop UI plan
@@ -15,7 +15,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     dark mode, a11y, optional Electron shell (Phase 2); depends on the system
     tenant API plan and current architecture references below
 - `docs/plans/install-script-plan.md`
-  - canonical execution plan for the neovex install script (Channel 1):
+  - canonical execution plan for the nimbus install script (Channel 1):
     `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
@@ -28,12 +28,12 @@ archived plans only when you need historical execution detail.
 
 - `docs/architecture/sandbox/microvm-service-baseline.md`
   - concise current baseline for the landed krun-backed microVM runtime,
-    service activation, Compose-backed `neovex compose ...` surface, and the
+    service activation, Compose-backed `nimbus compose ...` surface, and the
     Linux-versus-macOS platform model
 - `docs/architecture/sandbox/macos-machine-flow.md`
   - concise current reference for the settled macOS developer-machine contract:
     pinned Podman image digest, host-managed guest binary sync, forwarded
-    machine API, host-resident `neovex start`, and proof-helper entrypoints
+    machine API, host-resident `nimbus start`, and proof-helper entrypoints
 - `docs/architecture/runtime/adapter-boundary.md`
   - current runtime and adapter ownership boundary
 - `docs/architecture/runtime/permission-model.md`
@@ -55,8 +55,8 @@ archived plans only when you need historical execution detail.
     types, OCI annotations, build scripts, workflow inputs, Homebrew cask, and
     cross-repo interface coordination
 - `docs/plans/nimbus-rename-plan.md`
-  - canonical execution plan for renaming the project from "neovex" to "nimbus"
-    and relocating all repositories from the `agentstation` GitHub organization
+  - canonical execution plan for renaming the project from "nimbus" to "nimbus"
+    and relocating all repositories from the `nimbus` GitHub organization
     to `nimbus`: GitHub repo transfers, Rust crate renames, JS package renames,
     CI/CD workflow updates, script renames, Makefile updates, config/doc bulk
     replacement, and verification; depends on the satellite repos plan above
@@ -66,14 +66,14 @@ archived plans only when you need historical execution detail.
 - `docs/plans/windows-machine-support-plan.md`
   - canonical execution plan for the Podman-aligned Windows developer-machine
     architecture, source-backed against the Podman WSL2 provider: Windows-native
-    `neovex.exe` with WSL2 machine provider, win-sshproxy named-pipe API
+    `nimbus.exe` with WSL2 machine provider, win-sshproxy named-pipe API
     forwarding, shell-script bootstrap (not ignition), WSL2-native networking
     (not gvproxy); activation gate is macOS MAC5+ stabilization
 
 ## Deferred design and experiment plans
 
 - `docs/plans/distribution-plan.md`
-  - canonical plan for distributing neovex across all channels: install
+  - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
     (macOS via krunkit/libkrun), binary tarballs, container images, cloud
     VM images (AWS AMI, GCP). Channel 4 covers the macOS machine VM
@@ -90,11 +90,11 @@ archived plans only when you need historical execution detail.
 - `docs/plans/wasi-agent-capabilities-plan.md`
   - canonical plan for adding agent OS primitives (virtual filesystem, sandboxed
     process execution, HTTP client) via WASI Component Model interfaces; covers
-    `neovex:agent` WIT package, `AgentOsProvider` trait, capability-based tenant
+    `nimbus:agent` WIT package, `AgentOsProvider` trait, capability-based tenant
     admission, and agent-os sidecar integration; activates after the wasmtime
     backend plan W3 completes
 - `docs/plans/native-transport-evolution-plan.md`
-  - proposed follow-on plan for Neovex-native transport evolution: shared
+  - proposed follow-on plan for Nimbus-native transport evolution: shared
     session and codec seams, benchmark-driven optional binary codec work, and
     optional WebTransport evaluation without re-owning the established
     WebSocket protocol or Firebase transport work.
@@ -126,8 +126,8 @@ the work is explicitly a historical review.
   asked to review historical work.
 - If no active plan owns the work, promote or author a new active plan instead
   of reviving a completed archived one.
-- For Convex or Neovex CLI/codegen workflow work (`packages/codegen/`,
-  `packages/convex/`, `demos/convex/`, or the `neovex start --app-dir`
+- For Convex or Nimbus CLI/codegen workflow work (`packages/codegen/`,
+  `packages/convex/`, `demos/convex/`, or the `nimbus start --app-dir`
   contract), start with `docs/adapters/convex/ai-guidelines.md`,
   `docs/operating/cli.md`, and `docs/adapters/convex/compatibility.md`.
   Promote a new active plan before another CLI/codegen/facade architecture wave

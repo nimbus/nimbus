@@ -1,10 +1,10 @@
-# Plan: Hybrid Directory Layout — `.neovex/` + XDG
+# Plan: Hybrid Directory Layout — `.nimbus/` + XDG
 
-Canonical execution plan for restructuring Neovex's directory layout into a
-hybrid model: project-local `.neovex/` for project-scoped state (codegen
+Canonical execution plan for restructuring Nimbus's directory layout into a
+hybrid model: project-local `.nimbus/` for project-scoped state (codegen
 artifacts, dev database), XDG directories for user-scoped state (license,
 auth, shared config), and `.env.local` for deployment identity. This
-establishes the deployment-target model that `neovex deploy` will use.
+establishes the deployment-target model that `nimbus deploy` will use.
 
 ## Status
 
@@ -17,30 +17,30 @@ establishes the deployment-target model that `neovex deploy` will use.
 
 ## Plan Ownership And Canonical Inputs
 
-This plan owns the license extraction from `.neovex/` to XDG, deployment
+This plan owns the license extraction from `.nimbus/` to XDG, deployment
 identity mapping via `.env.local`, and the global config directory at
-`~/.config/neovex/`. It does NOT own `neovex deploy` itself — it builds
-the directory and identity foundation that `neovex deploy` will use.
-`.neovex/`'s internal structure (codegen artifacts, dev database) is
+`~/.config/nimbus/`. It does NOT own `nimbus deploy` itself — it builds
+the directory and identity foundation that `nimbus deploy` will use.
+`.nimbus/`'s internal structure (codegen artifacts, dev database) is
 unchanged by this plan.
 
 Hard deps (all landed):
-- `neovex dev` watch loop and adapter detection
-- `neovex codegen` artifact generation
-- `neovex init` scaffold templates (gitignore references `.neovex/`)
-- Machine subsystem XDG pattern (`crates/neovex-bin/src/machine/record.rs`)
+- `nimbus dev` watch loop and adapter detection
+- `nimbus codegen` artifact generation
+- `nimbus init` scaffold templates (gitignore references `.nimbus/`)
+- Machine subsystem XDG pattern (`crates/nimbus-bin/src/machine/record.rs`)
 
 Implementation work must keep these source inputs open:
 
 - Top-level repo references: `README.md`, `ARCHITECTURE.md`, `docs/README.md`,
   `docs/plans/README.md`.
 - CLI reference: `docs/operating/cli.md`.
-- Module structure: `crates/neovex-bin/src/` (dev.rs, init.rs, node.rs,
+- Module structure: `crates/nimbus-bin/src/` (dev.rs, init.rs, node.rs,
   deploy.rs, codegen.rs, start/, cli_ux.rs, main.rs).
-- Server license path: `crates/neovex-server/src/license/mod.rs`,
-  `crates/neovex-server/src/license/loading.rs`.
-- Machine XDG pattern: `crates/neovex-bin/src/machine/record.rs`.
-- Init plan: `docs/plans/archive/neovex-init-plan.md`.
+- Server license path: `crates/nimbus-server/src/license/mod.rs`,
+  `crates/nimbus-server/src/license/loading.rs`.
+- Machine XDG pattern: `crates/nimbus-bin/src/machine/record.rs`.
+- Init plan: `docs/plans/archive/nimbus-init-plan.md`.
 
 ## Autonomous Execution Contract
 
@@ -110,9 +110,9 @@ Every completed item must leave durable evidence:
   - Error cases (invalid input produces the correct error, not a panic).
 - Run `cargo fmt --all --check` and `make clippy` after each item. Both must
   be clean with zero warnings.
-- Run `cargo test -p neovex-bin` for items that change `neovex-bin` code
+- Run `cargo test -p nimbus-bin` for items that change `nimbus-bin` code
   (H1, H2, H3).
-- Run `cargo test -p neovex-server` for items that change `neovex-server`
+- Run `cargo test -p nimbus-server` for items that change `nimbus-server`
   code (H3).
 - Run `npm run typecheck` if JS packages are touched (none expected).
 - If any verification step fails, the item is not `done`. Fix the issue and
@@ -122,17 +122,17 @@ Every completed item must leave durable evidence:
 
 ## Problem
 
-### Current: flat `.neovex/` conflates three concerns
+### Current: flat `.nimbus/` conflates three concerns
 
-`neovex dev` creates a `.neovex/` directory inside the project:
+`nimbus dev` creates a `.nimbus/` directory inside the project:
 
 ```
 my-app/
 ├── convex/                      # source (developer-authored)
-├── .neovex/                     # ← generated/ephemeral, gitignored
+├── .nimbus/                     # ← generated/ephemeral, gitignored
 │   ├── dev/                     # SQLite databases, control plane
 │   │   ├── demo.db
-│   │   └── neovex-control.db
+│   │   └── nimbus-control.db
 │   ├── convex/                  # codegen artifacts
 │   │   ├── functions.json
 │   │   ├── bundle.mjs
@@ -144,7 +144,7 @@ my-app/
 │   │   └── bundle.sha256
 │   └── license.json             # optional license
 ├── package.json
-└── .gitignore                   # ignores .neovex/
+└── .gitignore                   # ignores .nimbus/
 ```
 
 This conflates three concerns in one directory:
@@ -155,7 +155,7 @@ This conflates three concerns in one directory:
 3. **Deployment identity** (which deployment this project targets) — should
    be explicit in `.env.local`, like `CONVEX_DEPLOYMENT`
 
-The fix is not moving everything out of `.neovex/` — the industry consensus
+The fix is not moving everything out of `.nimbus/` — the industry consensus
 is that project-scoped state belongs in a project-local dotdir. The fix is
 separating the three concerns properly.
 
@@ -216,7 +216,7 @@ Research across 10+ tools confirms a consistent hybrid pattern:
 
 **Why project-local for dev state specifically:**
 1. **Filesystem does the namespacing for free.** No slugs, no hashes.
-2. **Discoverability.** `rm -rf .neovex` is the idiomatic reset. Every
+2. **Discoverability.** `rm -rf .nimbus` is the idiomatic reset. Every
    developer understands this without documentation.
 3. **State travels with the project.** Copy/move a directory and state comes
    with it. User-level keyed by path would orphan state on move.
@@ -231,13 +231,13 @@ Research across 10+ tools confirms a consistent hybrid pattern:
    wastes disk space.
 3. Config (license, registry settings) applies to the installation.
 
-### What Neovex's machine subsystem already does
+### What Nimbus's machine subsystem already does
 
-The `neovex machine` commands follow XDG correctly for user-scoped resources:
-- `~/.config/neovex/machine/` — config
-- `~/.local/share/neovex/machine/` — data (disk images, shared)
-- `~/.local/state/neovex/machine/` — state (status, locks)
-- `~/.cache/neovex/machine/` — cache (OCI images, shared)
+The `nimbus machine` commands follow XDG correctly for user-scoped resources:
+- `~/.config/nimbus/machine/` — config
+- `~/.local/share/nimbus/machine/` — data (disk images, shared)
+- `~/.local/state/nimbus/machine/` — state (status, locks)
+- `~/.cache/nimbus/machine/` — cache (OCI images, shared)
 
 This is the right pattern for machine resources because they are user-scoped
 (images and machines are shared across projects). The dev server data is
@@ -251,10 +251,10 @@ After this plan:
 my-app/
 ├── convex/                      # source (developer-authored)
 ├── convex/_generated/           # generated types (unchanged)
-├── .neovex/                     # project-scoped dev state (gitignored)
+├── .nimbus/                     # project-scoped dev state (gitignored)
 │   ├── dev/                     # SQLite databases, control plane
 │   │   ├── demo.db
-│   │   └── neovex-control.db
+│   │   └── nimbus-control.db
 │   ├── convex/                  # codegen artifacts (Convex adapter)
 │   │   ├── functions.json
 │   │   ├── bundle.mjs
@@ -264,34 +264,34 @@ my-app/
 │       ├── targets.json
 │       ├── bundle.mjs
 │       └── bundle.sha256
-├── .env.local                   # NEOVEX_DEPLOYMENT=local:<slug> (gitignored)
+├── .env.local                   # NIMBUS_DEPLOYMENT=local:<slug> (gitignored)
 ├── package.json
-└── .gitignore                   # .neovex/, .env.local
+└── .gitignore                   # .nimbus/, .env.local
 
-~/.config/neovex/
+~/.config/nimbus/
 ├── config.json                  # global CLI config (future: auth tokens)
 └── license.json                 # license file (optional)
 ```
 
 What changed:
-1. **License moved out** of `.neovex/` to `~/.config/neovex/` (user-scoped)
+1. **License moved out** of `.nimbus/` to `~/.config/nimbus/` (user-scoped)
 2. **Deployment identity** added via `.env.local` (Convex pattern)
-3. **`.neovex/` kept** for project-scoped state (codegen artifacts + dev DB)
+3. **`.nimbus/` kept** for project-scoped state (codegen artifacts + dev DB)
 4. **Global config dir** established for user-scoped CLI state
 
 What stayed the same:
-- `.neovex/` is still project-local and gitignored
-- Codegen artifacts still write to `.neovex/convex/` and `.neovex/firebase/`
-- Dev database still lives at `.neovex/dev/`
+- `.nimbus/` is still project-local and gitignored
+- Codegen artifacts still write to `.nimbus/convex/` and `.nimbus/firebase/`
+- Dev database still lives at `.nimbus/dev/`
 - `--data-dir` still overrides the data location
 
 ---
 
 ## Design Decisions
 
-### D1: Keep `.neovex/` project-local for project-scoped state
+### D1: Keep `.nimbus/` project-local for project-scoped state
 
-**Decision:** `.neovex/` stays in the project directory for codegen artifacts
+**Decision:** `.nimbus/` stays in the project directory for codegen artifacts
 and dev database state.
 
 **Evidence:** Convex moved FROM user-level TO project-local in v1.32.0 after
@@ -316,7 +316,7 @@ XDG user-level directories.
 Each project gets a deployment identity, written to `.env.local`:
 
 ```
-NEOVEX_DEPLOYMENT=local:<slug>
+NIMBUS_DEPLOYMENT=local:<slug>
 ```
 
 The slug is derived from the project directory:
@@ -324,23 +324,23 @@ The slug is derived from the project directory:
 <dir-name>-<sha256(canonical_path)[:8]>
 ```
 
-Example: `/Users/jack/src/my-app` → `NEOVEX_DEPLOYMENT=local:my-app-a1b2c3d4`
+Example: `/Users/jack/src/my-app` → `NIMBUS_DEPLOYMENT=local:my-app-a1b2c3d4`
 
 This follows the Convex pattern exactly:
 - Convex writes `CONVEX_DEPLOYMENT=dev:tall-forest-1234` to `.env.local`
-- Neovex writes `NEOVEX_DEPLOYMENT=local:my-app-a1b2c3d4` to `.env.local`
+- Nimbus writes `NIMBUS_DEPLOYMENT=local:my-app-a1b2c3d4` to `.env.local`
 
-**Future `neovex deploy` migration:** When remote deployment ships, the value
-changes to `NEOVEX_DEPLOYMENT=<server-url>:<server-assigned-slug>`. The
+**Future `nimbus deploy` migration:** When remote deployment ships, the value
+changes to `NIMBUS_DEPLOYMENT=<server-url>:<server-assigned-slug>`. The
 dev flow is "deploy to local", the deploy flow is "deploy to remote". The
 `.env.local` pattern scales to both with no model change.
 
 `.env.local` is added to the gitignore template (matches Convex behavior).
 
-### D3: User-scoped state to `~/.config/neovex/`
+### D3: User-scoped state to `~/.config/nimbus/`
 
-User-scoped configuration that applies to the Neovex installation (not to
-any specific project) lives at `~/.config/neovex/`:
+User-scoped configuration that applies to the Nimbus installation (not to
+any specific project) lives at `~/.config/nimbus/`:
 
 | File | Content |
 |------|---------|
@@ -351,20 +351,20 @@ This is consistent with:
 - `~/.convex/config.json` (Convex auth tokens)
 - `~/.config/planetscale/` (PlanetScale auth)
 - `~/.config/turso/` (Turso auth and settings)
-- `~/.config/neovex/machine/` (existing machine subsystem config)
+- `~/.config/nimbus/machine/` (existing machine subsystem config)
 
-The machine subsystem already resolves `~/.config/neovex/machine/` via
-`resolve_config_root()` in `crates/neovex-bin/src/machine/record.rs`. The
-global config lives one level up at `~/.config/neovex/`.
+The machine subsystem already resolves `~/.config/nimbus/machine/` via
+`resolve_config_root()` in `crates/nimbus-bin/src/machine/record.rs`. The
+global config lives one level up at `~/.config/nimbus/`.
 
-### D4: `neovex dev` writes `.env.local` on startup
+### D4: `nimbus dev` writes `.env.local` on startup
 
-`neovex dev` writes `NEOVEX_DEPLOYMENT=local:<slug>` to `.env.local` in the
+`nimbus dev` writes `NIMBUS_DEPLOYMENT=local:<slug>` to `.env.local` in the
 app directory on startup. Behavior:
 - If `.env.local` does not exist, create it with the deployment variable.
-- If `.env.local` exists but has no `NEOVEX_DEPLOYMENT` line, append it.
-- If `.env.local` exists with the correct `NEOVEX_DEPLOYMENT` value, no-op.
-- If `.env.local` exists with a different `NEOVEX_DEPLOYMENT` value,
+- If `.env.local` exists but has no `NIMBUS_DEPLOYMENT` line, append it.
+- If `.env.local` exists with the correct `NIMBUS_DEPLOYMENT` value, no-op.
+- If `.env.local` exists with a different `NIMBUS_DEPLOYMENT` value,
   overwrite that line (the developer switched deployment targets).
 - Never delete other content in `.env.local`.
 
@@ -372,28 +372,28 @@ This matches Convex's `changesToEnvFile()` in `deployment.ts`.
 
 ### D5: License file location
 
-Move from `.neovex/license.json` (project-local) to
-`~/.config/neovex/license.json` (user-level). The license applies to the
-Neovex installation, not to a specific project.
+Move from `.nimbus/license.json` (project-local) to
+`~/.config/nimbus/license.json` (user-level). The license applies to the
+Nimbus installation, not to a specific project.
 
 Override chain (first wins):
 1. `--license-file` CLI flag
-2. `NEOVEX_LICENSE_FILE` env var
-3. `~/.config/neovex/license.json` (default)
+2. `NIMBUS_LICENSE_FILE` env var
+3. `~/.config/nimbus/license.json` (default)
 
-### D6: `neovex start` behavior unchanged
+### D6: `nimbus start` behavior unchanged
 
-`neovex start` is the operator/production path. It does NOT resolve
+`nimbus start` is the operator/production path. It does NOT resolve
 `.env.local` or derive deployment slugs. Operators specify explicit paths
 via `--data-dir` and `--app-dir`. The `--app-dir` path resolves codegen
-artifacts from `.neovex/convex/` and `.neovex/firebase/` relative to the
+artifacts from `.nimbus/convex/` and `.nimbus/firebase/` relative to the
 app directory, same as today.
 
 ### D7: Shared `dirs` module for XDG resolution
 
 Create a shared `crate::dirs` module that provides XDG resolution functions,
 consistent with the machine subsystem pattern. This handles:
-- `global_config_dir()` → `~/.config/neovex/`
+- `global_config_dir()` → `~/.config/nimbus/`
 - `deployment_slug(app_dir)` → `<dir-name>-<sha256(canonical_path)[:8]>`
 
 The machine subsystem's existing resolvers in `machine/record.rs` stay
@@ -412,8 +412,8 @@ rather than adding compatibility shims.
 | Phase | Status | Items | Done when |
 |-------|--------|-------|-----------|
 | P1: Shared dirs module | `done` | H1 | `dirs.rs` module with `global_config_dir()` and `deployment_slug()` |
-| P2: Deployment identity | `done` | H2 | `neovex dev` writes `NEOVEX_DEPLOYMENT=local:<slug>` to `.env.local` |
-| P3: License migration | `done` | H3 | License default path is `~/.config/neovex/license.json` |
+| P2: Deployment identity | `done` | H2 | `nimbus dev` writes `NIMBUS_DEPLOYMENT=local:<slug>` to `.env.local` |
+| P3: License migration | `done` | H3 | License default path is `~/.config/nimbus/license.json` |
 | P4: Gitignore + docs | `done` | H4 | `.env.local` in gitignore templates, docs updated |
 
 ## Roadmap Items
@@ -422,25 +422,25 @@ rather than adding compatibility shims.
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| H1 | `done` | none | `crates/neovex-bin/src/dirs.rs` created with `global_config_dir()` (XDG_CONFIG_HOME with fallback to `~/.config/neovex/`) and `deployment_slug(app_dir)` (SHA-256 of canonical path, truncated to 8 hex chars, prefixed with sanitized dir name — strip non-alphanumeric chars except hyphens, lowercase). `mod dirs` added to `main.rs`. Tests pass for slug derivation determinism, XDG override, default paths, and dir names with spaces/special chars/non-ASCII. Follows the pattern from `machine/record.rs` for XDG env var resolution. `sha2` is already a workspace dependency. |
+| H1 | `done` | none | `crates/nimbus-bin/src/dirs.rs` created with `global_config_dir()` (XDG_CONFIG_HOME with fallback to `~/.config/nimbus/`) and `deployment_slug(app_dir)` (SHA-256 of canonical path, truncated to 8 hex chars, prefixed with sanitized dir name — strip non-alphanumeric chars except hyphens, lowercase). `mod dirs` added to `main.rs`. Tests pass for slug derivation determinism, XDG override, default paths, and dir names with spaces/special chars/non-ASCII. Follows the pattern from `machine/record.rs` for XDG env var resolution. `sha2` is already a workspace dependency. |
 
 ### P2 Work Queue: Deployment Identity
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| H2 | `done` | H1 | `crates/neovex-bin/src/dev.rs` updated: after resolving the app directory and before starting the server, writes `NEOVEX_DEPLOYMENT=local:<slug>` to `<app_dir>/.env.local`. Uses `dirs::deployment_slug()` for the slug. Handles the four `.env.local` states (absent, exists without var, exists with correct var, exists with different var). Dev banner shows `Deployment: local:<slug>` line. Tests cover all four `.env.local` states. |
+| H2 | `done` | H1 | `crates/nimbus-bin/src/dev.rs` updated: after resolving the app directory and before starting the server, writes `NIMBUS_DEPLOYMENT=local:<slug>` to `<app_dir>/.env.local`. Uses `dirs::deployment_slug()` for the slug. Handles the four `.env.local` states (absent, exists without var, exists with correct var, exists with different var). Dev banner shows `Deployment: local:<slug>` line. Tests cover all four `.env.local` states. |
 
 ### P3 Work Queue: License Migration
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| H3 | `done` | H1 | License default resolution moved to `neovex-bin`: in `start/boot.rs:47`, resolves the default license path via `dirs::global_config_dir().join("license.json")` when `command.license_file` is `None` and `NEOVEX_LICENSE_FILE` is not set. Passes the resolved path to `LicenseState::load()`. `DEFAULT_LICENSE_PATH` removed from `neovex-server/src/license/mod.rs:15`. Default-path fallback removed from `neovex-server/src/license/loading.rs:43-46` so the server crate has no XDG knowledge — it receives an explicit path or returns `community()`. `start/mod.rs:143` help text updated to say `~/.config/neovex/license.json`. `ARCHITECTURE.md:693` updated. Existing license tests pass. |
+| H3 | `done` | H1 | License default resolution moved to `nimbus-bin`: in `start/boot.rs:47`, resolves the default license path via `dirs::global_config_dir().join("license.json")` when `command.license_file` is `None` and `NIMBUS_LICENSE_FILE` is not set. Passes the resolved path to `LicenseState::load()`. `DEFAULT_LICENSE_PATH` removed from `nimbus-server/src/license/mod.rs:15`. Default-path fallback removed from `nimbus-server/src/license/loading.rs:43-46` so the server crate has no XDG knowledge — it receives an explicit path or returns `community()`. `start/mod.rs:143` help text updated to say `~/.config/nimbus/license.json`. `ARCHITECTURE.md:693` updated. Existing license tests pass. |
 
 ### P4 Work Queue: Gitignore And Docs
 
 | Item | Status | Hard deps | Completion gate |
 |------|--------|-----------|-----------------| 
-| H4 | `done` | H2, H3 | `.env.local` added to gitignore templates (`templates/convex/gitignore`, `templates/cloud-functions/gitignore`). `.env.local` and `**/.env.local` added to root `.gitignore`. `docs/operating/cli.md` updated with deployment identity behavior and license path change. `docs/plans/neovex-init-plan.md` updated with `.env.local` in template listings (lines 87, 105). `README.md` updated if it references license path. |
+| H4 | `done` | H2, H3 | `.env.local` added to gitignore templates (`templates/convex/gitignore`, `templates/cloud-functions/gitignore`). `.env.local` and `**/.env.local` added to root `.gitignore`. `docs/operating/cli.md` updated with deployment identity behavior and license path change. `docs/plans/nimbus-init-plan.md` updated with `.env.local` in template listings (lines 87, 105). `README.md` updated if it references license path. |
 
 ---
 
@@ -450,43 +450,43 @@ rather than adding compatibility shims.
 
 | File | Change |
 |------|--------|
-| `crates/neovex-bin/src/dirs.rs` | **New** — shared XDG + deployment slug module |
-| `crates/neovex-bin/src/main.rs` | Add `mod dirs` |
-| `crates/neovex-bin/src/dev.rs` | Write `.env.local` on startup, add `Deployment:` to banner |
-| `crates/neovex-bin/src/start/boot.rs` | Resolve default license path via `dirs::global_config_dir()` before calling `LicenseState::load()` |
-| `crates/neovex-bin/src/start/mod.rs` | Update `--license-file` help text (line 143) |
-| `crates/neovex-server/src/license/mod.rs` | Remove `DEFAULT_LICENSE_PATH` constant |
-| `crates/neovex-server/src/license/loading.rs` | Remove default-path fallback from `LicenseState::load()` (lines 43-46) |
+| `crates/nimbus-bin/src/dirs.rs` | **New** — shared XDG + deployment slug module |
+| `crates/nimbus-bin/src/main.rs` | Add `mod dirs` |
+| `crates/nimbus-bin/src/dev.rs` | Write `.env.local` on startup, add `Deployment:` to banner |
+| `crates/nimbus-bin/src/start/boot.rs` | Resolve default license path via `dirs::global_config_dir()` before calling `LicenseState::load()` |
+| `crates/nimbus-bin/src/start/mod.rs` | Update `--license-file` help text (line 143) |
+| `crates/nimbus-server/src/license/mod.rs` | Remove `DEFAULT_LICENSE_PATH` constant |
+| `crates/nimbus-server/src/license/loading.rs` | Remove default-path fallback from `LicenseState::load()` (lines 43-46) |
 
 ### Templates
 
 | File | Change |
 |------|--------|
-| `crates/neovex-bin/templates/convex/gitignore` | Add `.env.local` line |
-| `crates/neovex-bin/templates/cloud-functions/gitignore` | Add `.env.local` line |
+| `crates/nimbus-bin/templates/convex/gitignore` | Add `.env.local` line |
+| `crates/nimbus-bin/templates/cloud-functions/gitignore` | Add `.env.local` line |
 
 ### Docs
 
 | File | Change |
 |------|--------|
 | `docs/operating/cli.md` | Document `.env.local` deployment identity, license path change |
-| `docs/plans/archive/neovex-init-plan.md` | Add `.env.local` to template listings |
+| `docs/plans/archive/nimbus-init-plan.md` | Add `.env.local` to template listings |
 | `ARCHITECTURE.md` | Update license path reference (line 693) |
 | Root `.gitignore` | Add `.env.local` and `**/.env.local` |
 
-### Not changed (project-scoped `.neovex/` paths stay as-is)
+### Not changed (project-scoped `.nimbus/` paths stay as-is)
 
 | File | Reference | Why unchanged |
 |------|-----------|---------------|
-| `crates/neovex-bin/src/codegen.rs` | Passes `--app .` | Codegen writes to `.neovex/convex/` relative to app dir |
-| `crates/neovex-bin/src/deploy.rs:428,432` | `generated_convex_dir()`, `generated_cloud_functions_dir()` | Resolve from `app_dir.join(".neovex")` |
-| `crates/neovex-bin/src/start/boot.rs:359,388` | Artifact manifest paths | `.neovex/convex/` and `.neovex/firebase/` resolution unchanged (license resolution in same file changes in H3) |
-| `crates/neovex-bin/src/dev.rs:169` | Data dir default | `.neovex/dev` stays as project-local default |
-| `crates/neovex-bin/src/dev.rs:209` | `detect_app_dir` | `.neovex/convex/functions.json` check stays (artifact detection) |
-| `crates/neovex-bin/src/dev.rs:607` | Watch skip list | `.neovex` stays in skip list |
-| `crates/neovex-bin/src/cli_ux.rs:51` | Dev help example | `--data-dir ./.neovex/dev` stays (correct example) |
-| `packages/codegen/src/main.mjs:23` | `internalDir` | `path.join(appDir, ".neovex", "convex")` stays |
-| `packages/codegen/src/cloud_functions/project.mjs:4` | `CLOUD_FUNCTIONS_INTERNAL_DIR` | `[".neovex", "firebase"]` stays |
+| `crates/nimbus-bin/src/codegen.rs` | Passes `--app .` | Codegen writes to `.nimbus/convex/` relative to app dir |
+| `crates/nimbus-bin/src/deploy.rs:428,432` | `generated_convex_dir()`, `generated_cloud_functions_dir()` | Resolve from `app_dir.join(".nimbus")` |
+| `crates/nimbus-bin/src/start/boot.rs:359,388` | Artifact manifest paths | `.nimbus/convex/` and `.nimbus/firebase/` resolution unchanged (license resolution in same file changes in H3) |
+| `crates/nimbus-bin/src/dev.rs:169` | Data dir default | `.nimbus/dev` stays as project-local default |
+| `crates/nimbus-bin/src/dev.rs:209` | `detect_app_dir` | `.nimbus/convex/functions.json` check stays (artifact detection) |
+| `crates/nimbus-bin/src/dev.rs:607` | Watch skip list | `.nimbus` stays in skip list |
+| `crates/nimbus-bin/src/cli_ux.rs:51` | Dev help example | `--data-dir ./.nimbus/dev` stays (correct example) |
+| `packages/codegen/src/main.mjs:23` | `internalDir` | `path.join(appDir, ".nimbus", "convex")` stays |
+| `packages/codegen/src/cloud_functions/project.mjs:4` | `CLOUD_FUNCTIONS_INTERNAL_DIR` | `[".nimbus", "firebase"]` stays |
 
 ---
 
@@ -496,35 +496,35 @@ rather than adding compatibility shims.
    reversed course in v1.32.0 due to worktree conflicts. The industry
    consensus is that project-scoped dev state belongs in a project-local
    dotdir. Moving codegen artifacts and dev databases to XDG would sacrifice
-   discoverability (`rm -rf .neovex` as reset), portability (state travels
+   discoverability (`rm -rf .nimbus` as reset), portability (state travels
    with project), and worktree isolation — all for an aesthetic improvement
    that no successful dev tool has found worthwhile.
 
-2. **Why keep `.neovex/` instead of renaming to `.convex/`-style?**
-   `.neovex/` is the correct namespace — it is Neovex-specific state, not
+2. **Why keep `.nimbus/` instead of renaming to `.convex/`-style?**
+   `.nimbus/` is the correct namespace — it is Nimbus-specific state, not
    adapter-specific. It contains both Convex and Cloud Functions artifacts.
    The name is already established in the codebase and gitignore templates.
 
-3. **`.env.local` written on `neovex dev` from day one.** Convex writes
-   `CONVEX_DEPLOYMENT=...` to `.env.local` — Neovex follows the same
-   pattern. `neovex dev` writes `NEOVEX_DEPLOYMENT=local:<slug>` to
+3. **`.env.local` written on `nimbus dev` from day one.** Convex writes
+   `CONVEX_DEPLOYMENT=...` to `.env.local` — Nimbus follows the same
+   pattern. `nimbus dev` writes `NIMBUS_DEPLOYMENT=local:<slug>` to
    `.env.local` in the app directory. This makes the deployment identity
    inspectable, matches Convex's developer experience, and when
-   `neovex deploy` ships the value changes to a remote URL with no model
+   `nimbus deploy` ships the value changes to a remote URL with no model
    change.
 
 4. **License is user-scoped, not project-scoped.** A license applies to the
-   Neovex installation, not to a specific project. Storing it in `.neovex/`
+   Nimbus installation, not to a specific project. Storing it in `.nimbus/`
    would mean copying the license file into every project directory. The
-   correct location is `~/.config/neovex/license.json`, consistent with how
+   correct location is `~/.config/nimbus/license.json`, consistent with how
    Convex stores auth at `~/.convex/config.json` and the machine subsystem
-   stores config at `~/.config/neovex/machine/`.
+   stores config at `~/.config/nimbus/machine/`.
 
 5. **Dev banner shows deployment identity.** The dev banner adds a
    `Deployment:` line showing `local:<slug>` so developers can see their
    deployment identity without opening `.env.local`.
 
-6. **`neovex start` is unaffected.** The operator path does not resolve
+6. **`nimbus start` is unaffected.** The operator path does not resolve
    `.env.local` or derive slugs. This keeps the explicit operator contract
    clean — operators specify paths, not identity.
 
@@ -532,32 +532,32 @@ rather than adding compatibility shims.
 
 1. **Should slug use canonical path or a stable project identifier?**
    Canonical path is simple and deterministic but changes on project move.
-   An alternative is writing a stable UUID to `.neovex/project-id` on first
+   An alternative is writing a stable UUID to `.nimbus/project-id` on first
    run. This would survive moves but adds a file that needs to be either
    committed (shared identity) or gitignored (per-clone identity). **Current
    decision:** canonical path. Revisit if project-move identity loss becomes
    a real user complaint post-launch.
 
-2. **Should `.neovex/` be self-gitignoring?** Convex creates `.convex/.gitignore`
+2. **Should `.nimbus/` be self-gitignoring?** Convex creates `.convex/.gitignore`
    containing `/*` so the directory is always gitignored regardless of the
    project's root `.gitignore`. This is a nice UX touch — the developer never
-   needs to add `.neovex/` to their gitignore manually. Consider adopting
-   this pattern when `.neovex/` is first created (in `neovex dev` or
-   `neovex init`). **Decision deferred** to implementation.
+   needs to add `.nimbus/` to their gitignore manually. Consider adopting
+   this pattern when `.nimbus/` is first created (in `nimbus dev` or
+   `nimbus init`). **Decision deferred** to implementation.
 
 ---
 
 ## Phase 2+ (Out of Scope)
 
-### `neovex deploy`
+### `nimbus deploy`
 
 When remote deployment ships:
 - Deployment identity becomes server-assigned
-- `.env.local` stores `NEOVEX_DEPLOYMENT=<server-url>:<slug>`
-- `neovex dev` is "deploy to local", `neovex deploy` is "deploy to remote"
+- `.env.local` stores `NIMBUS_DEPLOYMENT=<server-url>:<slug>`
+- `nimbus dev` is "deploy to local", `nimbus deploy` is "deploy to remote"
 - Same codegen artifacts, different upload target
-- `.neovex/` still holds project-local artifacts; the deploy command reads
-  from `.neovex/` and uploads to the remote server
+- `.nimbus/` still holds project-local artifacts; the deploy command reads
+  from `.nimbus/` and uploads to the remote server
 
 ### Machine subsystem unification
 
@@ -565,10 +565,10 @@ The machine subsystem has its own XDG resolvers in `machine/record.rs`. A
 follow-on could unify both into the shared `dirs` module. Not in scope here
 to avoid coupling the migration with machine subsystem changes.
 
-### `neovex auth`
+### `nimbus auth`
 
 Future authentication flow. Auth tokens would live at
-`~/.config/neovex/auth.json` (user-scoped), following the pattern established
+`~/.config/nimbus/auth.json` (user-scoped), following the pattern established
 by this plan's `global_config_dir()`. Not in scope here.
 
 ---
@@ -578,7 +578,7 @@ by this plan's `global_config_dir()`. Not in scope here.
 | Date | Item | Status | Description | Verification |
 |------|------|--------|-------------|--------------|
 | — | — | — | Plan created | — |
-| 2026-04-28 | H1 | `done` | Created `crates/neovex-bin/src/dirs.rs` with `global_config_dir()` (XDG_CONFIG_HOME + HOME fallback), `deployment_slug()` (SHA-256 canonical path, 8 hex chars, sanitized dir name), `sanitize_dir_name()` (strip non-alphanumeric except hyphens, lowercase, empty→"app"). Added `mod dirs` to `main.rs`. Files: `dirs.rs` (new), `main.rs` (mod added). | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- dirs::`: 14 passed, 0 failed (5 consecutive parallel runs, no races). `cargo test -p neovex-bin`: 380 passed, 0 failed. |
-| 2026-04-28 | H2 | `done` | Updated `dev.rs`: added `write_env_local_deployment()` handling 4 `.env.local` states (absent, no var, correct value, different value); added `deployment_slug` field to `DevPlan`; `resolve_dev_plan` computes slug via `dirs::deployment_slug()`; dev banner shows `Deployment: local:<slug>` line with aligned column widths; removed `#[allow(dead_code)]` from `main.rs` `mod dirs`. Files: `dev.rs` (modified), `main.rs` (allow removed), `dirs.rs` (allow on `global_config_dir`). | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- dev::tests::env_local`: 6 passed, 0 failed. `cargo test -p neovex-bin -- dev::tests::dev_banner_includes_deployment_line`: 1 passed. `cargo test -p neovex-bin`: 387 passed, 0 failed. |
-| 2026-04-28 | H3 | `done` | Moved license default from `.neovex/license.json` to `~/.config/neovex/license.json`. Added `resolve_license_path()` in `start/boot.rs` (explicit → env var → XDG default). Removed `DEFAULT_LICENSE_PATH` from `neovex-server/license/mod.rs`. Removed default-path fallback from `loading.rs`. Removed `DefaultPath` variant from `LicenseSourceKind` enum. Removed unused `PathBuf` import from `license/mod.rs`. Updated re-exports in `neovex-server/lib.rs` and `neovex/lib.rs`. Updated help text in `start/mod.rs`. Updated `ARCHITECTURE.md:693`. Removed `#[allow(dead_code)]` from `dirs.rs::global_config_dir`. | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin -p neovex-server -p neovex --all-targets -- -D warnings`: clean. `cargo test -p neovex-server -- license`: 11 passed, 0 failed. `cargo test -p neovex-bin`: 387 passed, 0 failed. |
-| 2026-04-28 | H4 | `done` | Added `.env.local` to `templates/convex/gitignore` and `templates/cloud-functions/gitignore`. Added `.env.local` and `**/.env.local` to root `.gitignore`. Updated `docs/operating/cli.md` with deployment identity behavior (`.env.local` write on `neovex dev`) and license path change (`~/.config/neovex/license.json`). Updated `docs/plans/neovex-init-plan.md` template listings. `README.md` checked — no license path reference found. | `cargo fmt --all --check`: clean. `cargo clippy -p neovex-bin --all-targets -- -D warnings`: clean. `cargo test -p neovex-bin -- init`: 34 passed, 0 failed. `cargo test -p neovex-bin`: 387 passed, 0 failed. |
+| 2026-04-28 | H1 | `done` | Created `crates/nimbus-bin/src/dirs.rs` with `global_config_dir()` (XDG_CONFIG_HOME + HOME fallback), `deployment_slug()` (SHA-256 canonical path, 8 hex chars, sanitized dir name), `sanitize_dir_name()` (strip non-alphanumeric except hyphens, lowercase, empty→"app"). Added `mod dirs` to `main.rs`. Files: `dirs.rs` (new), `main.rs` (mod added). | `cargo fmt --all --check`: clean. `cargo clippy -p nimbus-bin --all-targets -- -D warnings`: clean. `cargo test -p nimbus-bin -- dirs::`: 14 passed, 0 failed (5 consecutive parallel runs, no races). `cargo test -p nimbus-bin`: 380 passed, 0 failed. |
+| 2026-04-28 | H2 | `done` | Updated `dev.rs`: added `write_env_local_deployment()` handling 4 `.env.local` states (absent, no var, correct value, different value); added `deployment_slug` field to `DevPlan`; `resolve_dev_plan` computes slug via `dirs::deployment_slug()`; dev banner shows `Deployment: local:<slug>` line with aligned column widths; removed `#[allow(dead_code)]` from `main.rs` `mod dirs`. Files: `dev.rs` (modified), `main.rs` (allow removed), `dirs.rs` (allow on `global_config_dir`). | `cargo fmt --all --check`: clean. `cargo clippy -p nimbus-bin --all-targets -- -D warnings`: clean. `cargo test -p nimbus-bin -- dev::tests::env_local`: 6 passed, 0 failed. `cargo test -p nimbus-bin -- dev::tests::dev_banner_includes_deployment_line`: 1 passed. `cargo test -p nimbus-bin`: 387 passed, 0 failed. |
+| 2026-04-28 | H3 | `done` | Moved license default from `.nimbus/license.json` to `~/.config/nimbus/license.json`. Added `resolve_license_path()` in `start/boot.rs` (explicit → env var → XDG default). Removed `DEFAULT_LICENSE_PATH` from `nimbus-server/license/mod.rs`. Removed default-path fallback from `loading.rs`. Removed `DefaultPath` variant from `LicenseSourceKind` enum. Removed unused `PathBuf` import from `license/mod.rs`. Updated re-exports in `nimbus-server/lib.rs` and `nimbus/lib.rs`. Updated help text in `start/mod.rs`. Updated `ARCHITECTURE.md:693`. Removed `#[allow(dead_code)]` from `dirs.rs::global_config_dir`. | `cargo fmt --all --check`: clean. `cargo clippy -p nimbus-bin -p nimbus-server -p nimbus --all-targets -- -D warnings`: clean. `cargo test -p nimbus-server -- license`: 11 passed, 0 failed. `cargo test -p nimbus-bin`: 387 passed, 0 failed. |
+| 2026-04-28 | H4 | `done` | Added `.env.local` to `templates/convex/gitignore` and `templates/cloud-functions/gitignore`. Added `.env.local` and `**/.env.local` to root `.gitignore`. Updated `docs/operating/cli.md` with deployment identity behavior (`.env.local` write on `nimbus dev`) and license path change (`~/.config/nimbus/license.json`). Updated `docs/plans/nimbus-init-plan.md` template listings. `README.md` checked — no license path reference found. | `cargo fmt --all --check`: clean. `cargo clippy -p nimbus-bin --all-targets -- -D warnings`: clean. `cargo test -p nimbus-bin -- init`: 34 passed, 0 failed. `cargo test -p nimbus-bin`: 387 passed, 0 failed. |

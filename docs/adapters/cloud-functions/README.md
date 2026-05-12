@@ -6,7 +6,7 @@ import { onRequest } from "firebase-functions/v2/https";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 
 export const hello = onRequest(async (req, res) => {
-  res.json({ message: "Hello from Neovex Cloud Functions!" });
+  res.json({ message: "Hello from Nimbus Cloud Functions!" });
 });
 
 export const onMessageCreated = onDocumentCreated("messages/{messageId}", async (event) => {
@@ -15,14 +15,14 @@ export const onMessageCreated = onDocumentCreated("messages/{messageId}", async 
 ```
 
 ```bash
-neovex codegen && neovex start
+nimbus codegen && nimbus start
 ```
 
-Your existing `firebase-functions/v2` handlers run on Neovex unchanged --
+Your existing `firebase-functions/v2` handlers run on Nimbus unchanged --
 with at-least-once delivery, durable retry, and Firestore document triggers.
 ~5 minutes from install to a working trigger.
 
-Node.js with `npm` is required for this authoring flow. `neovex dev` runs
+Node.js with `npm` is required for this authoring flow. `nimbus dev` runs
 codegen through `node` and auto-runs `npm install` when declared packages are
 missing locally.
 
@@ -31,7 +31,7 @@ missing locally.
 **New project:**
 
 ```bash
-neovex init cloud-functions my-functions-app
+nimbus init cloud-functions my-functions-app
 ```
 
 ```bash
@@ -39,10 +39,10 @@ cd my-functions-app
 ```
 
 ```bash
-neovex dev
+nimbus dev
 ```
 
-`neovex init cloud-functions` scaffolds the backend project files. `neovex dev`
+`nimbus init cloud-functions` scaffolds the backend project files. `nimbus dev`
 then installs missing packages in `functions/`, runs codegen, and starts the
 local server.
 
@@ -53,8 +53,8 @@ local server.
 **2. Generate artifacts and start:**
 
 ```bash
-neovex codegen
-neovex start
+nimbus codegen
+nimbus start
 ```
 
 **3. Test it:**
@@ -66,7 +66,7 @@ curl http://localhost:8080/hello
 **4. Deploy to production:**
 
 ```bash
-neovex deploy --url http://production:8080 --token <deploy-token>
+nimbus deploy --url http://production:8080 --token <deploy-token>
 ```
 
 ## Project Layout (Firebase style)
@@ -79,7 +79,7 @@ my-functions-app/
 │   ├── tsconfig.json
 │   └── src/
 │       └── index.ts
-└── .neovex/
+└── .nimbus/
     └── firebase/
         ├── functions.json
         ├── bundle.mjs
@@ -93,7 +93,7 @@ my-functions/
 ├── package.json
 ├── src/
 │   └── index.ts
-└── .neovex/
+└── .nimbus/
     └── firebase/
         ├── targets.json       # Maps functions to routes
         ├── functions.json
@@ -123,7 +123,7 @@ export const onMessageCreated = onDocumentCreated("messages/{messageId}", async 
 });
 
 export const hello = onRequest(async (req, res) => {
-  res.json({ message: "Hello from Neovex Cloud Functions!" });
+  res.json({ message: "Hello from Nimbus Cloud Functions!" });
 });
 
 export const greet = onCall(async (request) => {
@@ -154,7 +154,7 @@ export const greet = onCall(async (request) => {
 ## Configuration
 
 - Firebase project auto-detected from `firebase.json` or `--app-dir`
-- Standalone Functions Framework requires `.neovex/firebase/targets.json`
+- Standalone Functions Framework requires `.nimbus/firebase/targets.json`
 - Covered `firebase-admin` surface: `initializeApp()`, `getFirestore()`, `get()`, `set()`, `update()`, `delete()`
 
 ## Known Limitations

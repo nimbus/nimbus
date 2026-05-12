@@ -87,10 +87,10 @@ of the same tenant, but never from a different tenant.
 ### BI0: Rename `bundle_identity()` → `identity()`
 
 Files to change:
-- `crates/neovex-runtime/src/runtime/bundle.rs` — method rename
-- `crates/neovex-runtime/src/affinity.rs` — call sites
-- `crates/neovex-runtime/src/runtime/bootstrap/snapshot/retained_pool.rs` — call sites
-- `crates/neovex-runtime/src/runtime.rs` — test call sites
+- `crates/nimbus-runtime/src/runtime/bundle.rs` — method rename
+- `crates/nimbus-runtime/src/affinity.rs` — call sites
+- `crates/nimbus-runtime/src/runtime/bootstrap/snapshot/retained_pool.rs` — call sites
+- `crates/nimbus-runtime/src/runtime.rs` — test call sites
 - Any other `bundle_identity()` call sites found via grep
 
 This is a mechanical rename. The internal field name `identity` is already
@@ -145,14 +145,14 @@ A test that:
 4. Asserts cold miss (no warm hit) because the tenant labels differ
 5. Invokes tenant-A again and asserts warm hit
 
-This test goes in `crates/neovex-runtime/src/runtime/tests/cooperative.rs` or
+This test goes in `crates/nimbus-runtime/src/runtime/tests/cooperative.rs` or
 a new `warm_pool.rs` test file.
 
 ## Verification Contract
 
 | Phase | Required verification |
 |-------|---------------------|
-| BI0 | `cargo test -p neovex-runtime --lib` passes; no references to `bundle_identity()` remain; `make clippy` clean |
+| BI0 | `cargo test -p nimbus-runtime --lib` passes; no references to `bundle_identity()` remain; `make clippy` clean |
 | BI1 | Compiles; existing tests pass (they use `None` tenant label) |
 | BI2 | Existing warm pool tests pass; warm pool metrics unchanged for single-tenant scenarios |
 | BI3 | New cross-tenant isolation test passes; warm_pool_hits == 0 for cross-tenant attempts |
@@ -170,7 +170,7 @@ a new `warm_pool.rs` test file.
 
 | Date | Phase | Outcome | Summary | Verification | Next Step |
 |------|-------|---------|---------|--------------|-----------|
-| 2026-04-08 | BI0 | done | Renamed `bundle_identity()` → `identity()` in bundle.rs, affinity.rs, retained_pool.rs, runtime.rs tests | `cargo test -p neovex-runtime --lib` 71 pass; grep confirms zero `.bundle_identity()` call sites in crates/ | BI1 |
+| 2026-04-08 | BI0 | done | Renamed `bundle_identity()` → `identity()` in bundle.rs, affinity.rs, retained_pool.rs, runtime.rs tests | `cargo test -p nimbus-runtime --lib` 71 pass; grep confirms zero `.bundle_identity()` call sites in crates/ | BI1 |
 | 2026-04-08 | BI1 | done | Added `tenant_label: Option<String>` to `RuntimeBundleIdentity`; added `RuntimeBundle::for_tenant()` constructor; `new()` and `with_expected_sha256()` pass `None` | Workspace compiles clean; all 71 existing tests pass | BI2 |
 | 2026-04-08 | BI2 | done | `RuntimeAffinityKey::Script` now includes `tenant_label: Option<String>`; warm pool matching via derived `PartialEq` automatically enforces tenant isolation | `make clippy` clean; all tests pass | BI3 |
 | 2026-04-08 | BI3 | done | Added `bundle_identity_includes_tenant_label` (unit) and `warm_pool_cross_tenant_isolation` (integration) tests proving cross-tenant warm pool entries are never shared | Both tests pass; warm_pool_hits==0 for cross-tenant, warm_pool_hits==1 for same-tenant | — |

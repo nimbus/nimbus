@@ -1,6 +1,6 @@
 # Native Transport Evolution Plan
 
-Proposed follow-on plan for Neovex-native client transport evolution after the
+Proposed follow-on plan for Nimbus-native client transport evolution after the
 completed Firebase compatibility, multi-adapter hardening, and
 runtime-capability boundary cleanup waves. This plan exists to keep the native
 transport architecture clean and extensible pre-launch without conflating that
@@ -10,7 +10,7 @@ plan.
 The intended scope is narrow and explicit:
 
 - preserve the current JSON-over-HTTP plus JSON-over-WebSocket baseline as the
-  shipping native contract until a better option is proven on Neovex's actual
+  shipping native contract until a better option is proven on Nimbus's actual
   workload,
 - extract the internal seams needed for future codec negotiation and future
   transport alternatives,
@@ -22,7 +22,7 @@ The intended scope is narrow and explicit:
   resume subscriptions from a known position instead of re-fetching from
   scratch.
 
-This is a Neovex-native plan. It does **not** own Firebase unary transport,
+This is a Nimbus-native plan. It does **not** own Firebase unary transport,
 Firestore protobuf schemas, Firebase WebChannel compatibility, or Convex wire
 compatibility work.
 
@@ -42,7 +42,7 @@ compatibility work.
 
 ## Why This Exists
 
-Pre-launch is the right time to decide whether Neovex should keep its current
+Pre-launch is the right time to decide whether Nimbus should keep its current
 native JSON transport as the long-term default, add optional binary codecs, or
 grow an alternative transport such as WebTransport. It is **not** the right
 time to assume those changes are automatically better without repo-specific
@@ -51,8 +51,8 @@ evidence.
 This plan captures the future architecture work so the repo can:
 
 - stay DRY through shared session and codec seams,
-- avoid transport-specific logic leaking into `neovex-core` or
-  `neovex-engine`,
+- avoid transport-specific logic leaking into `nimbus-core` or
+  `nimbus-engine`,
 - and preserve compatibility boundaries for Convex and Firebase instead of
   forcing one public wire protocol everywhere.
 
@@ -60,13 +60,13 @@ This plan captures the future architecture work so the repo can:
 
 - The native WebSocket path is JSON-text only today. Inbound and outbound
   serialization happen directly in
-  `crates/neovex-server/src/ws/socket/transport.rs`.
+  `crates/nimbus-server/src/ws/socket/transport.rs`.
 - Native WebSocket frame shapes are currently defined in
-  `crates/neovex-server/src/protocol.rs` as JSON-tagged `ClientMessage` and
+  `crates/nimbus-server/src/protocol.rs` as JSON-tagged `ClientMessage` and
   `ServerMessage`.
-- The browser SDK path in `packages/neovex/src/browser.ts`,
-  `packages/neovex/src/browser-utils.ts`, and
-  `packages/neovex/src/http-client.ts` is also JSON-specific today.
+- The browser SDK path in `packages/nimbus/src/browser.ts`,
+  `packages/nimbus/src/browser-utils.ts`, and
+  `packages/nimbus/src/http-client.ts` is also JSON-specific today.
 - `docs/plans/archive/websocket-protocol-plan.md` already owns subprotocol
   negotiation, hello or client_hello handshake, structured error schema, and
   versioned protocol negotiation. This plan must consume that groundwork
@@ -96,18 +96,18 @@ This plan captures the future architecture work so the repo can:
 
 ## Design Rules
 
-1. `neovex-core` remains zero-I/O and wire-format agnostic.
-2. `neovex-engine` remains transport-agnostic; transport framing and codec
+1. `nimbus-core` remains zero-I/O and wire-format agnostic.
+2. `nimbus-engine` remains transport-agnostic; transport framing and codec
    selection stay in server and SDK layers.
 3. JSON remains the default native wire format until a benchmark-backed plan
    item explicitly changes that default.
 4. Future binary codec support is optional and negotiated; it is not assumed to
    replace JSON globally.
 5. Future WebTransport support is additive behind shared session semantics; it
-   is not a reason to fork Neovex semantics or bypass the active WebSocket
+   is not a reason to fork Nimbus semantics or bypass the active WebSocket
    protocol plan.
 6. Firebase and Convex compatibility contracts stay intact even if native
-   Neovex transport evolves.
+   Nimbus transport evolves.
 
 ## Out Of Scope
 
@@ -128,7 +128,7 @@ Refresh the current native transport evidence before any execution work:
   in server and SDK code,
 - collect current browser and Rust ecosystem state for WebTransport and codec
   libraries,
-- and define the benchmark harness and representative Neovex-native payloads
+- and define the benchmark harness and representative Nimbus-native payloads
   needed to compare JSON versus optional binary codecs, including
   JSON-with-`permessage-deflate` WebSocket compression as a baseline so the
   evidence can distinguish whether the simpler change (enabling compression)
@@ -165,7 +165,7 @@ Completion gate:
 ### NTE3 Optional Binary Native Codec
 
 Evaluate and, if justified by evidence, add an optional negotiated binary codec
-for the native Neovex protocol.
+for the native Nimbus protocol.
 
 Likely first candidate:
 
@@ -174,7 +174,7 @@ Likely first candidate:
 
 Completion gate:
 
-- A benchmark-backed decision exists for whether Neovex should ship optional
+- A benchmark-backed decision exists for whether Nimbus should ship optional
   MessagePack support, and if yes, the rollout is explicitly negotiated and
   remains JSON-default.
 
@@ -195,7 +195,7 @@ Completion gate:
 - The plan records whether WebTransport should remain deferred, ship as an
   experiment, or be promoted toward wider use, based on browser support, Rust
   implementation maturity, local-development ergonomics (including TLS
-  certificate management), and Neovex workload evidence.
+  certificate management), and Nimbus workload evidence.
 
 ### NTE5 Connection Resumption
 
@@ -229,7 +229,7 @@ Completion gate:
 |------|--------|------------|------|
 | NTE1.1 Evidence refresh and codebase inventory | `pending` | activation gate | Record current JSON framing points, existing `NegotiatedWebSocketProtocol` seam, reader/writer asymmetry, session coupling, and the exact reuse boundary with `docs/plans/archive/websocket-protocol-plan.md` |
 | NTE1.2 External transport and codec research refresh | `pending` | NTE1.1 | Refresh 2026 ecosystem evidence for WebTransport, MessagePack libraries, browser support, and Rust implementation maturity |
-| NTE1.3 Benchmark harness and payload definition | `pending` | NTE1.1 | Define the Neovex-native message corpus and benchmark method; must include JSON-with-`permessage-deflate` as a baseline alongside raw JSON and binary candidates |
+| NTE1.3 Benchmark harness and payload definition | `pending` | NTE1.1 | Define the Nimbus-native message corpus and benchmark method; must include JSON-with-`permessage-deflate` as a baseline alongside raw JSON and binary candidates |
 | NTE2.1 Server codec dispatch seam | `pending` | NTE1.3 | Formalize `to_text(protocol)` into a bytes-level dispatch; make `spawn_socket_reader` protocol-aware to match the writer |
 | NTE2.2 SDK codec and transport seam | `pending` | NTE2.1 | Keep browser and HTTP clients transport-aware but message-semantics-shared |
 | NTE3.1 MessagePack spike | `pending` | NTE2.2 | Prototype optional native MessagePack negotiation behind the existing native protocol semantics |

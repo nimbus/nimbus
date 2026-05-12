@@ -1,6 +1,6 @@
 # Horizontal Scaling Architecture
 
-This document describes how the single Neovex binary scales from one node to
+This document describes how the single Nimbus binary scales from one node to
 many, across different compute models (V8 isolates, microVMs) and storage
 backends (embedded, external, replicated).
 
@@ -14,12 +14,12 @@ Everything runs in one process. No cluster coordination needed.
 flowchart TD
     Client["Clients · HTTP + WebSocket"]
 
-    subgraph binary["neovex · single binary · single node"]
-        Server["neovex-server · transport + ingress"]
-        Engine["neovex-engine · coordinator"]
-        Runtime["neovex-runtime · V8 isolate pool"]
-        Sandbox["neovex-sandbox · krun microVMs"]
-        Storage["neovex-storage · persistence"]
+    subgraph binary["nimbus · single binary · single node"]
+        Server["nimbus-server · transport + ingress"]
+        Engine["nimbus-engine · coordinator"]
+        Runtime["nimbus-runtime · V8 isolate pool"]
+        Sandbox["nimbus-sandbox · krun microVMs"]
+        Storage["nimbus-storage · persistence"]
 
         Server --> Engine
         Server --> Runtime
@@ -63,7 +63,7 @@ same disk.
 **The deployment story IS the product.**
 
 Most distributed systems assume controlled infrastructure: VPCs, DNS, load
-balancers, service meshes. Neovex bets on a different story: run the binary on
+balancers, service meshes. Nimbus bets on a different story: run the binary on
 any machine, anywhere, and it joins the cluster. No infrastructure. No
 orchestrator. The binary IS the orchestrator.
 
@@ -75,7 +75,7 @@ This means:
 
 This thesis drives the library choices below. We prefer transformative
 architectural bets over conservative stability when the upside reshapes what
-the product can be. Neovex is pre-stable — we can absorb API churn in
+the product can be. Nimbus is pre-stable — we can absorb API churn in
 dependencies.
 
 ---
@@ -89,7 +89,7 @@ libraries.
 
 ```mermaid
 flowchart TD
-    subgraph cluster["Cluster Substrate · embedded in every neovex binary"]
+    subgraph cluster["Cluster Substrate · embedded in every nimbus binary"]
         subgraph iroh_stack["Iroh Ecosystem"]
             Iroh["iroh · QUIC mesh\nidentity · NAT traversal · relay"]
             Gossip["iroh-gossip · pub/sub overlay\nHyParView membership + PlumTree broadcast"]
@@ -107,7 +107,7 @@ flowchart TD
 
 ### Iroh protocols — what each does
 
-| Protocol | Built on | Purpose in Neovex |
+| Protocol | Built on | Purpose in Nimbus |
 |----------|----------|-------------------|
 | **iroh** (core) | Quinn QUIC | Encrypted mesh. Public-key identity. NAT holepunching + relay fallback. Connection lifecycle events. |
 | **iroh-gossip** | iroh streams | Topic-based pub/sub overlay. HyParView handles membership + liveness detection (connection-based, logarithmic scaling). PlumTree handles efficient broadcast (eager-push + lazy-push trees). Scales to 2000+ nodes on phone-grade resources. |
@@ -115,7 +115,7 @@ flowchart TD
 
 ### What each protocol replaces
 
-| Concern | Traditional approach | Neovex (Iroh-native) |
+| Concern | Traditional approach | Nimbus (Iroh-native) |
 |---------|---------------------|----------------------|
 | Node mesh + NAT | VPC + Tailscale + service mesh | **iroh** core |
 | Membership + failure detection | Foca / Chitchat / SWIM library | **iroh-gossip** HyParView layer |
@@ -134,14 +134,14 @@ filled from the passive set automatically. This is connection-liveness-based
 detection: dead peers are detected through broken QUIC connections rather than
 explicit ping probes.
 
-For clusters under 20 nodes (where Neovex maintains a full mesh of QUIC
+For clusters under 20 nodes (where Nimbus maintains a full mesh of QUIC
 connections via iroh), this is strictly sufficient. Every node has a direct
 connection to every other node — a broken connection IS instant failure
 detection. SWIM's indirect-probe and suspicion sub-protocol exist for large
 clusters where you CAN'T maintain full connectivity. At our initial scale,
 they're unnecessary complexity.
 
-If Neovex grows past 20+ nodes where full mesh becomes impractical,
+If Nimbus grows past 20+ nodes where full mesh becomes impractical,
 iroh-gossip's partial-view protocol (logarithmic resource growth) handles it
 natively — this is exactly what HyParView was designed for.
 
@@ -151,7 +151,7 @@ iroh-gossip provides topic-based pub/sub out of the box. For subscription
 invalidation:
 
 ```
-Topic model (maps directly to Neovex semantics):
+Topic model (maps directly to Nimbus semantics):
 ├── topic:<tenant_id>:mutations     → all mutations for a tenant
 ├── topic:<tenant_id>:<table_name>  → per-table granularity (if needed)
 └── topic:cluster:state             → node capacity, scheduling metadata
@@ -402,8 +402,8 @@ flowchart LR
 | Storage Mode | Nodes | Consensus | Who owns replication | Best for |
 |---|---|---|---|---|
 | **redb / SQLite** | 1 | None | N/A | Dev, single-machine prod |
-| **redb + openraft** | 3-5 | Built-in Raft | Neovex binary | Self-contained clusters, no external deps |
-| **SQLite + openraft** | 3-5 | Built-in Raft | Neovex binary | Same, with SQLite ecosystem tools |
+| **redb + openraft** | 3-5 | Built-in Raft | Nimbus binary | Self-contained clusters, no external deps |
+| **SQLite + openraft** | 3-5 | Built-in Raft | Nimbus binary | Same, with SQLite ecosystem tools |
 | **PostgreSQL** | N | External (PG replication) | Postgres | Teams with existing PG infrastructure |
 | **MySQL** | N | External (MySQL replication) | MySQL | Teams with existing MySQL infrastructure |
 | **FoundationDB** | N | External (FDB consensus) | FoundationDB | Convex-grade distributed KV, enterprise |
@@ -416,7 +416,7 @@ flowchart LR
 flowchart TD
     Client["Clients · HTTP + WebSocket"]
 
-    subgraph binary["neovex · single binary · every node runs this"]
+    subgraph binary["nimbus · single binary · every node runs this"]
         direction TB
 
         subgraph transport["Transport Layer · axum"]
@@ -464,7 +464,7 @@ flowchart TD
         Iroh --> Gossip & Blobs & Raft
     end
 
-    Peers["Other neovex nodes\n(anywhere in the world)"]
+    Peers["Other nimbus nodes\n(anywhere in the world)"]
     Client <--> HTTP & WS
     Iroh <-.->|"encrypted QUIC\nNAT-traversing"| Peers
 
@@ -677,7 +677,7 @@ gossip. The boundary contains the blast radius.
 
 ## 12. What Kubernetes Does That We Replace
 
-| K8s concept | Neovex equivalent | Implementation |
+| K8s concept | Nimbus equivalent | Implementation |
 |-------------|-------------------|----------------|
 | etcd | openraft (embedded) | Raft log over Iroh streams |
 | kube-apiserver | Raft leader | Leader node makes placement decisions |
@@ -794,7 +794,7 @@ In a VPC, nodes have stable private IPs and can reach each other directly.
 No NAT traversal needed. No relay needed. No external discovery needed.
 
 ```toml
-# neovex.toml — enterprise VPC configuration
+# nimbus.toml — enterprise VPC configuration
 [cluster]
 discovery = "static"
 relay = "disabled"
@@ -812,7 +812,7 @@ This mirrors how Consul, CockroachDB, and Nomad handle VPC discovery: a seed
 list of 3-5 known addresses. After initial contact, iroh-gossip disseminates
 the full topology — you only need to reach one seed.
 
-Alternatively, use DNS SRV records (`_neovex._quic.cluster.internal`) pointing
+Alternatively, use DNS SRV records (`_nimbus._quic.cluster.internal`) pointing
 to seed nodes. This is how most enterprise teams prefer it — they manage DNS,
 not config files.
 
@@ -923,7 +923,7 @@ flowchart TD
         Balance["Load rebalancing\n(gossip-reported saturation)"]
     end
 
-    subgraph node_level["Node Level (each neovex binary)"]
+    subgraph node_level["Node Level (each nimbus binary)"]
         Pool["V8 Isolate Pool\n(tokio tasks, not OS processes)"]
         Invoke["Function invocation\n(load bundle → execute → return)"]
         Bridge["HostBridge\n(ctx.db.* → Engine → Storage)"]
@@ -942,7 +942,7 @@ flowchart TD
 | Concern | How it works |
 |---------|--------------|
 | **Scheduling** | Leader assigns tenant affinity for subscription locality. Any node CAN run any function — affinity is a preference, not a constraint. |
-| **Lifecycle** | In-process tokio tasks. No OS processes, no systemd, no conmon. The neovex binary manages all isolates directly. |
+| **Lifecycle** | In-process tokio tasks. No OS processes, no systemd, no conmon. The nimbus binary manages all isolates directly. |
 | **Scaling** | Add a node → leader rebalances tenant affinity → new node immediately handles invocations. |
 | **Failure** | Node dies → leader reassigns its tenants → other nodes absorb (stateless, instant failover). |
 | **Bundle delivery** | iroh-blobs distributes function bundles (BLAKE3 content-addressed). Node fetches bundle on first invocation of a new deploy. |
@@ -961,7 +961,7 @@ flowchart TD
         Rollout["Rolling deploys\n(drain old → place new)"]
     end
 
-    subgraph node_level["Node Level (each neovex binary)"]
+    subgraph node_level["Node Level (each nimbus binary)"]
         direction TB
         Agent["Node Agent\n(receives placement commands via Iroh)"]
         Systemd["systemd\n(process lifecycle, cgroups, journal)"]
@@ -995,20 +995,20 @@ Dynamically scheduled microVMs use `systemd-run` transient service units
 | systemd provides | Why it matters |
 |------------------|----------------|
 | Restart policies (`Restart=on-failure`) | MicroVM crashes → systemd restarts locally, no Raft round-trip |
-| Cgroup delegation | CPU/memory limits enforced by the kernel, not the neovex process |
+| Cgroup delegation | CPU/memory limits enforced by the kernel, not the nimbus process |
 | Journal integration | Logs captured via journald, queryable with `journalctl -u vm-<id>` |
 | Process tracking | systemd knows exactly which processes belong to each VM |
-| Scope isolation | VM cgroup is independent of the neovex binary's cgroup |
+| Scope isolation | VM cgroup is independent of the nimbus binary's cgroup |
 
 ```bash
-# What the neovex node agent does when it receives a placement command:
+# What the nimbus node agent does when it receives a placement command:
 systemd-run \
-  --unit="neovex-vm-${service_id}" \
+  --unit="nimbus-vm-${service_id}" \
   --property=Restart=on-failure \
   --property=RestartSec=2s \
   --property=MemoryMax=${memory_limit} \
   --property=CPUQuota=${cpu_quota} \
-  -- conmon --runtime /usr/libexec/neovex/crun ...
+  -- conmon --runtime /usr/libexec/nimbus/crun ...
 ```
 
 **Why transient units, not quadlets:**
@@ -1025,7 +1025,7 @@ For Raft-scheduled workloads with placement churn, transient units avoid
 truth — the node agent translates it into a systemd unit immediately.
 
 **Quadlets are used for:**
-- The neovex binary itself (`neovex.service` or `neovex.container`)
+- The nimbus binary itself (`nimbus.service` or `nimbus.container`)
 - Static infrastructure (monitoring, log shippers, relay servers)
 - Not for dynamically scheduled workloads
 
@@ -1038,7 +1038,7 @@ truth — the node agent translates it into a systemd unit immediately.
 | Node failure | Raft leader detects via gossip | Reschedules all VMs to healthy nodes |
 | Rolling deploy | Raft leader coordinates | Drains old version, places new version progressively |
 | Scale up/down | Raft leader | Adds/removes VM instances based on desired state |
-| Resource limit enforcement | systemd cgroups | Kernel-level, survives neovex binary crash |
+| Resource limit enforcement | systemd cgroups | Kernel-level, survives nimbus binary crash |
 
 **OCI image distribution:**
 
@@ -1170,7 +1170,7 @@ flowchart TD
 | Dimension | V8 Isolates | MicroVMs (OCI) | Storage |
 |-----------|-------------|----------------|---------|
 | **Scheduling** | Leader tenant affinity | Leader placement + systemd local | Raft log replication |
-| **Lifecycle** | In-process (neovex owns) | systemd (OS owns local restarts) | Raft commit protocol |
+| **Lifecycle** | In-process (nimbus owns) | systemd (OS owns local restarts) | Raft commit protocol |
 | **Failure (local)** | Retry in-process | systemd restarts | Raft leader re-proposes |
 | **Failure (node)** | Leader reassigns tenants | Leader reschedules VMs elsewhere | Raft elects new leader, reads continue on remaining replicas |
 | **Scaling** | Instant (add node → rebalance) | Seconds (pull image → start VM) | Add follower → Raft snapshot + catch-up |
@@ -1182,7 +1182,7 @@ flowchart TD
 
 ## 15. Multi-Tenancy Across The Cluster
 
-Tenants are the unit of horizontal scaling. Neovex does NOT shard a single
+Tenants are the unit of horizontal scaling. Nimbus does NOT shard a single
 tenant across nodes — it distributes different tenants across different nodes.
 Each tenant is a complete, isolated application with its own storage, bundles,
 schemas, subscriptions, and optionally its own declared services.

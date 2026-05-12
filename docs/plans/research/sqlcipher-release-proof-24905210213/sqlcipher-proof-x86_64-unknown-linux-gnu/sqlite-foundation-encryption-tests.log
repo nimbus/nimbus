@@ -1,6 +1,6 @@
-$ cargo test -p neovex-storage sqlite_foundation::encryption -- --nocapture
+$ cargo test -p nimbus-storage sqlite_foundation::encryption -- --nocapture
 [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.18s
-[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/neovex_storage-920d25ae8fb9f5a2)
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/nimbus_storage-920d25ae8fb9f5a2)
 
 running 9 tests
 test tests::sqlite_foundation::encryption::encrypted_sqlite_store_wrong_key_fails ... ok

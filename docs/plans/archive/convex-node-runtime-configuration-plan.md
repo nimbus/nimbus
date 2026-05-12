@@ -6,16 +6,16 @@ Owner: Convex adapter / Node-compatible runtime
 
 ## Purpose
 
-Make Neovex's Convex-compatible Node runtime surface match the developer
+Make Nimbus's Convex-compatible Node runtime surface match the developer
 contract Convex documents today, while keeping support claims evidence-backed.
 The target experience is familiar to Convex developers:
 
 - `"use node"` at the top of a function module selects the Node.js runtime for
   actions in that module.
 - `convex.json` can declare `node.nodeVersion` as `"20"`, `"22"`, or `"24"`.
-- Neovex keeps Node22 as its default until a deliberate Node24-default
+- Nimbus keeps Node22 as its default until a deliberate Node24-default
   migration is planned and verified.
-- `neovex dev --once --debug-node-apis` and the codegen CLI equivalent explain
+- `nimbus dev --once --debug-node-apis` and the codegen CLI equivalent explain
   Node builtin usage that should move behind `"use node"`.
 - Node builtin diagnostics recognize both bare and `node:` specifiers such as
   `fs` and `node:fs`.
@@ -111,7 +111,7 @@ Close criteria:
 
 Status: `done`
 
-Add `neovex dev --once --debug-node-apis` and the codegen CLI equivalent. The
+Add `nimbus dev --once --debug-node-apis` and the codegen CLI equivalent. The
 diagnostic pass should identify Node builtin imports/requires in files that do
 not opt into `"use node"` and explain how to fix the owning module.
 
@@ -127,7 +127,7 @@ Close criteria:
 
 Status: `done`
 
-Align Neovex docs and artifact metadata with Convex bundling behavior for Node
+Align Nimbus docs and artifact metadata with Convex bundling behavior for Node
 actions, including `node.externalPackages`. Keep unresolved package behavior
 truthful if server-side installation is not yet supported.
 
@@ -150,7 +150,7 @@ across code, docs, and tests.
 Close criteria:
 
 - Plan status is `done` and indexed as a stable baseline.
-- `npm run test --workspace @neovex/codegen` passes.
+- `npm run test --workspace @nimbus/codegen` passes.
 - Focused Rust tests for runtime target/config loading pass.
 - `cargo fmt --all --check` and `git diff --check` pass.
 

@@ -1,7 +1,7 @@
 # Cloud Functions Root Defaults Contract
 
 This document records the `T0.6` choice for `firebase-functions/v2` root
-imports and `setGlobalOptions()` inheritance on Neovex.
+imports and `setGlobalOptions()` inheritance on Nimbus.
 
 ## Decision
 
@@ -15,12 +15,12 @@ contract:
   covered base HTTP and callable slices
 - root-level `onInit()` is explicitly deferred and must fail validation
 
-This keeps the root package source-compatible without pretending that Neovex
+This keeps the root package source-compatible without pretending that Nimbus
 already implements the full Google Cloud deployment and runtime option matrix.
 
 ## Inheritance Order
 
-For covered document triggers, Neovex resolves defaults in this order:
+For covered document triggers, Nimbus resolves defaults in this order:
 
 1. explicit per-handler option
 2. `setGlobalOptions()` default
@@ -72,7 +72,7 @@ The first slice rejects these root-level claims up front:
 - `vpcConnectorEgressSettings`
 - `networkInterface`
 
-Those are not being ignored. They are simply outside the first-slice Neovex
+Those are not being ignored. They are simply outside the first-slice Nimbus
 contract and must fail validation until a later phase promotes them.
 
 ## Boundary

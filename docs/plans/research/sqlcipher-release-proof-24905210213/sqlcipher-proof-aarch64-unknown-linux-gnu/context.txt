@@ -1,6 +1,6 @@
 script=scripts/verify-sqlcipher-proof.sh
 mode=cargo-lanes
-cwd=/home/runner/work/neovex/neovex
+cwd=/home/runner/work/nimbus/nimbus
 runner_os=Linux
 runner_arch=ARM64
 github_job=build-linux-arm64

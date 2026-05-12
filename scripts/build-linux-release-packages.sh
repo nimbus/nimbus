@@ -3,19 +3,19 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: build-linux-release-packages.sh --output-dir <path> --neovex-binary <path> --neovex-crun-binary <path> --version <semver> [options]
+usage: build-linux-release-packages.sh --output-dir <path> --nimbus-binary <path> --nimbus-crun-binary <path> --version <semver> [options]
 
-Stage the Neovex Linux package payloads, render nFPM manifests for Debian and
+Stage the Nimbus Linux package payloads, render nFPM manifests for Debian and
 RPM formats, and optionally build the packages when `nfpm` is available.
 
 Required:
   --output-dir <path>          Output root for staged payloads, manifests, and packages
-  --neovex-binary <path>       Linux `neovex` binary to package at /usr/bin/neovex
-  --neovex-crun-binary <path>  Linux patched `crun` binary to package at /usr/libexec/neovex/crun
-  --version <semver>           Neovex package version (leading `v` accepted)
+  --nimbus-binary <path>       Linux `nimbus` binary to package at /usr/bin/nimbus
+  --nimbus-crun-binary <path>  Linux patched `crun` binary to package at /usr/libexec/nimbus/crun
+  --version <semver>           Nimbus package version (leading `v` accepted)
 
 Optional:
-  --crun-version <semver>      neovex-crun package version (default: --version)
+  --crun-version <semver>      nimbus-crun package version (default: --version)
   --arch <amd64|arm64>         Package architecture (default: host architecture)
   --format <deb|rpm>           Package format to build; repeatable (default: deb + rpm)
   --nfpm <path>                Explicit nFPM binary path (default: `nfpm` on PATH)
@@ -24,16 +24,16 @@ Optional:
 
 Examples:
   bash scripts/build-linux-release-packages.sh \
-    --output-dir /tmp/neovex-linux-packages \
-    --neovex-binary /tmp/neovex \
-    --neovex-crun-binary /tmp/neovex-crun \
+    --output-dir /tmp/nimbus-linux-packages \
+    --nimbus-binary /tmp/nimbus \
+    --nimbus-crun-binary /tmp/nimbus-crun \
     --version 0.1.10 \
     --arch amd64
 
   bash scripts/build-linux-release-packages.sh \
-    --output-dir /tmp/neovex-linux-packages \
-    --neovex-binary /tmp/neovex \
-    --neovex-crun-binary /tmp/neovex-crun \
+    --output-dir /tmp/nimbus-linux-packages \
+    --nimbus-binary /tmp/nimbus \
+    --nimbus-crun-binary /tmp/nimbus-crun \
     --version v0.1.10 \
     --crun-version 0.1.4 \
     --render-only
@@ -94,43 +94,43 @@ append_yaml_list() {
   } >>"$file_path"
 }
 
-write_neovex_readme() {
+write_nimbus_readme() {
   local file_path="$1"
   local version="$2"
   cat >"$file_path" <<EOF
-# neovex
+# nimbus
 
 Version: ${version}
-Repository: https://github.com/agentstation/neovex
+Repository: https://github.com/nimbus/nimbus
 
-This package installs the Neovex host CLI at /usr/bin/neovex.
+This package installs the Nimbus host CLI at /usr/bin/nimbus.
 
-On Linux production hosts, Neovex stays aligned with the existing service
+On Linux production hosts, Nimbus stays aligned with the existing service
 execution stack instead of bundling Podman itself. The distro package depends
 on the host container primitives (buildah, conmon, netavark, aardvark-dns)
-plus the private neovex-crun runtime package that installs to
-/usr/libexec/neovex/crun.
+plus the private nimbus-crun runtime package that installs to
+/usr/libexec/nimbus/crun.
 EOF
 }
 
-write_neovex_crun_readme() {
+write_nimbus_crun_readme() {
   local file_path="$1"
   local version="$2"
   cat >"$file_path" <<EOF
-# neovex-crun
+# nimbus-crun
 
 Version: ${version}
-Repository: https://github.com/agentstation/neovex-crun
+Repository: https://github.com/nimbus/nimbus-crun
 
-This package installs the patched private runtime at /usr/libexec/neovex/crun.
+This package installs the patched private runtime at /usr/libexec/nimbus/crun.
 
-It does not replace the system crun package. Neovex invokes this private path
+It does not replace the system crun package. Nimbus invokes this private path
 explicitly so distro Podman/CRI-O flows can keep using the distro runtime
 unmodified.
 EOF
 }
 
-render_neovex_manifest() {
+render_nimbus_manifest() {
   local manifest_path="$1"
   local version="$2"
   local arch="$3"
@@ -140,36 +140,36 @@ render_neovex_manifest() {
 
   cat >"$manifest_path" <<EOF
 # yaml-language-server: \$schema=https://nfpm.goreleaser.com/schema.json
-name: neovex
+name: nimbus
 arch: ${arch}
 platform: linux
 version: ${version}
 version_schema: semver
 section: devel
 priority: optional
-maintainer: AgentStation
-vendor: AgentStation
-homepage: https://github.com/agentstation/neovex
-license: Neovex-Community-1.0
+maintainer: Nimbus
+vendor: Nimbus
+homepage: https://github.com/nimbus/nimbus
+license: Nimbus-Community-1.0
 description: |
   Self-hosted JavaScript backend runtime powered by V8.
 
-  This Linux package installs the host Neovex CLI and depends on the distro
-  container stack plus the private neovex-crun runtime package.
+  This Linux package installs the host Nimbus CLI and depends on the distro
+  container stack plus the private nimbus-crun runtime package.
 rpm:
   summary: Self-hosted JavaScript backend runtime powered by V8
   group: Applications/Internet
 contents:
-  - src: ${staged_root}/usr/bin/neovex
-    dst: /usr/bin/neovex
+  - src: ${staged_root}/usr/bin/nimbus
+    dst: /usr/bin/nimbus
     file_info:
       mode: 0755
-  - src: ${staged_root}/usr/share/doc/neovex/README.md
-    dst: /usr/share/doc/neovex/README.md
+  - src: ${staged_root}/usr/share/doc/nimbus/README.md
+    dst: /usr/share/doc/nimbus/README.md
     file_info:
       mode: 0644
-  - src: ${staged_root}/usr/share/doc/neovex/LICENSE
-    dst: /usr/share/doc/neovex/LICENSE
+  - src: ${staged_root}/usr/share/doc/nimbus/LICENSE
+    dst: /usr/share/doc/nimbus/LICENSE
     file_info:
       mode: 0644
 EOF
@@ -177,7 +177,7 @@ EOF
   append_yaml_list "$manifest_path" "recommends" "fuse-overlayfs" "uidmap"
 }
 
-render_neovex_crun_manifest() {
+render_nimbus_crun_manifest() {
   local manifest_path="$1"
   local version="$2"
   local arch="$3"
@@ -187,36 +187,36 @@ render_neovex_crun_manifest() {
 
   cat >"$manifest_path" <<EOF
 # yaml-language-server: \$schema=https://nfpm.goreleaser.com/schema.json
-name: neovex-crun
+name: nimbus-crun
 arch: ${arch}
 platform: linux
 version: ${version}
 version_schema: semver
 section: admin
 priority: optional
-maintainer: AgentStation
-vendor: AgentStation
-homepage: https://github.com/agentstation/neovex-crun
-license: Neovex-Community-1.0
+maintainer: Nimbus
+vendor: Nimbus
+homepage: https://github.com/nimbus/nimbus-crun
+license: Nimbus-Community-1.0
 description: |
-  Patched private crun runtime for Neovex libkrun service execution.
+  Patched private crun runtime for Nimbus libkrun service execution.
 
-  This package installs /usr/libexec/neovex/crun and intentionally does not
+  This package installs /usr/libexec/nimbus/crun and intentionally does not
   replace the system crun binary.
 rpm:
-  summary: Patched private crun runtime for Neovex
+  summary: Patched private crun runtime for Nimbus
   group: Applications/System
 contents:
-  - src: ${staged_root}/usr/libexec/neovex/crun
-    dst: /usr/libexec/neovex/crun
+  - src: ${staged_root}/usr/libexec/nimbus/crun
+    dst: /usr/libexec/nimbus/crun
     file_info:
       mode: 0755
-  - src: ${staged_root}/usr/share/doc/neovex-crun/README.md
-    dst: /usr/share/doc/neovex-crun/README.md
+  - src: ${staged_root}/usr/share/doc/nimbus-crun/README.md
+    dst: /usr/share/doc/nimbus-crun/README.md
     file_info:
       mode: 0644
-  - src: ${staged_root}/usr/share/doc/neovex-crun/LICENSE
-    dst: /usr/share/doc/neovex-crun/LICENSE
+  - src: ${staged_root}/usr/share/doc/nimbus-crun/LICENSE
+    dst: /usr/share/doc/nimbus-crun/LICENSE
     file_info:
       mode: 0644
 EOF
@@ -224,8 +224,8 @@ EOF
 }
 
 output_dir=""
-neovex_binary=""
-neovex_crun_binary=""
+nimbus_binary=""
+nimbus_crun_binary=""
 version=""
 crun_version=""
 arch=""
@@ -239,12 +239,12 @@ while [[ "$#" -gt 0 ]]; do
       output_dir="${2:-}"
       shift 2
       ;;
-    --neovex-binary)
-      neovex_binary="${2:-}"
+    --nimbus-binary)
+      nimbus_binary="${2:-}"
       shift 2
       ;;
-    --neovex-crun-binary)
-      neovex_crun_binary="${2:-}"
+    --nimbus-crun-binary)
+      nimbus_crun_binary="${2:-}"
       shift 2
       ;;
     --version)
@@ -289,8 +289,8 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 [[ -n "$output_dir" ]] || die "--output-dir is required"
-[[ -n "$neovex_binary" ]] || die "--neovex-binary is required"
-[[ -n "$neovex_crun_binary" ]] || die "--neovex-crun-binary is required"
+[[ -n "$nimbus_binary" ]] || die "--nimbus-binary is required"
+[[ -n "$nimbus_crun_binary" ]] || die "--nimbus-crun-binary is required"
 [[ -n "$version" ]] || die "--version is required"
 
 if [[ "${#formats[@]}" -eq 0 ]]; then
@@ -308,8 +308,8 @@ if [[ -z "$arch" ]]; then
   arch="$(normalize_arch "$(uname -m)")"
 fi
 
-[[ -f "$neovex_binary" ]] || die "neovex binary not found: $neovex_binary"
-[[ -f "$neovex_crun_binary" ]] || die "neovex-crun binary not found: $neovex_crun_binary"
+[[ -f "$nimbus_binary" ]] || die "nimbus binary not found: $nimbus_binary"
+[[ -f "$nimbus_crun_binary" ]] || die "nimbus-crun binary not found: $nimbus_crun_binary"
 
 mkdir -p "$output_dir"
 output_dir="$(cd "$output_dir" && pwd)"
@@ -321,57 +321,57 @@ package_checksums_path="${packages_dir}/checksums-sha256.txt"
 rm -rf "$staging_dir" "$manifests_dir" "$packages_dir"
 mkdir -p "$staging_dir" "$manifests_dir" "$packages_dir"
 
-neovex_stage="${staging_dir}/neovex"
-neovex_crun_stage="${staging_dir}/neovex-crun"
+nimbus_stage="${staging_dir}/nimbus"
+nimbus_crun_stage="${staging_dir}/nimbus-crun"
 
-install -d "${neovex_stage}/usr/bin" \
-  "${neovex_stage}/usr/share/doc/neovex" \
-  "${neovex_crun_stage}/usr/libexec/neovex" \
-  "${neovex_crun_stage}/usr/share/doc/neovex-crun"
+install -d "${nimbus_stage}/usr/bin" \
+  "${nimbus_stage}/usr/share/doc/nimbus" \
+  "${nimbus_crun_stage}/usr/libexec/nimbus" \
+  "${nimbus_crun_stage}/usr/share/doc/nimbus-crun"
 
-install -m 0755 "$neovex_binary" "${neovex_stage}/usr/bin/neovex"
-install -m 0755 "$neovex_crun_binary" "${neovex_crun_stage}/usr/libexec/neovex/crun"
-install -m 0644 LICENSE "${neovex_stage}/usr/share/doc/neovex/LICENSE"
-install -m 0644 LICENSE "${neovex_crun_stage}/usr/share/doc/neovex-crun/LICENSE"
-write_neovex_readme "${neovex_stage}/usr/share/doc/neovex/README.md" "$version"
-write_neovex_crun_readme "${neovex_crun_stage}/usr/share/doc/neovex-crun/README.md" "$crun_version"
+install -m 0755 "$nimbus_binary" "${nimbus_stage}/usr/bin/nimbus"
+install -m 0755 "$nimbus_crun_binary" "${nimbus_crun_stage}/usr/libexec/nimbus/crun"
+install -m 0644 LICENSE "${nimbus_stage}/usr/share/doc/nimbus/LICENSE"
+install -m 0644 LICENSE "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/LICENSE"
+write_nimbus_readme "${nimbus_stage}/usr/share/doc/nimbus/README.md" "$version"
+write_nimbus_crun_readme "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/README.md" "$crun_version"
 
-neovex_deb_manifest="${manifests_dir}/neovex-deb.yaml"
-neovex_rpm_manifest="${manifests_dir}/neovex-rpm.yaml"
-neovex_crun_deb_manifest="${manifests_dir}/neovex-crun-deb.yaml"
-neovex_crun_rpm_manifest="${manifests_dir}/neovex-crun-rpm.yaml"
+nimbus_deb_manifest="${manifests_dir}/nimbus-deb.yaml"
+nimbus_rpm_manifest="${manifests_dir}/nimbus-rpm.yaml"
+nimbus_crun_deb_manifest="${manifests_dir}/nimbus-crun-deb.yaml"
+nimbus_crun_rpm_manifest="${manifests_dir}/nimbus-crun-rpm.yaml"
 
-render_neovex_manifest \
-  "$neovex_deb_manifest" \
+render_nimbus_manifest \
+  "$nimbus_deb_manifest" \
   "$version" \
   "$arch" \
-  "$neovex_stage" \
-  "buildah" "conmon" "netavark" "aardvark-dns" "neovex-crun"
-render_neovex_manifest \
-  "$neovex_rpm_manifest" \
+  "$nimbus_stage" \
+  "buildah" "conmon" "netavark" "aardvark-dns" "nimbus-crun"
+render_nimbus_manifest \
+  "$nimbus_rpm_manifest" \
   "$version" \
   "$arch" \
-  "$neovex_stage" \
-  "buildah" "conmon" "netavark" "aardvark-dns" "neovex-crun"
-render_neovex_crun_manifest \
-  "$neovex_crun_deb_manifest" \
+  "$nimbus_stage" \
+  "buildah" "conmon" "netavark" "aardvark-dns" "nimbus-crun"
+render_nimbus_crun_manifest \
+  "$nimbus_crun_deb_manifest" \
   "$crun_version" \
   "$arch" \
-  "$neovex_crun_stage" \
+  "$nimbus_crun_stage" \
   "libkrun" "libkrunfw"
-render_neovex_crun_manifest \
-  "$neovex_crun_rpm_manifest" \
+render_nimbus_crun_manifest \
+  "$nimbus_crun_rpm_manifest" \
   "$crun_version" \
   "$arch" \
-  "$neovex_crun_stage" \
+  "$nimbus_crun_stage" \
   "libkrun" "libkrunfw"
 
-printf 'stage.neovex=%s\n' "$neovex_stage"
-printf 'stage.neovex_crun=%s\n' "$neovex_crun_stage"
-printf 'manifest.neovex.deb=%s\n' "$neovex_deb_manifest"
-printf 'manifest.neovex.rpm=%s\n' "$neovex_rpm_manifest"
-printf 'manifest.neovex_crun.deb=%s\n' "$neovex_crun_deb_manifest"
-printf 'manifest.neovex_crun.rpm=%s\n' "$neovex_crun_rpm_manifest"
+printf 'stage.nimbus=%s\n' "$nimbus_stage"
+printf 'stage.nimbus_crun=%s\n' "$nimbus_crun_stage"
+printf 'manifest.nimbus.deb=%s\n' "$nimbus_deb_manifest"
+printf 'manifest.nimbus.rpm=%s\n' "$nimbus_rpm_manifest"
+printf 'manifest.nimbus_crun.deb=%s\n' "$nimbus_crun_deb_manifest"
+printf 'manifest.nimbus_crun.rpm=%s\n' "$nimbus_crun_rpm_manifest"
 
 if [[ "$render_only" -eq 1 ]]; then
   printf 'result=rendered\n'
@@ -387,10 +387,10 @@ for format in "${formats[@]}"; do
   manifest_list=""
   case "$format" in
     deb)
-      manifest_list="${neovex_deb_manifest} ${neovex_crun_deb_manifest}"
+      manifest_list="${nimbus_deb_manifest} ${nimbus_crun_deb_manifest}"
       ;;
     rpm)
-      manifest_list="${neovex_rpm_manifest} ${neovex_crun_rpm_manifest}"
+      manifest_list="${nimbus_rpm_manifest} ${nimbus_crun_rpm_manifest}"
       ;;
     *)
       die "unsupported format in build loop: ${format}"

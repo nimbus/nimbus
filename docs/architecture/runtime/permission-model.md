@@ -2,7 +2,7 @@
 
 Status: active baseline
 
-Neovex models runtime execution with separate axes:
+Nimbus models runtime execution with separate axes:
 
 | Axis | Current values | Notes |
 | --- | --- | --- |
@@ -21,9 +21,9 @@ tenant-supplied, or generated-code surfaces.
 platform baseline and still requires explicit grants for host-sensitive
 resources.
 
-`Privileged` is the highest Neovex-approved ceiling for explicitly trusted
+`Privileged` is the highest Nimbus-approved ceiling for explicitly trusted
 operator or enterprise workloads. It is not host root and still runs inside the
-outer Neovex sandbox.
+outer Nimbus sandbox.
 
 ## Grants
 
@@ -59,7 +59,7 @@ policy is installed:
 | --- | --- |
 | `Restricted` | Rejects `env_write`, `identity`, `run`, `ffi`, `worker`, and `tool` grants. |
 | `Standard` | Accepts bounded application/tooling grants but rejects `ffi`. |
-| `Privileged` | Allows explicit grants, while still running inside the outer Neovex sandbox. |
+| `Privileged` | Allows explicit grants, while still running inside the outer Nimbus sandbox. |
 
 Sensitive host entrypoints also enforce their own grant families at use time:
 managed service lookups require an exact `service` grant, worker-thread

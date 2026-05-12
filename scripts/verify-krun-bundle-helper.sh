@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fixture_path="${repo_root}/scripts/fixtures/crun-spec-config.json"
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/neovex-krun-bundle-verify.XXXXXX")"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-krun-bundle-verify.XXXXXX")"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 config_path="${tmp_dir}/config.json"
@@ -12,7 +12,7 @@ cp "${fixture_path}" "${config_path}"
 bash "${repo_root}/scripts/prepare-krun-bundle.sh" \
   --config-path "${config_path}" \
   --skip-spec \
-  --rootfs /srv/neovex/rootfs \
+  --rootfs /srv/nimbus/rootfs \
   --host-port 15432 \
   --guest-port 5432 \
   --process-arg /usr/bin/postgres \
@@ -28,7 +28,7 @@ config_path = Path(sys.argv[1])
 with config_path.open("r", encoding="utf-8") as fh:
     config = json.load(fh)
 
-assert config["root"]["path"] == "/srv/neovex/rootfs"
+assert config["root"]["path"] == "/srv/nimbus/rootfs"
 assert config["root"]["readonly"] is False
 assert config["process"]["cwd"] == "/"
 assert config["process"]["args"] == [

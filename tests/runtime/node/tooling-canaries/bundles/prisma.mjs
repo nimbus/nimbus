@@ -33,19 +33,19 @@ function prismaBoundaryToken(text) {
   return null;
 }
 
-globalThis.__neovexInvoke = function () {
+globalThis.__nimbusInvoke = function () {
   const appRoot = process.cwd();
   const hostNodeBin = path.join(
     appRoot,
     "node_modules",
-    "neovex-host-node",
+    "nimbus-host-node",
     "bin",
     cliName("node"),
   );
   const prismaEntrypoint = path.join(appRoot, "node_modules", "prisma", "build", "index.js");
   const prismaConfigPath = path.join(appRoot, "fixtures", "prisma", "prisma.config.ts");
   const smokeScript = path.join(appRoot, "fixtures", "prisma", "smoke.mjs");
-  const databasePath = path.join(appRoot, ".neovex", "tmp", "prisma-canary.db");
+  const databasePath = path.join(appRoot, ".nimbus", "tmp", "prisma-canary.db");
   const env = {
     ...process.env,
     DATABASE_URL: `file:${databasePath}`,

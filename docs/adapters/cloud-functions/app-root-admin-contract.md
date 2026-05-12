@@ -5,7 +5,7 @@ discovery and the first covered `firebase-admin` method matrix.
 
 ## Decision
 
-Neovex will settle one shared app-root resolver contract before deploy and
+Nimbus will settle one shared app-root resolver contract before deploy and
 runtime phases wire Cloud Functions layouts into the CLI or server.
 
 The first-slice rules are:
@@ -17,7 +17,7 @@ The first-slice rules are:
   plus an `@google-cloud/functions-framework` dependency.
 - Firebase project roots preserve `functions.source`, default `functions/`,
   and multi-codebase `functions[].codebase` layouts.
-- Generated Cloud Functions artifacts remain under `.neovex/firebase/`.
+- Generated Cloud Functions artifacts remain under `.nimbus/firebase/`.
 - The covered `firebase-admin` surface is explicit and fail-fast.
 
 This is a contract decision, not the full live CLI rollout yet. Later phases
@@ -30,14 +30,14 @@ runtime, and package-surface code.
 
 `--app-dir` is the operator escape hatch for ambiguous or nonstandard repos.
 
-When supplied, Neovex resolves the given path first and chooses the nearest
+When supplied, Nimbus resolves the given path first and chooses the nearest
 compatible app root around that explicit location:
 
 - a Firebase project root if the explicit path is that root or a child of it
 - a standalone Functions Framework package if the explicit path is that package
   root or a child of it
 
-If the explicit path does not resolve to either shape, Neovex must fail
+If the explicit path does not resolve to either shape, Nimbus must fail
 clearly instead of silently falling back somewhere else.
 
 ### Auto-Discovery
@@ -57,7 +57,7 @@ Selection rules:
    Functions Framework package under that source tree.
 2. If the same directory qualifies as both a Firebase project root and a
    standalone framework package, the Firebase project root wins.
-3. If Neovex sees both a Firebase project root and a nested standalone
+3. If Nimbus sees both a Firebase project root and a nested standalone
    framework package that is **not** covered by the Firebase codebase mapping,
    auto-discovery is ambiguous and must fail with guidance to use `--app-dir`.
 
@@ -139,14 +139,14 @@ Resolved Cloud Functions app roots always pair with the Cloud Functions sibling
 artifact namespace:
 
 ```text
-.neovex/firebase/
+.nimbus/firebase/
 ```
 
-That internal directory is owned by Neovex and stays separate from the existing
+That internal directory is owned by Nimbus and stays separate from the existing
 Convex-compatible artifact root:
 
 ```text
-.neovex/convex/
+.nimbus/convex/
 ```
 
 ## Covered `firebase-admin` Matrix
@@ -168,7 +168,7 @@ The covered Firestore subset is intentionally narrow:
 - collection queries, transactions, listeners, and batch helpers are still deferred on the admin surface
 - covered document reads and writes route through the shared Firebase document-path and bound-write primitives instead of a Cloud-Functions-local storage shim
 
-Unsupported imports or methods must fail validation explicitly. Neovex should
+Unsupported imports or methods must fail validation explicitly. Nimbus should
 not quietly accept `firebase-admin/auth`, `firebase-admin/storage`, or deeper
 Firestore helper methods that are not yet documented here.
 
@@ -178,8 +178,8 @@ Firestore helper methods that are not yet documented here.
 
 It does **not** yet wire this resolver into:
 
-- `neovex dev`
-- `neovex deploy`
+- `nimbus dev`
+- `nimbus deploy`
 - runtime artifact loading
 - package-surface aliasing for the covered admin methods
 

@@ -1,15 +1,15 @@
 # Getting Started
 
-Install Neovex, then pick how you want to build.
+Install Nimbus, then pick how you want to build.
 
 If you're authoring Convex or Cloud Functions code locally, install Node.js
 with `npm` first. If you're connecting MongoDB, Firebase client, or native
-HTTP/WebSocket clients to `neovex start`, Node.js is not required.
+HTTP/WebSocket clients to `nimbus start`, Node.js is not required.
 
 ## Install
 
 ```bash
-brew install agentstation/tap/neovex
+brew install nimbus/tap/nimbus
 ```
 
 See [Install](../README.md#install) for other platforms or building from source.
@@ -19,24 +19,24 @@ See [Install](../README.md#install) for other platforms or building from source.
 **1. Scaffold a Convex app:**
 
 ```bash
-neovex init convex my-app
+nimbus init convex my-app
 cd my-app
 ```
 
-`neovex init convex` scaffolds backend files only: a schema, example query and
+`nimbus init convex` scaffolds backend files only: a schema, example query and
 mutation, `package.json`, `tsconfig.json`, and `.gitignore`. Add your frontend
 separately or point an existing frontend at the local deployment URL.
 
 **2. Start the dev server:**
 
 ```bash
-neovex dev
+nimbus dev
 ```
 
-`neovex dev` auto-runs `npm install` when declared packages are missing
+`nimbus dev` auto-runs `npm install` when declared packages are missing
 locally, creates a `demo` tenant, and starts the server on `localhost:3210`.
 
-From there, edit the TypeScript files in `convex/` and `neovex dev` watches
+From there, edit the TypeScript files in `convex/` and `nimbus dev` watches
 for changes, re-runs codegen, and activates updated functions with reactive
 subscriptions.
 
@@ -48,11 +48,11 @@ endpoints, GraphQL, or polling.
 
 ## Existing drivers and SDKs
 
-Run `neovex start` and connect with drivers you already know. No codegen, no
+Run `nimbus start` and connect with drivers you already know. No codegen, no
 schema files, no special project layout.
 
 ```bash
-neovex start --port 8080
+nimbus start --port 8080
 ```
 
 | Adapter | What it gives you | Time to first query |
@@ -62,13 +62,13 @@ neovex start --port 8080
 | [**Cloud Functions**](adapters/cloud-functions/) | Firebase v2 triggers and Functions Framework handlers | ~5 min |
 | [**Native HTTP/WS**](adapters/native/) | Direct REST + WebSocket — just curl | ~1 min |
 
-For MongoDB, Firebase client, and native HTTP/WS, `neovex start` is enough and
+For MongoDB, Firebase client, and native HTTP/WS, `nimbus start` is enough and
 Node.js is not required. Cloud Functions authoring still requires Node.js
-because `neovex codegen` runs through the Node toolchain.
+because `nimbus codegen` runs through the Node toolchain.
 
 **Not sure?** Start with [MongoDB](adapters/mongodb/). It uses drivers you
 already have, works in every language, and requires nothing beyond
-`neovex start`.
+`nimbus start`.
 
 **Just want to kick the tires?** The [README quick start](../README.md#quick-start)
 has a curl walkthrough you can copy-paste.

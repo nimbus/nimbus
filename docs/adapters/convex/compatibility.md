@@ -1,15 +1,15 @@
 # Convex Compatibility
 
-Neovex includes an in-repo Convex compatibility surface built on the V8 runtime
-in `crates/neovex-runtime`, the `packages/convex` package, and generated
+Nimbus includes an in-repo Convex compatibility surface built on the V8 runtime
+in `crates/nimbus-runtime`, the `packages/convex` package, and generated
 artifacts from `packages/codegen`.
 
 This surface is intentionally partial and evolving. It is designed to support a
 useful subset cleanly rather than claim blanket Convex parity.
 
-This document covers the Convex-compatible authoring mode. Neovex also ships a
-first-party native JS surface under `packages/neovex`; native apps may use a
-`neovex/` source root, while upstream-style compatibility apps continue to use
+This document covers the Convex-compatible authoring mode. Nimbus also ships a
+first-party native JS surface under `packages/nimbus`; native apps may use a
+`nimbus/` source root, while upstream-style compatibility apps continue to use
 `convex/`.
 
 ## What Exists Today
@@ -17,13 +17,13 @@ first-party native JS surface under `packages/neovex`; native apps may use a
 - `packages/convex` provides the in-repo `convex/browser`, `convex/react`,
   `convex/server`, and `convex/values` surfaces
 - `packages/codegen` accepts `convex/` as the compatibility source root and
-  `neovex/` as the native source root
+  `nimbus/` as the native source root
 - generated `_generated/*` files land under the selected source root and import
-  from the matching package namespace (`convex/*` or `neovex/*`)
-- `packages/codegen` emits `.neovex/convex/functions.json`,
-  `.neovex/convex/bundle.mjs`, and `.neovex/convex/bundle.sha256`
+  from the matching package namespace (`convex/*` or `nimbus/*`)
+- `packages/codegen` emits `.nimbus/convex/functions.json`,
+  `.nimbus/convex/bundle.mjs`, and `.nimbus/convex/bundle.sha256`
 - the runtime verifies the bundle hash before every invocation
-- starting Neovex with `--app-dir` enables the Convex HTTP, WebSocket,
+- starting Nimbus with `--app-dir` enables the Convex HTTP, WebSocket,
   scheduler, and runtime diagnostics routes
 
 ## Codegen Security Boundary
@@ -36,7 +36,7 @@ process.
 
 The generated runtime bundle still uses `new Function` to materialize
 runtime-only handlers from the manifest. That use belongs to runtime execution:
-the bundle is SHA-256 checked before invocation and runs inside the Neovex V8
+the bundle is SHA-256 checked before invocation and runs inside the Nimbus V8
 runtime behind the `HostBridge` capability boundary. It is not part of
 compile-time schema or planner extraction.
 
@@ -44,12 +44,12 @@ compile-time schema or planner extraction.
 
 For Convex-style projects, the shipped codegen entrypoints are now:
 
-- `neovex codegen --app ./my-app`
+- `nimbus codegen --app ./my-app`
 - `npx convex codegen --app ./my-app`
-- `npx neovex-codegen --app ./my-app`
+- `npx nimbus-codegen --app ./my-app`
 
-All three invoke the same `@neovex/codegen` pipeline and produce the same
-`_generated/*` plus `.neovex/convex/` outputs.
+All three invoke the same `@nimbus/codegen` pipeline and produce the same
+`_generated/*` plus `.nimbus/convex/` outputs.
 
 Generated files should still be checked into version control. That keeps
 frontend typechecking and CI stable even when a developer has not run the CLI
@@ -61,19 +61,19 @@ For repo-owned JS verification, use the root workspace entrypoints:
 - `npm run test`
 - `npm run build`
 
-Those commands fan out to package-owned scripts across `@neovex/codegen`,
-`convex`, and `neovex`. The `@neovex/codegen` typecheck lane is a JS syntax and
+Those commands fan out to package-owned scripts across `@nimbus/codegen`,
+`convex`, and `nimbus`. The `@nimbus/codegen` typecheck lane is a JS syntax and
 codegen-boundary guardrail check because that package is implemented as `.mjs`
 rather than TypeScript.
 
-`neovex start --app-dir ./my-app` now runs one codegen preflight pass before
+`nimbus start --app-dir ./my-app` now runs one codegen preflight pass before
 startup unless `--skip-codegen` is set, but this is intentionally not a
-replacement for Convex's watched `dev` loop. After the server starts, Neovex
+replacement for Convex's watched `dev` loop. After the server starts, Nimbus
 does not watch source files or regenerate artifacts on later edits.
 
 ## Node Runtime Configuration
 
-Neovex mirrors Convex's Node runtime selection shape for action modules:
+Nimbus mirrors Convex's Node runtime selection shape for action modules:
 
 ```ts
 "use node";
@@ -101,20 +101,20 @@ Project-level Node action version selection is read from `convex.json`:
 }
 ```
 
-Supported values are `"20"`, `"22"`, and `"24"`. Neovex defaults to `"22"`
+Supported values are `"20"`, `"22"`, and `"24"`. Nimbus defaults to `"22"`
 until a deliberate Node24-default migration. Node builtin imports are accepted
 in both bare and `node:` forms, so `fs` and `node:fs` resolve to the same
-runtime family. Use `neovex dev --once --debug-node-apis` or
-`neovex codegen --app . --debug-node-apis` to diagnose default-runtime modules
+runtime family. Use `nimbus dev --once --debug-node-apis` or
+`nimbus codegen --app . --debug-node-apis` to diagnose default-runtime modules
 that import Node builtins without `"use node"`.
 
 `node.externalPackages` supports explicit package specifiers and Convex-style
 `["*"]` for packages imported by `"use node"` action modules. Codegen validates
 that each externalized package resolves from local `node_modules`, stages the
-resolved package roots under `.neovex/convex/node_modules/`, materializes static
+resolved package roots under `.nimbus/convex/node_modules/`, materializes static
 package imports into generated runtime bindings, and emits
-`.neovex/convex/node_external_packages.json` with package roots, staged roots,
-importers, size evidence, and Convex cloud limit references. Neovex records
+`.nimbus/convex/node_external_packages.json` with package roots, staged roots,
+importers, size evidence, and Convex cloud limit references. Nimbus records
 those external-package limits but does not enforce the same zipped/unzipped
 thresholds yet. Full Convex cloud-style dependency installation and
 dependency-closure packaging are still narrower than Convex's cloud bundler, so
@@ -153,11 +153,11 @@ see `docs/runtimes/nodejs/`.
 - support is still partial; the compatibility surface should be treated as a
   supported subset, not full Convex parity
 - `convex/` remains the compatibility-oriented user source root, while
-  `neovex/` is the first-party native root; both still converge on the same
-  internal runtime artifacts under `.neovex/convex/`
+  `nimbus/` is the first-party native root; both still converge on the same
+  internal runtime artifacts under `.nimbus/convex/`
 - compiled `patch`, `delete`, and `get` flows currently require ids declared
   with `v.id("table")` so codegen can preserve the Convex call shape while
-  lowering into Neovex plans
+  lowering into Nimbus plans
 - `convex/react` and `convex/browser` automatically reconnect and resubscribe
   after dropped sockets
 - string refs and `anyApi` do not yet cover paginated live-query flows; use
@@ -185,7 +185,7 @@ messages workload used for both targets.
 
 The runner compares:
 
-- Neovex plus the in-repo `packages/convex` client
+- Nimbus plus the in-repo `packages/convex` client
 - an external Convex deployment plus the official Convex browser client source
 
 Result normalization is limited to documented transport-shape differences such
@@ -197,13 +197,13 @@ mismatch it finds in one pass instead of stopping at the first structural diff.
 From the repo root:
 
 ```bash
-npm run test:differential --workspace convex -- --neovex-only
+npm run test:differential --workspace convex -- --nimbus-only
 ```
 
 To export the shared fixture app for external provisioning:
 
 ```bash
-npm run test:differential --workspace convex -- --emit-fixture-dir /tmp/neovex-convex-differential-app
+npm run test:differential --workspace convex -- --emit-fixture-dir /tmp/nimbus-convex-differential-app
 ```
 
 To run the full external comparison after provisioning that fixture app on a
@@ -224,7 +224,7 @@ npm run test:differential --workspace convex -- --require-external
 
 If the official Convex browser source is not available in a nearby
 `convex-backend` checkout, set
-`NEOVEX_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY=/absolute/path/to/npm-packages/convex/src/browser/index.ts`.
+`NIMBUS_CONVEX_DIFF_OFFICIAL_BROWSER_ENTRY=/absolute/path/to/npm-packages/convex/src/browser/index.ts`.
 
 Scheduling and supported auth-shape differential cases are planned follow-on
 coverage for this suite rather than part of the first landed slice.

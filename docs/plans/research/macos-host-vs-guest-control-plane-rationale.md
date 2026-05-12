@@ -1,6 +1,6 @@
 # macOS Host-vs-Guest Control-Plane Rationale
 
-Why Neovex originally preferred a guest-resident authoritative server on macOS
+Why Nimbus originally preferred a guest-resident authoritative server on macOS
 developer machines, why the hybrid alternative stayed viable, how both map to
 the landed Linux baseline, and why a DX-first evaluation ultimately switched
 the active macOS plan to the hybrid direction.
@@ -15,17 +15,17 @@ now lives in `docs/plans/archive/macos-machine-support-plan.md`.
 
 ## The Question
 
-On Linux production today, Neovex runs on a Linux node and activates workload
+On Linux production today, Nimbus runs on a Linux node and activates workload
 services that run inside isolated microVMs. On macOS developer machines, we
 already know the workload services themselves must run inside one Linux machine
 VM.
 
 The open design question is:
 
-- should Neovex itself keep running on the macOS host and remotely manage guest
+- should Nimbus itself keep running on the macOS host and remotely manage guest
   containers?
 - or should the macOS host be only a thin launcher/proxy while the
-  authoritative Neovex server runs inside the Linux guest next to the guest
+  authoritative Nimbus server runs inside the Linux guest next to the guest
   container runtime?
 
 Both are viable. They are not equally close to the Linux baseline.
@@ -36,7 +36,7 @@ Both are viable. They are not equally close to the Linux baseline.
 
 The active macOS execution plan now prefers:
 
-- a **host-resident authoritative `neovex serve`**
+- a **host-resident authoritative `nimbus serve`**
 - a **narrow guest machine-API seam**
 - **guest-resident standard containers** for services
 
@@ -44,21 +44,21 @@ In short:
 
 ```text
 macOS host
-  -> neovex serve
+  -> nimbus serve
   -> V8 runtime / storage / API
   -> machine lifecycle
   -> forwarded host `<machine>-api.sock`
   -> local port exposure / proxying
 
 Linux guest VM
-  -> neovex.socket / neovex.service
+  -> nimbus.socket / nimbus.service
   -> buildah + conmon + crun
   -> service containers
 ```
 
 This is the former "Option A" hybrid model:
 
-- host-resident Neovex runtime/storage/server
+- host-resident Nimbus runtime/storage/server
 - guest-resident service containers only
 
 The earlier guest-authoritative model remains worth preserving in this document
@@ -70,11 +70,11 @@ active macOS control plane switched to the hybrid path for `MAC5` and `MAC6`.
 
 ## The Two Options
 
-### Option A: Hybrid host-resident Neovex, guest-resident containers
+### Option A: Hybrid host-resident Nimbus, guest-resident containers
 
 ```text
 macOS host
-  -> neovex serve
+  -> nimbus serve
       -> V8 runtime
       -> engine / service registry
       -> storage access
@@ -85,16 +85,16 @@ Linux guest VM
   -> service containers
 ```
 
-### Option B: Guest-resident authoritative Neovex
+### Option B: Guest-resident authoritative Nimbus
 
 ```text
 macOS host
-  -> neovex machine ...
-  -> neovex serve    (thin wrapper / proxy)
-  -> neovex service ...
+  -> nimbus machine ...
+  -> nimbus serve    (thin wrapper / proxy)
+  -> nimbus service ...
 
 Linux guest VM
-  -> neovex serve
+  -> nimbus serve
       -> V8 runtime
       -> engine / service registry
       -> storage access
@@ -117,7 +117,7 @@ On Linux production, these are the same machine:
 
 ```text
 physical host = platform host = Linux node
-  -> neovex serve
+  -> nimbus serve
   -> buildah + conmon + crun + libkrun
   -> service microVMs
 ```
@@ -129,22 +129,22 @@ physical host = macOS
 platform host = Linux guest VM
 ```
 
-The landed Linux baseline is not merely "Neovex runs on the same physical
+The landed Linux baseline is not merely "Nimbus runs on the same physical
 machine as the workloads." The deeper invariant is:
 
-- Neovex runs on the same **platform host** that owns the container / sandbox
+- Nimbus runs on the same **platform host** that owns the container / sandbox
   runtime it manages.
 
 Option B preserves that invariant on macOS:
 
-- Neovex runs inside the Linux guest
+- Nimbus runs inside the Linux guest
 - the Linux guest also owns buildah/conmon/crun and service state
 
 Option A breaks it:
 
-- Neovex would run on macOS
+- Nimbus would run on macOS
 - but the actual service runtime would live on a remote Linux node from
-  Neovex's perspective
+  Nimbus's perspective
 
 So the hybrid is closer only if we optimize for "same physical laptop."
 Option B is closer if we optimize for "same control-plane placement relative to
@@ -158,7 +158,7 @@ That second meaning is the more important one for architecture.
 
 The current baseline says:
 
-- `neovex-server` owns service activation and `ctx.services.*`
+- `nimbus-server` owns service activation and `ctx.services.*`
 - Linux request-time activation runs through the local server-owned service
   manager
 - macOS v1 should not add a second host-side orchestration path
@@ -171,10 +171,10 @@ The Linux request path today is:
 
 ```text
 compose.yaml / image / build context
-  -> neovex-bin validates and lowers service intent
-  -> neovex-server owns declared services and activation
+  -> nimbus-bin validates and lowers service intent
+  -> nimbus-server owns declared services and activation
   -> ctx.services.<name> triggers ensure_service_binding(...)
-  -> neovex-sandbox krun backend materializes OCI bundle + state
+  -> nimbus-sandbox krun backend materializes OCI bundle + state
   -> conmon -> patched crun -> libkrun VM
   -> guest service answers via host-side binding
 ```
@@ -183,11 +183,11 @@ That is a **local control plane** relative to the sandbox runtime.
 
 Option A would turn that into a **remote control plane** for macOS:
 
-- host Neovex would have to manage a guest Linux container runtime remotely
+- host Nimbus would have to manage a guest Linux container runtime remotely
 
 Option B keeps the same local-control-plane property:
 
-- guest Neovex manages guest containers locally
+- guest Nimbus manages guest containers locally
 
 ---
 
@@ -200,21 +200,21 @@ Podman's macOS model is:
 - guest-resident Podman engine
 - guest-resident containers
 
-Neovex is not Podman, but Podman's topology is still the right reference.
+Nimbus is not Podman, but Podman's topology is still the right reference.
 
 The important distinction is product scope:
 
 - **Podman** productizes a generic remote container engine
-- **Neovex** productizes a database/runtime/server that also manages service
+- **Nimbus** productizes a database/runtime/server that also manages service
   containers
 
-That means Neovex should copy:
+That means Nimbus should copy:
 
 - the host/guest topology
 - the machine lifecycle layering
 - the local-wrapper to guest-authority model
 
-But Neovex does **not** need:
+But Nimbus does **not** need:
 
 - a generic user-facing remote-engine abstraction
 - a registry of arbitrary remote engines/connections
@@ -224,8 +224,8 @@ So the host is still talking to something remote in both products.
 The difference is:
 
 - Podman host config is centered on **remote engine connection management**
-- Neovex host config should be centered on **booting and reaching one
-  guest-resident Neovex control surface**
+- Nimbus host config should be centered on **booting and reaching one
+  guest-resident Nimbus control surface**
 
 ---
 
@@ -252,10 +252,10 @@ The important product lesson is not "copy Podman's engine API." It is:
 - local DX improves dramatically when the host can talk to a guest-owned
   control socket as if it were local
 
-That pattern can support either Neovex option:
+That pattern can support either Nimbus option:
 
-- guest-resident authoritative Neovex server
-- host-resident Neovex with a narrower guest `neovex.sock` / machine-API
+- guest-resident authoritative Nimbus server
+- host-resident Nimbus with a narrower guest `nimbus.sock` / machine-API
   socket
 
 ---
@@ -280,7 +280,7 @@ For service-backed app development, this can feel materially better:
 - `ctx.db.*` and local persistence introspection stay host-native
 - only service activation crosses into the guest
 - guest containers become a backing dependency rather than the home of the
-  whole Neovex stack
+  whole Nimbus stack
 
 This is the best argument for Option A, and it is stronger for AI agents than
 for many human workflows because agents often optimize for:
@@ -293,7 +293,7 @@ for many human workflows because agents often optimize for:
 
 ## Podman-Reusable Seams If We Choose Option A
 
-If Neovex adopts the hybrid model, Podman's source and helper topology are
+If Nimbus adopts the hybrid model, Podman's source and helper topology are
 still highly reusable.
 
 ### 1. Machine lifecycle and image/materialization
@@ -310,19 +310,19 @@ Keep reusing the same Podman-aligned pieces:
 
 Podman's `gvproxy` + forwarded guest socket pattern is directly useful.
 
-Neovex hybrid could expose a guest socket such as:
+Nimbus hybrid could expose a guest socket such as:
 
 ```text
-/run/neovex/neovex.sock
+/run/nimbus/nimbus.sock
 ```
 
 and forward it to a host-local socket such as:
 
 ```text
-~/.local/state/neovex/machine/<name>-api.sock
+~/.local/state/nimbus/machine/<name>-api.sock
 ```
 
-The host Neovex process would then talk to that socket through a local client,
+The host Nimbus process would then talk to that socket through a local client,
 just as Podman makes the guest engine feel local.
 
 ### 3. Readiness and recovery
@@ -333,7 +333,7 @@ Podman's readiness model is also reusable:
 - SSH reachability
 - forwarded socket reachability
 
-For Neovex hybrid, the layered readiness model would become:
+For Nimbus hybrid, the layered readiness model would become:
 
 - machine ready
 - guest machine-API socket reachable
@@ -345,7 +345,7 @@ Keep using `gvproxy` and machine port-forwarding for published guest service
 ports.
 
 The hybrid model does not require inventing a new data-plane technology. It
-only changes where Neovex's authoritative application/runtime process lives.
+only changes where Nimbus's authoritative application/runtime process lives.
 
 ---
 
@@ -354,10 +354,10 @@ only changes where Neovex's authoritative application/runtime process lives.
 The biggest architectural risk in the hybrid model is accidentally rebuilding a
 generic remote engine like Podman.
 
-Avoid that by keeping the guest API narrow and Neovex-specific.
+Avoid that by keeping the guest API narrow and Nimbus-specific.
 
 The guest should not become "a Podman replacement API." It should expose only
-the runtime operations the host Neovex server needs:
+the runtime operations the host Nimbus server needs:
 
 - ensure service
 - stop service
@@ -369,8 +369,8 @@ the runtime operations the host Neovex server needs:
 
 That keeps the product seam as:
 
-- Neovex host server
-- Neovex guest machine API
+- Nimbus host server
+- Nimbus guest machine API
 
 rather than:
 
@@ -388,7 +388,7 @@ plan should be rewritten along these lines:
 
 Repo outputs:
 
-- guest `neovex.socket` / `neovex.service` inside the Linux machine
+- guest `nimbus.socket` / `nimbus.service` inside the Linux machine
 - host client for that guest machine API
 - forwarded host-local socket path
 - typed remote lifecycle protocol for service operations only
@@ -396,25 +396,25 @@ Repo outputs:
 
 Acceptance criteria:
 
-- host Neovex can ensure, stop, and inspect guest containers through the
+- host Nimbus can ensure, stop, and inspect guest containers through the
   forwarded guest socket
-- guest logs and published port bindings are visible to host Neovex without
+- guest logs and published port bindings are visible to host Nimbus without
   SSH-driven ad hoc shelling
-- the protocol remains Neovex-specific and does not expand into a generic
+- the protocol remains Nimbus-specific and does not expand into a generic
   container-engine surface
 
-### Revised MAC6: Host-resident `neovex serve`
+### Revised MAC6: Host-resident `nimbus serve`
 
 Repo outputs:
 
-- mac-aware host-resident `neovex serve`
+- mac-aware host-resident `nimbus serve`
 - host runtime/storage path remains authoritative on macOS
 - `ctx.services.*` activation routes through the guest machine-API client
 - docs for hybrid host-runtime plus guest-services workflow
 
 Acceptance criteria:
 
-- `neovex serve` on macOS runs the authoritative Neovex API on the host Mac
+- `nimbus serve` on macOS runs the authoritative Nimbus API on the host Mac
 - service activation reaches guest containers through the remote guest
   machine-API seam
 - ordinary runtime/storage edits do not require restarting or re-entering the
@@ -451,7 +451,7 @@ It is:
 
 ## Tradeoff Matrix
 
-| Concern | Option A: host Neovex, guest containers | Option B: guest Neovex, guest containers |
+| Concern | Option A: host Nimbus, guest containers | Option B: guest Nimbus, guest containers |
 | --- | --- | --- |
 | Linux control-plane parity | weaker | stronger |
 | Podman topology alignment | weaker | stronger |
@@ -478,7 +478,7 @@ These are real advantages and should not be dismissed:
 - For requests that only touch storage/runtime and never activate services,
   the path can be shorter.
 
-If Neovex's product value on macOS were dominated by host-native runtime
+If Nimbus's product value on macOS were dominated by host-native runtime
 development and only lightly touched guest-managed services, this option would
 deserve stronger consideration.
 
@@ -490,7 +490,7 @@ These are the reasons it is not the default v1 recommendation:
 
 ### 1. It creates a new remote control-plane problem
 
-The host Neovex process would need to manage:
+The host Nimbus process would need to manage:
 
 - guest container create/start/stop
 - guest logs
@@ -500,13 +500,13 @@ The host Neovex process would need to manage:
 - guest build contexts
 - guest recovery/reconciliation after partial failure
 
-That is not the same problem Neovex solves on Linux today.
+That is not the same problem Nimbus solves on Linux today.
 
 ### 2. It introduces split-brain state
 
 With Option A:
 
-- the Neovex service registry and runtime state live on macOS
+- the Nimbus service registry and runtime state live on macOS
 - the actual container runtime state lives in the Linux guest
 
 That invites disagreement during failures:
@@ -530,7 +530,7 @@ cross-OS ownership problem:
 Option B still has file sharing, but the control plane that reasons about
 those paths lives in the guest where the runtime executes.
 
-### 4. It pushes Neovex toward becoming a generic remote engine client
+### 4. It pushes Nimbus toward becoming a generic remote engine client
 
 Even if we do not expose that product seam publicly, Option A nudges the
 implementation toward:
@@ -549,9 +549,9 @@ One of the strongest objections to Option B is storage.
 
 Important nuance:
 
-- **guest-resident Neovex does not require guest-only data**
+- **guest-resident Nimbus does not require guest-only data**
 
-The guest Neovex process can still read/write host-backed project paths or
+The guest Nimbus process can still read/write host-backed project paths or
 state roots through `virtiofs`.
 
 So the choice is not:
@@ -564,7 +564,7 @@ The real choice is:
 - where the **authoritative process** runs
 - not whether data ultimately lives on host-backed storage
 
-This weakens one of the main objections to guest-resident Neovex.
+This weakens one of the main objections to guest-resident Nimbus.
 
 ---
 
@@ -589,7 +589,7 @@ So the practical recommendation is now:
 1. keep the active macOS plan on Option A
 2. preserve Podman's machine topology, forwarded-socket pattern, and readiness
    layering
-3. keep the guest protocol narrow and Neovex-specific
+3. keep the guest protocol narrow and Nimbus-specific
 4. do not let the hybrid seam expand into a generic remote container engine
 
 Option B remains the strongest fallback if the hybrid seam proves too complex

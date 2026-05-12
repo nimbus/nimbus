@@ -1,12 +1,12 @@
 # Plan: Service Control Plane
 
-Canonical plan for Neovex's developer and operator service control plane for
+Canonical plan for Nimbus's developer and operator service control plane for
 Compose-declared sandbox-backed services.
 
 Builds on `microvm-runtime-plan.md` M1 through M4 and records the completed M5
 architectural work: project identity, durable state ownership, control-root
 layout, and lifecycle command semantics for
-`neovex service ...`.
+`nimbus service ...`.
 
 ---
 
@@ -37,10 +37,10 @@ The M5 service-control work was no longer just "add more CLI commands." It had
 its own architectural questions:
 
 - what is the durable source of truth for service lifecycle state?
-- how do `neovex service ...` commands identify a project and its services?
-- how do `neovex --compose-file ...` and `neovex service ...` share one control
+- how do `nimbus service ...` commands identify a project and its services?
+- how do `nimbus --compose-file ...` and `nimbus service ...` share one control
   plane instead of becoming parallel systems?
-- which Docker/Podman behaviors should Neovex copy, and which should it
+- which Docker/Podman behaviors should Nimbus copy, and which should it
   explicitly reject?
 
 Those questions are large enough that they should not remain buried as one
@@ -50,33 +50,33 @@ phase inside the broader microVM runtime plan.
 
 ## Current Assessed State
 
-- `neovex-bin` already owns the first Compose translation seam in
-  `crates/neovex-bin/src/service/compose.rs`.
-- `neovex service config` already parses and validates a supported Compose
+- `nimbus-bin` already owns the first Compose translation seam in
+  `crates/nimbus-bin/src/service/compose.rs`.
+- `nimbus service config` already parses and validates a supported Compose
   subset and lowers it into a typed `SandboxServiceCatalog`.
-- `crates/neovex-bin/src/service/project.rs` now owns the first explicit
+- `crates/nimbus-bin/src/service/project.rs` now owns the first explicit
   project/control-root seam. It derives a deterministic Compose project key
   from the validated project name plus the canonical compose file path, derives
   a local service tenant id from that key, and materializes a project-scoped
   krun backend root under
   `<control_data_dir>/services/projects/<project_key>/backends/krun/`.
-- `crates/neovex-sandbox/src/backends/krun/state.rs` now owns the first
+- `crates/nimbus-sandbox/src/backends/krun/state.rs` now owns the first
   backend-owned persisted-state lookup seam. `KrunSandboxStateView` reads krun
   manifests from the project-scoped backend root and exposes typed surfaces for
   project listing, inspect-by-service identity, and log-path lookup without
   introducing a separate CLI lifecycle database.
-- `neovex --compose-file ...` now reuses that same control-plane derivation for
+- `nimbus --compose-file ...` now reuses that same control-plane derivation for
   the server path instead of constructing the krun backend with the generic
-  `/tmp/neovex-sandbox` default.
-- `neovex service config`, `up`, `down`, `list`, `inspect`, `logs`, and `ps`
-  now all exist locally in `crates/neovex-bin/src/service/`.
-- `neovex service up` reparses Compose through the same
+  `/tmp/nimbus-sandbox` default.
+- `nimbus service config`, `up`, `down`, `list`, `inspect`, `logs`, and `ps`
+  now all exist locally in `crates/nimbus-bin/src/service/`.
+- `nimbus service up` reparses Compose through the same
   `ComposeProjectContext`, derives the same deterministic project key / local
   tenant / project-scoped krun backend root as `--compose-file`, and starts
   services through the same `SandboxServiceCatalog` launch bridge used by the
   server path. If the current persisted service identity is still active,
   `up` returns `already_running` instead of launching a duplicate sandbox.
-- `neovex service down` resolves current service identity from backend-owned
+- `nimbus service down` resolves current service identity from backend-owned
   persisted state, dedupes historical manifest history per service name, and
   stops the active sandbox through the generic backend `stop()` seam. If the
   resolved service identity is already terminal, `down` returns
@@ -94,7 +94,7 @@ phase inside the broader microVM runtime plan.
 ### Compose format
 
 - Docker and Podman both target the Compose Spec.
-- `compose.yaml` remains the right config input format for Neovex.
+- `compose.yaml` remains the right config input format for Nimbus.
 
 ### Podman
 
@@ -126,10 +126,10 @@ phase inside the broader microVM runtime plan.
   - `.env` / `COMPOSE_*` precedence
   - multi-file merge/include behavior
   - project/service labels and config-hash ideas
-- It is **not** a good runtime dependency for Neovex because:
+- It is **not** a good runtime dependency for Nimbus because:
   - it is a separate Python process and CLI wrapper
-  - it orchestrates Podman containers and networks, not Neovex sandboxes
-  - its durable lookup model is label-and-`podman ps` based, while Neovex
+  - it orchestrates Podman containers and networks, not Nimbus sandboxes
+  - its durable lookup model is label-and-`podman ps` based, while Nimbus
     already has backend-owned manifests and logs
 
 ---
@@ -137,26 +137,26 @@ phase inside the broader microVM runtime plan.
 ## Architectural Decisions
 
 1. **Compose stays the input format.**
-   Neovex continues to accept `compose.yaml` as the user-facing service
+   Nimbus continues to accept `compose.yaml` as the user-facing service
    definition format.
 
-2. **Neovex does not depend on `podman-compose` at runtime.**
+2. **Nimbus does not depend on `podman-compose` at runtime.**
    We may use it as a source reference, but not as an execution dependency or
    subprocess wrapper.
 
 3. **Backend-owned persisted sandbox state is the lifecycle source of truth.**
-   `neovex service up/down/list/logs/inspect` must resolve against backend-owned
+   `nimbus service up/down/list/logs/inspect` must resolve against backend-owned
    manifests, logs, and state roots. Do not add a second CLI-owned lifecycle
    state file or project database.
 
-4. **`neovex service ...` and `neovex --compose-file ...` must share one
+4. **`nimbus service ...` and `nimbus --compose-file ...` must share one
    lowering pipeline and one project identity model.**
    The CLI and server path may differ in execution mode, but not in how they
    derive service definitions, project identity, backend roots, or service
    names.
 
 5. **Project identity must be deterministic and collision-resistant.**
-   Neovex should follow Compose-style project-name precedence, but it must also
+   Nimbus should follow Compose-style project-name precedence, but it must also
    disambiguate same-named projects from different directories. The working
    design target is:
    - human-facing project name: normalized Compose project name
@@ -164,14 +164,14 @@ phase inside the broader microVM runtime plan.
      compose root / config path set
    - deterministic local tenant identity derived from that project key
 
-6. **Control roots belong under the Neovex control-plane directory, not `/tmp`.**
+6. **Control roots belong under the Nimbus control-plane directory, not `/tmp`.**
    For local developer workflows, backend state roots should live under a
    deterministic project-scoped subtree of `control_data_dir`, then fan out
    into backend-specific directories such as krun manifests, bundles, and logs.
 
 7. **Logs and inspect output must be backend-first.**
-   `neovex service logs` should tail backend-owned persistent logs.
-   `neovex service inspect` should surface a typed, backend-owned summary built
+   `nimbus service logs` should tail backend-owned persistent logs.
+   `nimbus service inspect` should surface a typed, backend-owned summary built
    from manifest/runtime state, not raw YAML or ad hoc CLI caches.
 
 8. **Podman alignment is selective.**
@@ -187,20 +187,20 @@ phase inside the broader microVM runtime plan.
    - Podman pods as the primary ownership primitive
 
 9. **OS-native service managers are future adapters, not the source of truth.**
-   If Neovex later emits systemd, Quadlet, or launchd artifacts, they should be
+   If Nimbus later emits systemd, Quadlet, or launchd artifacts, they should be
    generated from the same service control plane, not replace it.
 
 ---
 
 ## Project Identity Contract
 
-Current implemented precedence in `crates/neovex-bin/src/service/compose.rs`
+Current implemented precedence in `crates/nimbus-bin/src/service/compose.rs`
 and `project.rs`:
 
-1. top-level Compose `name:` after Neovex sanitization
+1. top-level Compose `name:` after Nimbus sanitization
 2. otherwise the compose file's parent directory name
 3. otherwise the compose file stem
-4. otherwise the literal fallback `neovex`
+4. otherwise the literal fallback `nimbus`
 
 Current implemented derivation rules:
 
@@ -259,8 +259,8 @@ in backend-owned state, not in a separate CLI-owned registry file.
 
 ### CLI resolution model
 
-- `neovex service config` parses and validates Compose
-- `neovex service up/down/...` reparses Compose, derives the same project key,
+- `nimbus service config` parses and validates Compose
+- `nimbus service up/down/...` reparses Compose, derives the same project key,
   and resolves service identities deterministically
 - lifecycle commands then discover current state from the backend root
 
@@ -275,8 +275,8 @@ backend remains authoritative for current runtime state.
 
 | Slice | Status | Notes |
 |---|---|---|
-| SCP1: project identity + control-root contract | `done` | project-name precedence, project-key / local-tenant derivation, and the project-scoped backend-root contract are now documented here and implemented in `crates/neovex-bin/src/service/project.rs` |
-| SCP2: backend-owned summary/lookup seams | `done` | `KrunSandboxStateView` landed in `crates/neovex-sandbox/src/backends/krun/state.rs` with project listing, inspect-by-service identity, and log-path lookup over manifest-backed krun state |
+| SCP1: project identity + control-root contract | `done` | project-name precedence, project-key / local-tenant derivation, and the project-scoped backend-root contract are now documented here and implemented in `crates/nimbus-bin/src/service/project.rs` |
+| SCP2: backend-owned summary/lookup seams | `done` | `KrunSandboxStateView` landed in `crates/nimbus-sandbox/src/backends/krun/state.rs` with project listing, inspect-by-service identity, and log-path lookup over manifest-backed krun state |
 | SCP3: lifecycle commands | `done` | `config`, `up`, `down`, `list`, `inspect`, `logs`, and `ps` now exist locally; `down` resolves one current target per service identity instead of fanning out across raw manifest history |
 | SCP4: CLI/server ownership unification | `done` | main server path plus explicit lifecycle commands now share `ComposeProjectContext`, project-scoped backend roots, and the `SandboxServiceCatalog` lowering bridge without a duplicate lifecycle database |
 | SCP5: end-to-end proof and operator docs | `done` | Hardened helpers from `81cf133` re-verified on Debian 13 (2026-04-13). Compose-serve helper clears control root before run, records exact project_root/project_key, and now prefers a machine-readable metadata-file handoff over stdout scraping. Recovery drill validates exact current-run project root, manifest sandbox ids, ctr/oci log paths, orphan detection by sandbox identity. All checks passed: project_key=`smoke-app-cf079a18bd54`, sandbox=`db-01kp3yamn6rb2dtwbk0wn1t8tz`, status=stopped, shutdown_requested=True, exit_code=137, no leaked ports, no orphan processes, ctr+oci logs persist |
@@ -306,19 +306,19 @@ Deliverables:
 
 Deliverables:
 
-- `neovex service up`
-- `neovex service down`
-- `neovex service list`
-- `neovex service logs`
-- `neovex service inspect`
-- `neovex service ps`
+- `nimbus service up`
+- `nimbus service down`
+- `nimbus service list`
+- `nimbus service logs`
+- `nimbus service inspect`
+- `nimbus service ps`
 
 ### SCP4: Unify server-path and CLI-path ownership
 
 Deliverables:
 
-- `neovex --compose-file ...` uses the same project/control-root derivation as
-  `neovex service ...`
+- `nimbus --compose-file ...` uses the same project/control-root derivation as
+  `nimbus service ...`
 - no duplicate lifecycle bookkeeping between CLI and server path
 - documented behavior for lazy activation vs explicit pre-start
 
@@ -341,7 +341,7 @@ are true:
 - the project identity and control-root rules are documented in-repo
 - no CLI-owned lifecycle state file was introduced
 - backend-owned list/log/inspect seams exist and are tested
-- `neovex service ...` lifecycle commands use the same lowering and identity
+- `nimbus service ...` lifecycle commands use the same lowering and identity
   rules as `--compose-file`
 - Linux-host end-to-end proof exists for the compose-backed runtime path
 
@@ -351,8 +351,8 @@ are true:
 
 - Use `podman-compose` as a **reference implementation** for Compose parsing and
   project-shape edge cases.
-- Do **not** use `podman-compose` as Neovex's runtime dependency or wrapper.
-- Align Neovex's ownership model with Podman's native `libpod` approach:
+- Do **not** use `podman-compose` as Nimbus's runtime dependency or wrapper.
+- Align Nimbus's ownership model with Podman's native `libpod` approach:
   backend-owned state, typed inspect/log/list surfaces, and deterministic
   project identity.
 
@@ -361,7 +361,7 @@ are true:
 ## Execution Log
 
 - 2026-04-13: Landed the first code slice for `SCP1` and part of `SCP4`.
-  Added `crates/neovex-bin/src/service/project.rs` with a typed
+  Added `crates/nimbus-bin/src/service/project.rs` with a typed
   `ComposeProjectContext` / `ComposeProjectControlPlane` helper that:
   - loads the validated Compose project plan
   - canonicalizes the compose file path
@@ -372,15 +372,15 @@ are true:
   - produces a krun backend config rooted there
   The main `--compose-file` server path now uses that helper instead of
   `KrunSandboxBackendConfig::default()`, so Compose-backed server startup no
-  longer falls back to `/tmp/neovex-sandbox`. The Linux ignored smoke in
-  `crates/neovex-bin/src/main.rs` was updated to exercise the same helper.
+  longer falls back to `/tmp/nimbus-sandbox`. The Linux ignored smoke in
+  `crates/nimbus-bin/src/main.rs` was updated to exercise the same helper.
   Verification:
   - `cargo fmt --all --check`
-  - `cargo check -p neovex-bin -p neovex-sandbox -p neovex`
-  - `cargo test -p neovex-bin service::`
+  - `cargo check -p nimbus-bin -p nimbus-sandbox -p nimbus`
+  - `cargo test -p nimbus-bin service::`
 - 2026-04-13: Landed `SCP2`, the first backend-owned persisted-state lookup
   seam for krun. Added
-  `crates/neovex-sandbox/src/backends/krun/state.rs` with a public
+  `crates/nimbus-sandbox/src/backends/krun/state.rs` with a public
   `KrunSandboxStateView` that:
   - reads krun manifests under the project-scoped `state/containers/` root
   - lists typed sandbox summaries for the project
@@ -392,13 +392,13 @@ are true:
   service-identity preference across multiple manifests for the same
   tenant/service pair. Verification:
   - `cargo fmt --all --check`
-  - `cargo check -p neovex-sandbox -p neovex-bin -p neovex`
-  - `cargo test -p neovex-sandbox krun::state -- --nocapture`
-  - `cargo test -p neovex-bin service:: -- --nocapture`
+  - `cargo check -p nimbus-sandbox -p nimbus-bin -p nimbus`
+  - `cargo test -p nimbus-sandbox krun::state -- --nocapture`
+  - `cargo test -p nimbus-bin service:: -- --nocapture`
 - 2026-04-13: Started `SCP3` with the first non-mutating lifecycle command
-  slice in `crates/neovex-bin/src/service/mod.rs`. Added:
-  - `neovex service list [--all-tenants]`
-  - `neovex service inspect <service> [--tenant <tenant-id>]`
+  slice in `crates/nimbus-bin/src/service/mod.rs`. Added:
+  - `nimbus service list [--all-tenants]`
+  - `nimbus service inspect <service> [--tenant <tenant-id>]`
   Both commands now derive the same project-scoped backend root as
   `--compose-file`, resolve persisted state through `KrunSandboxStateView`, and
   render typed YAML from backend-owned manifests instead of inventing a CLI
@@ -411,11 +411,11 @@ are true:
   persisted manifest discovery for both the default local-tenant view and the
   explicit tenant override path. Verification:
   - `cargo fmt --all --check`
-  - `cargo check -p neovex-sandbox -p neovex-bin -p neovex`
-  - `cargo test -p neovex-bin service:: -- --nocapture`
-  - `cargo test -p neovex-sandbox krun::state -- --nocapture`
+  - `cargo check -p nimbus-sandbox -p nimbus-bin -p nimbus`
+  - `cargo test -p nimbus-bin service:: -- --nocapture`
+  - `cargo test -p nimbus-sandbox krun::state -- --nocapture`
 - 2026-04-13: Extended `SCP3` with the first persisted log reader:
-  - `neovex service logs <service> [--tenant <tenant-id>] [--follow]`
+  - `nimbus service logs <service> [--tenant <tenant-id>] [--follow]`
   The command resolves the same project-scoped backend root as the other
   lifecycle reads, selects the persisted sandbox for the requested
   tenant/service identity, and reads `ctr.log` directly from backend-owned
@@ -424,10 +424,10 @@ are true:
   tests for command parsing, tenant-aware log-path resolution, and incremental
   appended-byte reads. Verification:
   - `cargo fmt --all --check`
-  - `cargo check -p neovex-sandbox -p neovex-bin -p neovex`
-  - `cargo test -p neovex-bin service:: -- --nocapture`
+  - `cargo check -p nimbus-sandbox -p nimbus-bin -p nimbus`
+  - `cargo test -p nimbus-bin service:: -- --nocapture`
 - 2026-04-13: Extended `SCP3` with the first persisted process snapshot:
-  - `neovex service ps <service> [--tenant <tenant-id>]`
+  - `nimbus service ps <service> [--tenant <tenant-id>]`
   The command resolves the same project-scoped backend root as the other
   lifecycle reads, loads the selected sandbox from backend-owned persisted
   state, reads the persisted `pidfile` / `conmon.pid`, and layers a host `ps`
@@ -435,12 +435,12 @@ are true:
   parsing, pidfile parsing, `ps` output filtering, and project-root-based PID
   snapshot rendering. Verification:
   - `cargo fmt --all --check`
-  - `cargo check -p neovex-sandbox -p neovex-bin -p neovex`
-  - `cargo test -p neovex-bin service:: -- --nocapture`
+  - `cargo check -p nimbus-sandbox -p nimbus-bin -p nimbus`
+  - `cargo test -p nimbus-bin service:: -- --nocapture`
 - 2026-04-13: Completed the remaining local `SCP3` lifecycle wiring and closed
-  the `SCP4` ownership gap in `crates/neovex-bin/src/service/mod.rs`. Added:
-  - `neovex service up [service] [--tenant <tenant-id>]`
-  - `neovex service down [service] [--tenant <tenant-id>]`
+  the `SCP4` ownership gap in `crates/nimbus-bin/src/service/mod.rs`. Added:
+  - `nimbus service up [service] [--tenant <tenant-id>]`
+  - `nimbus service down [service] [--tenant <tenant-id>]`
   Both commands now reparse Compose through the same
   `ComposeProjectContext`, derive the same deterministic project key / local
   tenant / project-scoped krun backend root as `--compose-file`, and consume
@@ -452,25 +452,25 @@ are true:
   `already_stopped` reporting. Added focused tests for CLI parsing,
   manifest-history dedupe, and helper start/stop behavior. Verification:
   - `cargo fmt --all --check`
-  - `cargo check -p neovex-sandbox -p neovex-bin -p neovex`
-  - `cargo test -p neovex-bin service:: -- --nocapture`
+  - `cargo check -p nimbus-sandbox -p nimbus-bin -p nimbus`
+  - `cargo test -p nimbus-bin service:: -- --nocapture`
 - 2026-04-13: Ran initial SCP5 Linux-host verification on Debian 13 x86_64.
   Compose-serve verification via
   `bash scripts/verify-microvm-m5-compose-serve-helper.sh` passed (~9.5s):
   - V8 function `services:activate` returned `ctx.services.db.port = 18091`
   - BusyBox httpd responded on TSI host port 18091 (guest 8091)
   - tenant deletion stopped service and released port
-  - state at `/tmp/neovex-sandbox-smoke/m5-compose-control/services/projects/smoke-app-444d8e7fafaa/`
+  - state at `/tmp/nimbus-sandbox-smoke/m5-compose-control/services/projects/smoke-app-444d8e7fafaa/`
   Recovery drill via `bash scripts/verify-microvm-m5-recovery-drill-helper.sh`
   also reported success and wrote
-  `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`.
+  `/tmp/nimbus-sandbox-smoke/m5-recovery-drill/summary.txt`.
 - 2026-04-13: Post-review hardening found two durability gaps in the initial
   SCP5 closeout:
   - the bin smoke had widened public API surface by making
     `RuntimeServiceRegistry` public even though the test could assert through
     the already-public `SandboxCatalog` surface on `SandboxServiceManager`
   - the recovery helper could validate stale manifests/logs from the shared
-    `${NEOVEX_KRUN_SMOKE_WORKDIR}` and could miss orphaned conmon/crun
+    `${NIMBUS_KRUN_SMOKE_WORKDIR}` and could miss orphaned conmon/crun
     processes by grepping the host port rather than the sandbox identity
   The current code now keeps `RuntimeServiceRegistry` internal again, records
   the exact current-run project root/key in the compose-serve helper, clears
@@ -486,13 +486,13 @@ are true:
   `grep -o 'M5_PROJECT_ROOT=[^ ]*'` to extract mid-line markers reliably.
   Commands run:
   1. `cargo fmt --all --check` — passed
-  2. `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex` — passed
-  3. `cargo test -p neovex-bin` — 39 passed, 1 ignored
+  2. `cargo check -p nimbus-sandbox -p nimbus-server -p nimbus-bin -p nimbus` — passed
+  3. `cargo test -p nimbus-bin` — 39 passed, 1 ignored
   4. `bash scripts/verify-microvm-m5-compose-serve-helper.sh` — passed (~6.9s)
   5. `bash scripts/verify-microvm-m5-recovery-drill-helper.sh` — all checks passed
   Evidence:
   - project_key: `smoke-app-cf079a18bd54`
-  - project_root: `/tmp/neovex-sandbox-smoke/m5-compose-control/services/projects/smoke-app-cf079a18bd54`
+  - project_root: `/tmp/nimbus-sandbox-smoke/m5-compose-control/services/projects/smoke-app-cf079a18bd54`
   - sandbox_id: `db-01kp3yamn6rb2dtwbk0wn1t8tz`
   - manifest.status: stopped
   - manifest.shutdown_requested: True
@@ -502,20 +502,20 @@ are true:
   - logs.ctr.persists: ok (1/1)
   - logs.oci.persists: ok (1/1)
   - project.layout: ok
-  - compose-serve log: `/tmp/neovex-sandbox-smoke/m5-compose-serve-verification/compose-serve.log`
-  - compose-serve summary: `/tmp/neovex-sandbox-smoke/m5-compose-serve-verification/summary.txt`
-  - recovery-drill summary: `/tmp/neovex-sandbox-smoke/m5-recovery-drill/summary.txt`
+  - compose-serve log: `/tmp/nimbus-sandbox-smoke/m5-compose-serve-verification/compose-serve.log`
+  - compose-serve summary: `/tmp/nimbus-sandbox-smoke/m5-compose-serve-verification/summary.txt`
+  - recovery-drill summary: `/tmp/nimbus-sandbox-smoke/m5-recovery-drill/summary.txt`
   SCP5 is now `done`.
 - 2026-04-13: Post-closeout helper hardening removed the remaining stdout-
   parsing seam from SCP5. The compose-backed ignored smoke in
-  `crates/neovex-bin/src/main.rs` now writes machine-readable project metadata
-  to `NEOVEX_KRUN_SMOKE_M5_METADATA_FILE` when requested, and
+  `crates/nimbus-bin/src/main.rs` now writes machine-readable project metadata
+  to `NIMBUS_KRUN_SMOKE_M5_METADATA_FILE` when requested, and
   `scripts/verify-microvm-m5-compose-serve-helper.sh` now reads
   `${log_root}/metadata.json` instead of scraping `project_root` /
   `project_key` from cargo output. Local verification only:
   1. `cargo fmt --all --check` — passed
-  2. `cargo check -p neovex-sandbox -p neovex-server -p neovex-bin -p neovex` — passed
-  3. `cargo test -p neovex-bin service:: -- --nocapture` — passed
+  2. `cargo check -p nimbus-sandbox -p nimbus-server -p nimbus-bin -p nimbus` — passed
+  3. `cargo test -p nimbus-bin service:: -- --nocapture` — passed
   4. `bash -n scripts/verify-microvm-m5-compose-serve-helper.sh` — passed
   5. `bash -n scripts/verify-microvm-m5-recovery-drill-helper.sh` — passed
   This did not change the recorded Debian 13 Linux evidence; it hardened the

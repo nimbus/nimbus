@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 TEST_FILE_SUFFIXES = {".js", ".mjs", ".cjs"}
-RUST_NODE_COMPAT_PATH = Path("crates/neovex-runtime/src/runtime/tests/node/mod.rs")
+RUST_NODE_COMPAT_PATH = Path("crates/nimbus-runtime/src/runtime/tests/node/mod.rs")
 LANE_AWARE_BATCH_MACROS = {
     "node20_only_batch_case",
     "node22_default_only_batch_case",
@@ -41,7 +41,7 @@ def manifest_root() -> Path:
     return (
         repo_root()
         / "crates"
-        / "neovex-runtime"
+        / "nimbus-runtime"
         / "src"
         / "runtime"
         / "tests"

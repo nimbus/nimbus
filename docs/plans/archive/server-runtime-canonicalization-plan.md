@@ -2,7 +2,7 @@
 
 Canonical execution control plane for the next post-Firebase, post-Cloud
 Functions architecture wave. This plan exists because the completed trust and
-boundary hardening work left Neovex in a much healthier state, but the current
+boundary hardening work left Nimbus in a much healthier state, but the current
 review still found several important seams that are less canonical, less
 modular, or less enterprise-trustworthy than the pre-launch repo should accept:
 
@@ -64,7 +64,7 @@ also more foundational:
 - the highest-churn public surfaces should be smaller and clearer
 - host-call dispatch should not require triplicate hand-maintained switchboards
 
-This is exactly the kind of cleanup Neovex should do pre-launch while direct
+This is exactly the kind of cleanup Nimbus should do pre-launch while direct
 breaking changes are still preferred over compatibility layers.
 
 ## Relationship To Other Plans
@@ -140,10 +140,10 @@ This plan does not cover:
   deriving it from `ConvexRegistry`.
 - Cloud Functions `firebase-admin/firestore` host-call dispatch stays typed
   end to end and uses explicit async runtime write helpers.
-- `neovex-core::Document` now stores both durable `creation_time` and
+- `nimbus-core::Document` now stores both durable `creation_time` and
   `update_time`, and covered adapters expose truthful shared lifecycle
   metadata.
-- `crates/neovex-server/src/adapters/cloud_functions/http.rs` and
+- `crates/nimbus-server/src/adapters/cloud_functions/http.rs` and
   `packages/firebase/src/firestore.ts` are both back under the repo’s
   preferred composition-root modularity band.
 - Convex host-bridge document/query dispatch now routes through a narrower
@@ -272,7 +272,7 @@ Goal: shrink the Cloud Functions HTTP surface to a thinner composition root.
 
 Completion gate:
 
-- `crates/neovex-server/src/adapters/cloud_functions/http.rs` is below the
+- `crates/nimbus-server/src/adapters/cloud_functions/http.rs` is below the
   1,500-line threshold or justified by a strong ownership exception recorded in
   this plan
 
@@ -344,14 +344,14 @@ Each implementation item should record focused verification before it closes.
 Expected lanes include the narrowest proofs that match the touched surface, for
 example:
 
-- `cargo test -p neovex-server cloud_functions --lib`
-- focused Firebase lanes under `cargo test -p neovex-server ...`
-- focused Convex auth/runtime lanes under `cargo test -p neovex-server ...`
-- `cargo check -p neovex-server`
+- `cargo test -p nimbus-server cloud_functions --lib`
+- focused Firebase lanes under `cargo test -p nimbus-server ...`
+- focused Convex auth/runtime lanes under `cargo test -p nimbus-server ...`
+- `cargo check -p nimbus-server`
 - `cargo fmt --all --check`
-- `cargo clippy -p neovex-server --lib --tests -- -D warnings`
-- focused `npm run typecheck --workspace @neovex/firebase`
-- focused `npm run test --workspace @neovex/firebase`
+- `cargo clippy -p nimbus-server --lib --tests -- -D warnings`
+- focused `npm run typecheck --workspace @nimbus/firebase`
+- focused `npm run test --workspace @nimbus/firebase`
 
 Use broader workspace verification only after the focused proofs are green.
 
@@ -361,11 +361,11 @@ Use broader workspace verification only after the focused proofs are green.
 | --- | --- | --- | --- |
 | 2026-04-26 | plan authoring | `done` | Created this control-plane plan from the architecture and modularity review after the completed trust/boundary waves. No code verification ran in the authoring pass because this step only established the control plane. |
 | 2026-04-26 | `SRC1` | `done` | Promoted this plan into `docs/plans/README.md` as the active owner and updated `AGENTS.md` so post-Firebase / post-Cloud-Functions auth/runtime/modularity follow-ons now point here instead of only at the completed trust baseline. |
-| 2026-04-26 | `SRC2` | `done` | `AppState` no longer infers `application_auth_verifier` from `convex_registry`; router composition explicitly seeds the verifier at startup, and deploy activation continues to update it explicitly. Focused proofs: `cargo test -p neovex-server state::tests --lib`, `cargo test -p neovex-server deploy_ --lib`, `cargo test -p neovex-server convex_runtime_query_rejects_invalid_bearer_token --lib`, `cargo test -p neovex-server firebase_rest_commit_and_batch_get_respect_bearer_principal --lib`, and `cargo check -p neovex-server`. |
-| 2026-04-26 | `SRC3a` + `SRC3b` | `done` | Removed the internal `serde_json::Value` bounce from the Cloud Functions `firebase-admin/firestore` host-call dispatcher and introduced `execute_atomic_write_batch_async(...)` in the shared runtime-host capability seam so async Firestore-admin writes no longer just fall back to the sync batch helper. Focused proof: `cargo test -p neovex-server cloud_functions --lib`. |
-| 2026-04-26 | `SRC4` | `done` | Added durable `update_time` metadata to `neovex-core::Document`, threaded it through engine write preservation plus SQLite/Postgres/MySQL/LibSQL persistence paths, and updated covered Firebase and Cloud Functions read contracts to expose truthful shared lifecycle metadata. No-op overwrites now preserve `update_time` so trigger suppression semantics remain correct. Focused proofs: `cargo check -p neovex-core -p neovex-storage -p neovex-engine -p neovex-server`; `cargo test -p neovex-server cloud_functions --lib`. |
-| 2026-04-26 | `SRC5` | `done` | Split callable-specific Cloud Functions HTTP behavior into `adapters/cloud_functions/http/callable.rs`, leaving `http.rs` as a thinner composition root under the 1,500-line threshold while preserving the same tenant-resolution, CORS, and runtime invocation behavior. Focused proof: `cargo test -p neovex-server cloud_functions --lib`. |
-| 2026-04-26 | `SRC6` | `done` | Extracted the remaining Firebase Firestore public-surface helpers into `packages/firebase/src/internal/firestore-helpers.ts`, shrinking `packages/firebase/src/firestore.ts` back under the 1,500-line threshold without changing the public API surface. Focused proofs: `npm run typecheck --workspace @neovex/firebase`; `npm run build --workspace @neovex/firebase`; `npm run test --workspace @neovex/firebase`. |
-| 2026-04-26 | `SRC7` | `done` | Consolidated the Convex host-bridge triple-dispatch into family-owned enums under `adapters/convex/host_bridge/db_ops/dispatch.rs`, leaving `db_ops/mod.rs` as a narrower adapter-owned dispatch root with explicit unsupported handling for adapter-owned host calls. Focused proofs: `cargo test -p neovex-server adapters::convex::tests::authorization --lib`; `cargo test -p neovex-server adapters::convex::tests::cancellation --lib`; `cargo test -p neovex-server cloud_functions --lib`; `cargo check -p neovex-server`. |
+| 2026-04-26 | `SRC2` | `done` | `AppState` no longer infers `application_auth_verifier` from `convex_registry`; router composition explicitly seeds the verifier at startup, and deploy activation continues to update it explicitly. Focused proofs: `cargo test -p nimbus-server state::tests --lib`, `cargo test -p nimbus-server deploy_ --lib`, `cargo test -p nimbus-server convex_runtime_query_rejects_invalid_bearer_token --lib`, `cargo test -p nimbus-server firebase_rest_commit_and_batch_get_respect_bearer_principal --lib`, and `cargo check -p nimbus-server`. |
+| 2026-04-26 | `SRC3a` + `SRC3b` | `done` | Removed the internal `serde_json::Value` bounce from the Cloud Functions `firebase-admin/firestore` host-call dispatcher and introduced `execute_atomic_write_batch_async(...)` in the shared runtime-host capability seam so async Firestore-admin writes no longer just fall back to the sync batch helper. Focused proof: `cargo test -p nimbus-server cloud_functions --lib`. |
+| 2026-04-26 | `SRC4` | `done` | Added durable `update_time` metadata to `nimbus-core::Document`, threaded it through engine write preservation plus SQLite/Postgres/MySQL/LibSQL persistence paths, and updated covered Firebase and Cloud Functions read contracts to expose truthful shared lifecycle metadata. No-op overwrites now preserve `update_time` so trigger suppression semantics remain correct. Focused proofs: `cargo check -p nimbus-core -p nimbus-storage -p nimbus-engine -p nimbus-server`; `cargo test -p nimbus-server cloud_functions --lib`. |
+| 2026-04-26 | `SRC5` | `done` | Split callable-specific Cloud Functions HTTP behavior into `adapters/cloud_functions/http/callable.rs`, leaving `http.rs` as a thinner composition root under the 1,500-line threshold while preserving the same tenant-resolution, CORS, and runtime invocation behavior. Focused proof: `cargo test -p nimbus-server cloud_functions --lib`. |
+| 2026-04-26 | `SRC6` | `done` | Extracted the remaining Firebase Firestore public-surface helpers into `packages/firebase/src/internal/firestore-helpers.ts`, shrinking `packages/firebase/src/firestore.ts` back under the 1,500-line threshold without changing the public API surface. Focused proofs: `npm run typecheck --workspace @nimbus/firebase`; `npm run build --workspace @nimbus/firebase`; `npm run test --workspace @nimbus/firebase`. |
+| 2026-04-26 | `SRC7` | `done` | Consolidated the Convex host-bridge triple-dispatch into family-owned enums under `adapters/convex/host_bridge/db_ops/dispatch.rs`, leaving `db_ops/mod.rs` as a narrower adapter-owned dispatch root with explicit unsupported handling for adapter-owned host calls. Focused proofs: `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`; `cargo test -p nimbus-server adapters::convex::tests::cancellation --lib`; `cargo test -p nimbus-server cloud_functions --lib`; `cargo check -p nimbus-server`. |
 | 2026-04-26 | `SRC8` | `done` | Refreshed the canonical boundary docs and stable completed baselines so the runtime-host ABI layout, composition-root thresholds, and completed canonicalization wave all match the landed code instead of the pre-split plan state. Focused proof: targeted `sed`/`rg` review across `docs/architecture/runtime/adapter-boundary.md`, `docs/plans/README.md`, `AGENTS.md`, and `docs/plans/native-transport-evolution-plan.md`. |
 | 2026-04-26 | `SRC9` | `done` | Closed the control plane by moving this plan out of the active index, rewriting `AGENTS.md` to treat it as a completed baseline instead of an active owner, and refreshing native-transport guidance so future work starts from the corrected server/runtime/auth baseline. Focused proofs: `cargo fmt --all --check`; targeted `rg` review of plan-index and AGENTS references. |

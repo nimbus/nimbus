@@ -15,7 +15,7 @@ Source corpus:
 This file records the pinned official-fixture subset for the carried
 loader-context denominator. The canonical source of truth for the executed subset is
 `LOADER_CONTEXT_BATCH` in
-`crates/neovex-runtime/src/runtime/tests/node/mod.rs`; this document keeps
+`crates/nimbus-runtime/src/runtime/tests/node/mod.rs`; this document keeps
 the current green denominator resumable without rereading the Rust batch table.
 
 ## Initial Slice Map
@@ -262,7 +262,7 @@ Current staged official files:
 
 ## Notes
 
-- The first staged `node:module` wave is green because the Neovex-local module
+- The first staged `node:module` wave is green because the Nimbus-local module
   shim now keeps internal override specifiers out of the public
   `builtinModules` surface and restores the public `Module._stat()` contract.
 - The expanded CommonJS remainder promotion now also includes
@@ -281,7 +281,7 @@ Current staged official files:
   copied `execPath` and env paths into each child bundle root, and the
   CommonJS loader now treats stat-only module-resolution probes beneath
   `.node_modules`, `.node_libraries`, and `lib/node` as quiet existence checks
-  while still keeping actual file reads gated by the Neovex path policy.
+  while still keeping actual file reads gated by the Nimbus path policy.
 - The same CommonJS family now also includes
   `test-module-loading-error.js`. That closeout preserved the real FFI
   capability boundary for valid native addons while fixing Node-shaped error
@@ -296,7 +296,7 @@ Current staged official files:
   implementation shape, so that file stays out of the Node20 denominator as a
   Node20 supported-lane watchpoint.
 - The first staged `async_hooks` wave is now green on the published
-  `agentstation/deno v2.7.14-locker.39` baseline after the canonical Deno
+  `nimbus/deno v2.7.14-locker.39` baseline after the canonical Deno
   owner fixes restored Node-style `AsyncResource` validation, execution async
   resource tracking, trigger async id semantics, and promise-hook propagation.
   The next promise-hook expansion is also green: `test-async-hooks-async-await.js`,
@@ -307,7 +307,7 @@ Current staged official files:
   `test-async-hooks-promise-triggerid.js`, and
   `test-async-hooks-promise-enable-disable.js` all promote on the current
   canonical local Deno baseline. The harness side still stays narrow:
-  Neovex-local fixture isolation disables the hook immediately after the
+  Nimbus-local fixture isolation disables the hook immediately after the
   user-visible `nextTick` assertion in `test-async-hooks-enable-during-promise.js`,
   while the promise-hook batch now quiesces startup Promise noise before
   synchronously requiring the CommonJS fixture for
@@ -335,8 +335,8 @@ Current staged official files:
   and Node24. The Deno owner fixes restored Node-shaped invalid-filename
   constructor errors, standalone `MessagePort` `ref()` / `unref()` /
   `hasRef()` behavior, custom event interop, and listener-late message
-  delivery, while the Neovex runtime now always provisions a
-  `SharedArrayBufferStore` and the Neovex worker bootstrap now tracks
+  delivery, while the Nimbus runtime now always provisions a
+  `SharedArrayBufferStore` and the Nimbus worker bootstrap now tracks
   one-shot message listeners correctly so worker close/exit can drain
   honestly after ref/unref transitions. The explicit remainder is therefore
   sharper now: broader `worker_threads` APIs beyond this verified basics
@@ -418,7 +418,7 @@ Current staged official files:
   which keeps the Node20 and Node24 official files green without changing the
   Node22 denominator because upstream `v22.15.0` does not ship those files.
 - The first shared-LTS `crypto` KDF/stream wave is now green on Node22 and
-  Node20 on the published `agentstation/deno v2.7.14-locker.39` baseline.
+  Node20 on the published `nimbus/deno v2.7.14-locker.39` baseline.
   That promoted slice now covers the deprecated public
   `crypto.Cipher` / `crypto.Decipher` constructor surface, legacy
   `createCipher()` / `createDecipher()` password-based key derivation,
@@ -434,7 +434,7 @@ Current staged official files:
   and Node22 fixtures.
 - The next shared-LTS `crypto` symmetric-cipher/padding wave is now green
   across Node22, Node20, and Node24 on the published
-  `agentstation/deno v2.7.14-locker.39` baseline. That
+  `nimbus/deno v2.7.14-locker.39` baseline. That
   promoted slice now covers AES key-wrap cipher selection and unwrap parity
   (`test-crypto-cipheriv-decipheriv.js`), OpenSSL3-style decrypt/final error
   shaping for CBC padding failures (`test-crypto-padding.js` and

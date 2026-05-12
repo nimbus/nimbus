@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in Neovex.
+Thanks for your interest in Nimbus.
 
 ## Before you open a pull request
 
@@ -12,7 +12,7 @@ Thanks for your interest in Neovex.
 
 ## Contributor license agreements
 
-Neovex uses contributor license agreements so the project owner can maintain,
+Nimbus uses contributor license agreements so the project owner can maintain,
 relicense, and commercialize the project consistently.
 
 Before a pull request can be merged:
@@ -25,7 +25,7 @@ By submitting a contribution, you represent that:
 
 - you are authorized to submit it
 - the contribution is original to you or you have the right to submit it
-- the contribution may be used, relicensed, and distributed by the Neovex
+- the contribution may be used, relicensed, and distributed by the Nimbus
   project owner under open, source-available, and commercial terms
 
 ## License of contributions

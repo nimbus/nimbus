@@ -1,11 +1,11 @@
 # Plan: Docker/Podman-Compatible Compose Discovery
 
-Canonical execution plan for shared Compose file discovery across `neovex dev`,
-`neovex start`, and `neovex compose ...`.
+Canonical execution plan for shared Compose file discovery across `nimbus dev`,
+`nimbus start`, and `nimbus compose ...`.
 
 The goal is a zero-flag happy path that feels native to developers coming from
 Docker Compose, Podman Compose, and Convex: when no explicit compose path is
-provided, Neovex should discover the Compose project from the current working
+provided, Nimbus should discover the Compose project from the current working
 directory and its parents using Compose-native conventions; when an explicit
 compose path is provided, it should win everywhere.
 
@@ -16,7 +16,7 @@ compose path is provided, it should win everywhere.
 - **Status:** `done`
 - **Primary owner:** this plan
 - **Related plans:** none active — `docs/plans/archive/cli-command-surface-plan.md`
-  records the original `neovex dev` and `neovex compose` rollout
+  records the original `nimbus dev` and `nimbus compose` rollout
 - **Related reference:** `docs/reference/cli.md` (canonical CLI contract),
   `docs/reference/microvm-service-baseline.md` (compose/service baseline)
 - **External compatibility inputs:** official Docker Compose docs and Podman
@@ -37,12 +37,12 @@ Post-implementation audit against local source mirrors under
   filename list than this slice (`podman-compose.*`, `container-compose.*`, and
   multiple override aliases) and discovers files from the working directory
   without parent traversal
-- Neovex intentionally does **not** mirror those broader provider-specific
+- Nimbus intentionally does **not** mirror those broader provider-specific
   defaults; it follows the narrower approved Docker/Podman-compatible contract
   for this slice
 - local `podman-compose` does preserve ordered file lists and treats the first
   file as the project directory anchor (`COMPOSE_PROJECT_DIR` / `COMPOSE_FILE`),
-  which matches the Neovex `files[0]` identity and relative-path rule
+  which matches the Nimbus `files[0]` identity and relative-path rule
 
 Result: the landed implementation remains correct for the approved contract,
 and the local source audit did not require code changes.
@@ -51,8 +51,8 @@ and the local source audit did not require code changes.
 
 Today Compose discovery is split:
 
-- `neovex dev` and `neovex start` require an explicit `--compose-file`
-- `neovex compose ...` defaults to `./compose.yaml` relative to the cwd
+- `nimbus dev` and `nimbus start` require an explicit `--compose-file`
+- `nimbus compose ...` defaults to `./compose.yaml` relative to the cwd
 
 That split creates avoidable friction:
 
@@ -62,7 +62,7 @@ That split creates avoidable friction:
    the canonical modern file.
 2. **It does not feel Podman-native.** `podman compose` is a thin wrapper around
    an external Compose provider, so Podman users still expect Compose-provider
-   discovery semantics instead of a Neovex-specific root rule.
+   discovery semantics instead of a Nimbus-specific root rule.
 3. **It couples the wrong concepts.** `app_dir` is a codegen/runtime concept.
    Compose discovery is an infrastructure/project-layout concept. These often
    align, but they are not the same invariant.
@@ -73,8 +73,8 @@ That split creates avoidable friction:
 
 The DX target is simple:
 
-- run `neovex dev` from a project root with Compose files and it just works
-- run `neovex compose ps` from a nested directory inside that project and it
+- run `nimbus dev` from a project root with Compose files and it just works
+- run `nimbus compose ps` from a nested directory inside that project and it
   talks to the same Compose project
 - pass an explicit compose path and every command uses exactly that path
 
@@ -82,9 +82,9 @@ The DX target is simple:
 
 All compose-aware commands must use one late-bound discovery helper:
 
-- `neovex dev --compose-file ...`
-- `neovex start --compose-file ...`
-- `neovex compose ... --file ...`
+- `nimbus dev --compose-file ...`
+- `nimbus start --compose-file ...`
+- `nimbus compose ... --file ...`
 
 When no explicit compose path is provided, all of them must discover the same
 Compose project the same way.
@@ -159,7 +159,7 @@ CLI parse structs.
 ### Support the documented default override pairing
 
 When auto-discovery selects the canonical modern base file `compose.yaml`,
-Neovex should also look for the documented default override companion
+Nimbus should also look for the documented default override companion
 `compose.override.yaml` in the same directory and include it after the base
 file when present.
 
@@ -211,11 +211,11 @@ Canonical project:
 
 ```text
 my-app/
-├── neovex/
+├── nimbus/
 ├── compose.yaml
 ├── compose.override.yaml
 ├── package.json
-└── .neovex/
+└── .nimbus/
 ```
 
 Nested invocation inside the same project:
@@ -228,13 +228,13 @@ my-app/
         └── src/
 ```
 
-Running `neovex compose ps` from `packages/web/src/` should still discover
+Running `nimbus compose ps` from `packages/web/src/` should still discover
 `my-app/compose.yaml`.
 
 Explicit override of discovery:
 
 ```bash
-neovex start --app-dir ./apps/chat --compose-file ./infra/dev-compose.yaml
+nimbus start --app-dir ./apps/chat --compose-file ./infra/dev-compose.yaml
 ```
 
 This must use `./infra/dev-compose.yaml` exactly, regardless of cwd discovery.
@@ -250,10 +250,10 @@ resolved selection type that preserves origin and ordered file list.
 
 **Files:**
 
-- `crates/neovex-bin/src/compose/` — add a concept-owned discovery module such
+- `crates/nimbus-bin/src/compose/` — add a concept-owned discovery module such
   as `discovery.rs`
-- shared callers in `crates/neovex-bin/src/dev.rs`,
-  `crates/neovex-bin/src/start/`, and `crates/neovex-bin/src/compose/`
+- shared callers in `crates/nimbus-bin/src/dev.rs`,
+  `crates/nimbus-bin/src/start/`, and `crates/nimbus-bin/src/compose/`
 
 **Behavior contract:**
 
@@ -271,11 +271,11 @@ selection instead of a single file path.
 
 **Files:**
 
-- `crates/neovex-bin/src/compose/file/` — add selection-aware loading and
+- `crates/nimbus-bin/src/compose/file/` — add selection-aware loading and
   ordered merge support
-- `crates/neovex-bin/src/compose/project.rs` — derive project identity from
+- `crates/nimbus-bin/src/compose/project.rs` — derive project identity from
   `files[0]`
-- `crates/neovex-bin/src/compose/mod.rs` and execution helpers — thread the
+- `crates/nimbus-bin/src/compose/mod.rs` and execution helpers — thread the
   resolved selection through lifecycle/config/log/inspect/top flows
 
 **Behavior contract:**
@@ -287,7 +287,7 @@ selection instead of a single file path.
 
 **Status:** `done`
 
-### CD3 — Unify `neovex compose ...` on the shared resolver
+### CD3 — Unify `nimbus compose ...` on the shared resolver
 
 **Scope:** Remove clap-time `./compose.yaml` defaults from compose subcommands
 and resolve the Compose selection after parsing using the shared discovery
@@ -295,27 +295,27 @@ helper.
 
 **Files:**
 
-- `crates/neovex-bin/src/compose/commands.rs`
-- `crates/neovex-bin/src/compose/mod.rs`
+- `crates/nimbus-bin/src/compose/commands.rs`
+- `crates/nimbus-bin/src/compose/mod.rs`
 
 **Behavior contract:**
 
-- `neovex compose up` with no `--file` discovers from cwd/parents
-- `neovex compose ps` from a nested directory resolves to the same project as
-  `neovex dev` in that project
+- `nimbus compose up` with no `--file` discovers from cwd/parents
+- `nimbus compose ps` from a nested directory resolves to the same project as
+  `nimbus dev` in that project
 - `--file` stays the explicit compose-path flag for the `compose` namespace
 
 **Status:** `done`
 
-### CD4 — Unify `neovex dev` and `neovex start` on the shared resolver
+### CD4 — Unify `nimbus dev` and `nimbus start` on the shared resolver
 
 **Scope:** `dev` and `start` must use the same late-bound compose discovery
 contract as `compose`.
 
 **Files:**
 
-- `crates/neovex-bin/src/dev.rs`
-- `crates/neovex-bin/src/start/`
+- `crates/nimbus-bin/src/dev.rs`
+- `crates/nimbus-bin/src/start/`
 
 **Behavior contract:**
 
@@ -332,8 +332,8 @@ guesswork or ad hoc string logic.
 
 **Files:**
 
-- `crates/neovex-bin/src/dev.rs` — banner output
-- `crates/neovex-bin/src/start/boot.rs` — startup summary output
+- `crates/nimbus-bin/src/dev.rs` — banner output
+- `crates/nimbus-bin/src/start/boot.rs` — startup summary output
 
 **Behavior contract:**
 
@@ -373,9 +373,9 @@ selection, command-family consistency, and provenance-aware output.
 
 **Files:**
 
-- `crates/neovex-bin/src/compose/` tests
-- `crates/neovex-bin/src/dev.rs` tests
-- `crates/neovex-bin/src/start/tests.rs`
+- `crates/nimbus-bin/src/compose/` tests
+- `crates/nimbus-bin/src/dev.rs` tests
+- `crates/nimbus-bin/src/start/tests.rs`
 
 **Coverage contract:**
 

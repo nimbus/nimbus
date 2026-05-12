@@ -3,7 +3,7 @@
 Generated with:
 
 ```bash
-NEOVEX_BENCH_POSTGRES_URL='<connection-string>' make bench-postgres-provider REPORT=docs/plans/research/postgres-provider-benchmark-report.md
+NIMBUS_BENCH_POSTGRES_URL='<connection-string>' make bench-postgres-provider REPORT=docs/plans/research/postgres-provider-benchmark-report.md
 ```
 
 ## Methodology
@@ -473,4 +473,4 @@ Relative to the unconstrained steady-state Postgres mixed-load lane, the bounded
 
 - Postgres tenant persistence is benchmarked with the global usage/control path still local and redb-backed.
 - The service-path benchmark includes provider-owned pooling, typed construction, scheduler/journal semantics, and the provider hint-listener wake path, but notifications remain wake hints rather than the authoritative journal contract.
-- Companion operational drills for reconnect recovery, restart recovery, transient backend termination, unloaded-tenant scheduler wake, and tenant cleanup are covered by focused storage/engine verification and recorded in `/Users/jack/src/github.com/agentstation/neovex/docs/plans/archive/postgres-storage-provider-plan.md`.
+- Companion operational drills for reconnect recovery, restart recovery, transient backend termination, unloaded-tenant scheduler wake, and tenant cleanup are covered by focused storage/engine verification and recorded in `/Users/jack/src/github.com/nimbus/nimbus/docs/plans/archive/postgres-storage-provider-plan.md`.

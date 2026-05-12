@@ -58,7 +58,7 @@ needed to drive the rest of this plan.
 
 ## Harness Modularity Decision
 
-`crates/neovex-runtime/src/runtime/tests/node_compat.rs` remains above the
+`crates/nimbus-runtime/src/runtime/tests/node_compat.rs` remains above the
 repo-wide line threshold as an explicit Node-compat harness ownership exception.
 The file is the embedded Rust entrypoint for a large checked-in upstream corpus:
 most of its size is fixture batch inventory, materialization wiring, and
@@ -101,13 +101,13 @@ concept-owned scripts over adding new inline status logic to `node_compat.rs`.
   intentionally returns nonzero for a cataloged unexpected pass
 - `python3 scripts/node_compat/status.py --output-root /private/tmp/node-compat-status-unexpected-pass --observed-results /private/tmp/node-compat-unexpected-pass.json`
   intentionally returns nonzero for the same unexpected pass
-- `node crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/supplementary/resource-safety.mjs`
-- `node crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/supplementary/framework-loader-patterns.mjs`
-- `node crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/supplementary/signal-listener-lifecycle.mjs`
-- `cargo test -p neovex-runtime node_compat_runtime_supplementary -- --nocapture`
-- `cargo test -p neovex-runtime node_compat_manifest_topology_loader_composes_deterministically_from_disk -- --nocapture`
-- `cargo test -p neovex-runtime node_compat_supplementary_runtime_ -- --nocapture --test-threads=1`
-- `cargo test -p neovex-runtime node_compat_supplementary_signal_lifecycle_watchpoint_ -- --nocapture --test-threads=1`
+- `node crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/supplementary/resource-safety.mjs`
+- `node crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/supplementary/framework-loader-patterns.mjs`
+- `node crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/supplementary/signal-listener-lifecycle.mjs`
+- `cargo test -p nimbus-runtime node_compat_runtime_supplementary -- --nocapture`
+- `cargo test -p nimbus-runtime node_compat_manifest_topology_loader_composes_deterministically_from_disk -- --nocapture`
+- `cargo test -p nimbus-runtime node_compat_supplementary_runtime_ -- --nocapture --test-threads=1`
+- `cargo test -p nimbus-runtime node_compat_supplementary_signal_lifecycle_watchpoint_ -- --nocapture --test-threads=1`
 - `make node-compat-report FAMILY=runtime-supplementary SLICE=supplementary-resource-safety CAPTURE_LIVE=1`
 - `make node-compat-report FAMILY=runtime-supplementary SLICE=supplementary-framework-loader-patterns CAPTURE_LIVE=1`
 - `make node-compat-report FAMILY=runtime-supplementary-signal-lifecycle SLICE=supplementary-signal-listener-lifecycle CAPTURE_LIVE=1`

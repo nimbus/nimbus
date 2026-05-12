@@ -10,12 +10,12 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/archive/scalability-and-architecture-follow-on-plan.md`
-- `crates/neovex-engine/src/tenant.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/service/mutations.rs`
-- `crates/neovex-engine/src/service/mutations/journal.rs`
-- `crates/neovex-engine/src/service/subscriptions.rs`
-- `crates/neovex-engine/src/subscriptions.rs`
+- `crates/nimbus-engine/src/tenant.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/service/mutations/journal.rs`
+- `crates/nimbus-engine/src/service/subscriptions.rs`
+- `crates/nimbus-engine/src/subscriptions.rs`
 - `/Users/jack/src/github.com/get-convex/convex-backend/crates/database/src/snapshot_manager.rs`
 - `/Users/jack/src/github.com/get-convex/convex-backend/crates/database/src/token.rs`
 - `/Users/jack/src/github.com/get-convex/convex-backend/crates/database/src/metrics.rs`
@@ -58,9 +58,9 @@ cache layer.
 
 ---
 
-## Why This Fits Neovex
+## Why This Fits Nimbus
 
-This plan is intentionally specific to Neovex's product shape:
+This plan is intentionally specific to Nimbus's product shape:
 
 - single binary
 - per-tenant embedded storage
@@ -69,13 +69,13 @@ This plan is intentionally specific to Neovex's product shape:
 - scheduling and cron in the same process
 
 For this architecture, promoting selected hot reads onto already-materialized
-document state is advantageous because Neovex pays no network hop or process
+document state is advantageous because Nimbus pays no network hop or process
 boundary to do so. Every extra scan, decode, or repeated query evaluation
 happens inside the same binary that already owns the authoritative journal,
 apply loop, runtime host bridge, and subscription fan-out.
 
 That makes the `SA8` promotion the right tactical optimization. It does **not**
-mean Neovex should evolve a second ad hoc database inside `TenantRuntime`.
+mean Nimbus should evolve a second ad hoc database inside `TenantRuntime`.
 The right long-term pattern for this product is:
 
 1. journal-first authoritative writes
@@ -116,7 +116,7 @@ they live in different systems:
   `/Users/jack/src/github.com/tigerbeetle/tigerbeetle/docs/ARCHITECTURE.md`,
   committed prepares are applied in sequence order, checkpoints are only a
   derived serving state, and replay reconstructs exact state after crash.
-- CockroachDB is useful here not because Neovex should adopt per-range Raft,
+- CockroachDB is useful here not because Nimbus should adopt per-range Raft,
   but because it is disciplined about exact read frontiers and change
   propagation. In
   `/Users/jack/src/github.com/cockroachdb/cockroach/docs/RFCS/20191108_closed_timestamps_v2.md`
@@ -142,7 +142,7 @@ authoritative apply boundary.**
 
 This plan is intentionally **reference-driven, not reference-copied**.
 
-Neovex should borrow the strongest fitting ideas from each system while
+Nimbus should borrow the strongest fitting ideas from each system while
 remaining specific to its own architecture. The references are not peers for
 every concern:
 
@@ -160,7 +160,7 @@ every concern:
   wait for, and observe a safe serving frontier?", Cockroach provides the
   strongest pattern.
 
-If references disagree, prefer the one that best fits Neovex's actual product
+If references disagree, prefer the one that best fits Nimbus's actual product
 shape: single binary, per-tenant embedded storage, embedded V8 runtime,
 server-authoritative reactive queries, and scheduling in the same process.
 
@@ -169,9 +169,9 @@ That means this plan should **not** drift into:
 - CockroachDB-style per-range replication, leaseholder routing, or descriptor
   leasing as an architectural goal
 - TigerBeetle-style whole-program static allocation as a direct requirement
-- Convex-specific public API surfaces unless Neovex independently wants them
+- Convex-specific public API surfaces unless Nimbus independently wants them
 
-What Neovex should take is the principle behind those mechanisms, not the
+What Nimbus should take is the principle behind those mechanisms, not the
 mechanisms themselves.
 
 ---
@@ -242,7 +242,7 @@ This plan is successful only when all of the following are true:
 The following rules are the implementation contract for `MH1` through `MH4`.
 
 1. **Every served result has an exact coverage frontier.** A reactive bootstrap,
-   warmed table, or serving read is only valid if Neovex can name the exact
+   warmed table, or serving read is only valid if Nimbus can name the exact
    apply sequence it reflects. "Nearby durable head" and "current best effort"
    are not acceptable substitutes.
 2. **Derived publication follows authoritative apply.** Materialized serving
@@ -269,9 +269,9 @@ The following rules are the implementation contract for `MH1` through `MH4`.
 As of the current verified state:
 
 - the engine has a tenant-local warmed materialized table surface in
-  `crates/neovex-engine/src/tenant.rs`
+  `crates/nimbus-engine/src/tenant.rs`
 - full-scan query, pagination, warmed get, and subscription re-evaluation can
-  reuse that surface through `crates/neovex-engine/src/service/queries.rs`
+  reuse that surface through `crates/nimbus-engine/src/service/queries.rs`
 - the materialized surface is now updated before `applied_head` advances, which
   closed the reproduced stale-read regression after async mutation ack
 - subscription bootstrap now carries the exact covered apply sequence of its
@@ -331,8 +331,8 @@ TigerBeetle reference patterns:
 
 - targeted deterministic regressions for the touched race or invariant
 - targeted metrics assertions where observability is part of the item
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `make clippy`
 
@@ -411,11 +411,11 @@ We should copy the principle even if we do not expose a public token yet.
 
 #### Files likely to change
 
-- `crates/neovex-engine/src/service/subscriptions.rs`
-- `crates/neovex-engine/src/subscriptions.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-server/tests/reactive_loop/socket/subscriptions.rs`
+- `crates/nimbus-engine/src/service/subscriptions.rs`
+- `crates/nimbus-engine/src/subscriptions.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-server/tests/reactive_loop/socket/subscriptions.rs`
 
 #### Acceptance criteria
 
@@ -474,10 +474,10 @@ The local Convex `SnapshotManager` is the best shape reference:
 
 #### Files likely to change
 
-- `crates/neovex-engine/src/tenant.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/service/mutations.rs`
-- `crates/neovex-engine/src/service/mutations/journal.rs`
+- `crates/nimbus-engine/src/tenant.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/service/mutations.rs`
+- `crates/nimbus-engine/src/service/mutations/journal.rs`
 - `ARCHITECTURE.md`
 
 #### Acceptance criteria
@@ -536,9 +536,9 @@ measured explicitly, not guessed from generic request timing.
 
 #### Files likely to change
 
-- `crates/neovex-engine/src/tenant.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/tests.rs`
+- `crates/nimbus-engine/src/tenant.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/tests.rs`
 - `ARCHITECTURE.md`
 
 #### Acceptance criteria
@@ -591,9 +591,9 @@ The local reference posture comes from both sides:
 
 #### Files likely to change
 
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-server/tests/reactive_loop/socket/subscriptions.rs`
-- `crates/neovex-test-support/src/`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-server/tests/reactive_loop/socket/subscriptions.rs`
+- `crates/nimbus-test-support/src/`
 - `docs/plans/archive/verification-harness-plan.md` if shared harness seams need a
   documented extension
 
@@ -635,10 +635,10 @@ This is much closer to the local Convex `SnapshotManager` model than the
 current mutable table cache, while still preserving the TigerBeetle discipline
 that derived state only exists because ordered applied state made it valid.
 CockroachDB's closed timestamp and resolved/checkpoint progress model sharpens
-the same recommendation further: Neovex should evolve toward explicit serving
+the same recommendation further: Nimbus should evolve toward explicit serving
 frontiers and published serving state, not broader best-effort cache reuse.
 
-#### What this should look like in Neovex
+#### What this should look like in Nimbus
 
 - a first-class `ServingSnapshotManager`, documented in
   `docs/research/versioned-serving-snapshot-design-note.md`
@@ -676,14 +676,14 @@ frontiers and published serving state, not broader best-effort cache reuse.
 | 2026-04-02 | baseline | created | Created this plan after the first `SA8` serving-path promotion landed and then passed a retrospective architecture review. The review concluded that the direction is good but not yet canonical enough for enterprise trust: the next hardening steps are exact bootstrap sequencing, atomic warmed-table publication with covered-sequence metadata, bounded memory plus observability, and stronger adversarial verification. Local reference points used for the plan were Convex's `SnapshotManager`, read `Token`, and subscription/bootstrap metrics, plus TigerBeetle's strict ordering between committed log application and derived state. |
 | 2026-04-02 | refinement | updated | Refined the plan after a second retrospective review against the local CockroachDB checkout. Added explicit served-at frontier language, strengthened the implementation contract for `MH1` through `MH4`, and incorporated Cockroach's closed timestamp, resolved timestamp, checkpoint-progress, and backpressure posture as additional reference guidance. The result is intended to be implementation-ready rather than only roadmap-ready. |
 | 2026-04-02 | reference posture | updated | Re-reviewed the local Convex, TigerBeetle, and CockroachDB sources specifically to ensure the plan was not overweighting CockroachDB. Clarified the reference posture: Convex is the primary semantic model for bootstrap and reactive correctness, TigerBeetle is the primary discipline model for derived-state validity and boundedness, and CockroachDB is the primary frontier/observability model. Also made the non-goals explicit so the plan cannot be misread as a distributed-storage rewrite. |
-| 2026-04-02 | MH1 | done | Implemented exact bootstrap-covered sequence tracking for subscription registration and activation. Bootstrap queries now evaluate against a consistent `TenantReadSnapshot`, return the exact `applied_sequence()` they covered, warm the document cache from that result, and activate the subscription at that exact sequence instead of inferring from a nearby head. To close the inactive bootstrap window, activation now enqueues one coalesced catch-up re-evaluation when newer applied commits landed after the bootstrap snapshot but before activation. Verified with targeted sync and async bootstrap-race regressions, `cargo test -p neovex-engine`, and the reactive reconnect/resubscribe server regression. |
-| 2026-04-02 | MH2 | done | Replaced anonymous warmed-table entries with explicit published table state carrying `{generation, covered_sequence, documents}`. Full-scan query, paginated query, and warmed `get_document` paths now sample a required sequence up front, wait for that frontier, and only reuse a warmed table when its published coverage meets or exceeds the required sequence. New first-load publication logic builds privately, replays to a target applied sequence, pauses publication behind a deterministic test seam, and only then publishes atomically; once published, apply updates move table contents and covered sequence forward together. Verified with targeted coverage-frontier and concurrent first-load race regressions, `cargo test -p neovex-engine`, `make test`, `cargo fmt --all --check`, and `make clippy`. |
-| 2026-04-02 | MH3 | done | Added a bounded capacity model around the published materialized surface: per-tenant table count and byte limits, deterministic table-level LRU eviction, in-flight warm-load tracking, and metrics for resident tables/documents/bytes, earliest/latest covered sequence, load count, query/paginated/get hits, evictions, and coverage bypasses. The new tests force byte-budget eviction and an under-covered published-table bypass so the metrics describe real behavior instead of incidental debug state. Verified with focused materialized-surface regressions, `cargo test -p neovex-engine`, `make test`, `cargo fmt --all --check`, and `make clippy`. |
-| 2026-04-02 | MH4 | done | Added deterministic adversarial coverage for the remaining serving-race boundaries. The engine now has a repeated warm/load/evict/rewarm regression that proves resident-frontier advancement in place, eviction under a bounded table budget, and fresh-write visibility after rewarming an evicted table. The reactive-loop suite now covers disconnect-before-bootstrap-activation on the generic `/ws` route and proves that a dropped client cancels pending bootstrap work, releases the inactive subscription promptly, and reconnects cleanly. Landing that test exposed two real implementation issues that were fixed in the same slice: the generic websocket route no longer awaits subscription bootstrap inline in the socket read loop, and subscription-delivery teardown now guards against self-join when shutdown runs on the worker thread. A narrow `neovex-engine` `test-hooks` feature exposes just the bootstrap-pause seam needed by downstream workspace tests without widening the rest of the engine's test-only surface. Verified with `cargo test -p neovex-engine -- --nocapture`, `cargo test -p neovex-server --test reactive_loop socket::subscriptions:: -- --nocapture`, plus the final workspace checks below. |
-| 2026-04-02 | MH5 | done | Re-read the local Convex, TigerBeetle, and CockroachDB sources against the hardened Neovex serving slice and converted the north-star recommendation into `docs/research/versioned-serving-snapshot-design-note.md`. The note pins the canonical next abstraction as a tenant-local `ServingSnapshotManager` with immutable published versions, exact frontier-pinned serving handles, bounded retained versions, waiter-based frontier advancement, and operator-visible lag/retention metrics. It also narrows the implementation direction for Neovex specifically: versioned serving snapshots come first, and stronger backends such as a shadow-materializer-backed serving surface or a serving replica come later behind that stable contract rather than by growing `TenantRuntime` into a second ad hoc database. |
-| 2026-04-02 | MH5 slice | done | Implemented the first reader-facing serving-snapshot slice behind that design note. Promoted full-scan `get`, query, and pagination paths now pin a tenant-scoped `ServingSnapshot` assembled from published table versions instead of reading directly from the warmed-table map or a raw table handle. The in-memory backend still retains versions per table, but snapshot selection now prefers the oldest published version that still covers the reader's required frontier, which preserves retained exact-frontier behavior when available and still allows first-load publication to satisfy older readers safely. Verified with focused retained-version, multi-table, and concurrent-first-load regressions plus `cargo test -p neovex-engine`. |
-| 2026-04-02 | MH5 manager slice | done | Lifted the serving seam from per-read snapshot assembly to a real tenant-level manager. The materialized serving layer now publishes and retains tenant-scoped `ServingSnapshot` versions, wakes exact-frontier waiters when newer snapshots are published, and prunes old tenant snapshots only after they fall outside the retained window and are no longer pinned by a reader. Promoted full-scan reads now acquire the earliest tenant snapshot that safely covers their required frontier for the target table, while the current in-memory per-table retained versions remain the initial backend under that manager. Verified with new waiter and pin-aware pruning regressions plus `cargo test -p neovex-engine`, `cargo clippy -p neovex-engine --all-targets -- -D warnings`, `cargo fmt --all --check`, and `git diff --check`. |
-| 2026-04-02 | MH5 backend slice | done | Deduplicated in-flight table warm loads behind the new serving snapshot manager and tightened first-load publication to catch up to the newest applied frontier before publishing. Concurrent readers for the same cold table now share one warm load instead of rebuilding the same table independently, and a loader that sees newer applied commits after its initial catch-up loop will replay once more before publishing rather than emitting a stale table image. The old stale-first-publication test was replaced by stronger "catch up before publication" and "one concurrent load serves both readers" regressions. Verified with focused warm-load concurrency regressions plus `cargo test -p neovex-engine`, `cargo clippy -p neovex-engine --all-targets -- -D warnings`, `cargo fmt --all --check`, and `git diff --check`. |
-| 2026-04-02 | MH5 subscription adoption | done | Extended the serving-snapshot contract to promoted full-scan subscriptions. Subscription bootstrap now reuses the serving snapshot for supported shapes instead of always reading directly from storage, and later re-evaluation continues to reuse the same materialized-serving path. The important semantic guardrail was preserved during the refactor: bootstrap still pins the current applied frontier rather than waiting for the latest durable head, so lagged durable commits continue to surface through the existing catch-up handoff instead of being silently folded into the initial result. Verified with new sync and async full-scan bootstrap regressions, a full-scan subscription re-evaluation regression, the pre-existing lagged-apply bootstrap regression, plus `cargo test -p neovex-engine`, `cargo clippy -p neovex-engine --all-targets -- -D warnings`, `cargo fmt --all --check`, and `git diff --check`. |
-| 2026-04-02 | MH5 runtime and scheduler closeout | done | Closed the remaining adoption ambiguity with server-level proof instead of another speculative refactor. Read-only runtime host operations now demonstrably inherit the serving contract on promoted full-scan shapes: new `neovex-server` regressions prove that runtime-only full-scan query, `ctx.db.get` after warmup, and runtime paginated full-scan queries warm and reuse the serving layer through the public service APIs. A companion host-bridge regression proves the transactional boundary stayed correct: runtime mutation reads still use the `MutationExecutionUnit` snapshot plus staged writes even when a serving snapshot is already warm for the same table. The scheduler story is now explicit too: schedulable Convex mutations still resolve manifest `Mutation` plans, so runtime-only handlers are rejected at schedule time rather than creating a second scheduler-side runtime read path. Verified with focused `cargo test -p neovex-server ...` regressions, then the final workspace checks below. |
-| 2026-04-02 | MH5 reactive transport closeout | done | Closed the last reactive-loop gap in the runtime subscription layer. Plan-backed runtime subscriptions can still wake conservatively because their base subscription may be broader than the runtime read set, and delayed bootstrap catch-up can legitimately trigger a re-evaluation after the request-scoped bootstrap result has already been sent. Runtime subscription transforms now retain the last emitted runtime value and suppress duplicate pushes when re-evaluation produces the same externally visible payload, which keeps websocket delivery aligned with the intended bootstrap-then-catch-up contract without inventing a second ad hoc sequencing model. The reactive-loop transport tests were tightened to assert the real applied-visibility contract consistently: an initial empty/null bootstrap is allowed while apply lags, but the subscription must converge correctly and stay quiet once no visible change occurred. Verified with `cargo test -p neovex-server --test reactive_loop runtime_queries::get_and_query:: -- --nocapture`, `cargo test -p neovex-server --test reactive_loop -- --nocapture`, `make test`, `make clippy`, `cargo fmt --all --check`, and `git diff --check`. |
+| 2026-04-02 | MH1 | done | Implemented exact bootstrap-covered sequence tracking for subscription registration and activation. Bootstrap queries now evaluate against a consistent `TenantReadSnapshot`, return the exact `applied_sequence()` they covered, warm the document cache from that result, and activate the subscription at that exact sequence instead of inferring from a nearby head. To close the inactive bootstrap window, activation now enqueues one coalesced catch-up re-evaluation when newer applied commits landed after the bootstrap snapshot but before activation. Verified with targeted sync and async bootstrap-race regressions, `cargo test -p nimbus-engine`, and the reactive reconnect/resubscribe server regression. |
+| 2026-04-02 | MH2 | done | Replaced anonymous warmed-table entries with explicit published table state carrying `{generation, covered_sequence, documents}`. Full-scan query, paginated query, and warmed `get_document` paths now sample a required sequence up front, wait for that frontier, and only reuse a warmed table when its published coverage meets or exceeds the required sequence. New first-load publication logic builds privately, replays to a target applied sequence, pauses publication behind a deterministic test seam, and only then publishes atomically; once published, apply updates move table contents and covered sequence forward together. Verified with targeted coverage-frontier and concurrent first-load race regressions, `cargo test -p nimbus-engine`, `make test`, `cargo fmt --all --check`, and `make clippy`. |
+| 2026-04-02 | MH3 | done | Added a bounded capacity model around the published materialized surface: per-tenant table count and byte limits, deterministic table-level LRU eviction, in-flight warm-load tracking, and metrics for resident tables/documents/bytes, earliest/latest covered sequence, load count, query/paginated/get hits, evictions, and coverage bypasses. The new tests force byte-budget eviction and an under-covered published-table bypass so the metrics describe real behavior instead of incidental debug state. Verified with focused materialized-surface regressions, `cargo test -p nimbus-engine`, `make test`, `cargo fmt --all --check`, and `make clippy`. |
+| 2026-04-02 | MH4 | done | Added deterministic adversarial coverage for the remaining serving-race boundaries. The engine now has a repeated warm/load/evict/rewarm regression that proves resident-frontier advancement in place, eviction under a bounded table budget, and fresh-write visibility after rewarming an evicted table. The reactive-loop suite now covers disconnect-before-bootstrap-activation on the generic `/ws` route and proves that a dropped client cancels pending bootstrap work, releases the inactive subscription promptly, and reconnects cleanly. Landing that test exposed two real implementation issues that were fixed in the same slice: the generic websocket route no longer awaits subscription bootstrap inline in the socket read loop, and subscription-delivery teardown now guards against self-join when shutdown runs on the worker thread. A narrow `nimbus-engine` `test-hooks` feature exposes just the bootstrap-pause seam needed by downstream workspace tests without widening the rest of the engine's test-only surface. Verified with `cargo test -p nimbus-engine -- --nocapture`, `cargo test -p nimbus-server --test reactive_loop socket::subscriptions:: -- --nocapture`, plus the final workspace checks below. |
+| 2026-04-02 | MH5 | done | Re-read the local Convex, TigerBeetle, and CockroachDB sources against the hardened Nimbus serving slice and converted the north-star recommendation into `docs/research/versioned-serving-snapshot-design-note.md`. The note pins the canonical next abstraction as a tenant-local `ServingSnapshotManager` with immutable published versions, exact frontier-pinned serving handles, bounded retained versions, waiter-based frontier advancement, and operator-visible lag/retention metrics. It also narrows the implementation direction for Nimbus specifically: versioned serving snapshots come first, and stronger backends such as a shadow-materializer-backed serving surface or a serving replica come later behind that stable contract rather than by growing `TenantRuntime` into a second ad hoc database. |
+| 2026-04-02 | MH5 slice | done | Implemented the first reader-facing serving-snapshot slice behind that design note. Promoted full-scan `get`, query, and pagination paths now pin a tenant-scoped `ServingSnapshot` assembled from published table versions instead of reading directly from the warmed-table map or a raw table handle. The in-memory backend still retains versions per table, but snapshot selection now prefers the oldest published version that still covers the reader's required frontier, which preserves retained exact-frontier behavior when available and still allows first-load publication to satisfy older readers safely. Verified with focused retained-version, multi-table, and concurrent-first-load regressions plus `cargo test -p nimbus-engine`. |
+| 2026-04-02 | MH5 manager slice | done | Lifted the serving seam from per-read snapshot assembly to a real tenant-level manager. The materialized serving layer now publishes and retains tenant-scoped `ServingSnapshot` versions, wakes exact-frontier waiters when newer snapshots are published, and prunes old tenant snapshots only after they fall outside the retained window and are no longer pinned by a reader. Promoted full-scan reads now acquire the earliest tenant snapshot that safely covers their required frontier for the target table, while the current in-memory per-table retained versions remain the initial backend under that manager. Verified with new waiter and pin-aware pruning regressions plus `cargo test -p nimbus-engine`, `cargo clippy -p nimbus-engine --all-targets -- -D warnings`, `cargo fmt --all --check`, and `git diff --check`. |
+| 2026-04-02 | MH5 backend slice | done | Deduplicated in-flight table warm loads behind the new serving snapshot manager and tightened first-load publication to catch up to the newest applied frontier before publishing. Concurrent readers for the same cold table now share one warm load instead of rebuilding the same table independently, and a loader that sees newer applied commits after its initial catch-up loop will replay once more before publishing rather than emitting a stale table image. The old stale-first-publication test was replaced by stronger "catch up before publication" and "one concurrent load serves both readers" regressions. Verified with focused warm-load concurrency regressions plus `cargo test -p nimbus-engine`, `cargo clippy -p nimbus-engine --all-targets -- -D warnings`, `cargo fmt --all --check`, and `git diff --check`. |
+| 2026-04-02 | MH5 subscription adoption | done | Extended the serving-snapshot contract to promoted full-scan subscriptions. Subscription bootstrap now reuses the serving snapshot for supported shapes instead of always reading directly from storage, and later re-evaluation continues to reuse the same materialized-serving path. The important semantic guardrail was preserved during the refactor: bootstrap still pins the current applied frontier rather than waiting for the latest durable head, so lagged durable commits continue to surface through the existing catch-up handoff instead of being silently folded into the initial result. Verified with new sync and async full-scan bootstrap regressions, a full-scan subscription re-evaluation regression, the pre-existing lagged-apply bootstrap regression, plus `cargo test -p nimbus-engine`, `cargo clippy -p nimbus-engine --all-targets -- -D warnings`, `cargo fmt --all --check`, and `git diff --check`. |
+| 2026-04-02 | MH5 runtime and scheduler closeout | done | Closed the remaining adoption ambiguity with server-level proof instead of another speculative refactor. Read-only runtime host operations now demonstrably inherit the serving contract on promoted full-scan shapes: new `nimbus-server` regressions prove that runtime-only full-scan query, `ctx.db.get` after warmup, and runtime paginated full-scan queries warm and reuse the serving layer through the public service APIs. A companion host-bridge regression proves the transactional boundary stayed correct: runtime mutation reads still use the `MutationExecutionUnit` snapshot plus staged writes even when a serving snapshot is already warm for the same table. The scheduler story is now explicit too: schedulable Convex mutations still resolve manifest `Mutation` plans, so runtime-only handlers are rejected at schedule time rather than creating a second scheduler-side runtime read path. Verified with focused `cargo test -p nimbus-server ...` regressions, then the final workspace checks below. |
+| 2026-04-02 | MH5 reactive transport closeout | done | Closed the last reactive-loop gap in the runtime subscription layer. Plan-backed runtime subscriptions can still wake conservatively because their base subscription may be broader than the runtime read set, and delayed bootstrap catch-up can legitimately trigger a re-evaluation after the request-scoped bootstrap result has already been sent. Runtime subscription transforms now retain the last emitted runtime value and suppress duplicate pushes when re-evaluation produces the same externally visible payload, which keeps websocket delivery aligned with the intended bootstrap-then-catch-up contract without inventing a second ad hoc sequencing model. The reactive-loop transport tests were tightened to assert the real applied-visibility contract consistently: an initial empty/null bootstrap is allowed while apply lags, but the subscription must converge correctly and stay quiet once no visible change occurred. Verified with `cargo test -p nimbus-server --test reactive_loop runtime_queries::get_and_query:: -- --nocapture`, `cargo test -p nimbus-server --test reactive_loop -- --nocapture`, `make test`, `make clippy`, `cargo fmt --all --check`, and `git diff --check`. |

@@ -18,9 +18,9 @@ async function runCoreFixtures() {
   await testBlockBodyServerFixture();
   await testSchemaFixture();
   await testAuthConfigFixture();
-  await testNeovexAuthConfigFixture();
-  await testNeovexSourceRootFixture();
-  await testBothRootsPreferNeovexFixture();
+  await testNimbusAuthConfigFixture();
+  await testNimbusSourceRootFixture();
+  await testBothRootsPreferNimbusFixture();
   await testMissingSourceRootFixture();
   await testDuplicateAuthConfigFixture();
   await testUnsupportedFixture();
@@ -80,10 +80,10 @@ export const send = defineMutation("messages:send", ({ body }) => ({
   assert.equal(manifest.functions[0].visibility, "public");
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
-  assert.match(runtimeBundle, /globalThis\.__neovexInvoke = async function/);
-  assert.match(runtimeBundle, /globalThis\.__neovexInvokeNamedLocal = invokeNamedDefinitionLocally/);
-  assert.doesNotMatch(runtimeBundle, /__neovexRawHostCall/);
-  assert.match(runtimeBundle, /__neovexCreateContext/);
+  assert.match(runtimeBundle, /globalThis\.__nimbusInvoke = async function/);
+  assert.match(runtimeBundle, /globalThis\.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally/);
+  assert.doesNotMatch(runtimeBundle, /__nimbusRawHostCall/);
+  assert.match(runtimeBundle, /__nimbusCreateContext/);
   assert.match(runtimeBundle, /"messages:list"/);
 
   const runtimeBundleHash = (await readConvexFile(appDir, "bundle.sha256")).trim();
@@ -248,7 +248,7 @@ export default {
   providers: [
     {
       domain: "https://auth.example.com",
-      applicationID: "neovex-dev",
+      applicationID: "nimbus-dev",
     },
     {
       type: "customJwt",
@@ -274,7 +274,7 @@ export default {
     providers: [
       {
         domain: "https://auth.example.com",
-        applicationID: "neovex-dev",
+        applicationID: "nimbus-dev",
       },
       {
         type: "customJwt",
@@ -286,7 +286,7 @@ export default {
   });
 }
 
-async function testNeovexAuthConfigFixture() {
+async function testNimbusAuthConfigFixture() {
   const appDir = await createAppFixture(
     {
       "messages.ts": `
@@ -298,19 +298,19 @@ export const whoami = query({
 });
 `,
       "auth.config.ts": `
-import { AuthConfig } from "neovex/server";
+import { AuthConfig } from "nimbus/server";
 
 export default {
   providers: [
     {
       domain: "https://auth.example.com",
-      applicationID: "neovex-dev",
+      applicationID: "nimbus-dev",
     },
   ],
 } satisfies AuthConfig;
 `,
     },
-    { sourceDir: "neovex" },
+    { sourceDir: "nimbus" },
   );
 
   const result = runCli(appDir);
@@ -321,18 +321,18 @@ export default {
     providers: [
       {
         domain: "https://auth.example.com",
-        applicationID: "neovex-dev",
+        applicationID: "nimbus-dev",
       },
     ],
   });
 }
 
-async function testNeovexSourceRootFixture() {
+async function testNimbusSourceRootFixture() {
   const appDir = await createAppFixture(
     {
       "messages.ts": `
 import { query } from "./_generated/server";
-import { v } from "neovex/values";
+import { v } from "nimbus/values";
 
 export const list = query({
   args: { channel: v.string() },
@@ -345,39 +345,39 @@ export const list = query({
 });
 `,
     },
-    { sourceDir: "neovex" },
+    { sourceDir: "nimbus" },
   );
 
   const result = runCli(appDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   const generatedApi = await readGeneratedFile(appDir, "api.ts", {
-    sourceDir: "neovex",
+    sourceDir: "nimbus",
   });
   assert.match(generatedApi, /messages:list/);
-  assert.match(generatedApi, /from "neovex\/browser"/);
+  assert.match(generatedApi, /from "nimbus\/browser"/);
 
   const generatedServer = await readGeneratedFile(appDir, "server.ts", {
-    sourceDir: "neovex",
+    sourceDir: "nimbus",
   });
-  assert.match(generatedServer, /from "neovex\/server"/);
+  assert.match(generatedServer, /from "nimbus\/server"/);
 
   const generatedDataModel = await readGeneratedFile(appDir, "dataModel.d.ts", {
-    sourceDir: "neovex",
+    sourceDir: "nimbus",
   });
-  assert.match(generatedDataModel, /from "neovex\/values"/);
+  assert.match(generatedDataModel, /from "nimbus\/values"/);
 
   const manifest = await readConvexJson(appDir, "functions.json");
   assert.equal(manifest.functions.length, 1);
   assert.equal(manifest.functions[0].name, "messages:list");
 }
 
-async function testBothRootsPreferNeovexFixture() {
-  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex_codegen_"));
-  await fs.mkdir(path.join(appDir, "neovex"), { recursive: true });
+async function testBothRootsPreferNimbusFixture() {
+  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus_codegen_"));
+  await fs.mkdir(path.join(appDir, "nimbus"), { recursive: true });
   await fs.mkdir(path.join(appDir, "convex"), { recursive: true });
   await fs.writeFile(
-    path.join(appDir, "neovex", "messages.ts"),
+    path.join(appDir, "nimbus", "messages.ts"),
     `
 import { defineQuery } from "convex/browser";
 
@@ -409,7 +409,7 @@ export const ignored = defineQuery("messages:ignored", () => ({
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(
     result.stderr,
-    /Detected both neovex\/ and convex\/ in .*; using neovex\/\.\n?/,
+    /Detected both nimbus\/ and convex\/ in .*; using nimbus\/\.\n?/,
   );
 
   const manifest = await readConvexJson(appDir, "functions.json");
@@ -417,11 +417,11 @@ export const ignored = defineQuery("messages:ignored", () => ({
   assert.equal(manifest.functions[0].name, "messages:selected");
 
   const generatedApi = await fs.readFile(
-    path.join(appDir, "neovex", "_generated", "api.ts"),
+    path.join(appDir, "nimbus", "_generated", "api.ts"),
     "utf8",
   );
   assert.match(generatedApi, /messages:selected/);
-  assert.match(generatedApi, /from "neovex\/browser"/);
+  assert.match(generatedApi, /from "nimbus\/browser"/);
   await assert.rejects(
     fs.readFile(path.join(appDir, "convex", "_generated", "api.ts"), "utf8"),
     { code: "ENOENT" },
@@ -429,13 +429,13 @@ export const ignored = defineQuery("messages:ignored", () => ({
 }
 
 async function testMissingSourceRootFixture() {
-  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "neovex_codegen_"));
+  const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus_codegen_"));
 
   const result = runCli(appDir);
   assert.notEqual(result.status, 0);
   assert.match(
     result.stderr || result.stdout,
-    /No neovex\/ or convex\/ directory found in .*Create one of those directories and place your app functions there\./,
+    /No nimbus\/ or convex\/ directory found in .*Create one of those directories and place your app functions there\./,
   );
 }
 

@@ -87,7 +87,7 @@ later-family/internal buckets called out below.
 - Divergence from the Node22 staged subset:
   - none in behavior for the currently executed 89-file green paired subset
   - several fixture files differ textually from the Deno-vendored Node22 corpus,
-    so Neovex keeps a separate pinned `node20/` fixture root instead of
+    so Nimbus keeps a separate pinned `node20/` fixture root instead of
     pretending the Node22 staged copies are identical
   - `test-path-join.js` is one such divergence: the pinned Deno-vendored Node22
     corpus carries extra UNC join assertions that are absent from the official
@@ -97,17 +97,17 @@ later-family/internal buckets called out below.
     corpus, so both fixture roots stay checked in deliberately
   - `test-url-parse-invalid-input.js` is no longer a Node20 divergence after
     the batch URL drift review. Official Node20 and official Node22 both still
-    expect `DEP0170` warning semantics here, so Neovex fixed one shared
+    expect `DEP0170` warning semantics here, so Nimbus fixed one shared
     runtime seam instead of maintaining version-specific behavior.
   - `test-url-domain-ascii-unicode.js`, `test-url-pathtofileurl.js`, and
     `test-url-fileurltopath.js` also differ textually from the Deno-vendored
     Node22 corpus, but the official `nodejs/node v20.20.2` and
     `nodejs/node v22.15.0` files are still byte-identical for those cases.
-    Neovex now runs one shared official LTS fixture body for both lanes there
+    Nimbus now runs one shared official LTS fixture body for both lanes there
     instead of pretending the vendored Node22 copies are the canonical source.
   - `test-assert-async.js` also differs from the Deno-vendored Node22 corpus,
     but the official `nodejs/node v20.20.2` and `nodejs/node v22.15.0` files
-    are still byte-identical there. Neovex now runs one shared official LTS
+    are still byte-identical there. Nimbus now runs one shared official LTS
     fixture body for both lanes, which adds the first upstream-backed top-level
     async `node:assert` proof without inventing a fake version split.
   - `test-assert-fail-deprecation.js` and `test-assert-first-line.js` also use
@@ -224,19 +224,19 @@ Package/framework canary note:
 ## Harness Gap
 
 - The pinned vendored Deno `tests/node_compat` runner cannot be pointed at
-  Neovex directly. It shells out to a Deno CLI executable via
+  Nimbus directly. It shells out to a Deno CLI executable via
   `DENO_TEST_UTIL_DENO_EXE` and expects Deno CLI argument/process semantics,
-  not `neovex` runtime invocation semantics.
-- `NLC3` therefore still needs a Neovex-owned upstream-slice runner that can:
+  not `nimbus` runtime invocation semantics.
+- `NLC3` therefore still needs a Nimbus-owned upstream-slice runner that can:
   - execute the pinned Node corpus against `RuntimePreset::Application` /
     `CompatibilityTarget::Node22`
   - capture stdout/stderr/exit status in a Node-test-shaped way
   - produce repeatable per-family pass/fail counts for both Node22 and Node20
-- The current Neovex-owned runner now proves the first narrow subset can run
+- The current Nimbus-owned runner now proves the first narrow subset can run
   with checked-in `test/common` shims, but it still does not emulate general
   Node CLI harness behavior or the full `test/common` contract.
 - The same runner now also executes official `test-assert-async.js` cleanly in
-  both Node22 and Node20 lanes, which shows the current `__neovexInvoke` path
+  both Node22 and Node20 lanes, which shows the current `__nimbusInvoke` path
   plus `nextTick` drains are already strong enough for at least one upstream
   top-level `Promise.all(...).then(common.mustCall())` assertion file.
 - The same runner now also executes official `test-assert-fail-deprecation.js`
@@ -293,9 +293,9 @@ Package/framework canary note:
   `Deno.test` bridge, but broader `node:test` hooks, suites, reporters, and
   full CLI semantics are still out of contract for `NLC3`.
 - The matching Deno-fork regression source now exists in
-  `~/src/github.com/agentstation/deno/tests/unit_node/vm_test.ts`, but this
+  `~/src/github.com/nimbus/deno/tests/unit_node/vm_test.ts`, but this
   machine could not execute the fork-built Deno lane because the local toolchain
-  lacks `cmake`. Neovex therefore keeps the runtime proof grounded in the
+  lacks `cmake`. Nimbus therefore keeps the runtime proof grounded in the
   repinned `v2.7.14-locker.19` integration lane rather than overstating the
   Deno-side local verification result.
 - The full `node_compat::` lane is still a stability watchpoint, not a green

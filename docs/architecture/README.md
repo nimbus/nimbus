@@ -10,8 +10,8 @@ For the stable top-level architecture overview, see
 
 | Directory | Crate | What's here |
 |-----------|-------|-------------|
-| [server/](server/) | `neovex-server` | Adapter contracts, auth/runtime trust boundary |
-| [runtime/](runtime/) | `neovex-runtime` | V8 host capability ownership, adapter boundary |
-| [storage/](storage/) | `neovex-storage` | Encryption design, persistence engine, provider topologies |
-| [sandbox/](sandbox/) | `neovex-sandbox` | MicroVM baseline, macOS machine flow, krun validation |
-| [testing/](testing/) | `neovex-testing` | Verification harness, reliability posture, CI failure playbook |
+| [server/](server/) | `nimbus-server` | Adapter contracts, auth/runtime trust boundary |
+| [runtime/](runtime/) | `nimbus-runtime` | V8 host capability ownership, adapter boundary |
+| [storage/](storage/) | `nimbus-storage` | Encryption design, persistence engine, provider topologies |
+| [sandbox/](sandbox/) | `nimbus-sandbox` | MicroVM baseline, macOS machine flow, krun validation |
+| [testing/](testing/) | `nimbus-testing` | Verification harness, reliability posture, CI failure playbook |

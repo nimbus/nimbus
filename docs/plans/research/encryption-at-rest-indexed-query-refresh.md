@@ -32,7 +32,7 @@ Plaintext:
 ```bash
 make bench-embedded-providers \
   WORKLOAD=indexed-query \
-  REPORT=/tmp/neovex-indexed-query-refresh-plaintext.md
+  REPORT=/tmp/nimbus-indexed-query-refresh-plaintext.md
 ```
 
 Encrypted:
@@ -41,7 +41,7 @@ Encrypted:
 make bench-embedded-providers \
   WORKLOAD=indexed-query \
   ENCRYPTION=temp-master-key-file \
-  REPORT=/tmp/neovex-indexed-query-refresh-encrypted.md
+  REPORT=/tmp/nimbus-indexed-query-refresh-encrypted.md
 ```
 
 ## Methodology
@@ -111,13 +111,13 @@ same repo-owned evidence pack rather than inferred from older one-round drills.
 Command:
 
 ```bash
-NEOVEX_ENCRYPTION_PROFILE=1 \
-NEOVEX_SQLITE_OPEN_PROFILE=1 \
-NEOVEX_TENANT_LOAD_PROFILE=1 \
-NEOVEX_QUERY_PROFILE=1 \
-NEOVEX_PROFILE_ONLY_COLD_SAMPLES=1 \
-NEOVEX_BENCH_COLD_MEASURE_ROUNDS=3 \
-cargo bench -p neovex-engine --bench embedded-provider-benchmarks \
+NIMBUS_ENCRYPTION_PROFILE=1 \
+NIMBUS_SQLITE_OPEN_PROFILE=1 \
+NIMBUS_TENANT_LOAD_PROFILE=1 \
+NIMBUS_QUERY_PROFILE=1 \
+NIMBUS_PROFILE_ONLY_COLD_SAMPLES=1 \
+NIMBUS_BENCH_COLD_MEASURE_ROUNDS=3 \
+cargo bench -p nimbus-engine --bench embedded-provider-benchmarks \
   -- --workload indexed-query --local-encryption temp-master-key-file
 ```
 
@@ -152,7 +152,7 @@ startup effects, rather than weakening or retuning the encryption contract.
 
 We then tested the most direct warmup hypothesis with a benchmark-only hook in
 the embedded indexed-query cold lane. The hook is gated by
-`NEOVEX_SQLITE_INDEX_QUERY_WARMUP` and runs one targeted SQLite query before
+`NIMBUS_SQLITE_INDEX_QUERY_WARMUP` and runs one targeted SQLite query before
 the measured cold batch, while still counting that work inside reopen/bootstrap
 time so the end-to-end sample remains honest.
 
@@ -198,7 +198,7 @@ paying the cold query early.
 ## SQLite Raw Index Probe Experiment
 
 We then tested the next lower-level hypothesis with a second benchmark-only
-mode, `NEOVEX_SQLITE_INDEX_QUERY_WARMUP=raw-id-only`. Instead of going through
+mode, `NIMBUS_SQLITE_INDEX_QUERY_WARMUP=raw-id-only`. Instead of going through
 the service query path, this mode opens the cloned SQLite file through a
 separate raw `rusqlite` connection, applies the manifest-resolved SQLCipher
 key, and runs a cheaper covering-style probe:

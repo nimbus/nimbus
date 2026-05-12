@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://neovex.local/node-compat/fixture-inventory.schema.json",
+  "$id": "https://nimbus.local/node-compat/fixture-inventory.schema.json",
   "title": "Node compatibility fixture inventory",
   "type": "object",
   "required": [

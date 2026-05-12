@@ -12,7 +12,7 @@ usage() {
   cat <<'EOF' >&2
 usage:
   bash scripts/verify-sqlcipher-proof.sh [--output-dir <dir>] cargo-lanes
-  bash scripts/verify-sqlcipher-proof.sh [--output-dir <dir>] packaged-binary <path-to-neovex>
+  bash scripts/verify-sqlcipher-proof.sh [--output-dir <dir>] packaged-binary <path-to-nimbus>
 EOF
 }
 
@@ -173,9 +173,9 @@ PY
 
 run_cargo_lanes() {
   run_logged sqlite-encryption-tests \
-    cargo test -p neovex-storage sqlite::encryption -- --nocapture
+    cargo test -p nimbus-storage sqlite::encryption -- --nocapture
   run_logged sqlite-foundation-encryption-tests \
-    cargo test -p neovex-storage sqlite_foundation::encryption -- --nocapture
+    cargo test -p nimbus-storage sqlite_foundation::encryption -- --nocapture
 }
 
 run_packaged_binary_proof() {
@@ -185,7 +185,7 @@ run_packaged_binary_proof() {
     exit 64
   fi
   if [[ ! -x "${binary}" ]]; then
-    echo "expected packaged Neovex binary to be executable: ${binary}" >&2
+    echo "expected packaged Nimbus binary to be executable: ${binary}" >&2
     exit 64
   fi
 
@@ -207,8 +207,8 @@ run_packaged_binary_proof() {
   create_plaintext_sqlite_fixture "${plaintext_db}"
   write_master_key_file "${master_key}"
 
-  export NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file
-  export NEOVEX_ENCRYPTION_MASTER_KEY_FILE="${master_key}"
+  export NIMBUS_ENCRYPTION_KEY_PROVIDER=master-key-file
+  export NIMBUS_ENCRYPTION_MASTER_KEY_FILE="${master_key}"
 
   run_logged migrate-proof \
     "${binary}" encryption migrate \
@@ -218,7 +218,7 @@ run_packaged_binary_proof() {
       --tenant-id package-proof
 
   test -f "${encrypted_db}"
-  test -f "${encrypted_db}.neovex-enc"
+  test -f "${encrypted_db}.nimbus-enc"
 
   run_logged export-proof \
     "${binary}" encryption export \

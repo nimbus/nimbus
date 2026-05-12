@@ -83,7 +83,7 @@ of the denominator.
     which currently depends on hidden `Deno.exit` behavior that the embedded
     runtime does not expose
   - owner: cross-family boundary between the shared Deno-family
-    `internal/process/report` polyfill and Neovex-owned hidden-Deno
+    `internal/process/report` polyfill and Nimbus-owned hidden-Deno
     bootstrap/exit wiring, not the `http.Agent` keepalive or socket-pool path
   - evidence:
     `runtime::tests::node_compat::node22_http_agent_reuse_drained_socket_only_watchpoint`

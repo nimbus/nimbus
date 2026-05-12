@@ -9,7 +9,7 @@ belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 Source corpus:
 
 - current Deno-family implementation baseline:
-  `~/src/github.com/agentstation/deno @ v2.7.14-locker.31`
+  `~/src/github.com/nimbus/deno @ v2.7.14-locker.31`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
 - pinned official Node20 supported corpus:
@@ -48,7 +48,7 @@ shared seam instead of trying to run all `512+` files at once.
 ## Current Manifested Official Subset
 
 The first manifested `NLC5` batch is now live in
-[`STREAMS_AND_LOCAL_IO_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node/mod.rs).
+[`STREAMS_AND_LOCAL_IO_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs).
 
 Current manifested batch counts:
 
@@ -144,7 +144,7 @@ Current manifested slice coverage:
   function seam exercised by the official `test-os-checked-function.js`
   fixture
 - the current local `node:fs` stream-wrapper contract now routes path-based
-  `createReadStream()` / `createWriteStream()` through the Neovex-owned
+  `createReadStream()` / `createWriteStream()` through the Nimbus-owned
   `open()` and error-normalization seam while preserving builtin `fd` /
   `FileHandle` stream behavior
 - path-based `fs.promises` lifecycle and read parity for the staged local
@@ -523,7 +523,7 @@ Keep widening by shared seam instead of by isolated file:
 
 - `~/src/github.com/nodejs/node` is the canonical local source for file
   selection and Node20/Node22 drift review.
-- `~/src/github.com/agentstation/deno` remains the shared implementation and
+- `~/src/github.com/nimbus/deno` remains the shared implementation and
   harness reference, not the truth source for staged fixture content.
 - The shared `test/common` shim must follow the official Node corpus version,
   not the runtime's raw global surface. Current examples: Node20/Node22 omit

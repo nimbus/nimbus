@@ -1,6 +1,6 @@
 # Node.js Runtime Compatibility
 
-Neovex's Node.js runtime compatibility is evidence-backed and deliberately
+Nimbus's Node.js runtime compatibility is evidence-backed and deliberately
 bounded. A surface is considered supported only when it has checked-in fixture,
 canary, oracle, or classification evidence.
 
@@ -37,7 +37,7 @@ pass claim.
   mode and explicit grants remain separate from Node compatibility target.
 - Convex-compatible `"use node"` action modules can select Node20, Node22, or
   Node24 through `convex.json`.
-- Neovex does not currently claim full Node built-in compatibility for any
+- Nimbus does not currently claim full Node built-in compatibility for any
   target.
 - Runtime support is narrower than Node CLI parity; `node --test`, inspector,
   worker, child process, native addon, and host-heavy behavior is only

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-output_dir="$(mktemp -d "${TMPDIR:-/tmp}/neovex-apt-repo-helper.XXXXXX")"
+output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-apt-repo-helper.XXXXXX")"
 trap 'rm -rf "${output_dir}"' EXIT
 
 packages_dir="${output_dir}/packages"
@@ -30,7 +30,7 @@ create_stub_deb() {
     printf 'Package: %s\n' "${package_name}"
     printf 'Version: %s\n' "${version}"
     printf 'Architecture: %s\n' "${arch}"
-    printf 'Maintainer: AgentStation <oss@agentstation.ai>\n'
+    printf 'Maintainer: Nimbus <oss@nimbus.dev>\n'
     printf 'Section: devel\n'
     printf 'Priority: optional\n'
     local control_line
@@ -51,15 +51,15 @@ create_stub_deb() {
   )
 }
 
-create_stub_deb "neovex" "0.1.10" "amd64" "/usr/bin/neovex" \
-  "Depends: neovex-crun, buildah, conmon, netavark, aardvark-dns" \
+create_stub_deb "nimbus" "0.1.10" "amd64" "/usr/bin/nimbus" \
+  "Depends: nimbus-crun, buildah, conmon, netavark, aardvark-dns" \
   "Recommends: fuse-overlayfs, uidmap"
-create_stub_deb "neovex-crun" "0.1.4" "amd64" "/usr/libexec/neovex/crun" \
+create_stub_deb "nimbus-crun" "0.1.4" "amd64" "/usr/libexec/nimbus/crun" \
   "Depends: libkrun, libkrunfw"
-create_stub_deb "neovex" "0.1.10" "arm64" "/usr/bin/neovex" \
-  "Depends: neovex-crun, buildah, conmon, netavark, aardvark-dns" \
+create_stub_deb "nimbus" "0.1.10" "arm64" "/usr/bin/nimbus" \
+  "Depends: nimbus-crun, buildah, conmon, netavark, aardvark-dns" \
   "Recommends: fuse-overlayfs, uidmap"
-create_stub_deb "neovex-crun" "0.1.4" "arm64" "/usr/libexec/neovex/crun" \
+create_stub_deb "nimbus-crun" "0.1.4" "arm64" "/usr/libexec/nimbus/crun" \
   "Depends: libkrun, libkrunfw"
 
 cd "${repo_root}"
@@ -70,7 +70,7 @@ if command -v apt-ftparchive >/dev/null 2>&1; then
   chmod 0700 "${signing_home}"
   GNUPGHOME="${signing_home}" gpgconf --launch gpg-agent >/dev/null 2>&1
   GNUPGHOME="${signing_home}" gpg --batch --pinentry-mode loopback --passphrase '' \
-    --quick-gen-key "Neovex Apt Repo <apt@neovex.dev>" ed25519 sign 0 >/dev/null 2>&1
+    --quick-gen-key "Nimbus Apt Repo <apt@nimbus.dev>" ed25519 sign 0 >/dev/null 2>&1
   signing_fingerprint="$(
     GNUPGHOME="${signing_home}" gpg --batch --with-colons --list-secret-keys \
       | awk -F: '$1=="fpr"{print $10; exit}'
@@ -83,9 +83,9 @@ if command -v apt-ftparchive >/dev/null 2>&1; then
     --packages-dir "${packages_dir}" \
     --distribution stable \
     --component main \
-    --origin AgentStation \
-    --label neovex \
-    --description "Neovex apt repository" \
+    --origin Nimbus \
+    --label nimbus \
+    --description "Nimbus apt repository" \
     --gpg-private-key "${signing_dir}/private.asc" \
     >"${output_dir}/build-summary.txt"
   verification_mode="local"
@@ -105,7 +105,7 @@ elif command -v docker >/dev/null 2>&1; then
       chmod 0700 "$GNUPGHOME"
       gpgconf --launch gpg-agent >/dev/null 2>&1 || true
       gpg --batch --pinentry-mode loopback --passphrase "" \
-        --quick-gen-key "Neovex Apt Repo <apt@neovex.dev>" ed25519 sign 0 >/dev/null 2>&1
+        --quick-gen-key "Nimbus Apt Repo <apt@nimbus.dev>" ed25519 sign 0 >/dev/null 2>&1
       signing_fingerprint="$(
         gpg --batch --with-colons --list-secret-keys \
           | awk -F: '\''$1=="fpr"{print $10; exit}'\''
@@ -115,14 +115,14 @@ elif command -v docker >/dev/null 2>&1; then
         --packages-dir /work/packages \
         --distribution stable \
         --component main \
-        --origin AgentStation \
-        --label neovex \
-        --description "Neovex apt repository" \
+        --origin Nimbus \
+        --label nimbus \
+        --description "Nimbus apt repository" \
         --gpg-key-id "$signing_fingerprint"
       verify_home=/work/signature-verify
       mkdir -p "$verify_home"
       chmod 0700 "$verify_home"
-      GNUPGHOME="$verify_home" gpg --batch --import /work/repo/public/neovex.asc >/dev/null 2>&1
+      GNUPGHOME="$verify_home" gpg --batch --import /work/repo/public/nimbus.asc >/dev/null 2>&1
       GNUPGHOME="$verify_home" gpg --batch --verify /work/repo/dists/stable/InRelease >/dev/null 2>&1
       GNUPGHOME="$verify_home" gpg --batch --verify \
         /work/repo/dists/stable/Release.gpg \
@@ -142,13 +142,13 @@ test -f "${repo_dir}/dists/stable/main/binary-arm64/Packages.gz"
 test -f "${repo_dir}/dists/stable/Release"
 test -f "${repo_dir}/dists/stable/Release.gpg"
 test -f "${repo_dir}/dists/stable/InRelease"
-test -f "${repo_dir}/public/neovex.asc"
-test -f "${repo_dir}/public/neovex.gpg"
+test -f "${repo_dir}/public/nimbus.asc"
+test -f "${repo_dir}/public/nimbus.gpg"
 
-grep -F "Package: neovex" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
-grep -F "Package: neovex-crun" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
-grep -F "Filename: pool/main/amd64/neovex_0.1.10_amd64.deb" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
-grep -F "Filename: pool/main/arm64/neovex_0.1.10_arm64.deb" "${repo_dir}/dists/stable/main/binary-arm64/Packages" >/dev/null
+grep -F "Package: nimbus" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
+grep -F "Package: nimbus-crun" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
+grep -F "Filename: pool/main/amd64/nimbus_0.1.10_amd64.deb" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
+grep -F "Filename: pool/main/arm64/nimbus_0.1.10_arm64.deb" "${repo_dir}/dists/stable/main/binary-arm64/Packages" >/dev/null
 grep -F "Architectures: amd64 arm64" "${repo_dir}/dists/stable/Release" >/dev/null
 grep -F "Components: main" "${repo_dir}/dists/stable/Release" >/dev/null
 grep -F "Codename: stable" "${repo_dir}/dists/stable/Release" >/dev/null
@@ -163,7 +163,7 @@ else
   verify_home="${output_dir}/verify-gnupg"
   mkdir -p "${verify_home}"
   chmod 0700 "${verify_home}"
-  GNUPGHOME="${verify_home}" gpg --batch --import "${repo_dir}/public/neovex.asc" >/dev/null 2>&1
+  GNUPGHOME="${verify_home}" gpg --batch --import "${repo_dir}/public/nimbus.asc" >/dev/null 2>&1
   GNUPGHOME="${verify_home}" gpg --batch --verify "${repo_dir}/dists/stable/InRelease" >/dev/null 2>&1
   GNUPGHOME="${verify_home}" gpg --batch --verify \
     "${repo_dir}/dists/stable/Release.gpg" \

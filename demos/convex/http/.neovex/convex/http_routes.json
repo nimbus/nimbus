@@ -1,0 +1,73 @@
+{
+  "routes": [
+    {
+      "method": "POST",
+      "plan": {
+        "type": "http_response",
+        "response": {
+          "kind": "json",
+          "body": {
+            "id": {
+              "$result": {
+                "index": 0,
+                "path": ""
+              }
+            }
+          },
+          "status": 201
+        },
+        "operation": {
+          "type": "call_mutation",
+          "name": "messages:sendInternal",
+          "visibility": "internal",
+          "args": {
+            "author": {
+              "$request": {
+                "source": "json",
+                "path": "author"
+              }
+            },
+            "body": {
+              "$request": {
+                "source": "json",
+                "path": "body"
+              }
+            }
+          }
+        }
+      },
+      "path": "/messages",
+      "name": "http:inline:0"
+    },
+    {
+      "method": "GET",
+      "plan": {
+        "type": "http_response",
+        "response": {
+          "kind": "json",
+          "body": {
+            "$result": {
+              "index": 0,
+              "path": ""
+            }
+          }
+        },
+        "operation": {
+          "type": "call_query",
+          "name": "messages:byAuthor",
+          "visibility": "public",
+          "args": {
+            "author": {
+              "$request": {
+                "source": "query",
+                "name": "author"
+              }
+            }
+          }
+        }
+      },
+      "path": "/messages/by-author",
+      "name": "http:inline:1"
+    }
+  ]
+}

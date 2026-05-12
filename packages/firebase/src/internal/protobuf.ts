@@ -1,6 +1,6 @@
-// Shared browser-safe protobuf foundation for @neovex/firebase transport work.
-// The source proto tree is vendored under crates/neovex-server/proto/google/...
-// and regenerated with `npm run codegen:proto --workspace @neovex/firebase`.
+// Shared browser-safe protobuf foundation for @nimbus/firebase transport work.
+// The source proto tree is vendored under crates/nimbus-server/proto/google/...
+// and regenerated with `npm run codegen:proto --workspace @nimbus/firebase`.
 export { create, fromBinary, fromJson, toBinary, toJson } from "@bufbuild/protobuf";
 
 export * as firestoreV1 from "../gen/google/firestore/v1/firestore_pb";

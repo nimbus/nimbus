@@ -1,8 +1,8 @@
-$ cargo test -p neovex-storage sqlite::encryption -- --nocapture
-[1m[92m   Compiling[0m neovex-core v0.1.22 (/home/runner/work/neovex/neovex/crates/neovex-core)
-[1m[92m   Compiling[0m neovex-storage v0.1.22 (/home/runner/work/neovex/neovex/crates/neovex-storage)
+$ cargo test -p nimbus-storage sqlite::encryption -- --nocapture
+[1m[92m   Compiling[0m nimbus-core v0.1.22 (/home/runner/work/nimbus/nimbus/crates/nimbus-core)
+[1m[92m   Compiling[0m nimbus-storage v0.1.22 (/home/runner/work/nimbus/nimbus/crates/nimbus-storage)
 [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 16.46s
-[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/neovex_storage-920d25ae8fb9f5a2)
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/nimbus_storage-920d25ae8fb9f5a2)
 
 running 7 tests
 test sqlite::encryption::tests::test_path_with_quote_is_rejected ... ok

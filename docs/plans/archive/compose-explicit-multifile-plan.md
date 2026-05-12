@@ -1,8 +1,8 @@
 # Plan: Explicit Compose File Lists And `COMPOSE_FILE`
 
 Canonical execution plan for adding ordered explicit Compose file lists and
-`COMPOSE_FILE` support across `neovex compose ...`, `neovex dev`, and
-`neovex start`.
+`COMPOSE_FILE` support across `nimbus compose ...`, `nimbus dev`, and
+`nimbus start`.
 
 This plan extends the landed shared-discovery contract in
 `docs/plans/archive/compose-discovery-plan.md`. Auto-discovery stays unchanged; this
@@ -34,7 +34,7 @@ workflow that Docker users expect:
 - `files[0]` remains the project-identity and relative-path anchor
 - `dev`, `start`, and `compose` still share one resolver
 
-This wave does **not** broaden Neovex into provider-specific default filenames
+This wave does **not** broaden Nimbus into provider-specific default filenames
 such as `podman-compose.yaml` or `container-compose.yaml`.
 
 ## Behavior Contract
@@ -60,7 +60,7 @@ environment-driven selections without breaking the landed auto-discovery path.
 
 **Files:**
 
-- `crates/neovex-bin/src/compose/discovery.rs`
+- `crates/nimbus-bin/src/compose/discovery.rs`
 
 **Behavior contract:**
 
@@ -84,16 +84,16 @@ three command families aligned on the shared resolver.
 
 **Files:**
 
-- `crates/neovex-bin/src/compose/commands.rs`
-- `crates/neovex-bin/src/compose/mod.rs`
-- `crates/neovex-bin/src/dev.rs`
-- `crates/neovex-bin/src/start/`
+- `crates/nimbus-bin/src/compose/commands.rs`
+- `crates/nimbus-bin/src/compose/mod.rs`
+- `crates/nimbus-bin/src/dev.rs`
+- `crates/nimbus-bin/src/start/`
 
 **Behavior contract:**
 
-- `neovex compose ... --file a --file b` loads `[a, b]` in order
-- `neovex dev --compose-file a --compose-file b` loads `[a, b]` in order
-- `neovex start --compose-file a --compose-file b` loads `[a, b]` in order
+- `nimbus compose ... --file a --file b` loads `[a, b]` in order
+- `nimbus dev --compose-file a --compose-file b` loads `[a, b]` in order
+- `nimbus start --compose-file a --compose-file b` loads `[a, b]` in order
 - all three families honor `COMPOSE_FILE` when explicit flags are absent
 
 **Implementation note:** compose command structs plus `dev` / `start` now store
@@ -110,8 +110,8 @@ selection came from and how ordered explicit files behave.
 
 **Files:**
 
-- `crates/neovex-bin/src/dev.rs`
-- `crates/neovex-bin/src/start/boot.rs`
+- `crates/nimbus-bin/src/dev.rs`
+- `crates/nimbus-bin/src/start/boot.rs`
 - `docs/reference/cli.md`
 
 **Behavior contract:**
@@ -136,9 +136,9 @@ environment-driven selections, and cross-command consistency.
 
 **Files:**
 
-- `crates/neovex-bin/src/compose/` tests
-- `crates/neovex-bin/src/dev.rs` tests
-- `crates/neovex-bin/src/start/tests.rs`
+- `crates/nimbus-bin/src/compose/` tests
+- `crates/nimbus-bin/src/dev.rs` tests
+- `crates/nimbus-bin/src/start/tests.rs`
 
 **Coverage contract:**
 
@@ -153,7 +153,7 @@ environment-driven selections, and cross-command consistency.
 explicit flags, `COMPOSE_FILE`, precedence over environment defaults,
 cross-command parser behavior, `files[0]` project anchoring, and provenance-aware
 dev/start output. Closeout verification passed with `cargo fmt --all --check`,
-`cargo test -p neovex-bin`, `cargo clippy -p neovex-bin --all-targets -- -D warnings`,
+`cargo test -p nimbus-bin`, `cargo clippy -p nimbus-bin --all-targets -- -D warnings`,
 `cargo check --workspace`, `make clippy`, `make check`, and `make test`.
 Follow-up test hardening now routes all cwd-mutating tests through the shared
 crate-level helper so `dev`, `start`, and `compose` cwd scenarios serialize on
@@ -167,8 +167,8 @@ Focused verification during implementation:
 
 ```bash
 cargo fmt --all --check
-cargo test -p neovex-bin
-cargo clippy -p neovex-bin --all-targets -- -D warnings
+cargo test -p nimbus-bin
+cargo clippy -p nimbus-bin --all-targets -- -D warnings
 cargo check --workspace
 ```
 

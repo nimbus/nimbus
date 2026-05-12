@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const CLOUD_FUNCTIONS_INTERNAL_DIR = [".neovex", "firebase"];
+const CLOUD_FUNCTIONS_INTERNAL_DIR = [".nimbus", "firebase"];
 const DEFAULT_FIREBASE_FUNCTIONS_SOURCE = "functions";
 const DEFAULT_FIREBASE_CODEBASE = "default";
 const FUNCTIONS_FRAMEWORK_PACKAGE = "@google-cloud/functions-framework";

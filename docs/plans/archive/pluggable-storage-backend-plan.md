@@ -1,7 +1,7 @@
 # SQLite Storage Backend Migration Control Plan
 
 This file keeps its historical filename, but it now owns a SQLite-first
-embedded-provider migration: move Neovex internal storage from a redb-only
+embedded-provider migration: move Nimbus internal storage from a redb-only
 implementation to a provider model with SQLite as the default embedded backend,
 benchmark SQLite against redb before cutover, and retain redb as a supported
 embedded provider. Future replica-connected SQLite, Postgres/MySQL, and other
@@ -15,20 +15,20 @@ Reviewed against:
 - `docs/README.md`
 - `docs/plans/README.md`
 - `docs/plans/encryption-at-rest-plan.md`
-- `crates/neovex-storage/src/async_storage/traits.rs`
-- `crates/neovex-storage/src/store/write/direct.rs`
-- `crates/neovex-storage/src/store/write/batch.rs`
-- `crates/neovex-storage/src/store/journal_stream.rs`
-- `crates/neovex-storage/src/store/journal_snapshot.rs`
-- `crates/neovex-storage/src/index/`
-- `crates/neovex-storage/src/keys.rs`
-- `crates/neovex-storage/src/store/scan.rs`
-- `crates/neovex-storage/src/schema_store.rs`
-- `crates/neovex-storage/src/store/schema_rewrite.rs`
-- `crates/neovex-engine/src/service/execution_units/commit.rs`
-- `crates/neovex-engine/src/service/mutations/commit_processing.rs`
-- `crates/neovex-engine/src/scheduler.rs`
-- `crates/neovex-engine/src/service/queries/planner/`
+- `crates/nimbus-storage/src/async_storage/traits.rs`
+- `crates/nimbus-storage/src/store/write/direct.rs`
+- `crates/nimbus-storage/src/store/write/batch.rs`
+- `crates/nimbus-storage/src/store/journal_stream.rs`
+- `crates/nimbus-storage/src/store/journal_snapshot.rs`
+- `crates/nimbus-storage/src/index/`
+- `crates/nimbus-storage/src/keys.rs`
+- `crates/nimbus-storage/src/store/scan.rs`
+- `crates/nimbus-storage/src/schema_store.rs`
+- `crates/nimbus-storage/src/store/schema_rewrite.rs`
+- `crates/nimbus-engine/src/service/execution_units/commit.rs`
+- `crates/nimbus-engine/src/service/mutations/commit_processing.rs`
+- `crates/nimbus-engine/src/scheduler.rs`
+- `crates/nimbus-engine/src/service/queries/planner/`
 
 Baseline verification status for this plan:
 
@@ -53,10 +53,10 @@ Baseline verification status for this plan:
 
 ## Purpose
 
-Neovex is still pre-launch with zero production data, which makes this the
+Nimbus is still pre-launch with zero production data, which makes this the
 right moment to replace the current redb-only storage implementation cleanly
 instead of carrying long-lived compatibility layers. The goal of this
-workstream is to preserve Neovex's current product semantics while making
+workstream is to preserve Nimbus's current product semantics while making
 SQLite the default embedded backend and retaining redb as a supported embedded
 provider behind the same durable behavior seam.
 
@@ -65,7 +65,7 @@ failure modes:
 
 - preserving redb-shaped shared seams just because redb remains supported,
   instead of pushing backend-local mechanics behind the provider boundary
-- treating Neovex-owned product behavior as if SQLite already solved it just
+- treating Nimbus-owned product behavior as if SQLite already solved it just
   because SQLite has lower-level storage hooks or replication features
 
 ---
@@ -93,7 +93,7 @@ failure modes:
 
 This plan covers:
 
-- SQLite as the default target embedded backend for Neovex internal storage
+- SQLite as the default target embedded backend for Nimbus internal storage
 - redb retained as a supported embedded provider behind the durable provider
   seam
 - a temporary redb-vs-SQLite migration window for parity tests and benchmarks
@@ -112,7 +112,7 @@ This plan does not cover:
 - user-facing `env.DB` / `env.HYPERDRIVE` bindings
 - a long-lived compatibility layer or migration shim for launched users
 
-Because Neovex is pre-launch, this plan prefers clean replacement over
+Because Nimbus is pre-launch, this plan prefers clean replacement over
 compatibility scaffolding. A redb-to-SQLite import tool is optional and only
 worth adding if local developer migration friction becomes real.
 
@@ -130,15 +130,15 @@ These rules are mandatory for every item in this plan.
    item explicitly records otherwise.
 
 2. Keep the core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation`.
    Storage atomicity remains intact.
 
-3. Use SQLite for storage mechanics; keep Neovex-owned product semantics in
-   Neovex.
+3. Use SQLite for storage mechanics; keep Nimbus-owned product semantics in
+   Nimbus.
    SQLite should own transactions, WAL durability, table/index storage, JSON
-   expressions, and physical query execution. Neovex should continue to own
+   expressions, and physical query execution. Nimbus should continue to own
    logical commits, durable journal semantics, subscription fan-out, scheduler
    dedupe semantics, validation/policy rules, and execution-unit semantics.
 
@@ -180,7 +180,7 @@ These rules are mandatory for every item in this plan.
 
 ## Current Assessed State
 
-- Neovex is pre-launch with zero production users and zero production data, so
+- Nimbus is pre-launch with zero production users and zero production data, so
   breaking changes and direct replacements are preferred over compatibility
   layers.
 - SQLite is now the default embedded provider, redb is retained as an explicit
@@ -227,16 +227,16 @@ These rules are mandatory for every item in this plan.
 
 3. Journal streaming, bootstrap, snapshot export/restore/rebuild, durable-head
    tracking, and scheduled execution dedupe remain required after SQLite.
-   They are Neovex semantics, not redb implementation accidents.
+   They are Nimbus semantics, not redb implementation accidents.
 
 4. SQLite should delete or backend-localize large redb-era shared storage code
    instead of wrapping it.
-   `crates/neovex-storage/src/index/`, `keys.rs`, `store/scan.rs`, and
+   `crates/nimbus-storage/src/index/`, `keys.rs`, `store/scan.rs`, and
    `store/schema_rewrite.rs` must stop defining the shared canonical seam,
    while `schema_store.rs` and the engine planner should shrink materially.
 
 5. The query planner should be simplified toward SQL generation and residual
-   Neovex semantics, not preserved as a redb scan-shape chooser with SQLite
+   Nimbus semantics, not preserved as a redb scan-shape chooser with SQLite
    adapters underneath.
 
 6. Documents should move to JSON at rest in SQLite, while durable journal blobs
@@ -347,12 +347,12 @@ Do not rely on prior chat transcripts as progress state.
 
 ## Canonical Design Decisions
 
-### Use SQLite vs Keep in Neovex
+### Use SQLite vs Keep in Nimbus
 
 Use this rule throughout the migration:
 
-- preserve Neovex semantics
-- replace Neovex mechanics whenever SQLite already provides an equivalent or
+- preserve Nimbus semantics
+- replace Nimbus mechanics whenever SQLite already provides an equivalent or
   better primitive
 
 SQLite should replace current implementation details where it already gives us
@@ -366,7 +366,7 @@ the right storage primitive:
 - query planning for point lookups and indexed scans
 - prepared statements and normal SQL read/write execution
 
-Neovex should continue to own the parts that are product semantics rather than
+Nimbus should continue to own the parts that are product semantics rather than
 storage mechanics:
 
 - logical mutation commits via `CommitEntry`
@@ -378,7 +378,7 @@ storage mechanics:
 - durable-head vs applied-head tracking while the engine still depends on it
 
 This plan should aggressively delete redb-shaped shared implementation seams,
-but it should not treat current Neovex product guarantees as accidental
+but it should not treat current Nimbus product guarantees as accidental
 storage details just because SQLite has lower-level hooks or replication
 features.
 
@@ -429,11 +429,11 @@ The benchmark results reinforce the intended seam placement.
 - external SQL backends also pay network round trips, pool checkout, TLS,
   remote planning, and server-side concurrency costs
 
-That makes the Neovex-owned pre-storage layer even more important for external
+That makes the Nimbus-owned pre-storage layer even more important for external
 SQL, but only for semantic shaping and round-trip reduction:
 
 - keep auth, validation, admission, batching, OCC, `CommitEntry`, and
-  tenant-routing semantics in Neovex
+  tenant-routing semantics in Nimbus
 - keep transactions, indexes, filtering, ordering, prepared statements,
   pooling, and physical query execution in the backend
 - prefer coarse semantic operations at the seam over tiny CRUD or scan-shaped
@@ -467,24 +467,24 @@ cross-provider machinery.
 
 Delete or keep deleted:
 
-- `crates/neovex-engine/src/service/queries/planner/loading.rs`
+- `crates/nimbus-engine/src/service/queries/planner/loading.rs`
   - already deleted; do not restore a redb-shaped loading adapter seam
 
 The following redb-era modules must either be deleted or clearly reduced to
 redb-provider-local implementation code instead of remaining shared engine
 plumbing:
 
-- `crates/neovex-storage/src/index/`
+- `crates/nimbus-storage/src/index/`
   - SQLite expression indexes and SQL predicates replace the old shared custom
     key encoding, bounds computation, scan adapters, and index maintenance as
     the canonical seam; any remaining redb implementation must be provider-local
-- `crates/neovex-storage/src/keys.rs`
+- `crates/nimbus-storage/src/keys.rs`
   - SQLite `PRIMARY KEY (table_name, id)` replaces the old shared flat-key
     encoding model
-- `crates/neovex-storage/src/store/scan.rs`
+- `crates/nimbus-storage/src/store/scan.rs`
   - SQLite `WHERE` clauses and indexed predicates replace the old shared
     MessagePack byte-level filter-pushdown seam
-- `crates/neovex-storage/src/store/schema_rewrite.rs`
+- `crates/nimbus-storage/src/store/schema_rewrite.rs`
   - SQLite index maintenance during replay is automatic once document writes hit
     indexed columns; any redb replay-specific rewrite logic must stay
     provider-local
@@ -492,12 +492,12 @@ plumbing:
 The following modules should be significantly simplified, with the redb-specific
 index-reconciliation and scan-plumbing logic removed:
 
-- `crates/neovex-storage/src/schema_store.rs`
+- `crates/nimbus-storage/src/schema_store.rs`
   - keep schema persistence
   - replace manual key collection and reconciliation with SQLite-backed schema
     persistence plus `DROP INDEX` / `CREATE INDEX`
-- `crates/neovex-engine/src/service/queries/planner/`
-  - keep only the Neovex-owned planning logic that still adds product value
+- `crates/nimbus-engine/src/service/queries/planner/`
+  - keep only the Nimbus-owned planning logic that still adds product value
   - delete storage-scan adapter plumbing and redb-oriented index candidate
     scoring once SQLite-native query generation exists
 
@@ -509,18 +509,18 @@ supposed to replace them.
 The engine query planner should be simplified, not preserved verbatim.
 
 - SQLite should own physical index choice and low-level scan execution
-- Neovex should continue to own query semantics, auth/policy merge behavior,
+- Nimbus should continue to own query semantics, auth/policy merge behavior,
   and any residual filtering for semantics not cleanly expressed in SQL
 
 That means the intended direction is:
 
-- keep a smaller Neovex planner/query-builder layer if it still adds value
+- keep a smaller Nimbus planner/query-builder layer if it still adds value
 - generate parameterized SQL instead of calling the current redb scan adapter
   surface
-- delete `crates/neovex-engine/src/service/queries/planner/loading.rs`
+- delete `crates/nimbus-engine/src/service/queries/planner/loading.rs`
   once SQLite-backed query generation replaces scan-adapter dispatch
 - significantly simplify
-  `crates/neovex-engine/src/service/queries/planner/mod.rs`
+  `crates/nimbus-engine/src/service/queries/planner/mod.rs`
   and any exact/range/scoring modules that only exist to choose among
   redb-specific scan shapes
 
@@ -671,61 +671,61 @@ is:
   the engine currently depends on concrete snapshot, planner-loading, journal,
   and materialized-read helpers
   - reviewed call sites:
-    `crates/neovex-engine/src/service/queries/documents.rs`,
-    `crates/neovex-engine/src/service/queries/prepared.rs`,
-    `crates/neovex-engine/src/service/queries/materialized.rs`,
-    `crates/neovex-engine/src/service/queries/journal.rs`,
-    `crates/neovex-engine/src/service/subscriptions/bootstrap.rs`,
-    `crates/neovex-engine/src/service/scheduler/access.rs`
+    `crates/nimbus-engine/src/service/queries/documents.rs`,
+    `crates/nimbus-engine/src/service/queries/prepared.rs`,
+    `crates/nimbus-engine/src/service/queries/materialized.rs`,
+    `crates/nimbus-engine/src/service/queries/journal.rs`,
+    `crates/nimbus-engine/src/service/subscriptions/bootstrap.rs`,
+    `crates/nimbus-engine/src/service/scheduler/access.rs`
 - async writes still run through `TenantWriteStorage::execute_write(...)` and
   `execute_write_cancellable(...)`, with closures over
   `TenantWriteTransaction`, because schema updates, scheduler transitions, and
   cancellation-sensitive writes rely on the current transaction lifecycle
   rather than document-only helpers
   - reviewed call sites:
-    `crates/neovex-engine/src/service/schema.rs`,
-    `crates/neovex-engine/src/service/scheduler/access.rs`,
-    `crates/neovex-storage/src/tests/async_faults.rs`
+    `crates/nimbus-engine/src/service/schema.rs`,
+    `crates/nimbus-engine/src/service/scheduler/access.rs`,
+    `crates/nimbus-storage/src/tests/async_faults.rs`
 - `TenantWriteCommit<T>` and `TenantWriteOutcome<T>` stay the write result
   contract, preserving the distinction between pre-commit cancellation and
   post-commit completion
 - validated direct-write helpers remain part of the contract; they are not
   incidental redb convenience methods
   - reviewed call sites:
-    `crates/neovex-storage/src/store/write/direct.rs`,
-    `crates/neovex-engine/src/service/mutations/direct/execution.rs`,
-    `crates/neovex-engine/src/service/mutations/direct/store.rs`
+    `crates/nimbus-storage/src/store/write/direct.rs`,
+    `crates/nimbus-engine/src/service/mutations/direct/execution.rs`,
+    `crates/nimbus-engine/src/service/mutations/direct/store.rs`
 - execution-unit commits continue to hand storage fully resolved document and
   scheduler changes through `ResolvedWrite` and `ResolvedScheduleOp`, and
   storage continues to apply them atomically before the engine fans out the
   resulting `CommitEntry`
   - reviewed call sites:
-    `crates/neovex-storage/src/store/write/batch.rs`,
-    `crates/neovex-engine/src/service/execution_units/state.rs`,
-    `crates/neovex-engine/src/service/execution_units/commit.rs`
+    `crates/nimbus-storage/src/store/write/batch.rs`,
+    `crates/nimbus-engine/src/service/execution_units/state.rs`,
+    `crates/nimbus-engine/src/service/execution_units/commit.rs`
 - scheduled execution dedupe remains keyed by execution id and must continue to
   flow through storage-owned dedupe state rather than through function-level or
   hook-level shortcuts
   - reviewed call sites:
-    `crates/neovex-engine/src/scheduler.rs`,
-    `crates/neovex-storage/src/index/maintenance/writes.rs`,
-    `crates/neovex-storage/src/store/journal.rs`
+    `crates/nimbus-engine/src/scheduler.rs`,
+    `crates/nimbus-storage/src/index/maintenance/writes.rs`,
+    `crates/nimbus-storage/src/store/journal.rs`
 - durable journal read/stream/bootstrap plus materialized snapshot
   export/restore/rebuild remain first-class storage APIs, not incidental test
   helpers
   - reviewed call sites:
-    `crates/neovex-storage/src/store/journal.rs`,
-    `crates/neovex-storage/src/store/journal_stream.rs`,
-    `crates/neovex-storage/src/store/journal_snapshot.rs`,
-    `crates/neovex-engine/src/service/queries/journal.rs`,
-    `crates/neovex-engine/src/service/queries/verification.rs`
+    `crates/nimbus-storage/src/store/journal.rs`,
+    `crates/nimbus-storage/src/store/journal_stream.rs`,
+    `crates/nimbus-storage/src/store/journal_snapshot.rs`,
+    `crates/nimbus-engine/src/service/queries/journal.rs`,
+    `crates/nimbus-engine/src/service/queries/verification.rs`
 - the current query planner still depends on storage-backed exact, prefix,
   range, and composite-range loading, which is why SQLite must eventually
   replace the physical execution path instead of wrapping the existing
   scan-shape API forever
   - reviewed call sites:
-    `crates/neovex-engine/src/service/queries/planner/loading.rs`,
-    `crates/neovex-engine/src/service/queries/planner/mod.rs`
+    `crates/nimbus-engine/src/service/queries/planner/loading.rs`,
+    `crates/nimbus-engine/src/service/queries/planner/mod.rs`
 
 ---
 
@@ -741,9 +741,9 @@ Always run:
 
 Run, as appropriate:
 
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-server`
 - the checked-in benchmark workload commands defined by `SB9`
 
 Before considering the whole workstream complete, run:
@@ -788,7 +788,7 @@ genuinely stale one instead of switching to alternate artifact directories.
 | SB1 | `done` | documented the preserved engine/storage contract from actual call sites in code and in this plan | SB0 | completed 2026-04-08 after inventorying the live read/write, batch, journal, snapshot, scheduler, and planner seams |
 | SB2 | `done` | added temporary redb-vs-SQLite migration selection scaffolding at the service/storage composition root while keeping redb as the active backend | SB1 | completed 2026-04-08; the switch is explicitly migration-only and SQLite stays gated until the store foundation lands |
 | SB3 | `done` | verified that the codified contract and migration scaffolding preserve the current redb-backed seam | SB1, SB2 | completed 2026-04-08 with focused storage and engine seam-preservation tests plus workspace format/check verification |
-| SB4 | `done` | implemented the SQLite store foundation and async read/write boundary in `neovex-storage` | SB3 | completed 2026-04-08 with concrete SQLite store/executor types, WAL initialization, and focused boundary verification |
+| SB4 | `done` | implemented the SQLite store foundation and async read/write boundary in `nimbus-storage` | SB3 | completed 2026-04-08 with concrete SQLite store/executor types, WAL initialization, and focused boundary verification |
 | SB5 | `done` | implement SQLite read path and query/index parity | SB4 | completed 2026-04-08 with a planner-owned query read contract, SQLite-backed engine query coverage, and the first redb-era read-surface deletion |
 | SB6 | `done` | implemented SQLite write path, scheduler, journal, and snapshot parity | SB4 | completed 2026-04-08 with SQLite-native batch writes, scheduler queues/results/crons, journal stream/bootstrap, snapshot export/restore/rebuild, and the concrete sequence-metadata fallback required once snapshot restore truncates the physical journal |
 | SB7 | `done` | ran the broader parity verification sweep for the SQLite implementation | SB5, SB6 | completed 2026-04-08 with full storage and engine crate sweeps plus workspace format/check verification after the last SQLite schema-store additions |
@@ -839,15 +839,15 @@ genuinely stale one instead of switching to alternate artifact directories.
 
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
-| SB0 | done; rewrote this document into the durable SQLite migration control plane, split future external SQL work into `docs/plans/archive/external-sql-storage-backends-plan.md`, and recorded the SQLite-vs-Neovex boundary, deletion inventory, planner direction, storage model, codec/sequence decisions, and benchmark gate | resolve the plan-level activation gate, then start `SB1` with a call-site inventory of the current engine/storage contract |
+| SB0 | done; rewrote this document into the durable SQLite migration control plane, split future external SQL work into `docs/plans/archive/external-sql-storage-backends-plan.md`, and recorded the SQLite-vs-Nimbus boundary, deletion inventory, planner direction, storage model, codec/sequence decisions, and benchmark gate | resolve the plan-level activation gate, then start `SB1` with a call-site inventory of the current engine/storage contract |
 | SB1 | done; documented the live contract on `async_storage` and `store` types, and recorded the reviewed engine/storage call-site inventory in this control plan so later SQLite work preserves the real seam instead of inventing a CRUD abstraction | start `SB2` by introducing temporary migration-only redb-vs-SQLite selection scaffolding around tenant lifecycle and async storage handles |
 | SB2 | done; added the migration-only `StorageBackendKind`, threaded it through service construction and tenant path selection, preserved redb as the default path, and added focused tests covering both redb filename preservation and the temporary SQLite gate | start `SB3` by verifying the codified contract and migration scaffolding preserve the current seam without changing runtime behavior |
 | SB3 | done; verified the preserved seam through async storage cancellation tests, focused engine `service_*` behavior tests, the new backend-selection tests, and fresh workspace format/check runs so SQLite foundation work can start from a proven redb baseline | start `SB4` by implementing the SQLite store foundation and async boundary |
 | SB4 | done; added concrete SQLite tenant store/read snapshot/write transaction types, a SQLite tenant storage engine plus async executors, WAL-oriented initialization, metadata and journal-progress foundation helpers, and backend-specific async trait associated types so SQLite can advance without a permanent trait-object layer | start `SB5` by implementing SQLite read-path parity and beginning the redb-era read-surface deletions |
-| SB5 | done; added a planner-owned `QueryReadStore` contract in `neovex-storage`, made the engine evaluator/planner/prepared query path generic over it, verified SQLite-backed store and snapshot query execution under engine tests, and deleted `crates/neovex-engine/src/service/queries/planner/loading.rs` so the redb-era read surface has started to come out instead of being wrapped | start `SB6` by replacing redb direct-write, execution-unit batch, scheduler dedupe, journal, and snapshot mechanics with SQLite-native implementations while preserving `CommitEntry` and durable replay semantics |
+| SB5 | done; added a planner-owned `QueryReadStore` contract in `nimbus-storage`, made the engine evaluator/planner/prepared query path generic over it, verified SQLite-backed store and snapshot query execution under engine tests, and deleted `crates/nimbus-engine/src/service/queries/planner/loading.rs` so the redb-era read surface has started to come out instead of being wrapped | start `SB6` by replacing redb direct-write, execution-unit batch, scheduler dedupe, journal, and snapshot mechanics with SQLite-native implementations while preserving `CommitEntry` and durable replay semantics |
 | SB6 | done; completed the SQLite storage-parity surface across execution-unit batch apply, scheduler queue/result/cron flows, durable journal stream/bootstrap, and materialized snapshot export/restore/rebuild. The SQLite path now keeps sequence progress in metadata when snapshot restore truncates the physical journal, uses SQLite DDL for schema/index restore, and preserves the same `CommitEntry`, execution-id dedupe, and durable/applied-head semantics under focused storage and engine tests | start `SB7` by running the broader crate-level parity sweep now that the focused SQLite contract tests are green |
 | SB7 | done; reran the broader parity sweep after the last SQLite schema-store additions and kept the full storage crate, full engine crate, and workspace format/check verification green, which closes the SQLite parity gate before broad engine cutover begins | start `SB8` by wiring the engine tenant/runtime/service seams, scheduler discovery, and relevant tests/harnesses through SQLite-backed stores and executors |
-| SB8 | done; introduced the migration-only backend wrapper in `neovex-engine`, moved tenant/runtime/service ownership onto backend-aware store/read-storage handles, updated scheduler discovery and consistency helpers for backend-specific tenant files, and proved the SQLite service path under full crate and workspace verification. The repo-wide sweep also flushed out a SQLite reopen race in the new backend-selection test, which was fixed by quiescing the first service before asserting the durable reopen path | start `SB9` by inventorying the existing benchmark/example surfaces, then add and run the redb-vs-SQLite workloads required for the migration gate |
+| SB8 | done; introduced the migration-only backend wrapper in `nimbus-engine`, moved tenant/runtime/service ownership onto backend-aware store/read-storage handles, updated scheduler discovery and consistency helpers for backend-specific tenant files, and proved the SQLite service path under full crate and workspace verification. The repo-wide sweep also flushed out a SQLite reopen race in the new backend-selection test, which was fixed by quiescing the first service before asserting the durable reopen path | start `SB9` by inventorying the existing benchmark/example surfaces, then add and run the redb-vs-SQLite workloads required for the migration gate |
 | SB9 | done; the checked-in benchmark gate now includes the final SQLite sort-elision tuning pass in addition to the earlier hot-path, methodology, and `EXPLAIN QUERY PLAN` corrections. The SQLite read path now elides equality-constrained prefix fields from storage-level `ORDER BY`, the corrected benchmark plans no longer spill to a temp B-tree in the indexed-query lanes, and the refreshed full report shows SQLite leading 14 of 16 measured lanes overall. The remaining redb advantage is now limited to steady-state durable journal stream (0.98x SQLite) and durable journal bootstrap (0.74x SQLite) | remain paused here before `SB10`; if cutover resumes, decide whether the current journal-only steady-state caveats are acceptable or whether one more journal-focused tuning pass is worth it |
 | SB10 | done; switched the actual default constructor path to `EmbeddedProviderKind::Sqlite`, aligned the enum default, and updated focused provider tests so `Service::new` now proves the SQLite default while explicit redb selection still preserves `.redb` tenant files | start `SB11` with the repo-level verification sweep now that the default-cutover code path is green under focused engine and server tests |
 | SB11 | done; the repo-level verification sweep is green with SQLite as the default embedded backend. The only failure uncovered during `make test` was a test-helper lifetime bug that dropped a `TempDir` early; redb had masked it by keeping files open, while SQLite correctly reopens by path. The helper now retains the tempdir for the duration of the scenario, and the full suite plus clippy are green again | start `SB12` by renaming the migration-only `StorageBackendKind` / `Backend*` vocabulary into the durable embedded-provider seam and keeping explicit redb support intact |
@@ -915,8 +915,8 @@ genuinely stale one instead of switching to alternate artifact directories.
 
 #### Focused verification
 
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-engine`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -1002,29 +1002,29 @@ genuinely stale one instead of switching to alternate artifact directories.
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-06 | meta | documented | Authored the initial version of this file as a pluggable multi-backend plan with redb retained long-term. | doc review only | revise scope before activation |
-| 2026-04-08 | SB0 | done | Re-scoped the historical pluggable-backend plan into a SQLite-only migration control plane. Moved future Postgres/MySQL work into `docs/plans/archive/external-sql-storage-backends-plan.md`, kept `CommitEntry` and journal/snapshot semantics explicit, rejected hook-driven reactivity as the core contract, required composite SQLite indexes, added a benchmark gate before redb removal, clarified the SQLite-vs-Neovex boundary, and recorded the explicit deletion inventory plus planner, codec, and sequence decisions so implementers delete redb-era code instead of wrapping it. | docs-only review against the files listed in `Reviewed against`; no new code verification claimed | resolve the plan-level activation gate, then start `SB1` with a call-site inventory of the current engine/storage contract |
+| 2026-04-08 | SB0 | done | Re-scoped the historical pluggable-backend plan into a SQLite-only migration control plane. Moved future Postgres/MySQL work into `docs/plans/archive/external-sql-storage-backends-plan.md`, kept `CommitEntry` and journal/snapshot semantics explicit, rejected hook-driven reactivity as the core contract, required composite SQLite indexes, added a benchmark gate before redb removal, clarified the SQLite-vs-Nimbus boundary, and recorded the explicit deletion inventory plus planner, codec, and sequence decisions so implementers delete redb-era code instead of wrapping it. | docs-only review against the files listed in `Reviewed against`; no new code verification claimed | resolve the plan-level activation gate, then start `SB1` with a call-site inventory of the current engine/storage contract |
 | 2026-04-08 | meta | activated | Promoted this control plane into active execution ownership by updating the plan index and `AGENTS.md`, and recorded the activation decision so fresh agent contexts start from the SQLite migration rather than treating it as a deferred design note. | docs-only update; no new code verification claimed | start `SB1` from the live call sites and mark it `in_progress` when implementation begins |
 | 2026-04-08 | SB1 | done | Inventoried the live engine/storage contract from the actual read, write, batch, scheduler, journal, snapshot, and planner call sites. Documented that preserved seam directly on the async storage and store types, and added a dedicated call-site inventory section here so later migration slices preserve `TenantWriteCommit<T>`, `TenantWriteOutcome<T>`, validated direct writes, `ResolvedWrite` / `ResolvedScheduleOp`, execution-id dedupe, engine-owned `CommitEntry`, and durable journal/bootstrap/snapshot semantics. | `cargo fmt --all --check`; `cargo check --workspace` | start `SB2` with temporary migration-only redb-vs-SQLite selection scaffolding |
-| 2026-04-08 | SB2 | done | Added the migration-only `StorageBackendKind`, threaded it through service construction, tenant path selection, and storage-engine path helpers, and kept redb as the active backend while explicitly gating SQLite selection until the store foundation lands. Added focused engine tests that lock in both the preserved `.redb` tenant filename path and the temporary SQLite rejection behavior. | `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p neovex-engine storage_backend`; attempted `bash scripts/cargo-isolated.sh -- test -p neovex-engine storage_backend` but the isolated target hit sandbox DNS failures when `rusty_v8` tried to download its archive, so the focused test was rerun successfully against the existing workspace target | start `SB3` by verifying the contract docs plus migration scaffolding preserve the current seam and do not perturb current redb behavior |
-| 2026-04-08 | SB3 | done | Verified that the codified contract and migration scaffolding preserve the current seam. Re-ran the storage cancellation/commit-boundary tests that define the async storage contract, exercised focused engine `service_*` behavior that covers tenant lifecycle and service-level redb baselines, and kept the new backend-selection seam under test before starting any SQLite implementation work. | `cargo test -p neovex-storage async_faults`; `cargo test -p neovex-engine storage_backend`; `cargo test -p neovex-engine service_`; `cargo fmt --all --check`; `cargo check --workspace` | start `SB4` with the SQLite store foundation and async boundary implementation |
-| 2026-04-08 | SB4 | done | Landed the first concrete SQLite implementation slice inside `neovex-storage`: backend-specific associated types on the async storage traits, `SqliteTenantStore` / `SqliteReadSnapshot` / `SqliteWriteTransaction`, `SqliteTenantStorage` / `SqliteStorageEngine`, WAL-oriented initialization, and minimal metadata/journal-progress helpers that preserve the current pre-commit versus committed-write semantics at the boundary. | `cargo check --workspace`; `cargo test -p neovex-storage sqlite_`; `cargo test -p neovex-engine storage_backend`; `cargo fmt --all --check` | start `SB5` by implementing SQLite read-path parity and planner-facing query support |
-| 2026-04-08 | SB5 | done | Finished the SQLite read-parity slice by introducing a planner-owned `QueryReadStore` contract in `neovex-storage`, making the engine evaluator/planner/prepared query path generic over that contract, adding SQLite-backed engine tests for planned store and snapshot query execution plus pagination, and deleting `crates/neovex-engine/src/service/queries/planner/loading.rs` so the redb-era read surface started landing in the deletion inventory instead of being wrapped. | `cargo test -p neovex-storage sqlite_`; `cargo check -p neovex-engine`; `cargo test -p neovex-engine sqlite_`; `cargo test -p neovex-engine evaluator`; `cargo test -p neovex-engine queries`; `cargo fmt --all --check`; `cargo check --workspace` | start `SB6` by replacing redb write/journal/snapshot mechanics with SQLite-native transaction, commit, and replay flows |
-| 2026-04-08 | SB6 | in_progress | Re-read the live redb write-path ownership seams across direct writes, execution-unit batch apply, scheduler dedupe/state, durable journal append/apply/recovery, snapshot export/restore/rebuild, and schema/index reconciliation, then landed the first SQLite write slice: `SqliteWriteTransaction` now supports deduped direct insert/update/delete flows, emits `CommitEntry` values with SQLite-allocated sequences, writes durable journal blobs to `commit_log`, updates applied-head metadata, and exposes durable journal plus scheduled-execution reads under focused SQLite tests. | code review of `crates/neovex-storage/src/store/write/direct.rs`, `crates/neovex-storage/src/store/write/batch.rs`, `crates/neovex-storage/src/store/journal.rs`, `crates/neovex-storage/src/store/journal_snapshot.rs`, `crates/neovex-storage/src/schema_store.rs`, and `crates/neovex-engine/src/service/scheduler/access.rs`; `cargo test -p neovex-storage sqlite_`; `cargo fmt --all --check`; `cargo check --workspace` | extend SQLite write parity through execution-unit batch apply, durable replay/recovery, scheduler queues/results, snapshot export/restore/rebuild, and schema/index reconciliation cleanup |
-| 2026-04-08 | SB6 | in_progress | Extended the SQLite write/journal slice beyond direct writes: durable append now enforces contiguous sequences, durable journal reads return serialized `DurableMutationRecord` blobs, recovery replays durable-but-unapplied records onto JSON-at-rest documents while preserving execution-id dedupe markers, and focused SQLite tests now cover both append-hole rejection and durable-head recovery semantics. | `cargo test -p neovex-storage sqlite_`; `cargo fmt --all --check`; `cargo check --workspace` | implement execution-unit batch apply plus scheduler queue/result/cron flows, then carry the same SQLite-native mechanics into snapshot export/restore/rebuild and schema/index cleanup |
-| 2026-04-08 | SB6 | done | Finished the SQLite storage-parity implementation slice: `SqliteTenantStore` now covers execution-unit batch apply, scheduler queue/result/cron flows, durable journal stream/bootstrap, and materialized snapshot export/restore/rebuild, while preserving `CommitEntry`, execution-id dedupe, and durable/applied-head tracking. The SQLite path now also records next-sequence metadata once snapshot restore truncates the physical `commit_log`, which is the concrete parity case that proved a metadata fallback was still required. | `cargo fmt --all --check`; `cargo test -p neovex-storage sqlite_`; `cargo test -p neovex-engine sqlite_`; `cargo check --workspace` | start `SB7` with the broader crate-level parity sweep across storage and engine |
-| 2026-04-08 | SB7 | done | Re-ran the broader parity sweep after the last SQLite schema-store additions and kept the full storage crate, full engine crate, and workspace format/check verification green. That closes the parity gate for the implemented SQLite storage surface and confirms the remaining work belongs to engine/test integration rather than missing storage semantics. | `cargo fmt --all --check`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo check --workspace` | start `SB8` by wiring the engine tenant/runtime/service seams and test helpers through SQLite-backed stores and executors |
-| 2026-04-08 | SB8 | done | Finished the engine/test integration slice for the temporary SQLite migration path. `Service`, tenant runtime ownership, scheduler access/discovery, direct mutation/query helpers, and the relevant consistency/backend-selection tests now run through backend-aware store and async executor wrappers instead of hard-coded redb types. The broader workspace verification sweep exposed one deterministic race in the new SQLite reopen test, which was fixed by quiescing the first service before reopening so the test asserts the durable path rather than executor teardown timing. | `cargo test -p neovex-engine`; `cargo test -p neovex-storage`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy` | start `SB9` by adding and running the redb-vs-SQLite benchmark workloads, then record the benchmark report and go/no-go decision |
-| 2026-04-08 | SB9 | in_progress | Started the benchmark-gate slice by adding a checked-in redb-vs-SQLite harness in `crates/neovex-engine/benches/embedded-provider-benchmarks.rs` and a matching `make bench-embedded-providers` entrypoint. The harness compiles after a focused `cargo check`, and it is designed to write the checked-in markdown report directly, but the first release-mode benchmark run was interrupted cleanly when the user asked to pause before moving on to `SB10`, so no benchmark numbers are claimed yet. | `cargo check -p neovex-engine --bench embedded-provider-benchmarks`; `cargo fmt --all` | rerun `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`, inspect the generated results, and only then record the benchmark gate decision |
+| 2026-04-08 | SB2 | done | Added the migration-only `StorageBackendKind`, threaded it through service construction, tenant path selection, and storage-engine path helpers, and kept redb as the active backend while explicitly gating SQLite selection until the store foundation lands. Added focused engine tests that lock in both the preserved `.redb` tenant filename path and the temporary SQLite rejection behavior. | `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p nimbus-engine storage_backend`; attempted `bash scripts/cargo-isolated.sh -- test -p nimbus-engine storage_backend` but the isolated target hit sandbox DNS failures when `rusty_v8` tried to download its archive, so the focused test was rerun successfully against the existing workspace target | start `SB3` by verifying the contract docs plus migration scaffolding preserve the current seam and do not perturb current redb behavior |
+| 2026-04-08 | SB3 | done | Verified that the codified contract and migration scaffolding preserve the current seam. Re-ran the storage cancellation/commit-boundary tests that define the async storage contract, exercised focused engine `service_*` behavior that covers tenant lifecycle and service-level redb baselines, and kept the new backend-selection seam under test before starting any SQLite implementation work. | `cargo test -p nimbus-storage async_faults`; `cargo test -p nimbus-engine storage_backend`; `cargo test -p nimbus-engine service_`; `cargo fmt --all --check`; `cargo check --workspace` | start `SB4` with the SQLite store foundation and async boundary implementation |
+| 2026-04-08 | SB4 | done | Landed the first concrete SQLite implementation slice inside `nimbus-storage`: backend-specific associated types on the async storage traits, `SqliteTenantStore` / `SqliteReadSnapshot` / `SqliteWriteTransaction`, `SqliteTenantStorage` / `SqliteStorageEngine`, WAL-oriented initialization, and minimal metadata/journal-progress helpers that preserve the current pre-commit versus committed-write semantics at the boundary. | `cargo check --workspace`; `cargo test -p nimbus-storage sqlite_`; `cargo test -p nimbus-engine storage_backend`; `cargo fmt --all --check` | start `SB5` by implementing SQLite read-path parity and planner-facing query support |
+| 2026-04-08 | SB5 | done | Finished the SQLite read-parity slice by introducing a planner-owned `QueryReadStore` contract in `nimbus-storage`, making the engine evaluator/planner/prepared query path generic over that contract, adding SQLite-backed engine tests for planned store and snapshot query execution plus pagination, and deleting `crates/nimbus-engine/src/service/queries/planner/loading.rs` so the redb-era read surface started landing in the deletion inventory instead of being wrapped. | `cargo test -p nimbus-storage sqlite_`; `cargo check -p nimbus-engine`; `cargo test -p nimbus-engine sqlite_`; `cargo test -p nimbus-engine evaluator`; `cargo test -p nimbus-engine queries`; `cargo fmt --all --check`; `cargo check --workspace` | start `SB6` by replacing redb write/journal/snapshot mechanics with SQLite-native transaction, commit, and replay flows |
+| 2026-04-08 | SB6 | in_progress | Re-read the live redb write-path ownership seams across direct writes, execution-unit batch apply, scheduler dedupe/state, durable journal append/apply/recovery, snapshot export/restore/rebuild, and schema/index reconciliation, then landed the first SQLite write slice: `SqliteWriteTransaction` now supports deduped direct insert/update/delete flows, emits `CommitEntry` values with SQLite-allocated sequences, writes durable journal blobs to `commit_log`, updates applied-head metadata, and exposes durable journal plus scheduled-execution reads under focused SQLite tests. | code review of `crates/nimbus-storage/src/store/write/direct.rs`, `crates/nimbus-storage/src/store/write/batch.rs`, `crates/nimbus-storage/src/store/journal.rs`, `crates/nimbus-storage/src/store/journal_snapshot.rs`, `crates/nimbus-storage/src/schema_store.rs`, and `crates/nimbus-engine/src/service/scheduler/access.rs`; `cargo test -p nimbus-storage sqlite_`; `cargo fmt --all --check`; `cargo check --workspace` | extend SQLite write parity through execution-unit batch apply, durable replay/recovery, scheduler queues/results, snapshot export/restore/rebuild, and schema/index reconciliation cleanup |
+| 2026-04-08 | SB6 | in_progress | Extended the SQLite write/journal slice beyond direct writes: durable append now enforces contiguous sequences, durable journal reads return serialized `DurableMutationRecord` blobs, recovery replays durable-but-unapplied records onto JSON-at-rest documents while preserving execution-id dedupe markers, and focused SQLite tests now cover both append-hole rejection and durable-head recovery semantics. | `cargo test -p nimbus-storage sqlite_`; `cargo fmt --all --check`; `cargo check --workspace` | implement execution-unit batch apply plus scheduler queue/result/cron flows, then carry the same SQLite-native mechanics into snapshot export/restore/rebuild and schema/index cleanup |
+| 2026-04-08 | SB6 | done | Finished the SQLite storage-parity implementation slice: `SqliteTenantStore` now covers execution-unit batch apply, scheduler queue/result/cron flows, durable journal stream/bootstrap, and materialized snapshot export/restore/rebuild, while preserving `CommitEntry`, execution-id dedupe, and durable/applied-head tracking. The SQLite path now also records next-sequence metadata once snapshot restore truncates the physical `commit_log`, which is the concrete parity case that proved a metadata fallback was still required. | `cargo fmt --all --check`; `cargo test -p nimbus-storage sqlite_`; `cargo test -p nimbus-engine sqlite_`; `cargo check --workspace` | start `SB7` with the broader crate-level parity sweep across storage and engine |
+| 2026-04-08 | SB7 | done | Re-ran the broader parity sweep after the last SQLite schema-store additions and kept the full storage crate, full engine crate, and workspace format/check verification green. That closes the parity gate for the implemented SQLite storage surface and confirms the remaining work belongs to engine/test integration rather than missing storage semantics. | `cargo fmt --all --check`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo check --workspace` | start `SB8` by wiring the engine tenant/runtime/service seams and test helpers through SQLite-backed stores and executors |
+| 2026-04-08 | SB8 | done | Finished the engine/test integration slice for the temporary SQLite migration path. `Service`, tenant runtime ownership, scheduler access/discovery, direct mutation/query helpers, and the relevant consistency/backend-selection tests now run through backend-aware store and async executor wrappers instead of hard-coded redb types. The broader workspace verification sweep exposed one deterministic race in the new SQLite reopen test, which was fixed by quiescing the first service before reopening so the test asserts the durable path rather than executor teardown timing. | `cargo test -p nimbus-engine`; `cargo test -p nimbus-storage`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy` | start `SB9` by adding and running the redb-vs-SQLite benchmark workloads, then record the benchmark report and go/no-go decision |
+| 2026-04-08 | SB9 | in_progress | Started the benchmark-gate slice by adding a checked-in redb-vs-SQLite harness in `crates/nimbus-engine/benches/embedded-provider-benchmarks.rs` and a matching `make bench-embedded-providers` entrypoint. The harness compiles after a focused `cargo check`, and it is designed to write the checked-in markdown report directly, but the first release-mode benchmark run was interrupted cleanly when the user asked to pause before moving on to `SB10`, so no benchmark numbers are claimed yet. | `cargo check -p nimbus-engine --bench embedded-provider-benchmarks`; `cargo fmt --all` | rerun `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`, inspect the generated results, and only then record the benchmark gate decision |
 | 2026-04-08 | SB9 | done | Completed the benchmark gate by running the checked-in redb-vs-SQLite harness to a captured markdown report at `docs/research/sqlite-storage-benchmark-report.md` and recording the go/no-go decision in this plan. The report shows SQLite ahead on document CRUD throughput (4.77x median ops/s), point reads (2.10x), durable journal streaming (1.63x), durable journal bootstrap (1.27x), subscription fan-out (3.84x), and concurrent multi-tenant mixed load (4.34x), while redb remains ahead on indexed-query latency (SQLite at 0.64x on the single-field query and 0.62x on the composite query). The migration gate is accepted because the broader write-heavy and mixed service-path workloads improved materially and the indexed-query regression is now explicitly documented before the default switch. | `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy` | pause here per user request before starting `SB10` |
 | 2026-04-08 | meta | documented | Folded the duplicate SQLite-plan guardrails back into this active control plane: the migration seam stays explicitly temporary, no durable filesystem-shaped backend factory seam should emerge from `SB10` through `SB14`, and the long-term Postgres/MySQL construction/config seam remains owned by `docs/plans/archive/external-sql-storage-backends-plan.md`. The stale duplicate SQLite plan file was retired so this historical filename remains the single live control plane. | docs-only review of the active SQLite plan, `docs/plans/README.md`, and `docs/plans/archive/external-sql-storage-backends-plan.md`; no code verification claimed | remain paused here before `SB10`; when work resumes, continue from this active plan rather than reviving duplicate SQLite plan docs |
-| 2026-04-08 | SB9 | optimized | Tuned the SQLite indexed-read hot path before cutover by reusing pooled read connections, removing per-query schema reloads through a shared schema cache that refreshes on schema writes and snapshot restore, and reusing cached prepared statements on the pooled connections. The refreshed benchmark report at `docs/research/sqlite-storage-benchmark-report.md` now shows SQLite at 23.14x redb for CRUD throughput, 1.02x for point reads, 0.90x for the remaining single-field indexed-query caveat, 1.01x for composite indexed queries, 2.27x for durable journal streaming, 1.80x for durable journal bootstrap, 11.09x for subscription fan-out, and 15.20x for concurrent multi-tenant mixed load. | `cargo fmt --all --check`; `cargo test -p neovex-storage sqlite_`; `cargo test -p neovex-engine queries`; `cargo check -p neovex-engine --bench embedded-provider-benchmarks`; `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `cargo check --workspace`; `make clippy` | pause here before `SB10`; when work resumes, switch the default backend to SQLite from this refreshed benchmark baseline |
-| 2026-04-09 | SB9 | rebenchmarked | Hardened the benchmark gate before `SB10` by adding alternating backend order, 12 steady-state / 10 cold-start measured samples, 95% confidence intervals, workload filtering for surgical reruns, SQLite `EXPLAIN QUERY PLAN` capture, and a cloned seeded-dataset cold-start path that measures fresh opens without repeatedly rebuilding the same tenant data. The strengthened report shows SQLite still dominant on CRUD throughput (23.80x steady-state, 21.07x cold-start), subscription fan-out (6.05x steady-state, 2.09x cold-start), concurrent mixed load (13.34x steady-state, 12.99x cold-start), and every cold-start lane. redb still leads several steady-state read-only microbenchmarks, including point reads (1.02x), indexed queries (1.12x), composite indexed queries (1.18x), journal bootstrap (1.33x), and near-parity journal stream (1.01x). The SQLite `EXPLAIN QUERY PLAN` sections also show the indexed-query SQL using `sqlite_autoindex_documents_1 (table_name=?)` plus a temp B-tree for ordering instead of the intended expression indexes, which is now the main remaining cutover caveat. | `cargo check -p neovex-engine --bench embedded-provider-benchmarks`; workload-filtered release repros on `crud`, `point-read`, and `mixed-load` with 1 measured round per lane to validate the new harness shape; `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy` | remain paused here before `SB10`; if work resumes, decide whether to accept the current benchmark trade-offs or do another SQLite indexed-query tuning pass first |
-| 2026-04-09 | SB9 | corrected evidence | Replaced the benchmark-only duplicated SQLite `EXPLAIN QUERY PLAN` SQL with shared production-shaped statement builders from `neovex-storage`, added a regression test to keep the report aligned with the real read path, restored the checked-in winner scorecard directly in the benchmark renderer, and reran the checked-in benchmark gate. The corrected report now shows the intended SQLite expression indexes being used in both indexed-query lanes (`idx_tasks_by_status` and `idx_tasks_by_team_status_rank`), which means the earlier primary-key autoindex evidence was a benchmark-report artifact rather than a production query-planner failure. The remaining indexed-query caveat is narrower and real: both corrected plans still spill to a temp B-tree for `ORDER BY`, while the workload-level benchmark outcome remains the same broad shape with redb ahead on the steady-state read-only microbenchmarks and SQLite ahead on CRUD, subscriptions, mixed load, and every cold-start lane. | `cargo test -p neovex-storage sqlite_ -- --nocapture`; `cargo check -p neovex-engine --bench embedded-provider-benchmarks`; `cargo fmt --all --check`; `cargo check --workspace`; `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `make clippy` | remain paused here before `SB10`; if work resumes, decide whether the current trade-off is acceptable or whether to do one more SQLite indexed-query sort-elision pass first |
-| 2026-04-09 | SB9 | optimized | Landed the final pre-`SB10` SQLite sort-elision pass by trimming storage-level `ORDER BY` down to the non-constant index suffix plus `id`, and by routing both the production SQLite read path and the benchmark `EXPLAIN QUERY PLAN` capture through the same shared SQL builders. Added a regression test proving the indexed-query plans no longer use `USE TEMP B-TREE`, reran focused engine/storage verification, and refreshed the full benchmark report. On the updated report, SQLite now leads both indexed-query lanes in steady-state and cold-start, wins steady-state point reads by a hair, and moves the overall scorecard to 14 of 16 measured lanes, with redb still ahead only on steady-state durable journal stream and durable journal bootstrap. | sqlite probe via `/usr/bin/sqlite3` to confirm suffix-only `ORDER BY` removes temp sorts before code changes; `cargo test -p neovex-storage sqlite_ -- --nocapture`; `cargo test -p neovex-engine queries`; `cargo check -p neovex-engine --bench embedded-provider-benchmarks`; `cargo fmt --all --check`; `cargo check --workspace`; workload-filtered release reruns for `indexed-query` and `composite-indexed-query`; `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `make clippy` | remain paused here before `SB10`; if work resumes, decide whether the remaining steady-state journal-only regressions merit another tuning pass or whether to proceed to the default-backend switch |
-| 2026-04-09 | SB10 | done | Flipped the actual embedded default to SQLite by making `StorageBackendKind::Sqlite` the enum default and routing `Service::new` plus `Service::new_with_simulation` through that default, while keeping `Service::new_with_storage_backend(..., StorageBackendKind::Redb)` as the explicit retained redb path. Updated the focused backend tests so the default constructor proves `.sqlite3` tenant persistence and roundtrip loading, the retained redb constructor still preserves `.redb` tenant files, and the service fixture harness exercises the default path under SQLite. | `cargo test -p neovex-engine storage_backend`; `cargo test -p neovex-engine consistency`; `cargo test -p neovex-server core_http::tenants`; `cargo fmt --all --check`; `cargo check --workspace` | continue with `SB11` by running the full repo verification sweep under the new SQLite default while redb remains explicitly selectable |
-| 2026-04-09 | SB11 | done | Ran the full verification sweep with SQLite as the default embedded backend and redb still explicitly selectable. `make test` initially surfaced three mutation-journal cancellation failures, but the root cause was not a SQLite engine regression: a shared test helper dropped its `TempDir` immediately after returning, which redb had masked by keeping the tenant file handle open while SQLite correctly reopened by path. The helper now retains the tempdir for the whole scenario, the focused cancellation cluster is green again, and the full repo verification sweep now passes cleanly under the SQLite default. | `make check`; `make test`; `cargo test -p neovex-engine waiting_for_applied_visibility`; `cargo fmt --all --check`; `make clippy` | start `SB12` by promoting migration-only backend-selection names into the durable embedded-provider seam and preserving explicit redb support behind that seam |
+| 2026-04-08 | SB9 | optimized | Tuned the SQLite indexed-read hot path before cutover by reusing pooled read connections, removing per-query schema reloads through a shared schema cache that refreshes on schema writes and snapshot restore, and reusing cached prepared statements on the pooled connections. The refreshed benchmark report at `docs/research/sqlite-storage-benchmark-report.md` now shows SQLite at 23.14x redb for CRUD throughput, 1.02x for point reads, 0.90x for the remaining single-field indexed-query caveat, 1.01x for composite indexed queries, 2.27x for durable journal streaming, 1.80x for durable journal bootstrap, 11.09x for subscription fan-out, and 15.20x for concurrent multi-tenant mixed load. | `cargo fmt --all --check`; `cargo test -p nimbus-storage sqlite_`; `cargo test -p nimbus-engine queries`; `cargo check -p nimbus-engine --bench embedded-provider-benchmarks`; `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `cargo check --workspace`; `make clippy` | pause here before `SB10`; when work resumes, switch the default backend to SQLite from this refreshed benchmark baseline |
+| 2026-04-09 | SB9 | rebenchmarked | Hardened the benchmark gate before `SB10` by adding alternating backend order, 12 steady-state / 10 cold-start measured samples, 95% confidence intervals, workload filtering for surgical reruns, SQLite `EXPLAIN QUERY PLAN` capture, and a cloned seeded-dataset cold-start path that measures fresh opens without repeatedly rebuilding the same tenant data. The strengthened report shows SQLite still dominant on CRUD throughput (23.80x steady-state, 21.07x cold-start), subscription fan-out (6.05x steady-state, 2.09x cold-start), concurrent mixed load (13.34x steady-state, 12.99x cold-start), and every cold-start lane. redb still leads several steady-state read-only microbenchmarks, including point reads (1.02x), indexed queries (1.12x), composite indexed queries (1.18x), journal bootstrap (1.33x), and near-parity journal stream (1.01x). The SQLite `EXPLAIN QUERY PLAN` sections also show the indexed-query SQL using `sqlite_autoindex_documents_1 (table_name=?)` plus a temp B-tree for ordering instead of the intended expression indexes, which is now the main remaining cutover caveat. | `cargo check -p nimbus-engine --bench embedded-provider-benchmarks`; workload-filtered release repros on `crud`, `point-read`, and `mixed-load` with 1 measured round per lane to validate the new harness shape; `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `cargo fmt --all --check`; `cargo check --workspace`; `make clippy` | remain paused here before `SB10`; if work resumes, decide whether to accept the current benchmark trade-offs or do another SQLite indexed-query tuning pass first |
+| 2026-04-09 | SB9 | corrected evidence | Replaced the benchmark-only duplicated SQLite `EXPLAIN QUERY PLAN` SQL with shared production-shaped statement builders from `nimbus-storage`, added a regression test to keep the report aligned with the real read path, restored the checked-in winner scorecard directly in the benchmark renderer, and reran the checked-in benchmark gate. The corrected report now shows the intended SQLite expression indexes being used in both indexed-query lanes (`idx_tasks_by_status` and `idx_tasks_by_team_status_rank`), which means the earlier primary-key autoindex evidence was a benchmark-report artifact rather than a production query-planner failure. The remaining indexed-query caveat is narrower and real: both corrected plans still spill to a temp B-tree for `ORDER BY`, while the workload-level benchmark outcome remains the same broad shape with redb ahead on the steady-state read-only microbenchmarks and SQLite ahead on CRUD, subscriptions, mixed load, and every cold-start lane. | `cargo test -p nimbus-storage sqlite_ -- --nocapture`; `cargo check -p nimbus-engine --bench embedded-provider-benchmarks`; `cargo fmt --all --check`; `cargo check --workspace`; `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `make clippy` | remain paused here before `SB10`; if work resumes, decide whether the current trade-off is acceptable or whether to do one more SQLite indexed-query sort-elision pass first |
+| 2026-04-09 | SB9 | optimized | Landed the final pre-`SB10` SQLite sort-elision pass by trimming storage-level `ORDER BY` down to the non-constant index suffix plus `id`, and by routing both the production SQLite read path and the benchmark `EXPLAIN QUERY PLAN` capture through the same shared SQL builders. Added a regression test proving the indexed-query plans no longer use `USE TEMP B-TREE`, reran focused engine/storage verification, and refreshed the full benchmark report. On the updated report, SQLite now leads both indexed-query lanes in steady-state and cold-start, wins steady-state point reads by a hair, and moves the overall scorecard to 14 of 16 measured lanes, with redb still ahead only on steady-state durable journal stream and durable journal bootstrap. | sqlite probe via `/usr/bin/sqlite3` to confirm suffix-only `ORDER BY` removes temp sorts before code changes; `cargo test -p nimbus-storage sqlite_ -- --nocapture`; `cargo test -p nimbus-engine queries`; `cargo check -p nimbus-engine --bench embedded-provider-benchmarks`; `cargo fmt --all --check`; `cargo check --workspace`; workload-filtered release reruns for `indexed-query` and `composite-indexed-query`; `make bench-embedded-providers REPORT=docs/research/sqlite-storage-benchmark-report.md`; `make clippy` | remain paused here before `SB10`; if work resumes, decide whether the remaining steady-state journal-only regressions merit another tuning pass or whether to proceed to the default-backend switch |
+| 2026-04-09 | SB10 | done | Flipped the actual embedded default to SQLite by making `StorageBackendKind::Sqlite` the enum default and routing `Service::new` plus `Service::new_with_simulation` through that default, while keeping `Service::new_with_storage_backend(..., StorageBackendKind::Redb)` as the explicit retained redb path. Updated the focused backend tests so the default constructor proves `.sqlite3` tenant persistence and roundtrip loading, the retained redb constructor still preserves `.redb` tenant files, and the service fixture harness exercises the default path under SQLite. | `cargo test -p nimbus-engine storage_backend`; `cargo test -p nimbus-engine consistency`; `cargo test -p nimbus-server core_http::tenants`; `cargo fmt --all --check`; `cargo check --workspace` | continue with `SB11` by running the full repo verification sweep under the new SQLite default while redb remains explicitly selectable |
+| 2026-04-09 | SB11 | done | Ran the full verification sweep with SQLite as the default embedded backend and redb still explicitly selectable. `make test` initially surfaced three mutation-journal cancellation failures, but the root cause was not a SQLite engine regression: a shared test helper dropped its `TempDir` immediately after returning, which redb had masked by keeping the tenant file handle open while SQLite correctly reopened by path. The helper now retains the tempdir for the whole scenario, the focused cancellation cluster is green again, and the full repo verification sweep now passes cleanly under the SQLite default. | `make check`; `make test`; `cargo test -p nimbus-engine waiting_for_applied_visibility`; `cargo fmt --all --check`; `make clippy` | start `SB12` by promoting migration-only backend-selection names into the durable embedded-provider seam and preserving explicit redb support behind that seam |
 | 2026-04-09 | meta | documented | Updated `ARCHITECTURE.md`, this active plan, and the deferred external-SQL plan to codify the post-cutover storage direction from first principles: the durable engine-facing seam should be named `TenantPersistence`, the separate typed construction/config seam should be named `PersistenceProvider`, temporary `Backend*` and `StorageBackendKind` names must not survive `SB12`, and the embedded-vs-external cost model should drive a coarse semantic seam with backend-native physical execution below it. | docs-only review of `ARCHITECTURE.md`, this plan, and `docs/plans/archive/external-sql-storage-backends-plan.md`; attempted `npm run docs:validate-refs:strict`, but the root workspace currently has no such script | remain paused here before `SB10`; when work resumes, treat the persistence seam and provider naming above as canonical and continue with the default-backend switch from the refreshed SB9 benchmark baseline |
 | 2026-04-09 | meta | amended | Revised the live control plane after the provider-seam review: SQLite remains the target default embedded backend, but redb is now retained as a supported embedded provider instead of being slated for deletion. `SB12` through `SB14` now promote the migration-only selector into the durable embedded-provider seam, future non-local or coordinated provider work is deferred, and the provider contract now explicitly distinguishes backend dialect from deployment topology so local-file SQLite, replica-connected SQLite, retained redb, and later coordinated providers can coexist without reshaping `TenantPersistence`. | docs-only review of this plan, `ARCHITECTURE.md`, `docs/plans/README.md`, and `docs/plans/archive/external-sql-storage-backends-plan.md` | remain paused here before `SB10`; when work resumes, cut over to SQLite as the default backend and then replace migration-only naming with the durable embedded-provider seam rather than removing redb |
-| 2026-04-09 | SB12 | done | Promoted the migration-only backend-selection scaffolding into the durable embedded-provider seam. The live engine/storage code now uses `TenantPersistence` and `PersistenceProvider` at the seam, `EmbeddedProviderKind` at the local selector, `EmbeddedRedbProvider` / `EmbeddedSqliteProvider` for the retained embedded concrete providers, and `embedded-provider-benchmarks` / `make bench-embedded-providers` for the retained benchmark entrypoint. | `cargo check -p neovex-engine --bench embedded-provider-benchmarks`; `cargo fmt --all --check`; `make check`; `make test`; `make clippy` | start `SB13` by aligning the active docs and follow-on plans with the landed provider vocabulary |
+| 2026-04-09 | SB12 | done | Promoted the migration-only backend-selection scaffolding into the durable embedded-provider seam. The live engine/storage code now uses `TenantPersistence` and `PersistenceProvider` at the seam, `EmbeddedProviderKind` at the local selector, `EmbeddedRedbProvider` / `EmbeddedSqliteProvider` for the retained embedded concrete providers, and `embedded-provider-benchmarks` / `make bench-embedded-providers` for the retained benchmark entrypoint. | `cargo check -p nimbus-engine --bench embedded-provider-benchmarks`; `cargo fmt --all --check`; `make check`; `make test`; `make clippy` | start `SB13` by aligning the active docs and follow-on plans with the landed provider vocabulary |
 | 2026-04-09 | SB13 | done | Aligned the live docs with the landed provider seam: updated `ARCHITECTURE.md`, the benchmark report instructions, the active plan, the plan index, and the redb encryption follow-on plan to use the retained embedded-provider vocabulary, then deleted the stale duplicate `docs/plans/sqlite-pluggable-storage-backend-plan.md` file so this historical filename remains the sole migration record. | docs-only review of the updated docs and plan files; no new code verification beyond the green SB12 sweep claimed | start `SB14` with the final repo-wide verification sweep and archive/index cleanup |
 | 2026-04-09 | SB14 | done | Completed the final closure sweep from the settled provider-seam state. `make ci` passed after rerunning it with elevated filesystem access so `cargo deny` could take its advisory-db lock outside the workspace, and the repo entry docs now point future work at the right active/deferred plans instead of this completed migration control plane. | `make ci` (rerun with elevated filesystem access for the `cargo deny` advisory-db lock) | archived complete; use `docs/plans/archive/external-sql-storage-backends-plan.md` for future provider-topology work and `docs/plans/encryption-at-rest-plan.md` for retained redb encryption work |

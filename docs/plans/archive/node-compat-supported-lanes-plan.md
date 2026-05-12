@@ -72,7 +72,7 @@ with the same evidence standard:
 - `make node-compat-trends`
 - `make node-compat-publish-evidence`
 - schema validation for generated status/inventory/trend/refresh artifacts
-- focused `cargo test -p neovex-runtime node_compat_manifest_topology -- --nocapture --test-threads=1`
+- focused `cargo test -p nimbus-runtime node_compat_manifest_topology -- --nocapture --test-threads=1`
 - focused runtime lane tests for any promoted green batch
 - `cargo fmt --all --check`
 - `git diff --check`

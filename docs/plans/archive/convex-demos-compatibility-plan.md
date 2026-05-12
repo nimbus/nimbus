@@ -12,7 +12,7 @@ external `convex-demos` overlay runner.
 Archive-time verification:
 
 - `npm run convex:test`
-- `npm run test:differential --workspace convex -- --neovex-only`
+- `npm run test:differential --workspace convex -- --nimbus-only`
 - `npm run convex:build`
 
 ## Scope
@@ -24,16 +24,16 @@ This repo already has a substantial Convex compatibility baseline:
 - `packages/codegen` emits generated refs plus the runtime bundle
 - `demos/convex/html` and `demos/convex/http` already exercise the current
   supported surface
-- `packages/convex/src/differential.mjs` already compares Neovex's supported
+- `packages/convex/src/differential.mjs` already compares Nimbus's supported
   subset against an official Convex browser client oracle
 
 This plan is therefore not "make Convex demos exist." It is the remaining work
 to support the specific upstream-style `node`, `html`, and `http` demo authoring
-patterns cleanly in Neovex.
+patterns cleanly in Nimbus.
 
 Because `convex-demos` has no license, treat it as a behavior reference only:
 
-1. Fix missing compat-layer behavior in Neovex
+1. Fix missing compat-layer behavior in Nimbus
 2. Add or refine repo-owned demos in `demos/convex/`
 3. Add verification that matches how this repo actually resolves generated refs,
    browser bundles, and external demo fixtures
@@ -73,8 +73,8 @@ Already present in the current codebase:
 
 **Files:**
 
-- `packages/neovex/src/browser.ts`
-  - Add `webSocket?: { new (url: string): WebSocket }` to the `NeovexClient`
+- `packages/nimbus/src/browser.ts`
+  - Add `webSocket?: { new (url: string): WebSocket }` to the `NimbusClient`
     constructor options.
   - Store the constructor on the client instance.
   - Replace the hardcoded `new WebSocket(...)` socket creation site with
@@ -167,7 +167,7 @@ existing `/demos/` static serving path.
 
 **Current codebase constraint:** The server serves the repo's `demos/` tree, not
 `packages/convex/`, so `vanilla.html` cannot point at a file under
-`packages/convex/dist/` and expect it to work through Neovex.
+`packages/convex/dist/` and expect it to work through Nimbus.
 
 **Files:**
 
@@ -256,7 +256,7 @@ entry therefore needs either TypeScript execution or a small build step.
   - Add `demos/convex/node` to `workspaces`
   - Add:
     - `"convex:codegen:node": "convex codegen --app demos/convex/node"`
-    - `"convex:server:node": "cargo run -p neovex-bin -- --port 8080 --convex-app-dir ./demos/convex/node"`
+    - `"convex:server:node": "cargo run -p nimbus-bin -- --port 8080 --convex-app-dir ./demos/convex/node"`
     - `"convex:demo:node": "npm run demo --workspace convex-node"`
 
 **Verify:**
@@ -290,11 +290,11 @@ Phase 2 and 3 string-ref ergonomics.
 
 ## Phase 8: External Upstream-Demo Runner
 
-**Goal:** Let developers validate upstream demo shapes against Neovex without
+**Goal:** Let developers validate upstream demo shapes against Nimbus without
 mutating their local `convex-demos` clone and without accidentally resolving
 runtime imports to the official `convex` package.
 
-**Current codebase constraint:** Running Neovex directly against a user's clone
+**Current codebase constraint:** Running Nimbus directly against a user's clone
 is not enough. Generated files and app runtime code import `convex/*` at
 runtime, so a direct in-place runner would exercise the official package rather
 than this repo's compat layer.
@@ -309,7 +309,7 @@ than this repo's compat layer.
   - Add `.env`
 - `scripts/convex-demo-overlay.mjs` (new)
   - Copy the selected upstream demo into a temp workspace
-  - Symlink or otherwise force `convex`, `neovex`, and `@neovex/codegen`
+  - Symlink or otherwise force `convex`, `nimbus`, and `@nimbus/codegen`
     resolution to this repo's workspace packages
   - Run `convex codegen --app <overlay-dir>`
   - Print or return the prepared overlay path
@@ -327,7 +327,7 @@ than this repo's compat layer.
 - Set `CONVEX_DEMOS_DIR`
 - Run `make convex-demo-node`
 - Confirm the prepared app resolves `convex/*` to this repo's compat package
-- Start Neovex against the prepared overlay app and connect a client
+- Start Nimbus against the prepared overlay app and connect a client
 
 ---
 
@@ -350,7 +350,7 @@ overlay workflow validates an already-defined supported surface.
 ## Verification
 
 1. `npm run convex:test`
-2. `npm run test:differential --workspace convex -- --neovex-only`
+2. `npm run test:differential --workspace convex -- --nimbus-only`
 3. `npm run convex:build`
 4. Existing demos still work:
    - `npm run convex:demo:html`

@@ -54,7 +54,7 @@ async function bundleAuthConfig(authConfigPath) {
       {
         name: "convex-auth-config-stubs",
         setup(build) {
-          build.onResolve({ filter: /^(convex|neovex)\/server$/ }, () => ({
+          build.onResolve({ filter: /^(convex|nimbus)\/server$/ }, () => ({
             path: "convex-server-stub",
             namespace: "convex-auth-config",
           }));

@@ -14,16 +14,16 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-runtime/src/executor/queue.rs`
-- `crates/neovex-runtime/src/metrics.rs`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-engine/src/tenant.rs`
-- `crates/neovex-engine/src/service/subscriptions.rs`
-- `crates/neovex-storage/src/tests.rs`
-- `crates/neovex-test-support/src/http_api_fixture.rs`
-- `crates/neovex-server/src/tests/core_http/documents_and_commits.rs`
-- `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage/scenarios.rs`
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/executor/queue.rs`
+- `crates/nimbus-runtime/src/metrics.rs`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-engine/src/tenant.rs`
+- `crates/nimbus-engine/src/service/subscriptions.rs`
+- `crates/nimbus-storage/src/tests.rs`
+- `crates/nimbus-test-support/src/http_api_fixture.rs`
+- `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs`
+- `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage/scenarios.rs`
 
 Baseline verification status for this plan:
 
@@ -77,15 +77,15 @@ one file.
 This plan covers:
 
 - runtime worker-queue ownership inside
-  `crates/neovex-runtime/src/executor/queue.rs`
+  `crates/nimbus-runtime/src/executor/queue.rs`
 - shared HTTP fixture ownership inside
-  `crates/neovex-test-support/src/http_api_fixture.rs`
+  `crates/nimbus-test-support/src/http_api_fixture.rs`
 - movement of the remaining broad engine integration test root toward
-  concept-owned surfaces inside `crates/neovex-engine/src/tests.rs`
+  concept-owned surfaces inside `crates/nimbus-engine/src/tests.rs`
 - movement of the remaining broad storage integration test root toward
-  concept-owned surfaces inside `crates/neovex-storage/src/tests.rs`
+  concept-owned surfaces inside `crates/nimbus-storage/src/tests.rs`
 - cleanup of the remaining mixed native HTTP document/journal scenario root in
-  `crates/neovex-server/src/tests/core_http/documents_and_commits.rs`
+  `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs`
 - final naming, visibility, helper-placement, and docs cleanup that falls out
   of the new ownership map
 
@@ -110,8 +110,8 @@ These rules are mandatory for every item in this plan.
    unless a specific item explicitly records otherwise.
 
 2. Keep the core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -140,17 +140,17 @@ These rules are mandatory for every item in this plan.
 - The runtime, engine, storage, and server production trees are materially more
   modular than they were at the start of the cleanup campaign.
 - The remaining largest production roots are no longer automatically the best
-  cleanup targets. `crates/neovex-runtime/src/runtime.rs` and
-  `crates/neovex-runtime/src/executor.rs` are large, but they now mainly read
+  cleanup targets. `crates/nimbus-runtime/src/runtime.rs` and
+  `crates/nimbus-runtime/src/executor.rs` are large, but they now mainly read
   as composition roots plus inline tests.
 - The strongest remaining maintainability problem is the still-flat integration
-  test ownership in `crates/neovex-engine/src/tests.rs`, followed by the
-  broad-but-smaller storage root in `crates/neovex-storage/src/tests.rs`.
-- The clearest remaining production seam is `crates/neovex-runtime/src/executor/queue.rs`,
+  test ownership in `crates/nimbus-engine/src/tests.rs`, followed by the
+  broad-but-smaller storage root in `crates/nimbus-storage/src/tests.rs`.
+- The clearest remaining production seam is `crates/nimbus-runtime/src/executor/queue.rs`,
   which still combines worker job models, activity signaling, shutdown state,
   affinity-aware routing, and queue-controller behavior.
 - The highest-value shared test helper seam is
-  `crates/neovex-test-support/src/http_api_fixture.rs`, which still groups
+  `crates/nimbus-test-support/src/http_api_fixture.rs`, which still groups
   debug, Convex, tenants, schedule, schema, document, journal, and native query
   helpers into one surface.
 
@@ -158,7 +158,7 @@ These rules are mandatory for every item in this plan.
 
 ## Current Review Findings
 
-1. `crates/neovex-engine/src/tests.rs` is the largest remaining concept-mixed
+1. `crates/nimbus-engine/src/tests.rs` is the largest remaining concept-mixed
    root in the repo.
    It still combines subscription/reactivity cases, schema and tenant basics,
    indexed query or pagination coverage, materialized-serving coverage,
@@ -166,39 +166,39 @@ These rules are mandatory for every item in this plan.
    embedded-replica consistency, policy behavior, and generated-history
    verification in one flat chronological file.
 
-2. `crates/neovex-storage/src/tests.rs` is smaller than the engine root but
+2. `crates/nimbus-storage/src/tests.rs` is smaller than the engine root but
    still mixes several distinct storage concepts.
    Store CRUD and atomicity basics, journal metadata, shadow-materializer or
    recovery behavior, async cancellation and fault injection, and usage-store
    time semantics still share one root.
 
-3. `crates/neovex-test-support/src/http_api_fixture.rs` remains a broad shared
+3. `crates/nimbus-test-support/src/http_api_fixture.rs` remains a broad shared
    fixture surface.
    Debug/diagnostics routes, Convex runtime routes, tenant lifecycle routes,
    schedule and cron routes, schema routes, document or journal routes, and
    native query routes all live together.
 
-4. `crates/neovex-runtime/src/executor/queue.rs` is the clearest remaining
+4. `crates/nimbus-runtime/src/executor/queue.rs` is the clearest remaining
    production ownership seam.
    Runtime worker job models, result senders, worker-activity signaling,
    shutdown state, affinity-aware routing, and queue-controller completion
    behavior still live together.
 
-5. `crates/neovex-server/src/tests/core_http/documents_and_commits.rs` is the
+5. `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs` is the
    strongest remaining mixed server scenario root.
    Document lifecycle, journal paging and bootstrap, consistency reports,
    embedded-replica scenarios, and previously extracted helper modules still
    belong to distinct concepts but share one root.
 
-6. `crates/neovex-runtime/src/metrics.rs`,
-   `crates/neovex-engine/src/tenant.rs`,
-   and `crates/neovex-engine/src/service/subscriptions.rs`
+6. `crates/nimbus-runtime/src/metrics.rs`,
+   `crates/nimbus-engine/src/tenant.rs`,
+   and `crates/nimbus-engine/src/service/subscriptions.rs`
    are no longer the best next targets.
    They are denser than small modules, but they now mostly read as coherent
    facades or already-extracted subsystem boundaries rather than the highest
    value cleanup seams for the next pass.
 
-7. `crates/neovex-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage/scenarios.rs`
+7. `crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/seeded_usage/scenarios.rs`
    is large but already cohesive.
    It reads as one owned adversarial scenario surface rather than a misplaced
    helper pile, so it is not the next cleanup target just because of size.
@@ -283,11 +283,11 @@ silently skipping it.
 | Item | Status | Summary | Hard Dependencies | Gate Note |
 | --- | --- | --- | --- | --- |
 | TQ0 | `done` | reviewed the current post-indexing-bootstrap architecture and identified the next meaningful cleanup hotspots in runtime worker-queue ownership, shared HTTP fixtures, and remaining broad integration test roots | none | docs-only review and planning pass on 2026-04-06 |
-| TQ1 | `done` | split `crates/neovex-runtime/src/executor/queue.rs` by worker-queue ownership | none | landed as the `executor/queue/` module tree with stable executor-facing behavior |
-| TQ2 | `done` | split `crates/neovex-test-support/src/http_api_fixture.rs` by API-family fixture ownership | TQ1 recommended first | landed as the `http_api_fixture/` route-family module tree with stable helper behavior |
-| TQ3 | `done` | split `crates/neovex-engine/src/tests.rs` by concept-owned integration surfaces | TQ2 recommended first | landed as a root composition surface over `tests/subscriptions.rs`, `tests/queries.rs`, `tests/materialized_serving.rs`, `tests/mutation_journal.rs`, `tests/consistency.rs`, and `tests/policy.rs` |
-| TQ4 | `done` | split `crates/neovex-storage/src/tests.rs` by concept-owned storage surfaces | TQ2 recommended first | landed as a root composition surface over CRUD/journal, recovery, store basics, usage-store, async/fault, and generated-history modules |
-| TQ5 | `done` | split `crates/neovex-server/src/tests/core_http/documents_and_commits.rs` by concept ownership | TQ2 recommended first | landed as a scenario composition surface over lifecycle, journal, consistency, generated-history, and fault-helper modules |
+| TQ1 | `done` | split `crates/nimbus-runtime/src/executor/queue.rs` by worker-queue ownership | none | landed as the `executor/queue/` module tree with stable executor-facing behavior |
+| TQ2 | `done` | split `crates/nimbus-test-support/src/http_api_fixture.rs` by API-family fixture ownership | TQ1 recommended first | landed as the `http_api_fixture/` route-family module tree with stable helper behavior |
+| TQ3 | `done` | split `crates/nimbus-engine/src/tests.rs` by concept-owned integration surfaces | TQ2 recommended first | landed as a root composition surface over `tests/subscriptions.rs`, `tests/queries.rs`, `tests/materialized_serving.rs`, `tests/mutation_journal.rs`, `tests/consistency.rs`, and `tests/policy.rs` |
+| TQ4 | `done` | split `crates/nimbus-storage/src/tests.rs` by concept-owned storage surfaces | TQ2 recommended first | landed as a root composition surface over CRUD/journal, recovery, store basics, usage-store, async/fault, and generated-history modules |
+| TQ5 | `done` | split `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs` by concept ownership | TQ2 recommended first | landed as a scenario composition surface over lifecycle, journal, consistency, generated-history, and fault-helper modules |
 | TQ6 | `done` | perform follow-on idiomatic-Rust, naming, and helper-placement cleanup after the new boundaries stabilize | TQ1 through TQ5 | completed as the canonical visibility/helper-placement sweep across the new split roots, with focused verification rerun green across runtime, engine, storage, server, and workspace lint/check surfaces |
 | TQ7 | `done` | update docs, run the full verification sweep, and archive the completed plan cleanly | TQ1 through TQ6 | completed with green repo-wide `make check`, `make test`, and `make clippy`; `make ci` remains environment-limited by a read-only cargo advisory-db lock path |
 
@@ -325,9 +325,9 @@ silently skipping it.
 | --- | --- | --- |
 | TQ0 | done | start `TQ1` by mapping what still belongs together in `executor/queue.rs` versus the natural job, signal, router, and controller seams |
 | TQ1 | done | start `TQ2` by mapping `http_api_fixture.rs` into debug/diagnostics, Convex, tenant, scheduling, schema, document/journal, and query-owned fixture seams |
-| TQ2 | done | start `TQ3` by mapping `crates/neovex-engine/src/tests.rs` into concept-owned integration modules that can sit on top of the cleaner route-family fixture surface |
-| TQ3 | done | start `TQ4` by mapping `crates/neovex-storage/src/tests.rs` into CRUD/journal, recovery, async/fault, and usage-store owned surfaces |
-| TQ4 | done | start `TQ5` by mapping `crates/neovex-server/src/tests/core_http/documents_and_commits.rs` into lifecycle, journal/bootstrap, and consistency/replica owned scenario modules |
+| TQ2 | done | start `TQ3` by mapping `crates/nimbus-engine/src/tests.rs` into concept-owned integration modules that can sit on top of the cleaner route-family fixture surface |
+| TQ3 | done | start `TQ4` by mapping `crates/nimbus-storage/src/tests.rs` into CRUD/journal, recovery, async/fault, and usage-store owned surfaces |
+| TQ4 | done | start `TQ5` by mapping `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs` into lifecycle, journal/bootstrap, and consistency/replica owned scenario modules |
 | TQ5 | done | start `TQ6` by reviewing the newly split roots for leftover module-order, visibility, and helper-placement glue now that the ownership map is stable |
 | TQ6 | done | start `TQ7` by running the repo-wide verification sweep, then archive the completed control plane and update the live entrypoint docs |
 | TQ7 | done | workstream complete; keep this file archived as historical record only |
@@ -354,8 +354,8 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -377,7 +377,7 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -386,7 +386,7 @@ silently skipping it.
 - shared HTTP fixture ownership is easier to navigate by route family
 - later server and integration-test moves have clearer helper homes
 
-### TQ3. Split `neovex-engine/src/tests.rs` by concept-owned integration surfaces
+### TQ3. Split `nimbus-engine/src/tests.rs` by concept-owned integration surfaces
 
 #### Implementation plan
 
@@ -399,17 +399,17 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
 #### Acceptance criteria
 
-- `crates/neovex-engine/src/tests.rs` reads as a composition root or thin
+- `crates/nimbus-engine/src/tests.rs` reads as a composition root or thin
   entrypoint rather than a giant flat scenario file
 - new engine integration cases have obvious homes
 
-### TQ4. Split `neovex-storage/src/tests.rs` by concept-owned storage surfaces
+### TQ4. Split `nimbus-storage/src/tests.rs` by concept-owned storage surfaces
 
 #### Implementation plan
 
@@ -421,13 +421,13 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-storage`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
 #### Acceptance criteria
 
-- `crates/neovex-storage/src/tests.rs` reads as a thin root instead of a mixed
+- `crates/nimbus-storage/src/tests.rs` reads as a thin root instead of a mixed
   concept pile
 - storage regression cases are easier to extend without scanning unrelated tests
 
@@ -442,7 +442,7 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-server`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 
@@ -462,10 +462,10 @@ silently skipping it.
 
 #### Focused verification
 
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-server`
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-server`
+- `cargo test -p nimbus-runtime`
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -504,11 +504,11 @@ silently skipping it.
 
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
-| 2026-04-06 | TQ0 | done | Reviewed the live post-indexing-bootstrap architecture and identified the next meaningful cleanup hotspots in runtime worker-queue ownership, shared HTTP fixture ownership, and the remaining broad engine, storage, and native-HTTP integration test roots. Authored this new active cleanup control plane and prepared it for promotion in the plans index and agent entrypoint. | docs-only review and planning pass; no new code verification claimed in this handoff | start `TQ1` by mapping `crates/neovex-runtime/src/executor/queue.rs` into job/result, activity/shutdown, router, and controller-owned seams |
-| 2026-04-08 | TQ1 | done | Split `crates/neovex-runtime/src/executor/queue.rs` into the `executor/queue/` module tree: `job.rs` now owns worker job envelopes and result senders, `signal.rs` owns worker activity signaling, `shutdown.rs` owns executor shutdown state, `router.rs` owns affinity-aware dispatch and load tracking, and `controller.rs` owns the worker-local queue controller surface. Updated `ARCHITECTURE.md` to reflect the landed queue ownership map. | `cargo fmt --all --check`; `cargo check --workspace`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime`; `bash scripts/cargo-isolated.sh -- test -p neovex-server` | start `TQ2` by mapping `crates/neovex-test-support/src/http_api_fixture.rs` into API-family fixture modules while keeping the existing test call surface stable |
-| 2026-04-08 | TQ2 | done | Split `crates/neovex-test-support/src/http_api_fixture.rs` into the `http_api_fixture/` route-family module tree: `debug.rs` owns diagnostics helpers, `convex.rs` owns Convex runtime and HTTP helpers, `tenants.rs` owns tenant lifecycle helpers, `schedule.rs` owns native scheduling and cron helpers, `schema.rs` owns schema helpers, `documents.rs` owns document and journal helpers, and `queries.rs` owns native query helpers. Updated `ARCHITECTURE.md` to reflect the landed `neovex-test-support` ownership map. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p neovex-server` | start `TQ3` by mapping `crates/neovex-engine/src/tests.rs` into concept-owned integration modules with clearer helper ownership |
-| 2026-04-08 | TQ3 | done | Split the giant engine integration root into concept-owned module files under `crates/neovex-engine/src/tests/`: subscriptions/reactivity, queries/planner, materialized serving, mutation journal/visibility, consistency/replica, and policy behavior now live in separate files while `crates/neovex-engine/src/tests.rs` remains the composition surface for shared helpers and a small set of basic service/schema regressions. Updated `ARCHITECTURE.md` to reflect the landed engine test ownership map. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p neovex-engine` | start `TQ4` by mapping `crates/neovex-storage/src/tests.rs` into concept-owned storage test modules |
-| 2026-04-08 | TQ4 | done | Split the remaining storage integration root into concept-owned module files under `crates/neovex-storage/src/tests/`: CRUD and durable-journal basics, shadow-materializer recovery, store basics, usage-store coverage, async/fault behavior, and generated-history coverage now live in separate files while `crates/neovex-storage/src/tests.rs` keeps the shared helper fixtures and module declarations. Updated `ARCHITECTURE.md` to reflect the landed storage test ownership map. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p neovex-storage` | start `TQ5` by mapping `crates/neovex-server/src/tests/core_http/documents_and_commits.rs` into concept-owned native HTTP scenario modules |
-| 2026-04-08 | TQ5 | done | Split the native HTTP `documents_and_commits` root into concept-owned scenario files under `crates/neovex-server/src/tests/core_http/documents_and_commits/`: lifecycle, journal/bootstrap, and consistency/embedded-replica cases now live beside the existing generated-history and fault-helper modules while the root file remains a small composition surface. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p neovex-server` | start `TQ6` by tightening leftover naming, visibility, and module-order glue across the new split roots |
-| 2026-04-08 | TQ6 | done | Reviewed the newly split runtime queue, shared HTTP fixture, engine test, storage test, and native HTTP scenario roots for leftover split glue, then kept the canonical composition-root shape with tightened visibility/helper placement and rustfmt-owned module ordering instead of adding new helper piles or fighting formatter conventions. A clean standalone rerun of the full runtime suite passed after one transient parallel-run failure, and the remaining focused verification surfaces all closed green. | `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p neovex-engine`; `bash scripts/cargo-isolated.sh -- test -p neovex-storage`; `bash scripts/cargo-isolated.sh -- test -p neovex-server`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime`; `cargo clippy --workspace --all-targets -- -D warnings` | finish `TQ7` by running the repo-wide sweep, updating live plan-entry docs, and archiving the completed control plane |
+| 2026-04-06 | TQ0 | done | Reviewed the live post-indexing-bootstrap architecture and identified the next meaningful cleanup hotspots in runtime worker-queue ownership, shared HTTP fixture ownership, and the remaining broad engine, storage, and native-HTTP integration test roots. Authored this new active cleanup control plane and prepared it for promotion in the plans index and agent entrypoint. | docs-only review and planning pass; no new code verification claimed in this handoff | start `TQ1` by mapping `crates/nimbus-runtime/src/executor/queue.rs` into job/result, activity/shutdown, router, and controller-owned seams |
+| 2026-04-08 | TQ1 | done | Split `crates/nimbus-runtime/src/executor/queue.rs` into the `executor/queue/` module tree: `job.rs` now owns worker job envelopes and result senders, `signal.rs` owns worker activity signaling, `shutdown.rs` owns executor shutdown state, `router.rs` owns affinity-aware dispatch and load tracking, and `controller.rs` owns the worker-local queue controller surface. Updated `ARCHITECTURE.md` to reflect the landed queue ownership map. | `cargo fmt --all --check`; `cargo check --workspace`; `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime`; `bash scripts/cargo-isolated.sh -- test -p nimbus-server` | start `TQ2` by mapping `crates/nimbus-test-support/src/http_api_fixture.rs` into API-family fixture modules while keeping the existing test call surface stable |
+| 2026-04-08 | TQ2 | done | Split `crates/nimbus-test-support/src/http_api_fixture.rs` into the `http_api_fixture/` route-family module tree: `debug.rs` owns diagnostics helpers, `convex.rs` owns Convex runtime and HTTP helpers, `tenants.rs` owns tenant lifecycle helpers, `schedule.rs` owns native scheduling and cron helpers, `schema.rs` owns schema helpers, `documents.rs` owns document and journal helpers, and `queries.rs` owns native query helpers. Updated `ARCHITECTURE.md` to reflect the landed `nimbus-test-support` ownership map. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p nimbus-server` | start `TQ3` by mapping `crates/nimbus-engine/src/tests.rs` into concept-owned integration modules with clearer helper ownership |
+| 2026-04-08 | TQ3 | done | Split the giant engine integration root into concept-owned module files under `crates/nimbus-engine/src/tests/`: subscriptions/reactivity, queries/planner, materialized serving, mutation journal/visibility, consistency/replica, and policy behavior now live in separate files while `crates/nimbus-engine/src/tests.rs` remains the composition surface for shared helpers and a small set of basic service/schema regressions. Updated `ARCHITECTURE.md` to reflect the landed engine test ownership map. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p nimbus-engine` | start `TQ4` by mapping `crates/nimbus-storage/src/tests.rs` into concept-owned storage test modules |
+| 2026-04-08 | TQ4 | done | Split the remaining storage integration root into concept-owned module files under `crates/nimbus-storage/src/tests/`: CRUD and durable-journal basics, shadow-materializer recovery, store basics, usage-store coverage, async/fault behavior, and generated-history coverage now live in separate files while `crates/nimbus-storage/src/tests.rs` keeps the shared helper fixtures and module declarations. Updated `ARCHITECTURE.md` to reflect the landed storage test ownership map. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p nimbus-storage` | start `TQ5` by mapping `crates/nimbus-server/src/tests/core_http/documents_and_commits.rs` into concept-owned native HTTP scenario modules |
+| 2026-04-08 | TQ5 | done | Split the native HTTP `documents_and_commits` root into concept-owned scenario files under `crates/nimbus-server/src/tests/core_http/documents_and_commits/`: lifecycle, journal/bootstrap, and consistency/embedded-replica cases now live beside the existing generated-history and fault-helper modules while the root file remains a small composition surface. | `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p nimbus-server` | start `TQ6` by tightening leftover naming, visibility, and module-order glue across the new split roots |
+| 2026-04-08 | TQ6 | done | Reviewed the newly split runtime queue, shared HTTP fixture, engine test, storage test, and native HTTP scenario roots for leftover split glue, then kept the canonical composition-root shape with tightened visibility/helper placement and rustfmt-owned module ordering instead of adding new helper piles or fighting formatter conventions. A clean standalone rerun of the full runtime suite passed after one transient parallel-run failure, and the remaining focused verification surfaces all closed green. | `cargo fmt --all --check`; `cargo check --workspace`; `cargo test -p nimbus-engine`; `bash scripts/cargo-isolated.sh -- test -p nimbus-storage`; `bash scripts/cargo-isolated.sh -- test -p nimbus-server`; `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime`; `cargo clippy --workspace --all-targets -- -D warnings` | finish `TQ7` by running the repo-wide sweep, updating live plan-entry docs, and archiving the completed control plane |
 | 2026-04-08 | TQ7 | done | Closed the workstream with the repo-wide verification sweep, archived this completed control plane under `docs/plans/archive/`, and removed the stale live-entry references from `docs/plans/README.md` and `AGENTS.md` so new agents will not resume the finished cleanup pass. | `make check`; `make test`; `make clippy`; `make ci` failed at `cargo deny check` because `/Users/jack/.cargo/advisory-dbs/db.lock` is read-only in this environment | workstream complete |

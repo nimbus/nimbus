@@ -48,7 +48,7 @@ workloads that don't need full hardware VM boundaries.
 1. **Syscall compatibility is not 100%.** gVisor implements ~70% of Linux
    syscalls. Standard workloads (Node.js, Python, Go) work well, but low-level
    systems code and some database internals may hit unimplemented syscalls.
-   neovex's target workloads (postgres, redis) benefit from full kernel
+   nimbus's target workloads (postgres, redis) benefit from full kernel
    compatibility that hardware VMs provide.
 
 2. **I/O overhead.** Every syscall goes through gVisor's user-space kernel,
@@ -74,7 +74,7 @@ Tier 2: gVisor (150ms startup, untrusted code without hardware isolation)
 Tier 3: libkrun microVM (100ms startup, full hardware isolation)
 ```
 
-This would let neovex select isolation level based on trust level and workload
+This would let nimbus select isolation level based on trust level and workload
 requirements, without the cost of a hardware VM for every workload.
 
 ---

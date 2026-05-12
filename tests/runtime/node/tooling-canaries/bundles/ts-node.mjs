@@ -10,12 +10,12 @@ function includesToken(result, token) {
     || String(result.stdout ?? "").includes(token);
 }
 
-globalThis.__neovexInvoke = function () {
+globalThis.__nimbusInvoke = function () {
   const appRoot = process.cwd();
   const hostNodeBin = path.join(
     appRoot,
     "node_modules",
-    "neovex-host-node",
+    "nimbus-host-node",
     "bin",
     cliName("node"),
   );

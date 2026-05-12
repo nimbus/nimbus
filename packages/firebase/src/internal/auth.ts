@@ -1,8 +1,8 @@
 import type { Firestore } from "../firestore";
 import type { FirestoreGrpcWebContext } from "./grpc-web";
 
-const FIRESTORE_LISTEN_AUTH_SUBPROTOCOL_PREFIX = "neovex.firebase.auth.";
-const FIRESTORE_LISTEN_WEBSOCKET_PROTOCOL = "neovex.firebase.listen.v1";
+const FIRESTORE_LISTEN_AUTH_SUBPROTOCOL_PREFIX = "nimbus.firebase.auth.";
+const FIRESTORE_LISTEN_WEBSOCKET_PROTOCOL = "nimbus.firebase.listen.v1";
 
 export interface FirestoreAuthDependencies {
   mockUserToken(firestore: Firestore): string | null;

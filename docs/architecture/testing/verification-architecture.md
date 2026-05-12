@@ -15,8 +15,8 @@ CI failure to evidence-backed fix, see
 ## Testing Layers
 
 Unit tests live beside the owning crates. Integration tests for HTTP and
-WebSocket end-to-end behavior live in `neovex-server/tests/reactive_loop.rs`.
-Shared fixtures live in `neovex-testing`. In-memory store constructors such as
+WebSocket end-to-end behavior live in `nimbus-server/tests/reactive_loop.rs`.
+Shared fixtures live in `nimbus-testing`. In-memory store constructors such as
 `TenantStore::create_in_memory()` and `UsageStore::create_in_memory()` keep the
 fast storage lanes off disk.
 
@@ -42,7 +42,7 @@ root.
 
 ## Simulation Seams
 
-The first concrete seam layer now lives in `neovex-storage::simulation`.
+The first concrete seam layer now lives in `nimbus-storage::simulation`.
 `Clock` and `FaultInjector` are production-owned interfaces, not ad hoc test
 helpers. `TenantStore::*_with_simulation(...)` and
 `Service::new_with_simulation(...)` accept deterministic implementations,
@@ -71,23 +71,23 @@ server tests can share one reproducible scenario vocabulary.
 
 Runtime semantic tests no longer rely on drifting `RuntimeLimits::default()`
 behavior unless the default itself is the subject under test.
-`neovex-runtime::test_support` owns named runtime test profiles,
+`nimbus-runtime::test_support` owns named runtime test profiles,
 subprocess-isolation helpers for V8-sensitive cooperative and warm-pool tests,
 and stable runtime repro case metadata.
 
-Cross-crate campaigns then share the same vocabulary through `neovex-testing`,
+Cross-crate campaigns then share the same vocabulary through `nimbus-testing`,
 which now owns:
 
 - common eventual-assertion helpers
 - CI-aware timing-budget helpers for proof surfaces that can share
-  `neovex-testing`
+  `nimbus-testing`
 - `DeterministicTestCase` failure context
 - reusable runtime profile helpers used by server and transport campaigns
 - canonical shared fault-gate primitives used by engine and server adversarial
   tests
 
-`neovex-runtime` keeps the same timing-helper contract locally inside its test
-support rather than depending on `neovex-testing`, preserving the
+`nimbus-runtime` keeps the same timing-helper contract locally inside its test
+support rather than depending on `nimbus-testing`, preserving the
 zero-workspace-dependency invariant while keeping the reliability posture
 aligned across proof surfaces.
 
@@ -104,7 +104,7 @@ such as durable-append-before-apply, scheduler claim, and scheduler completion.
 
 ## Differential And Consistency Verification
 
-`neovex-testing` now complements the shared scenario vocabulary with reusable
+`nimbus-testing` now complements the shared scenario vocabulary with reusable
 `BlockingFaultInjector` and `ArmedBlockingFaultInjector` primitives for
 adversarial engine and server tests. The current transport/runtime liveness
 slice uses them to pause the authoritative write path after durable append but
@@ -115,10 +115,10 @@ reactive pushes once the fault is released.
 The first external Convex semantic oracle now lives in
 `packages/convex/src/differential.mjs`. It reuses one shared messages fixture
 app, can start an official local Convex deployment automatically from a nearby
-`convex-backend` checkout, and compares Neovex against the supported Convex
+`convex-backend` checkout, and compares Nimbus against the supported Convex
 subset across mutations, queries, manual pagination, and subscriptions.
 
-Neovex now also has its first online trust-but-verify path for authoritative
+Nimbus now also has its first online trust-but-verify path for authoritative
 and derived state. `Service::verify_consistency_async(...)` captures one
 durable bootstrap cut, rebuilds an authoritative in-memory projection from the
 raw materialized snapshot plus journal suffix, then compares that projection
@@ -129,10 +129,10 @@ same inputs. Operators can request that report through
 ## Harness Corpora And Entry Points
 
 The harness now has an operational seed corpus rather than only ad hoc
-scenario constructors. `neovex-storage::simulation` defines named generated-
+scenario constructors. `nimbus-storage::simulation` defines named generated-
 history seeds for explicit `pr` and `nightly` modes, and failure context for
 those corpus runs prints a one-command repro that pins the exact named case
-through `NEOVEX_VERIFY_CASE`.
+through `NIMBUS_VERIFY_CASE`.
 
 CI runs the focused PR corpus separately from the heavier scheduled nightly
 corpus, and local entrypoints live in `scripts/verification-harness.sh` plus

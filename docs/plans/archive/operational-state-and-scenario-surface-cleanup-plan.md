@@ -13,14 +13,14 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `crates/neovex-engine/src/tenant/mutation.rs`
-- `crates/neovex-storage/src/store/write.rs`
-- `crates/neovex-engine/src/evaluator.rs`
-- `crates/neovex-runtime/src/metrics.rs`
-- `crates/neovex-server/src/ws/socket.rs`
-- `crates/neovex-server/src/adapters/convex/subscriptions/socket/named_subscriptions.rs`
-- `crates/neovex-engine/src/tests.rs`
-- `crates/neovex-storage/src/tests.rs`
+- `crates/nimbus-engine/src/tenant/mutation.rs`
+- `crates/nimbus-storage/src/store/write.rs`
+- `crates/nimbus-engine/src/evaluator.rs`
+- `crates/nimbus-runtime/src/metrics.rs`
+- `crates/nimbus-server/src/ws/socket.rs`
+- `crates/nimbus-server/src/adapters/convex/subscriptions/socket/named_subscriptions.rs`
+- `crates/nimbus-engine/src/tests.rs`
+- `crates/nimbus-storage/src/tests.rs`
 
 Baseline verification status for this plan:
 
@@ -92,8 +92,8 @@ Out of scope unless the plan is explicitly amended first:
 
 ## Cleanup Invariants
 
-- `neovex-core` remains zero-I/O.
-- `neovex-runtime` remains zero-workspace-dependency.
+- `nimbus-core` remains zero-I/O.
+- `nimbus-runtime` remains zero-workspace-dependency.
 - All mutations still flow through `Service::apply_mutation` or its queued
   async journal path.
 - Storage atomicity remains intact: document write, index maintenance, and
@@ -114,15 +114,15 @@ Out of scope unless the plan is explicitly amended first:
 - The biggest top-level composition roots were already split in the previous
   cleanup workstreams, and the codebase is materially easier to navigate than
   it was before.
-- `crates/neovex-runtime/src/runtime.rs` and
-  `crates/neovex-runtime/src/executor.rs` are still large, but they are now
+- `crates/nimbus-runtime/src/runtime.rs` and
+  `crates/nimbus-runtime/src/executor.rs` are still large, but they are now
   mostly composition plus inline tests; they are not the highest-value next
   split targets.
 - The remaining high-value cleanup is concentrated in inner stateful files that
   still own multiple operational concepts at once.
 - The remaining highest-value test cleanup is concentrated in
-  `crates/neovex-engine/src/tests.rs` and
-  `crates/neovex-storage/src/tests.rs`, which still carry many concept-mixed
+  `crates/nimbus-engine/src/tests.rs` and
+  `crates/nimbus-storage/src/tests.rs`, which still carry many concept-mixed
   scenario clusters.
 - The current worktree should be committed before any `OS1+` implementation
   work starts so this plan becomes the new durable control plane from a clean
@@ -132,25 +132,25 @@ Out of scope unless the plan is explicitly amended first:
 
 ## Current Review Findings
 
-1. `crates/neovex-engine/src/tenant/mutation.rs` still combines queued request
+1. `crates/nimbus-engine/src/tenant/mutation.rs` still combines queued request
    models, admission gating, CoDel shedding, journal queue state, wait
    accounting, and test pause ownership in one file.
-2. `crates/neovex-storage/src/store/write.rs` still combines
+2. `crates/nimbus-storage/src/store/write.rs` still combines
    `TenantWriteTransaction`, direct CRUD helpers, batch/durable commit helpers,
    scheduled-write integration, and `TenantStore` open/create lifecycle.
-3. `crates/neovex-engine/src/evaluator.rs` still combines filtering, document
+3. `crates/nimbus-engine/src/evaluator.rs` still combines filtering, document
    ordering, cursor encoding/validation, paginated windowing, and store-backed
    versus preloaded-document evaluation paths.
-4. `crates/neovex-runtime/src/metrics.rs` still combines global runtime
+4. `crates/nimbus-runtime/src/metrics.rs` still combines global runtime
    counters, host-operation metrics, per-tenant metrics, duration
    distributions, request-correlation retention, and snapshot assembly.
-5. `crates/neovex-server/src/ws/socket.rs` and
-   `crates/neovex-server/src/adapters/convex/subscriptions/socket/named_subscriptions.rs`
+5. `crates/nimbus-server/src/ws/socket.rs` and
+   `crates/nimbus-server/src/adapters/convex/subscriptions/socket/named_subscriptions.rs`
    still mix websocket session transport, bootstrap cancellation tracking,
    runtime/native subscription activation, and initial publish/forwarding
    concerns.
-6. `crates/neovex-engine/src/tests.rs` and
-   `crates/neovex-storage/src/tests.rs` still hold large concept-mixed test
+6. `crates/nimbus-engine/src/tests.rs` and
+   `crates/nimbus-storage/src/tests.rs` still hold large concept-mixed test
    inventories that slow local comprehension and make feature-oriented updates
    harder than they should be.
 
@@ -266,10 +266,10 @@ before stopping. Do not rely on chat history as progress state.
 
 ### Additional verification by scope
 
-- run `cargo test -p neovex-engine` for engine-facing changes
-- run `cargo test -p neovex-storage` for storage-facing changes
-- run `cargo test -p neovex-runtime` for runtime-facing changes
-- run `cargo test -p neovex-server` for websocket, server, or Convex-facing
+- run `cargo test -p nimbus-engine` for engine-facing changes
+- run `cargo test -p nimbus-storage` for storage-facing changes
+- run `cargo test -p nimbus-runtime` for runtime-facing changes
+- run `cargo test -p nimbus-server` for websocket, server, or Convex-facing
   changes
 - run `cargo clippy --workspace --all-targets -- -D warnings` after meaningful
   implementation slices or before closing an item whose changes span crates
@@ -293,10 +293,10 @@ verification available.
 | Item | Status | Summary | Hard Dependencies |
 | --- | --- | --- | --- |
 | OS0 | done | Baseline review and hotspot map for the next operational-state and scenario-surface cleanup pass | none |
-| OS1 | done | Split `crates/neovex-engine/src/tenant/mutation.rs` by mutation operational-state ownership | OS0 |
-| OS2 | done | Decompose `crates/neovex-storage/src/store/write.rs` around durable write-path ownership | OS0 |
-| OS3 | done | Split `crates/neovex-engine/src/evaluator.rs` by evaluation, sorting, cursor, and pagination ownership | OS0 |
-| OS4 | done | Decompose `crates/neovex-runtime/src/metrics.rs` around runtime metrics ownership | OS0 |
+| OS1 | done | Split `crates/nimbus-engine/src/tenant/mutation.rs` by mutation operational-state ownership | OS0 |
+| OS2 | done | Decompose `crates/nimbus-storage/src/store/write.rs` around durable write-path ownership | OS0 |
+| OS3 | done | Split `crates/nimbus-engine/src/evaluator.rs` by evaluation, sorting, cursor, and pagination ownership | OS0 |
+| OS4 | done | Decompose `crates/nimbus-runtime/src/metrics.rs` around runtime metrics ownership | OS0 |
 | OS5 | done | Normalize websocket-session and Convex named-subscription ownership across the remaining socket hotspots | OS0 |
 | OS6 | done | Move the highest-value remaining test clusters to concept-owned surfaces and perform the follow-on idiomatic Rust sweep | OS1, OS2, OS3, OS4, OS5 |
 | OS7 | done | Update docs and run the full verification closure sweep | OS1, OS2, OS3, OS4, OS5, OS6 |
@@ -369,7 +369,7 @@ verification available.
 
 #### Focused verification
 
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
 #### Acceptance criteria
@@ -389,7 +389,7 @@ verification available.
 
 #### Focused verification
 
-- `cargo test -p neovex-storage`
+- `cargo test -p nimbus-storage`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
 #### Acceptance criteria
@@ -409,8 +409,8 @@ verification available.
 
 #### Focused verification
 
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-server`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
 #### Acceptance criteria
@@ -430,8 +430,8 @@ verification available.
 
 #### Focused verification
 
-- `cargo test -p neovex-runtime`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-runtime`
+- `cargo test -p nimbus-server`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
 #### Acceptance criteria
@@ -454,7 +454,7 @@ verification available.
 
 #### Focused verification
 
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-server`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
 #### Acceptance criteria
@@ -467,7 +467,7 @@ verification available.
 #### Implementation plan
 
 1. Move the highest-value remaining concept-mixed test clusters out of
-   `crates/neovex-engine/src/tests.rs` and `crates/neovex-storage/src/tests.rs`
+   `crates/nimbus-engine/src/tests.rs` and `crates/nimbus-storage/src/tests.rs`
    into concept-owned surfaces where it improves maintainability.
 2. Keep broad integration coverage intact while reducing the size of the giant
    root test files.
@@ -477,9 +477,9 @@ verification available.
 #### Focused verification
 
 - targeted crate tests for every moved test surface
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-storage`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-storage`
+- `cargo test -p nimbus-server`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
 #### Acceptance criteria
@@ -519,12 +519,12 @@ verification available.
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-04 | OS0 | done | Reviewed the live post-cleanup architecture and confirmed that the next high-value cleanup is no longer in the top-level composition roots. The remaining worthwhile work is concentrated in `tenant/mutation.rs`, `store/write.rs`, `evaluator.rs`, `runtime/metrics.rs`, the websocket session/subscription socket surfaces, and the remaining giant engine/storage test roots. Promoted this plan as the next active cleanup control plane. | docs-only planning pass; relied on the previously green deep module-ownership cleanup baseline recorded above | commit the completed previous cleanup handoff plus this new active plan, then start `OS1` |
-| 2026-04-04 | OS1 | done | Split `tenant/mutation.rs` into concept-owned modules for queued request models, admission-gate and CoDel ownership, journal queue state plus applied-sequence waiting, public mutation diagnostics snapshot types, and test-only pause control. Kept `tenant.rs` as the stable tenant facade and updated `ARCHITECTURE.md` to reflect the landed mutation subtree. | `cargo fmt --all`; `cargo fmt --all --check`; `CARGO_HOME=/tmp/neovex-cargo-home cargo test -p neovex-engine`; `CARGO_HOME=/tmp/neovex-cargo-home cargo clippy -p neovex-engine --all-targets -- -D warnings`; attempted `CARGO_HOME=/tmp/neovex-cargo-home cargo check --workspace` but it is currently blocked by the parallel V8 fork workstream in the same worktree (`rusty_v8` archive download 404 plus outdated `deno eval --allow-net` helper expectations) | start `OS2` by decomposing `store/write.rs` around durable write-path ownership while leaving the separate V8 fork changes untouched |
-| 2026-04-04 | OS2 | done | Split `store/write.rs` into concept-owned modules for transaction lifecycle and commit ownership, scheduled-write deduplication plus scheduled-op integration, direct document CRUD helpers, execution-unit batch apply, and `TenantStore` construction or write-entry helpers. Updated `ARCHITECTURE.md` so the storage write subtree reflects the landed ownership map. | `cargo fmt --all`; `cargo fmt --all --check`; `CARGO_HOME=/tmp/neovex-cargo-home cargo test -p neovex-storage`; `CARGO_HOME=/tmp/neovex-cargo-home cargo clippy -p neovex-storage --all-targets -- -D warnings`; attempted `CARGO_HOME=/tmp/neovex-cargo-home cargo check --workspace` and confirmed it remains blocked by the unrelated parallel V8 fork workstream (`rusty_v8` archive download 404 plus outdated `deno eval --allow-net` helper expectations) | start `OS3` by decomposing `evaluator.rs` around filter evaluation, ordering, cursor handling, paginated windowing, and shared evaluation helpers while leaving the separate V8 fork changes untouched |
-| 2026-04-04 | OS3 | done | Split `evaluator.rs` into concept-owned modules for query surfaces, paginated windowing, shared filter evaluation, ordering validation, and cursor encoding or comparison. Updated `ARCHITECTURE.md` so the evaluator ownership map reflects the landed module tree, and moved the local cursor tests beside the cursor implementation. | `cargo fmt --all`; `cargo fmt --all --check`; `CARGO_HOME=/tmp/neovex-cargo-home cargo test -p neovex-engine`; `CARGO_HOME=/tmp/neovex-cargo-home cargo clippy -p neovex-engine --all-targets -- -D warnings`; attempted `CARGO_HOME=/tmp/neovex-cargo-home cargo test -p neovex-server` but it remains blocked by the unrelated parallel V8 fork workstream when the server build reaches `rusty_v8` (`deno eval --allow-net` incompatibility plus runtime archive download failure) | start `OS4` by decomposing `runtime/metrics.rs` around runtime metrics ownership while leaving the separate V8 fork changes untouched |
+| 2026-04-04 | OS1 | done | Split `tenant/mutation.rs` into concept-owned modules for queued request models, admission-gate and CoDel ownership, journal queue state plus applied-sequence waiting, public mutation diagnostics snapshot types, and test-only pause control. Kept `tenant.rs` as the stable tenant facade and updated `ARCHITECTURE.md` to reflect the landed mutation subtree. | `cargo fmt --all`; `cargo fmt --all --check`; `CARGO_HOME=/tmp/nimbus-cargo-home cargo test -p nimbus-engine`; `CARGO_HOME=/tmp/nimbus-cargo-home cargo clippy -p nimbus-engine --all-targets -- -D warnings`; attempted `CARGO_HOME=/tmp/nimbus-cargo-home cargo check --workspace` but it is currently blocked by the parallel V8 fork workstream in the same worktree (`rusty_v8` archive download 404 plus outdated `deno eval --allow-net` helper expectations) | start `OS2` by decomposing `store/write.rs` around durable write-path ownership while leaving the separate V8 fork changes untouched |
+| 2026-04-04 | OS2 | done | Split `store/write.rs` into concept-owned modules for transaction lifecycle and commit ownership, scheduled-write deduplication plus scheduled-op integration, direct document CRUD helpers, execution-unit batch apply, and `TenantStore` construction or write-entry helpers. Updated `ARCHITECTURE.md` so the storage write subtree reflects the landed ownership map. | `cargo fmt --all`; `cargo fmt --all --check`; `CARGO_HOME=/tmp/nimbus-cargo-home cargo test -p nimbus-storage`; `CARGO_HOME=/tmp/nimbus-cargo-home cargo clippy -p nimbus-storage --all-targets -- -D warnings`; attempted `CARGO_HOME=/tmp/nimbus-cargo-home cargo check --workspace` and confirmed it remains blocked by the unrelated parallel V8 fork workstream (`rusty_v8` archive download 404 plus outdated `deno eval --allow-net` helper expectations) | start `OS3` by decomposing `evaluator.rs` around filter evaluation, ordering, cursor handling, paginated windowing, and shared evaluation helpers while leaving the separate V8 fork changes untouched |
+| 2026-04-04 | OS3 | done | Split `evaluator.rs` into concept-owned modules for query surfaces, paginated windowing, shared filter evaluation, ordering validation, and cursor encoding or comparison. Updated `ARCHITECTURE.md` so the evaluator ownership map reflects the landed module tree, and moved the local cursor tests beside the cursor implementation. | `cargo fmt --all`; `cargo fmt --all --check`; `CARGO_HOME=/tmp/nimbus-cargo-home cargo test -p nimbus-engine`; `CARGO_HOME=/tmp/nimbus-cargo-home cargo clippy -p nimbus-engine --all-targets -- -D warnings`; attempted `CARGO_HOME=/tmp/nimbus-cargo-home cargo test -p nimbus-server` but it remains blocked by the unrelated parallel V8 fork workstream when the server build reaches `rusty_v8` (`deno eval --allow-net` incompatibility plus runtime archive download failure) | start `OS4` by decomposing `runtime/metrics.rs` around runtime metrics ownership while leaving the separate V8 fork changes untouched |
 | 2026-04-04 | OS4 | blocked | Split `runtime/metrics.rs` in the worktree into a `RuntimeMetrics` facade over concept-owned global-counter, host-operation, tenant-metrics, and request-correlation modules. Formatting is clean, but runtime-focused verification still cannot compile because the parallel V8 fork workstream breaks `rusty_v8` before the runtime crate reaches this code. | `cargo fmt --all`; `cargo fmt --all --check`; attempted runtime or server verification remains blocked by the same parallel V8 fork failure (`rusty_v8` archive download failure and outdated `deno eval --allow-net` helper expectations) | wait for the V8 fork workstream to unblock runtime builds, then resume `OS4`, run the required runtime-focused verification, and only after that decide whether the metrics split can be marked done |
-| 2026-04-04 | OS4 | blocked | Confirmed that the temporary `CARGO_HOME=/tmp/neovex-cargo-home` workaround is no longer needed for the local workspace. Plain `cargo check --workspace` and `cargo test -p neovex-runtime` now pass, so the old shared-cache or local-Cargo blocker is gone. The remaining blocker is narrower: both `cargo test -p neovex-server` and `cargo clippy -p neovex-runtime --all-targets -- -D warnings` fail only when the patched `rusty_v8` fork tries to download `librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz`, which returns `404`, and its downloader still invokes `deno eval --allow-net`, which the installed Deno rejects. | `cargo test -p neovex-runtime`; `cargo check --workspace`; `cargo clippy -p neovex-runtime --all-targets -- -D warnings`; `cargo test -p neovex-server` | keep `OS4` blocked on the separate V8 fork workstream, then rerun the remaining focused verification once the patched `rusty_v8` archive or downloader path is fixed |
-| 2026-04-06 | OS4 | done | Resumed `OS4` after the locker fork unblocked plain local Cargo. Kept the metrics split intact, then fixed the runtime-worker affinity regression that was starving same-tenant follow-up work, refreshed the convenience-runtime test to match the default startup-snapshot pool semantics, restored the CLI `RuntimeLimits` initializer with struct update syntax, and moved the delayed async snapshot repro behind a subprocess-backed wrapper so the full runtime suite no longer crashes from prior in-process V8 state. Updated `ARCHITECTURE.md` so the runtime metrics ownership map now names the landed `global.rs`, `host_operations.rs`, `tenants.rs`, and `correlations.rs` submodules. | `cargo fmt --all`; `cargo test -p neovex-runtime runtime::tests::convenience_runtime_invocations_reuse_runtime_owned_executor -- --exact`; `cargo test -p neovex-runtime executor::tests::parked_invocation_counts_toward_in_flight_limit -- --exact`; `cargo test -p neovex-server tests::convex_runtime::cancellation::request_drops::queued::dropped_queued_runtime_request_never_starts_mutation -- --exact`; `cargo test -p neovex-server tests::convex_runtime::cancellation::request_drops::queued::dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears -- --exact`; `cargo test -p neovex-runtime`; `cargo test -p neovex-server`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo fmt --all --check` | start `OS5` by decomposing the websocket-session and Convex named-subscription hotspots around transport task ownership, pending bootstrap cancellation tracking, registration cleanup, and initial publish or forwarding responsibilities |
-| 2026-04-06 | OS5 | done | Split the remaining websocket-session hotspot into `ws/socket/transport.rs`, `ws/socket/pending.rs`, and `ws/socket/session.rs`, then split Convex named-subscription ownership into `named_subscriptions/direct.rs` and `named_subscriptions/runtime.rs` so generic transport tasks, pending bootstrap cancellation tracking, session registration or cleanup, and native versus runtime bootstrap or initial publish flows now have dedicated homes. Updated `ARCHITECTURE.md` to reflect the landed websocket and named-subscription ownership map. | `cargo fmt --all`; `cargo test -p neovex-server`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo fmt --all --check` | start `OS6` by moving the highest-value remaining engine and storage test clusters to concept-owned surfaces, then tighten naming, visibility, and helper placement around the stabilized module trees |
-| 2026-04-06 | OS6 | done | Moved the highest-value remaining concept-mixed tests beside the module trees they now exercise directly: evaluator behavior now lives under `evaluator/tests.rs`, storage scan behavior under `store/scan/tests.rs`, and durable journal stream, recovery, and snapshot rebuild behavior under `store/journal*.rs` test modules. Removed the duplicated root-test copies and stale helpers so the giant engine and storage roots are more integration-oriented. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p neovex-engine`; `bash scripts/cargo-isolated.sh -- test -p neovex-storage`; `cargo test -p neovex-server`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo fmt --all --check` | finish `OS7` by running the repo-wide make entrypoints, reconciling any remaining docs or plan ownership updates, and archiving the completed control plane cleanly |
+| 2026-04-04 | OS4 | blocked | Confirmed that the temporary `CARGO_HOME=/tmp/nimbus-cargo-home` workaround is no longer needed for the local workspace. Plain `cargo check --workspace` and `cargo test -p nimbus-runtime` now pass, so the old shared-cache or local-Cargo blocker is gone. The remaining blocker is narrower: both `cargo test -p nimbus-server` and `cargo clippy -p nimbus-runtime --all-targets -- -D warnings` fail only when the patched `rusty_v8` fork tries to download `librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz`, which returns `404`, and its downloader still invokes `deno eval --allow-net`, which the installed Deno rejects. | `cargo test -p nimbus-runtime`; `cargo check --workspace`; `cargo clippy -p nimbus-runtime --all-targets -- -D warnings`; `cargo test -p nimbus-server` | keep `OS4` blocked on the separate V8 fork workstream, then rerun the remaining focused verification once the patched `rusty_v8` archive or downloader path is fixed |
+| 2026-04-06 | OS4 | done | Resumed `OS4` after the locker fork unblocked plain local Cargo. Kept the metrics split intact, then fixed the runtime-worker affinity regression that was starving same-tenant follow-up work, refreshed the convenience-runtime test to match the default startup-snapshot pool semantics, restored the CLI `RuntimeLimits` initializer with struct update syntax, and moved the delayed async snapshot repro behind a subprocess-backed wrapper so the full runtime suite no longer crashes from prior in-process V8 state. Updated `ARCHITECTURE.md` so the runtime metrics ownership map now names the landed `global.rs`, `host_operations.rs`, `tenants.rs`, and `correlations.rs` submodules. | `cargo fmt --all`; `cargo test -p nimbus-runtime runtime::tests::convenience_runtime_invocations_reuse_runtime_owned_executor -- --exact`; `cargo test -p nimbus-runtime executor::tests::parked_invocation_counts_toward_in_flight_limit -- --exact`; `cargo test -p nimbus-server tests::convex_runtime::cancellation::request_drops::queued::dropped_queued_runtime_request_never_starts_mutation -- --exact`; `cargo test -p nimbus-server tests::convex_runtime::cancellation::request_drops::queued::dropped_queued_runtime_request_recovers_and_serves_new_work_after_pressure_clears -- --exact`; `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo fmt --all --check` | start `OS5` by decomposing the websocket-session and Convex named-subscription hotspots around transport task ownership, pending bootstrap cancellation tracking, registration cleanup, and initial publish or forwarding responsibilities |
+| 2026-04-06 | OS5 | done | Split the remaining websocket-session hotspot into `ws/socket/transport.rs`, `ws/socket/pending.rs`, and `ws/socket/session.rs`, then split Convex named-subscription ownership into `named_subscriptions/direct.rs` and `named_subscriptions/runtime.rs` so generic transport tasks, pending bootstrap cancellation tracking, session registration or cleanup, and native versus runtime bootstrap or initial publish flows now have dedicated homes. Updated `ARCHITECTURE.md` to reflect the landed websocket and named-subscription ownership map. | `cargo fmt --all`; `cargo test -p nimbus-server`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo fmt --all --check` | start `OS6` by moving the highest-value remaining engine and storage test clusters to concept-owned surfaces, then tighten naming, visibility, and helper placement around the stabilized module trees |
+| 2026-04-06 | OS6 | done | Moved the highest-value remaining concept-mixed tests beside the module trees they now exercise directly: evaluator behavior now lives under `evaluator/tests.rs`, storage scan behavior under `store/scan/tests.rs`, and durable journal stream, recovery, and snapshot rebuild behavior under `store/journal*.rs` test modules. Removed the duplicated root-test copies and stale helpers so the giant engine and storage roots are more integration-oriented. | `cargo fmt --all`; `bash scripts/cargo-isolated.sh -- test -p nimbus-engine`; `bash scripts/cargo-isolated.sh -- test -p nimbus-storage`; `cargo test -p nimbus-server`; `cargo check --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo fmt --all --check` | finish `OS7` by running the repo-wide make entrypoints, reconciling any remaining docs or plan ownership updates, and archiving the completed control plane cleanly |
 | 2026-04-06 | OS7 | done | Closed the workstream with the repo-level guarded verification entrypoints, moved the completed operational-state cleanup plan out of the active set, and removed the live-plan pointers from `docs/plans/README.md` and `AGENTS.md` so future agents do not resume this finished pass as current progress. The repo-level `make` wrappers initially hit stale single-flight locks from an older local session, but clearing those stale keys unblocked fresh `make check` and `make clippy` runs without any code changes. | `make check`; `make test`; `make clippy`; attempted `make ci` and confirmed it still stops locally because `cargo deny` is not installed | archived plan is the historical record; future cleanup work should start from a newly promoted active plan rather than reviving this one |

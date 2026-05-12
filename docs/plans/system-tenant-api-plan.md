@@ -2,7 +2,7 @@
 
 Canonical execution plan for making machine, service, and runtime state
 observable via the Convex API and manageable via HTTP endpoints. Creates a
-reserved `_neovex` system tenant, wires the machine and service managers to
+reserved `_nimbus` system tenant, wires the machine and service managers to
 persist state as documents, and exposes lifecycle actions as HTTP endpoints.
 This makes state queryable from any Convex client (`useQuery`, CLI, SDK)
 with reactive subscriptions — independently useful regardless of whether a
@@ -10,14 +10,14 @@ UI exists.
 
 Reviewed against:
 
-- `crates/neovex-server/src/adapters/convex/` — `ConvexRegistry::from_app_dir()`,
+- `crates/nimbus-server/src/adapters/convex/` — `ConvexRegistry::from_app_dir()`,
   runtime-backed function execution, `ConvexHostBridge`, `ctx.db.*` host ops
-- `crates/neovex-server/src/router.rs` — existing REST routes
+- `crates/nimbus-server/src/router.rs` — existing REST routes
   (`/api/tenants/{tenant_id}/documents/{table}`, etc.)
-- `crates/neovex-bin/src/main.rs` — `--app-dir` flag, CLI subcommands
-- `crates/neovex-bin/src/machine/mod.rs` — `MachineManager` state tracking
-- `crates/neovex-bin/src/compose/mod.rs` — Compose-backed service state tracking
-- `crates/neovex-engine/src/service/` — `Service`, tenant runtime, subscription
+- `crates/nimbus-bin/src/main.rs` — `--app-dir` flag, CLI subcommands
+- `crates/nimbus-bin/src/machine/mod.rs` — `MachineManager` state tracking
+- `crates/nimbus-bin/src/compose/mod.rs` — Compose-backed service state tracking
+- `crates/nimbus-engine/src/service/` — `Service`, tenant runtime, subscription
   delivery, query planning
 
 ---
@@ -36,7 +36,7 @@ Reviewed against:
 ## Current Assessed State
 
 - Machine and service state lives in CLI-level managers
-  (`crates/neovex-bin/src/machine/`, `crates/neovex-bin/src/compose/`), not
+  (`crates/nimbus-bin/src/machine/`, `crates/nimbus-bin/src/compose/`), not
   in the engine's document storage. No API client can observe machine state
   reactively.
 - The Convex adapter supports runtime-backed function execution via
@@ -53,7 +53,7 @@ Reviewed against:
 1. Every lifecycle mutation flows through `Service::apply_mutation` for
    document writes. HTTP endpoints invoke the managers, then the managers
    update system-tenant documents — no bypass.
-2. The system tenant name `_neovex` is reserved. User-created tenants
+2. The system tenant name `_nimbus` is reserved. User-created tenants
    must not start with `_`.
 3. The read/write path split is intentional: Convex queries for reactive
    reads, HTTP endpoints for lifecycle writes that require host-level
@@ -74,17 +74,17 @@ Each roadmap item must satisfy before closing:
 
 ### Read/write path split
 
-- **Read path**: Convex queries on the `_neovex` system tenant → reactive
+- **Read path**: Convex queries on the `_nimbus` system tenant → reactive
   subscriptions fire automatically when documents change. Any Convex client
   (`useQuery`, HTTP query, CLI) gets live state.
 - **Write path**: Machine/service lifecycle actions (start, stop, restart,
   delete) require host-level orchestration (spawning VMs, managing
   processes) beyond what `ctx.db` can do. These are HTTP endpoints on
-  `neovex-server` that invoke the managers directly. The managers update
+  `nimbus-server` that invoke the managers directly. The managers update
   system-tenant documents on completion, triggering reactive subscription
   updates automatically.
 - **Cross-tenant data browsing**: The system tenant's Convex functions can
-  only access `_neovex` documents via `ctx.db`. Browsing user-tenant
+  only access `_nimbus` documents via `ctx.db`. Browsing user-tenant
   documents uses the existing REST API
   (`GET /api/tenants/{tenant_id}/documents/{table}`) directly.
 
@@ -149,11 +149,11 @@ tables.{create,setSchema,dropSchema,deleteRows}
 
 ### ST1 — System tenant creation and schema
 
-Create the `_neovex` system tenant automatically on server startup.
+Create the `_nimbus` system tenant automatically on server startup.
 Define table schemas for all 9 system tables. Reserve the `_` prefix for
 system tenants — reject user-created tenants starting with `_`.
 
-**Verification:** (a) `_neovex` tenant exists after `neovex start` starts,
+**Verification:** (a) `_nimbus` tenant exists after `nimbus start` starts,
 (b) all 9 tables are defined with correct schemas, (c) `POST /api/tenants`
 with `_` prefix name → 400 rejected.
 
@@ -162,11 +162,11 @@ with `_` prefix name → 400 rejected.
 ### ST2 — Machine and service state persistence
 
 Wire the machine manager to write machine state as documents in the
-`_neovex` system tenant on every state transition (init, start, stop,
+`_nimbus` system tenant on every state transition (init, start, stop,
 delete, error). Wire the service manager similarly for service state
 changes and health updates.
 
-**Verification:** (a) `neovex machine init` + `neovex machine start`
+**Verification:** (a) `nimbus machine init` + `nimbus machine start`
 creates documents in the `machines` table, (b) machine stop updates the
 document state field, (c) `ctx.db.query("machines")` returns current
 state from a Convex function on the system tenant, (d) document changes
@@ -176,7 +176,7 @@ trigger reactive subscription updates.
 
 ### ST3 — HTTP lifecycle endpoints
 
-Add HTTP endpoints on `neovex-server` for machine/service lifecycle actions
+Add HTTP endpoints on `nimbus-server` for machine/service lifecycle actions
 and system operations. Endpoints invoke `MachineManager` /
 `ServiceManager` directly, then the managers update system-tenant documents
 on completion.
@@ -190,9 +190,9 @@ structured error schema from `docs/plans/archive/websocket-protocol-plan.md`.
 
 ### ST4 — Convex function bundle and codegen
 
-Implement the Convex function bundle at `packages/neovex-ui/convex/` with
+Implement the Convex function bundle at `packages/nimbus-ui/convex/` with
 query functions for all system tables and document-level mutation functions
-(bundles, tables). Generate typed function refs via `@neovex/codegen`.
+(bundles, tables). Generate typed function refs via `@nimbus/codegen`.
 Configure the server to load this bundle via
 `ConvexRegistry::from_app_dir()` on the system tenant.
 

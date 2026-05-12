@@ -4,7 +4,7 @@ Status: completed
 
 This plan owns the architectural follow-up from the April 2026 codebase review
 around runtime service activation, runtime host ABI typing, and persistence
-provider boundaries. Neovex is still pre-launch, so the work should make clean
+provider boundaries. Nimbus is still pre-launch, so the work should make clean
 breaking changes instead of preserving compatibility with the current
 implementation quirks.
 
@@ -30,7 +30,7 @@ implementation quirks.
 - `HostCallRequest` uses a typed operation plus a raw `serde_json::Value`
   payload. Runtime payload structs exist, but the top-level ABI does not prove
   that an operation and payload family match before dispatch.
-- `neovex-engine` still coordinates provider behavior through parallel enum
+- `nimbus-engine` still coordinates provider behavior through parallel enum
   matches and macros. That is acceptable for a closed set, but it spreads each
   provider addition or capability change across engine surfaces.
 
@@ -82,8 +82,8 @@ boundary instead of leaving every backend adapter to parse raw JSON ad hoc.
 - introduce a versioned `HostCallEnvelope` with an ABI version field
 - introduce a `HostCallPayload` enum or equivalent typed family whose variants
   map one-to-one with supported `HostCallOperation` values
-- move payload structs that are runtime-owned into `neovex-runtime`; keep
-  Convex-specific semantic lowering in `neovex-server`
+- move payload structs that are runtime-owned into `nimbus-runtime`; keep
+  Convex-specific semantic lowering in `nimbus-server`
 - make deserialization fail when the operation and payload family do not match
 - keep backend-neutral names at the runtime boundary where possible, and map
   Convex names in the Convex adapter
@@ -103,7 +103,7 @@ instead of engine-wide match lattices.
   catch-up, freshness hints, notifications, and polling
 - move provider-specific catch-up and freshness policy out of engine switch
   statements into provider-owned implementations
-- keep `neovex-engine` as coordinator of tenant semantics, not provider
+- keep `nimbus-engine` as coordinator of tenant semantics, not provider
   mechanics
 - shrink or remove the `match_persistence_provider!`,
   `match_tenant_persistence!`, and related executor/snapshot macros once the
@@ -112,7 +112,7 @@ instead of engine-wide match lattices.
 Verification:
 
 - adding a capability to one provider no longer requires touching every
-  provider enum match in `neovex-engine`
+  provider enum match in `nimbus-engine`
 - existing Postgres/MySQL/libsql freshness and catch-up tests remain green
 - provider benchmark and harness lanes still identify the provider under test
   in failure output
@@ -130,6 +130,6 @@ Verification:
 
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
-| 2026-04-23 | RPB1 | `done` | Resumed the active runtime/provider boundary hardening plan from the live worktree, added a roadmap ledger plus checkpoints, and landed the async service-activation contract. `ctx.services.<name>` is now snapshot-only, missing bindings resolve through async `ctx.services.get("name")`, sync runtime lookup no longer starts sandboxes, and service-manager readiness polling now honors `HostCallCancellation`. Verification: `cargo test -p neovex-runtime host_bridge -- --nocapture`; `cargo test -p neovex-server services -- --nocapture`; `cargo test -p neovex-server service_manager -- --nocapture`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p neovex-runtime -p neovex-server`; `cargo clippy -p neovex-runtime -p neovex-server --all-targets -- -D warnings`. Next: introduce the versioned typed host ABI in RPB2. |
-| 2026-04-23 | RPB2 | `done` | Landed the versioned typed host ABI. `neovex-runtime` now owns `HOST_CALL_ABI_VERSION`, runtime-owned payload structs, `HostCallPayload`, and `HostCallEnvelope`, and `HostCallRequest` now carries an ABI version plus a constructor. The Convex host bridge converts requests through the typed envelope before dispatch, consumes typed payload variants by route family, and only then lowers into Convex-specific payload parsing. Added runtime and server regression tests for ABI version rejection, operation/payload mismatch rejection, adapter-wire roundtrips, and typed dispatch acceptance. Verification: `cargo check -p neovex-runtime -p neovex-server`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p neovex-runtime host -- --nocapture`; `cargo test -p neovex-server adapters::convex::tests -- --nocapture`; `cargo clippy -p neovex-runtime -p neovex-server --all-targets -- -D warnings`. Next: start RPB3 and replace the provider match lattice with provider-owned capability facades. |
-| 2026-04-23 | RPB3 | `done` | Landed the provider-owned capability facade for the behavior-heavy provider seam. `PersistenceProvider` now owns background-task selection for Postgres notifications versus MySQL/libsql polling, and `TenantPersistence` now owns async schema load, journal progress/recovery, commit-log tail reads, scheduled-work checks, loaded-runtime refresh planning, and the libsql replica applied-head exception after durable batch apply. The engine service layer now coordinates tenant semantics through those capability methods instead of matching provider families directly in tenant load, scheduler recovery, schema refresh, provider polling, and mutation-journal apply flow. Verification: `cargo check -p neovex-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p neovex-engine mysql_background_poll -- --nocapture`; `cargo test -p neovex-engine libsql_replica_background_poll -- --nocapture`; `cargo test -p neovex-engine postgres_listener_reconnect -- --nocapture`; `cargo test -p neovex-engine embedded_replica_catch_up -- --nocapture`; `cargo clippy -p neovex-engine --all-targets -- -D warnings`. External-provider integration tests self-skipped where no explicit provider URLs were configured and Docker was unavailable (`/var/run/docker.sock` missing). Next: this plan is complete; promote a new active plan before another provider-boundary cleanup wave. |
+| 2026-04-23 | RPB1 | `done` | Resumed the active runtime/provider boundary hardening plan from the live worktree, added a roadmap ledger plus checkpoints, and landed the async service-activation contract. `ctx.services.<name>` is now snapshot-only, missing bindings resolve through async `ctx.services.get("name")`, sync runtime lookup no longer starts sandboxes, and service-manager readiness polling now honors `HostCallCancellation`. Verification: `cargo test -p nimbus-runtime host_bridge -- --nocapture`; `cargo test -p nimbus-server services -- --nocapture`; `cargo test -p nimbus-server service_manager -- --nocapture`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check -p nimbus-runtime -p nimbus-server`; `cargo clippy -p nimbus-runtime -p nimbus-server --all-targets -- -D warnings`. Next: introduce the versioned typed host ABI in RPB2. |
+| 2026-04-23 | RPB2 | `done` | Landed the versioned typed host ABI. `nimbus-runtime` now owns `HOST_CALL_ABI_VERSION`, runtime-owned payload structs, `HostCallPayload`, and `HostCallEnvelope`, and `HostCallRequest` now carries an ABI version plus a constructor. The Convex host bridge converts requests through the typed envelope before dispatch, consumes typed payload variants by route family, and only then lowers into Convex-specific payload parsing. Added runtime and server regression tests for ABI version rejection, operation/payload mismatch rejection, adapter-wire roundtrips, and typed dispatch acceptance. Verification: `cargo check -p nimbus-runtime -p nimbus-server`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p nimbus-runtime host -- --nocapture`; `cargo test -p nimbus-server adapters::convex::tests -- --nocapture`; `cargo clippy -p nimbus-runtime -p nimbus-server --all-targets -- -D warnings`. Next: start RPB3 and replace the provider match lattice with provider-owned capability facades. |
+| 2026-04-23 | RPB3 | `done` | Landed the provider-owned capability facade for the behavior-heavy provider seam. `PersistenceProvider` now owns background-task selection for Postgres notifications versus MySQL/libsql polling, and `TenantPersistence` now owns async schema load, journal progress/recovery, commit-log tail reads, scheduled-work checks, loaded-runtime refresh planning, and the libsql replica applied-head exception after durable batch apply. The engine service layer now coordinates tenant semantics through those capability methods instead of matching provider families directly in tenant load, scheduler recovery, schema refresh, provider polling, and mutation-journal apply flow. Verification: `cargo check -p nimbus-engine`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo test -p nimbus-engine mysql_background_poll -- --nocapture`; `cargo test -p nimbus-engine libsql_replica_background_poll -- --nocapture`; `cargo test -p nimbus-engine postgres_listener_reconnect -- --nocapture`; `cargo test -p nimbus-engine embedded_replica_catch_up -- --nocapture`; `cargo clippy -p nimbus-engine --all-targets -- -D warnings`. External-provider integration tests self-skipped where no explicit provider URLs were configured and Docker was unavailable (`/var/run/docker.sock` missing). Next: this plan is complete; promote a new active plan before another provider-boundary cleanup wave. |

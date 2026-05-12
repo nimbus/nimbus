@@ -1,47 +1,47 @@
 # Prompt: Independent Audit of nimbus-rename-plan.md
 
-Use this prompt with an Opus 4.7 model that has access to the neovex repo
+Use this prompt with an Opus 4.7 model that has access to the nimbus repo
 (e.g., via Claude Code). The model should have read access to the full working
-tree at `~/src/github.com/agentstation/neovex`.
+tree at `~/src/github.com/nimbus/nimbus`.
 
 ---
 
 ## Prompt
 
 You are auditing a project rename plan for completeness and correctness. The
-project "neovex" (owned by the `agentstation` GitHub org) is being renamed to
+project "nimbus" (owned by the `nimbus` GitHub org) is being renamed to
 "nimbus" (under a new `nimbus` GitHub org). The plan lives at
 `docs/plans/nimbus-rename-plan.md` with a prerequisite satellite plan at
 `docs/plans/nimbus-rename-satellite-repos-plan.md`.
 
 **Your job:** Find anything the plan gets wrong or misses. Do NOT rewrite the
 plan. Output a structured audit report with three sections: **Errors**
-(factual inaccuracies in the plan), **Gaps** (neovex/agentstation references
+(factual inaccuracies in the plan), **Gaps** (nimbus/nimbus references
 the plan does not cover), and **Suggestions** (non-blocking improvements).
 
 ### Context you need to know
 
 This is a Rust workspace + npm monorepo. Key facts:
 
-- **9 Rust crates** under `crates/`: neovex, neovex-bin, neovex-core,
-  neovex-engine, neovex-runtime, neovex-sandbox, neovex-server, neovex-storage,
-  neovex-testing.
-- **5 JS packages** under `packages/`: neovex (SDK), codegen (@neovex/codegen),
-  convex (compat layer, keeps its name), firebase (@neovex/firebase), mongodb
-  (@neovex/mongodb).
-- **4 demo directories** under `demos/`: convex, firebase, mongodb, neovex.
+- **9 Rust crates** under `crates/`: nimbus, nimbus-bin, nimbus-core,
+  nimbus-engine, nimbus-runtime, nimbus-sandbox, nimbus-server, nimbus-storage,
+  nimbus-testing.
+- **5 JS packages** under `packages/`: nimbus (SDK), codegen (@nimbus/codegen),
+  convex (compat layer, keeps its name), firebase (@nimbus/firebase), mongodb
+  (@nimbus/mongodb).
+- **4 demo directories** under `demos/`: convex, firebase, mongodb, nimbus.
 - **7 CI workflows** under `.github/workflows/`: release.yml, ci.yml,
-  verify-neovex-crun-patch.yml, linux-distribution-release.yml,
+  verify-nimbus-crun-patch.yml, linux-distribution-release.yml,
   linux-packages.yml, apt-repo.yml, copr-srpms.yml.
 - **~55 scripts** under `scripts/` (shell, Python, MJS), plus `scripts/fixtures/`
   and `scripts/runtime/node/`.
 - **Deno fork situation**: The project previously used a standalone
-  `agentstation/deno_core` fork. That repo is now historical. The active fork
-  is `agentstation/deno` (the full Deno monorepo). `Cargo.toml`
-  `[patch.crates-io]` points 21 crates at `agentstation/deno` tag
-  `v2.7.14-locker.37`, plus v8 at `agentstation/rusty_v8` tag
+  `nimbus/deno` fork. That repo is now historical. The active fork
+  is `nimbus/deno` (the full Deno monorepo). `Cargo.toml`
+  `[patch.crates-io]` points 21 crates at `nimbus/deno` tag
+  `v2.7.14-locker.37`, plus v8 at `nimbus/rusty_v8` tag
   `v147.4.0-locker.1`. However, `deny.toml` `allow-git` still has a stale
-  entry for `https://github.com/agentstation/deno_core`.
+  entry for `https://github.com/nimbus/deno`.
 - **Pre-launch**: zero users, zero production data. Breaking changes are the
   correct approach.
 
@@ -71,50 +71,50 @@ the plan. Report any hit NOT covered:
 
 1. **Rust internals** -- `grep -rn` for these patterns in `crates/` (`.rs` and
    `.js` files, excluding `target/`):
-   - `op_neovex_` (V8 op names)
-   - `__neovex` (JS globals)
-   - `neovexHost` (error propagation)
-   - `ext:neovex` (Deno extension namespace)
-   - `Symbol.for("neovex` (JS well-known symbols)
-   - `x-neovex` (HTTP headers)
-   - `neovex.v` (WebSocket protocol IDs)
-   - `io.neovex.` (OCI annotations)
-   - `vnd.neovex.` (OCI media types)
-   - `.neovex` (dot-directory paths -- note: these appear in ~20 files across
+   - `op_nimbus_` (V8 op names)
+   - `__nimbus` (JS globals)
+   - `nimbusHost` (error propagation)
+   - `ext:nimbus` (Deno extension namespace)
+   - `Symbol.for("nimbus` (JS well-known symbols)
+   - `x-nimbus` (HTTP headers)
+   - `nimbus.v` (WebSocket protocol IDs)
+   - `io.nimbus.` (OCI annotations)
+   - `vnd.nimbus.` (OCI media types)
+   - `.nimbus` (dot-directory paths -- note: these appear in ~20 files across
      deploy.rs, dev.rs, dirs.rs, init.rs, bundle.rs, vm.rs, etc.)
-   - `neovex_provider` and `neovex_meta_`
-   - `NEOVEX_` (env var constants)
-   - `"neovex"` in string literals (CLI name, network name, log messages)
-   - `agentstation` in string literals or comments
+   - `nimbus_provider` and `nimbus_meta_`
+   - `NIMBUS_` (env var constants)
+   - `"nimbus"` in string literals (CLI name, network name, log messages)
+   - `nimbus` in string literals or comments
 
 2. **JS/codegen** -- `grep -rn` in `packages/` (excluding `node_modules/`):
-   - `__neovex` markers in `packages/codegen/src/constants.mjs`
-   - `__neovex` in emit templates (`packages/codegen/src/emit/*.mjs`)
-   - `neovexHostError` in emit templates
-   - `// Generated by @neovex/codegen` headers
-   - `neovex` imports in all `.ts`, `.mjs`, `.js` files
-   - `"neovex"` in `package.json` files (name, bin, deps)
+   - `__nimbus` markers in `packages/codegen/src/constants.mjs`
+   - `__nimbus` in emit templates (`packages/codegen/src/emit/*.mjs`)
+   - `nimbusHostError` in emit templates
+   - `// Generated by @nimbus/codegen` headers
+   - `nimbus` imports in all `.ts`, `.mjs`, `.js` files
+   - `"nimbus"` in `package.json` files (name, bin, deps)
 
-3. **Demos** -- check every file under `demos/` for neovex refs, including:
+3. **Demos** -- check every file under `demos/` for nimbus refs, including:
    - `demos/index.html`
    - `demos/convex/vendor/browser.bundle.js` (vendored bundle)
    - All `package.json` and source files
    - All `_generated/` directories
 
 4. **Scripts** -- for every file under `scripts/`:
-   - Count neovex+NEOVEX+agentstation references
-   - Flag any containing `neovex.dev` (domain), `apt@neovex.dev` (GPG email),
-     `neovex-dev` (Homebrew cask token), `/usr/bin/neovex` or
-     `/usr/libexec/neovex/` (install paths)
+   - Count nimbus+NIMBUS+nimbus references
+   - Flag any containing `github.com/nimbus/nimbus` (domain), `apt@nimbus.github.io` (GPG email),
+     `nimbus-dev` (Homebrew cask token), `/usr/bin/nimbus` or
+     `/usr/libexec/nimbus/` (install paths)
    - Check `scripts/fixtures/` and `scripts/runtime/node/`
 
 5. **CI workflows** -- for each `.yml` under `.github/workflows/`:
    - Count references
    - Verify the plan lists the file and its approximate count
 
-6. **Config files** -- check these specific files for neovex/agentstation:
+6. **Config files** -- check these specific files for nimbus/nimbus:
    - `.cargo/config.toml`
-   - `.codex/config.toml` and `.codex/rules/neovex.rules`
+   - `.codex/config.toml` and `.codex/rules/nimbus.rules`
    - `.claude/settings.local.json`
    - `.gitignore`
    - `cliff.toml`
@@ -125,7 +125,7 @@ the plan. Report any hit NOT covered:
    - `rust-toolchain.toml`
    - `rustfmt.toml`
 
-7. **Top-level docs** -- check these for neovex/agentstation references and
+7. **Top-level docs** -- check these for nimbus/nimbus references and
    verify the plan covers them:
    - `README.md`, `README.new.md`, `ARCHITECTURE.md`, `AGENTS.md`, `CLAUDE.md`
    - `LICENSE`, `LICENSING.md`, `TRADEMARKS.md`, `COMMERCIAL.md`,
@@ -136,7 +136,7 @@ the plan. Report any hit NOT covered:
    - `tests/demos.smoke.md`
    - `tests/runtime/node/` (all files)
 
-9. **Data files** -- check if `data/neovex-control.db` or similar needs
+9. **Data files** -- check if `data/nimbus-control.db` or similar needs
    renaming.
 
 10. **Cross-reference the Naming Map** -- verify every row in the plan's

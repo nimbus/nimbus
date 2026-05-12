@@ -26,7 +26,7 @@ function createServer() {
   });
 }
 
-globalThis.__neovexInvoke = async function () {
+globalThis.__nimbusInvoke = async function () {
   const server = createServer();
   await new Promise((resolve, reject) => {
     server.listen(0, "127.0.0.1", (error) => {

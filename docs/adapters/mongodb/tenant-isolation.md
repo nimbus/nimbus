@@ -1,6 +1,6 @@
 # Tenant Isolation
 
-The MongoDB adapter maps **database names to Neovex tenants**. Each tenant
+The MongoDB adapter maps **database names to Nimbus tenants**. Each tenant
 is fully isolated at the storage level -- separate data, separate indexes,
 no cross-tenant visibility.
 
@@ -12,7 +12,7 @@ no cross-tenant visibility.
                    │
                    ▼
 ┌──────────────────────────────────────────────────────────┐
-│  Neovex Server                                           │
+│  Nimbus Server                                           │
 │                                                          │
 │  ┌────────────────────┐    ┌────────────────────┐        │
 │  │ Tenant: tenant_a   │    │ Tenant: tenant_b   │        │
@@ -27,7 +27,7 @@ no cross-tenant visibility.
 
 ## Mapping Rules
 
-| MongoDB database name | Neovex tenant ID | Notes |
+| MongoDB database name | Nimbus tenant ID | Notes |
 |---|---|---|
 | `"myapp"` | `myapp` | Direct mapping -- database name becomes tenant ID |
 | `"customer_123"` | `customer_123` | Any valid name works |
@@ -58,7 +58,7 @@ Most apps use a single database name. The `uri()` helper defaults to
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@neovex/mongodb";
+import { uri } from "@nimbus/mongodb";
 
 const client = new MongoClient(uri()); // database: "default"
 await client.connect();
@@ -72,7 +72,7 @@ on first access:
 
 ```typescript
 import { MongoClient } from "mongodb";
-import { uri } from "@neovex/mongodb";
+import { uri } from "@nimbus/mongodb";
 
 async function clientForTenant(tenantId: string) {
   const client = new MongoClient(uri({ database: tenantId }));

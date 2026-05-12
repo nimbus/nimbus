@@ -1,13 +1,13 @@
 # Bootc Adoption Evaluation
 
-Research evaluation for adopting bootc-based machine images in Neovex.
+Research evaluation for adopting bootc-based machine images in Nimbus.
 
 Date: 2026-04-17
 
 ## Executive Summary
 
 The upstream direction is real, but the earlier draft overstated how much of it
-is already true for Neovex.
+is already true for Nimbus.
 
 What is clearly verified:
 
@@ -19,62 +19,62 @@ What is clearly verified:
   and `podman machine os upgrade`.
 - Podman's machine image remains a customized FCOS image layered through a
   `Containerfile`.
-- Neovex's current shipped macOS contract is still the pinned Podman machine
-  image plus Neovex host-managed bootstrap and guest-binary sync.
+- Nimbus's current shipped macOS contract is still the pinned Podman machine
+  image plus Nimbus host-managed bootstrap and guest-binary sync.
 
 What is **not** verified:
 
 - That FCOS 43 has already switched its runtime lifecycle from
   `rpm-ostree`/Zincati to `bootc`.
 - That pure `fedora-bootc` is already a drop-in substitute for the current
-  Neovex macOS contract.
-- That current `neovex-machine-os` artifacts preserve all FCOS-specific
-  assumptions in Neovex's bootstrap path.
-- That composefs integrity is a current Neovex advantage; the checked-in
+  Nimbus macOS contract.
+- That current `nimbus-machine-os` artifacts preserve all FCOS-specific
+  assumptions in Nimbus's bootstrap path.
+- That composefs integrity is a current Nimbus advantage; the checked-in
   builder config currently disables it.
 
 ### Recommendation
 
 Keep the shipped macOS path Podman-aligned for now.
 
-Treat `agentstation/neovex-machine-os` as the validation and ownership lane, but
+Treat `nimbus/nimbus-machine-os` as the validation and ownership lane, but
 do **not** switch the default macOS guest image to pure `fedora-bootc` until
-Neovex proves parity on:
+Nimbus proves parity on:
 
 - bootstrap delivery
 - `core` user / SSH flow
-- `/usr/local/bin/neovex` execution semantics
+- `/usr/local/bin/nimbus` execution semantics
 - ready/vsock signaling
 - forwarded machine API readiness
 - virtiofs mount behavior
 - SELinux labeling
 
-If Neovex wants a first step toward owning the macOS guest image, the lower-risk
+If Nimbus wants a first step toward owning the macOS guest image, the lower-risk
 path is a **custom FCOS-derived image** that preserves current FCOS/Ignition
-semantics while moving to a Neovex-owned build and release pipeline.
+semantics while moving to a Nimbus-owned build and release pipeline.
 
 Pure `fedora-bootc` remains a plausible follow-on path, but it is not yet
 proven in this repo.
 
-## Current Neovex State
+## Current Nimbus State
 
 ### Shipped macOS contract
 
 The current shipped macOS machine contract is still Podman-aligned:
 
-- `crates/neovex-bin/src/machine/mod.rs:57-79` pins macOS `Krunkit` to
+- `crates/nimbus-bin/src/machine/mod.rs:57-79` pins macOS `Krunkit` to
   `quay.io/podman/machine-os@sha256:...`
-- `crates/neovex-bin/src/machine/mod.rs:119-131` treats both Podman's image and
-  the Neovex image repo as part of the host-managed image contract on macOS
+- `crates/nimbus-bin/src/machine/mod.rs:119-131` treats both Podman's image and
+  the Nimbus image repo as part of the host-managed image contract on macOS
 - `docs/reference/macos-machine-flow.md` explicitly says the current macOS
   bring-up path is Podman's published machine image by pinned immutable
-  reference, with Neovex bootstrap layered on top
+  reference, with Nimbus bootstrap layered on top
 
 ```mermaid
 flowchart LR
-    Host["macOS host: neovex"] -->|"boot pinned Podman machine image"| Guest["Linux guest: Podman FCOS image"]
+    Host["macOS host: nimbus"] -->|"boot pinned Podman machine image"| Guest["Linux guest: Podman FCOS image"]
     Host -->|"Ignition file + SSH identity"| Guest
-    Host -->|"hash-sync /usr/local/bin/neovex"| Guest
+    Host -->|"hash-sync /usr/local/bin/nimbus"| Guest
     Host -->|"validate forwarded machine API"| Guest
 ```
 
@@ -82,22 +82,22 @@ flowchart LR
 
 The checked-in bootstrap flow is explicitly FCOS-shaped:
 
-- `crates/neovex-bin/src/machine/bootstrap.rs:10-17` emits Ignition 3.2.0,
-  expects a `core` user, and places the guest binary at `/usr/local/bin/neovex`
+- `crates/nimbus-bin/src/machine/bootstrap.rs:10-17` emits Ignition 3.2.0,
+  expects a `core` user, and places the guest binary at `/usr/local/bin/nimbus`
 - the same file records the important FCOS-specific assumption that `/usr/local`
   is a writable symlink to `/var/usrlocal` and has the right executable label
-- `crates/neovex-bin/src/machine/manager.rs:625-668` requires an SSH identity so
-  Neovex can stage the guest binary and validate the forwarded machine API
-- `crates/neovex-bin/src/machine/manager.rs:1290-1292` explicitly warns that on
+- `crates/nimbus-bin/src/machine/manager.rs:625-668` requires an SSH identity so
+  Nimbus can stage the guest binary and validate the forwarded machine API
+- `crates/nimbus-bin/src/machine/manager.rs:1290-1292` explicitly warns that on
   macOS, generic `fedora-bootc` raw images are not a supported substitute for
   the current FCOS/libkrun/Ignition path
 
 ### Current OS update behavior
 
-Neovex's `machine os apply` and `machine os upgrade` are currently **host-side
+Nimbus's `machine os apply` and `machine os upgrade` are currently **host-side
 disk replacement**, not in-guest bootc transitions:
 
-- `crates/neovex-bin/src/machine/mod.rs:653-708` rewrites
+- `crates/nimbus-bin/src/machine/mod.rs:653-708` rewrites
   `config.guest.image_source`
 - invalidates the materialized machine disk
 - resets machine state
@@ -108,21 +108,21 @@ replacement rather than differential in-place updates.
 
 ### Distribution plan state
 
-The active distribution plan already moved the Neovex image build pipeline in a
+The active distribution plan already moved the Nimbus image build pipeline in a
 bootc direction:
 
 - `docs/plans/distribution-plan.md:393-403` describes a `fedora-bootc:42`
   machine image built via `podman build` and `bootc-image-builder --type raw`
 - `docs/plans/distribution-plan.md:690-703` still keeps the shipped macOS
-  contract pinned to Podman's machine image until a Neovex-owned image preserves
+  contract pinned to Podman's machine image until a Nimbus-owned image preserves
   the same FCOS/Ignition/libkrun semantics
 - `docs/plans/distribution-plan.md:778-780` records the CI migration from
   `rpm-ostree + custom-coreos-disk-images` to `bootc-image-builder`
 
-### Current `neovex-machine-os` reality
+### Current `nimbus-machine-os` reality
 
-The checked-in `agentstation/neovex-machine-os` repo is important because it
-shows where Neovex actually stands today, not where the earlier research draft
+The checked-in `nimbus/nimbus-machine-os` repo is important because it
+shows where Nimbus actually stands today, not where the earlier research draft
 assumed it stood.
 
 Verified repo state:
@@ -139,10 +139,10 @@ Verified repo state:
 
 This means:
 
-- the current repo does prove Neovex is already using bootc for image building
+- the current repo does prove Nimbus is already using bootc for image building
 - it does **not** prove that the current image recipe preserves the full FCOS
   bootstrap contract
-- it does **not** support claiming composefs as a current Neovex security
+- it does **not** support claiming composefs as a current Nimbus security
   property
 - the checked-in README's `cloud-init` statement is out of sync with the checked
   build script
@@ -182,9 +182,9 @@ So the correct statement is:
 - **Verified**: FCOS is converging on bootc supply chain and OCI transport
 - **Not verified**: FCOS has already fully switched to bootc runtime lifecycle
 
-#### FCOS still carries semantics Neovex currently depends on
+#### FCOS still carries semantics Nimbus currently depends on
 
-Current Neovex bootstrap assumptions line up with FCOS conventions:
+Current Nimbus bootstrap assumptions line up with FCOS conventions:
 
 - default `core` user
 - Ignition-first provisioning model
@@ -227,7 +227,7 @@ The important architectural point is:
 - Podman is using **Containerfile-based image ownership** while still preserving
   the guest semantics it needs from FCOS
 
-That is the closest upstream analogue to Neovex's current needs.
+That is the closest upstream analogue to Nimbus's current needs.
 
 #### Current Podman macOS default is libkrun
 
@@ -239,9 +239,9 @@ Verified from:
 - `pkg/machine/provider/platform_darwin.go`
 
 That supports the general long-term alignment story with `krunkit`, but it does
-not by itself prove Neovex's full custom guest contract.
+not by itself prove Nimbus's full custom guest contract.
 
-#### `podman-bootc` proves upstream interest, not Neovex parity
+#### `podman-bootc` proves upstream interest, not Nimbus parity
 
 Upstream prior art exists and is worth keeping, but it should be described
 precisely:
@@ -252,7 +252,7 @@ precisely:
   as completed on **2025-06-05**
 
 That is good evidence that `krunkit` plus bootc is a real upstream path. It is
-still not proof that Neovex's own bootstrap, SSH, vsock, and forwarded API
+still not proof that Nimbus's own bootstrap, SSH, vsock, and forwarded API
 contract already works on pure `fedora-bootc`.
 
 #### WSL remains a separate path
@@ -260,7 +260,7 @@ contract already works on pure `fedora-bootc`.
 Podman docs explicitly exclude WSL-based machines from `podman machine os apply`
 and tell users to update them inside the guest with package-manager flows.
 
-That matches Neovex's current model:
+That matches Nimbus's current model:
 
 - `Wsl2` uses a tar image and shell bootstrap
 - it is not on the same path as the raw-disk `Krunkit` machine flow
@@ -295,14 +295,14 @@ Official bootc docs say:
 
 That supports two conclusions:
 
-- pure bootc **can** be made to work for Neovex
-- but Neovex must explicitly own that bootstrap story rather than assuming it is
+- pure bootc **can** be made to work for Nimbus
+- but Nimbus must explicitly own that bootstrap story rather than assuming it is
   already provided
 
-#### `/usr/local` semantics differ between bootc guidance and current Neovex assumptions
+#### `/usr/local` semantics differ between bootc guidance and current Nimbus assumptions
 
 Official bootc filesystem guidance recommends that in bootc-oriented systems
-`/usr/local` be a regular directory by default. By contrast, current Neovex
+`/usr/local` be a regular directory by default. By contrast, current Nimbus
 bootstrap explicitly depends on FCOS's `/usr/local -> /var/usrlocal` behavior and
 labeling.
 
@@ -310,7 +310,7 @@ This is a real block for "pure bootc is low-friction":
 
 - it is solvable
 - but it is not free
-- it must be validated in the actual Neovex guest path
+- it must be validated in the actual Nimbus guest path
 
 #### bootc auto-updates are simpler than Zincati
 
@@ -334,11 +334,11 @@ But:
 bootc filesystem guidance strongly recommends the ostree composefs backend, but
 it is a configuration choice.
 
-That matters because Neovex currently disables it in
+That matters because Nimbus currently disables it in
 `images/bootc-image-builder.toml`.
 
-So composefs is a **potential** future Neovex advantage, not a current verified
-property of the checked-in Neovex image recipe.
+So composefs is a **potential** future Nimbus advantage, not a current verified
+property of the checked-in Nimbus image recipe.
 
 ## Claim Audit
 
@@ -349,13 +349,13 @@ property of the checked-in Neovex image recipe.
 | Podman machine uses `bootc switch` / `bootc upgrade` | Verified | Confirmed in current docs and source |
 | Podman machine OS remains FCOS layered via `Containerfile` | Verified | Confirmed in `podman-machine-os` |
 | Current Podman macOS default is `libkrun` | Verified | Confirmed in current docs/source |
-| krunkit + bootc is proven upstream | Partially verified | `podman-bootc` merged macOS krunkit support, but that is not Neovex parity proof |
-| Pure bootc is ready to replace Neovex's current macOS path | Not verified | Local bootstrap and image-recipe gaps remain |
-| Composefs integrity is already part of Neovex's current machine image | Not verified | Current builder config disables composefs |
-| Neovex `machine os apply` does in-guest `bootc switch` like Podman | False | Neovex currently does host-side disk replacement |
-| Windows can be treated the same way as macOS/Linux in current Neovex plan | False | Current WSL2 path is separate tar + shell bootstrap |
+| krunkit + bootc is proven upstream | Partially verified | `podman-bootc` merged macOS krunkit support, but that is not Nimbus parity proof |
+| Pure bootc is ready to replace Nimbus's current macOS path | Not verified | Local bootstrap and image-recipe gaps remain |
+| Composefs integrity is already part of Nimbus's current machine image | Not verified | Current builder config disables composefs |
+| Nimbus `machine os apply` does in-guest `bootc switch` like Podman | False | Nimbus currently does host-side disk replacement |
+| Windows can be treated the same way as macOS/Linux in current Nimbus plan | False | Current WSL2 path is separate tar + shell bootstrap |
 
-## Option Analysis For Neovex
+## Option Analysis For Nimbus
 
 ### Option 1: Keep the shipped Podman-aligned path
 
@@ -363,17 +363,17 @@ This is the current production-quality path for macOS development machines.
 
 Benefits:
 
-- already matches current Neovex startup and bootstrap assumptions
+- already matches current Nimbus startup and bootstrap assumptions
 - no ambiguity about FCOS/Ignition/libkrun behavior
 - no immediate risk to the current machine bring-up flow
 
 Costs:
 
-- Neovex does not own the guest OS image content
+- Nimbus does not own the guest OS image content
 - customizations remain constrained by the Podman contract
 - no direct step toward in-guest differential updates yet
 
-### Option 2: Adopt a Neovex-owned FCOS-derived image first
+### Option 2: Adopt a Nimbus-owned FCOS-derived image first
 
 This is the lower-risk ownership step.
 
@@ -382,7 +382,7 @@ Meaning:
 - keep FCOS guest semantics
 - keep Ignition and the current `core`-user shape
 - keep Podman-aligned macOS guest behavior
-- move the image build, release, provenance, and OCI packaging under Neovex
+- move the image build, release, provenance, and OCI packaging under Nimbus
 
 Why this is attractive:
 
@@ -394,21 +394,21 @@ Why this is attractive:
 
 Main work:
 
-- prove the Neovex-owned image preserves the existing boot path
-- remove current doc/repo drift in `neovex-machine-os`
-- make the macOS shipped contract switch from Podman's pinned image to Neovex's
+- prove the Nimbus-owned image preserves the existing boot path
+- remove current doc/repo drift in `nimbus-machine-os`
+- make the macOS shipped contract switch from Podman's pinned image to Nimbus's
   pinned image only after parity is proven
 
 ### Option 3: Jump directly to pure `fedora-bootc`
 
 This is still plausible, but it is not ready to recommend as the default path.
 
-What Neovex would need to own explicitly:
+What Nimbus would need to own explicitly:
 
 - install and validate Ignition, or replace it with another first-boot mechanism
 - define how SSH keys arrive
 - create and manage the `core` user, or stop depending on it
-- decide the final `/usr/local/bin/neovex` strategy and its SELinux labeling
+- decide the final `/usr/local/bin/nimbus` strategy and its SELinux labeling
 - decide whether composefs stays off or becomes part of the security baseline
 - validate the entire `krunkit` + vsock + forwarded machine API path end to end
 
@@ -429,10 +429,10 @@ flowchart TD
 
 ### Phase 1: Close the repo/documentation drift
 
-Before any product decision, Neovex should make the checked-in machine image repo
+Before any product decision, Nimbus should make the checked-in machine image repo
 match reality:
 
-- fix the `cloud-init` claim in `neovex-machine-os/README.md`
+- fix the `cloud-init` claim in `nimbus-machine-os/README.md`
 - make the intended bootstrap contract explicit: FCOS semantics, explicit
   Ignition installation, or alternate provisioning
 - make the composefs choice explicit instead of leaving it implied by the
@@ -441,12 +441,12 @@ match reality:
 ### Phase 2: Prove parity gates on macOS
 
 Do not change the shipped default image until all of these are true with a
-Neovex-owned image:
+Nimbus-owned image:
 
 - `krunkit` boots the guest reliably
 - the guest consumes bootstrap data on first boot
 - SSH comes up for the expected user
-- Neovex can sync the guest binary
+- Nimbus can sync the guest binary
 - `ready.service` reaches the host over vsock
 - the forwarded machine API becomes healthy
 - virtiofs mounts work with the intended SELinux treatment
@@ -454,18 +454,18 @@ Neovex-owned image:
 
 ### Phase 3: Pick the ownership step
 
-If the goal is the fastest safe move to Neovex-owned images, choose:
+If the goal is the fastest safe move to Nimbus-owned images, choose:
 
 - **custom FCOS-derived image**
 
-If the goal is longer-term simplification and Neovex is willing to own the
+If the goal is longer-term simplification and Nimbus is willing to own the
 bootstrap contract more directly, continue:
 
 - **pure `fedora-bootc` prototype**
 
 ### Phase 4: Decide whether to adopt in-guest bootc transitions
 
-Only after the guest image contract is solid should Neovex decide whether to
+Only after the guest image contract is solid should Nimbus decide whether to
 move from host-side disk replacement to in-guest `bootc switch` / `bootc
 upgrade`.
 
@@ -478,11 +478,11 @@ That is a separate change from image ownership and should be planned as such.
 | macOS developer machine | Highest sensitivity; raw disk + `krunkit` + Ignition + host-managed sync | This is the main decision surface |
 | Linux production workload | krun/libkrun microVM service isolation | Largely independent of the machine-image decision |
 | Windows developer machine | WSL2 tar + shell bootstrap | Separate from current bootc/raw-disk discussion |
-| Future Windows Hyper-V path | Not current Neovex path | Could use bootc-generated disk images later, but that is future scope |
+| Future Windows Hyper-V path | Not current Nimbus path | Could use bootc-generated disk images later, but that is future scope |
 
 ### Linux production note
 
-Nothing in this audit suggests that Neovex should change the current Linux
+Nothing in this audit suggests that Nimbus should change the current Linux
 production service-isolation architecture because of bootc research.
 
 The machine-image decision is mainly about:
@@ -496,33 +496,33 @@ model.
 
 ## Final Recommendation
 
-The earlier draft was right about the ecosystem trend and wrong about Neovex's
+The earlier draft was right about the ecosystem trend and wrong about Nimbus's
 readiness to exploit all of it immediately.
 
 The best current recommendation is:
 
 1. Keep the shipped macOS default on the pinned Podman machine image.
-2. Continue `neovex-machine-os` as the image-ownership and validation lane.
+2. Continue `nimbus-machine-os` as the image-ownership and validation lane.
 3. Make the first ownership target a custom FCOS-derived image unless the pure
-   `fedora-bootc` prototype proves full Neovex parity first.
+   `fedora-bootc` prototype proves full Nimbus parity first.
 4. Treat pure bootc as a follow-on optimization, not a currently proven default.
 
-That keeps Neovex aligned with where Fedora and Podman are going, while still
-respecting what the checked-in Neovex code actually requires today.
+That keeps Nimbus aligned with where Fedora and Podman are going, while still
+respecting what the checked-in Nimbus code actually requires today.
 
 ## Sources
 
-### Local Neovex sources
+### Local Nimbus sources
 
-- `crates/neovex-bin/src/machine/mod.rs`
-- `crates/neovex-bin/src/machine/manager.rs`
-- `crates/neovex-bin/src/machine/bootstrap.rs`
+- `crates/nimbus-bin/src/machine/mod.rs`
+- `crates/nimbus-bin/src/machine/manager.rs`
+- `crates/nimbus-bin/src/machine/bootstrap.rs`
 - `docs/reference/macos-machine-flow.md`
 - `docs/plans/distribution-plan.md`
-- `/Users/jack/src/github.com/agentstation/neovex-machine-os/README.md`
-- `/Users/jack/src/github.com/agentstation/neovex-machine-os/images/README.md`
-- `/Users/jack/src/github.com/agentstation/neovex-machine-os/images/build-common.sh`
-- `/Users/jack/src/github.com/agentstation/neovex-machine-os/images/bootc-image-builder.toml`
+- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/README.md`
+- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/images/README.md`
+- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/images/build-common.sh`
+- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/images/bootc-image-builder.toml`
 
 ### Fedora / FCOS
 

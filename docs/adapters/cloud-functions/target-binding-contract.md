@@ -1,11 +1,11 @@
 # Cloud Functions Target Binding Contract
 
 This document records the `T0.5` deploy-time binding choice for Cloud
-Functions-compatible authoring on Neovex.
+Functions-compatible authoring on Nimbus.
 
 ## Decision
 
-Neovex will use a typed `targets.json` manifest beside the Cloud Functions
+Nimbus will use a typed `targets.json` manifest beside the Cloud Functions
 runtime bundle. Each target entry records:
 
 - the source authoring surface (`firebase_v2` or `functions_framework`)
@@ -98,9 +98,9 @@ pretending to support them:
 - Firestore `namespace` bindings are out of scope for the first slice. The
   trigger contract only covers the default namespace.
 - Raw standalone Functions Framework server parity is still deferred. This
-  manifest binds Neovex-hosted execution targets; it does not claim support
+  manifest binds Nimbus-hosted execution targets; it does not claim support
   for `FUNCTION_TARGET`, `FUNCTION_SIGNATURE_TYPE`, or generic ingress
-  unmarshalling outside the Neovex deploy/runtime path.
+  unmarshalling outside the Nimbus deploy/runtime path.
 
 ## Boundary
 

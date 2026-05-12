@@ -86,13 +86,13 @@ fi
 
 echo "emitting node-compat report artifacts for ${family}:${slice} into ${output_root} (mode=${capture_mode})"
 
-NEOVEX_NODE_COMPAT_REPORT_FAMILY="${family}" \
-NEOVEX_NODE_COMPAT_REPORT_SLICE="${slice}" \
-NEOVEX_NODE_COMPAT_REPORT_OUTPUT_ROOT="${output_root}" \
-NEOVEX_NODE_COMPAT_REPORT_CAPTURE_MODE="${capture_mode}" \
-NEOVEX_NODE_COMPAT_REPORT_OBSERVED_RESULTS="${observed_results}" \
+NIMBUS_NODE_COMPAT_REPORT_FAMILY="${family}" \
+NIMBUS_NODE_COMPAT_REPORT_SLICE="${slice}" \
+NIMBUS_NODE_COMPAT_REPORT_OUTPUT_ROOT="${output_root}" \
+NIMBUS_NODE_COMPAT_REPORT_CAPTURE_MODE="${capture_mode}" \
+NIMBUS_NODE_COMPAT_REPORT_OBSERVED_RESULTS="${observed_results}" \
 bash "${REPO_ROOT}/scripts/single-flight.sh" \
   --key "node-compat-report-${family}-${slice}" \
-  -- cargo test -p neovex-runtime \
+  -- cargo test -p nimbus-runtime \
     node_compat_manifest_report_entrypoint_emits_slice_artifacts \
     -- --ignored --nocapture --test-threads=1

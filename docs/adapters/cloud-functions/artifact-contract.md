@@ -1,12 +1,12 @@
 # Cloud Functions Artifact Contract
 
 This document records the `T0.4` deploy/runtime decision for Cloud
-Functions-compatible authoring on Neovex.
+Functions-compatible authoring on Nimbus.
 
 ## Decision
 
-Neovex will use a **sibling Cloud Functions artifact family** under
-`.neovex/firebase/` rather than trying to make the current Convex manifest and
+Nimbus will use a **sibling Cloud Functions artifact family** under
+`.nimbus/firebase/` rather than trying to make the current Convex manifest and
 registry schema generic up front.
 
 The shared parts stay shared:
@@ -19,8 +19,8 @@ The shared parts stay shared:
 
 The artifact schema stays separate:
 
-- Convex keeps `.neovex/convex/` and `ConvexRegistry::from_app_dir(...)`
-- Cloud Functions gets `.neovex/firebase/` with its own manifest family and
+- Convex keeps `.nimbus/convex/` and `ConvexRegistry::from_app_dir(...)`
+- Cloud Functions gets `.nimbus/firebase/` with its own manifest family and
   target discovery contract
 
 This is intentional. The current Convex manifest is built around Convex
@@ -35,7 +35,7 @@ and higher migration risk.
 The first-slice internal Cloud Functions artifact root is:
 
 ```text
-.neovex/firebase/
+.nimbus/firebase/
   artifact.json
   bundle.mjs
   bundle.sha256
@@ -82,14 +82,14 @@ neighbor `targets.json` contract.
 
 ## Import Resolution
 
-The chosen import strategy is a **Neovex-owned deploy/build alias layer**.
+The chosen import strategy is a **Nimbus-owned deploy/build alias layer**.
 
 That means:
 
 - user source keeps upstream imports unchanged
-- Neovex resolves covered imports during build/deploy to compatibility shims
-- Neovex does **not** require user source rewrites
-- Neovex does **not** rely on replacing upstream packages in the user's package
+- Nimbus resolves covered imports during build/deploy to compatibility shims
+- Nimbus does **not** require user source rewrites
+- Nimbus does **not** rely on replacing upstream packages in the user's package
   manager graph just to make covered imports work
 
 Covered first-slice specifiers:

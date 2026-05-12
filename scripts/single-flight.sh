@@ -12,7 +12,7 @@ Usage:
 
 Examples:
   bash scripts/single-flight.sh --key cargo-test-workspace -- cargo test --workspace
-  bash scripts/single-flight.sh -- cargo test -p neovex-engine
+  bash scripts/single-flight.sh -- cargo test -p nimbus-engine
   bash scripts/single-flight.sh --clear cargo-test-workspace
 EOF
 }
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-lock_root="${NEOVEX_SINGLE_FLIGHT_DIR:-${SCRIPT_DIR}/../.neovex/single-flight}"
+lock_root="${NIMBUS_SINGLE_FLIGHT_DIR:-${SCRIPT_DIR}/../.nimbus/single-flight}"
 mkdir -p "$lock_root"
 
 if [[ -n "$clear_key" ]]; then

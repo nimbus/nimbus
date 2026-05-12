@@ -20,9 +20,9 @@
     "./values": "./src/values.ts"
   },
   "dependencies": {
-    "@neovex/codegen": "0.1.22",
+    "@nimbus/codegen": "0.1.22",
     "esbuild": "0.28.0",
-    "neovex": "0.1.22"
+    "nimbus": "0.1.22"
   },
   "devDependencies": {
     "typescript": "6.0.3"

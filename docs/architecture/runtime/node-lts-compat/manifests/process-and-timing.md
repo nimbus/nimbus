@@ -5,7 +5,7 @@ Current upstream Node test-slice manifest for `NLC4`.
 Source corpus:
 
 - current Deno-family implementation baseline:
-  `~/src/github.com/agentstation/deno @ v2.7.14-locker.28`
+  `~/src/github.com/nimbus/deno @ v2.7.14-locker.28`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
 - pinned official Node20 supported corpus:
@@ -16,7 +16,7 @@ Source corpus:
 This file records the currently manifested official-fixture subset for the
 `NLC4` process and timing family. The canonical source of truth for the
 executed subset is
-[`PROCESS_AND_TIMING_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node/mod.rs)
+[`PROCESS_AND_TIMING_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs)
 plus the explicit watchpoints in the same Rust file; this document summarizes
 that state so future work can resume without rediscovering it.
 
@@ -35,7 +35,7 @@ that state so future work can resume without rediscovering it.
 
 The current manifested subset is data-driven from the checked-in fixture roots
 and the `PROCESS_AND_TIMING_BATCH` table in
-`crates/neovex-runtime/src/runtime/tests/node/mod.rs`.
+`crates/nimbus-runtime/src/runtime/tests/node/mod.rs`.
 
 Current manifested batch counts:
 
@@ -66,13 +66,13 @@ Family-level notes:
 - The current hot-path `util.format()` numeric-separator formatting,
   `%s` + `Symbol.toPrimitive` coercion, and
   `diagnostics_channel` stable-subscriber iteration semantics are now owned by
-  `agentstation/deno`, not Neovex-local bootstrap code.
-- `agentstation/deno v2.7.14-locker.22` now also owns the imported official
+  `nimbus/deno`, not Nimbus-local bootstrap code.
+- `nimbus/deno v2.7.14-locker.22` now also owns the imported official
   `util.parseEnv()` plain-object shape contract, with a fork-side regression in
   `tests/unit_node/util_test.ts` that asserts `Object.getPrototypeOf(parsed) === Object.prototype`.
-- `agentstation/deno v2.7.14-locker.23`,
-  `agentstation/deno v2.7.14-locker.24`, and
-  `agentstation/deno v2.7.14-locker.25` now own the imported
+- `nimbus/deno v2.7.14-locker.23`,
+  `nimbus/deno v2.7.14-locker.24`, and
+  `nimbus/deno v2.7.14-locker.25` now own the imported
   `node:perf_hooks` user-timing contract:
   exporting `PerformanceMark` / `PerformanceMeasure`, seeding the minimal
   `nodeTiming` marks the Node file expects, and restoring Node-style Symbol
@@ -81,9 +81,9 @@ Family-level notes:
   `performance.mark('a', { startTime: ... })`, which moves the imported
   official `test-perf-hooks-usertiming.js` file into the manifested green
   denominator instead of leaving it as a watchpoint.
-- `agentstation/deno v2.7.14-locker.26`,
-  `agentstation/deno v2.7.14-locker.27`, and
-  `agentstation/deno v2.7.14-locker.28` now own the imported
+- `nimbus/deno v2.7.14-locker.26`,
+  `nimbus/deno v2.7.14-locker.27`, and
+  `nimbus/deno v2.7.14-locker.28` now own the imported
   `node:perf_hooks` resource-timing contract:
   exporting `PerformanceResourceTiming`, implementing
   `performance.markResourceTiming()`, aligning web-layer enumerable
@@ -92,7 +92,7 @@ Family-level notes:
   green.
 - `process.loadEnvFile()` is now part of the manifested green denominator
   instead of a separate watchpoint. The final enabling fixes stayed local to
-  Neovex because the remaining seam was embedder-owned: the embedded
+  Nimbus because the remaining seam was embedder-owned: the embedded
   `Node22` bootstrap now layers a runtime-only env overlay plus Node-style
   missing-file and permission error shaping on top of Deno's base op, and the
   `node_compat` subprocess helper now snapshots and restores host `cwd` and
@@ -102,7 +102,7 @@ Family-level notes:
   instead of a separate watchpoint. `process.finalization.*` is no longer an
   active `NLC4` seam in its own right: the direct official fixture bodies
   (`close.mjs`, `before-exit.mjs`, and `unregister.mjs`) now run green through
-  the Neovex-owned sync subprocess harness, and the only remaining failure in
+  the Nimbus-owned sync subprocess harness, and the only remaining failure in
   the top-level official wrapper file `test-process-finalization.mjs` is
   `different-registry-per-thread.mjs`, which depends on `node:worker_threads`
   and is therefore owned by the later VM/worker family rather than this
@@ -111,13 +111,13 @@ Family-level notes:
   default lane and the staged Node24 supported lane, but it remains outside the
   Node20 supported green subset because official `v20.20.2`
   `PerformanceResourceTiming#toJSON()` omits the later `deliveryType` and
-  `responseStatus` fields that Neovex intentionally keeps in its single
+  `responseStatus` fields that Nimbus intentionally keeps in its single
   Node22-shaped runtime contract.
 - Official `test-process-load-env-file.js` files are now manifested in the
   Node22 default lane, the official Node20 supported lane, and the staged
   Node24 supported lane. The imported file remains a good example of the owner
   split rule: the underlying Deno op still loads env content, but the final
-  batch-stability and Node-style runtime contract fixes belong in Neovex's
+  batch-stability and Node-style runtime contract fixes belong in Nimbus's
   embedded bootstrap and subprocess harness rather than the Deno fork.
 
 ## Current Local Evidence
@@ -136,5 +136,5 @@ Family-level notes:
   `CARGO_ENCODED_RUSTFLAGS` cleanly removes the repo's checked-in macOS
   `-fuse-ld=lld` flag for a single local command, but the full Deno `unit_node`
   harness still requires extra machine prerequisites such as `cmake` and the
-  prebuilt `deno` / `test_server` binaries. The current Neovex manifest lanes
+  prebuilt `deno` / `test_server` binaries. The current Nimbus manifest lanes
   are therefore the primary integration proof for this slice.

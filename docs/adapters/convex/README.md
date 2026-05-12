@@ -18,14 +18,14 @@ export const send = mutation({
 ```
 
 ```bash
-neovex dev
+nimbus dev
 ```
 
-Write TypeScript functions, run `neovex dev`, and your frontend gets reactive
+Write TypeScript functions, run `nimbus dev`, and your frontend gets reactive
 queries, mutations, and real-time subscriptions -- all running on your own
 machine. ~3 minutes from install to live data in the browser.
 
-Node.js with `npm` is required for this authoring flow. `neovex dev` runs
+Node.js with `npm` is required for this authoring flow. `nimbus dev` runs
 codegen through `node` and auto-runs `npm install` when declared packages are
 missing locally.
 
@@ -34,21 +34,21 @@ missing locally.
 **1. Scaffold a backend project:**
 
 ```bash
-neovex init convex my-app
+nimbus init convex my-app
 cd my-app
 ```
 
-`neovex init convex` scaffolds a backend-only starter: a schema, example query
+`nimbus init convex` scaffolds a backend-only starter: a schema, example query
 and mutation, `package.json`, `tsconfig.json`, and `.gitignore`. It does not
 scaffold React, Vite, or another frontend for you.
 
 **2. Start the dev server:**
 
 ```bash
-neovex dev
+nimbus dev
 ```
 
-`neovex dev` auto-runs `npm install` when declared packages are missing
+`nimbus dev` auto-runs `npm install` when declared packages are missing
 locally, auto-creates a `demo` tenant so a Convex client can connect
 immediately,
 watches your `convex/` directory, runs codegen, and starts on port 3210.
@@ -86,19 +86,19 @@ REST endpoints, no GraphQL schema.
 ## How it works
 
 Convex-compatible server-side function runtime. Teams with existing Convex apps
-can run them on Neovex by changing the deployment URL. Supports queries,
+can run them on Nimbus by changing the deployment URL. Supports queries,
 mutations, actions, paginated queries, scheduled execution, HTTP routes, and
 React hooks.
 
 ## Client package
 
-`convex` (in-repo workspace package wrapping `neovex`)
+`convex` (in-repo workspace package wrapping `nimbus`)
 
 - Exports: `convex/react`, `convex/browser`, `convex/server`, `convex/values`
 
 ## Project layout
 
-**Created by `neovex init convex`:**
+**Created by `nimbus init convex`:**
 
 ```
 my-app/
@@ -110,7 +110,7 @@ my-app/
 └── tsconfig.json
 ```
 
-**Created after the first `neovex dev` run:**
+**Created after the first `nimbus dev` run:**
 
 ```
 my-app/
@@ -120,16 +120,16 @@ my-app/
 │       ├── dataModel.d.ts     # Document type definitions
 │       ├── server.ts          # Typed wrappers
 │       └── scheduled_functions.ts
-├── .neovex/
+├── .nimbus/
 │   └── convex/                # Build artifacts (functions.json, bundle.mjs, etc.)
-├── .env.local                 # NEOVEX_DEPLOYMENT=local:<slug>
+├── .env.local                 # NIMBUS_DEPLOYMENT=local:<slug>
 ├── package.json
 └── tsconfig.json
 ```
 
 Your frontend can live in this repo or somewhere else. Point it at
 `http://localhost:3210/convex/demo` and import the generated API types from the
-Neovex app directory.
+Nimbus app directory.
 
 ## More examples
 
@@ -237,16 +237,16 @@ await live.mutation(api.messages.send, { author: "Node", body: "Hello" });
 - `--app-dir <path>`: Point to the directory containing your `convex/` source root
 - `--skip-codegen`: Skip the startup codegen pass
 - Convex URL pattern: `http://localhost:{port}/convex/{tenant_id}`
-- `neovex dev` auto-creates a `demo` tenant on startup, so `http://localhost:3210/convex/demo` is ready immediately.
-- `neovex start` does not auto-create tenants. Create them via `POST /api/tenants` before connecting a Convex client.
+- `nimbus dev` auto-creates a `demo` tenant on startup, so `http://localhost:3210/convex/demo` is ready immediately.
+- `nimbus start` does not auto-create tenants. Create them via `POST /api/tenants` before connecting a Convex client.
 
 ### Tenant creation security
 
-> **Important:** `POST /api/tenants` currently creates tenants on demand without authentication. This is convenient for local development but is a security concern in production. Pre-provision tenants via the admin API or CLI before exposing Neovex to untrusted clients.
+> **Important:** `POST /api/tenants` currently creates tenants on demand without authentication. This is convenient for local development but is a security concern in production. Pre-provision tenants via the admin API or CLI before exposing Nimbus to untrusted clients.
 
-## `neovex/` source root
+## `nimbus/` source root
 
-Neovex also supports a first-party `neovex/` source root alongside the Convex-compatible `convex/` root. When both directories exist, `neovex/` takes priority. This is experimental. See the [source directory story](../../plans/stories/support-neovex-source-directory.md) for the full contract.
+Nimbus also supports a first-party `nimbus/` source root alongside the Convex-compatible `convex/` root. When both directories exist, `nimbus/` takes priority. This is experimental. See the [source directory story](../../plans/stories/support-nimbus-source-directory.md) for the full contract.
 
 ## Known Limitations
 

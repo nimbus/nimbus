@@ -1,4 +1,4 @@
 export default {
-  distDir: ".neovex/tmp/next-dist",
+  distDir: ".nimbus/tmp/next-dist",
 };
 

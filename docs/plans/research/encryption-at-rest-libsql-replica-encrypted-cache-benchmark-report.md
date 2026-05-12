@@ -3,9 +3,9 @@
 Generated with:
 
 ```bash
-NEOVEX_LIBSQL_URL='http://127.0.0.1:18080' \
-NEOVEX_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \
-make bench-libsql-replica-provider WORKLOADS='point-read indexed-query composite-indexed-query barrier-refresh peer-catch-up' ENCRYPTION=temp-master-key-file REPORT=/Users/jack/src/github.com/agentstation/neovex/docs/plans/research/encryption-at-rest-libsql-replica-encrypted-cache-benchmark-report.md
+NIMBUS_LIBSQL_URL='http://127.0.0.1:18080' \
+NIMBUS_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \
+make bench-libsql-replica-provider WORKLOADS='point-read indexed-query composite-indexed-query barrier-refresh peer-catch-up' ENCRYPTION=temp-master-key-file REPORT=/Users/jack/src/github.com/nimbus/nimbus/docs/plans/research/encryption-at-rest-libsql-replica-encrypted-cache-benchmark-report.md
 ```
 
 ## Methodology
@@ -29,7 +29,7 @@ make bench-libsql-replica-provider WORKLOADS='point-read indexed-query composite
 - peer catch-up timeout: `6` with `25.00 ms` polling interval
 - local cache encryption posture: `manifest-backed encrypted local cache`
 - local cache encryption notes: enables the real service startup path with a benchmark-only master key file so control-plane redb and replica cache SQLite files both reopen through manifest-backed DEKs
-- report path: `/Users/jack/src/github.com/agentstation/neovex/docs/plans/research/encryption-at-rest-libsql-replica-encrypted-cache-benchmark-report.md`
+- report path: `/Users/jack/src/github.com/nimbus/nimbus/docs/plans/research/encryption-at-rest-libsql-replica-encrypted-cache-benchmark-report.md`
 - workload filter: `point read latency, indexed query latency, composite indexed query latency, same-service barrier refresh latency, peer catch-up / delegated-write visibility latency`
 
 ## SQLite Contrast Scorecard

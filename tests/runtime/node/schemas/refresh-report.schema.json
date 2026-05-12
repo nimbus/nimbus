@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://neovex.local/node-compat/refresh-report.schema.json",
+  "$id": "https://nimbus.local/node-compat/refresh-report.schema.json",
   "title": "Node compatibility refresh report",
   "type": "object",
   "required": [

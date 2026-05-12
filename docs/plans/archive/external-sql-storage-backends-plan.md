@@ -16,11 +16,11 @@ Reviewed against:
 - `docs/plans/README.md`
 - `docs/plans/archive/pluggable-storage-backend-plan.md`
 - `docs/plans/encryption-at-rest-plan.md`
-- `crates/neovex-engine/src/persistence.rs`
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-storage/src/async_storage/traits.rs`
-- `crates/neovex-storage/src/async_storage/engine.rs`
-- `crates/neovex-storage/src/sqlite.rs`
+- `crates/nimbus-engine/src/persistence.rs`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-storage/src/async_storage/traits.rs`
+- `crates/nimbus-storage/src/async_storage/engine.rs`
+- `crates/nimbus-storage/src/sqlite.rs`
 
 Additional external references:
 
@@ -99,7 +99,7 @@ prematurely.
 - The runtime-facing config story now lowers idiomatic CLI flags, environment
   variables, and JSON config into `ServicePersistenceConfig`,
   `TenantProviderConfig`, and `ControlPlaneConfig`.
-- `NEOVEX_POSTGRES_URL` is now the canonical Postgres resource input, while
+- `NIMBUS_POSTGRES_URL` is now the canonical Postgres resource input, while
   test, benchmark, and runtime intent remain separate from the resource
   identity and are chosen by the invoking surface.
 - Future replica-connected SQLite work must reject raw network-mounted SQLite
@@ -141,8 +141,8 @@ prematurely.
   `mysql_async` directly, because it is Tokio-native, already includes a pool,
   and keeps transaction, locking-read, and dynamic fully qualified SQL control
   explicit. `sqlx` and `diesel-async` remain valid in the abstract, but they
-  are not the best first fit for Neovex's provider seam.
-- Future provider work should continue to start from settled Neovex semantics,
+  are not the best first fit for Nimbus's provider seam.
+- Future provider work should continue to start from settled Nimbus semantics,
   not from a least-common-denominator CRUD trait.
 - With `PX3` and `PX5` complete, this umbrella plan has finished its design
   and cleanup role. Future concrete provider implementation work should
@@ -236,7 +236,7 @@ The future runtime-facing rule is:
   `ServicePersistenceConfig`
 - the canonical Postgres connection resource may be represented once in typed
   config and optionally surfaced through a generic env input such as
-  `NEOVEX_POSTGRES_URL`
+  `NIMBUS_POSTGRES_URL`
 - test, benchmark, and runtime intent should be chosen by command/profile/CLI
   semantics rather than by encoding purpose into different resource variable
   names
@@ -326,7 +326,7 @@ The future `SqliteReplicaProvider` name remains valid, but it must not mean
 - The best first fit for a future replica-connected SQLite implementation is a
   `libsql`-style provider family, not a local-only SQLite driver stretched
   across a topology problem. `libsql`'s `Builder` already models the provider
-  shapes Neovex actually cares about here: `new_remote_replica`,
+  shapes Nimbus actually cares about here: `new_remote_replica`,
   `new_local_replica`, `new_synced_database`, optional delegated writes, and
   explicit `read_your_writes` / `sync_until` behavior.
 - `rusqlite` and `sqlx::Sqlite` remain good tools for plain local SQLite, but
@@ -352,7 +352,7 @@ The future `SqliteReplicaProvider` name remains valid, but it must not mean
   and catch-up latency, documents failover and promotion assumptions, and
   verifies strong-read fallback behavior before code lands.
 
-The current umbrella `TenantPersistence` enum in `crates/neovex-engine/src/persistence.rs`
+The current umbrella `TenantPersistence` enum in `crates/nimbus-engine/src/persistence.rs`
 is acceptable as a live composition root, but future Postgres/MySQL work should
 refine it toward the capability families above rather than expanding the enum
 with more backend-specific branches.
@@ -360,7 +360,7 @@ with more backend-specific branches.
 Provider-specific execution rules for external modes:
 
 - provider implementations may coalesce planner or scheduler requests into
-  fewer backend round trips as long as Neovex semantics stay unchanged
+  fewer backend round trips as long as Nimbus semantics stay unchanged
 - provider implementations own transaction scope, pooling, retry policy,
   server-side planning, and notification/catch-up mechanics below the seam
 - the engine owns policy merge, `CommitEntry`, journal meaning, execution-unit
@@ -385,7 +385,7 @@ The first concrete non-local provider mode is `PostgresProvider`.
 
 ### Transaction and sequencing model
 
-- Preserve the current Neovex logical journal model instead of collapsing it
+- Preserve the current Nimbus logical journal model instead of collapsing it
   into "the database transaction log".
 - Keep durable journal rows as serialized `DurableMutationRecord` blobs in
   `commit_log`.
@@ -394,7 +394,7 @@ The first concrete non-local provider mode is `PostgresProvider`.
 - Preserve durable-head and applied-head semantics in tenant metadata.
 - Enforce per-tenant ordered journal append and apply through provider-owned
   serialization inside Postgres so concurrent service requests do not weaken
-  Neovex's logical ordering guarantees.
+  Nimbus's logical ordering guarantees.
 - Use Postgres MVCC transactions to provide the consistent read boundary needed
   by planner-driven reads, execution-unit OCC, bootstrap, and materialized
   serving behavior.
@@ -425,13 +425,13 @@ The first concrete non-local provider mode is `PostgresProvider`.
 
 ## PX5 MySQL Provider Mode Decision
 
-The first MySQL mode should preserve the same Neovex semantics as the
+The first MySQL mode should preserve the same Nimbus semantics as the
 Postgres-first path while using MySQL-native physical mechanics.
 
 ### Tenant layout
 
 - Use one provider-owned MySQL deployment with one small provider metadata
-  database and one tenant database per Neovex tenant.
+  database and one tenant database per Nimbus tenant.
 - In MySQL, schemas and databases share the same namespace, so
   database-per-tenant is the closest analog to SQLite file-per-tenant and
   Postgres schema-per-tenant without collapsing tenant isolation into shared
@@ -483,7 +483,7 @@ Postgres-first path while using MySQL-native physical mechanics.
   Its crate docs describe it as a Tokio-based asynchronous MySQL client, and
   its built-in `Pool` is already cloneable, `Send + Sync`, and paired with
   explicit transaction control via `Conn::start_transaction`. That matches
-  Neovex's need for provider-owned fully qualified dynamic SQL, explicit
+  Nimbus's need for provider-owned fully qualified dynamic SQL, explicit
   locking reads, prepared statements, and coarse transaction boundaries below
   the seam.
 - `sqlx` remains a valid Rust option in the abstract, but it is not the best
@@ -495,7 +495,7 @@ Postgres-first path while using MySQL-native physical mechanics.
   statements would give up most of that advantage.
 - `diesel-async` also remains valid in the abstract, but it is still an async
   Diesel ORM/query-builder layer. That is the wrong center of gravity for the
-  Neovex provider seam, which wants backend-native SQL and explicit physical
+  Nimbus provider seam, which wants backend-native SQL and explicit physical
   control rather than a schema-first DSL.
 - Canonical automated MySQL verification should use
   `testcontainers-modules::mysql` for self-contained integration tests, with
@@ -503,7 +503,7 @@ Postgres-first path while using MySQL-native physical mechanics.
   Postgres, future runtime/test/benchmark intent should stay separate from the
   resource identity; a future active implementation plan may surface one
   canonical typed MySQL resource value, potentially through a generic env name
-  such as `NEOVEX_MYSQL_URL`, while keeping purpose-specific behavior in the
+  such as `NIMBUS_MYSQL_URL`, while keeping purpose-specific behavior in the
   invoking command or profile.
 
 ### Future activation rule
@@ -676,7 +676,7 @@ This plan does not cover:
 | PX6 | `done` | defined the Postgres-specific benchmark lanes, workloads, operational drills, and promotion criteria needed before any implementation control plane can be activated | PX4 | the first activated mode needs its own measured readiness gate |
 | PX7 | `done` | promoted the Postgres-first provider mode into a dedicated implementation control plane, which has since completed and been archived at `docs/plans/archive/postgres-storage-provider-plan.md` | PX6 | use the archived Postgres plan for historical context only; future provider-topology work resumes from this deferred umbrella plan |
 | PX8 | `done` | made the cross-tenant usage/control path lower through an explicit control-plane provider seam instead of hard-wiring local redb construction in service setup | PX7 | kept this separate from `TenantPersistence`; retained local redb remains the current control-plane provider |
-| PX9 | `done` | defined the idiomatic runtime CLI/env/config surface for provider selection and topology so typed config, not harness env vars, becomes the operator-facing contract, while resource identity stays separate from test/bench/runtime intent | PX7 | `NEOVEX_POSTGRES_URL` is now the canonical Postgres resource input, with command/profile semantics deciding runtime vs test vs benchmark intent |
+| PX9 | `done` | defined the idiomatic runtime CLI/env/config surface for provider selection and topology so typed config, not harness env vars, becomes the operator-facing contract, while resource identity stays separate from test/bench/runtime intent | PX7 | `NIMBUS_POSTGRES_URL` is now the canonical Postgres resource input, with command/profile semantics deciding runtime vs test vs benchmark intent |
 
 ## Dependency Graph
 
@@ -723,7 +723,7 @@ This plan does not cover:
 | PX6 | Complete. The plan now requires steady-state, cold-start, and RTT-sensitive benchmark lanes plus listener-loss, reconnect, restart, pool-pressure, and tenant-lifecycle drills before the Postgres mode can promote into implementation ownership. | start `PX7` and promote the Postgres-first mode into a dedicated active implementation control plane |
 | PX7 | Complete. The dedicated Postgres-first implementation control plane has landed, completed, and been archived at `docs/plans/archive/postgres-storage-provider-plan.md`, while this file returns to follow-on ownership for broader provider-topology design. | keep this plan deferred until replica-connected SQLite, MySQL, or later control-plane expansion work is activated |
 | PX8 | Complete. The global usage/control path now lowers through an explicit `ControlPlaneProvider` role backed by `EmbeddedRedbControlPlaneProvider`, and embedded tenant persistence no longer has to smuggle control-plane construction through `EmbeddedRedbProvider`. Split control-plane directories are supported in typed service config. | `PX9` complete; keep the umbrella plan deferred until `PX3`, `PX5`, or a later control-plane/provider-topology slice activates |
-| PX9 | Complete. `neovex-bin` now lowers CLI, env, and JSON config into `ServicePersistenceConfig`, supports explicit `control_data_dir`, and treats `NEOVEX_POSTGRES_URL` as the canonical Postgres resource input while keeping execution intent in the invoking command/profile surface. | roadmap complete; use this file as historical design baseline only and start any later provider-topology implementation from a new active plan |
+| PX9 | Complete. `nimbus-bin` now lowers CLI, env, and JSON config into `ServicePersistenceConfig`, supports explicit `control_data_dir`, and treats `NIMBUS_POSTGRES_URL` as the canonical Postgres resource input while keeping execution intent in the invoking command/profile surface. | roadmap complete; use this file as historical design baseline only and start any later provider-topology implementation from a new active plan |
 
 ## Execution Log
 
@@ -739,16 +739,16 @@ This plan does not cover:
 | 2026-04-09 | PX0 | done | Scoped the first Postgres activation to tenant persistence only after confirming from `Service::new_with_simulation_and_embedded_provider`, `service/usage.rs`, `UsageStore`, and `RedbUsageStorage` that the current cross-tenant usage/control path is a separate local redb concern. Recorded that `UsageStore` / `RedbUsageStorage` stay local for the first non-local slice instead of silently expanding Postgres scope into a global control-plane redesign. | doc/code review; `git diff --check` | start `PX1` and codify the typed provider config model around this boundary |
 | 2026-04-09 | PX1 | done | Codified the durable typed config model from the live embedded-only surfaces. Recorded that the future service-level config should split into `ServicePersistenceConfig`, `TenantProviderConfig`, and `ControlPlaneConfig`, with `PersistenceDialect` and `PersistenceTopology` as separate validated axes. Also recorded that `Service::new(data_dir)`, `Service::new_with_embedded_provider(...)`, `EmbeddedProviderKind`, and file-extension/path-based tenant discovery are retained embedded conveniences, not the durable cross-provider API. | doc/code review; `git diff --check` | start `PX2` and codify the common external-provider execution contract around coarse semantic operations and external cost-model constraints |
 | 2026-04-09 | PX2 | done | Hardened the external-provider contract around capability families derived from the live seam: `TenantQueryRead`, `TenantMutationPersistence`, `TenantJournalPersistence`, `TenantSchedulerPersistence`, `TenantSnapshotPersistence`, and `TenantSchemaPersistence`. Recorded that external providers may optimize round trips below the seam, but the common contract must not collapse into path-shaped construction, hook-driven reactivity, row-at-a-time remote iterators, or chatty CRUD. | doc/code review; `git diff --check` | start `PX4` and design the concrete Postgres provider mode on top of this contract |
-| 2026-04-09 | PX4 | done | Designed `PostgresProvider` as the first concrete non-local mode. The plan now fixes the layout to one provider-owned Postgres database with provider registry metadata plus per-tenant schemas, preserves Neovex logical journal rows as serialized blobs with Postgres-native sequence allocation, keeps notifications as wake hints rather than the reactive contract, and makes recovery depend on metadata plus journal replay rather than listener continuity. | doc/code review; `git diff --check` | start `PX6` and define the benchmark and operational gates for this Postgres mode |
+| 2026-04-09 | PX4 | done | Designed `PostgresProvider` as the first concrete non-local mode. The plan now fixes the layout to one provider-owned Postgres database with provider registry metadata plus per-tenant schemas, preserves Nimbus logical journal rows as serialized blobs with Postgres-native sequence allocation, keeps notifications as wake hints rather than the reactive contract, and makes recovery depend on metadata plus journal replay rather than listener continuity. | doc/code review; `git diff --check` | start `PX6` and define the benchmark and operational gates for this Postgres mode |
 | 2026-04-09 | PX6 | done | Defined the Postgres-specific readiness gate: steady-state, cold-start, and RTT-sensitive lanes; CRUD/query/journal/subscription/mixed-load and tenant-lifecycle workloads; and listener-loss, reconnect, restart, pool-pressure, and tenant cleanup drills. Recorded that Postgres need not beat embedded SQLite, but it must show predictable costs, explicit operator assumptions, and no semantic regressions before promotion. | doc/code review; `git diff --check` | start `PX7` and promote the Postgres-first mode into a dedicated active implementation control plane |
 | 2026-04-09 | PX7 | done | Promoted the Postgres-first provider mode into `docs/plans/postgres-storage-provider-plan.md`, which now owns the active implementation work. Returned this umbrella plan to deferred follow-on ownership for replica-connected SQLite, MySQL, later control-plane expansion, and other non-local or coordinated provider-topology slices. | doc/code review; `git diff --check` | keep deferred until a later provider-topology slice needs activation |
 | 2026-04-10 | meta | updated | Recorded that the dedicated Postgres-first implementation workstream is complete and archived at `docs/plans/archive/postgres-storage-provider-plan.md`, including the benchmark gate and operator-facing conclusion that Postgres remains an opt-in external mode rather than a latency replacement for the embedded default. This umbrella plan now resumes deferred ownership for future replica-connected SQLite, MySQL, and broader coordinated-provider follow-on work. | doc review | keep deferred until a later provider-topology slice needs activation |
-| 2026-04-10 | meta | refined | Added two explicit follow-on cleanup slices to this umbrella plan: `PX8` for the remaining redb-backed cross-tenant control-plane seam, and `PX9` for the idiomatic runtime CLI/env/config contract that should lower into `ServicePersistenceConfig`. Recorded that harness env vars like `NEOVEX_TEST_POSTGRES_URL` and `NEOVEX_BENCH_POSTGRES_URL` remain harness inputs rather than the operator-facing runtime surface. | doc review | activate `PX8` or `PX9` explicitly when we are ready to clean up the control-plane seam or formalize runtime provider startup config |
-| 2026-04-10 | meta | refined | Clarified the config principle for future provider cleanup: resource identity and execution intent should stay separate. A single typed Postgres connection value, potentially exposed as `NEOVEX_POSTGRES_URL`, is acceptable as the canonical resource input, while test, benchmark, and runtime semantics should be chosen by the invoking surface rather than by multiplying DSN env-var names. | doc review | when `PX9` activates, prefer one canonical resource input plus explicit command/profile semantics over purpose-specific DSN naming |
+| 2026-04-10 | meta | refined | Added two explicit follow-on cleanup slices to this umbrella plan: `PX8` for the remaining redb-backed cross-tenant control-plane seam, and `PX9` for the idiomatic runtime CLI/env/config contract that should lower into `ServicePersistenceConfig`. Recorded that harness env vars like `NIMBUS_TEST_POSTGRES_URL` and `NIMBUS_BENCH_POSTGRES_URL` remain harness inputs rather than the operator-facing runtime surface. | doc review | activate `PX8` or `PX9` explicitly when we are ready to clean up the control-plane seam or formalize runtime provider startup config |
+| 2026-04-10 | meta | refined | Clarified the config principle for future provider cleanup: resource identity and execution intent should stay separate. A single typed Postgres connection value, potentially exposed as `NIMBUS_POSTGRES_URL`, is acceptable as the canonical resource input, while test, benchmark, and runtime semantics should be chosen by the invoking surface rather than by multiplying DSN env-var names. | doc review | when `PX9` activates, prefer one canonical resource input plus explicit command/profile semantics over purpose-specific DSN naming |
 | 2026-04-10 | meta | activated | Reactivated this umbrella plan for the control-plane and runtime-config cleanup pass after the completed Postgres-first implementation. `PX8` became the live roadmap item and `PX9` followed immediately after it. | doc review | implement `PX8` in code, verify it, and then start `PX9` |
-| 2026-04-10 | PX8 | done | Split the cross-tenant usage/control path into an explicit control-plane provider role. Landed `EmbeddedRedbControlPlaneProvider`, added `ControlPlaneProvider` to the engine seam, removed the hidden usage-store role from `EmbeddedRedbProvider`, and allowed typed embedded configs to use a separate control-plane data directory. | `cargo test -p neovex-engine embedded_providers -- --nocapture`; `cargo check -p neovex-engine`; `cargo fmt --all --check`; `cargo check --workspace` | start `PX9` and formalize the runtime CLI/env/config surface on top of the settled typed config seam |
-| 2026-04-10 | PX9 | done | Landed the canonical runtime config lowering in `neovex-bin`: CLI, env, and JSON config now all lower into `ServicePersistenceConfig`, `control_data_dir` is explicit, and `NEOVEX_POSTGRES_URL` is the canonical Postgres resource input while runtime/test/benchmark intent stays with the invoking command/profile surface. Also refreshed `ARCHITECTURE.md` to match the live seams. | `cargo test -p neovex-bin -- --nocapture`; `cargo test -p neovex-engine postgres_provider -- --nocapture`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy` | keep this umbrella plan deferred again until `PX3`, `PX5`, or a later provider-topology slice is activated explicitly |
+| 2026-04-10 | PX8 | done | Split the cross-tenant usage/control path into an explicit control-plane provider role. Landed `EmbeddedRedbControlPlaneProvider`, added `ControlPlaneProvider` to the engine seam, removed the hidden usage-store role from `EmbeddedRedbProvider`, and allowed typed embedded configs to use a separate control-plane data directory. | `cargo test -p nimbus-engine embedded_providers -- --nocapture`; `cargo check -p nimbus-engine`; `cargo fmt --all --check`; `cargo check --workspace` | start `PX9` and formalize the runtime CLI/env/config surface on top of the settled typed config seam |
+| 2026-04-10 | PX9 | done | Landed the canonical runtime config lowering in `nimbus-bin`: CLI, env, and JSON config now all lower into `ServicePersistenceConfig`, `control_data_dir` is explicit, and `NIMBUS_POSTGRES_URL` is the canonical Postgres resource input while runtime/test/benchmark intent stays with the invoking command/profile surface. Also refreshed `ARCHITECTURE.md` to match the live seams. | `cargo test -p nimbus-bin -- --nocapture`; `cargo test -p nimbus-engine postgres_provider -- --nocapture`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo check --workspace`; `make check`; `make test`; `make clippy` | keep this umbrella plan deferred again until `PX3`, `PX5`, or a later provider-topology slice is activated explicitly |
 | 2026-04-10 | PX3 | done | Closed the remaining replica-connected SQLite design gap. Recorded that raw network-mounted SQLite files are not an acceptable provider mode, defined future replica SQLite as a concrete primary/replica provider family with primary-owned writes and sequence-barrier reads, and required any implementation to start from a new dedicated active plan instead of reopening this umbrella file as live progress state. | doc review against `ARCHITECTURE.md`, `docs/plans/README.md`, and official SQLite network/WAL guidance; `git diff --check` | close the remaining MySQL design gap so this umbrella plan can become historical baseline only |
 | 2026-04-10 | PX5 | done | Closed the remaining MySQL design gap. Recorded MySQL as a provider metadata database plus tenant-database model with InnoDB MVCC, auto-increment journal sequencing, generated-column JSON indexing, durable-progress recovery, and explicit replication/queue-claim assumptions that future implementation work must validate in a dedicated active plan. | doc review against `ARCHITECTURE.md`, `docs/plans/README.md`, and official MySQL locking/indexing/schema docs; `git diff --check` | rerun canonical provider verification with Docker available and write back any final implementation findings before treating this plan as closed historical baseline |
-| 2026-04-10 | meta | completed | Closed the umbrella provider-topology plan as historical baseline. Once Docker Desktop was available, reran the container-backed Postgres provider suites and full repo verification. That surfaced a real provider concurrency bug: a single-thread `neovex-engine` background executor let the long-lived Postgres hint worker starve the mutation journal response path during restart recovery. Fixed the live code by widening the engine background executor to two worker threads, kept the restart-recovery drill deterministic, and reran the Docker-backed provider suites plus repo-wide verification successfully. | `cargo fmt --all --check`; `cargo test -p neovex-storage postgres_provider -- --nocapture`; `cargo test -p neovex-engine postgres_restart_recovers_due_scheduler_work_after_reopen -- --nocapture`; `cargo test -p neovex-engine postgres_provider -- --nocapture`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `make ci` (initial sandboxed run failed at `cargo deny` because the advisory DB lock under `/Users/jack/.cargo` was read-only; elevated rerun passed); `git diff --check` | roadmap complete; use this file as historical design baseline only and start future provider-topology implementation from a new active plan |
-| 2026-04-10 | meta | refined | Added the same style of connector-fit analysis that guided the Postgres implementation choice. The umbrella plan and `ARCHITECTURE.md` now explicitly recommend a `libsql`-style provider family as the best first fit for replica-connected SQLite and `mysql_async` as the best first fit for MySQL, while recording why local-only SQLite drivers, `sqlx`, and `diesel-async` are weaker fits for Neovex's provider seam. | primary-source review of `libsql`, `mysql_async`, `sqlx`, `rusqlite`, and `testcontainers-modules::mysql`; `git diff --check` | future replica-SQLite or MySQL implementation should start from a new active plan that reuses these connector recommendations unless the source landscape changes materially |
+| 2026-04-10 | meta | completed | Closed the umbrella provider-topology plan as historical baseline. Once Docker Desktop was available, reran the container-backed Postgres provider suites and full repo verification. That surfaced a real provider concurrency bug: a single-thread `nimbus-engine` background executor let the long-lived Postgres hint worker starve the mutation journal response path during restart recovery. Fixed the live code by widening the engine background executor to two worker threads, kept the restart-recovery drill deterministic, and reran the Docker-backed provider suites plus repo-wide verification successfully. | `cargo fmt --all --check`; `cargo test -p nimbus-storage postgres_provider -- --nocapture`; `cargo test -p nimbus-engine postgres_restart_recovers_due_scheduler_work_after_reopen -- --nocapture`; `cargo test -p nimbus-engine postgres_provider -- --nocapture`; `cargo check --workspace`; `make check`; `make test`; `make clippy`; `make ci` (initial sandboxed run failed at `cargo deny` because the advisory DB lock under `/Users/jack/.cargo` was read-only; elevated rerun passed); `git diff --check` | roadmap complete; use this file as historical design baseline only and start future provider-topology implementation from a new active plan |
+| 2026-04-10 | meta | refined | Added the same style of connector-fit analysis that guided the Postgres implementation choice. The umbrella plan and `ARCHITECTURE.md` now explicitly recommend a `libsql`-style provider family as the best first fit for replica-connected SQLite and `mysql_async` as the best first fit for MySQL, while recording why local-only SQLite drivers, `sqlx`, and `diesel-async` are weaker fits for Nimbus's provider seam. | primary-source review of `libsql`, `mysql_async`, `sqlx`, `rusqlite`, and `testcontainers-modules::mysql`; `git diff --check` | future replica-SQLite or MySQL implementation should start from a new active plan that reuses these connector recommendations unless the source landscape changes materially |

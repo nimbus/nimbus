@@ -4,7 +4,7 @@ Canonical execution control plane for the next post-Firebase, post-Cloud
 Functions architecture wave. This plan exists because the previous adapter
 boundary work landed the right broad direction, but the review found several
 remaining seams that are still less canonical, less idiomatic, or less
-trustworthy than Neovex should accept pre-launch:
+trustworthy than Nimbus should accept pre-launch:
 
 - server-owned application auth still depends on Convex-owned types and
   registries
@@ -51,7 +51,7 @@ Reviewed against:
 
 ## Why This Exists
 
-Neovex now has multiple adapter families and a much cleaner shared primitive
+Nimbus now has multiple adapter families and a much cleaner shared primitive
 core than it did before the Firebase work. That progress is real. The current
 review findings are narrower, but they matter more:
 
@@ -149,8 +149,8 @@ This plan does not cover:
   runtime ABI payload dispatch.
 - `RuntimeHostContext::build(...)` and `ConvexHostBridge::build(...)` still
   duplicate mutation-session bootstrap logic.
-- `cargo clippy -p neovex-server --lib --tests -- -D warnings` currently fails
-  immediately on `neovex-core/src/typed_scalar.rs` for `manual_div_ceil`,
+- `cargo clippy -p nimbus-server --lib --tests -- -D warnings` currently fails
+  immediately on `nimbus-core/src/typed_scalar.rs` for `manual_div_ceil`,
   which is a useful signal that the touched stack is not back to a clean
   idiomatic baseline yet.
 
@@ -259,7 +259,7 @@ Goal: stop emitting incorrect document lifecycle metadata.
 
 - Decide the canonical source of document update time for covered
   Firestore-admin responses
-- If Neovex needs a new shared `update_time` concept, add it end to end through
+- If Nimbus needs a new shared `update_time` concept, add it end to end through
   the correct primitive layers
 - If the value cannot be made truthful in this slice, remove the false field
   instead of preserving a lie
@@ -343,13 +343,13 @@ Each implementation item should record focused verification before it closes.
 Expected lanes include the narrowest proofs that match the touched surface, for
 example:
 
-- `cargo test -p neovex-server cloud_functions --lib`
-- focused Firebase lanes under `cargo test -p neovex-server ...`
-- focused Convex auth/runtime lanes under `cargo test -p neovex-server ...`
-- `cargo check -p neovex-server`
+- `cargo test -p nimbus-server cloud_functions --lib`
+- focused Firebase lanes under `cargo test -p nimbus-server ...`
+- focused Convex auth/runtime lanes under `cargo test -p nimbus-server ...`
+- `cargo check -p nimbus-server`
 - `cargo fmt --all --check`
-- `cargo clippy -p neovex-server --lib --tests -- -D warnings`
-- focused `npm run typecheck --workspace @neovex/firebase` when adapter-facing
+- `cargo clippy -p nimbus-server --lib --tests -- -D warnings`
+- focused `npm run typecheck --workspace @nimbus/firebase` when adapter-facing
   JS surfaces change
 
 Use broader workspace verification only after the focused proofs are green.
@@ -361,4 +361,4 @@ Use broader workspace verification only after the focused proofs are green.
 | 2026-04-26 | plan authoring | `done` | Created this control-plane plan from the full post-RCAB architecture review to close the remaining auth ownership, provider-family seam, runtime bootstrap, metadata truth, and idiomatic-Rust trust gaps before any native transport promotion. No code verification ran in the authoring pass because this step only established the control plane. |
 | 2026-04-26 | `ARTH1`-`ARTH7` | `done` | Landed the server-owned auth seam, fail-closed callable auth, shared Firestore-family compatibility helpers, truthful Firestore-admin metadata, shared runtime bootstrap construction, and explicit runtime ABI layering under `runtime_host/abi/*`. |
 | 2026-04-26 | `ARTH8` | `done` | Closed the hot-path idiomatic-Rust cleanup with shared auth/bootstrap argument shaping, Cloud Functions callable request shaping, `typed_scalar.rs` `div_ceil` cleanup, and a scoped Firebase gRPC lint posture that keeps `tonic::Status` explicit at the transport boundary while removing the real shape issues called out by clippy. |
-| 2026-04-26 | `ARTH9` | `done` | Focused verification is green: `cargo fmt --all --check`, `cargo clippy -p neovex-server --lib --tests -- -D warnings`, `cargo test -p neovex-server cloud_functions --lib`, `cargo test -p neovex-server adapters::convex::tests::authorization --lib`, `cargo test -p neovex-server provider_family::firestore --lib`, and `npm run test --workspace @neovex/codegen`. Updated `docs/plans/README.md`, `AGENTS.md`, reference docs, and the deferred native transport plan to point at this completed trust baseline. |
+| 2026-04-26 | `ARTH9` | `done` | Focused verification is green: `cargo fmt --all --check`, `cargo clippy -p nimbus-server --lib --tests -- -D warnings`, `cargo test -p nimbus-server cloud_functions --lib`, `cargo test -p nimbus-server adapters::convex::tests::authorization --lib`, `cargo test -p nimbus-server provider_family::firestore --lib`, and `npm run test --workspace @nimbus/codegen`. Updated `docs/plans/README.md`, `AGENTS.md`, reference docs, and the deferred native transport plan to point at this completed trust baseline. |

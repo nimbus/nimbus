@@ -8,7 +8,7 @@ one orchestration path.
 
 ## Supported Lanes
 
-Neovex currently carries these selectable Node.js compatibility lanes:
+Nimbus currently carries these selectable Node.js compatibility lanes:
 
 | Lane | Public role | Notes |
 | --- | --- | --- |
@@ -17,7 +17,7 @@ Neovex currently carries these selectable Node.js compatibility lanes:
 | `node24` | Supported | Supported current-line compatibility lane. |
 
 Future lanes should use the same `nodeNN` shape and start with checked-in lane
-metadata under `crates/neovex-runtime/src/runtime/tests/node_compat_manifests/lanes/`.
+metadata under `crates/nimbus-runtime/src/runtime/tests/node_compat_manifests/lanes/`.
 
 ## One Command Path
 

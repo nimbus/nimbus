@@ -14,7 +14,7 @@ Reviewed against (local repos):
 - Convex backend (`~/src/github.com/get-convex/convex-backend`)
 - TigerBeetle (`~/src/github.com/tigerbeetle/tigerbeetle`)
 - CockroachDB (`~/src/github.com/cockroachdb/cockroach`)
-- Neovex current state (commit `3f553ad` and dirty worktree)
+- Nimbus current state (commit `3f553ad` and dirty worktree)
 
 Reviewed against (docs):
 
@@ -127,12 +127,12 @@ Update this section whenever an item is left partially complete across sessions.
 
 | Item | Checkpoint | Next Step |
 |------|------------|-----------|
-| EO1 | completed on 2026-04-03: `Service` now owns engine/storage `BackgroundExecutor` fields, async storage uses the service-owned storage handle for all blocking work, `neovex-bin` drains via `service.quiesce().await`, and executor quiesce semantics are covered by targeted tests. | start `EO2` by adding a separate `MutationAdmissionGate` before journal enqueue |
-| EO2 | completed on 2026-04-03: async mutations now enter a separate per-tenant `MutationAdmissionGate`; the journal worker drains that gate before commit-path processing, sheds stale gate items via CoDel, preserves admitted work once it reaches the journal path, and can top off the current batch from gate work that arrives before the batch snapshot closes. Coverage now includes gate shedding, gate buffering while the journal is paused, admitted-work durability, and the full `neovex-engine` crate. | start `EO3` by merging queue-level subscription delivery work across distinct journal batches |
+| EO1 | completed on 2026-04-03: `Service` now owns engine/storage `BackgroundExecutor` fields, async storage uses the service-owned storage handle for all blocking work, `nimbus-bin` drains via `service.quiesce().await`, and executor quiesce semantics are covered by targeted tests. | start `EO2` by adding a separate `MutationAdmissionGate` before journal enqueue |
+| EO2 | completed on 2026-04-03: async mutations now enter a separate per-tenant `MutationAdmissionGate`; the journal worker drains that gate before commit-path processing, sheds stale gate items via CoDel, preserves admitted work once it reaches the journal path, and can top off the current batch from gate work that arrives before the batch snapshot closes. Coverage now includes gate shedding, gate buffering while the journal is paused, admitted-work durability, and the full `nimbus-engine` crate. | start `EO3` by merging queue-level subscription delivery work across distinct journal batches |
 | EO3 | completed on 2026-04-03: the subscription delivery worker now drains a small ready batch, merges `QueuedSubscriptionWork` items before dispatch, preserves the existing journal-batch coalescing behavior, and records `queue_level_merge_count` alongside the existing stale-delivery skip metrics. | start `EO4` by introducing the shared watchdog timer and routing registration through it |
 | EO4 | completed on 2026-04-03: `RuntimeExecutor` now owns a shared `WatchdogTimer`; runtime invocations register timeout and external-cancellation termination against that timer, disarm those registrations before `JsRuntime` teardown, and no longer spawn dedicated watchdog OS threads per invocation. Added unit coverage for timeout firing, disarm, and external-cancellation polling. | start `EO5` by decoupling `worker_threads` from JS permits and adding suspend/resume |
-| EO5 | completed on 2026-04-03: `RuntimeExecutor` now runs worker threads through `WorkerLoopFactory` / `RunToCompletionWorkerLoop`, uses a worker-local `DenoRuntimeBackend`, decouples `worker_threads` from `max_concurrent_isolates`, and tracks per-tenant active/in-flight/queued admission separately. `SharedInvocationPermit` now lives in `OpState`, async host ops suspend and re-acquire permits through that shared controller, and timeout accounting pauses while an invocation waits to re-acquire its permit. Coverage now includes freed-permit capacity across workers, same-tenant in-flight accounting, parked-invocation resume, timeout exclusion for permit re-acquire wait, the full `neovex-runtime` suite, the Convex demo server flow, and workspace clippy. | start `EO6` by deleting the dead `RuntimeHostExecutor` path |
-| EO6 | completed on 2026-04-03: deleted `crates/neovex-runtime/src/host_executor.rs`, removed the dead `mod` / public re-export from `neovex-runtime`, and scrubbed the architecture reference that still described it as a live runtime surface. The runtime crate verification stayed green after the deletion. | start `EO7` by replacing sequential scheduler tenant iteration with bounded concurrent fan-out |
+| EO5 | completed on 2026-04-03: `RuntimeExecutor` now runs worker threads through `WorkerLoopFactory` / `RunToCompletionWorkerLoop`, uses a worker-local `DenoRuntimeBackend`, decouples `worker_threads` from `max_concurrent_isolates`, and tracks per-tenant active/in-flight/queued admission separately. `SharedInvocationPermit` now lives in `OpState`, async host ops suspend and re-acquire permits through that shared controller, and timeout accounting pauses while an invocation waits to re-acquire its permit. Coverage now includes freed-permit capacity across workers, same-tenant in-flight accounting, parked-invocation resume, timeout exclusion for permit re-acquire wait, the full `nimbus-runtime` suite, the Convex demo server flow, and workspace clippy. | start `EO6` by deleting the dead `RuntimeHostExecutor` path |
+| EO6 | completed on 2026-04-03: deleted `crates/nimbus-runtime/src/host_executor.rs`, removed the dead `mod` / public re-export from `nimbus-runtime`, and scrubbed the architecture reference that still described it as a live runtime surface. The runtime crate verification stayed green after the deletion. | start `EO7` by replacing sequential scheduler tenant iteration with bounded concurrent fan-out |
 | EO7 | completed on 2026-04-03: `tick_at_async` now fans out loaded tenants with bounded `for_each_concurrent(...)` parallelism, so one tenant's paused or slow scheduled mutation no longer blocks due work for other tenants. Added coverage for a paused-tenant regression and reconciled the server/runtime test suite with the new oversubscribed-worker and applied-visibility contracts before closing the item with workspace-wide verification. | keep `EO8` deferred until load testing identifies the next real admission boundary |
 | EO8 | deferred: the full background, prior art, observability map, and experiment design now live in `docs/plans/layered-admission-control-plan.md`. Existing runtime and engine diagnostics provide part of the needed signal surface, but promotion still requires a focused EO8 experiment report that proves which work class is causing cross-class interference and whether the next gate should be query slots, scheduled-job slots, storage sub-budgets, or stronger tenant isolation. | keep deferred until a measurement run selects the first EO8 implementation slice |
 
@@ -179,26 +179,26 @@ an item.
 |------|------|---------|---------|--------------|-----------|
 | 2026-04-03 | meta | documented | Converted this document into a durable control plan with stable item IDs, status ledger, checkpoints, recovery loop, and execution log so autonomous Codex runs can resume after handoffs or compaction without relying on chat history. | document review | start `EO1` unless a future worktree reconciliation marks another earlier item `in_progress` |
 | 2026-04-03 | EO1 | in_progress | Started the owned-executor workstream from a clean worktree. This session owns replacing the service `OnceLock<TokioRuntime>` pattern with owned executor fields, threading a storage-owned executor into async storage, and landing the first verification-backed shutdown slice. | worktree reconciliation and control-plan review | inspect current engine/storage runtime ownership code, implement EO1, run targeted verification, then mark done or checkpoint the remaining gap |
-| 2026-04-03 | EO1 | done | Replaced the static service runtime with owned engine/storage `BackgroundExecutor` fields, threaded the storage executor handle through async storage and storage-engine constructors, added `Service::quiesce()`, and wired the bin shutdown path to drain service-owned work before exit. Added targeted executor quiesce tests and synced architecture docs to the new ownership model. | `cargo fmt --all --check`; `cargo test -p neovex-storage`; `cargo test -p neovex-engine`; `cargo test -p neovex-server convex_http_demo_ -- --nocapture`; `make clippy` | start `EO2` |
-| 2026-04-03 | EO2 | done | Added a per-tenant `MutationAdmissionGate` ahead of the journal queue, routed async mutations through that outer gate, added CoDel shedding plus gate diagnostics, preserved admitted journal work, and tightened the worker handoff so newly admitted gate work can join the current batch before the batch snapshot closes without being transiently rejected by momentary inner-queue fullness. Rewrote the old overflow test around the new buffered-gate semantics and kept the existing journal batch coalescing and reopen recovery behavior green under the new worker loop. | `cargo fmt --all --check`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-admission cargo test -p neovex-engine mutation_admission_gate_codel_ -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-buffered cargo test -p neovex-engine mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-admitted cargo test -p neovex-engine mutation_journal_never_expires_admitted_work -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-queued cargo test -p neovex-engine queued_ -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo2-queued cargo test -p neovex-engine` | start `EO3` |
-| 2026-04-03 | EO3 | done | Extended the subscription delivery worker to drain a small ready batch, merge overlapping `QueuedSubscriptionWork` items before reevaluation, and expose `queue_level_merge_count` in diagnostics. Preserved journal-batch coalescing and overflow monotonicity while removing redundant second-pass delivery work. | `cargo fmt --all --check`; `CARGO_TARGET_DIR=/tmp/neovex-eo3 cargo test -p neovex-engine subscription_delivery_queue_merge_coalesces_overlapping_work_items -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo3 cargo test -p neovex-engine subscription_delivery_queue_overflow_falls_back_without_regressing_monotonicity -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo3 cargo test -p neovex-engine journal_batch_coalesces_subscription_delivery_into_one_update -- --nocapture`; `CARGO_TARGET_DIR=/tmp/neovex-eo3 cargo test -p neovex-engine` | start `EO4` |
-| 2026-04-03 | EO4 | in_progress | Reconciled the dirty worktree and inspected the current `neovex-runtime` watchdog/executor seams. Confirmed the current per-invocation timeout and external-cancellation watchdog threads in `runtime.rs`, and scoped EO4 around a shared executor-owned `WatchdogTimer` that will replace those dedicated threads while preserving timeout and cancellation termination semantics. | control-plan review; `sed -n '860,1015p' docs/plans/execution-ownership-hardening-plan.md`; `sed -n '1380,1585p' crates/neovex-runtime/src/runtime.rs`; `sed -n '300,860p' crates/neovex-runtime/src/executor.rs` | implement the shared watchdog module, wire it through `RuntimeExecutor`, replace runtime thread spawning, then run EO4 verification |
-| 2026-04-03 | EO4 | done | Added `neovex-runtime/src/watchdog.rs`, moved timeout and external-cancellation watchdog ownership into a shared `RuntimeExecutor`-owned `WatchdogTimer`, replaced per-invocation `std::thread::spawn` watchdogs in `runtime.rs` with explicit registration/disarm, and shut the shared watchdog down from `RuntimeExecutorInner::drop()` after worker join. Added unit coverage for timeout firing, disarm, and shared cancellation polling. The first isolated runtime test run hit restricted-network `rusty_v8` archive download failure; rerunning with network access succeeded. | `cargo fmt --all --check`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime` (first attempt failed under restricted network while fetching `rusty_v8`); `cargo test -p neovex-runtime`; `cargo test -p neovex-server convex_http_demo_ -- --nocapture` | start `EO5` |
+| 2026-04-03 | EO1 | done | Replaced the static service runtime with owned engine/storage `BackgroundExecutor` fields, threaded the storage executor handle through async storage and storage-engine constructors, added `Service::quiesce()`, and wired the bin shutdown path to drain service-owned work before exit. Added targeted executor quiesce tests and synced architecture docs to the new ownership model. | `cargo fmt --all --check`; `cargo test -p nimbus-storage`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server convex_http_demo_ -- --nocapture`; `make clippy` | start `EO2` |
+| 2026-04-03 | EO2 | done | Added a per-tenant `MutationAdmissionGate` ahead of the journal queue, routed async mutations through that outer gate, added CoDel shedding plus gate diagnostics, preserved admitted journal work, and tightened the worker handoff so newly admitted gate work can join the current batch before the batch snapshot closes without being transiently rejected by momentary inner-queue fullness. Rewrote the old overflow test around the new buffered-gate semantics and kept the existing journal batch coalescing and reopen recovery behavior green under the new worker loop. | `cargo fmt --all --check`; `CARGO_TARGET_DIR=/tmp/nimbus-eo2-admission cargo test -p nimbus-engine mutation_admission_gate_codel_ -- --nocapture`; `CARGO_TARGET_DIR=/tmp/nimbus-eo2-buffered cargo test -p nimbus-engine mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response -- --nocapture`; `CARGO_TARGET_DIR=/tmp/nimbus-eo2-admitted cargo test -p nimbus-engine mutation_journal_never_expires_admitted_work -- --nocapture`; `CARGO_TARGET_DIR=/tmp/nimbus-eo2-queued cargo test -p nimbus-engine queued_ -- --nocapture`; `CARGO_TARGET_DIR=/tmp/nimbus-eo2-queued cargo test -p nimbus-engine` | start `EO3` |
+| 2026-04-03 | EO3 | done | Extended the subscription delivery worker to drain a small ready batch, merge overlapping `QueuedSubscriptionWork` items before reevaluation, and expose `queue_level_merge_count` in diagnostics. Preserved journal-batch coalescing and overflow monotonicity while removing redundant second-pass delivery work. | `cargo fmt --all --check`; `CARGO_TARGET_DIR=/tmp/nimbus-eo3 cargo test -p nimbus-engine subscription_delivery_queue_merge_coalesces_overlapping_work_items -- --nocapture`; `CARGO_TARGET_DIR=/tmp/nimbus-eo3 cargo test -p nimbus-engine subscription_delivery_queue_overflow_falls_back_without_regressing_monotonicity -- --nocapture`; `CARGO_TARGET_DIR=/tmp/nimbus-eo3 cargo test -p nimbus-engine journal_batch_coalesces_subscription_delivery_into_one_update -- --nocapture`; `CARGO_TARGET_DIR=/tmp/nimbus-eo3 cargo test -p nimbus-engine` | start `EO4` |
+| 2026-04-03 | EO4 | in_progress | Reconciled the dirty worktree and inspected the current `nimbus-runtime` watchdog/executor seams. Confirmed the current per-invocation timeout and external-cancellation watchdog threads in `runtime.rs`, and scoped EO4 around a shared executor-owned `WatchdogTimer` that will replace those dedicated threads while preserving timeout and cancellation termination semantics. | control-plan review; `sed -n '860,1015p' docs/plans/execution-ownership-hardening-plan.md`; `sed -n '1380,1585p' crates/nimbus-runtime/src/runtime.rs`; `sed -n '300,860p' crates/nimbus-runtime/src/executor.rs` | implement the shared watchdog module, wire it through `RuntimeExecutor`, replace runtime thread spawning, then run EO4 verification |
+| 2026-04-03 | EO4 | done | Added `nimbus-runtime/src/watchdog.rs`, moved timeout and external-cancellation watchdog ownership into a shared `RuntimeExecutor`-owned `WatchdogTimer`, replaced per-invocation `std::thread::spawn` watchdogs in `runtime.rs` with explicit registration/disarm, and shut the shared watchdog down from `RuntimeExecutorInner::drop()` after worker join. Added unit coverage for timeout firing, disarm, and shared cancellation polling. The first isolated runtime test run hit restricted-network `rusty_v8` archive download failure; rerunning with network access succeeded. | `cargo fmt --all --check`; `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime` (first attempt failed under restricted network while fetching `rusty_v8`); `cargo test -p nimbus-runtime`; `cargo test -p nimbus-server convex_http_demo_ -- --nocapture` | start `EO5` |
 | 2026-04-03 | meta | documented | Re-scoped EO5 before implementation so the primary extensibility seam is now `WorkerLoop` / `WorkerLoopFactory`, with the current deno_core `RuntimeBackend::invoke(...)` kept as a worker-local helper below that seam. This keeps the current run-to-completion model intact while making later cooperative Locker, workerd-style, and WASM runtime models a clean follow-on instead of an executor retrofit. | document review against `docs/plans/v8-locker-fork-plan.md` and EO5 | update the locker fork plan to match the worker-loop seam before starting EO5 code |
-| 2026-04-03 | EO5 | in_progress | Reconciled the current dirty worktree to EO5, re-read the EO5 control-plan section, and inspected the concrete runtime seams in `executor.rs`, `runtime.rs`, `limits.rs`, and `watchdog.rs`. Confirmed the current gaps the implementation must close: executor logic is still embedded directly in `RuntimeExecutor`, tenant fairness still uses a single `in_flight` counter, and host async ops still have no shared permit/timeout controller in `OpState`. | control-plan review; `sed -n '960,1235p' docs/plans/execution-ownership-hardening-plan.md`; `sed -n '1,760p' crates/neovex-runtime/src/executor.rs`; `sed -n '300,380p' crates/neovex-runtime/src/runtime.rs`; `sed -n '1240,1305p' crates/neovex-runtime/src/runtime.rs`; `sed -n '1450,1685p' crates/neovex-runtime/src/runtime.rs`; `sed -n '1,260p' crates/neovex-runtime/src/limits.rs`; `sed -n '1,520p' crates/neovex-runtime/src/watchdog.rs` | implement the worker-loop seam and updated tenant admission accounting first, then wire permit suspend/resume and timeout pause through the runtime host-op path |
-| 2026-04-03 | EO5 | done | Introduced `worker_loop.rs` and `backend.rs` so `RuntimeExecutor` now owns an oversubscribed worker pool through `WorkerLoopFactory` / `RunToCompletionWorkerLoop` while the deno-specific `DenoRuntimeBackend` stays worker-local. Split runtime admission into per-tenant active/in-flight/queued accounting, added `worker_threads`, `max_active_top_level_invocations_per_tenant`, and `max_in_flight_top_level_invocations_per_tenant`, and threaded `SharedInvocationPermit` plus `RuntimeInvocationTimeoutController` through `OpState` so async host ops suspend and re-acquire permits with timeout pause during permit re-acquire. Added focused coverage for freed-permit capacity, parked resume, in-flight-limit accounting, and timeout exclusion for permit re-acquire wait. | `cargo fmt --all --check`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime`; `bash scripts/cargo-isolated.sh -- test -p neovex-server convex_http_demo_ -- --nocapture` (first attempt failed under restricted network while fetching `rusty_v8`; reran with network access and passed); `make clippy` | start `EO6` |
-| 2026-04-03 | EO6 | done | Deleted the dead `RuntimeHostExecutor` module and its unit test, removed the stale public re-export from `neovex-runtime/src/lib.rs`, and removed the remaining architecture reference that still documented it as a live runtime surface. This leaves async host work on the real engine/storage futures only, matching the post-EO1-through-EO5 runtime design. | `cargo check -p neovex-runtime`; `bash scripts/cargo-isolated.sh -- test -p neovex-runtime` | start `EO7` |
-| 2026-04-03 | EO7 | done | Replaced sequential scheduler tenant iteration with bounded `for_each_concurrent(...)` fan-out in `crates/neovex-engine/src/scheduler.rs` and added a paused-tenant regression test proving one tenant's scheduled mutation no longer blocks another tenant's due work. EO7 closeout also fixed follow-on server assertions to match the landed EO5 runtime model: execution metrics are recorded in the worker-loop path, oversubscribed workers can dispatch more jobs than active isolates, and HTTP/WebSocket write acknowledgements still wait for journal apply visibility. | `cargo test -p neovex-engine scheduler_tick_processes_other_tenants_while_one_tenant_is_paused -- --nocapture`; `cargo test -p neovex-engine scheduler_ -- --nocapture`; `cargo fmt --all --check`; `make clippy`; `make test` | keep `EO8` deferred until load testing identifies a concrete next admission bottleneck |
-| 2026-04-03 | EO8 | documented | Expanded EO8 from a design placeholder into a deferred promotion plan with three explicit decision inputs: existing Neovex architecture, battle-tested prior art, and a required experiment report. Added candidate per-work-class gates, mapped the observability already available via `/debug/runtime/metrics` and `/debug/tenants/{tenant}/engine/metrics`, documented instrumentation gaps, and defined a workload matrix plus promotion criteria so a future EO8 implementation is selected by evidence rather than guesswork. | control-plan review; local prior-art review in CockroachDB, Convex, and TigerBeetle sources; official CockroachDB admission-control docs review | keep deferred until an EO8 experiment run produces a concrete first implementation target |
+| 2026-04-03 | EO5 | in_progress | Reconciled the current dirty worktree to EO5, re-read the EO5 control-plan section, and inspected the concrete runtime seams in `executor.rs`, `runtime.rs`, `limits.rs`, and `watchdog.rs`. Confirmed the current gaps the implementation must close: executor logic is still embedded directly in `RuntimeExecutor`, tenant fairness still uses a single `in_flight` counter, and host async ops still have no shared permit/timeout controller in `OpState`. | control-plan review; `sed -n '960,1235p' docs/plans/execution-ownership-hardening-plan.md`; `sed -n '1,760p' crates/nimbus-runtime/src/executor.rs`; `sed -n '300,380p' crates/nimbus-runtime/src/runtime.rs`; `sed -n '1240,1305p' crates/nimbus-runtime/src/runtime.rs`; `sed -n '1450,1685p' crates/nimbus-runtime/src/runtime.rs`; `sed -n '1,260p' crates/nimbus-runtime/src/limits.rs`; `sed -n '1,520p' crates/nimbus-runtime/src/watchdog.rs` | implement the worker-loop seam and updated tenant admission accounting first, then wire permit suspend/resume and timeout pause through the runtime host-op path |
+| 2026-04-03 | EO5 | done | Introduced `worker_loop.rs` and `backend.rs` so `RuntimeExecutor` now owns an oversubscribed worker pool through `WorkerLoopFactory` / `RunToCompletionWorkerLoop` while the deno-specific `DenoRuntimeBackend` stays worker-local. Split runtime admission into per-tenant active/in-flight/queued accounting, added `worker_threads`, `max_active_top_level_invocations_per_tenant`, and `max_in_flight_top_level_invocations_per_tenant`, and threaded `SharedInvocationPermit` plus `RuntimeInvocationTimeoutController` through `OpState` so async host ops suspend and re-acquire permits with timeout pause during permit re-acquire. Added focused coverage for freed-permit capacity, parked resume, in-flight-limit accounting, and timeout exclusion for permit re-acquire wait. | `cargo fmt --all --check`; `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime`; `bash scripts/cargo-isolated.sh -- test -p nimbus-server convex_http_demo_ -- --nocapture` (first attempt failed under restricted network while fetching `rusty_v8`; reran with network access and passed); `make clippy` | start `EO6` |
+| 2026-04-03 | EO6 | done | Deleted the dead `RuntimeHostExecutor` module and its unit test, removed the stale public re-export from `nimbus-runtime/src/lib.rs`, and removed the remaining architecture reference that still documented it as a live runtime surface. This leaves async host work on the real engine/storage futures only, matching the post-EO1-through-EO5 runtime design. | `cargo check -p nimbus-runtime`; `bash scripts/cargo-isolated.sh -- test -p nimbus-runtime` | start `EO7` |
+| 2026-04-03 | EO7 | done | Replaced sequential scheduler tenant iteration with bounded `for_each_concurrent(...)` fan-out in `crates/nimbus-engine/src/scheduler.rs` and added a paused-tenant regression test proving one tenant's scheduled mutation no longer blocks another tenant's due work. EO7 closeout also fixed follow-on server assertions to match the landed EO5 runtime model: execution metrics are recorded in the worker-loop path, oversubscribed workers can dispatch more jobs than active isolates, and HTTP/WebSocket write acknowledgements still wait for journal apply visibility. | `cargo test -p nimbus-engine scheduler_tick_processes_other_tenants_while_one_tenant_is_paused -- --nocapture`; `cargo test -p nimbus-engine scheduler_ -- --nocapture`; `cargo fmt --all --check`; `make clippy`; `make test` | keep `EO8` deferred until load testing identifies a concrete next admission bottleneck |
+| 2026-04-03 | EO8 | documented | Expanded EO8 from a design placeholder into a deferred promotion plan with three explicit decision inputs: existing Nimbus architecture, battle-tested prior art, and a required experiment report. Added candidate per-work-class gates, mapped the observability already available via `/debug/runtime/metrics` and `/debug/tenants/{tenant}/engine/metrics`, documented instrumentation gaps, and defined a workload matrix plus promotion criteria so a future EO8 implementation is selected by evidence rather than guesswork. | control-plan review; local prior-art review in CockroachDB, Convex, and TigerBeetle sources; official CockroachDB admission-control docs review | keep deferred until an EO8 experiment run produces a concrete first implementation target |
 | 2026-04-03 | EO8 | documented | Split the deferred EO8 background into `docs/plans/layered-admission-control-plan.md` so the main execution-ownership control plan can keep only the status and promotion gate while the standalone companion plan holds the codebase review, prior art, observability surfaces, experiment workflow, and promotion matrix. | document review against the EO8 section, current debug endpoints, and local prior-art sources | keep EO8 deferred until a measurement run names the first concrete slice to promote |
 
 ---
 
 ## Cross-Project Comparison Summary
 
-### What Neovex already does well
+### What Nimbus already does well
 
-| Pattern | Neovex implementation | Industry match |
+| Pattern | Nimbus implementation | Industry match |
 |---------|----------------------|----------------|
 | Service-owned background executors | `Service` owns engine/storage `BackgroundExecutor` fields with explicit `quiesce()` (`service/mod.rs:42-119`, `background_executor.rs:14-97`) | Convex `ProdRuntime::spawn_background` (`local_backend/src/lib.rs:266`) |
 | Centralized spawn helper | `Service::spawn_background()` delegates to the owned engine executor (`service/mod.rs:107-114`) | CockroachDB `Stopper.RunAsyncTask` (`pkg/util/stop/stopper.go`) |
@@ -211,9 +211,9 @@ an item.
 | Journal-level subscription coalescing | N commits batched into 1 `QueuedSubscriptionWork` (`journal.rs:173`) | Convex `SingleFlightSender` transition skipping |
 | Delivery-level staleness skip | `is_stale_for_sequence` skips re-evaluation (`subscriptions.rs:416,427,445`) | CockroachDB raft scheduler flag coalescing |
 
-### What the battle-tested projects do that Neovex does not
+### What the battle-tested projects do that Nimbus does not
 
-| Pattern | Convex | TigerBeetle | CockroachDB | Neovex gap |
+| Pattern | Convex | TigerBeetle | CockroachDB | Nimbus gap |
 |---------|--------|-------------|-------------|------------|
 | Owned executor lifecycle | `TokioRuntime` on stack in `main()`, dropped on exit | Process kill + crash recovery | `Stopper.Quiesce()` then `Stop()` | resolved by `EO1`: `Service` now owns engine/storage executors with explicit quiesce |
 | Storage-owned executor | Committer serializes writes through dedicated task | Single thread owns all I/O | Pebble owns goroutine pool | resolved by `EO1`: async storage now runs on the service-owned storage executor handle |
@@ -229,7 +229,7 @@ an item.
 ```mermaid
 flowchart TB
     subgraph Process["Process Lifetime"]
-        MainRT["Main Tokio Runtime<br/><code>neovex-bin #[tokio::main]</code><br/>main.rs:79"]
+        MainRT["Main Tokio Runtime<br/><code>nimbus-bin #[tokio::main]</code><br/>main.rs:79"]
     end
 
     subgraph MainRT_Tasks["On Main Runtime"]
@@ -252,7 +252,7 @@ flowchart TB
     end
 
     subgraph Dead["Dead Code"]
-        HostExec["RuntimeHostExecutor<br/>host_executor.rs:20<br/>not imported by neovex-server"]
+        HostExec["RuntimeHostExecutor<br/>host_executor.rs:20<br/>not imported by nimbus-server"]
     end
 
     HTTP -->|"enqueue mutation"| JW
@@ -276,7 +276,7 @@ flowchart TB
      round-robin dispatch.
 
 2. **P3 — RuntimeHostExecutor is dead code.** Defined at `host_executor.rs:20`,
-   not imported anywhere in `neovex-server`. Pre-launch repo — delete it.
+   not imported anywhere in `nimbus-server`. Pre-launch repo — delete it.
 
 3. **P3 — Scheduler processes tenants sequentially.** One slow tenant blocks all
    others in `tick_at_async`.
@@ -471,30 +471,30 @@ transfers directly — use `task_local!` scoped to each executor's name.
 
 #### Files to change
 
-- `crates/neovex-engine/src/service/mod.rs` — Replace `OnceLock<TokioRuntime>`
+- `crates/nimbus-engine/src/service/mod.rs` — Replace `OnceLock<TokioRuntime>`
   (lines 60-73) and `background_runtime: TokioRuntimeHandle` field (line 53)
   with `engine_executor: BackgroundExecutor`. Replace `spawn_background`
   (lines 118-124) with delegation to `self.engine_executor.spawn(...)`.
   Add `Service::quiesce()` and remove `service_background_runtime_handle()`.
-- `crates/neovex-engine/src/service/mutations/journal.rs` — Change
+- `crates/nimbus-engine/src/service/mutations/journal.rs` — Change
   `self.spawn_background("mutation_journal", ...)` (line 66) to
   `self.engine_executor.spawn(...)`.
 - `Cargo.toml` — Add `tokio-util = { version = "0.7", features = ["rt"] }` to
   `[workspace.dependencies]` so the repo keeps a single canonical version and
   feature set. The `rt` feature is required for `TaskTracker`;
   `CancellationToken` needs no special feature.
-- `crates/neovex-engine/Cargo.toml` — Add `tokio-util.workspace = true` to
+- `crates/nimbus-engine/Cargo.toml` — Add `tokio-util.workspace = true` to
   follow the repo's normal dependency style instead of pinning an inline crate
   version in the member manifest.
-- `crates/neovex-storage/src/async_storage.rs` — Accept a
+- `crates/nimbus-storage/src/async_storage.rs` — Accept a
   `TokioRuntimeHandle` (from `storage_executor`) at construction. Replace all
   6 `tokio::task::spawn_blocking(...)` calls (lines 117, 147, 203, 233, 456,
   477) with `self.storage_handle.spawn_blocking(...)`.
-- `crates/neovex-storage/src/async_storage.rs` — Thread the storage runtime
+- `crates/nimbus-storage/src/async_storage.rs` — Thread the storage runtime
   handle through `RedbTenantStorage::new()`, `RedbUsageStorage::new()`, and
   `RedbStorageEngine::new()` / `read_storage_for_store()`, which is where the
   storage-engine wiring currently lives.
-- `crates/neovex-bin/src/main.rs` — Call `service.quiesce().await` in the
+- `crates/nimbus-bin/src/main.rs` — Call `service.quiesce().await` in the
   shutdown sequence (after the `watch` signal at line 79, before server exit).
 - `ARCHITECTURE.md` — Update execution domains table (line 280) and add
   lifecycle invariant.
@@ -514,15 +514,15 @@ transfers directly — use `task_local!` scoped to each executor's name.
 #### Verification
 
 ```bash
-cargo test -p neovex-storage
-cargo test -p neovex-engine
-cargo test -p neovex-server convex_http_demo_ -- --nocapture
+cargo test -p nimbus-storage
+cargo test -p nimbus-engine
+cargo test -p nimbus-server convex_http_demo_ -- --nocapture
 # New test: shutdown during active journal work completes in-flight batch
-cargo test -p neovex-engine shutdown_ -- --nocapture
+cargo test -p nimbus-engine shutdown_ -- --nocapture
 # New test: spawn after quiesce returns ResourceExhausted
-cargo test -p neovex-engine quiesce_ -- --nocapture
+cargo test -p nimbus-engine quiesce_ -- --nocapture
 # Existing restart/recovery tests still pass
-cargo test -p neovex-engine service_reload_ -- --nocapture
+cargo test -p nimbus-engine service_reload_ -- --nocapture
 ```
 
 #### Architecture invariants to add
@@ -746,19 +746,19 @@ journal's `MutationJournalState`. That was wrong for two reasons:
 
 #### Files to change
 
-- `crates/neovex-engine/src/tenant.rs` — Add `MutationAdmissionGate` struct
+- `crates/nimbus-engine/src/tenant.rs` — Add `MutationAdmissionGate` struct
   alongside `MutationJournalState` (separate fields on `TenantRuntime`). The
   journal state keeps its existing `VecDeque` with capacity-only rejection.
-- `crates/neovex-engine/src/service/mutations/journal.rs` — Modify
+- `crates/nimbus-engine/src/service/mutations/journal.rs` — Modify
   `submit_journaled_async_mutation` (`journal.rs:117`) to enqueue into the
   admission gate and ensure the journal worker is running. Update the journal
   worker loop so it drains the admission gate into the journal before
   `drain_batch()` / `process_queued_mutation_batch()`. The commit path itself
   remains unchanged.
-- `crates/neovex-engine/src/service/diagnostics.rs` — Expose gate metrics:
+- `crates/nimbus-engine/src/service/diagnostics.rs` — Expose gate metrics:
   `admitted_count`, `shed_count`, `codel_phase`, `gate_queue_depth`,
   `gate_oldest_age`.
-- `crates/neovex-engine/src/service/mod.rs` — Thread `MutationAdmissionGate`
+- `crates/nimbus-engine/src/service/mod.rs` — Thread `MutationAdmissionGate`
   through tenant construction.
 
 #### Prior art references
@@ -775,15 +775,15 @@ journal's `MutationJournalState`. That was wrong for two reasons:
 
 ```bash
 # New test: mutation that sits past CoDel target is shed at admission gate
-cargo test -p neovex-engine mutation_admission_gate_codel_ -- --nocapture
+cargo test -p nimbus-engine mutation_admission_gate_codel_ -- --nocapture
 # New test: journal queue is never CoDel-expired (only capacity-rejected)
-cargo test -p neovex-engine mutation_journal_never_expires_admitted_work -- --nocapture
+cargo test -p nimbus-engine mutation_journal_never_expires_admitted_work -- --nocapture
 # New test: work can remain buffered at the outer gate while the inner journal is paused
-cargo test -p neovex-engine mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response -- --nocapture
+cargo test -p nimbus-engine mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response -- --nocapture
 # Existing journal tests still pass
-cargo test -p neovex-engine queued_ -- --nocapture
+cargo test -p nimbus-engine queued_ -- --nocapture
 # Broader crate-level verification after the worker-loop handoff changes
-cargo test -p neovex-engine
+cargo test -p nimbus-engine
 ```
 
 ---
@@ -801,7 +801,7 @@ check overhead under write storms.
 
 #### What already exists (not introducing, extending)
 
-Neovex already has two coalescing layers — this phase builds on them:
+Nimbus already has two coalescing layers — this phase builds on them:
 
 **Layer 1 — Journal batch coalescing** (`journal.rs:173`):
 `process_applied_commit_batch` takes `&[CommitEntry]` (a batch of N commits
@@ -842,9 +842,9 @@ and redundant stale-check passes before reevaluation.
 
 #### Files to change
 
-- `crates/neovex-engine/src/tenant.rs` — Modify delivery worker loop
+- `crates/nimbus-engine/src/tenant.rs` — Modify delivery worker loop
   (`tenant.rs:2021`) to drain multiple items and merge before dispatch.
-- `crates/neovex-engine/src/subscriptions.rs` — Add
+- `crates/nimbus-engine/src/subscriptions.rs` — Add
   `queue_level_merge_count` metric to `SubscriptionDeliveryStats` and plumb it
   through the tenant diagnostics snapshot.
 
@@ -852,13 +852,13 @@ and redundant stale-check passes before reevaluation.
 
 ```bash
 # Existing coalescing test still passes
-cargo test -p neovex-engine journal_batch_coalesces -- --nocapture
+cargo test -p nimbus-engine journal_batch_coalesces -- --nocapture
 # New test: two journal batches with overlapping subscriptions merge in delivery
-cargo test -p neovex-engine subscription_delivery_queue_merge_coalesces_overlapping_work_items -- --nocapture
+cargo test -p nimbus-engine subscription_delivery_queue_merge_coalesces_overlapping_work_items -- --nocapture
 # Existing overflow monotonicity test still passes with queue-level merge accounting
-cargo test -p neovex-engine subscription_delivery_queue_overflow_falls_back_without_regressing_monotonicity -- --nocapture
+cargo test -p nimbus-engine subscription_delivery_queue_overflow_falls_back_without_regressing_monotonicity -- --nocapture
 # Broader crate-level verification after the delivery worker changes
-cargo test -p neovex-engine
+cargo test -p nimbus-engine
 ```
 
 ---
@@ -960,22 +960,22 @@ delivery cannot outlive the isolate lifecycle.
 
 **Files changed:**
 
-- `crates/neovex-runtime/src/watchdog.rs` (new) — `WatchdogTimer`,
+- `crates/nimbus-runtime/src/watchdog.rs` (new) — `WatchdogTimer`,
   `WatchdogRegistration`, and targeted unit tests.
-- `crates/neovex-runtime/src/runtime.rs` — Replaced per-invocation
+- `crates/nimbus-runtime/src/runtime.rs` — Replaced per-invocation
   `std::thread::spawn(...)` timeout and external-cancellation watchdogs with
   shared watchdog registration and acknowledged disarm.
-- `crates/neovex-runtime/src/executor.rs` — Constructed the shared
+- `crates/nimbus-runtime/src/executor.rs` — Constructed the shared
   `WatchdogTimer` in `RuntimeExecutor::new()`, threaded it through worker and
   direct invocation paths, and shut it down in `Drop`.
-- `crates/neovex-runtime/src/lib.rs` — Declared the new `watchdog` module.
+- `crates/nimbus-runtime/src/lib.rs` — Declared the new `watchdog` module.
 
 **Verification:**
 
 ```bash
 cargo fmt --all --check
-cargo test -p neovex-server convex_http_demo_ -- --nocapture
-cargo test -p neovex-runtime
+cargo test -p nimbus-server convex_http_demo_ -- --nocapture
+cargo test -p nimbus-runtime
 ```
 
 ---
@@ -994,7 +994,7 @@ permit and start a new invocation on a different thread while the original
 thread remains blocked on host I/O. The original thread resumes its invocation
 when the host call completes and it re-acquires a permit.
 
-EO5 also establishes the **primary runtime extensibility seam** for Neovex:
+EO5 also establishes the **primary runtime extensibility seam** for Nimbus:
 the executor should extend by swapping per-thread worker-loop strategies, not
 by assuming every runtime model can be expressed as a single run-to-completion
 `invoke(...)` call. Today's deno_core path uses a run-to-completion worker loop.
@@ -1017,7 +1017,7 @@ executor.rs:388         worker_runtime.block_on(invoke_job(...))
   runtime.rs:1585         invoke_loaded_bundle()
     runtime.rs:1597         runtime.with_event_loop_promise(resolve, ...)
       (deno_core polls async ops internally)
-        runtime.rs:1251       op_neovex_async_host_call()
+        runtime.rs:1251       op_nimbus_async_host_call()
           host.rs               bridge.call_async(request, cancellation) -> HostBridgeFuture
           (future polled by deno_core on worker's current-thread Tokio runtime)
           (worker thread idle in epoll_wait while I/O pending, permit still held)
@@ -1114,7 +1114,7 @@ Concrete shapes:
   a `CooperativeWorkerLoop` that owns runnable/parked queues, warm-runtime
   pools, and routing. It may still use runtime-specific helpers underneath, but
   it cannot be expressed as a single `invoke(...)` call.
-- **Future Wasmtime/WASM path:** Neovex can either reuse
+- **Future Wasmtime/WASM path:** Nimbus can either reuse
   `RunToCompletionWorkerLoop` with a `WasmtimeRuntimeBackend`, or add a
   different loop if benchmarking justifies it.
 
@@ -1142,7 +1142,7 @@ models through the wrong abstraction.
    `backend.invoke(...)` directly.
 4. **Add permit suspend/resume to the host bridge path.**
    Create a `SharedInvocationPermit` (stored in deno_core `OpState`) that
-   tracks in-flight async host ops. In `op_neovex_async_host_call`
+   tracks in-flight async host ops. In `op_nimbus_async_host_call`
    (`runtime.rs:1251`), wrap the host bridge future: increment in-flight
    count on start (release permit if 0→1), decrement on completion
    (re-acquire permit if 1→0). Use `Rc<RefCell<...>>` (safe because
@@ -1217,28 +1217,28 @@ the level where future V8, workerd, and WASM backends should plug in.
 
 #### Files to change
 
-- `crates/neovex-runtime/src/worker_loop.rs` (new) — `WorkerLoop`,
+- `crates/nimbus-runtime/src/worker_loop.rs` (new) — `WorkerLoop`,
   `WorkerLoopFactory`, `RunToCompletionWorkerLoop`, and
   `RunToCompletionWorkerLoopFactory`. This is the executor's primary seam.
-- `crates/neovex-runtime/src/backend.rs` (new) — worker-local
+- `crates/nimbus-runtime/src/backend.rs` (new) — worker-local
   `RuntimeBackendFactory` / `RuntimeBackend` helper for the current
   run-to-completion loop. `DenoRuntimeBackendFactory` creates worker-local
   `DenoRuntimeBackend` instances that delegate to the existing
   `invoke_loaded_bundle` + `with_event_loop_promise` path.
-- `crates/neovex-runtime/src/executor.rs` — Accept
+- `crates/nimbus-runtime/src/executor.rs` — Accept
   `Arc<dyn WorkerLoopFactory>` (or generic factory). Each worker thread creates
   one worker loop at startup and calls `worker_loop.run(...)`. Decouple
   `worker_threads` from `max_concurrent_isolates`.
-- `crates/neovex-runtime/src/limits.rs` — Add `worker_threads` to
+- `crates/nimbus-runtime/src/limits.rs` — Add `worker_threads` to
   `RuntimeLimits`. Replace `max_top_level_invocations_per_tenant` with
   `max_active_top_level_invocations_per_tenant` and
   `max_in_flight_top_level_invocations_per_tenant`. Keep
   `max_queued_top_level_invocations_per_tenant`. Add `SharedInvocationPermit`
   with suspend/resume (in-flight-op counting, `Rc<RefCell<...>>` +
   `Arc<Semaphore>`).
-- `crates/neovex-runtime/src/runtime.rs` — In `op_neovex_async_host_call`
+- `crates/nimbus-runtime/src/runtime.rs` — In `op_nimbus_async_host_call`
   (line 1251), wrap the host bridge future with permit suspend/resume.
-- `crates/neovex-runtime/src/host.rs` — No trait changes needed.
+- `crates/nimbus-runtime/src/host.rs` — No trait changes needed.
 
 #### Prior art references
 
@@ -1258,18 +1258,18 @@ the level where future V8, workerd, and WASM backends should plug in.
 #### Verification
 
 ```bash
-cargo test -p neovex-runtime
-cargo test -p neovex-server convex_http_demo_ -- --nocapture
+cargo test -p nimbus-runtime
+cargo test -p nimbus-server convex_http_demo_ -- --nocapture
 # New test: with workers > permits, I/O-bound invocation releases permit,
 # queued invocation starts on a different worker thread
-cargo test -p neovex-runtime permit_suspend_frees_capacity -- --nocapture
+cargo test -p nimbus-runtime permit_suspend_frees_capacity -- --nocapture
 # New test: parked invocation resumes correctly after host completion
-cargo test -p neovex-runtime parked_invocation_resumes_after_host_completion -- --nocapture
+cargo test -p nimbus-runtime parked_invocation_resumes_after_host_completion -- --nocapture
 # New test: parked invocation no longer counts toward active limit but still
 # counts toward the tenant in-flight limit
-cargo test -p neovex-runtime parked_invocation_counts_toward_in_flight_limit -- --nocapture
+cargo test -p nimbus-runtime parked_invocation_counts_toward_in_flight_limit -- --nocapture
 # New test: timeout accounting excludes permit re-acquire wait
-cargo test -p neovex-runtime timeout_excludes_permit_reacquire_wait -- --nocapture
+cargo test -p nimbus-runtime timeout_excludes_permit_reacquire_wait -- --nocapture
 ```
 
 ---
@@ -1282,21 +1282,21 @@ cargo test -p neovex-runtime timeout_excludes_permit_reacquire_wait -- --nocaptu
 **Estimated scope:** ~50 LOC (deletion)
 
 **Goal:** Remove dead code. `RuntimeHostExecutor` (`host_executor.rs:20`) is not
-imported by `neovex-server`. The live Convex async host-call path awaits engine
+imported by `nimbus-server`. The live Convex async host-call path awaits engine
 futures directly. Pre-launch repo — no compatibility concern.
 
 **Files to change:**
 
-- `crates/neovex-runtime/src/host_executor.rs` — Delete file.
-- `crates/neovex-runtime/src/lib.rs` — Remove `mod host_executor` and any
+- `crates/nimbus-runtime/src/host_executor.rs` — Delete file.
+- `crates/nimbus-runtime/src/lib.rs` — Remove `mod host_executor` and any
   re-exports.
 - `ARCHITECTURE.md` line 234 — Remove the `host_executor.rs` entry.
 
 **Verification:**
 
 ```bash
-cargo check -p neovex-runtime
-cargo test -p neovex-runtime
+cargo check -p nimbus-runtime
+cargo test -p nimbus-runtime
 ```
 
 ---
@@ -1332,15 +1332,15 @@ a `JoinSet` with a semaphore. The semaphore bound prevents unbounded fan-out.
 
 **Files to change:**
 
-- `crates/neovex-engine/src/scheduler.rs` — Replace sequential tenant iteration
+- `crates/nimbus-engine/src/scheduler.rs` — Replace sequential tenant iteration
   with bounded concurrent dispatch.
-- `crates/neovex-engine/src/service/scheduler.rs` — Expose tenant list for the
+- `crates/nimbus-engine/src/service/scheduler.rs` — Expose tenant list for the
   scheduler to fan out.
 
 **Verification:**
 
 ```bash
-cargo test -p neovex-engine scheduler_ -- --nocapture
+cargo test -p nimbus-engine scheduler_ -- --nocapture
 ```
 
 ---
@@ -1362,7 +1362,7 @@ background:
 
 - codebase architecture review
 - battle-tested prior art
-- current Neovex observability surfaces
+- current Nimbus observability surfaces
 - instrumentation gaps
 - experiment workflow
 - promotion matrix and default-setting guidance
@@ -1443,7 +1443,7 @@ admission boundary worth implementing.
 ```mermaid
 flowchart TB
     subgraph Process["Process Lifetime — owned by main()"]
-        MainRT["Main Tokio Runtime<br/><code>neovex-bin #[tokio::main]</code>"]
+        MainRT["Main Tokio Runtime<br/><code>nimbus-bin #[tokio::main]</code>"]
     end
 
     subgraph Service_Owned["Service-Owned BackgroundExecutors"]
@@ -1539,7 +1539,7 @@ CockroachDB that should guide all implementation in this plan:
 
 7. **Assert ownership at runtime.** Debug/test builds should assert that
    workers run on their expected executor. (TigerBeetle assertion density,
-   Neovex `assert_running_on_background_task`.)
+   Nimbus `assert_running_on_background_task`.)
 
 8. **Executors are owned struct fields, not process-wide statics.** Owned
    executors support explicit lifecycle (construct, quiesce, drop). Statics
@@ -1548,7 +1548,7 @@ CockroachDB that should guide all implementation in this plan:
 
 9. **Copy TigerBeetle's discipline, not its architecture.** Strict ownership,
    bounded queues, paired assertions, and deterministic fault tests — yes.
-   Single event loop, static allocation, no graceful shutdown — no. Neovex is
+   Single event loop, static allocation, no graceful shutdown — no. Nimbus is
    a mixed system with V8, HTTP, WebSocket, and storage execution domains that
    genuinely have different lifecycles.
 

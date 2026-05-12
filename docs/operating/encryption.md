@@ -1,6 +1,6 @@
 # Encryption at Rest Reference
 
-Neovex supports optional encryption at rest for Neovex-owned local files. This
+Nimbus supports optional encryption at rest for Nimbus-owned local files. This
 guide covers operator setup, current coverage, migration and rotation flows,
 and the limits that matter in an enterprise review.
 
@@ -19,9 +19,9 @@ Encryption is disabled by default. To enable it:
    chmod 400 /secure/path/master.key
    ```
 
-2. Start Neovex with encryption enabled:
+2. Start Nimbus with encryption enabled:
    ```bash
-   neovex start \
+   nimbus start \
      --encryption-key-provider master-key-file \
      --encryption-master-key-file /secure/path/master.key
    ```
@@ -30,22 +30,22 @@ Encryption is disabled by default. To enable it:
 
 ## Coverage
 
-Neovex encrypts local files it owns. External databases remain the operator's
+Nimbus encrypts local files it owns. External databases remain the operator's
 responsibility.
 
 | Provider family | Local file ownership | Encryption posture |
 | --- | --- | --- |
-| Embedded SQLite | `.sqlite3` tenant files | Neovex encrypts via SQLCipher |
-| Embedded redb | `.redb` tenant files | Neovex encrypts via AES-256-GCM-SIV |
-| Control plane | `neovex-control.db` | Neovex encrypts via AES-256-GCM-SIV |
-| libsql replica | Local cache files | Neovex encrypts via SQLCipher through the shared local-SQLite seam |
+| Embedded SQLite | `.sqlite3` tenant files | Nimbus encrypts via SQLCipher |
+| Embedded redb | `.redb` tenant files | Nimbus encrypts via AES-256-GCM-SIV |
+| Control plane | `nimbus-control.db` | Nimbus encrypts via AES-256-GCM-SIV |
+| libsql replica | Local cache files | Nimbus encrypts via SQLCipher through the shared local-SQLite seam |
 | Postgres | External database | Provider-managed |
 | MySQL | External database | Provider-managed |
 | Remote libsql/Turso | Remote primary | Provider-managed |
 
-At-rest coverage also applies to the on-disk working files created by Neovex
+At-rest coverage also applies to the on-disk working files created by Nimbus
 migration, rebuild, cutover, and recovery tooling. In-memory bootstrap
-payloads and HTTP responses are not at-rest artifacts unless Neovex later adds
+payloads and HTTP responses are not at-rest artifacts unless Nimbus later adds
 a persisted export command for them.
 
 ---
@@ -57,7 +57,7 @@ a persisted export command for them.
 A single 32-byte key file for self-hosted deployments.
 
 ```bash
-neovex start \
+nimbus start \
   --encryption-key-provider master-key-file \
   --encryption-master-key-file /secure/path/master.key
 ```
@@ -67,8 +67,8 @@ Requirements:
 - Store outside the data directory
 - Restrict permissions, for example `chmod 400`
 
-Neovex generates a fresh random DEK per protected path, stores the wrapped DEK
-in `<protected-path>.neovex-enc`, and uses the master key file to derive
+Nimbus generates a fresh random DEK per protected path, stores the wrapped DEK
+in `<protected-path>.nimbus-enc`, and uses the master key file to derive
 per-subject wrapping keys via HKDF-SHA256. One operator-managed key can
 therefore protect many local databases without reusing their DEKs.
 
@@ -77,7 +77,7 @@ therefore protect many local databases without reusing their DEKs.
 Per-subject key files for advanced deployments.
 
 ```bash
-neovex start \
+nimbus start \
   --encryption-key-provider key-dir \
   --encryption-key-dir /secure/path/keys/
 ```
@@ -96,15 +96,15 @@ CloudTrail visibility, and KMS-managed wrapping keys without changing the
 per-database manifest contract.
 
 ```bash
-neovex start \
+nimbus start \
   --encryption-key-provider aws-kms \
-  --encryption-aws-kms-key-id alias/neovex-production \
+  --encryption-aws-kms-key-id alias/nimbus-production \
   --encryption-aws-region us-east-1
 ```
 
-When `aws-kms` is selected, Neovex:
+When `aws-kms` is selected, Nimbus:
 - generates one random DEK per protected path with `GenerateDataKey`
-- stores the KMS ciphertext blob in the same `<protected-path>.neovex-enc`
+- stores the KMS ciphertext blob in the same `<protected-path>.nimbus-enc`
   sidecar manifest used by the local providers
 - binds manifest metadata into AWS `EncryptionContext`
 - reopens databases with `Decrypt`
@@ -119,16 +119,16 @@ All encryption flags have environment variable equivalents:
 
 | Flag | Environment Variable |
 | --- | --- |
-| `--encryption-key-provider` | `NEOVEX_ENCRYPTION_KEY_PROVIDER` |
-| `--encryption-master-key-file` | `NEOVEX_ENCRYPTION_MASTER_KEY_FILE` |
-| `--encryption-key-dir` | `NEOVEX_ENCRYPTION_KEY_DIR` |
-| `--encryption-aws-kms-key-id` | `NEOVEX_ENCRYPTION_AWS_KMS_KEY_ID` |
-| `--encryption-aws-region` | `NEOVEX_ENCRYPTION_AWS_REGION` |
-| `--encryption-aws-endpoint-url` | `NEOVEX_ENCRYPTION_AWS_ENDPOINT_URL` |
+| `--encryption-key-provider` | `NIMBUS_ENCRYPTION_KEY_PROVIDER` |
+| `--encryption-master-key-file` | `NIMBUS_ENCRYPTION_MASTER_KEY_FILE` |
+| `--encryption-key-dir` | `NIMBUS_ENCRYPTION_KEY_DIR` |
+| `--encryption-aws-kms-key-id` | `NIMBUS_ENCRYPTION_AWS_KMS_KEY_ID` |
+| `--encryption-aws-region` | `NIMBUS_ENCRYPTION_AWS_REGION` |
+| `--encryption-aws-endpoint-url` | `NIMBUS_ENCRYPTION_AWS_ENDPOINT_URL` |
 
 Precedence: CLI > environment > config file.
 
-`neovex encryption ...` admin commands read the current provider and
+`nimbus encryption ...` admin commands read the current provider and
 persistence settings from environment variables and config-file resolution.
 `rotate-kek` also accepts replacement-provider flags on the command itself
 (`--new-key-provider`, `--new-master-key-file`, `--new-key-dir`,
@@ -170,7 +170,7 @@ every plaintext exception or retirement-pending artifact.
 ### CLI Status
 
 ```bash
-neovex encryption status
+nimbus encryption status
 ```
 
 Reports enabled state, key provider, and configured family coverage.
@@ -186,29 +186,29 @@ Embedded local storage:
 
 ```bash
 make bench-embedded-providers \
-  REPORT=/tmp/neovex-bench/embedded-plaintext.md
+  REPORT=/tmp/nimbus-bench/embedded-plaintext.md
 
 make bench-embedded-providers \
   ENCRYPTION=temp-master-key-file \
-  REPORT=/tmp/neovex-bench/embedded-encrypted.md
+  REPORT=/tmp/nimbus-bench/embedded-encrypted.md
 ```
 
 Replica-connected SQLite with encrypted local cache:
 
 ```bash
-NEOVEX_LIBSQL_URL='http://127.0.0.1:18080' \
-NEOVEX_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \
+NIMBUS_LIBSQL_URL='http://127.0.0.1:18080' \
+NIMBUS_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \
 make bench-libsql-replica-provider \
   WORKLOADS='point-read indexed-query composite-indexed-query barrier-refresh peer-catch-up' \
   ENCRYPTION=temp-master-key-file \
-  REPORT=/tmp/neovex-bench/libsql-replica-encrypted-cache.md
+  REPORT=/tmp/nimbus-bench/libsql-replica-encrypted-cache.md
 ```
 
 To capture hardware context plus the benchmark reports in one directory:
 
 ```bash
 make collect-encryption-benchmark-evidence \
-  OUTPUT_DIR=/tmp/neovex-bench-evidence
+  OUTPUT_DIR=/tmp/nimbus-bench-evidence
 ```
 
 That collector writes `system-info.log`, per-command logs, embedded plaintext
@@ -232,17 +232,17 @@ Checked-in benchmark artifacts from the first manifest-backed embedded capture:
 
 ## Migration Workflows
 
-`neovex encryption migrate`, `export`, and `rotate-*` reuse the same
+`nimbus encryption migrate`, `export`, and `rotate-*` reuse the same
 encryption-provider configuration as `serve`. In practice that means setting
-`NEOVEX_ENCRYPTION_*` or using the config file loaded through `NEOVEX_CONFIG`
+`NIMBUS_ENCRYPTION_*` or using the config file loaded through `NIMBUS_CONFIG`
 before invoking the admin command.
 
 ### Migrate Plaintext to Encrypted (SQLite)
 
 ```bash
-NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
-NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
-neovex encryption migrate \
+NIMBUS_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NIMBUS_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
+nimbus encryption migrate \
   --source /data/tenant.sqlite3 \
   --target /data/tenant-encrypted.sqlite3 \
   --provider sqlite \
@@ -260,9 +260,9 @@ The migration:
 ### Export Encrypted to Plaintext (Recovery)
 
 ```bash
-NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
-NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
-neovex encryption export \
+NIMBUS_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NIMBUS_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
+nimbus encryption export \
   --source /data/tenant-encrypted.sqlite3 \
   --target /data/tenant-recovery.sqlite3 \
   --provider sqlite \
@@ -280,9 +280,9 @@ Use this for disaster recovery or interoperability when plaintext is required.
 KEK rotation rewraps the manifest only; database pages are not rewritten.
 
 ```bash
-NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
-NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/path/old.key \
-neovex encryption rotate-kek \
+NIMBUS_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NIMBUS_ENCRYPTION_MASTER_KEY_FILE=/secure/path/old.key \
+nimbus encryption rotate-kek \
   --path /data/tenant.sqlite3 \
   --new-master-key-file /secure/path/new.key
 ```
@@ -293,12 +293,12 @@ directory.
 You can also rotate a manifest to AWS KMS:
 
 ```bash
-NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
-NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/path/old.key \
-neovex encryption rotate-kek \
+NIMBUS_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NIMBUS_ENCRYPTION_MASTER_KEY_FILE=/secure/path/old.key \
+nimbus encryption rotate-kek \
   --path /data/tenant.sqlite3 \
   --new-key-provider aws-kms \
-  --new-aws-kms-key-id alias/neovex-production \
+  --new-aws-kms-key-id alias/nimbus-production \
   --new-aws-region us-east-1
 ```
 
@@ -307,44 +307,44 @@ neovex encryption rotate-kek \
 DEK rotation rewrites database pages.
 
 ```bash
-NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
-NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
-neovex encryption rotate-dek \
+NIMBUS_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NIMBUS_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
+nimbus encryption rotate-dek \
   --path /data/tenant.sqlite3 \
   --provider sqlite \
   --tenant-id tenant-a
 ```
 
-For SQLite, Neovex checkpoints WAL state first, backs up the SQLite artifact
+For SQLite, Nimbus checkpoints WAL state first, backs up the SQLite artifact
 set, runs `PRAGMA rekey`, and then updates the manifest so restart uses the new
 DEK.
 
 ### DEK Rotation (redb)
 
 ```bash
-NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
-NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
-neovex encryption rotate-dek \
+NIMBUS_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NIMBUS_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
+nimbus encryption rotate-dek \
   --path /data/tenant.redb \
   --provider redb \
   --tenant-id tenant-a
 ```
 
-For redb, Neovex re-encrypts pages into a new file using fresh nonces and the
+For redb, Nimbus re-encrypts pages into a new file using fresh nonces and the
 same AAD contract as the runtime backend, then rewrites the manifest.
 
 ### DEK Rotation (libsql replica)
 
 ```bash
-NEOVEX_ENCRYPTION_KEY_PROVIDER=master-key-file \
-NEOVEX_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
-neovex encryption rotate-dek \
+NIMBUS_ENCRYPTION_KEY_PROVIDER=master-key-file \
+NIMBUS_ENCRYPTION_MASTER_KEY_FILE=/secure/path/master.key \
+nimbus encryption rotate-dek \
   --path /data/cache/tenant-a/tenant.sqlite3 \
   --provider libsql-cache \
   --tenant-id tenant-a
 ```
 
-For libsql replica caches, Neovex rotates the manifest to a fresh DEK and
+For libsql replica caches, Nimbus rotates the manifest to a fresh DEK and
 retires the local cache database files. The next service start rebuilds the
 cache from the remote primary under the new key.
 
@@ -436,16 +436,16 @@ operation. Verify IAM policy, key policy, and any grant requirements.
 
 ### "aws kms network error"
 
-Neovex could not reach KMS. Verify region, endpoint overrides, VPC routing,
+Nimbus could not reach KMS. Verify region, endpoint overrides, VPC routing,
 and AWS credential-chain environment.
 
 ---
 
 ## Library Feature Flag
 
-The shipped `neovex` CLI binary includes AWS KMS support. If you embed the
+The shipped `nimbus` CLI binary includes AWS KMS support. If you embed the
 workspace crates directly and want to construct the KMS provider from Rust,
-enable the `aws-kms` feature on `neovex`:
+enable the `aws-kms` feature on `nimbus`:
 
 ```bash
 cargo build --release --features aws-kms

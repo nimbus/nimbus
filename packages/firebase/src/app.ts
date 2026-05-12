@@ -58,7 +58,7 @@ function normalizedAppName(name?: string): string {
 function assertKnownApp(app: FirebaseApp): FirebaseAppImpl {
   const known = apps.get(app.name);
   if (!known || known !== app) {
-    throw new Error(`Firebase app "${app.name}" is not registered by @neovex/firebase.`);
+    throw new Error(`Firebase app "${app.name}" is not registered by @nimbus/firebase.`);
   }
   if (known.deleted) {
     throw new Error(`Firebase app "${app.name}" has already been deleted.`);

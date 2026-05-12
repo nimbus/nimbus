@@ -2052,7 +2052,7 @@ dependencies = [
 [[package]]
 name = "deno_cache_dir"
 version = "0.39.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "base32",
@@ -2081,7 +2081,7 @@ dependencies = [
 [[package]]
 name = "deno_config"
 version = "0.97.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2107,7 +2107,7 @@ dependencies = [
 [[package]]
 name = "deno_core"
 version = "0.400.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "anyhow",
  "az",
@@ -2154,7 +2154,7 @@ checksum = "a9efff8990a82c1ae664292507e1a5c6749ddd2312898cdf9cd7cb1fd4bc64c6"
 [[package]]
 name = "deno_crypto"
 version = "0.261.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2195,7 +2195,7 @@ dependencies = [
 [[package]]
 name = "deno_crypto_provider"
 version = "0.41.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "aws-lc-sys",
 ]
@@ -2203,7 +2203,7 @@ dependencies = [
 [[package]]
 name = "deno_dotenv"
 version = "0.16.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_path_util",
  "sys_traits",
@@ -2238,7 +2238,7 @@ dependencies = [
 [[package]]
 name = "deno_features"
 version = "0.44.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "serde",
@@ -2248,7 +2248,7 @@ dependencies = [
 [[package]]
 name = "deno_fetch"
 version = "0.271.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2287,7 +2287,7 @@ dependencies = [
 [[package]]
 name = "deno_fs"
 version = "0.157.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "base32",
@@ -2346,7 +2346,7 @@ dependencies = [
 [[package]]
 name = "deno_http"
 version = "0.245.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -2388,7 +2388,7 @@ dependencies = [
 [[package]]
 name = "deno_inspector_server"
 version = "0.21.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2406,7 +2406,7 @@ dependencies = [
 [[package]]
 name = "deno_io"
 version = "0.157.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2431,7 +2431,7 @@ dependencies = [
 [[package]]
 name = "deno_lockfile"
 version = "0.49.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "deno_semver",
@@ -2443,7 +2443,7 @@ dependencies = [
 [[package]]
 name = "deno_maybe_sync"
 version = "0.34.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "dashmap",
 ]
@@ -2463,7 +2463,7 @@ dependencies = [
 [[package]]
 name = "deno_napi"
 version = "0.178.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2493,7 +2493,7 @@ dependencies = [
 [[package]]
 name = "deno_net"
 version = "0.239.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2522,7 +2522,7 @@ dependencies = [
 [[package]]
 name = "deno_node"
 version = "0.185.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "base64 0.22.1",
  "boxed_error",
@@ -2585,7 +2585,7 @@ dependencies = [
 [[package]]
 name = "deno_node_crypto"
 version = "0.17.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "aead-gcm-stream",
  "aes",
@@ -2648,7 +2648,7 @@ dependencies = [
 [[package]]
 name = "deno_node_sqlite"
 version = "0.17.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2660,7 +2660,7 @@ dependencies = [
 [[package]]
 name = "deno_npm"
 version = "0.59.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "capacity_builder",
@@ -2681,7 +2681,7 @@ dependencies = [
 [[package]]
 name = "deno_npmrc"
 version = "0.8.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "log",
  "monch",
@@ -2694,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "deno_ops"
 version = "0.276.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "indexmap 2.13.0",
  "proc-macro2",
@@ -2710,7 +2710,7 @@ dependencies = [
 [[package]]
 name = "deno_os"
 version = "0.64.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2730,7 +2730,7 @@ dependencies = [
 [[package]]
 name = "deno_package_json"
 version = "0.49.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2762,7 +2762,7 @@ dependencies = [
 [[package]]
 name = "deno_permissions"
 version = "0.106.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "capacity_builder",
  "chrono",
@@ -2792,7 +2792,7 @@ dependencies = [
 [[package]]
 name = "deno_process"
 version = "0.62.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2822,7 +2822,7 @@ dependencies = [
 [[package]]
 name = "deno_resolver"
 version = "0.78.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "anyhow",
  "async-once-cell",
@@ -2885,7 +2885,7 @@ dependencies = [
 [[package]]
 name = "deno_signals"
 version = "0.38.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_error",
  "libc",
@@ -2898,7 +2898,7 @@ dependencies = [
 [[package]]
 name = "deno_subprocess_windows"
 version = "0.42.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "fastrand",
  "futures-channel",
@@ -2909,7 +2909,7 @@ dependencies = [
 [[package]]
 name = "deno_telemetry"
 version = "0.69.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2951,7 +2951,7 @@ dependencies = [
 [[package]]
 name = "deno_tls"
 version = "0.234.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2997,7 +2997,7 @@ dependencies = [
 [[package]]
 name = "deno_web"
 version = "0.278.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "async-trait",
  "brotli 6.0.0",
@@ -3019,7 +3019,7 @@ dependencies = [
 [[package]]
 name = "deno_webidl"
 version = "0.247.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_core",
 ]
@@ -3027,7 +3027,7 @@ dependencies = [
 [[package]]
 name = "deno_websocket"
 version = "0.252.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "bytes",
  "deno_core",
@@ -3062,7 +3062,7 @@ dependencies = [
 [[package]]
 name = "denort_helper"
 version = "0.45.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_error",
  "deno_path_util",
@@ -5467,7 +5467,7 @@ dependencies = [
 [[package]]
 name = "napi_sym"
 version = "0.177.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "quote",
  "serde",
@@ -5493,19 +5493,35 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex"
-version = "0.1.22"
+name = "netif"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d29a01b9f018d6b7b277fef6c79fdbd9bf17bb2d1e298238055cafab49baa5ee"
 dependencies = [
- "neovex-core",
- "neovex-engine",
- "neovex-runtime",
- "neovex-sandbox",
- "neovex-server",
- "neovex-storage",
+ "libc",
+ "winapi",
 ]
 
 [[package]]
-name = "neovex-bin"
+name = "new_debug_unreachable"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nimbus"
+version = "0.1.22"
+dependencies = [
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-runtime",
+ "nimbus-sandbox",
+ "nimbus-server",
+ "nimbus-storage",
+]
+
+[[package]]
+name = "nimbus-bin"
 version = "0.1.22"
 dependencies = [
  "aes-gcm-siv",
@@ -5516,10 +5532,10 @@ dependencies = [
  "fs2",
  "indicatif",
  "libc",
- "neovex",
- "neovex-sandbox",
- "neovex-server",
- "neovex-testing",
+ "nimbus",
+ "nimbus-sandbox",
+ "nimbus-server",
+ "nimbus-testing",
  "oci-client",
  "rand 0.8.5",
  "reqwest 0.12.28",
@@ -5539,7 +5555,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex-core"
+name = "nimbus-core"
 version = "0.1.22"
 dependencies = [
  "rmp-serde",
@@ -5551,7 +5567,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex-engine"
+name = "nimbus-engine"
 version = "0.1.22"
 dependencies = [
  "arc-swap",
@@ -5561,9 +5577,9 @@ dependencies = [
  "hyper 0.14.32",
  "libsql",
  "mysql_async",
- "neovex-core",
- "neovex-storage",
- "neovex-testing",
+ "nimbus-core",
+ "nimbus-storage",
+ "nimbus-testing",
  "proptest",
  "rand 0.8.5",
  "rusqlite",
@@ -5581,7 +5597,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex-runtime"
+name = "nimbus-runtime"
 version = "0.1.22"
 dependencies = [
  "base64 0.22.1",
@@ -5625,14 +5641,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex-sandbox"
+name = "nimbus-sandbox"
 version = "0.1.22"
 dependencies = [
  "flate2",
  "fs2",
  "futures",
  "libc",
- "neovex-core",
+ "nimbus-core",
  "oci-client",
  "serde",
  "serde_json",
@@ -5648,7 +5664,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex-server"
+name = "nimbus-server"
 version = "0.1.22"
 dependencies = [
  "axum 0.8.8",
@@ -5660,12 +5676,12 @@ dependencies = [
  "hmac 0.12.1",
  "http 1.4.0",
  "libc",
- "neovex-core",
- "neovex-engine",
- "neovex-runtime",
- "neovex-sandbox",
- "neovex-storage",
- "neovex-testing",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-runtime",
+ "nimbus-sandbox",
+ "nimbus-storage",
+ "nimbus-testing",
  "pbkdf2",
  "prost 0.13.5",
  "prost-types 0.13.5",
@@ -5691,7 +5707,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex-storage"
+name = "nimbus-storage"
 version = "0.1.22"
 dependencies = [
  "aes-gcm-siv",
@@ -5706,7 +5722,7 @@ dependencies = [
  "libsql",
  "mysql_async",
  "native-tls",
- "neovex-core",
+ "nimbus-core",
  "parking_lot",
  "rand 0.8.5",
  "redb",
@@ -5731,37 +5747,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "neovex-testing"
+name = "nimbus-testing"
 version = "0.1.22"
 dependencies = [
  "axum 0.8.8",
  "futures",
  "http 1.4.0",
- "neovex-core",
- "neovex-runtime",
- "neovex-storage",
+ "nimbus-core",
+ "nimbus-runtime",
+ "nimbus-storage",
  "reqwest 0.12.28",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
 ]
-
-[[package]]
-name = "netif"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d29a01b9f018d6b7b277fef6c79fdbd9bf17bb2d1e298238055cafab49baa5ee"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "new_debug_unreachable"
-version = "1.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nix"
@@ -5792,7 +5792,7 @@ dependencies = [
 [[package]]
 name = "node_resolver"
 version = "0.85.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5822,7 +5822,7 @@ dependencies = [
 [[package]]
 name = "node_shim"
 version = "0.22.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "exec",
  "serde_json",
@@ -7935,7 +7935,7 @@ dependencies = [
 [[package]]
 name = "serde_v8"
 version = "0.309.0"
-source = "git+https://github.com/agentstation/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
+source = "git+https://github.com/nimbus/deno?tag=v2.7.14-locker.41#6d242386010811a6f04d4f7f48913460c1c9bac2"
 dependencies = [
  "deno_error",
  "num-bigint",
@@ -9862,7 +9862,7 @@ dependencies = [
 [[package]]
 name = "v8"
 version = "147.4.0"
-source = "git+https://github.com/agentstation/rusty_v8?tag=v147.4.0-locker.2#0231260c48bcf9dba098959d34e9e412a5134d51"
+source = "git+https://github.com/nimbus/rusty_v8?tag=v147.4.0-locker.2#0231260c48bcf9dba098959d34e9e412a5134d51"
 dependencies = [
  "bindgen 0.72.1",
  "bitflags",

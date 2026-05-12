@@ -1,0 +1,50 @@
+[package]
+name = "nimbus-bin"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Self-hosted JavaScript backend runtime with V8"
+repository.workspace = true
+license-file.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "nimbus"
+path = "src/main.rs"
+
+[dependencies]
+aes-gcm-siv.workspace = true
+axum.workspace = true
+clap.workspace = true
+comfy-table.workspace = true
+fs2.workspace = true
+indicatif.workspace = true
+libc.workspace = true
+nimbus = { path = "../nimbus", features = ["aws-kms"] }
+nimbus-server = { path = "../nimbus-server" }
+nimbus-sandbox = { path = "../nimbus-sandbox" }
+rand.workspace = true
+reqwest.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+signal-hook-registry.workspace = true
+shell-words.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+flate2 = "1"
+oci-client = "0.16"
+zstd = "0.13"
+
+[build-dependencies]
+serde_json.workspace = true
+
+[dev-dependencies]
+nimbus-testing = { path = "../nimbus-testing" }

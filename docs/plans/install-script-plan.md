@@ -1,6 +1,6 @@
 # Plan: Install Script — `curl | sh` Quick Start for All Platforms
 
-Canonical execution plan for the neovex install script (distribution
+Canonical execution plan for the nimbus install script (distribution
 Channel 1). The script handles platform detection, dependency installation,
 binary download, and post-install verification on Linux (Debian/Ubuntu,
 Fedora/RHEL) and macOS (Apple Silicon).
@@ -15,17 +15,17 @@ Fedora/RHEL) and macOS (Apple Silicon).
 - **Readiness:** implementation-ready after the 2026-04-18 contract refresh in
   this plan; I1 can start immediately
 - **Hard deps:** initial v1 implementation now has its external release inputs:
-  at least one `v*` Neovex release tag and at least one
-  `agentstation/neovex-crun` release tag already exist
+  at least one `v*` Nimbus release tag and at least one
+  `nimbus/nimbus-crun` release tag already exist
 - **Related CI:**
-  - `.github/workflows/release.yml` — neovex binary builds (linux x86_64,
+  - `.github/workflows/release.yml` — nimbus binary builds (linux x86_64,
     linux arm64, darwin arm64, windows x86_64) on `v*` tags, bundles
     `libexec/gvproxy` into the darwin archive, publishes checksums, dispatches
     machine-os, and updates the Homebrew cask
-  - `agentstation/neovex-crun` release workflow — publishes
-    `neovex-crun-linux-amd64` and `neovex-crun-linux-arm64`
-  - `agentstation/neovex-machine-os/.github/workflows/build.yml` — machine
-    guest image build/publish lane, called from the neovex `v*` release
+  - `nimbus/nimbus-crun` release workflow — publishes
+    `nimbus-crun-linux-amd64` and `nimbus-crun-linux-arm64`
+  - `nimbus/nimbus-machine-os/.github/workflows/build.yml` — machine
+    guest image build/publish lane, called from the nimbus `v*` release
     workflow and available for standalone image-repo `v*` tags
 
 ## Control Plan Rules
@@ -41,21 +41,21 @@ Source of truth:
 
 ```bash
 # One-line install (stable)
-curl -fsSL https://neovex.dev/install.sh | sh
+curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh
 
 # Pinned version
 # Linux direct-binary path in the initial cut; macOS initially follows the
 # latest Homebrew cask rather than supporting arbitrary historical cask pins.
-curl -fsSL https://neovex.dev/install.sh | sh -s -- --version v0.1.14
+curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --version v0.1.14
 
 # Dry run (print what would happen)
-curl -fsSL https://neovex.dev/install.sh | sh -s -- --dry-run
+curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --dry-run
 
 # Uninstall
-curl -fsSL https://neovex.dev/install.sh | sh -s -- --uninstall
+curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --uninstall
 
-# Direct from GitHub (before neovex.dev is live)
-curl -fsSL https://raw.githubusercontent.com/agentstation/neovex/main/scripts/install.sh | sh
+# Direct from GitHub (before github.com/nimbus/nimbus is live)
+curl -fsSL https://raw.githubusercontent.com/nimbus/nimbus/main/scripts/install.sh | sh
 ```
 
 ---
@@ -65,10 +65,10 @@ curl -fsSL https://raw.githubusercontent.com/agentstation/neovex/main/scripts/in
 The install script is a bootstrapper, not a single artifact installer.
 
 - On Linux in the initial cut, it installs distro dependencies via `apt` or
-  `dnf`, then installs the released `neovex` and `neovex-crun` binaries
+  `dnf`, then installs the released `nimbus` and `nimbus-crun` binaries
   directly from GitHub Releases with checksum verification.
 - On macOS in the initial cut, it installs or upgrades the published
-  `agentstation/tap/neovex` Homebrew cask. That cask owns `krunkit` as an
+  `nimbus/tap/nimbus` Homebrew cask. That cask owns `krunkit` as an
   explicit dependency and ships the bundled `libexec/gvproxy` helper.
 - Once the public apt/COPR channels are fully proved, the Linux branch of the
   script can switch from direct-release installs to package-repo installs
@@ -87,8 +87,8 @@ layout itself.
 
 | Component | Source | Install path |
 |-----------|--------|-------------|
-| `neovex` | GitHub Release `v*` | `/usr/local/bin/neovex` |
-| `neovex-crun` | `agentstation/neovex-crun` GitHub Release `v*` | `/usr/libexec/neovex/crun` |
+| `nimbus` | GitHub Release `v*` | `/usr/local/bin/nimbus` |
+| `nimbus-crun` | `nimbus/nimbus-crun` GitHub Release `v*` | `/usr/libexec/nimbus/crun` |
 | System deps | OS package repos | System paths (via apt/dnf) |
 
 **System dependencies installed via package manager:**
@@ -115,8 +115,8 @@ package manager to resolve it transitively.
 
 | Component | Source | Install path |
 |-----------|--------|-------------|
-| `neovex` | Homebrew cask `agentstation/tap/neovex` | Homebrew Caskroom + `$(brew --prefix)/bin/neovex` symlink |
-| `gvproxy` | Bundled inside the neovex darwin cask/archive | `$(brew --prefix)/Caskroom/neovex/<version>/libexec/gvproxy` |
+| `nimbus` | Homebrew cask `nimbus/tap/nimbus` | Homebrew Caskroom + `$(brew --prefix)/bin/nimbus` symlink |
+| `gvproxy` | Bundled inside the nimbus darwin cask/archive | `$(brew --prefix)/Caskroom/nimbus/<version>/libexec/gvproxy` |
 | krunkit | Homebrew (`slp/krunkit/krunkit`) via cask dependency | Homebrew prefix |
 
 No crun, conmon, buildah, or other Linux deps — everything runs inside the
@@ -136,12 +136,12 @@ POSIX `sh` — no bashisms. Following the conventions of:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--version <tag>` | latest | Pin neovex version (e.g., `v0.1.14`). Linux only in the initial cut; macOS installs the current Homebrew cask and does not support arbitrary historical version pins. |
-| `--crun-version <tag>` | latest `agentstation/neovex-crun` release | Pin neovex-crun version (Linux only; accepts the full release tag, e.g., `v1.27-neovex.1`) |
-| `--prefix <path>` | `/usr/local` | Install prefix for neovex binary (Linux only; ignored on macOS where Homebrew manages the prefix) |
+| `--version <tag>` | latest | Pin nimbus version (e.g., `v0.1.14`). Linux only in the initial cut; macOS installs the current Homebrew cask and does not support arbitrary historical version pins. |
+| `--crun-version <tag>` | latest `nimbus/nimbus-crun` release | Pin nimbus-crun version (Linux only; accepts the full release tag, e.g., `v1.27-nimbus.1`) |
+| `--prefix <path>` | `/usr/local` | Install prefix for nimbus binary (Linux only; ignored on macOS where Homebrew manages the prefix) |
 | `--skip-deps` | false | Skip system dependency installation |
 | `--dry-run` | false | Print what would happen, don't do anything |
-| `--uninstall` | false | Remove neovex and neovex-crun |
+| `--uninstall` | false | Remove nimbus and nimbus-crun |
 | `--yes`, `-y` | false | Skip interactive confirmation prompts (implied when piped via `curl \| sh`) |
 | `-h`, `--help` | — | Show usage |
 
@@ -156,7 +156,7 @@ main()
   if Linux:
     check_kvm_access()        # warn if /dev/kvm missing or inaccessible
     install_system_deps()     # apt-get or dnf
-    download_and_install_neovex()
+    download_and_install_nimbus()
     download_and_install_crun()
     verify_installation()
     print_getting_started_linux()
@@ -216,11 +216,11 @@ Respects `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (inherited by curl/wget).
 For Linux, query GitHub API for the latest releases:
 
 ```
-GET https://api.github.com/repos/agentstation/neovex/releases/latest
+GET https://api.github.com/repos/nimbus/nimbus/releases/latest
   → .tag_name → v0.1.14
 
-GET https://api.github.com/repos/agentstation/neovex-crun/releases/latest
-  → .tag_name → v1.27-neovex.1
+GET https://api.github.com/repos/nimbus/nimbus-crun/releases/latest
+  → .tag_name → v1.27-nimbus.1
 ```
 
 If rate-limited (HTTP 403), suggest `--version` on Linux or `GITHUB_TOKEN`.
@@ -230,50 +230,50 @@ does not attempt to synthesize a historical cask for `--version`.
 
 ### Release asset naming
 
-**neovex binary** (from `release.yml`):
+**nimbus binary** (from `release.yml`):
 ```
-neovex_linux_x86_64.tar.gz
-neovex_linux_arm64.tar.gz
-neovex_darwin_arm64.tar.gz
+nimbus_linux_x86_64.tar.gz
+nimbus_linux_arm64.tar.gz
+nimbus_darwin_arm64.tar.gz
 checksums-sha256.txt
 ```
 
-**neovex-crun** (from `agentstation/neovex-crun` releases):
+**nimbus-crun** (from `nimbus/nimbus-crun` releases):
 ```
-neovex-crun-linux-amd64
-neovex-crun-linux-arm64
+nimbus-crun-linux-amd64
+nimbus-crun-linux-arm64
 checksums.txt
 ```
 
-Note the naming inconsistency: neovex uses `x86_64` while neovex-crun uses
+Note the naming inconsistency: nimbus uses `x86_64` while nimbus-crun uses
 `amd64`. The script maps between them.
 
 ### Checksum verification
 
-For Linux, download `checksums-sha256.txt` (neovex) and `checksums.txt`
-(`neovex-crun`) from the release, extract the exact subject line for the target
+For Linux, download `checksums-sha256.txt` (nimbus) and `checksums.txt`
+(`nimbus-crun`) from the release, extract the exact subject line for the target
 asset, and compare the downloaded file's computed SHA-256 against that expected
 digest. Do not pipe a raw `grep` result straight into `sha256sum -c` because an
 empty match can be accepted as success on GNU coreutils.
 
 ### GitHub attestations
 
-The Neovex release workflow already publishes free GitHub artifact
+The Nimbus release workflow already publishes free GitHub artifact
 attestations via `actions/attest@v4`. The install script should use that
 enterprise-trust surface where it can:
 
 - Linux direct-binary install: if `gh` is available, verify the downloaded
-  `neovex_*` release artifact against the `agentstation/neovex`
+  `nimbus_*` release artifact against the `nimbus/nimbus`
   `.github/workflows/release.yml` provenance before extraction
-- Linux direct-binary install: if `NEOVEX_REQUIRE_ATTESTATIONS=1`, fail closed
+- Linux direct-binary install: if `NIMBUS_REQUIRE_ATTESTATIONS=1`, fail closed
   when `gh` is unavailable or attestation verification fails
 - macOS Homebrew path: the install script still delegates archive download and
   SHA validation to the cask metadata; do not invent a second manual macOS
   tarball path just to verify attestations
-- `agentstation/neovex-crun` is an external release source, but its live
-  `v1.27-neovex.1` release already carries GitHub artifact attestations from
+- `nimbus/nimbus-crun` is an external release source, but its live
+  `v1.27-nimbus.1` release already carries GitHub artifact attestations from
   `.github/workflows/build.yml`; the install script can therefore verify the
-  downloaded `neovex-crun-linux-*` binary against that external provenance as
+  downloaded `nimbus-crun-linux-*` binary against that external provenance as
   part of the same optional/fail-closed trust model
 
 For macOS, the install script delegates archive checksum verification to
@@ -284,7 +284,7 @@ Homebrew cask metadata rather than re-implementing cask install logic.
 - Detect if running as root already
 - If not root and installing to system paths, use `sudo` (check it exists)
 - For `/usr/local/bin`: some systems allow user writes, check first
-- For `/usr/libexec/neovex/crun`: always needs sudo
+- For `/usr/libexec/nimbus/crun`: always needs sudo
 - For package manager commands (apt-get, dnf): always needs sudo
 - For macOS Homebrew installs: do not use `sudo`; rely on the invoking user's
   Homebrew ownership and fail clearly if Homebrew itself is unavailable
@@ -296,7 +296,7 @@ When piped (`curl | sh`), stdin is the pipe, not the terminal. Detect with
 
 ### Idempotent behavior
 
-- Check existing installation via `command -v neovex` and `neovex --version`
+- Check existing installation via `command -v nimbus` and `nimbus --version`
 - If same version: skip with message
 - If different version: replace (no confirmation in non-interactive mode)
 
@@ -335,14 +335,14 @@ On Fedora, these are available from repos:
 
 ### Phase I3 (follow-up): Prebuilt .so download
 
-New CI workflow `neovex-libkrun.yml` builds libkrun+libkrunfw for
+New CI workflow `nimbus-libkrun.yml` builds libkrun+libkrunfw for
 Debian (amd64+arm64) and publishes `.so` files as GitHub Release assets.
 The install script downloads and installs them to `/usr/local/lib64/`,
 creates the ldconfig entry, and runs ldconfig.
 
 ### Phase I5 (mature): Apt repository
 
-The install script adds the neovex apt repo and installs libkrun as a
+The install script adds the nimbus apt repo and installs libkrun as a
 proper `.deb` package. This is the D2 phase from the distribution plan.
 
 ---
@@ -357,8 +357,8 @@ pattern from the existing `scripts/check-vmm-host.sh`.
 
 | Check | How | Required |
 |-------|-----|----------|
-| `neovex --version` | command + version output | yes |
-| `/usr/libexec/neovex/crun --version` | command + `+LIBKRUN` in output | yes |
+| `nimbus --version` | command + version output | yes |
+| `/usr/libexec/nimbus/crun --version` | command + `+LIBKRUN` in output | yes |
 | `/dev/kvm` exists | `test -c /dev/kvm` | warn only |
 | `/dev/kvm` accessible | `test -r /dev/kvm -a -w /dev/kvm` | warn only |
 | conmon | `command -v conmon` | yes |
@@ -375,17 +375,17 @@ pattern from the existing `scripts/check-vmm-host.sh`.
 
 | Check | How | Required |
 |-------|-----|----------|
-| `neovex --version` | command + version output | yes |
+| `nimbus --version` | command + version output | yes |
 | `krunkit --version` | `command -v krunkit` | yes |
-| bundled `gvproxy` exists | resolve installed `neovex` path into Caskroom and check adjacent `libexec/gvproxy` | yes |
+| bundled `gvproxy` exists | resolve installed `nimbus` path into Caskroom and check adjacent `libexec/gvproxy` | yes |
 | macOS version >= 14 | `sw_vers -productVersion` | yes |
 | Architecture arm64 | `uname -m` | yes |
 
 ### Output format
 
 ```
-neovex              present path=/usr/local/bin/neovex version=neovex 0.1.0
-neovex-crun         present path=/usr/libexec/neovex/crun version=crun version 1.27-dirty ... +LIBKRUN
+nimbus              present path=/usr/local/bin/nimbus version=nimbus 0.1.0
+nimbus-crun         present path=/usr/libexec/nimbus/crun version=crun version 1.27-dirty ... +LIBKRUN
 kvm.device          present path=/dev/kvm
 kvm.access          ok user=jack groups=kvm
 conmon              present path=/usr/bin/conmon version=conmon version 2.1.12
@@ -411,14 +411,14 @@ result              supported (0 failures)
 
 | Prerequisite | Status | Needed by |
 |-------------|--------|-----------|
-| neovex binary CI (`release.yml`) | exists, publishes tagged releases | Phase I2 |
-| neovex-crun release source (`agentstation/neovex-crun`) | exists, publishes tagged releases | Phase I2 |
-| At least one `v*` Neovex release tag | pushed (`v0.1.14`) | Phase I2 |
-| At least one `agentstation/neovex-crun` release tag | pushed (`v1.27-neovex.1`) | Phase I2 |
+| nimbus binary CI (`release.yml`) | exists, publishes tagged releases | Phase I2 |
+| nimbus-crun release source (`nimbus/nimbus-crun`) | exists, publishes tagged releases | Phase I2 |
+| At least one `v*` Nimbus release tag | pushed (`v0.1.14`) | Phase I2 |
+| At least one `nimbus/nimbus-crun` release tag | pushed (`v1.27-nimbus.1`) | Phase I2 |
 | Homebrew cask auto-update in release workflow | exists | Phase I4 |
-| `neovex.dev` domain serving script | not configured | Phase I5 |
+| `github.com/nimbus/nimbus` domain serving script | not configured | Phase I5 |
 | libkrun prebuilt .so CI | does not exist | Phase I3 |
-| neovex apt repo at `apt.neovex.dev` | does not exist | Phase I5 |
+| nimbus apt repo at `nimbus.github.io/apt` | does not exist | Phase I5 |
 
 ---
 
@@ -452,25 +452,25 @@ and the verification helper.
 
 ### Phase I2: Linux Binary Download and Installation
 
-**Goal:** Download `neovex` and `neovex-crun` on Linux from their GitHub
+**Goal:** Download `nimbus` and `nimbus-crun` on Linux from their GitHub
 releases, verify checksums, and install to the correct paths.
 
 **Scope:**
 - Version resolution via GitHub API (latest or `--version`)
-- Download Neovex tarball from `agentstation/neovex`
-- Download `neovex-crun` binary from `agentstation/neovex-crun`
+- Download Nimbus tarball from `nimbus/nimbus`
+- Download `nimbus-crun` binary from `nimbus/nimbus-crun`
 - SHA256 checksum verification
-- Install to `/usr/local/bin/neovex` and `/usr/libexec/neovex/crun`
+- Install to `/usr/local/bin/nimbus` and `/usr/libexec/nimbus/crun`
 - Sudo handling for system paths
 - Idempotent: skip if same version already installed
 
-**Hard deps:** at least one `agentstation/neovex` tag and one
-`agentstation/neovex-crun` tag pushed.
+**Hard deps:** at least one `nimbus/nimbus` tag and one
+`nimbus/nimbus-crun` tag pushed.
 
 **Acceptance criteria:**
 - `sh scripts/install.sh` on a clean Ubuntu VM downloads and installs both
   binaries
-- `neovex --version` and `/usr/libexec/neovex/crun --version` work
+- `nimbus --version` and `/usr/libexec/nimbus/crun --version` work
 - Checksums verified before install
 - Running twice skips if same version
 
@@ -494,20 +494,20 @@ releases, verify checksums, and install to the correct paths.
 
 ### Phase I4: macOS Installation
 
-**Goal:** Install or upgrade the published `agentstation/tap/neovex` cask on
+**Goal:** Install or upgrade the published `nimbus/tap/nimbus` cask on
 macOS Apple Silicon.
 
 **Scope:**
 - Check Homebrew is available
-- `brew tap agentstation/tap` and `brew tap slp/krunkit`
-- `brew install --cask agentstation/tap/neovex` or
-  `brew upgrade --cask agentstation/tap/neovex`
+- `brew tap nimbus/tap` and `brew tap slp/krunkit`
+- `brew install --cask nimbus/tap/nimbus` or
+  `brew upgrade --cask nimbus/tap/nimbus`
 - Verify the installed cask layout includes bundled `libexec/gvproxy`
-- Print getting-started: `neovex machine init` + `neovex start`
+- Print getting-started: `nimbus machine init` + `nimbus start`
 
 **Acceptance criteria:**
-- `sh scripts/install.sh` on a clean macOS M1+ installs `agentstation/tap/neovex`
-- `neovex --version` and `krunkit --version` work
+- `sh scripts/install.sh` on a clean macOS M1+ installs `nimbus/tap/nimbus`
+- `nimbus --version` and `krunkit --version` work
 - the installed cask layout includes bundled `libexec/gvproxy`
 - Intel Mac: script fails with clear message
 
@@ -516,20 +516,20 @@ macOS Apple Silicon.
 **Goal:** Complete lifecycle management and production readiness.
 
 **Scope:**
-- Linux `--uninstall` removes `neovex`, `neovex-crun`, and any apt repo entry
-- macOS `--uninstall` uses `brew uninstall --cask neovex`; note that Homebrew
+- Linux `--uninstall` removes `nimbus`, `nimbus-crun`, and any apt repo entry
+- macOS `--uninstall` uses `brew uninstall --cask nimbus`; note that Homebrew
   does not auto-remove formula dependencies of casks, so `krunkit` (installed
   as a cask dependency) will remain as an orphaned formula after uninstall —
   print a message suggesting `brew autoremove` or `brew uninstall krunkit` if
-  the user installed krunkit solely for neovex
+  the user installed krunkit solely for nimbus
 - Upgrade path: detect existing version, replace if different
-- Host `install.sh` at `neovex.dev/install.sh` (GitHub Pages or redirect)
+- Host `install.sh` at `github.com/nimbus/nimbus/releases/latest/download/install.sh` (GitHub Pages or redirect)
 - Error messages and getting-started output polished
 
 **Acceptance criteria:**
 - `sh scripts/install.sh --uninstall` cleanly removes everything
 - Upgrade from v0.1.11 to v0.1.14 works
-- `curl -fsSL https://neovex.dev/install.sh | sh` works end-to-end
+- `curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh` works end-to-end
 
 ---
 
@@ -541,7 +541,7 @@ macOS Apple Silicon.
 | I2: Linux binary download | `in_progress` | I1, release tags pushed | Release download/checksum/idempotency code landed; fresh Ubuntu proof still required |
 | I3: Linux system deps | `in_progress` | I2 | apt/dnf install landed; fresh Debian/Fedora proof still required |
 | I4: macOS installation | `in_progress` | I1 | Homebrew cask install/upgrade landed; fresh Apple Silicon proof still required |
-| I5: Uninstall + polish | `in_progress` | I3, I4 | Uninstall landed; hosted `neovex.dev` path and end-to-end proof still open |
+| I5: Uninstall + polish | `in_progress` | I3, I4 | Uninstall landed; hosted `github.com/nimbus/nimbus` path and end-to-end proof still open |
 
 ---
 
@@ -550,7 +550,7 @@ macOS Apple Silicon.
 ### Rootless install
 
 Linux user-prefix installs are out of scope for the first cut. The current
-Linux runtime contract assumes `/usr/libexec/neovex/crun`, and the codebase
+Linux runtime contract assumes `/usr/libexec/nimbus/crun`, and the codebase
 does not currently expose a supported runtime-path override for a user-prefix
 install. If rootless/user-prefix support becomes important, document and land
 that runtime-path contract explicitly first rather than letting the install
@@ -574,11 +574,11 @@ The script uses curl/wget which respect `HTTPS_PROXY`, `HTTP_PROXY`,
 
 The script installs buildah and conmon alongside any existing Docker or
 Podman. It does NOT modify Docker configuration or conflict with existing
-container runtimes. neovex-crun installs to `/usr/libexec/neovex/crun`,
+container runtimes. nimbus-crun installs to `/usr/libexec/nimbus/crun`,
 not the system crun path.
 
 On macOS, the script should not treat Homebrew `podman` or Podman Desktop as
-Neovex's dependency manager. The supported install path is the Neovex cask,
+Nimbus's dependency manager. The supported install path is the Nimbus cask,
 which owns `krunkit` and carries the bundled `gvproxy` helper itself.
 
 ---
@@ -587,5 +587,5 @@ which owns `krunkit` and carries the bundled `gvproxy` helper itself.
 
 | Date | Phase | Status | Notes | Verification | Next |
 |------|-------|--------|-------|--------------|------|
-| 2026-04-18 | planning refresh | `documented` | Rebased the install-script plan onto the current shipped distribution contract so implementation can start from a correct foundation. The initial Channel 1 design is now explicitly platform-split: Linux installs distro deps plus released `neovex` / `neovex-crun` artifacts directly from GitHub Releases, while macOS installs or upgrades the published `agentstation/tap/neovex` Homebrew cask instead of manually unpacking a single binary. The plan now points at the external `agentstation/neovex-crun` release source, treats the darwin bundled `libexec/gvproxy` helper as part of the required macOS install contract, drops the stale rootless `NEOVEX_CRUN_PATH` assumption, and updates prerequisites to the current `v0.1.14` / `v1.27-neovex.1` release reality. | plan review against `.github/workflows/release.yml`; plan review against `docs/architecture/sandbox/macos-machine-flow.md`; `gh release list --repo agentstation/neovex --limit 5`; `gh release list --repo agentstation/neovex-crun --limit 5` | Start I1 by writing `scripts/install.sh`, `scripts/verify-install.sh`, and `scripts/verify-install-helper.sh` to this refreshed contract |
-| 2026-04-18 | I1-I5 implementation landing | `documented` | Landed the first install-script implementation slice plus CI wiring, but the initial closeout note was too optimistic. An audit reopened I2-I5 because the evidence so far is local syntax/dry-run/helper coverage rather than fresh Debian/Fedora/macOS proof or a hosted `curl \| sh` end-to-end run. The follow-up hardening pass fixed the audited gaps: Linux checksum verification now requires an exact manifest match before comparing digests; optional `GITHUB_TOKEN` auth is now actually used for GitHub API lookups instead of merely being documented; macOS no longer performs unnecessary GitHub latest-release resolution on the Homebrew path; `neovex-crun` idempotency now compares the installed binary digest against the release manifest before skipping; the hosted installer now has an inline verification fallback when the standalone helper is not present beside `$0`; and the Linux direct-binary path now opportunistically verifies both the Neovex release artifact attestation and the external `agentstation/neovex-crun` artifact attestation with `gh`, with `NEOVEX_REQUIRE_ATTESTATIONS=1` available for fail-closed enterprise-trust environments. | `bash -n scripts/install.sh`; `dash -n scripts/install.sh`; `bash -n scripts/verify-install.sh`; `bash scripts/verify-install-helper.sh`; targeted helper coverage for checksum enforcement, GitHub API auth usage, and mocked macOS dry-run behavior; live external provenance proof: `gh release view --repo agentstation/neovex-crun --json tagName,assets,url`; `gh release download v1.27-neovex.1 --repo agentstation/neovex-crun --pattern neovex-crun-linux-amd64 --dir /tmp/neovex-crun-attest-check`; `gh attestation verify /tmp/neovex-crun-attest-check/neovex-crun-linux-amd64 --repo agentstation/neovex-crun --source-ref refs/tags/v1.27-neovex.1 --signer-workflow agentstation/neovex-crun/.github/workflows/build.yml --format json` | Run fresh Debian 13, Fedora 42, and Apple Silicon macOS install proofs; then host `neovex.dev/install.sh` and capture a real public `curl \| sh` proof before marking I2-I5 done |
+| 2026-04-18 | planning refresh | `documented` | Rebased the install-script plan onto the current shipped distribution contract so implementation can start from a correct foundation. The initial Channel 1 design is now explicitly platform-split: Linux installs distro deps plus released `nimbus` / `nimbus-crun` artifacts directly from GitHub Releases, while macOS installs or upgrades the published `nimbus/tap/nimbus` Homebrew cask instead of manually unpacking a single binary. The plan now points at the external `nimbus/nimbus-crun` release source, treats the darwin bundled `libexec/gvproxy` helper as part of the required macOS install contract, drops the stale rootless `NIMBUS_CRUN_PATH` assumption, and updates prerequisites to the current `v0.1.14` / `v1.27-nimbus.1` release reality. | plan review against `.github/workflows/release.yml`; plan review against `docs/architecture/sandbox/macos-machine-flow.md`; `gh release list --repo nimbus/nimbus --limit 5`; `gh release list --repo nimbus/nimbus-crun --limit 5` | Start I1 by writing `scripts/install.sh`, `scripts/verify-install.sh`, and `scripts/verify-install-helper.sh` to this refreshed contract |
+| 2026-04-18 | I1-I5 implementation landing | `documented` | Landed the first install-script implementation slice plus CI wiring, but the initial closeout note was too optimistic. An audit reopened I2-I5 because the evidence so far is local syntax/dry-run/helper coverage rather than fresh Debian/Fedora/macOS proof or a hosted `curl \| sh` end-to-end run. The follow-up hardening pass fixed the audited gaps: Linux checksum verification now requires an exact manifest match before comparing digests; optional `GITHUB_TOKEN` auth is now actually used for GitHub API lookups instead of merely being documented; macOS no longer performs unnecessary GitHub latest-release resolution on the Homebrew path; `nimbus-crun` idempotency now compares the installed binary digest against the release manifest before skipping; the hosted installer now has an inline verification fallback when the standalone helper is not present beside `$0`; and the Linux direct-binary path now opportunistically verifies both the Nimbus release artifact attestation and the external `nimbus/nimbus-crun` artifact attestation with `gh`, with `NIMBUS_REQUIRE_ATTESTATIONS=1` available for fail-closed enterprise-trust environments. | `bash -n scripts/install.sh`; `dash -n scripts/install.sh`; `bash -n scripts/verify-install.sh`; `bash scripts/verify-install-helper.sh`; targeted helper coverage for checksum enforcement, GitHub API auth usage, and mocked macOS dry-run behavior; live external provenance proof: `gh release view --repo nimbus/nimbus-crun --json tagName,assets,url`; `gh release download v1.27-nimbus.1 --repo nimbus/nimbus-crun --pattern nimbus-crun-linux-amd64 --dir /tmp/nimbus-crun-attest-check`; `gh attestation verify /tmp/nimbus-crun-attest-check/nimbus-crun-linux-amd64 --repo nimbus/nimbus-crun --source-ref refs/tags/v1.27-nimbus.1 --signer-workflow nimbus/nimbus-crun/.github/workflows/build.yml --format json` | Run fresh Debian 13, Fedora 42, and Apple Silicon macOS install proofs; then host `github.com/nimbus/nimbus/releases/latest/download/install.sh` and capture a real public `curl \| sh` proof before marking I2-I5 done |

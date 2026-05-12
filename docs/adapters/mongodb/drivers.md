@@ -1,7 +1,7 @@
 # Compatible Drivers
 
 Any MongoDB driver that supports the modern wire protocol (OP_MSG) and
-`directConnection=true` works with Neovex. This includes all current
+`directConnection=true` works with Nimbus. This includes all current
 official drivers maintained by MongoDB, Inc.
 
 ## Official Drivers
@@ -22,11 +22,11 @@ official drivers maintained by MongoDB, Inc.
 | C | [libmongoc](https://www.mongodb.com/docs/drivers/c/) | System package or source build |
 | C++ | [mongocxx](https://www.mongodb.com/docs/drivers/cxx/) | System package or source build |
 
-## Neovex URI Helper
+## Nimbus URI Helper
 
 | Package | Install |
 |---|---|
-| [@neovex/mongodb](../../../packages/mongodb/) | `npm install @neovex/mongodb` |
+| [@nimbus/mongodb](../../../packages/mongodb/) | `npm install @nimbus/mongodb` |
 
 Builds a `mongodb://` URI with `directConnection=true` and sensible defaults.
 See the [Client Package](README.md#client-package) section for details.
@@ -51,19 +51,19 @@ communication:
 
 ## Requirements
 
-Always connect with `directConnection=true`. Neovex is not a MongoDB replica
-set, so topology discovery will fail without this flag. The `@neovex/mongodb`
+Always connect with `directConnection=true`. Nimbus is not a MongoDB replica
+set, so topology discovery will fail without this flag. The `@nimbus/mongodb`
 URI helper includes it automatically.
 
 ## FerretDB
 
 [FerretDB](https://www.ferretdb.com) occupies the same architectural position
-as Neovex's MongoDB adapter -- it is a server that accepts MongoDB wire
+as Nimbus's MongoDB adapter -- it is a server that accepts MongoDB wire
 protocol connections and stores data in a non-MongoDB backend
-(Postgres/SQLite). FerretDB and Neovex do not talk to each other.
+(Postgres/SQLite). FerretDB and Nimbus do not talk to each other.
 
 From a client's perspective they are interchangeable: any app using a MongoDB
 driver with `directConnection=true` can point at either one. The difference
-is what's behind the protocol -- FerretDB proxies to Postgres, while Neovex
+is what's behind the protocol -- FerretDB proxies to Postgres, while Nimbus
 routes through its own engine with pluggable storage, V8 runtime execution,
-the Convex/Neovex SDK surface, and multi-adapter support.
+the Convex/Nimbus SDK surface, and multi-adapter support.

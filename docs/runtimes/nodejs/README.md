@@ -1,6 +1,6 @@
 # Node.js Runtime
 
-Neovex supports a Node.js-compatible runtime for code that intentionally opts
+Nimbus supports a Node.js-compatible runtime for code that intentionally opts
 into Node APIs. Node22 is the default target today. Node20, Node22, and Node24
 are selectable, evidence-backed lanes.
 

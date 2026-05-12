@@ -23,7 +23,7 @@
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
+        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1308,
         "documented_manifested_green_count": 904,
@@ -3272,7 +3272,7 @@
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
+        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1283,
         "documented_manifested_green_count": 876,
@@ -6556,7 +6556,7 @@
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
+        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1495,
         "documented_manifested_green_count": 925,

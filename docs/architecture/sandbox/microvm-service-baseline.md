@@ -1,6 +1,6 @@
 # MicroVM And Service-Control Baseline
 
-This document is the stable baseline for Neovex's landed krun-backed microVM
+This document is the stable baseline for Nimbus's landed krun-backed microVM
 runtime and Compose-backed service-control architecture.
 
 It is not a roadmap. Historical execution detail, verification logs, and
@@ -14,14 +14,14 @@ phase-by-phase closeout evidence live in the archived plans:
 ## Scope
 
 - Linux is the production platform for hardware-isolated service microVMs.
-- macOS is a developer delivery surface only: Neovex runs inside one Linux
+- macOS is a developer delivery surface only: Nimbus runs inside one Linux
   machine VM, and services run as standard containers inside that guest, the
   same way Podman works on macOS today.
-- `neovex-runtime` stays execution-only.
-- `neovex-sandbox` stays isolation-only.
-- `neovex-server` owns service activation, request-time binding, and
+- `nimbus-runtime` stays execution-only.
+- `nimbus-sandbox` stays isolation-only.
+- `nimbus-server` owns service activation, request-time binding, and
   `ctx.services.*` projection.
-- `neovex-bin` owns Compose parsing, service CLI commands, and server startup
+- `nimbus-bin` owns Compose parsing, service CLI commands, and server startup
   wiring such as `--compose-file`.
 
 ## Architecture
@@ -30,22 +30,22 @@ Current implementation by layer:
 
 | Layer | Current implementation | Ownership |
 | --- | --- | --- |
-| Execution runtime | V8 backend in `neovex-runtime` | code execution only |
-| Isolation backend | krun backend in `neovex-sandbox` | OCI lowering, lifecycle, logs, manifests |
+| Execution runtime | V8 backend in `nimbus-runtime` | code execution only |
+| Isolation backend | krun backend in `nimbus-sandbox` | OCI lowering, lifecycle, logs, manifests |
 | VM launch stack | `buildah` + `conmon` + patched `crun` + `libkrun` | subprocess orchestration |
-| Service manager | `SandboxServiceManager` in `neovex-server` | declared services, activation, readiness, teardown |
-| Developer/operator UX | `neovex-bin` | Compose validation and `neovex compose ...` |
+| Service manager | `SandboxServiceManager` in `nimbus-server` | declared services, activation, readiness, teardown |
+| Developer/operator UX | `nimbus-bin` | Compose validation and `nimbus compose ...` |
 
 Linux request path:
 
 ```text
 compose.yaml / image / build context
-  -> neovex-bin validates and lowers service intent
-  -> neovex-server owns declared services and activation
+  -> nimbus-bin validates and lowers service intent
+  -> nimbus-server owns declared services and activation
   -> runtime snapshots ready bindings for ctx.services.<name>
   -> await ctx.services.get("<name>") triggers cancellable activation when needed
-  -> neovex-sandbox krun backend materializes OCI bundle + state
-  -> conmon -> patched /usr/libexec/neovex/crun -> libkrun VM
+  -> nimbus-sandbox krun backend materializes OCI bundle + state
+  -> conmon -> patched /usr/libexec/nimbus/crun -> libkrun VM
   -> guest service answers via TSI-mapped host port
 ```
 
@@ -54,11 +54,11 @@ macOS development path:
 ```text
 macOS host
   -> krunkit machine VM
-  -> Linux guest running neovex
+  -> Linux guest running nimbus
   -> services run as standard containers in the guest
 ```
 
-Neovex does not add a second host-side orchestration path on macOS, and it
+Nimbus does not add a second host-side orchestration path on macOS, and it
 does not rely on nested per-service microVMs there for v1.
 
 Current macOS completion notes:
@@ -69,7 +69,7 @@ Current macOS completion notes:
 - the host server startup path can now select a forwarded guest machine-API
   backend for container-backed Compose projects on macOS when the guest
   machine API advertises `service_execution_ready`
-- the explicit `neovex compose ...` lifecycle commands now share that
+- the explicit `nimbus compose ...` lifecycle commands now share that
   forwarded guest path on macOS for container-backed projects: `up`, `down`,
   `ps`, `inspect`, `logs`, and `top` talk to the guest machine API instead of
   host-local krun state, while Linux production and krun-backed projects stay
@@ -85,7 +85,7 @@ Current macOS completion notes:
 ## Transport And Probe Semantics
 
 - **Linux production data plane:** service traffic crosses the service-VM
-  boundary through krun/TSI port mappings. Neovex publishes host-side ports
+  boundary through krun/TSI port mappings. Nimbus publishes host-side ports
   and treats those as the application-facing bindings.
 - **Linux production control/lifecycle plane:** the landed baseline does not
   require a custom guest-side `vsock` control agent. Startup, readiness,
@@ -108,12 +108,12 @@ Preferred probe hierarchy by platform:
 | Platform | Process boundary | Transport boundary | Application boundary |
 | --- | --- | --- | --- |
 | Linux service microVM | `conmon` / `crun` / manifest state | TSI-mapped host port reachable | guest service responds |
-| macOS machine VM | `krunkit` / `gvproxy` / machine state | guest control socket or SSH reachable | guest Neovex API or published service responds |
+| macOS machine VM | `krunkit` / `gvproxy` / machine state | guest control socket or SSH reachable | guest Nimbus API or published service responds |
 
 ## Core Invariants
 
-- `neovex-runtime` must not absorb sandbox/orchestration concerns.
-- `neovex-sandbox` must expose generic sandbox nouns, not krun-specific public
+- `nimbus-runtime` must not absorb sandbox/orchestration concerns.
+- `nimbus-sandbox` must expose generic sandbox nouns, not krun-specific public
   API.
 - The server owns the service registry and activation lifecycle.
 - `ctx.services.<name>` exposes only bindings that were already resolved before
@@ -137,7 +137,7 @@ The landed krun backend supports:
 - restart policy with bounded restart counts
 - exponential restart backoff
 - guest-side user switching inside the VM
-- manifest-backed recovery after Neovex/backend restart
+- manifest-backed recovery after Nimbus/backend restart
 - persisted `ctr.log` and `oci.log`
 
 The durable sandbox state model now includes:
@@ -164,47 +164,47 @@ service in the guest is still `Starting` or `NotReady`.
 
 ## Operator Surface
 
-Neovex currently exposes three operator paths relevant to services and macOS
+Nimbus currently exposes three operator paths relevant to services and macOS
 developer machines:
 
-- `neovex start --compose-file ./compose.yaml`
+- `nimbus start --compose-file ./compose.yaml`
   starts the server with a declared service catalog available for
   snapshot projection through `ctx.services.<name>` and request-time activation
   through `ctx.services.get(...)`
-- `neovex compose ...`
+- `nimbus compose ...`
   manages those services explicitly through the same backend-owned state model
-- `neovex machine ...`
+- `nimbus machine ...`
   owns the shipped macOS machine CLI and persisted machine-state foundation
 
 Supported CLI commands today:
 
-- `neovex compose config`
-- `neovex compose up`
-- `neovex compose down`
-- `neovex compose ps`
-- `neovex compose inspect`
-- `neovex compose logs`
-- `neovex compose top`
-- `neovex machine init`
-- `neovex machine start`
-- `neovex machine stop`
-- `neovex machine status`
-- `neovex machine ssh`
-- `neovex machine rm`
-- `neovex machine os apply`
-- `neovex machine os upgrade`
+- `nimbus compose config`
+- `nimbus compose up`
+- `nimbus compose down`
+- `nimbus compose ps`
+- `nimbus compose inspect`
+- `nimbus compose logs`
+- `nimbus compose top`
+- `nimbus machine init`
+- `nimbus machine start`
+- `nimbus machine stop`
+- `nimbus machine status`
+- `nimbus machine ssh`
+- `nimbus machine rm`
+- `nimbus machine os apply`
+- `nimbus machine os upgrade`
 
-Server startup now uses the explicit `neovex start` subcommand. `compose` is
+Server startup now uses the explicit `nimbus start` subcommand. `compose` is
 the managed-service namespace for Compose-declared local dependencies. The
 current command taxonomy is:
 
-- `neovex start` for explicit server startup
-- `neovex compose ...` for managed service lifecycle
-- `neovex machine ...` for macOS machine lifecycle
+- `nimbus start` for explicit server startup
+- `nimbus compose ...` for managed service lifecycle
+- `nimbus machine ...` for macOS machine lifecycle
 
 The current `machine` surface now includes the direct `krunkit` + `gvproxy`
 host-manager seam, the pinned-Podman-image macOS convergence contract, the
-host-managed guest-`neovex` binary sync path, and the explicit `machine os
+host-managed guest-`nimbus` binary sync path, and the explicit `machine os
 apply` / `machine os upgrade` rollout surfaces. Historical execution detail
 and the exact real-host closeout bundles remain in the archived macOS
 machine-support plan.

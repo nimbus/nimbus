@@ -5,7 +5,7 @@ Owner: Convex adapter, codegen, and Node-compatible runtime
 
 ## Purpose
 
-Close the gap between Neovex's Convex-compatible Node action runtime and the
+Close the gap between Nimbus's Convex-compatible Node action runtime and the
 Convex bundling contract in a way that is useful, explicit, and evidence-backed.
 Convex bundles every `convex/` module for either the default runtime or the
 Node.js runtime, lets Node actions opt packages out of bundling through
@@ -13,7 +13,7 @@ Node.js runtime, lets Node actions opt packages out of bundling through
 packages used by Node actions", and derives external package versions from the
 local `node_modules` tree.
 
-Neovex should support the same authoring shape where it can do so truthfully.
+Nimbus should support the same authoring shape where it can do so truthfully.
 Where cloud-style behavior is not implemented yet, codegen and runtime startup
 must fail with precise diagnostics rather than silently producing a bundle that
 only works by accident.
@@ -30,7 +30,7 @@ Primary sources:
 - Keep `"use node"` restricted to action-only modules.
 - Keep default-runtime modules fail-closed for Node builtin imports, with
   `--debug-node-apis` preserving import-chain diagnostics.
-- Do not claim full Convex cloud package install parity until Neovex can stage
+- Do not claim full Convex cloud package install parity until Nimbus can stage
   or install the external package payload deterministically.
 - Treat `node.externalPackages` as Node-action-only configuration.
 - Keep reusable parsing/resolution mechanics provider-neutral where practical;
@@ -48,7 +48,7 @@ Primary sources:
 
 - [x] Re-read the Convex runtime, project configuration, and bundling docs.
 - [x] Create this active plan and link it from the plan index.
-- [x] Document the current Neovex support boundary in Convex compatibility docs.
+- [x] Document the current Nimbus support boundary in Convex compatibility docs.
 
 ### CNB2 External Package Config Semantics
 
@@ -75,7 +75,7 @@ Primary sources:
   mode, resolved package paths, package roots, source modules, import specifiers,
   and package directory sizes.
 - [x] Record bundle-size/external-package-size limits separately from Convex's
-  cloud limits until Neovex enforces the same thresholds.
+  cloud limits until Nimbus enforces the same thresholds.
 
 ### CNB5 Runtime/Deploy Validation
 
@@ -83,8 +83,8 @@ Primary sources:
   distinctly from missing Node builtin bindings.
 - [x] Add server-side manifest validation for external package metadata once the
   codegen artifact is stable.
-- [x] Decide whether Neovex should copy/stage external package payloads under
-  `.neovex/convex/` or intentionally depend on project-local `node_modules` for
+- [x] Decide whether Nimbus should copy/stage external package payloads under
+  `.nimbus/convex/` or intentionally depend on project-local `node_modules` for
   local development.
 
 ### CNB6 Docs, Tests, And Closeout

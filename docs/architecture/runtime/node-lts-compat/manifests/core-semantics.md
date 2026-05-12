@@ -5,9 +5,9 @@ Current upstream Node test-slice manifest for `NLC3`.
 Source corpus:
 
 - vendored Node compatibility runner in
-  `~/src/github.com/agentstation/deno/tests/node_compat/runner/suite/test`
+  `~/src/github.com/nimbus/deno/tests/node_compat/runner/suite/test`
 - pinned local corpus identity:
-  `~/src/github.com/agentstation/deno @ v2.7.14-locker.19`
+  `~/src/github.com/nimbus/deno @ v2.7.14-locker.19`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
 - pinned official Node20 supported corpus:
@@ -16,7 +16,7 @@ Source corpus:
 This file records the pinned Node test globs and the currently manifested
 official-fixture subset for the `NLC3` core semantics family. The canonical
 source of truth for the executed subset is
-[`CORE_SEMANTICS_BATCH`](../../../../crates/neovex-runtime/src/runtime/tests/node/mod.rs)
+[`CORE_SEMANTICS_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs)
 plus the explicit watchpoints in the same Rust file; this document summarizes
 that state so future work can resume without rediscovering it.
 
@@ -34,7 +34,7 @@ that state so future work can resume without rediscovering it.
 | `node:punycode` | `test/parallel/test-punycode.js` |
 | `node:string_decoder` | `test/parallel/test-string-decoder-*.js`, `test/pummel/test-string-decoder-large-buffer.js` |
 
-## Current Neovex Fixture Coverage
+## Current Nimbus Fixture Coverage
 
 These local runtime fixtures currently back the narrow public contract while
 the upstream pass-rate lanes are still being wired:
@@ -46,7 +46,7 @@ the upstream pass-rate lanes are still being wired:
 
 The current manifested subset is fully data-driven from the checked-in fixture
 roots and the `CORE_SEMANTICS_BATCH` table in
-`crates/neovex-runtime/src/runtime/tests/node/mod.rs`.
+`crates/nimbus-runtime/src/runtime/tests/node/mod.rs`.
 
 Current manifested batch counts:
 
@@ -80,7 +80,7 @@ Imported public-core official corpus status:
 
 ## Representative Harness Requirements
 
-Sampled files from the pinned corpus show that a first Neovex upstream runner
+Sampled files from the pinned corpus show that a first Nimbus upstream runner
 cannot assume "evaluate one JS file and read the exit code" is enough:
 
 - `parallel/test-assert.js`
@@ -98,16 +98,16 @@ cannot assume "evaluate one JS file and read the exit code" is enough:
   - requires `../common`
   - depends on real `console`, `process.stdout`, and constructor semantics
 
-That means the first honest Neovex-owned runner likely needs:
+That means the first honest Nimbus-owned runner likely needs:
 
 - suite-relative CommonJS resolution into the vendored `test/common` harness
 - at least a narrow `node:test` posture or a documented filtered subset that
   avoids it
 - predictable `process`, stdio, and `console` behavior
 - a test-file execution model closer to Node/Deno CLI semantics than to the
-  current `__neovexInvoke` bundle fixture model
+  current `__nimbusInvoke` bundle fixture model
 
-Current Neovex-owned harness capabilities:
+Current Nimbus-owned harness capabilities:
 
 - suite-relative `require("../common")` resolution inside the staged bundle root
 - post-import `mustCall` / `mustCallAtLeast` / `mustNotCall` verification via a
@@ -129,11 +129,11 @@ Current Neovex-owned harness capabilities:
 ## Notes
 
 - These slices came from the pinned Deno-vendored Node corpus currently present
-  in `agentstation/deno`, not from memory.
+  in `nimbus/deno`, not from memory.
 - The vendored Deno `node_compat` runner is a useful corpus source, but it is
-  not a drop-in Neovex harness. Its Rust test runner shells out to a Deno CLI
+  not a drop-in Nimbus harness. Its Rust test runner shells out to a Deno CLI
   executable via `DENO_TEST_UTIL_DENO_EXE` and assumes Deno CLI argument and
-  process semantics, so Neovex needs a dedicated slice runner before `NLC3`
+  process semantics, so Nimbus needs a dedicated slice runner before `NLC3`
   can claim upstream pass-rate evidence.
 - `node:url` currently includes `urlpattern`-adjacent coverage in the vendored
   corpus, but `NLC3` should keep the final Node22 pass-rate calculation scoped
@@ -176,7 +176,7 @@ Current Neovex-owned harness capabilities:
   `nodejs/node v22.15.0` are still byte-identical for seven of those files. The
   pinned Deno-vendored copies still match for `test-assert-fail.js` and
   `test-assert-if-error.js`, but `test-assert-async.js` had vendored drift, so
-  Neovex stages one shared official LTS body for both lanes instead of growing
+  Nimbus stages one shared official LTS body for both lanes instead of growing
   a needless version split. `test-assert-async.js` also gives the current
   harness its first upstream-backed top-level async `node:assert` proof,
   `test-assert-fail-deprecation.js` proves `DEP0094` warning delivery through
@@ -190,7 +190,7 @@ Current Neovex-owned harness capabilities:
   `checktag` differs between Node20 and Node22 in global/globalThis treatment
   and in exact multiline assertion text, and `CallTracker.getCalls()` differs
   in the `node:test` concurrency option (`true` vs `!process.env.TEST_PARALLEL`).
-  Neovex stages both official LTS bodies directly instead of flattening those
+  Nimbus stages both official LTS bodies directly instead of flattening those
   differences away, and the checked-in `test/common` shim now intercepts only
   the harness-owned `TEST_PARALLEL` env probe so the official Node22 file can
   execute without broadening the public application-preset env contract.
@@ -276,7 +276,7 @@ Current Neovex-owned harness capabilities:
 - `test-url-parse-format.js` and `test-url-parse-invalid-input.js` are the
   current highest-signal `node:url` divergences. The Deno-vendored corpus had
   already moved to hard-throw invalid-port semantics, while the official
-  Node20 and Node22 LTS files still share `DEP0170` warning behavior. Neovex
+  Node20 and Node22 LTS files still share `DEP0170` warning behavior. Nimbus
   therefore keeps explicit official `node22/` and `node20/` fixture roots for
   those files and treats the vendored Deno copy only as a sampled watchpoint.
 - A broader drift audit of the currently executed `node:url` subset showed a
@@ -284,7 +284,7 @@ Current Neovex-owned harness capabilities:
   `nodejs/node v22.15.0` are still byte-identical for
   `test-url-domain-ascii-unicode.js`, `test-url-pathtofileurl.js`, and
   `test-url-fileurltopath.js`, while the pinned Deno-vendored copies lag one or
-  more of those official fixtures. Neovex therefore now executes one shared
+  more of those official fixtures. Nimbus therefore now executes one shared
   checked-in official LTS body for those files in both runtime lanes instead of
   treating the vendored Deno copies as a second source of truth.
 - `test-url-invalid-file-url-path-input.js` is different in the other
@@ -297,10 +297,10 @@ Current Neovex-owned harness capabilities:
   LTS lines still share one body.
 - A direct code-first drift review of official `nodejs/node v20.20.2` and
   `nodejs/node v22.15.0` `lib/url.js` showed that the legacy parser core is
-  still materially the same across both LTS lines. Neovex used that review to
-  batch the `warnInvalidPort` family fix in `agentstation/deno
+  still materially the same across both LTS lines. Nimbus used that review to
+  batch the `warnInvalidPort` family fix in `nimbus/deno
   v2.7.14-locker.13` instead of continuing fixture-by-fixture whack-a-mole.
-- The latest Deno-family runtime repin is `agentstation/deno
+- The latest Deno-family runtime repin is `nimbus/deno
   v2.7.14-locker.19`, which closes the imported `test-events-add-abort-listener.mjs`
   seam by wiring `events.addAbortListener()` through the real web
   `AbortSignal` stop-immediate-propagation hook in `ext:deno_web/02_event.js`

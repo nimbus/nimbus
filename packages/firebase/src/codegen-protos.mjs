@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const protoRoot = path.join(repoRoot, "crates", "neovex-server", "proto");
+const protoRoot = path.join(repoRoot, "crates", "nimbus-server", "proto");
 const googleProtoRoot = path.join(protoRoot, "google");
 const outputRoot = path.join(packageRoot, "src", "gen");
 const protocPlugin = resolvePluginBinary();
@@ -100,7 +100,7 @@ function resolveProtocBinary() {
 
   throw new Error(
     [
-      "Unable to find the vendored protoc binary used by neovex-server.",
+      "Unable to find the vendored protoc binary used by nimbus-server.",
       "Set PROTOC explicitly or run a cargo command that fetches the",
       `"${vendoredCrateName}" package into your Cargo registry first.`,
     ].join(" "),

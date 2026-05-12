@@ -5,22 +5,22 @@ usage() {
   cat <<'EOF'
 usage: verify-release-archive-layout.sh --artifacts-dir <path>
 
-Verify the published Neovex release-archive layout before checksums, release
+Verify the published Nimbus release-archive layout before checksums, release
 creation, or downstream packaging updates consume it.
 
 Current contract:
-- neovex_darwin_arm64.tar.gz contains:
-  - neovex
+- nimbus_darwin_arm64.tar.gz contains:
+  - nimbus
   - libexec/gvproxy
   - README.md
   - LICENSE
-- neovex_linux_x86_64.tar.gz and neovex_linux_arm64.tar.gz contain:
-  - neovex
+- nimbus_linux_x86_64.tar.gz and nimbus_linux_arm64.tar.gz contain:
+  - nimbus
   - README.md
   - LICENSE
   - no macOS-only libexec/gvproxy helper
-- neovex_windows_x86_64.zip contains:
-  - neovex.exe
+- nimbus_windows_x86_64.zip contains:
+  - nimbus.exe
   - README.md
   - LICENSE
 EOF
@@ -71,13 +71,13 @@ command -v tar >/dev/null 2>&1 || die "tar is required"
 command -v unzip >/dev/null 2>&1 || die "unzip is required"
 
 artifacts_dir="$(cd "${artifacts_dir}" && pwd)"
-tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/neovex-release-archives.XXXXXX")"
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-release-archives.XXXXXX")"
 trap 'rm -rf "${tmp_root}"' EXIT
 
-darwin_archive="${artifacts_dir}/neovex_darwin_arm64.tar.gz"
-linux_x86_archive="${artifacts_dir}/neovex_linux_x86_64.tar.gz"
-linux_arm_archive="${artifacts_dir}/neovex_linux_arm64.tar.gz"
-windows_archive="${artifacts_dir}/neovex_windows_x86_64.zip"
+darwin_archive="${artifacts_dir}/nimbus_darwin_arm64.tar.gz"
+linux_x86_archive="${artifacts_dir}/nimbus_linux_x86_64.tar.gz"
+linux_arm_archive="${artifacts_dir}/nimbus_linux_arm64.tar.gz"
+windows_archive="${artifacts_dir}/nimbus_windows_x86_64.zip"
 
 assert_present "${darwin_archive}"
 assert_present "${linux_x86_archive}"
@@ -97,25 +97,25 @@ unzip -q "${windows_archive}" -d "${windows_dir}"
 
 assert_present "${darwin_dir}/README.md"
 assert_present "${darwin_dir}/LICENSE"
-assert_present "${darwin_dir}/neovex"
-assert_executable "${darwin_dir}/neovex"
+assert_present "${darwin_dir}/nimbus"
+assert_executable "${darwin_dir}/nimbus"
 assert_present "${darwin_dir}/libexec/gvproxy"
 assert_executable "${darwin_dir}/libexec/gvproxy"
 
 assert_present "${linux_x86_dir}/README.md"
 assert_present "${linux_x86_dir}/LICENSE"
-assert_present "${linux_x86_dir}/neovex"
-assert_executable "${linux_x86_dir}/neovex"
+assert_present "${linux_x86_dir}/nimbus"
+assert_executable "${linux_x86_dir}/nimbus"
 assert_absent "${linux_x86_dir}/libexec/gvproxy"
 
 assert_present "${linux_arm_dir}/README.md"
 assert_present "${linux_arm_dir}/LICENSE"
-assert_present "${linux_arm_dir}/neovex"
-assert_executable "${linux_arm_dir}/neovex"
+assert_present "${linux_arm_dir}/nimbus"
+assert_executable "${linux_arm_dir}/nimbus"
 assert_absent "${linux_arm_dir}/libexec/gvproxy"
 
 assert_present "${windows_dir}/README.md"
 assert_present "${windows_dir}/LICENSE"
-assert_present "${windows_dir}/neovex.exe"
+assert_present "${windows_dir}/nimbus.exe"
 
 printf 'verified: release archives match the published binary/layout contract\n'

@@ -1,14 +1,14 @@
 [workspace]
 members = [
-    "crates/neovex",
-    "crates/neovex-bin",
-    "crates/neovex-runtime",
-    "crates/neovex-sandbox",
-    "crates/neovex-core",
-    "crates/neovex-engine",
-    "crates/neovex-server",
-    "crates/neovex-storage",
-    "crates/neovex-testing",
+    "crates/nimbus",
+    "crates/nimbus-bin",
+    "crates/nimbus-runtime",
+    "crates/nimbus-sandbox",
+    "crates/nimbus-core",
+    "crates/nimbus-engine",
+    "crates/nimbus-server",
+    "crates/nimbus-storage",
+    "crates/nimbus-testing",
 ]
 resolver = "2"
 
@@ -16,7 +16,7 @@ resolver = "2"
 version = "0.1.22"
 edition = "2024"
 publish = false
-repository = "https://github.com/agentstation/neovex"
+repository = "https://github.com/nimbus/nimbus"
 license-file = "LICENSE"
 
 [workspace.lints.rust]
@@ -86,7 +86,7 @@ rmp-serde = "1"
 # Keep the bundled SQLCipher lane self-contained on Windows release builds:
 # upstream `bundled-sqlcipher` requires OPENSSL_DIR there unless we also opt
 # into vendored OpenSSL, which would otherwise make the GitHub runner
-# environment part of the release contract. Neovex also consumes the
+# environment part of the release contract. Nimbus also consumes the
 # `node:sqlite` surface via `deno_node_sqlite`, so keep the broader Deno
 # runtime feature set enabled on the shared workspace dependency.
 rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl", "unlock_notify", "session", "modern_sqlite", "limits", "backup"] }
@@ -128,26 +128,26 @@ strip = true
 # Keep the public dependency surface aligned with upstream crate versions while
 # selecting the fork implementation immutably at the workspace root.
 [patch.crates-io]
-deno_core = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_crypto = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_fetch = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_fs = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_http = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_io = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_napi = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_net = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_node = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_node_sqlite = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_node_crypto = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_os = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_package_json = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_permissions = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_process = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_resolver = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_telemetry = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_tls = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_web = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_webidl = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-deno_websocket = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-node_resolver = { git = "https://github.com/agentstation/deno", tag = "v2.7.14-locker.41" }
-v8 = { git = "https://github.com/agentstation/rusty_v8", tag = "v147.4.0-locker.2" }
+deno_core = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_fetch = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_fs = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_http = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_io = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_napi = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_net = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_node = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_node_sqlite = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_node_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_os = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_package_json = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_permissions = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_process = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_telemetry = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_tls = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_web = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_webidl = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+deno_websocket = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+node_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.7.14-locker.41" }
+v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "v147.4.0-locker.2" }

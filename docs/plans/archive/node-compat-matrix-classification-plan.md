@@ -62,7 +62,7 @@ Node22 vendored `test-*` file as one of:
 - `make node-compat-dashboard`
 - `make node-compat-trends`
 - `make node-compat-publish-evidence`
-- focused `cargo test -p neovex-runtime ... -- --nocapture --test-threads=1`
+- focused `cargo test -p nimbus-runtime ... -- --nocapture --test-threads=1`
   for each promoted batch
 - `cargo fmt --all --check`
 - `git diff --check`

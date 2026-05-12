@@ -157,7 +157,7 @@ function sanitizeValidator(validator, filePath) {
   if (!validator || typeof validator !== "object" || Array.isArray(validator)) {
     throw unsupportedError(
       filePath,
-      "schema validators must be created with convex/values or neovex/values",
+      "schema validators must be created with convex/values or nimbus/values",
     );
   }
 

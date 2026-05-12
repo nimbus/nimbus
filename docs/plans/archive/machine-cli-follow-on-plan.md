@@ -1,6 +1,6 @@
 # Plan: Machine CLI Follow-on UX Plan
 
-Canonical execution plan for the next Neovex CLI UX wave after the completed
+Canonical execution plan for the next Nimbus CLI UX wave after the completed
 machine/service alignment rollout archived at
 `docs/plans/archive/machine-cli-alignment-plan.md`.
 
@@ -10,10 +10,10 @@ patterns over bespoke formatting.
 
 Reviewed against:
 
-- `crates/neovex-bin/src/main.rs`
-- `crates/neovex-bin/src/machine/mod.rs`
-- `crates/neovex-bin/src/machine/manager.rs`
-- `crates/neovex-bin/src/service/mod.rs`
+- `crates/nimbus-bin/src/main.rs`
+- `crates/nimbus-bin/src/machine/mod.rs`
+- `crates/nimbus-bin/src/machine/manager.rs`
+- `crates/nimbus-bin/src/service/mod.rs`
 - `docs/reference/cli.md`
 - `docs/plans/archive/machine-cli-alignment-plan.md`
 - `/Users/jack/src/github.com/containers/podman/cmd/podman/machine/info.go`
@@ -36,9 +36,9 @@ Reviewed against:
 
 ## Current Assessed State
 
-- `neovex machine status` now defaults to a compact table and `machine start`
+- `nimbus machine status` now defaults to a compact table and `machine start`
   has human-friendly progress output.
-- The CLI now includes a host-level `neovex machine info` command analogous to
+- The CLI now includes a host-level `nimbus machine info` command analogous to
   `podman machine info`, with a stable YAML/JSON structured contract.
 - Summary and inspect output now use consistent `-f` / `--format` aliases, and
   table-producing summary commands support `--noheading` for operator-friendly
@@ -56,7 +56,7 @@ Reviewed against:
 
 - Treat the current git worktree, this plan, and `docs/reference/cli.md` as the
   source of truth for this workstream.
-- Podman is the primary implementation and UX reference when Neovex already has
+- Podman is the primary implementation and UX reference when Nimbus already has
   a command with matching semantics.
 - Docker is a secondary product-surface comparator for concise operator tone and
   familiar output defaults.
@@ -71,11 +71,11 @@ Reviewed against:
 
 | ID | Status | Scope | Verification |
 | --- | --- | --- | --- |
-| `CLIF1` | `completed` | Add Podman-aligned host-level `neovex machine info` with a documented structured output contract and root discovery summary. | `cargo fmt --all --check`; `cargo check -p neovex-bin`; focused `cargo test -p neovex-bin machine_info -- --nocapture`; manual `./target/release/neovex machine info` / `--format json` |
-| `CLIF2` | `completed` | Expand output-shaping parity for summary/inspect commands: consistent `-f`/`--format`, header control, and the next deliberate decision on template support. | `cargo fmt --all --check`; `cargo check -p neovex-bin`; focused `cargo test -p neovex-bin machine_status -- --nocapture`; `cargo test -p neovex-bin machine_list -- --nocapture`; `cargo test -p neovex-bin machine_inspect -- --nocapture`; `cargo test -p neovex-bin service_list -- --nocapture`; `cargo test -p neovex-bin service_inspect -- --nocapture`; `cargo test -p neovex-bin service_ps -- --nocapture`; `cargo test -p neovex-bin render_table_ -- --nocapture`; direct `./target/debug/neovex machine list --help`; `./target/debug/neovex machine inspect --help`; `./target/debug/neovex service list --help`; `./target/debug/neovex service ps --help`; isolated `./target/debug/neovex machine status --noheading`; isolated `./target/debug/neovex machine list --noheading` |
-| `CLIF3` | `completed` | Improve `machine list` operator ergonomics: ordering, default/running signals, and better parity with Podman’s human table. | `cargo fmt --all --check`; `cargo check -p neovex-bin`; focused `cargo test -p neovex-bin machine_list -- --nocapture`; direct isolated `./target/debug/neovex machine list`; isolated `./target/debug/neovex machine list -f json` |
-| `CLIF4` | `completed` | Reconcile remaining help/example drift with the active macOS contract and the settled CLI style system. | `cargo fmt --all --check`; `cargo check -p neovex-bin`; focused `cargo test -p neovex-bin machine_help_uses_user_facing_descriptions -- --nocapture`; `cargo test -p neovex-bin machine_info_help_describes_structured_formats -- --nocapture`; direct `./target/debug/neovex machine --help`; `./target/debug/neovex machine info --help` |
-| `CLIF5` | `completed` | Final real-host proof on the shipped macOS path if any user-facing machine/service surface changes materially. | Real macOS-host CLI proof bundle at `/tmp/neovex-clif5-proof.RuHf4S` with isolated root `/tmp/neovex-clif5-root.N3T9bB`; captures `machine --help`, `machine info --help`, `machine list --help`, `machine status --help`, `service list --help`, `service ps --help`, `machine status --noheading`, `machine list`, and `machine list -f json` |
+| `CLIF1` | `completed` | Add Podman-aligned host-level `nimbus machine info` with a documented structured output contract and root discovery summary. | `cargo fmt --all --check`; `cargo check -p nimbus-bin`; focused `cargo test -p nimbus-bin machine_info -- --nocapture`; manual `./target/release/nimbus machine info` / `--format json` |
+| `CLIF2` | `completed` | Expand output-shaping parity for summary/inspect commands: consistent `-f`/`--format`, header control, and the next deliberate decision on template support. | `cargo fmt --all --check`; `cargo check -p nimbus-bin`; focused `cargo test -p nimbus-bin machine_status -- --nocapture`; `cargo test -p nimbus-bin machine_list -- --nocapture`; `cargo test -p nimbus-bin machine_inspect -- --nocapture`; `cargo test -p nimbus-bin service_list -- --nocapture`; `cargo test -p nimbus-bin service_inspect -- --nocapture`; `cargo test -p nimbus-bin service_ps -- --nocapture`; `cargo test -p nimbus-bin render_table_ -- --nocapture`; direct `./target/debug/nimbus machine list --help`; `./target/debug/nimbus machine inspect --help`; `./target/debug/nimbus service list --help`; `./target/debug/nimbus service ps --help`; isolated `./target/debug/nimbus machine status --noheading`; isolated `./target/debug/nimbus machine list --noheading` |
+| `CLIF3` | `completed` | Improve `machine list` operator ergonomics: ordering, default/running signals, and better parity with Podman’s human table. | `cargo fmt --all --check`; `cargo check -p nimbus-bin`; focused `cargo test -p nimbus-bin machine_list -- --nocapture`; direct isolated `./target/debug/nimbus machine list`; isolated `./target/debug/nimbus machine list -f json` |
+| `CLIF4` | `completed` | Reconcile remaining help/example drift with the active macOS contract and the settled CLI style system. | `cargo fmt --all --check`; `cargo check -p nimbus-bin`; focused `cargo test -p nimbus-bin machine_help_uses_user_facing_descriptions -- --nocapture`; `cargo test -p nimbus-bin machine_info_help_describes_structured_formats -- --nocapture`; direct `./target/debug/nimbus machine --help`; `./target/debug/nimbus machine info --help` |
+| `CLIF5` | `completed` | Final real-host proof on the shipped macOS path if any user-facing machine/service surface changes materially. | Real macOS-host CLI proof bundle at `/tmp/nimbus-clif5-proof.RuHf4S` with isolated root `/tmp/nimbus-clif5-root.N3T9bB`; captures `machine --help`, `machine info --help`, `machine list --help`, `machine status --help`, `service list --help`, `service ps --help`, `machine status --noheading`, `machine list`, and `machine list -f json` |
 
 ## Execution Log
 
@@ -83,7 +83,7 @@ Reviewed against:
   alignment plan after a fresh Podman/Docker comparative audit. The audit
   identified three highest-signal gaps: missing `machine info`, narrower output
   shaping than Podman/Docker, and a less operator-friendly `machine list`.
-- 2026-04-19: Landed `CLIF1` by adding `neovex machine info`, updating the CLI
+- 2026-04-19: Landed `CLIF1` by adding `nimbus machine info`, updating the CLI
   reference and agent/docs ownership, and keeping the next output-shaping wave
   explicitly tracked as `CLIF2`.
 - 2026-04-19: Landed `CLIF2` by adding consistent `-f` aliases to
@@ -103,8 +103,8 @@ Reviewed against:
   the current macOS flow reference instead of an obsolete active-plan note.
   `CLIF5` is now the active real-host closeout item.
 - 2026-04-19: Landed `CLIF5` by capturing a real macOS-host proof bundle under
-  `/tmp/neovex-clif5-proof.RuHf4S` using isolated roots under
-  `/tmp/neovex-clif5-root.N3T9bB`. The bundle records the final live help
+  `/tmp/nimbus-clif5-proof.RuHf4S` using isolated roots under
+  `/tmp/nimbus-clif5-root.N3T9bB`. The bundle records the final live help
   surfaces plus the machine status/list human and JSON outputs after the CLI
   follow-on wave. All roadmap items are now complete and the plan is ready to
   archive.

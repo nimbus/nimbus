@@ -82,7 +82,7 @@ export const send = mutation({
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /executeQueryDefinition/);
-  assert.match(runtimeBundle, /__neovexCreateContext/);
+  assert.match(runtimeBundle, /__nimbusCreateContext/);
   assert.match(runtimeBundle, /ctx\.db\.query/);
   assert.match(runtimeBundle, /executeMutationDefinition/);
   assert.match(runtimeBundle, /ctx\.db\.insert/);
@@ -119,7 +119,7 @@ export const listPage = paginatedQuery({
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /executePaginatedQueryDefinition/);
-  assert.match(runtimeBundle, /op_neovex_ctx_paginated_query/);
+  assert.match(runtimeBundle, /op_nimbus_ctx_paginated_query/);
 }
 
 async function testCtxDbFilterServerFixture() {

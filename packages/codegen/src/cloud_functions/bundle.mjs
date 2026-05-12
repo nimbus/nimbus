@@ -13,7 +13,7 @@ async function buildCloudFunctionsRuntimeBundle(project) {
   const runtimeProject = withRelativeEntrypoints(project);
   const result = await build({
     absWorkingDir: runtimeProject.appDir,
-    entryPoints: ["__neovex_cloud_functions_entry__"],
+    entryPoints: ["__nimbus_cloud_functions_entry__"],
     bundle: true,
     format: "esm",
     platform: "node",
@@ -51,68 +51,68 @@ function withRelativeEntrypoints(project) {
 
 function createCloudFunctionsVirtualModulePlugin(project) {
   return {
-    name: "neovex-cloud-functions-virtual-modules",
+    name: "nimbus-cloud-functions-virtual-modules",
     setup(builder) {
-      builder.onResolve({ filter: /^__neovex_cloud_functions_entry__$/ }, () => ({
-        path: "__neovex_cloud_functions_entry__",
-        namespace: "neovex-cloud-functions",
+      builder.onResolve({ filter: /^__nimbus_cloud_functions_entry__$/ }, () => ({
+        path: "__nimbus_cloud_functions_entry__",
+        namespace: "nimbus-cloud-functions",
       }));
-      builder.onResolve({ filter: /^__neovex_cloud_functions_shared__$/ }, () => ({
-        path: "__neovex_cloud_functions_shared__",
-        namespace: "neovex-cloud-functions",
+      builder.onResolve({ filter: /^__nimbus_cloud_functions_shared__$/ }, () => ({
+        path: "__nimbus_cloud_functions_shared__",
+        namespace: "nimbus-cloud-functions",
       }));
-      builder.onResolve({ filter: /^__neovex_firebase_functions_v2__$/ }, () => ({
-        path: "__neovex_firebase_functions_v2__",
-        namespace: "neovex-cloud-functions",
+      builder.onResolve({ filter: /^__nimbus_firebase_functions_v2__$/ }, () => ({
+        path: "__nimbus_firebase_functions_v2__",
+        namespace: "nimbus-cloud-functions",
       }));
-      builder.onResolve({ filter: /^__neovex_firebase_functions_v2_firestore__$/ }, () => ({
-        path: "__neovex_firebase_functions_v2_firestore__",
-        namespace: "neovex-cloud-functions",
+      builder.onResolve({ filter: /^__nimbus_firebase_functions_v2_firestore__$/ }, () => ({
+        path: "__nimbus_firebase_functions_v2_firestore__",
+        namespace: "nimbus-cloud-functions",
       }));
-      builder.onResolve({ filter: /^__neovex_firebase_functions_v2_https__$/ }, () => ({
-        path: "__neovex_firebase_functions_v2_https__",
-        namespace: "neovex-cloud-functions",
+      builder.onResolve({ filter: /^__nimbus_firebase_functions_v2_https__$/ }, () => ({
+        path: "__nimbus_firebase_functions_v2_https__",
+        namespace: "nimbus-cloud-functions",
       }));
-      builder.onResolve({ filter: /^__neovex_firebase_admin_app__$/ }, () => ({
-        path: "__neovex_firebase_admin_app__",
-        namespace: "neovex-cloud-functions",
+      builder.onResolve({ filter: /^__nimbus_firebase_admin_app__$/ }, () => ({
+        path: "__nimbus_firebase_admin_app__",
+        namespace: "nimbus-cloud-functions",
       }));
-      builder.onResolve({ filter: /^__neovex_firebase_admin_firestore__$/ }, () => ({
-        path: "__neovex_firebase_admin_firestore__",
-        namespace: "neovex-cloud-functions",
+      builder.onResolve({ filter: /^__nimbus_firebase_admin_firestore__$/ }, () => ({
+        path: "__nimbus_firebase_admin_firestore__",
+        namespace: "nimbus-cloud-functions",
       }));
-      builder.onResolve({ filter: /^__neovex_functions_framework__$/ }, () => ({
-        path: "__neovex_functions_framework__",
-        namespace: "neovex-cloud-functions",
+      builder.onResolve({ filter: /^__nimbus_functions_framework__$/ }, () => ({
+        path: "__nimbus_functions_framework__",
+        namespace: "nimbus-cloud-functions",
       }));
 
       builder.onResolve({ filter: /^firebase-functions\/v2$/ }, () => ({
-        path: "__neovex_firebase_functions_v2__",
-        namespace: "neovex-cloud-functions",
+        path: "__nimbus_firebase_functions_v2__",
+        namespace: "nimbus-cloud-functions",
       }));
       builder.onResolve({ filter: /^firebase-functions\/v2\/firestore$/ }, () => ({
-        path: "__neovex_firebase_functions_v2_firestore__",
-        namespace: "neovex-cloud-functions",
+        path: "__nimbus_firebase_functions_v2_firestore__",
+        namespace: "nimbus-cloud-functions",
       }));
       builder.onResolve({ filter: /^firebase-functions\/v2\/https$/ }, () => ({
-        path: "__neovex_firebase_functions_v2_https__",
-        namespace: "neovex-cloud-functions",
+        path: "__nimbus_firebase_functions_v2_https__",
+        namespace: "nimbus-cloud-functions",
       }));
       builder.onResolve({ filter: /^firebase-admin\/app$/ }, () => ({
-        path: "__neovex_firebase_admin_app__",
-        namespace: "neovex-cloud-functions",
+        path: "__nimbus_firebase_admin_app__",
+        namespace: "nimbus-cloud-functions",
       }));
       builder.onResolve({ filter: /^firebase-admin\/firestore$/ }, () => ({
-        path: "__neovex_firebase_admin_firestore__",
-        namespace: "neovex-cloud-functions",
+        path: "__nimbus_firebase_admin_firestore__",
+        namespace: "nimbus-cloud-functions",
       }));
       builder.onResolve({ filter: /^@google-cloud\/functions-framework$/ }, () => ({
-        path: "__neovex_functions_framework__",
-        namespace: "neovex-cloud-functions",
+        path: "__nimbus_functions_framework__",
+        namespace: "nimbus-cloud-functions",
       }));
 
       builder.onLoad(
-        { filter: /^__neovex_cloud_functions_entry__$/, namespace: "neovex-cloud-functions" },
+        { filter: /^__nimbus_cloud_functions_entry__$/, namespace: "nimbus-cloud-functions" },
         () => ({
           contents: cloudFunctionsEntrySource(project),
           loader: "js",
@@ -120,17 +120,17 @@ function createCloudFunctionsVirtualModulePlugin(project) {
         }),
       );
       builder.onLoad(
-        { filter: /^__neovex_cloud_functions_shared__$/, namespace: "neovex-cloud-functions" },
+        { filter: /^__nimbus_cloud_functions_shared__$/, namespace: "nimbus-cloud-functions" },
         () => ({
           contents: cloudFunctionsSharedSource(),
           loader: "js",
         }),
       );
       builder.onLoad(
-        { filter: /^__neovex_firebase_functions_v2__$/, namespace: "neovex-cloud-functions" },
+        { filter: /^__nimbus_firebase_functions_v2__$/, namespace: "nimbus-cloud-functions" },
         () => ({
           contents: `
-import { setGlobalOptions, onInit } from "__neovex_cloud_functions_shared__";
+import { setGlobalOptions, onInit } from "__nimbus_cloud_functions_shared__";
 
 export { onInit, setGlobalOptions };
 `,
@@ -138,10 +138,10 @@ export { onInit, setGlobalOptions };
         }),
       );
       builder.onLoad(
-        { filter: /^__neovex_firebase_functions_v2_firestore__$/, namespace: "neovex-cloud-functions" },
+        { filter: /^__nimbus_firebase_functions_v2_firestore__$/, namespace: "nimbus-cloud-functions" },
         () => ({
           contents: `
-import { defineFirestoreDocumentTarget } from "__neovex_cloud_functions_shared__";
+import { defineFirestoreDocumentTarget } from "__nimbus_cloud_functions_shared__";
 
 export const onDocumentCreated = (documentOrOptions, handler) =>
   defineFirestoreDocumentTarget("google.cloud.firestore.document.v1.created", documentOrOptions, handler);
@@ -156,14 +156,14 @@ export const onDocumentWritten = (documentOrOptions, handler) =>
         }),
       );
       builder.onLoad(
-        { filter: /^__neovex_firebase_functions_v2_https__$/, namespace: "neovex-cloud-functions" },
+        { filter: /^__nimbus_firebase_functions_v2_https__$/, namespace: "nimbus-cloud-functions" },
         () => ({
           contents: `
 import {
   defineFirebaseHttpsCallableTarget,
   defineFirebaseHttpsRequestTarget,
   HttpsError,
-} from "__neovex_cloud_functions_shared__";
+} from "__nimbus_cloud_functions_shared__";
 
 export const onRequest = (optionsOrHandler, handler) =>
   defineFirebaseHttpsRequestTarget(optionsOrHandler, handler);
@@ -175,24 +175,24 @@ export { HttpsError };
         }),
       );
       builder.onLoad(
-        { filter: /^__neovex_firebase_admin_app__$/, namespace: "neovex-cloud-functions" },
+        { filter: /^__nimbus_firebase_admin_app__$/, namespace: "nimbus-cloud-functions" },
         () => ({
           contents: cloudFunctionsAdminAppSource(),
           loader: "js",
         }),
       );
       builder.onLoad(
-        { filter: /^__neovex_firebase_admin_firestore__$/, namespace: "neovex-cloud-functions" },
+        { filter: /^__nimbus_firebase_admin_firestore__$/, namespace: "nimbus-cloud-functions" },
         () => ({
           contents: cloudFunctionsAdminFirestoreSource(),
           loader: "js",
         }),
       );
       builder.onLoad(
-        { filter: /^__neovex_functions_framework__$/, namespace: "neovex-cloud-functions" },
+        { filter: /^__nimbus_functions_framework__$/, namespace: "nimbus-cloud-functions" },
         () => ({
           contents: `
-import { registerFrameworkTarget } from "__neovex_cloud_functions_shared__";
+import { registerFrameworkTarget } from "__nimbus_cloud_functions_shared__";
 
 const functions = {
   cloudEvent(name, handler) {

@@ -1,8 +1,8 @@
-# Rename Satellite Repos: neovex-machine-os, neovex-crun, homebrew-tap
+# Rename Satellite Repos: nimbus-machine-os, nimbus-crun, homebrew-tap
 
 Prerequisite execution plan for renaming the satellite repositories before the
 main repo rename in `docs/plans/nimbus-rename-plan.md`. Covers the three repos
-that contain internal "neovex" or "agentstation" references requiring updates.
+that contain internal "nimbus" or "nimbus" references requiring updates.
 
 The forked dependency repos (`nimbus/deno`, `nimbus/rusty_v8`) preserve
 upstream names and need no internal renames, but they **do** need a locker
@@ -23,11 +23,11 @@ release workflow calls into `nimbus-machine-os` workflows and pushes to
 `homebrew-tap` via API, so both sides must agree on names at release time.
 
 **Execution order:**
-1. Transfer neovex-specific repos to `nimbus` org and create new
-   `nimbus/homebrew-tap` (Phase 0 of main plan; `agentstation/homebrew-tap`
-   stays in agentstation since it is shared with other products).
-   Note: the Deno-family fork is `agentstation/deno` (monorepo), not the
-   old standalone `agentstation/deno_core` which is historical only.
+1. Transfer nimbus-specific repos to `nimbus` org and create new
+   `nimbus/homebrew-tap` (Phase 0 of main plan; `nimbus/homebrew-tap`
+   stays in nimbus since it is shared with other products).
+   Note: the Deno-family fork is `nimbus/deno` (monorepo), not the
+   old standalone `nimbus/deno` which is historical only.
 2. Execute this satellite plan (rename internals of each repo and complete the
    token/action/ruleset audit below)
 3. Execute main plan Phases 1-8 (rename main repo internals)
@@ -64,7 +64,7 @@ for credentials, secrets, service-console access, and manual confirmations.
   at the old repo name; tag rules allow `v*-nimbus.*` tags.
 - **`nimbus/homebrew-tap`**: the release token principal has `contents: write`
   to this repo only, branch/ruleset policy allows automated cask updates, and
-  the shared `agentstation/homebrew-tap` token is not reused.
+  the shared `nimbus/homebrew-tap` token is not reused.
 - **`nimbus/deno` and `nimbus/rusty_v8`**: Actions/release settings,
   large-release-asset permissions, artifact retention, branch/tag protections,
   and any upstream-sync secrets survive transfer or the upstream release
@@ -85,7 +85,7 @@ could be embedded.
 | `nimbus/nimbus-machine-os` | `NIMBUS_MACHINE_OS_REGISTRY_USERNAME`, `NIMBUS_MACHINE_OS_REGISTRY_PASSWORD` | Prefer replacing with `GITHUB_TOKEN`/App token. If still needed, scope only to `ghcr.io/nimbus/nimbus-machine-os`. |
 | `nimbus/nimbus-crun` | none currently beyond `GITHUB_TOKEN` | Verify repo token can create releases, upload assets, attest, and use Docker Buildx. |
 | `nimbus/homebrew-tap` | no workflow secrets expected in the tap | Write access comes from `HOMEBREW_TAP_TOKEN` stored on `nimbus/nimbus`; verify the token principal is limited to this tap. |
-| `nimbus/deno` | `DENOBOT_PAT`, `DENOBOT_GIST_PAT`, `CARGO_REGISTRY_TOKEN`, `APPLE_CODESIGN_KEY`, `APPLE_CODESIGN_PASSWORD`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `GCP_SA_KEY`, `S3_SECRET_ACCESS_KEY`, `WPT_FYI_PW`, `NODE_COMPAT_SLACK_TOKEN`, `NODE_COMPAT_SLACK_CHANNEL`; vars `S3_ACCESS_KEY_ID`, `S3_ENDPOINT`, `S3_REGION` | Reprovision only if Nimbus intends to run upstream Deno release/publish/compat workflows. Otherwise disable those workflows or restrict them to the upstream `denoland/deno` condition and document that only tag reachability is required for Neovex/Nimbus. |
+| `nimbus/deno` | `DENOBOT_PAT`, `DENOBOT_GIST_PAT`, `CARGO_REGISTRY_TOKEN`, `APPLE_CODESIGN_KEY`, `APPLE_CODESIGN_PASSWORD`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `GCP_SA_KEY`, `S3_SECRET_ACCESS_KEY`, `WPT_FYI_PW`, `NODE_COMPAT_SLACK_TOKEN`, `NODE_COMPAT_SLACK_CHANNEL`; vars `S3_ACCESS_KEY_ID`, `S3_ENDPOINT`, `S3_REGION` | Reprovision only if Nimbus intends to run upstream Deno release/publish/compat workflows. Otherwise disable those workflows or restrict them to the upstream `denoland/deno` condition and document that only tag reachability is required for Nimbus/Nimbus. |
 | `nimbus/rusty_v8` | `DENOBOT_PAT` plus default `GITHUB_TOKEN` release permissions | Reprovision only if Nimbus intends to cut new `rusty_v8` releases from this fork. Otherwise disable release/update workflows and manually verify transferred locker tags/assets remain reachable. |
 
 Concrete third-party action allowlist additions by satellite repo:
@@ -133,9 +133,9 @@ gh api orgs/nimbus/actions/runners
 
 ## Repo 1: nimbus/nimbus-machine-os
 
-Formerly `agentstation/neovex-machine-os`. Builds the Fedora bootc-based guest
+Formerly `nimbus/nimbus-machine-os`. Builds the Fedora bootc-based guest
 Linux VM image for macOS machine support. The most complex satellite repo.
-~150+ lowercase "neovex", ~25 uppercase "NEOVEX", ~70 "agentstation" references
+~150+ lowercase "nimbus", ~25 uppercase "NIMBUS", ~70 "nimbus" references
 across 15 files.
 
 ### File inventory
@@ -164,86 +164,86 @@ scripts/verify-publish-helper.sh
 
 | Before | After |
 |--------|-------|
-| Repo name `neovex-machine-os` | `nimbus-machine-os` |
-| GHCR image `ghcr.io/agentstation/neovex-machine-os` | `ghcr.io/nimbus/nimbus-machine-os` |
-| Disk artifact `neovex-machine-os.raw.gz` | `nimbus-machine-os.raw.gz` |
-| OCI archive `neovex-machine-os.ociarchive` | `nimbus-machine-os.ociarchive` |
-| Guest binary `/usr/local/bin/neovex` | `/usr/local/bin/nimbus` |
-| Guest data dir `/var/lib/neovex/` | `/var/lib/nimbus/` |
-| Guest control dir `/var/lib/neovex/control/` | `/var/lib/nimbus/control/` |
-| Guest socket `/run/neovex/neovex.sock` | `/run/nimbus/nimbus.sock` |
-| Systemd unit `neovex.socket` | `nimbus.socket` |
-| Systemd unit `neovex.service` | `nimbus.service` |
-| OCI annotations `io.neovex.machine.*` | `io.nimbus.machine.*` |
-| OCI media types `application/vnd.neovex.machine.*` | `application/vnd.nimbus.machine.*` |
-| Config files `999-neovex-machine.conf` etc. | `999-nimbus-machine.conf` etc. |
-| Env vars `NEOVEX_MACHINE_OS_*` | `NIMBUS_MACHINE_OS_*` |
-| Env var `NEOVEX_BIB_IMAGE` | `NIMBUS_BIB_IMAGE` |
-| Workflow input `neovex_version` | `nimbus_version` |
-| Workflow input `neovex_artifact_name` | `nimbus_artifact_name` |
-| Artifact name `neovex-machine-os-arm64` | `nimbus-machine-os-arm64` |
-| CLI flags `--neovex-binary`, `--neovex-version` | `--nimbus-binary`, `--nimbus-version` |
-| License `Neovex Community License` | `Nimbus Community License` |
+| Repo name `nimbus-machine-os` | `nimbus-machine-os` |
+| GHCR image `ghcr.io/nimbus/nimbus-machine-os` | `ghcr.io/nimbus/nimbus-machine-os` |
+| Disk artifact `nimbus-machine-os.raw.gz` | `nimbus-machine-os.raw.gz` |
+| OCI archive `nimbus-machine-os.ociarchive` | `nimbus-machine-os.ociarchive` |
+| Guest binary `/usr/local/bin/nimbus` | `/usr/local/bin/nimbus` |
+| Guest data dir `/var/lib/nimbus/` | `/var/lib/nimbus/` |
+| Guest control dir `/var/lib/nimbus/control/` | `/var/lib/nimbus/control/` |
+| Guest socket `/run/nimbus/nimbus.sock` | `/run/nimbus/nimbus.sock` |
+| Systemd unit `nimbus.socket` | `nimbus.socket` |
+| Systemd unit `nimbus.service` | `nimbus.service` |
+| OCI annotations `io.nimbus.machine.*` | `io.nimbus.machine.*` |
+| OCI media types `application/vnd.nimbus.machine.*` | `application/vnd.nimbus.machine.*` |
+| Config files `999-nimbus-machine.conf` etc. | `999-nimbus-machine.conf` etc. |
+| Env vars `NIMBUS_MACHINE_OS_*` | `NIMBUS_MACHINE_OS_*` |
+| Env var `NIMBUS_BIB_IMAGE` | `NIMBUS_BIB_IMAGE` |
+| Workflow input `nimbus_version` | `nimbus_version` |
+| Workflow input `nimbus_artifact_name` | `nimbus_artifact_name` |
+| Artifact name `nimbus-machine-os-arm64` | `nimbus-machine-os-arm64` |
+| CLI flags `--nimbus-binary`, `--nimbus-version` | `--nimbus-binary`, `--nimbus-version` |
+| License `Nimbus Community License` | `Nimbus Community License` |
 
 ### Changes required
 
 #### MOS-1: Workflows (.github/workflows/)
 
 **`build.yml`** (~39 references, 489 lines):
-- Workflow input descriptions: `"Neovex release tag"` -> `"Nimbus release tag"`
-- Input names if exposed to callers: `neovex_version` -> `nimbus_version`,
-  `neovex_artifact_name` -> `nimbus_artifact_name`
-- Default image reference: `ghcr.io/agentstation/neovex-machine-os:v0.0.0-dev`
+- Workflow input descriptions: `"Nimbus release tag"` -> `"Nimbus release tag"`
+- Input names if exposed to callers: `nimbus_version` -> `nimbus_version`,
+  `nimbus_artifact_name` -> `nimbus_artifact_name`
+- Default image reference: `ghcr.io/nimbus/nimbus-machine-os:v0.0.0-dev`
   -> `ghcr.io/nimbus/nimbus-machine-os:v0.0.0-dev`
-- Checkout repository: `agentstation/neovex-machine-os` ->
+- Checkout repository: `nimbus/nimbus-machine-os` ->
   `nimbus/nimbus-machine-os`
-- Temp directory names: `${RUNNER_TEMP}/neovex-machine-os` ->
+- Temp directory names: `${RUNNER_TEMP}/nimbus-machine-os` ->
   `${RUNNER_TEMP}/nimbus-machine-os` (layout, release dirs too)
-- API calls to fetch latest tag: `repos/agentstation/neovex/releases/latest` ->
+- API calls to fetch latest tag: `repos/nimbus/nimbus/releases/latest` ->
   `repos/nimbus/nimbus/releases/latest`
-- Download URL: `github.com/agentstation/neovex/releases/download/*/neovex_linux_arm64.tar.gz`
+- Download URL: `github.com/nimbus/nimbus/releases/download/*/nimbus_linux_arm64.tar.gz`
   -> `github.com/nimbus/nimbus/releases/download/*/nimbus_linux_arm64.tar.gz`
-- Tar extraction: `neovex_linux_arm64.tar.gz` -> `nimbus_linux_arm64.tar.gz`
-- Binary output var: `neovex_binary=${RUNNER_TEMP}/neovex` ->
+- Tar extraction: `nimbus_linux_arm64.tar.gz` -> `nimbus_linux_arm64.tar.gz`
+- Binary output var: `nimbus_binary=${RUNNER_TEMP}/nimbus` ->
   `nimbus_binary=${RUNNER_TEMP}/nimbus`
-- Build script flags: `--neovex-binary`, `--neovex-version` ->
+- Build script flags: `--nimbus-binary`, `--nimbus-version` ->
   `--nimbus-binary`, `--nimbus-version`
-- GHCR push target: `ghcr.io/agentstation/neovex-machine-os:${tag}` ->
+- GHCR push target: `ghcr.io/nimbus/nimbus-machine-os:${tag}` ->
   `ghcr.io/nimbus/nimbus-machine-os:${tag}`
-- Source repository URL: `github.com/agentstation/neovex-machine-os` ->
+- Source repository URL: `github.com/nimbus/nimbus-machine-os` ->
   `github.com/nimbus/nimbus-machine-os`
-- Env vars: `NEOVEX_MACHINE_OS_REGISTRY_USERNAME`,
-  `NEOVEX_MACHINE_OS_REGISTRY_PASSWORD` -> `NIMBUS_MACHINE_OS_*`
-- GitHub App: `owner: agentstation`, `repositories: neovex-machine-os` ->
+- Env vars: `NIMBUS_MACHINE_OS_REGISTRY_USERNAME`,
+  `NIMBUS_MACHINE_OS_REGISTRY_PASSWORD` -> `NIMBUS_MACHINE_OS_*`
+- GitHub App: `owner: nimbus`, `repositories: nimbus-machine-os` ->
   `owner: nimbus`, `repositories: nimbus-machine-os`
-- Error messages referencing `neovex-machine-os` and `agentstation`
-- Release notes mentioning `agentstation/neovex`
-- Artifact stage names: `neovex-machine-os-arm64`,
-  `neovex-machine-os-arm64-publish` -> `nimbus-machine-os-*`
-- Release repo: `release_repository="agentstation/neovex-machine-os"` ->
+- Error messages referencing `nimbus-machine-os` and `nimbus`
+- Release notes mentioning `nimbus/nimbus`
+- Artifact stage names: `nimbus-machine-os-arm64`,
+  `nimbus-machine-os-arm64-publish` -> `nimbus-machine-os-*`
+- Release repo: `release_repository="nimbus/nimbus-machine-os"` ->
   `"nimbus/nimbus-machine-os"`
-- Build output artifact: `neovex-machine-os.raw.gz` -> `nimbus-machine-os.raw.gz`
+- Build output artifact: `nimbus-machine-os.raw.gz` -> `nimbus-machine-os.raw.gz`
 - App credentials: after the rename, this workflow still needs
   `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` when invoked as a reusable workflow that
   publishes or creates a release. Ensure the main repo passes the secret and the
   machine-os repo has its own copy for direct or dispatch-driven release paths.
 
 **`publish.yml`** (~22 references, 254 lines):
-- Input descriptions: `"Neovex release tag"` -> `"Nimbus release tag"`,
-  `"agentstation/neovex"` -> `"nimbus/nimbus"`
-- Checkout repository: `agentstation/neovex-machine-os` ->
+- Input descriptions: `"Nimbus release tag"` -> `"Nimbus release tag"`,
+  `"nimbus/nimbus"` -> `"nimbus/nimbus"`
+- Checkout repository: `nimbus/nimbus-machine-os` ->
   `nimbus/nimbus-machine-os`
 - Temp directory names: same pattern as build.yml
-- Error messages: `"neovex-machine-os"` -> `"nimbus-machine-os"`
-- Env vars: `NEOVEX_MACHINE_OS_REGISTRY_USERNAME`,
-  `NEOVEX_MACHINE_OS_REGISTRY_PASSWORD` -> `NIMBUS_MACHINE_OS_*`
-- GHCR publish target: `ghcr.io/agentstation/neovex-machine-os` ->
+- Error messages: `"nimbus-machine-os"` -> `"nimbus-machine-os"`
+- Env vars: `NIMBUS_MACHINE_OS_REGISTRY_USERNAME`,
+  `NIMBUS_MACHINE_OS_REGISTRY_PASSWORD` -> `NIMBUS_MACHINE_OS_*`
+- GHCR publish target: `ghcr.io/nimbus/nimbus-machine-os` ->
   `ghcr.io/nimbus/nimbus-machine-os`
-- Release title/notes: all neovex/agentstation references
-- Release repo: `release_repository='agentstation/neovex-machine-os'` ->
+- Release title/notes: all nimbus/nimbus references
+- Release repo: `release_repository='nimbus/nimbus-machine-os'` ->
   `'nimbus/nimbus-machine-os'`
-- Build output: `neovex-machine-os.raw.gz` -> `nimbus-machine-os.raw.gz`
-- Artifact name: `neovex-machine-os-arm64-publish` -> `nimbus-machine-os-*`
+- Build output: `nimbus-machine-os.raw.gz` -> `nimbus-machine-os.raw.gz`
+- Artifact name: `nimbus-machine-os-arm64-publish` -> `nimbus-machine-os-*`
 - App credentials: this workflow reads `MACHINE_OS_RELEASE_APP_ID` from repo
   variables and `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` from repo secrets to mint
   a token against `inputs.source_repository`. Provision both on
@@ -256,151 +256,151 @@ renaming, create a new tag or update the existing ref so the main repo can call
 
 **`.github/dependabot.yml`**:
 - Verify package ecosystem directories and any path filters after file/script
-  renames. The file may have no direct `neovex` strings today, but it must still
+  renames. The file may have no direct `nimbus` strings today, but it must still
   point at valid workflow, container, or package directories after the
   `nimbus-machine-os` rename.
 
 #### MOS-2: Containerfile and image build scripts
 
 **`images/Containerfile`** (3 references):
-- `COPY neovex /usr/local/bin/neovex` -> `COPY nimbus /usr/local/bin/nimbus`
-- `RUN chmod 0755 /usr/local/bin/neovex` -> `/usr/local/bin/nimbus`
+- `COPY nimbus /usr/local/bin/nimbus` -> `COPY nimbus /usr/local/bin/nimbus`
+- `RUN chmod 0755 /usr/local/bin/nimbus` -> `/usr/local/bin/nimbus`
 
 **`images/build.sh`** (~25 references, 191 lines):
-- Usage text: `"Build the Neovex Fedora CoreOS guest image"` -> `"Nimbus"`
-- CLI flags: `--neovex-binary`, `--neovex-version` ->
+- Usage text: `"Build the Nimbus Fedora CoreOS guest image"` -> `"Nimbus"`
+- CLI flags: `--nimbus-binary`, `--nimbus-version` ->
   `--nimbus-binary`, `--nimbus-version`
-- Variables: `neovex_binary`, `neovex_version` -> `nimbus_binary`,
+- Variables: `nimbus_binary`, `nimbus_version` -> `nimbus_binary`,
   `nimbus_version`
-- Default image name: `localhost/neovex-machine-os:dev` ->
+- Default image name: `localhost/nimbus-machine-os:dev` ->
   `localhost/nimbus-machine-os:dev`
-- Error messages: `"neovex binary does not exist"` etc.
-- Binary copy: `install ... "${context_dir}/neovex"` -> `"${context_dir}/nimbus"`
-- OCI archive: `neovex-machine-os.ociarchive` -> `nimbus-machine-os.ociarchive`
-- Env var: `NEOVEX_BIB_IMAGE` -> `NIMBUS_BIB_IMAGE`
-- Compressed output: `neovex-machine-os.raw.gz` -> `nimbus-machine-os.raw.gz`
-- Build manifest vars: `neovex_binary`, `neovex_version`,
-  `neovex_binary_sha256` -> `nimbus_*`
+- Error messages: `"nimbus binary does not exist"` etc.
+- Binary copy: `install ... "${context_dir}/nimbus"` -> `"${context_dir}/nimbus"`
+- OCI archive: `nimbus-machine-os.ociarchive` -> `nimbus-machine-os.ociarchive`
+- Env var: `NIMBUS_BIB_IMAGE` -> `NIMBUS_BIB_IMAGE`
+- Compressed output: `nimbus-machine-os.raw.gz` -> `nimbus-machine-os.raw.gz`
+- Build manifest vars: `nimbus_binary`, `nimbus_version`,
+  `nimbus_binary_sha256` -> `nimbus_*`
 
 **`images/build-common.sh`** (~6 references):
-- Data directories: `/var/lib/neovex/control`, `/var/lib/neovex/data` ->
+- Data directories: `/var/lib/nimbus/control`, `/var/lib/nimbus/data` ->
   `/var/lib/nimbus/*`
 - Config files dropped into image:
-  - `/etc/containers/registries.conf.d/999-neovex-machine.conf` ->
+  - `/etc/containers/registries.conf.d/999-nimbus-machine.conf` ->
     `999-nimbus-machine.conf`
-  - `/etc/ssh/sshd_config.d/99-neovex-machine-sshd.conf` ->
+  - `/etc/ssh/sshd_config.d/99-nimbus-machine-sshd.conf` ->
     `99-nimbus-machine-sshd.conf`
-  - `/etc/sysctl.d/10-neovex-machine-inotify.conf` ->
+  - `/etc/sysctl.d/10-nimbus-machine-inotify.conf` ->
     `10-nimbus-machine-inotify.conf`
-- chmod paths: `/var/lib/neovex /var/lib/neovex/control /var/lib/neovex/data` ->
+- chmod paths: `/var/lib/nimbus /var/lib/nimbus/control /var/lib/nimbus/data` ->
   `/var/lib/nimbus/*`
 
 #### MOS-3: OCI packaging and publishing scripts
 
 **`scripts/package-oci.sh`** (~19 references):
 - Custom OCI media types (critical -- consumed by the main repo's image puller):
-  - `application/vnd.neovex.machine.disk.layer.v1.raw+gzip` ->
+  - `application/vnd.nimbus.machine.disk.layer.v1.raw+gzip` ->
     `application/vnd.nimbus.machine.disk.layer.v1.raw+gzip`
-  - `application/vnd.neovex.machine.disk.layer.v1.raw+zstd` ->
+  - `application/vnd.nimbus.machine.disk.layer.v1.raw+zstd` ->
     `application/vnd.nimbus.machine.disk.layer.v1.raw+zstd`
-  - `application/vnd.neovex.machine.disk.layer.v1.raw` ->
+  - `application/vnd.nimbus.machine.disk.layer.v1.raw` ->
     `application/vnd.nimbus.machine.disk.layer.v1.raw`
-  - `application/vnd.neovex.machine.disk.layer.v1.blob` ->
+  - `application/vnd.nimbus.machine.disk.layer.v1.blob` ->
     `application/vnd.nimbus.machine.disk.layer.v1.blob`
 - OCI manifest annotations:
-  - `io.neovex.machine.attestation.repository` ->
+  - `io.nimbus.machine.attestation.repository` ->
     `io.nimbus.machine.attestation.repository`
-  - `io.neovex.machine.neovex.version` ->
+  - `io.nimbus.machine.nimbus.version` ->
     `io.nimbus.machine.nimbus.version`
-- Env vars: `NEOVEX_MACHINE_OS_PACKAGE_TEST_ARCH`,
-  `NEOVEX_MACHINE_OS_SOURCE_REPOSITORY_URL`,
-  `NEOVEX_MACHINE_OS_ATTESTATION_REPOSITORY`,
-  `NEOVEX_MACHINE_OS_VERSION` -> `NIMBUS_MACHINE_OS_*`
-- Default values: `agentstation/neovex-machine-os` -> `nimbus/nimbus-machine-os`
-- CLI flag: `--neovex-version` -> `--nimbus-version`
-- Variable: `neovex_version` -> `nimbus_version`
+- Env vars: `NIMBUS_MACHINE_OS_PACKAGE_TEST_ARCH`,
+  `NIMBUS_MACHINE_OS_SOURCE_REPOSITORY_URL`,
+  `NIMBUS_MACHINE_OS_ATTESTATION_REPOSITORY`,
+  `NIMBUS_MACHINE_OS_VERSION` -> `NIMBUS_MACHINE_OS_*`
+- Default values: `nimbus/nimbus-machine-os` -> `nimbus/nimbus-machine-os`
+- CLI flag: `--nimbus-version` -> `--nimbus-version`
+- Variable: `nimbus_version` -> `nimbus_version`
 
 **`scripts/publish.sh`** (~15 references):
-- Usage text: `"Push a packaged Neovex machine"` -> `"Nimbus"`
-- Env vars: `NEOVEX_MACHINE_OS_REGISTRY_USERNAME`,
-  `NEOVEX_MACHINE_OS_REGISTRY_PASSWORD` -> `NIMBUS_MACHINE_OS_*`
-- Example URLs: `ghcr.io/agentstation/neovex-machine-os` ->
+- Usage text: `"Push a packaged Nimbus machine"` -> `"Nimbus"`
+- Env vars: `NIMBUS_MACHINE_OS_REGISTRY_USERNAME`,
+  `NIMBUS_MACHINE_OS_REGISTRY_PASSWORD` -> `NIMBUS_MACHINE_OS_*`
+- Example URLs: `ghcr.io/nimbus/nimbus-machine-os` ->
   `ghcr.io/nimbus/nimbus-machine-os`
 - Error messages referencing env var names
 
 **`scripts/build.sh`** (wrapper, ~15 references):
-- Usage text: `"Build the neovex-machine-os guest image"` -> `"nimbus-machine-os"`
-- CLI flags: `--neovex-binary`, `--neovex-version` ->
+- Usage text: `"Build the nimbus-machine-os guest image"` -> `"nimbus-machine-os"`
+- CLI flags: `--nimbus-binary`, `--nimbus-version` ->
   `--nimbus-binary`, `--nimbus-version`
-- Variables: `neovex_binary`, `neovex_version` -> `nimbus_*`
-- Env var: `NEOVEX_MACHINE_OS_BUILD_WRAPPER_TEST_UNAME` ->
+- Variables: `nimbus_binary`, `nimbus_version` -> `nimbus_*`
+- Env var: `NIMBUS_MACHINE_OS_BUILD_WRAPPER_TEST_UNAME` ->
   `NIMBUS_MACHINE_OS_BUILD_WRAPPER_TEST_UNAME`
-- Temp dirs: `/tmp/neovex-machine-os` -> `/tmp/nimbus-machine-os`
-- Error messages: `"neovex binary not found"` etc.
-- Delegation: passes `--neovex-binary`, `--neovex-version` to `images/build.sh`
+- Temp dirs: `/tmp/nimbus-machine-os` -> `/tmp/nimbus-machine-os`
+- Error messages: `"nimbus binary not found"` etc.
+- Delegation: passes `--nimbus-binary`, `--nimbus-version` to `images/build.sh`
 
 #### MOS-4: Verification scripts
 
 **`scripts/verify-recipe.sh`** (~4 references):
-- `grep -F 'COPY neovex /usr/local/bin/neovex'` -> `'COPY nimbus /usr/local/bin/nimbus'`
-- `neovex_binary="${temp_dir}/neovex"` -> `nimbus_binary=...`
-- Env vars: `NEOVEX_MACHINE_OS_BUILD_TEST_UNAME`,
-  `NEOVEX_MACHINE_OS_BUILD_TEST_UID` -> `NIMBUS_MACHINE_OS_*`
+- `grep -F 'COPY nimbus /usr/local/bin/nimbus'` -> `'COPY nimbus /usr/local/bin/nimbus'`
+- `nimbus_binary="${temp_dir}/nimbus"` -> `nimbus_binary=...`
+- Env vars: `NIMBUS_MACHINE_OS_BUILD_TEST_UNAME`,
+  `NIMBUS_MACHINE_OS_BUILD_TEST_UID` -> `NIMBUS_MACHINE_OS_*`
 
 **`scripts/verify-build-helper.sh`** (~2 references):
-- `NEOVEX_MACHINE_OS_BUILD_WRAPPER_TEST_UNAME` -> `NIMBUS_*`
-- `/tmp/neovex-machine-os-out` -> `/tmp/nimbus-machine-os-out`
+- `NIMBUS_MACHINE_OS_BUILD_WRAPPER_TEST_UNAME` -> `NIMBUS_*`
+- `/tmp/nimbus-machine-os-out` -> `/tmp/nimbus-machine-os-out`
 
 **`scripts/verify-oci-layout-helper.sh`** (~11 references):
 - All test assertion strings:
-  - `ghcr.io/agentstation/neovex-machine-os:v1.2.3` ->
+  - `ghcr.io/nimbus/nimbus-machine-os:v1.2.3` ->
     `ghcr.io/nimbus/nimbus-machine-os:v1.2.3`
-  - `github.com/agentstation/neovex-machine-os` ->
+  - `github.com/nimbus/nimbus-machine-os` ->
     `github.com/nimbus/nimbus-machine-os`
-  - `agentstation/neovex` -> `nimbus/nimbus` (attestation repo)
-  - `io.neovex.machine.*` -> `io.nimbus.machine.*` (annotation assertions)
-- Success message: `"verified neovex machine-os"` -> `"verified nimbus machine-os"`
+  - `nimbus/nimbus` -> `nimbus/nimbus` (attestation repo)
+  - `io.nimbus.machine.*` -> `io.nimbus.machine.*` (annotation assertions)
+- Success message: `"verified nimbus machine-os"` -> `"verified nimbus machine-os"`
 
 **`scripts/verify-publish-helper.sh`** (~14 references):
 - All test assertion strings same pattern as oci-layout helper
-- Env vars: `NEOVEX_MACHINE_OS_REGISTRY_USERNAME`,
-  `NEOVEX_MACHINE_OS_REGISTRY_PASSWORD` -> `NIMBUS_MACHINE_OS_*`
-- Additional reference assertions for `ghcr.io/agentstation/neovex-machine-os:next`
-- Success message: `"verified neovex machine-os publish wrapper"` -> `"nimbus"`
+- Env vars: `NIMBUS_MACHINE_OS_REGISTRY_USERNAME`,
+  `NIMBUS_MACHINE_OS_REGISTRY_PASSWORD` -> `NIMBUS_MACHINE_OS_*`
+- Additional reference assertions for `ghcr.io/nimbus/nimbus-machine-os:next`
+- Success message: `"verified nimbus machine-os publish wrapper"` -> `"nimbus"`
 
 #### MOS-5: Documentation and license
 
 **`README.md`** (~25+ references):
-- Title: `# neovex-machine-os` -> `# nimbus-machine-os`
-- All prose: `"neovex"` -> `"nimbus"`, `"Neovex"` -> `"Nimbus"`
-- GHCR URL: `ghcr.io/agentstation/neovex-machine-os` ->
+- Title: `# nimbus-machine-os` -> `# nimbus-machine-os`
+- All prose: `"nimbus"` -> `"nimbus"`, `"Nimbus"` -> `"Nimbus"`
+- GHCR URL: `ghcr.io/nimbus/nimbus-machine-os` ->
   `ghcr.io/nimbus/nimbus-machine-os`
-- Main repo URLs: `github.com/agentstation/neovex` ->
+- Main repo URLs: `github.com/nimbus/nimbus` ->
   `github.com/nimbus/nimbus`
-- Download examples: `neovex_linux_arm64.tar.gz` -> `nimbus_linux_arm64.tar.gz`
-- CLI flags in examples: `--neovex-binary`, `--neovex-version`
-- Output dirs: `--output-dir /tmp/neovex-machine-os` -> `/tmp/nimbus-machine-os`
-- OCI annotations: `io.neovex.machine.*` -> `io.nimbus.machine.*`
-- Cross-repo references: `agentstation/neovex-machine-os`,
-  `agentstation/neovex`
+- Download examples: `nimbus_linux_arm64.tar.gz` -> `nimbus_linux_arm64.tar.gz`
+- CLI flags in examples: `--nimbus-binary`, `--nimbus-version`
+- Output dirs: `--output-dir /tmp/nimbus-machine-os` -> `/tmp/nimbus-machine-os`
+- OCI annotations: `io.nimbus.machine.*` -> `io.nimbus.machine.*`
+- Cross-repo references: `nimbus/nimbus-machine-os`,
+  `nimbus/nimbus`
 
 **`images/README.md`** (~16 references):
-- Title: `# Neovex Machine OS Recipe` -> `# Nimbus Machine OS Recipe`
+- Title: `# Nimbus Machine OS Recipe` -> `# Nimbus Machine OS Recipe`
 - All same patterns as root README
-- Artifact names: `neovex-machine-os.ociarchive`, `neovex-machine-os.raw.gz`
-- Publish examples: `ghcr.io/agentstation/neovex-machine-os`
+- Artifact names: `nimbus-machine-os.ociarchive`, `nimbus-machine-os.raw.gz`
+- Publish examples: `ghcr.io/nimbus/nimbus-machine-os`
 
 **`LICENSE`** (~7 references):
-- `Neovex Community License 1.0` -> `Nimbus Community License 1.0`
-- `Copyright (c) 2026 the Neovex contributors` -> `Nimbus contributors`
-- All other `Neovex` references in license text
+- `Nimbus Community License 1.0` -> `Nimbus Community License 1.0`
+- `Copyright (c) 2026 the Nimbus contributors` -> `Nimbus contributors`
+- All other `Nimbus` references in license text
 
 #### MOS-6: Verification
 
 ```sh
 # After all changes:
-rg "neovex" .
-rg "agentstation" .
+rg "nimbus" .
+rg "nimbus" .
 # Both should return 0 hits
 
 # Verify build script accepts new flags:
@@ -426,9 +426,9 @@ bash scripts/verify-publish-helper.sh
 
 ## Repo 2: nimbus/nimbus-crun
 
-Formerly `agentstation/neovex-crun`. Builds a patched crun binary with TSI port
+Formerly `nimbus/nimbus-crun`. Builds a patched crun binary with TSI port
 mapping support for the krun backend. Small repo: 9 files, ~39 lowercase
-"neovex", ~8 capitalized "Neovex" (LICENSE), 1 "agentstation" reference.
+"nimbus", ~8 capitalized "Nimbus" (LICENSE), 1 "nimbus" reference.
 
 ### File inventory
 
@@ -448,58 +448,58 @@ scripts/verify-patch.sh
 
 | Before | After |
 |--------|-------|
-| Repo name `neovex-crun` | `nimbus-crun` |
-| Binary install path `/usr/libexec/neovex/crun` | `/usr/libexec/nimbus/crun` |
-| Release assets `neovex-crun-linux-amd64` | `nimbus-crun-linux-amd64` |
-| Release assets `neovex-crun-linux-arm64` | `nimbus-crun-linux-arm64` |
-| Builder image tag `neovex-crun-builder:*` | `nimbus-crun-builder:*` |
-| Git tag `v1.27-neovex.1` | `v1.27-nimbus.1` |
-| License `Neovex Community License` | `Nimbus Community License` |
+| Repo name `nimbus-crun` | `nimbus-crun` |
+| Binary install path `/usr/libexec/nimbus/crun` | `/usr/libexec/nimbus/crun` |
+| Release assets `nimbus-crun-linux-amd64` | `nimbus-crun-linux-amd64` |
+| Release assets `nimbus-crun-linux-arm64` | `nimbus-crun-linux-arm64` |
+| Builder image tag `nimbus-crun-builder:*` | `nimbus-crun-builder:*` |
+| Git tag `v1.27-nimbus.1` | `v1.27-nimbus.1` |
+| License `Nimbus Community License` | `Nimbus Community License` |
 
 ### Changes required
 
 #### CRUN-1: Build script (scripts/build.sh, ~16 references)
 
-- Usage text: `"build-neovex-crun.sh"` -> `"build-nimbus-crun.sh"`
+- Usage text: `"build-nimbus-crun.sh"` -> `"build-nimbus-crun.sh"`
   (or just `"build.sh"` since the script name is already `build.sh`)
-- Prose: `"Build the checked-in patched neovex crun binary"` -> `"nimbus crun"`
-- Example paths: `--output /tmp/neovex-crun-stage/crun` ->
+- Prose: `"Build the checked-in patched nimbus crun binary"` -> `"nimbus crun"`
+- Example paths: `--output /tmp/nimbus-crun-stage/crun` ->
   `/tmp/nimbus-crun-stage/crun`
-- Install path: `--install-path /usr/libexec/neovex/crun` ->
+- Install path: `--install-path /usr/libexec/nimbus/crun` ->
   `/usr/libexec/nimbus/crun`
-- Default output: `${TMPDIR:-/tmp}/neovex-crun-stage/crun` ->
+- Default output: `${TMPDIR:-/tmp}/nimbus-crun-stage/crun` ->
   `nimbus-crun-stage/crun`
-- Error message: `"build-neovex-crun.sh requires a Linux host"` -> `nimbus`
-- Temp dir: `mktemp -d .../neovex-crun-build.XXXXXX` -> `nimbus-crun-build.*`
+- Error message: `"build-nimbus-crun.sh requires a Linux host"` -> `nimbus`
+- Temp dir: `mktemp -d .../nimbus-crun-build.XXXXXX` -> `nimbus-crun-build.*`
 
 #### CRUN-2: Verification scripts
 
 **`scripts/verify-fedora-userspace.sh`** (~8 references):
-- Usage text: `"verify-neovex-crun-fedora-userspace.sh"` -> `"nimbus"`
-- Prose: `"Run the neovex crun patch + build helpers"` -> `"nimbus"`
-- Example paths: `--output-dir /tmp/neovex-crun-fedora-output` -> `nimbus-*`
-- Temp dirs: `neovex-crun-fedora-output.*`, `neovex-crun-fedora-build.*` ->
+- Usage text: `"verify-nimbus-crun-fedora-userspace.sh"` -> `"nimbus"`
+- Prose: `"Run the nimbus crun patch + build helpers"` -> `"nimbus"`
+- Example paths: `--output-dir /tmp/nimbus-crun-fedora-output` -> `nimbus-*`
+- Temp dirs: `nimbus-crun-fedora-output.*`, `nimbus-crun-fedora-build.*` ->
   `nimbus-crun-*`
 
-**`scripts/verify-patch.sh`**: Check for any neovex references (likely minimal
+**`scripts/verify-patch.sh`**: Check for any nimbus references (likely minimal
 since it verifies the upstream patch applies cleanly).
 
 #### CRUN-3: Workflow (.github/workflows/build.yml, ~20 references)
 
-- Workflow name: `"Build neovex-crun"` -> `"Build nimbus-crun"`
-- Job name: `"Build neovex-crun (linux ${{ matrix.arch }})"` -> `"nimbus-crun"`
-- Temp dirs: `${RUNNER_TEMP}/neovex-crun-output`, `neovex-crun-build` ->
+- Workflow name: `"Build nimbus-crun"` -> `"Build nimbus-crun"`
+- Job name: `"Build nimbus-crun (linux ${{ matrix.arch }})"` -> `"nimbus-crun"`
+- Temp dirs: `${RUNNER_TEMP}/nimbus-crun-output`, `nimbus-crun-build` ->
   `nimbus-crun-*`
-- Docker builder tag: `neovex-crun-builder:${{ matrix.arch }}` ->
+- Docker builder tag: `nimbus-crun-builder:${{ matrix.arch }}` ->
   `nimbus-crun-builder:*`
-- Binary rename: `mv .../crun .../neovex-crun-linux-${{ matrix.arch }}` ->
+- Binary rename: `mv .../crun .../nimbus-crun-linux-${{ matrix.arch }}` ->
   `nimbus-crun-linux-*`
-- Artifact names: `neovex-crun-linux-${{ matrix.arch }}` ->
+- Artifact names: `nimbus-crun-linux-${{ matrix.arch }}` ->
   `nimbus-crun-linux-*`
-- Release asset paths: all `neovex-crun-linux-amd64`, `neovex-crun-linux-arm64`
-- Checksum generation: `sha256sum neovex-crun-linux-*` -> `nimbus-crun-linux-*`
-- Release title: `"neovex-crun ${{ github.ref_name }}"` -> `"nimbus-crun"`
-- Verification step: `./neovex-crun-linux-amd64 --version` ->
+- Release asset paths: all `nimbus-crun-linux-amd64`, `nimbus-crun-linux-arm64`
+- Checksum generation: `sha256sum nimbus-crun-linux-*` -> `nimbus-crun-linux-*`
+- Release title: `"nimbus-crun ${{ github.ref_name }}"` -> `"nimbus-crun"`
+- Verification step: `./nimbus-crun-linux-amd64 --version` ->
   `./nimbus-crun-linux-amd64`
 - Release permissions: keep `contents: write`, `id-token: write`, and
   `attestations: write`; verify the `nimbus-crun` repo/org default token policy
@@ -509,45 +509,45 @@ since it verifies the upstream patch applies cleanly).
 
 #### CRUN-4: Docker builder
 
-**`.github/container/Dockerfile.builder`**: Check for any neovex references in
+**`.github/container/Dockerfile.builder`**: Check for any nimbus references in
 the builder image definition (likely minimal -- it installs build dependencies).
 
 **`.github/dependabot.yml`**:
 - Verify package ecosystem directories and any path filters after workflow and
-  Docker builder path changes. The file may have no direct `neovex` strings
+  Docker builder path changes. The file may have no direct `nimbus` strings
   today, but path validity should be part of the crun repo rename review.
 
 #### CRUN-5: Patch file
 
 **`patches/0001-krun-add-tsi-port-mapping-via-oci-annotation.patch`**: The C
 code in the patch is upstream-generic (reads `krun.port_map` OCI annotation,
-not neovex-branded). Check the patch header/commit message for any neovex
+not nimbus-branded). Check the patch header/commit message for any nimbus
 references.
 
 #### CRUN-6: Documentation and license
 
 **`README.md`** (~8 references):
-- Title: `# neovex-crun` -> `# nimbus-crun`
-- Link: `[neovex](https://github.com/agentstation/neovex)` ->
+- Title: `# nimbus-crun` -> `# nimbus-crun`
+- Link: `[nimbus](https://github.com/nimbus/nimbus)` ->
   `[nimbus](https://github.com/nimbus/nimbus)`
-- Asset names: `neovex-crun-linux-amd64`, `neovex-crun-linux-arm64`
-- Install path: `/usr/libexec/neovex/crun` -> `/usr/libexec/nimbus/crun`
-- Example paths: `--output /tmp/neovex-crun`, `/tmp/neovex-crun --version`
+- Asset names: `nimbus-crun-linux-amd64`, `nimbus-crun-linux-arm64`
+- Install path: `/usr/libexec/nimbus/crun` -> `/usr/libexec/nimbus/crun`
+- Example paths: `--output /tmp/nimbus-crun`, `/tmp/nimbus-crun --version`
 
 **`LICENSE`** (~7 references):
-- `Neovex Community License 1.0` -> `Nimbus Community License 1.0`
-- All other `Neovex` references in license text
+- `Nimbus Community License 1.0` -> `Nimbus Community License 1.0`
+- All other `Nimbus` references in license text
 
 #### CRUN-7: Git tag format
 
-Current tag: `v1.27-neovex.1`. Future tags should use `v1.27-nimbus.1` or
+Current tag: `v1.27-nimbus.1`. Future tags should use `v1.27-nimbus.1` or
 similar. No existing tags need to be moved (pre-launch, no consumers).
 
 #### CRUN-8: Verification
 
 ```sh
-rg "neovex" .
-rg "agentstation" .
+rg "nimbus" .
+rg "nimbus" .
 # Both should return 0 hits
 
 # Verify build script help text:
@@ -561,20 +561,20 @@ grep -F "nimbus-crun-linux" .github/workflows/build.yml
 
 ## Repo 3: nimbus/homebrew-tap (NEW repo)
 
-`agentstation/homebrew-tap` is a **shared tap** serving 6 products (neovex,
+`nimbus/homebrew-tap` is a **shared tap** serving 6 products (nimbus,
 starmap, tokenizer, vhs, pocket, tydirium). It should NOT be transferred to
 the nimbus org. Instead, create a new `nimbus/homebrew-tap` repo containing
-only the nimbus cask, and delete `Casks/neovex.rb` from the agentstation tap.
+only the nimbus cask, and delete `Casks/nimbus.rb` from the nimbus tap.
 
-### What the agentstation tap contains (for context)
+### What the nimbus tap contains (for context)
 
 ```
-Casks/neovex.rb       <- the only file that concerns us
-Casks/starmap.rb      <- unrelated product, stays in agentstation
-Casks/tokenizer.rb    <- unrelated product, stays in agentstation
-Casks/vhs.rb          <- unrelated product, stays in agentstation
-Formula/pocket.rb     <- unrelated product, stays in agentstation
-Formula/tydirium.rb   <- unrelated product, stays in agentstation
+Casks/nimbus.rb       <- the only file that concerns us
+Casks/starmap.rb      <- unrelated product, stays in nimbus
+Casks/tokenizer.rb    <- unrelated product, stays in nimbus
+Casks/vhs.rb          <- unrelated product, stays in nimbus
+Formula/pocket.rb     <- unrelated product, stays in nimbus
+Formula/tydirium.rb   <- unrelated product, stays in nimbus
 README.md, CLAUDE.md, nix-packages/ (submodule)
 ```
 
@@ -592,9 +592,9 @@ nimbus/homebrew-tap/
 
 The `Casks/nimbus.rb` file will be auto-generated by the main repo's
 `release.yml` workflow on the first nimbus release. Optionally seed it with a
-placeholder adapted from the current `Casks/neovex.rb`:
+placeholder adapted from the current `Casks/nimbus.rb`:
 
-- `cask "nimbus"` (not `"neovex"`)
+- `cask "nimbus"` (not `"nimbus"`)
 - `name "nimbus"`
 - `homepage "https://github.com/nimbus/nimbus"`
 - `binary "nimbus"`
@@ -615,11 +615,11 @@ Homebrew tap for [nimbus](https://github.com/nimbus/nimbus).
     brew install nimbus/tap/nimbus
 ```
 
-#### TAP-3: Delete neovex cask from agentstation tap
+#### TAP-3: Delete nimbus cask from nimbus tap
 
-Remove `Casks/neovex.rb` from `agentstation/homebrew-tap`. The other 5 products
-remain untouched in that repo. Also remove the Neovex install section and any
-other user-facing Neovex install references from the shared tap README after
+Remove `Casks/nimbus.rb` from `nimbus/homebrew-tap`. The other 5 products
+remain untouched in that repo. Also remove the Nimbus install section and any
+other user-facing Nimbus install references from the shared tap README after
 the new `nimbus/homebrew-tap` path is verified.
 
 #### TAP-4: Verification
@@ -631,15 +631,15 @@ brew install nimbus/tap/nimbus
 nimbus --version
 
 # Verify old tap still serves other products:
-brew install agentstation/tap/starmap
+brew install nimbus/tap/starmap
 ```
 
 ---
 
 ## Repo 4: nimbus/deno + nimbus/rusty_v8 (forked dependency repos)
 
-Formerly `agentstation/deno` (Deno-family monorepo fork) and
-`agentstation/rusty_v8` (V8 binding fork). These repos do **not** get
+Formerly `nimbus/deno` (Deno-family monorepo fork) and
+`nimbus/rusty_v8` (V8 binding fork). These repos do **not** get
 internal renames -- they preserve upstream identifiers (`deno_core`,
 `deno_node`, `rusty_v8`, etc.) so the workspace `Cargo.toml`
 `[patch.crates-io]` patch surface continues to match published crate names.
@@ -647,7 +647,7 @@ internal renames -- they preserve upstream identifiers (`deno_core`,
 What DOES change:
 
 1. **Origin URL** -- the GitHub transfer in main-plan Phase 0 redirects
-   `agentstation/deno` -> `nimbus/deno` and `agentstation/rusty_v8` ->
+   `nimbus/deno` -> `nimbus/deno` and `nimbus/rusty_v8` ->
    `nimbus/rusty_v8`. Confirm redirects then update local clone remotes.
 
 2. **Locker tag re-publish** -- the canonical main-repo `Cargo.toml`
@@ -664,7 +664,7 @@ What DOES change:
      `make deny` (main-plan Phase 1g) runs successfully.
 
 3. **CI badge / README links** in each fork repo's `README.md` if any
-   reference the former `agentstation` URL or owner. Optional cleanup.
+   reference the former `nimbus` URL or owner. Optional cleanup.
 
 4. **Workflow posture decision** -- these forks carry upstream automation that
    can publish crates, npm packages, cloud artifacts, signed binaries, GitHub
@@ -693,7 +693,7 @@ make deny          # must succeed once allow-git lists nimbus/* URLs
 
 # If upstream release workflows remain enabled, verify their secrets/vars are
 # intentionally present; otherwise verify they are disabled or gated so they
-# cannot publish with stale denoland/agentstation credentials.
+# cannot publish with stale denoland/nimbus credentials.
 gh secret list --repo nimbus/deno
 gh variable list --repo nimbus/deno
 gh secret list --repo nimbus/rusty_v8
@@ -715,16 +715,16 @@ However, they must all complete before the main repo cuts a release with the
 new names.
 
 ```
-Phase 0 (main plan): Transfer neovex-machine-os, neovex-crun,
+Phase 0 (main plan): Transfer nimbus-machine-os, nimbus-crun,
                       deno, rusty_v8 to nimbus org
-                      (homebrew-tap stays in agentstation)
+                      (homebrew-tap stays in nimbus)
          |
          v
    +----------+---------+---------+---------+
    |          |         |         |         |
    v          v         v         v         v
- MOS-1..6  CRUN-1..8  TAP-1..4  Repo 4    Delete neovex.rb
- (machine)  (crun)    (new repo) (forks:   from agentstation
+ MOS-1..6  CRUN-1..8  TAP-1..4  Repo 4    Delete nimbus.rb
+ (machine)  (crun)    (new repo) (forks:   from nimbus
    |          |         |        deno +    /homebrew-tap
    |          |         |        rusty_v8       |
    |          |         |        locker tag     |
@@ -745,16 +745,16 @@ The main repo's release workflow calls into machine-os and homebrew-tap. Both
 sides of these interfaces must be updated atomically (or close to it):
 
 1. **machine-os workflow inputs** -- the main repo's `release.yml` passes
-   `neovex_version` and `neovex_artifact_name` to machine-os `build.yml`. Both
+   `nimbus_version` and `nimbus_artifact_name` to machine-os `build.yml`. Both
    must rename these inputs in the same release window.
 
 2. **machine-os OCI media types** -- the main repo's image puller parses
-   `application/vnd.neovex.machine.disk.layer.v1.*` media types. Both sides must
+   `application/vnd.nimbus.machine.disk.layer.v1.*` media types. Both sides must
    agree on the new `vnd.nimbus.machine.*` types.
 
 3. **machine-os OCI annotations** -- the main repo reads
-   `io.neovex.machine.attestation.repository` and
-   `io.neovex.machine.neovex.version` from image manifests. Both must rename.
+   `io.nimbus.machine.attestation.repository` and
+   `io.nimbus.machine.nimbus.version` from image manifests. Both must rename.
 
 4. **homebrew-tap API path** -- the main repo's `release.yml` pushes to
    `repos/nimbus/homebrew-tap/contents/Casks/nimbus.rb`. The new
@@ -776,25 +776,25 @@ verify the full pipeline.
 - **Workflow ref tag**: machine-os `build.yml` is pinned at
   `@release-workflow-v1`. After transfer+rename, verify the tag still resolves
   or create a new one.
-- **GHCR namespace**: Old images at `ghcr.io/agentstation/*` will become
+- **GHCR namespace**: Old images at `ghcr.io/nimbus/*` will become
   inaccessible once the org transfer completes. No migration needed since there
   are no production users.
 - **Crun patch**: The C patch itself is upstream-generic (reads `krun.port_map`
   OCI annotation). Only the surrounding build/packaging infrastructure uses
-  "neovex" branding.
-- **Homebrew tap split**: `agentstation/homebrew-tap` stays in agentstation.
+  "nimbus" branding.
+- **Homebrew tap split**: `nimbus/homebrew-tap` stays in nimbus.
   A new `nimbus/homebrew-tap` is created for nimbus only. The main repo's
   release workflow `HOMEBREW_TAP_TOKEN` must have write access to the new repo.
-- **OCI media types**: `application/vnd.neovex.machine.*` is a custom media
+- **OCI media types**: `application/vnd.nimbus.machine.*` is a custom media
   type used by the main repo's OCI image puller. Both sides must agree on the
   rename or image pulling will break.
-- **No Neovex/Nimbus published packages**: No Neovex-owned crates.io, npm, apt,
+- **No Nimbus/Nimbus published packages**: No Nimbus-owned crates.io, npm, apt,
   or COPR packages exist yet, so no registry migration is needed for the main
   product. This does not apply to the forked Deno/V8 automation, which carries
   upstream publish/release workflows; handle those through the Repo 4 workflow
   posture decision.
 - **License rename**: Both machine-os and crun repos use the
-  `Neovex Community License`. Coordinate with the main repo's LICENSE update.
+  `Nimbus Community License`. Coordinate with the main repo's LICENSE update.
 
 ---
 
@@ -802,11 +802,11 @@ verify the full pipeline.
 
 The following are discovered but not covered by this plan:
 
-- **Other agentstation products in `agentstation/homebrew-tap`**: starmap,
+- **Other nimbus products in `nimbus/homebrew-tap`**: starmap,
   tokenizer, vhs, pocket, tydirium, and shared tap infrastructure stay in
-  agentstation. Removing `Casks/neovex.rb` and removing user-facing Neovex
+  nimbus. Removing `Casks/nimbus.rb` and removing user-facing Nimbus
   install/docs references from the shared tap README are in scope for this
   rename; changing unrelated product formulas/casks is not.
-- **Other agentstation repos** (starmap, tokenizer, vhs, pocket, tydirium,
-  nix-packages, etc.): These are independent products that stay in agentstation.
-  They do not reference "neovex" internally.
+- **Other nimbus repos** (starmap, tokenizer, vhs, pocket, tydirium,
+  nix-packages, etc.): These are independent products that stay in nimbus.
+  They do not reference "nimbus" internally.

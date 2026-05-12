@@ -2,7 +2,7 @@
 
 Research document for exposing a tenant-scoped filesystem to JavaScript
 functions running in the V8 runtime. This feature gives `ctx.fs` operations
-to Neovex actions and mutations, backed by local disk or object storage.
+to Nimbus actions and mutations, backed by local disk or object storage.
 
 **Status:** research
 **Date:** 2026-04-02
@@ -14,7 +14,7 @@ shares the `object_store` dependency)
 
 ## Problem Statement
 
-Neovex's V8 runtime currently exposes database operations (`ctx.db.*`),
+Nimbus's V8 runtime currently exposes database operations (`ctx.db.*`),
 scheduling (`ctx.scheduler.*`), and nested function calls (`ctx.runQuery`,
 `ctx.runMutation`, `ctx.runAction`). There is no file or blob storage surface.
 
@@ -40,7 +40,7 @@ workarounds are:
 ## Design Space
 
 There are three broad approaches. This section evaluates each against
-Neovex's architecture constraints.
+Nimbus's architecture constraints.
 
 ### Approach A: Bespoke Blob API (`ctx.storage`)
 
@@ -64,7 +64,7 @@ const newId = await ctx.storage.store(processedBlob);
 - Not natural for JS/TS developers used to filesystem patterns
 - Every platform that started with blob IDs later added path support
 
-**Verdict:** Too limited for a Neovex-native feature. May be worth
+**Verdict:** Too limited for a Nimbus-native feature. May be worth
 implementing for Convex compatibility, but not as the primary file storage
 surface.
 
@@ -75,7 +75,7 @@ are virtual and tenant-scoped. The backend can be local disk or object
 storage. No FUSE mount needed.
 
 ```javascript
-// Neovex-native
+// Nimbus-native
 const config = await ctx.fs.readFile("/config/settings.json", "utf8");
 await ctx.fs.writeFile("/exports/report.csv", csvData);
 const entries = await ctx.fs.readDir("/uploads/");
@@ -97,7 +97,7 @@ const meta = await ctx.fs.stat("/uploads/image.png");
 - Must define consistency model (read-after-write? listing consistency?)
 - Path validation and sandboxing required (no `../` escapes)
 
-**Verdict:** Best fit for Neovex's DX goals. Filesystem semantics through
+**Verdict:** Best fit for Nimbus's DX goals. Filesystem semantics through
 HostBridge operations. This is the recommended approach.
 
 ### Approach C: Native `node:fs` via FUSE Mount
@@ -175,21 +175,21 @@ ctx.fs.getUploadUrl(path)             // → signed upload URL string
 
 ### Host Operations
 
-New `deno_core` ops in `neovex-runtime`:
+New `deno_core` ops in `nimbus-runtime`:
 
 ```
-op_neovex_ctx_fs_read          async   HostCallRequest { operation: "fs.read", payload: { path, encoding? } }
-op_neovex_ctx_fs_write         async   HostCallRequest { operation: "fs.write", payload: { path, data, content_type? } }
-op_neovex_ctx_fs_stat          async   HostCallRequest { operation: "fs.stat", payload: { path } }
-op_neovex_ctx_fs_exists        async   HostCallRequest { operation: "fs.exists", payload: { path } }
-op_neovex_ctx_fs_read_dir      async   HostCallRequest { operation: "fs.readDir", payload: { path, recursive? } }
-op_neovex_ctx_fs_delete        async   HostCallRequest { operation: "fs.delete", payload: { path } }
-op_neovex_ctx_fs_get_url       async   HostCallRequest { operation: "fs.getUrl", payload: { path, expires_secs? } }
-op_neovex_ctx_fs_get_upload_url async  HostCallRequest { operation: "fs.getUploadUrl", payload: { path, expires_secs? } }
+op_nimbus_ctx_fs_read          async   HostCallRequest { operation: "fs.read", payload: { path, encoding? } }
+op_nimbus_ctx_fs_write         async   HostCallRequest { operation: "fs.write", payload: { path, data, content_type? } }
+op_nimbus_ctx_fs_stat          async   HostCallRequest { operation: "fs.stat", payload: { path } }
+op_nimbus_ctx_fs_exists        async   HostCallRequest { operation: "fs.exists", payload: { path } }
+op_nimbus_ctx_fs_read_dir      async   HostCallRequest { operation: "fs.readDir", payload: { path, recursive? } }
+op_nimbus_ctx_fs_delete        async   HostCallRequest { operation: "fs.delete", payload: { path } }
+op_nimbus_ctx_fs_get_url       async   HostCallRequest { operation: "fs.getUrl", payload: { path, expires_secs? } }
+op_nimbus_ctx_fs_get_upload_url async  HostCallRequest { operation: "fs.getUploadUrl", payload: { path, expires_secs? } }
 ```
 
-These follow the exact same pattern as existing `op_neovex_ctx_db_*` and
-`op_neovex_ctx_scheduler_*` operations. The runtime crate defines the ops
+These follow the exact same pattern as existing `op_nimbus_ctx_db_*` and
+`op_nimbus_ctx_scheduler_*` operations. The runtime crate defines the ops
 and routes them through `HostCallRequest`. The server's `ConvexHostBridge`
 implementation handles the actual storage interaction.
 
@@ -201,18 +201,18 @@ implementation handles the actual storage interaction.
 │  await ctx.fs.readFile("/reports/q1.csv", "utf8")    │
 │    │                                                 │
 │    ▼                                                 │
-│  op_neovex_ctx_fs_read → HostCallRequest {           │
+│  op_nimbus_ctx_fs_read → HostCallRequest {           │
 │    operation: "fs.read",                             │
 │    payload: { path: "/reports/q1.csv", encoding: "utf8" }  │
 │  }                                                   │
 └──────────────────────────┬───────────────────────────┘
                            │
-              HostBridge (neovex-runtime boundary)
+              HostBridge (nimbus-runtime boundary)
               (runtime has zero workspace deps)
                            │
                            ▼
 ┌──────────────────────────────────────────────────────┐
-│  ConvexHostBridge (neovex-server)                    │
+│  ConvexHostBridge (nimbus-server)                    │
 │                                                      │
 │  match "fs.read" →                                   │
 │    validate_path(path)?                              │
@@ -223,7 +223,7 @@ implementation handles the actual storage interaction.
                            ▼
 ┌──────────────────────────────────────────────────────┐
 │  TenantFileStore                                     │
-│  (neovex-engine or neovex-server)                    │
+│  (nimbus-engine or nimbus-server)                    │
 │                                                      │
 │  trait FileStoreBackend: Send + Sync + 'static {     │
 │    async fn read(&self, key: &str) -> Result<Bytes>; │
@@ -446,7 +446,7 @@ designs and build a minimal `FileStoreBackend` trait that:
 ## FUSE and Kernel-Level Mount Options
 
 These are not recommended for the initial `ctx.fs` implementation but are
-documented here for completeness. They become relevant if Neovex ever needs
+documented here for completeness. They become relevant if Nimbus ever needs
 to expose tenant files outside the V8 runtime (NFS access, sidecar
 containers, operator tooling).
 
@@ -476,7 +476,7 @@ cases like JS bundle serving.
 
 ### When These Become Relevant
 
-If Neovex needs to expose tenant files via NFS, SFTP, or a block device
+If Nimbus needs to expose tenant files via NFS, SFTP, or a block device
 (for sidecar containers, backup tools, or IDE integration), the
 `FileStoreBackend` trait provides the abstraction point. A `fuser`-based
 or `ofs`-based layer could expose the same storage through a kernel mount
@@ -510,7 +510,7 @@ data flowing through the function and reduces bandwidth costs.
 
 **Takeaway:** Strong consistency and conditional operations via ETags are
 worth considering. R2's pricing (free egress) makes it an attractive
-backend for Neovex deployments on Cloudflare.
+backend for Nimbus deployments on Cloudflare.
 
 ### Vercel Blob
 
@@ -554,7 +554,7 @@ the HostBridge model well.
 | Vercel Blob | Hierarchical | ETag conditional | Direct or client | Public URLs |
 | Supabase | Bucket + path | Atomic upload | Direct or TUS | `createSignedUrl()` |
 | Firebase | Hierarchical | Atomic upload | Client SDK | `getDownloadURL()` |
-| **Neovex (proposed)** | **Hierarchical** | **Strong R-A-W** | **Direct + upload URL** | **`getUrl()` + `getUploadUrl()`** |
+| **Nimbus (proposed)** | **Hierarchical** | **Strong R-A-W** | **Direct + upload URL** | **`getUrl()` + `getUploadUrl()`** |
 
 ---
 
@@ -585,7 +585,7 @@ binary. Useful as a reference for caching strategy and metadata design.
 
 **ZeroFS** is the most interesting Rust-native option. It passes 8,662
 pjdfstest_nfs tests, uses SlateDB LSM + S3, supports NFS/9P/NBD protocols
-(not just FUSE), and is available as a crate. If Neovex ever needs to expose
+(not just FUSE), and is available as a crate. If Nimbus ever needs to expose
 tenant files via NFS or a block device, ZeroFS is the reference. However, for
 `ctx.fs` host operations, using `object_store` directly is simpler because we
 don't need POSIX semantics — we control the entire API surface.
@@ -598,7 +598,7 @@ access outside the runtime. However, for the initial implementation,
 for bundle distribution.
 
 **RustFS** is an object storage server (MinIO alternative), not a filesystem
-layer. Not relevant for this feature but could be relevant if Neovex ever
+layer. Not relevant for this feature but could be relevant if Nimbus ever
 needs to embed an S3-compatible storage server.
 
 ### When FUSE/NFS Becomes Relevant
@@ -606,7 +606,7 @@ needs to embed an S3-compatible storage server.
 The `ctx.fs` HostBridge approach handles the V8 runtime use case. But there
 are scenarios where a real filesystem mount would add value:
 
-- Exposing tenant files to non-Neovex tools (backup scripts, analytics)
+- Exposing tenant files to non-Nimbus tools (backup scripts, analytics)
 - Mounting tenant files into sidecar containers
 - SFTP/WebDAV access for operators
 - IDE integration for file browsing
@@ -622,15 +622,15 @@ expose the same files via NFS/FUSE while the V8 runtime continues using
 
 ```bash
 # Local development — files on local disk (default)
-neovex serve --data-dir ./data
+nimbus serve --data-dir ./data
 # Files at ./data/files/{tenant_id}/
 
 # Production — files in object storage
-neovex serve --data-dir /data --file-store s3://my-bucket/tenant-files
+nimbus serve --data-dir /data --file-store s3://my-bucket/tenant-files
 # Files at s3://my-bucket/tenant-files/{tenant_id}/
 
 # With local read cache for object storage backend
-neovex serve --data-dir /data \
+nimbus serve --data-dir /data \
   --file-store s3://my-bucket/tenant-files \
   --file-cache-dir /data/file-cache \
   --file-cache-max-gb 10
@@ -682,14 +682,14 @@ When `--file-store` is not specified, files are stored locally at
 
 | File | Change |
 |---|---|
-| `crates/neovex-runtime/src/runtime.rs` | Add `op_neovex_ctx_fs_*` ops and bootstrap JS |
-| `crates/neovex-server/src/adapters/convex/host_bridge/bridge.rs` | Handle `fs.*` operations |
-| `crates/neovex-server/src/files/mod.rs` | New module: `FileStoreBackend` trait, `TenantFileStore` |
-| `crates/neovex-server/src/files/local.rs` | `LocalFsBackend` |
-| `crates/neovex-server/src/files/object_store.rs` | `ObjectStoreBackend` (Phase 2) |
-| `crates/neovex-server/src/files/cache.rs` | `ReadCache` (Phase 2) |
-| `crates/neovex-engine/src/tenant.rs` | Tenant-level file store reference |
-| `crates/neovex-bin/src/main.rs` | `--file-store` and `--file-cache-*` flags |
+| `crates/nimbus-runtime/src/runtime.rs` | Add `op_nimbus_ctx_fs_*` ops and bootstrap JS |
+| `crates/nimbus-server/src/adapters/convex/host_bridge/bridge.rs` | Handle `fs.*` operations |
+| `crates/nimbus-server/src/files/mod.rs` | New module: `FileStoreBackend` trait, `TenantFileStore` |
+| `crates/nimbus-server/src/files/local.rs` | `LocalFsBackend` |
+| `crates/nimbus-server/src/files/object_store.rs` | `ObjectStoreBackend` (Phase 2) |
+| `crates/nimbus-server/src/files/cache.rs` | `ReadCache` (Phase 2) |
+| `crates/nimbus-engine/src/tenant.rs` | Tenant-level file store reference |
+| `crates/nimbus-bin/src/main.rs` | `--file-store` and `--file-cache-*` flags |
 | `ARCHITECTURE.md` | Document the file storage surface and invariants |
 
 ---
@@ -733,17 +733,17 @@ This avoids the subscription invalidation problem entirely.
 ### Q3: Where should `FileStoreBackend` live?
 
 Options:
-- (a) `neovex-server` — the integration point, where the HostBridge is
-- (b) `neovex-engine` — alongside `Service` and tenant management
-- (c) New `neovex-files` crate — separate concern
+- (a) `nimbus-server` — the integration point, where the HostBridge is
+- (b) `nimbus-engine` — alongside `Service` and tenant management
+- (c) New `nimbus-files` crate — separate concern
 
-**Recommendation:** Start in `neovex-server` (option a). The file store is
+**Recommendation:** Start in `nimbus-server` (option a). The file store is
 a host-bridge concern, not a core engine concern. If it grows complex enough
 to warrant its own crate, extract later. Don't over-abstract early.
 
 ### Q4: How do file writes interact with usage metering?
 
-Neovex tracks monthly active users via `UsageStore`. Should file storage
+Nimbus tracks monthly active users via `UsageStore`. Should file storage
 usage (total bytes, operation counts) be metered similarly?
 
 **Recommendation:** Yes, but as a later addition. Initial implementation
@@ -767,7 +767,7 @@ Convex has `ctx.storage` with opaque IDs, not `ctx.fs` with paths. These
 are different APIs serving different models.
 
 **Recommendation:** Implement both:
-- `ctx.fs` — Neovex-native, path-based, hierarchical (Phase 1-2)
+- `ctx.fs` — Nimbus-native, path-based, hierarchical (Phase 1-2)
 - `ctx.storage` — Convex-compatible, ID-based, flat (Phase 3)
 
 Both can share the same `FileStoreBackend` underneath. The `ctx.storage`
@@ -776,16 +776,16 @@ backend keys, matching Convex's model.
 
 ### Q7: What about HTTP endpoints for file access?
 
-Users need to upload files from clients and download them. Should Neovex
+Users need to upload files from clients and download them. Should Nimbus
 expose HTTP endpoints for direct file access?
 
 **Recommendation:** Yes, two approaches:
 - **Signed URLs** (preferred): `ctx.fs.getUrl()` and `ctx.fs.getUploadUrl()`
   generate time-limited URLs pointing directly at the object storage service.
-  No data flows through Neovex. Only works with the object storage backend.
+  No data flows through Nimbus. Only works with the object storage backend.
 - **Proxy endpoints** (fallback for local backend):
   `GET /api/tenants/{id}/files/{path}` and
-  `POST /api/tenants/{id}/files/{path}` proxy through Neovex. Required for
+  `POST /api/tenants/{id}/files/{path}` proxy through Nimbus. Required for
   the local filesystem backend which has no external URL.
 
 ### Q8: What consistency model for cross-function file visibility?
@@ -806,14 +806,14 @@ local backend.
 
 ## References
 
-### Neovex Internal
+### Nimbus Internal
 
-- HostBridge trait: `crates/neovex-runtime/src/host.rs:98`
-- HostCallRequest: `crates/neovex-runtime/src/host.rs:13`
-- Existing ops pattern: `crates/neovex-runtime/src/runtime.rs:575-600`
-- ConvexHostBridge: `crates/neovex-server/src/adapters/convex/host_bridge/bridge.rs`
-- Tenant isolation: `crates/neovex-engine/src/tenant.rs`
-- Current JS bootstrap: `crates/neovex-runtime/src/runtime.rs` (embedded JS in extension)
+- HostBridge trait: `crates/nimbus-runtime/src/host.rs:98`
+- HostCallRequest: `crates/nimbus-runtime/src/host.rs:13`
+- Existing ops pattern: `crates/nimbus-runtime/src/runtime.rs:575-600`
+- ConvexHostBridge: `crates/nimbus-server/src/adapters/convex/host_bridge/bridge.rs`
+- Tenant isolation: `crates/nimbus-engine/src/tenant.rs`
+- Current JS bootstrap: `crates/nimbus-runtime/src/runtime.rs` (embedded JS in extension)
 
 ### External APIs
 

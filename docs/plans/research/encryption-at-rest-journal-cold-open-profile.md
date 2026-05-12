@@ -29,18 +29,18 @@ profiling for:
 ## Diagnostic Command Shape
 
 ```bash
-NEOVEX_BENCH_STEADY_WARMUP_ROUNDS=1 \
-NEOVEX_BENCH_STEADY_MEASURE_ROUNDS=1 \
-NEOVEX_BENCH_COLD_WARMUP_ROUNDS=1 \
-NEOVEX_BENCH_COLD_MEASURE_ROUNDS=1 \
-NEOVEX_BENCH_COLD_OPEN_BREAKDOWN=1 \
-NEOVEX_ENCRYPTION_PROFILE=1 \
-NEOVEX_SQLITE_OPEN_PROFILE=1 \
-NEOVEX_REDB_OPEN_PROFILE=1 \
-NEOVEX_REDB_JOURNAL_PROFILE=1 \
-NEOVEX_REDB_DEP_OPEN_PROFILE=1 \
-NEOVEX_PROFILE_ONLY_COLD_SAMPLES=1 \
-cargo bench -p neovex-engine --bench embedded-provider-benchmarks \
+NIMBUS_BENCH_STEADY_WARMUP_ROUNDS=1 \
+NIMBUS_BENCH_STEADY_MEASURE_ROUNDS=1 \
+NIMBUS_BENCH_COLD_WARMUP_ROUNDS=1 \
+NIMBUS_BENCH_COLD_MEASURE_ROUNDS=1 \
+NIMBUS_BENCH_COLD_OPEN_BREAKDOWN=1 \
+NIMBUS_ENCRYPTION_PROFILE=1 \
+NIMBUS_SQLITE_OPEN_PROFILE=1 \
+NIMBUS_REDB_OPEN_PROFILE=1 \
+NIMBUS_REDB_JOURNAL_PROFILE=1 \
+NIMBUS_REDB_DEP_OPEN_PROFILE=1 \
+NIMBUS_PROFILE_ONLY_COLD_SAMPLES=1 \
+cargo bench -p nimbus-engine --bench embedded-provider-benchmarks \
   -- --workload journal-stream --local-encryption temp-master-key-file
 ```
 
@@ -109,7 +109,7 @@ To move beyond the outer `redb::Database` timer, we patched the exact pinned
 `redb 2.6.3` dependency locally through Cargo's `[patch.crates-io]` override
 path and added env-gated phase timing inside `Database::new()` and
 `TransactionalMemory::new()`. On the retained encrypted cold `journal-stream`
-samples for Neovex's current redb file format, the open split was:
+samples for Nimbus's current redb file format, the open split was:
 
 - `TransactionalMemory::new()`: `4.74-6.38 ms`
 - `InMemoryState::from_bytes()` total: `4.50-6.16 ms`
@@ -161,7 +161,7 @@ single noisy benchmark sample by itself.
 ### Rejected v3 File-Format Experiment
 
 Because `redb 2.6.3` exposes `Builder::create_with_file_format_v3(true)`, we
-tested the obvious product-side experiment: create Neovex redb databases in v3
+tested the obvious product-side experiment: create Nimbus redb databases in v3
 format and rerun the same reduced-round encrypted cold `journal-stream` drill.
 That experiment made cold reopen worse, so it was intentionally reverted.
 
@@ -181,7 +181,7 @@ The inner split explains why:
 - `begin_writable()` still cost another `5.13-5.50 ms`
 
 So the v3 allocator-state table path more than erased the header-side savings
-we hoped to reclaim from `Allocators::from_bytes(...)`. In the current Neovex
+we hoped to reclaim from `Allocators::from_bytes(...)`. In the current Nimbus
 encrypted reopen path, switching new redb files to v3 is not a cold-open
 optimization.
 
@@ -224,9 +224,9 @@ We also rejected the next obvious repo-owned product lever,
 `Builder::create_with_file_format_v3(true)`, because it increased encrypted
 cold reopen cost instead of reducing it. That means the next useful
 investigation should stay focused on the current v2 reopen path and the
-`begin_writable()` behavior, not on flipping Neovex to redb v3 by default.
+`begin_writable()` behavior, not on flipping Nimbus to redb v3 by default.
 
-There is also no obvious remaining Neovex-side builder or startup knob hidden
+There is also no obvious remaining Nimbus-side builder or startup knob hidden
 behind the current retained redb seam. The local checks we ran after this drill
 confirmed that the repo-owned open path is already down to `redb::Database`
 construction itself, so the next meaningful cold-open optimization will likely
@@ -273,9 +273,9 @@ durability work.
 
 That makes the next decision much clearer:
 
-- if Neovex cares most about first-read latency after reopen, a read-first open
+- if Nimbus cares most about first-read latency after reopen, a read-first open
   mode is promising
-- if Neovex needs the current eager writable guarantees on every open, the
+- if Nimbus needs the current eager writable guarantees on every open, the
   remaining win has to come from allocator reconstruction rather than from
   avoiding the sync barrier
 
@@ -310,13 +310,13 @@ most promising remaining redb cold-open lever.
 
 ### Supported API Boundary Check
 
-We also rechecked the live Neovex storage seam and the exact pinned
+We also rechecked the live Nimbus storage seam and the exact pinned
 `redb 2.6.3` source to answer the next obvious implementation question: can we
 prototype that read-first behavior in-repo without carrying a dependency fork?
 
 Today, the answer is no.
 
-- Neovex's repo-owned redb seam is already thin:
+- Nimbus's repo-owned redb seam is already thin:
   `TenantStore::open_encrypted_with_simulation(...)` constructs the encrypted
   backend and immediately calls `redb::Database::builder().create_with_backend(...)`.
 - In the pinned `redb 2.6.3` source, `Database::new()` still eagerly calls
@@ -328,7 +328,7 @@ Today, the answer is no.
 
 That closes an important branch in the roadmap. There is no hidden repo-only
 page-cache, file-read, or builder-level knob left that can deliver the
-read-first win we measured in the temporary dependency patch. If Neovex wants
+read-first win we measured in the temporary dependency patch. If Nimbus wants
 that improvement in the real product path, it now needs one of two deliberate
 moves:
 
@@ -338,7 +338,7 @@ moves:
 
 So this investigation is complete in one useful sense: the remaining redb
 cold-open opportunity is real, but it is no longer a repo-only tuning problem.
-For the current roadmap, Neovex is intentionally not pursuing a local `redb`
+For the current roadmap, Nimbus is intentionally not pursuing a local `redb`
 patch or upstream read-first-open contract. The practical next step is to
 leave this as a documented future lever and shift execution effort to the
 remaining libsql benchmark evidence and hosted SQLCipher proof work.
@@ -355,9 +355,9 @@ different pieces of the first operation:
 
 That bootstrap export is not the ordinary tenant reopen path. In the checked-in
 service graph it is used by replica/bootstrap surfaces, including
-[EmbeddedReplica bootstrap](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-engine/src/replica.rs:37),
-[consistency/shadow materializer verification](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-engine/src/service/queries/verification.rs:17),
-and the HTTP [journal bootstrap endpoint](/Users/jack/src/github.com/agentstation/neovex/crates/neovex-server/src/http/queries.rs:76).
+[EmbeddedReplica bootstrap](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-engine/src/replica.rs:37),
+[consistency/shadow materializer verification](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-engine/src/service/queries/verification.rs:17),
+and the HTTP [journal bootstrap endpoint](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-server/src/http/queries.rs:76).
 That matters for prioritization: this benchmark is measuring a real surface, but
 not the common lazy-load query reopen path.
 

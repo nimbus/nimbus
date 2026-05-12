@@ -1,0 +1,21 @@
+[package]
+name = "nimbus"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+aws-kms = ["nimbus-engine/aws-kms", "nimbus-storage/aws-kms"]
+
+[dependencies]
+nimbus-runtime = { path = "../nimbus-runtime" }
+nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-core = { path = "../nimbus-core" }
+nimbus-engine = { path = "../nimbus-engine" }
+nimbus-server = { path = "../nimbus-server" }
+nimbus-storage = { path = "../nimbus-storage" }

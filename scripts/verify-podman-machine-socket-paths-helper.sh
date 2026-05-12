@@ -4,11 +4,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_base="${TMPDIR:-/tmp}"
 tmp_base="${tmp_base%/}"
-tmp_dir="$(mktemp -d "${tmp_base}/neovex-podman-socket-paths-verify.XXXXXX")"
+tmp_dir="$(mktemp -d "${tmp_base}/nimbus-podman-socket-paths-verify.XXXXXX")"
 tmp_dir="$(cd "${tmp_dir}" && pwd)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
-machine_name="neovex-libkrun-users-only"
+machine_name="nimbus-libkrun-users-only"
 long_tmp_root="/var/folders/kw/d608x5pn4cq73rz78ztl92cw0000gn/T/podman"
 short_tmp_root="/tmp/podman"
 

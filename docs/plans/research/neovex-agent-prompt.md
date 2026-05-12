@@ -1,8 +1,8 @@
-# Neovex: Agent Prompt
+# Nimbus: Agent Prompt
 
 ## Mission
 
-Build **neovex**, a single-binary reactive document database in Rust.
+Build **nimbus**, a single-binary reactive document database in Rust.
 
 This prompt is the **phase 1 implementation plan**. It should be read alongside:
 
@@ -29,7 +29,7 @@ If that loop works end-to-end under automated test, this pass is successful.
 The final deliverable must include:
 
 1. A Rust workspace that compiles on stable Rust.
-2. A runnable binary: `cargo run -p neovex-bin -- serve --port 8080 --data-dir ./data`
+2. A runnable binary: `cargo run -p nimbus-bin -- serve --port 8080 --data-dir ./data`
 3. A passing end-to-end integration test proving:
   `subscribe -> HTTP insert -> automatic WebSocket push`
 4. Clean crate boundaries and testable modules, without over-abstracting v1.
@@ -84,7 +84,7 @@ different choice.
 
 - The only absolutely mandatory mutation for the first green end-to-end test is
 `Insert`.
-- Define `Update` and `Delete` types in `neovex-core`, but do not let them
+- Define `Update` and `Delete` types in `nimbus-core`, but do not let them
 delay the first green path.
 - If needed, it is acceptable to fully wire only `Insert` first, then add
 `Update` / `Delete` after the reactive loop test is already passing.
@@ -130,7 +130,7 @@ documents.
 ## Reference Repos Reviewed
 
 Use these as implementation references when helpful, but do **not** copy their
-complexity into neovex v1.
+complexity into nimbus v1.
 
 ### `redb`
 
@@ -183,7 +183,7 @@ Takeaways:
 - Keep routing / transport separate from the runtime / service layer.
 - The WebSocket sync path should have explicit message receive and message send
 loops rather than ad hoc socket access from deep business logic.
-- A single deployable backend binary is a reasonable target, but neovex v1
+- A single deployable backend binary is a reasonable target, but nimbus v1
 must stay dramatically smaller than Convex's production architecture.
 
 Files consulted:
@@ -231,7 +231,7 @@ Use for:
 
 Why:
 
-- Neovex v1 is built around Axum, so the official repo and examples are the
+- Nimbus v1 is built around Axum, so the official repo and examples are the
 right primary source for HTTP/WebSocket idioms.
 
 #### `snapview/tokio-tungstenite`
@@ -249,7 +249,7 @@ Use for:
 
 Why:
 
-- The Neovex end-to-end test should use a real WebSocket client, and this repo
+- The Nimbus end-to-end test should use a real WebSocket client, and this repo
 is the canonical Rust reference for that layer.
 
 ### Use for phase 2 or later, not for the first vertical slice
@@ -325,7 +325,7 @@ Use for:
 Why:
 
 - Highly relevant to later sync/replication work, but outside the first
-server-authoritative Neovex slice.
+server-authoritative Nimbus slice.
 
 #### `quickwit-oss/tantivy`
 
@@ -342,7 +342,7 @@ Use for:
 
 Why:
 
-- Best future reference for Neovex search, but search is explicitly out of
+- Best future reference for Nimbus search, but search is explicitly out of
 scope for phase 1.
 
 #### `databendlabs/openraft`
@@ -482,11 +482,11 @@ straightforward later:
 Keep the workspace small. Five crates is enough for a clean v1.
 
 ```text
-neovex/
+nimbus/
 ├── Cargo.toml
 ├── README.md
 ├── crates/
-│   ├── neovex-core/
+│   ├── nimbus-core/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── document.rs
@@ -495,7 +495,7 @@ neovex/
 │   │       ├── query.rs
 │   │       └── types.rs
 │   │
-│   ├── neovex-storage/
+│   ├── nimbus-storage/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── commit_log.rs
@@ -503,7 +503,7 @@ neovex/
 │   │       ├── store.rs
 │   │       └── tests.rs
 │   │
-│   ├── neovex-engine/
+│   ├── nimbus-engine/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── evaluator.rs
@@ -512,7 +512,7 @@ neovex/
 │   │       ├── tenant.rs
 │   │       └── tests.rs
 │   │
-│   ├── neovex-server/
+│   ├── nimbus-server/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── http.rs
@@ -520,7 +520,7 @@ neovex/
 │   │       ├── state.rs
 │   │       └── ws.rs
 │   │
-│   └── neovex-bin/
+│   └── nimbus-bin/
 │       └── src/
 │           └── main.rs
 │
@@ -531,25 +531,25 @@ neovex/
 ## Dependency Graph
 
 ```text
-neovex-bin
-  └── neovex-server
-        ├── neovex-engine
-        │     ├── neovex-storage
-        │     └── neovex-core
-        └── neovex-core
+nimbus-bin
+  └── nimbus-server
+        ├── nimbus-engine
+        │     ├── nimbus-storage
+        │     └── nimbus-core
+        └── nimbus-core
 ```
 
 Important:
 
-- `neovex-engine` owns tenant lifecycle, query evaluation, mutation
+- `nimbus-engine` owns tenant lifecycle, query evaluation, mutation
 application, and subscription fanout.
-- `neovex-server` should be thin glue around the engine.
+- `nimbus-server` should be thin glue around the engine.
 - Do **not** create a separate tenant crate and a separate query crate in v1.
 That split increases coordination cost and makes one-shot success less likely.
 
 ## Core Domain Model
 
-### `neovex-core`
+### `nimbus-core`
 
 This crate contains only pure types and errors. No network code. No `redb`
 types. No Tokio types.
@@ -622,7 +622,7 @@ if feasible, but the build order should get `Insert` working first.
 
 ## Storage Design
 
-### `neovex-storage`
+### `nimbus-storage`
 
 This crate owns all `redb` interaction. Do not add a generic storage trait in
 v1. Use a concrete store type and keep the API small.
@@ -693,7 +693,7 @@ small number of filesystem tests that prove reopening from disk works.
 
 ## Engine Design
 
-### `neovex-engine`
+### `nimbus-engine`
 
 This crate is the heart of the v1 system. It owns:
 
@@ -798,7 +798,7 @@ Never send updates before the storage commit succeeds.
 
 ## Server Design
 
-### `neovex-server`
+### `nimbus-server`
 
 This crate should contain:
 
@@ -903,7 +903,7 @@ Do not let deep engine code touch the raw WebSocket directly.
 
 ## Binary Design
 
-### `neovex-bin`
+### `nimbus-bin`
 
 Responsibilities:
 
@@ -959,14 +959,14 @@ Verify:
 cargo check --workspace
 ```
 
-### Step 2: `neovex-core`
+### Step 2: `nimbus-core`
 
 Implement all shared types, queries, mutations, and errors.
 
 Verify:
 
 ```bash
-cargo test -p neovex-core
+cargo test -p nimbus-core
 ```
 
 Add a few unit tests for:
@@ -975,7 +975,7 @@ Add a few unit tests for:
 - document JSON conversion
 - basic query serialization
 
-### Step 3: `neovex-storage`
+### Step 3: `nimbus-storage`
 
 Implement:
 
@@ -988,7 +988,7 @@ Implement:
 Verify:
 
 ```bash
-cargo test -p neovex-storage
+cargo test -p nimbus-storage
 ```
 
 Required storage tests:
@@ -999,7 +999,7 @@ Required storage tests:
 - commit log sequence increments
 - reopen from disk and read back data
 
-### Step 4: `neovex-engine`
+### Step 4: `nimbus-engine`
 
 Implement:
 
@@ -1011,7 +1011,7 @@ Implement:
 Verify:
 
 ```bash
-cargo test -p neovex-engine
+cargo test -p nimbus-engine
 ```
 
 Required engine tests:
@@ -1023,7 +1023,7 @@ Required engine tests:
 - commit touching `tasks` only invalidates `tasks` subscriptions
 - insert causes re-evaluation and outbound message send
 
-### Step 5: `neovex-server`
+### Step 5: `nimbus-server`
 
 Implement:
 
@@ -1035,7 +1035,7 @@ Implement:
 Verify:
 
 ```bash
-cargo test -p neovex-server
+cargo test -p nimbus-server
 ```
 
 At minimum add:
@@ -1044,14 +1044,14 @@ At minimum add:
 - create tenant route test
 - insert route test against a live `Service`
 
-### Step 6: `neovex-bin`
+### Step 6: `nimbus-bin`
 
 Implement CLI and startup.
 
 Verify:
 
 ```bash
-cargo build -p neovex-bin
+cargo build -p nimbus-bin
 ```
 
 ### Step 7: End-to-end test
@@ -1165,4 +1165,4 @@ WebSocket client subscribes to tasks
 -> WebSocket client receives [{"_id": "...", "_creationTime": ..., "title": "Hello"}]
 ```
 
-That is the proof that neovex's core architecture is viable.
+That is the proof that nimbus's core architecture is viable.

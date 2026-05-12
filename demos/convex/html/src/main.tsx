@@ -5,7 +5,7 @@ import { ConvexProvider, ConvexReactClient } from "convex/react";
 import App from "./App";
 
 const deploymentUrl =
-  import.meta.env.VITE_NEOVEX_URL ?? "http://localhost:8080/convex/demo";
+  import.meta.env.VITE_NIMBUS_URL ?? "http://localhost:8080/convex/demo";
 
 const client = new ConvexReactClient(deploymentUrl, {
   skipConvexDeploymentUrlCheck: true,

@@ -2,17 +2,17 @@ import { createElement } from "react";
 import type { ReactNode } from "react";
 
 import {
-  NeovexProvider,
-  NeovexProviderWithAuth,
-  useAction as useNeovexAction,
-  useMutation as useNeovexMutation,
-  useNeovex,
-  useNeovexAuth,
-  useNeovexConnectionState,
-  usePaginatedQuery as useNeovexPaginatedQuery,
-  useQueries as useNeovexQueries,
-  useQuery as useNeovexQuery,
-} from "neovex/react";
+  NimbusProvider,
+  NimbusProviderWithAuth,
+  useAction as useNimbusAction,
+  useMutation as useNimbusMutation,
+  useNimbus,
+  useNimbusAuth,
+  useNimbusConnectionState,
+  usePaginatedQuery as useNimbusPaginatedQuery,
+  useQueries as useNimbusQueries,
+  useQuery as useNimbusQuery,
+} from "nimbus/react";
 
 import { ConvexReactClient } from "./browser.ts";
 import type {
@@ -66,7 +66,7 @@ export function ConvexProvider(props: {
   children?: ReactNode;
 }) {
   return createElement(
-    NeovexProvider,
+    NimbusProvider,
     { client: props.client },
     props.children,
   );
@@ -82,7 +82,7 @@ export function ConvexProviderWithAuth(props: {
   };
 }) {
   return createElement(
-    NeovexProviderWithAuth,
+    NimbusProviderWithAuth,
     {
       client: props.client,
       useAuth: props.useAuth,
@@ -92,28 +92,28 @@ export function ConvexProviderWithAuth(props: {
 }
 
 export function useConvex(): ConvexReactClient {
-  return useNeovex() as ConvexReactClient;
+  return useNimbus() as ConvexReactClient;
 }
 
 export function useConvexAuth(): ConvexAuthState {
-  return useNeovexAuth();
+  return useNimbusAuth();
 }
 
 export function useConvexConnectionState(): ConnectionState {
-  return useNeovexConnectionState();
+  return useNimbusConnectionState();
 }
 
 export function useQuery<Query extends ConvexQueryReference<any, any>>(
   query: Query,
   args?: InferArgs<Query> | "skip",
 ): InferResult<Query> | undefined {
-  return useNeovexQuery(query, args) as InferResult<Query> | undefined;
+  return useNimbusQuery(query, args) as InferResult<Query> | undefined;
 }
 
 export function useMutation<Mutation extends ConvexMutationReference<any, any>>(
   mutation: Mutation,
 ) {
-  return useNeovexMutation(mutation) as (
+  return useNimbusMutation(mutation) as (
     args?: InferArgs<Mutation>,
   ) => Promise<InferResult<Mutation>>;
 }
@@ -121,7 +121,7 @@ export function useMutation<Mutation extends ConvexMutationReference<any, any>>(
 export function useAction<Action extends ConvexActionReference<any, any>>(
   action: Action,
 ) {
-  return useNeovexAction(action) as (
+  return useNimbusAction(action) as (
     args?: InferArgs<Action>,
   ) => Promise<InferResult<Action>>;
 }
@@ -129,7 +129,7 @@ export function useAction<Action extends ConvexActionReference<any, any>>(
 export function useQueries<Queries extends UseQueriesRequest>(
   queries: Queries,
 ): UseQueriesResults<Queries> {
-  return useNeovexQueries(queries) as UseQueriesResults<Queries>;
+  return useNimbusQueries(queries) as UseQueriesResults<Queries>;
 }
 
 export function usePaginatedQuery<Query extends ConvexPaginatedQueryReference<any, any>>(
@@ -137,7 +137,7 @@ export function usePaginatedQuery<Query extends ConvexPaginatedQueryReference<an
   args: InferArgs<Query> | "skip",
   options: { initialNumItems: number },
 ): UsePaginatedQueryResult<InferResult<Query>> {
-  return useNeovexPaginatedQuery(
+  return useNimbusPaginatedQuery(
     query,
     args,
     options,

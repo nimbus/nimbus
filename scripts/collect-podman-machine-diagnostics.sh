@@ -25,9 +25,9 @@ options:
 
 examples:
   bash scripts/collect-podman-machine-diagnostics.sh \
-    --machine neovex-libkrun-validation \
+    --machine nimbus-libkrun-validation \
     --provider libkrun \
-    --output-dir /tmp/neovex-libkrun-diagnostics
+    --output-dir /tmp/nimbus-libkrun-diagnostics
 EOF
 }
 
@@ -297,7 +297,7 @@ else
   print_line "capture.processes" "missing path=${ps_bin}"
 fi
 
-diag_os="${NEOVEX_DIAGNOSTICS_TEST_UNAME:-$(uname -s)}"
+diag_os="${NIMBUS_DIAGNOSTICS_TEST_UNAME:-$(uname -s)}"
 if [[ "${diag_os}" == "Darwin" && -x "$(command -v "${system_profiler_bin}" 2>/dev/null || true)" ]]; then
   capture_command "capture.system_profiler_hardware" "${output_dir}/system-profiler-hardware.txt" "${system_profiler_bin}" SPHardwareDataType
   capture_command "capture.system_profiler_software" "${output_dir}/system-profiler-software.txt" "${system_profiler_bin}" SPSoftwareDataType

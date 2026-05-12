@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/neovex-runtime-separation-verify.XXXXXX")"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-runtime-separation-verify.XXXXXX")"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 bin_dir="${tmp_dir}/bin"
@@ -35,7 +35,7 @@ cat > "${private_dir}/crun" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "--version" ]]; then
-  echo "crun version 1.22-neovex"
+  echo "crun version 1.22-nimbus"
   exit 0
 fi
 echo "unexpected args for fake private crun: $*" >&2
@@ -68,7 +68,7 @@ bash "${repo_root}/scripts/verify-runtime-separation.sh" \
 grep -F "system.runtime.path          ${bin_dir}/crun" "${output_file}" >/dev/null
 grep -F "system.runtime.version       crun version 1.22-system" "${output_file}" >/dev/null
 grep -F "private.runtime.path         ${private_dir}/crun" "${output_file}" >/dev/null
-grep -F "private.runtime.version      crun version 1.22-neovex" "${output_file}" >/dev/null
+grep -F "private.runtime.version      crun version 1.22-nimbus" "${output_file}" >/dev/null
 grep -F "podman.path                  ${bin_dir}/podman" "${output_file}" >/dev/null
 grep -F "podman.version               podman version 5.8.1" "${output_file}" >/dev/null
 grep -F "podman.runtime               crun /usr/bin/crun" "${output_file}" >/dev/null
@@ -107,7 +107,7 @@ fi
 
 grep -F "podman.runtime.path          ${shared_dir}/private-runtime-link" "${collision_output_file}" >/dev/null
 grep -F "podman.runtime.realpath      ${private_runtime_realpath}" "${collision_output_file}" >/dev/null
-grep -F "podman.runtime.separation    failed (Podman points at the private neovex runtime)" "${collision_output_file}" >/dev/null
+grep -F "podman.runtime.separation    failed (Podman points at the private nimbus runtime)" "${collision_output_file}" >/dev/null
 grep -F "result                       not-separate (1 failing checks)" "${collision_output_file}" >/dev/null
 
 echo "verified: runtime separation helper distinguishes separated and colliding runtimes"

@@ -1,6 +1,6 @@
 # Node Compatibility Supplementary Evidence
 
-This document tracks Neovex-authored supplementary Node-compatibility probes
+This document tracks Nimbus-authored supplementary Node-compatibility probes
 that sit between the vendored upstream Node test corpus and the package or
 framework canary layer.
 
@@ -28,9 +28,9 @@ Current measured slices:
     `process.release.lts` shape for the carried Node20, Node22, and Node24
     lines
   - Measured outcome:
-    - `node20`: expected failure, still reports `v22.0.0-neovex` instead of a Node20 line
+    - `node20`: expected failure, still reports `v22.0.0-nimbus` instead of a Node20 line
     - `node22`: expected failure, still omits the expected `process.release.lts` label
-    - `node24`: expected failure, still reports `v22.0.0-neovex` instead of a Node24 line
+    - `node24`: expected failure, still reports `v22.0.0-nimbus` instead of a Node24 line
 - `supplementary-resource-safety`
   - Category: `resource_safety`
   - Scope: file-handle close/use-after-close behavior, abortable

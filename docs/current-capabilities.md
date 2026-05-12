@@ -1,7 +1,7 @@
 # Current Capabilities
 
-This document is a snapshot of what Neovex currently implements. It is not a
-roadmap. Neovex is still pre-launch, so this surface can change quickly when a
+This document is a snapshot of what Nimbus currently implements. It is not a
+roadmap. Nimbus is still pre-launch, so this surface can change quickly when a
 cleaner design is preferred.
 
 ## Core Platform

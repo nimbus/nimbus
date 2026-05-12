@@ -26,9 +26,9 @@ as the checked-in evidence baseline for the successor follow-on wave.
   machine-readable lane provenance, carried family catalogs, deterministic
   report/oracle/canary artifact generation, profile-aware claim mapping, and
   the nightly evidence workflow are all checked in under the
-  `crates/neovex-runtime/src/runtime/tests/node_compat_manifests/`,
+  `crates/nimbus-runtime/src/runtime/tests/node_compat_manifests/`,
   `scripts/node_compat/`, and `tests/node-compat/` roots
-- **Hard constraint:** preserve `neovex-runtime`'s zero-workspace-dependency
+- **Hard constraint:** preserve `nimbus-runtime`'s zero-workspace-dependency
   invariant and the existing global runtime-suite serialization model
 
 ## Current State
@@ -60,7 +60,7 @@ manifest-driven, provenance-backed, report-producing test infrastructure that:
 - preserves current passing behavior while making expectations explicit
 - scales to Node 20 / 22 / 24 today and future lanes such as Node 26 without
   routine Rust harness edits
-- distinguishes upstream Node line status, Neovex lane role, and public support
+- distinguishes upstream Node line status, Nimbus lane role, and public support
   claims
 - adds trust-grade evidence through expected-failure accounting, package and
   framework canaries, and a shadow-oracle lane against real Node
@@ -114,7 +114,7 @@ Control-plane rule:
   manifests, failures, and future dashboards.
 - Add harness self-verification through golden tests and a shadow-oracle lane
   against real Node 20 / 22 / 24.
-- Introduce a supplementary behavioral test tier — Neovex-authored tests that
+- Introduce a supplementary behavioral test tier — Nimbus-authored tests that
   verify behaviors Node's own suite does not comprehensively cover from the
   perspective of an alternative runtime: module resolution bridge, builtin
   import completeness, global injection fidelity, process object shape,
@@ -131,7 +131,7 @@ Control-plane rule:
 - Claiming full Node parity from harness refactoring alone.
 - Removing the existing runtime-suite serialization lock or making embedded
   runtime fixtures concurrent by default.
-- Adding workspace dependencies to `neovex-runtime`.
+- Adding workspace dependencies to `nimbus-runtime`.
 - Promoting Node 20 back to a primary runtime contract or implying that Node 24
   / 26 preview lanes are already public support claims.
 - Introducing speculative compatibility surfaces outside the current NLC and
@@ -145,14 +145,14 @@ already moving.
 
 | Metric | Live value | Notes |
 | --- | --- | --- |
-| `crates/neovex-runtime/src/runtime/tests/node_compat.rs` size | 7,139 lines | Well above the repo's 2,000-line decomposition threshold |
+| `crates/nimbus-runtime/src/runtime/tests/node_compat.rs` size | 7,139 lines | Well above the repo's 2,000-line decomposition threshold |
 | `#[test]` functions | 232 | Counted from the live file |
 | `#[ignore]` annotations | 60 | Must be migrated intentionally, not dropped |
 | Batch constant arrays | 45 | Current Rust-owned slice declaration surface |
 | Fixture files: `node20/` | 1,291 | Checked-in per-lane upstream fixtures |
 | Fixture files: `node22/` | 1,236 | Primary canonical lane today |
 | Fixture files: `node24/` | 1,479 | Preview lane, currently broader and still noisy |
-| Shared fixture files: `test/` | 158 | Neovex-owned shared fixtures and helper files |
+| Shared fixture files: `test/` | 158 | Nimbus-owned shared fixtures and helper files |
 | Byte-identical files: `node20` vs `node22` | 1,023 of 1,178 overlapping | Strong signal that checked-in duplication can be reduced |
 | Byte-identical files across all three lanes | 739 of 1,166 overlapping | Supports canonical-plus-overrides layout |
 | Fixture disk footprint | 20 MB | Current checked-in baseline |
@@ -185,7 +185,7 @@ Current implementation observations that matter to this plan:
   `tests/node-compat/networking-canaries/` root; this plan should normalize and
   expand that progress rather than replace it with a second parallel layout.
 - The entire Node compat test surface consists of vendored upstream fixtures.
-  There are no Neovex-authored supplementary tests covering module resolution
+  There are no Nimbus-authored supplementary tests covering module resolution
   bridge, builtin import completeness, global injection fidelity, or process
   object shape — behaviors that both Deno and Bun test extensively because
   Node's own suite does not comprehensively exercise them from the perspective
@@ -193,7 +193,7 @@ Current implementation observations that matter to this plan:
 
 ## Key Invariants To Preserve
 
-- `neovex-runtime` must keep zero workspace dependencies.
+- `nimbus-runtime` must keep zero workspace dependencies.
 - Embedded fixture execution must stay serialized behind
   `acquire_runtime_suite_lock()` until a later plan explicitly proves that
   process-global env mutation and tempdir semantics can be removed safely.
@@ -215,9 +215,9 @@ Current implementation observations that matter to this plan:
   will require zero implementation work.
 - Vendored upstream fixtures must remain unmodified — behavioral adaptations
   use preludes, postludes, or per-lane overrides, not source edits.
-  Supplementary tests are Neovex-authored and CAN be modified freely.
+  Supplementary tests are Nimbus-authored and CAN be modified freely.
 - Package/framework canaries that need npm packages or broader repo-owned test
-  helpers must live outside `neovex-runtime` if that avoids violating crate
+  helpers must live outside `nimbus-runtime` if that avoids violating crate
   dependency rules.
 
 ## Dependencies And Ordering
@@ -249,11 +249,11 @@ Current implementation observations that matter to this plan:
 
 - **What changes**
   - Add a thin composition root under
-    `crates/neovex-runtime/src/runtime/tests/node_compat/` and move the
+    `crates/nimbus-runtime/src/runtime/tests/node_compat/` and move the
     machine-readable harness types into concept-owned modules such as:
     `catalog.rs`, `taxonomy.rs`, and `preludes.rs`.
   - Add a checked-in manifest data root under
-    `crates/neovex-runtime/src/runtime/tests/node_compat_manifests/` with:
+    `crates/nimbus-runtime/src/runtime/tests/node_compat_manifests/` with:
     - `schema.json`
     - `lanes/node20.json`, `lanes/node22.json`, `lanes/node24.json`
     - `fixtures/core-semantics.json`, `process-and-timing.json`,
@@ -293,11 +293,11 @@ Current implementation observations that matter to this plan:
     smaller Rust modules.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_manifest_schema`
+  - `cargo test -p nimbus-runtime node_compat_manifest_schema`
     - proves the manifest parser accepts valid data and rejects malformed data
-  - `cargo test -p neovex-runtime node_compat_named_preludes`
+  - `cargo test -p nimbus-runtime node_compat_named_preludes`
     - proves named prelude / postlude resolution preserves current behavior
-  - `cargo test -p neovex-runtime node_compat_preview_lane_top_level_skip`
+  - `cargo test -p nimbus-runtime node_compat_preview_lane_top_level_skip`
     - proves preview-style top-level skip capture remains explicit lane data
   - `cargo fmt --all --check`
   - `make clippy`
@@ -331,8 +331,8 @@ Current implementation observations that matter to this plan:
       preview-lane-only
   - Make the supplementary-fixture path explicit at the same time:
     supplementary manifest entries live in `fixtures/supplementary*.json`,
-    while the corresponding Neovex-authored fixture sources live under
-    `crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/supplementary/`.
+    while the corresponding Nimbus-authored fixture sources live under
+    `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/supplementary/`.
   - Define deterministic loader semantics:
     1. load all known lane files
     2. load `preludes.json`
@@ -362,10 +362,10 @@ Current implementation observations that matter to this plan:
     semantics remain inferred instead of declared.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_manifest_topology`
+  - `cargo test -p nimbus-runtime node_compat_manifest_topology`
     - proves lane files, fixture files, and prelude registry compose
       deterministically
-  - `cargo test -p neovex-runtime node_compat_profile_capability_model`
+  - `cargo test -p nimbus-runtime node_compat_profile_capability_model`
     - proves profile, capability, and execution-class validation rejects
       ambiguous or contradictory entries
 
@@ -393,7 +393,7 @@ Current implementation observations that matter to this plan:
     - sync date
     - source directory under upstream `test/`
     - upstream lifecycle (`eol`, `lts`, `current`, etc.)
-    - Neovex lane role (`validation`, `primary`, `preview`)
+    - Nimbus lane role (`validation`, `primary`, `preview`)
     - current runtime target (`node22` today)
   - Add repo-owned sync helpers under `scripts/node_compat/`, for example:
     - `sync-fixtures.sh`
@@ -411,7 +411,7 @@ Current implementation observations that matter to this plan:
     harder to review.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_provenance_validation`
+  - `cargo test -p nimbus-runtime node_compat_provenance_validation`
     - proves required provenance fields exist for each configured lane
   - `bash scripts/node_compat/validate-provenance.sh`
     - proves tags, commits, and lane metadata are internally consistent
@@ -433,7 +433,7 @@ Current implementation observations that matter to this plan:
 - **What changes**
   - Model Node core suite types directly in the manifest:
     `parallel`, `sequential`, `pseudo-tty`, `internet`, `pummel`,
-    `known_issues`, plus Neovex-specific `watchpoint`, `wpt`, and `canary`.
+    `known_issues`, plus Nimbus-specific `watchpoint`, `wpt`, and `canary`.
   - Add stability metadata similar to Node status semantics:
     `slow`, `flaky`, `expected_failure`, `known_issue`.
   - Keep execution class separate from suite taxonomy so a `parallel` suite
@@ -445,7 +445,7 @@ Current implementation observations that matter to this plan:
     future report slicing.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_taxonomy_golden`
+  - `cargo test -p nimbus-runtime node_compat_taxonomy_golden`
     - proves fixture paths and manifest entries normalize into the intended
       Node-style suite categories
 
@@ -505,7 +505,7 @@ Current implementation observations that matter to this plan:
 #### 2.1 Decompose `node_compat.rs` into concept-owned modules
 
 - **What changes**
-  - Replace the monolithic `crates/neovex-runtime/src/runtime/tests/node_compat.rs`
+  - Replace the monolithic `crates/nimbus-runtime/src/runtime/tests/node_compat.rs`
     root with a thin composition surface and concept-owned modules such as:
     - `mod.rs`
     - `bundle.rs`
@@ -529,7 +529,7 @@ Current implementation observations that matter to this plan:
     ownership seams instead of churning immediately afterward.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_`
+  - `cargo test -p nimbus-runtime node_compat_`
     - focused runtime test filter for the new module tree
   - `make verify-harness SURFACE=runtime`
     - proves the repo-owned runtime verification entrypoint still covers the
@@ -551,7 +551,7 @@ Current implementation observations that matter to this plan:
 
 - **What changes**
   - Reorganize
-    `crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/` into a
+    `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/` into a
     dedup-friendly structure:
     - `canonical/node22/test/...`
     - `overrides/node20/...`
@@ -559,7 +559,7 @@ Current implementation observations that matter to this plan:
     - `shared/test/...`
   - Add a materialization layer that reconstructs a lane-local bundle view from
     canonical files plus per-lane overrides at execution time.
-  - Keep Neovex-owned helper files such as `test/common/index.js`,
+  - Keep Nimbus-owned helper files such as `test/common/index.js`,
     `fixtures.js`, and `tmpdir.js` under the shared root and reference them
     explicitly through manifest `extraFiles`.
   - Make fixture resolution explicit in one place so lane diffs remain
@@ -570,7 +570,7 @@ Current implementation observations that matter to this plan:
     which canonical and override files belong to each fixture.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_fixture_materialization`
+  - `cargo test -p nimbus-runtime node_compat_fixture_materialization`
     - proves a materialized lane reconstructs the same runtime file tree as the
       pre-refactor fixture source
   - `bash scripts/node_compat/diff-fixtures.sh --lane node20 --materialized`
@@ -619,9 +619,9 @@ Current implementation observations that matter to this plan:
     explicit and machine-readable first.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_expectation_golden`
+  - `cargo test -p nimbus-runtime node_compat_expectation_golden`
     - proves expectation parsing and unexpected-pass logic behave as designed
-  - `cargo test -p neovex-runtime node_compat_ignore_migration_audit`
+  - `cargo test -p nimbus-runtime node_compat_ignore_migration_audit`
     - proves every historical ignore has a manifest replacement
 
 - **Completion gate**
@@ -645,7 +645,7 @@ Current implementation observations that matter to this plan:
   - Make report schema explicit and versioned.
   - Keep NLC checked-in family manifests and failure inventories as the public
     narrative layer, but generate their numeric inputs from these reports.
-  - Report upstream line status, Neovex lane role, and public support claim as
+  - Report upstream line status, Nimbus lane role, and public support claim as
     separate fields rather than one overloaded "status."
 
 - **Why this ordering**
@@ -655,9 +655,9 @@ Current implementation observations that matter to this plan:
     not reimplement counting logic.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_report_schema`
+  - `cargo test -p nimbus-runtime node_compat_report_schema`
     - proves report serialization and versioning are stable
-  - `cargo test -p neovex-runtime node_compat_report_golden`
+  - `cargo test -p nimbus-runtime node_compat_report_golden`
     - proves lane / slice / profile summaries match expected fixture outcomes
   - `make verify-harness SURFACE=runtime`
     - proves the repo-owned harness entrypoint can emit the structured report
@@ -691,18 +691,18 @@ Current implementation observations that matter to this plan:
   - Invoke the oracle through explicit, version-matched Node subprocesses
     configured per lane, not through whichever `node` binary happens to be on
     `PATH`. The initial contract may use environment variables such as
-    `NEOVEX_NODE20_BIN`, `NEOVEX_NODE22_BIN`, and `NEOVEX_NODE24_BIN`, with
+    `NIMBUS_NODE20_BIN`, `NIMBUS_NODE22_BIN`, and `NIMBUS_NODE24_BIN`, with
     nightly CI wiring them explicitly.
   - Treat preludes/postludes as data with oracle portability metadata:
-    portable behaviors may be replayed under real Node, while Neovex-only
+    portable behaviors may be replayed under real Node, while Nimbus-only
     helpers such as process-exit sentinels, synthetic TTY env proxies, or
     embedded top-level skip capture must either be disabled in oracle mode or
     replaced with a Node-native equivalent. Oracle mismatch caused only by
     harness-only helpers must classify as `oracle_harness_mismatch`, not as a
     runtime failure.
   - Join oracle output with manifest expectation state so "expected failure in
-    Neovex and failure under real Node" is classified differently from
-    "expected pass in Neovex but failure only under Neovex."
+    Nimbus and failure under real Node" is classified differently from
+    "expected pass in Nimbus but failure only under Nimbus."
   - Keep oracle runs serialized by default so they do not undercut the current
     process-global test model.
   - Add repo-owned helpers under `scripts/node_compat/` such as
@@ -716,9 +716,9 @@ Current implementation observations that matter to this plan:
     expectation states are stable.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_oracle_classification`
+  - `cargo test -p nimbus-runtime node_compat_oracle_classification`
     - proves drift classes are computed deterministically
-  - `cargo test -p neovex-runtime node_compat_bundle_golden`
+  - `cargo test -p nimbus-runtime node_compat_bundle_golden`
     - proves resolved bundle contents remain stable for representative fixtures
   - `bash scripts/node_compat/oracle-run.sh --lane node22 --fixture test/parallel/test-buffer-alloc.js`
     - proves the real-Node shadow path works on at least one representative
@@ -780,7 +780,7 @@ Current implementation observations that matter to this plan:
 #### 3.5 Supplementary behavioral test tier
 
 - **What changes**
-  - Introduce a distinct test tier for Neovex-authored tests that verify
+  - Introduce a distinct test tier for Nimbus-authored tests that verify
     behaviors Node's own suite does not comprehensively test from the
     perspective of an alternative runtime. These sit between vendored
     upstream fixtures (which prove API correctness) and framework canaries
@@ -805,9 +805,9 @@ Current implementation observations that matter to this plan:
     | Resource safety | `createWriteStream`/`createReadStream` don't leak FDs; `Buffer` ops handle detached `ArrayBuffer` | Bun `fs-leak.test.js`, `buffer-copy-fill-detach.test.ts` |
     | Framework-motivated patterns | `Module._compile` hooks (tsx/ts-node), `ServerResponse` wrapping (hono/express), worker eval mode (fflate) | Deno `specs/node/` framework regressions |
 
-  - Supplementary tests are Neovex-authored and CAN be modified (unlike
+  - Supplementary tests are Nimbus-authored and CAN be modified (unlike
     vendored upstream fixtures which must remain unmodified). They live under
-    `crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/supplementary/`
+    `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/supplementary/`
     or an equivalent supplementary root outside the vendored fixture tree.
   - Each supplementary test runs per lane and per profile, with per-lane
     expectations in the manifest. A supplementary test can be `skip` for a
@@ -828,14 +828,14 @@ Current implementation observations that matter to this plan:
     the middle ground.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_supplementary_builtin_completeness`
+  - `cargo test -p nimbus-runtime node_compat_supplementary_builtin_completeness`
     - proves all supported builtins are importable in all forms per lane
-  - `cargo test -p neovex-runtime node_compat_supplementary_module_bridge`
+  - `cargo test -p nimbus-runtime node_compat_supplementary_module_bridge`
     - proves CJS/ESM interop paths resolve correctly
-  - `cargo test -p neovex-runtime node_compat_supplementary_global_injection`
+  - `cargo test -p nimbus-runtime node_compat_supplementary_global_injection`
     - proves `__dirname`/`__filename`/`require` injection is correct per
       module type
-  - `cargo test -p neovex-runtime node_compat_supplementary_process_shape`
+  - `cargo test -p nimbus-runtime node_compat_supplementary_process_shape`
     - proves process object shape matches the lane's target version
 
 - **Completion gate**
@@ -923,7 +923,7 @@ Current implementation observations that matter to this plan:
     truth.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_claim_mapping_golden`
+  - `cargo test -p nimbus-runtime node_compat_claim_mapping_golden`
     - proves report-to-claim mapping logic keeps profile boundaries intact
   - package-root commands recorded during implementation must show profile-tagged
     results, not anonymous pass/fail lines
@@ -959,7 +959,7 @@ Current implementation observations that matter to this plan:
     precede it.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_lane_registry_golden`
+  - `cargo test -p nimbus-runtime node_compat_lane_registry_golden`
     - proves a synthetic `node26` lane can be registered without Rust harness
       edits
   - `bash scripts/node_compat/add-lane.sh node26 --dry-run`
@@ -981,7 +981,7 @@ Current implementation observations that matter to this plan:
 - **What changes**
   - Add distinct lane metadata fields for:
     - upstream lifecycle (`eol`, `lts`, `current`, etc.)
-    - Neovex lane role (`validation`, `primary`, `preview`)
+    - Nimbus lane role (`validation`, `primary`, `preview`)
     - public support state / claim dependency
   - Make structured reports and docs consume those fields separately.
 
@@ -990,7 +990,7 @@ Current implementation observations that matter to this plan:
     labels are not collapsed together.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_lane_metadata_golden`
+  - `cargo test -p nimbus-runtime node_compat_lane_metadata_golden`
     - proves the report keeps lifecycle, lane role, and support claim distinct
 
 - **Completion gate**
@@ -1011,9 +1011,9 @@ Current implementation observations that matter to this plan:
     against, even while that target remains `node22` for all current lanes.
   - Prepare the harness to consume future runtime-target expansions through the
     already-inspected seams in:
-    - `crates/neovex-runtime/src/limits.rs`
-    - `crates/neovex-runtime/src/runtime/bootstrap/source.rs`
-    - `crates/neovex-runtime/src/runtime/bootstrap/state.rs`
+    - `crates/nimbus-runtime/src/limits.rs`
+    - `crates/nimbus-runtime/src/runtime/bootstrap/source.rs`
+    - `crates/nimbus-runtime/src/runtime/bootstrap/state.rs`
   - Move lane-specific behavior differences out of ad hoc fixture wrappers and
     into explicit expectation or target-selection metadata.
   - Keep preview-only top-level skip capture and validation-only divergence
@@ -1024,9 +1024,9 @@ Current implementation observations that matter to this plan:
     active NLC runtime semantics, so it should not lead the refactor.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_runtime_target_selection`
+  - `cargo test -p nimbus-runtime node_compat_runtime_target_selection`
     - proves lane metadata resolves to the intended runtime target
-  - `cargo test -p neovex-runtime node_compat_version_divergence_golden`
+  - `cargo test -p nimbus-runtime node_compat_version_divergence_golden`
     - proves lane-specific expectations are explicit and deterministic
 
 - **Completion gate**
@@ -1052,7 +1052,7 @@ Current implementation observations that matter to this plan:
     - `process.getBuiltinModule(...)`
     - explicit `node:` forms
   - Align harness expectations with the loader/runtime seams already visible in
-    `crates/neovex-runtime/src/module_loader.rs`.
+    `crates/nimbus-runtime/src/module_loader.rs`.
   - Add manifest metadata such as `resolverMode: esm | cjs | both` so failures
     can be reported precisely instead of as generic loader regressions.
 
@@ -1061,7 +1061,7 @@ Current implementation observations that matter to this plan:
     should be proven after the harness can express the relevant axes cleanly.
 
 - **Verification**
-  - `cargo test -p neovex-runtime node_compat_bare_builtin_resolution`
+  - `cargo test -p nimbus-runtime node_compat_bare_builtin_resolution`
     - proves CJS and ESM bare-builtin paths are both covered
   - focused manifested fixture reruns for representative loader cases recorded
     by the active NLC owner during implementation
@@ -1193,22 +1193,22 @@ The harness refactor is only complete when it leaves durable, layered proof.
 Counts and pass totals must be measured at execution time; they should never be
 hardcoded into plan text or report expectations.
 
-The focused `cargo test -p neovex-runtime ...` entries below are the target
+The focused `cargo test -p nimbus-runtime ...` entries below are the target
 proof surfaces this refactor should create or preserve. If implementation
 chooses different final module names, it must update the table and land
 matching focused coverage in the same change.
 
 | Command | What it proves |
 | --- | --- |
-| `cargo test -p neovex-runtime node_compat_manifest_schema` | Manifest schema validation and parse-time guardrails |
-| `cargo test -p neovex-runtime node_compat_fixture_materialization` | Canonical-plus-overrides resolution recreates the intended lane bundle |
-| `cargo test -p neovex-runtime node_compat_expectation_golden` | Skip / expected-failure / flaky / unexpected-pass rules behave deterministically |
-| `cargo test -p neovex-runtime node_compat_report_schema` | Structured report output remains versioned and parseable |
-| `cargo test -p neovex-runtime node_compat_oracle_classification` | Real-Node shadow results are classified consistently |
-| `cargo test -p neovex-runtime node_compat_bare_builtin_resolution` | CJS and ESM bare-builtin proof stays explicit |
-| `cargo test -p neovex-runtime node_compat_supplementary_builtin_completeness` | All supported builtins importable in all specifier forms per lane |
-| `cargo test -p neovex-runtime node_compat_supplementary_module_bridge` | CJS/ESM interop paths resolve correctly |
-| `cargo test -p neovex-runtime node_compat_supplementary_global_injection` | `__dirname`/`__filename`/`require` injection correct per module type |
+| `cargo test -p nimbus-runtime node_compat_manifest_schema` | Manifest schema validation and parse-time guardrails |
+| `cargo test -p nimbus-runtime node_compat_fixture_materialization` | Canonical-plus-overrides resolution recreates the intended lane bundle |
+| `cargo test -p nimbus-runtime node_compat_expectation_golden` | Skip / expected-failure / flaky / unexpected-pass rules behave deterministically |
+| `cargo test -p nimbus-runtime node_compat_report_schema` | Structured report output remains versioned and parseable |
+| `cargo test -p nimbus-runtime node_compat_oracle_classification` | Real-Node shadow results are classified consistently |
+| `cargo test -p nimbus-runtime node_compat_bare_builtin_resolution` | CJS and ESM bare-builtin proof stays explicit |
+| `cargo test -p nimbus-runtime node_compat_supplementary_builtin_completeness` | All supported builtins importable in all specifier forms per lane |
+| `cargo test -p nimbus-runtime node_compat_supplementary_module_bridge` | CJS/ESM interop paths resolve correctly |
+| `cargo test -p nimbus-runtime node_compat_supplementary_global_injection` | `__dirname`/`__filename`/`require` injection correct per module type |
 | `make node-compat-sync LANE=node22 DRY_RUN=1` | Pinned sync tooling is reachable through the canonical developer surface |
 | `make node-compat-oracle LANE=node22 SAMPLE=test/parallel/test-buffer-alloc.js` | Shadow-oracle lane is reachable through one documented entrypoint |
 | `make verify-harness SURFACE=runtime` | Repo-owned focused runtime harness lane still passes after the refactor |

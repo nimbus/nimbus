@@ -14,13 +14,13 @@ Reviewed against:
 - `ARCHITECTURE.md`
 - `docs/README.md`
 - `docs/plans/README.md`
-- `crates/neovex-engine/src/service/mod.rs`
-- `crates/neovex-engine/src/service/queries.rs`
-- `crates/neovex-engine/src/subscriptions.rs`
-- `crates/neovex-runtime/src/lib.rs`
-- `crates/neovex-runtime/src/runtime.rs`
-- `crates/neovex-runtime/src/executor.rs`
-- `crates/neovex-runtime/src/worker_loop.rs`
+- `crates/nimbus-engine/src/service/mod.rs`
+- `crates/nimbus-engine/src/service/queries.rs`
+- `crates/nimbus-engine/src/subscriptions.rs`
+- `crates/nimbus-runtime/src/lib.rs`
+- `crates/nimbus-runtime/src/runtime.rs`
+- `crates/nimbus-runtime/src/executor.rs`
+- `crates/nimbus-runtime/src/worker_loop.rs`
 
 Baseline verification status for this plan:
 
@@ -34,7 +34,7 @@ Baseline verification status for this plan:
 
 ## Purpose
 
-Neovex already has a much clearer macro-architecture than it did earlier in the
+Nimbus already has a much clearer macro-architecture than it did earlier in the
 project: the engine read path is split behind a query capability tree, tenant
 state is organized around `TenantRuntime` as a facade and composition root, and
 runtime host dispatch has a typed internal operation registry. The next cleanup
@@ -66,7 +66,7 @@ This plan covers:
 
 - making the public runtime invocation boundary canonical and unsurprising for
   embedders
-- splitting `neovex-runtime` by concept ownership instead of leaving dense
+- splitting `nimbus-runtime` by concept ownership instead of leaving dense
   multi-concept root files
 - removing duplicated runtime invocation lifecycle logic across executor and
   worker paths
@@ -98,8 +98,8 @@ These rules are mandatory for every item in this plan.
    otherwise and the change is recorded.
 
 2. Keep core architecture invariants intact.
-   `neovex-core` stays zero I/O.
-   `neovex-runtime` stays zero workspace dependencies.
+   `nimbus-core` stays zero I/O.
+   `nimbus-runtime` stays zero workspace dependencies.
    All mutations still flow through `Service::apply_mutation` or its queued
    async journal path.
    Storage atomicity stays unchanged.
@@ -143,11 +143,11 @@ This plan assumes the codebase described in `ARCHITECTURE.md` today:
 
 The current hotspot map from the live worktree is:
 
-- `crates/neovex-runtime/src/runtime.rs` is 3620 lines
-- `crates/neovex-runtime/src/executor.rs` is 2292 lines
-- `crates/neovex-engine/src/service/queries.rs` is 1173 lines
-- `crates/neovex-engine/src/subscriptions.rs` is 709 lines
-- `crates/neovex-engine/src/tenant.rs` is 523 lines and no longer a primary
+- `crates/nimbus-runtime/src/runtime.rs` is 3620 lines
+- `crates/nimbus-runtime/src/executor.rs` is 2292 lines
+- `crates/nimbus-engine/src/service/queries.rs` is 1173 lines
+- `crates/nimbus-engine/src/subscriptions.rs` is 709 lines
+- `crates/nimbus-engine/src/tenant.rs` is 523 lines and no longer a primary
   cleanup target
 
 The runtime layer is now the dominant modularity risk. Engine cleanup still
@@ -162,46 +162,46 @@ These findings describe the current reasons this plan exists.
 
 1. Public runtime convenience APIs still construct a fresh `RuntimeExecutor`
    for each invocation instead of enforcing one canonical runtime execution
-   ownership model. That makes the public `NeovexRuntime` surface easy to use
+   ownership model. That makes the public `NimbusRuntime` surface easy to use
    in a non-canonical way and obscures the intended pooled execution model.
-   Sources: `crates/neovex-runtime/src/runtime.rs:1529`,
-   `crates/neovex-runtime/src/runtime.rs:1554`,
-   `crates/neovex-runtime/src/executor.rs:856`,
-   `crates/neovex-runtime/src/lib.rs:15`
+   Sources: `crates/nimbus-runtime/src/runtime.rs:1529`,
+   `crates/nimbus-runtime/src/runtime.rs:1554`,
+   `crates/nimbus-runtime/src/executor.rs:856`,
+   `crates/nimbus-runtime/src/lib.rs:15`
 
 2. Runtime invocation lifecycle logic is duplicated between the direct executor
    path and the worker-loop path. Metrics, cancellation, permit handling, and
    execution accounting can drift because they are expressed in parallel
    shapes.
-   Sources: `crates/neovex-runtime/src/executor.rs:925`,
-   `crates/neovex-runtime/src/worker_loop.rs:103`
+   Sources: `crates/nimbus-runtime/src/executor.rs:925`,
+   `crates/nimbus-runtime/src/worker_loop.rs:103`
 
 3. `runtime.rs` still mixes public invocation types, bundle integrity
    handling, host-op payload schemas, op registration, bootstrap JavaScript,
    isolate setup, and runtime invocation logic in one file. The seams exist,
    but the file is still not grouped by concept ownership.
-   Sources: `crates/neovex-runtime/src/runtime.rs:31`,
-   `crates/neovex-runtime/src/runtime.rs:486`,
-   `crates/neovex-runtime/src/runtime.rs:1124`,
-   `crates/neovex-runtime/src/runtime.rs:1470`
+   Sources: `crates/nimbus-runtime/src/runtime.rs:31`,
+   `crates/nimbus-runtime/src/runtime.rs:486`,
+   `crates/nimbus-runtime/src/runtime.rs:1124`,
+   `crates/nimbus-runtime/src/runtime.rs:1470`
 
 4. `service/queries.rs` still combines multiple concept surfaces in one public
    root: document access, query and pagination access, durable-journal reads,
    shadow-materializer bootstrap, consistency verification, and test hooks.
    It is cleaner than before, but still denser than the architecture it fronts.
-   Sources: `crates/neovex-engine/src/service/queries.rs:65`,
-   `crates/neovex-engine/src/service/queries.rs:724`,
-   `crates/neovex-engine/src/service/queries.rs:813`,
-   `crates/neovex-engine/src/service/queries.rs:930`
+   Sources: `crates/nimbus-engine/src/service/queries.rs:65`,
+   `crates/nimbus-engine/src/service/queries.rs:724`,
+   `crates/nimbus-engine/src/service/queries.rs:813`,
+   `crates/nimbus-engine/src/service/queries.rs:930`
 
 5. `subscriptions.rs` still bundles registry state, dependency derivation,
    batch wakeup coalescing, policy invalidation, and delivery reevaluation in
    one file. The behavior is explicit, but the ownership model is still too
    dense for safe future iteration.
-   Sources: `crates/neovex-engine/src/subscriptions.rs:79`,
-   `crates/neovex-engine/src/subscriptions.rs:151`,
-   `crates/neovex-engine/src/subscriptions.rs:281`,
-   `crates/neovex-engine/src/subscriptions.rs:534`
+   Sources: `crates/nimbus-engine/src/subscriptions.rs:79`,
+   `crates/nimbus-engine/src/subscriptions.rs:151`,
+   `crates/nimbus-engine/src/subscriptions.rs:281`,
+   `crates/nimbus-engine/src/subscriptions.rs:534`
 
 ---
 
@@ -212,7 +212,7 @@ This plan is successful only when all of the following are true:
 1. The current feature set and stable behavior still work after the cleanup.
 2. The public runtime invocation model is canonical and no longer invites
    accidental per-call executor construction.
-3. `neovex-runtime/src/runtime.rs` is split around concept ownership rather
+3. `nimbus-runtime/src/runtime.rs` is split around concept ownership rather
    than continuing as a multi-concept root file.
 4. Runtime executor and worker lifecycle semantics have one canonical home and
    no longer drift across parallel implementations.
@@ -232,10 +232,10 @@ Every implementation item must preserve these surfaces.
 
 | Surface | Must stay true | Minimum item-level verification |
 | --- | --- | --- |
-| Native CRUD, query, paginated query, schema, scheduler, and journal routes | route semantics and durable behavior stay unchanged | targeted engine tests; `cargo test -p neovex-server` for touched HTTP paths |
+| Native CRUD, query, paginated query, schema, scheduler, and journal routes | route semantics and durable behavior stay unchanged | targeted engine tests; `cargo test -p nimbus-server` for touched HTTP paths |
 | Native WebSocket subscriptions | initial bootstrap, live delivery, cleanup on disconnect, and unsubscribe behavior stay unchanged | targeted engine and server reactive tests |
 | Convex runtime query, mutation, action, scheduler, and nested-call paths | host-call semantics, error mapping, and executor ownership semantics stay unchanged unless explicitly recorded | targeted runtime and server Convex tests |
-| Runtime admission, cancellation, timeout, and fairness semantics | queued, active, cancelled, timed-out, and shutdown behavior stay unchanged | targeted runtime tests plus `cargo test -p neovex-runtime` |
+| Runtime admission, cancellation, timeout, and fairness semantics | queued, active, cancelled, timed-out, and shutdown behavior stay unchanged | targeted runtime tests plus `cargo test -p nimbus-runtime` |
 | Authorization and policy-aware invalidation | read filters, policy invalidation, and principal-aware behavior stay unchanged | targeted engine and server authorization tests |
 | Materialized read surface, diagnostics, and metrics snapshots | serving behavior and snapshot shapes stay unchanged unless explicitly documented | targeted engine tests; diagnostics or metrics tests when touched |
 
@@ -338,11 +338,11 @@ before stopping. Do not rely on chat history as progress state.
 ### Additional verification by scope
 
 - for runtime invocation, runtime module, or executor ownership refactors:
-  `cargo test -p neovex-runtime`
+  `cargo test -p nimbus-runtime`
 - for engine read-surface or subscription ownership refactors:
-  `cargo test -p neovex-engine`
+  `cargo test -p nimbus-engine`
 - for server ownership, HTTP, WebSocket, or Convex bridge fallout:
-  `cargo test -p neovex-server`
+  `cargo test -p nimbus-server`
 - before marking any item `done`:
   `cargo clippy --workspace --all-targets -- -D warnings`
 
@@ -365,7 +365,7 @@ If environmental limits block a command, record the limitation in
 | --- | --- | --- | --- |
 | MC0 | done | Baseline review and hotspot map for the current modularity cleanup pass | none |
 | MC1 | done | Make the public runtime invocation boundary canonical and eliminate per-call executor construction footguns | MC0 |
-| MC2 | done | Split `neovex-runtime/src/runtime.rs` into concept-owned modules for invocation types, host-op ABI, bootstrap, and runtime construction | MC0, MC1 |
+| MC2 | done | Split `nimbus-runtime/src/runtime.rs` into concept-owned modules for invocation types, host-op ABI, bootstrap, and runtime construction | MC0, MC1 |
 | MC3 | done | Decompose runtime executor and worker lifecycle code so admission, queueing, permit state, and execution accounting have clear ownership with no duplicated semantics | MC0, MC1 |
 | MC4 | done | Split engine read-service surfaces by grouped concepts instead of keeping documents, journal, verification, and test hooks in one root module | MC0 |
 | MC5 | done | Decompose subscription ownership around registry, dependency derivation, batch wakeups, delivery, and policy invalidation | MC0, MC4 |
@@ -412,7 +412,7 @@ If environmental limits block a command, record the limitation in
 | Item | Checkpoint | Next Step |
 | --- | --- | --- |
 | MC0 | done; reviewed the current architecture and reformatted this workstream into a standalone control plane with explicit invariants, success criteria, preservation matrix, dependency graph, write-back rules, and resume guidance for future agents | start `MC1` by deciding the canonical public runtime ownership model and eliminating the per-call `RuntimeExecutor::new(...)` convenience path |
-| MC1 | done; `NeovexRuntime` now lazily owns a shared executor for its public convenience entrypoints, `invoke_bundle*` routes through the worker pool instead of constructing a fresh executor per call, and runtime coverage now proves convenience invocations reuse pooled worker state without changing observable results | start `MC2` by turning `runtime.rs` into a concept-owned module tree rooted in invocation types, host-op ABI, bootstrap, and runtime construction |
+| MC1 | done; `NimbusRuntime` now lazily owns a shared executor for its public convenience entrypoints, `invoke_bundle*` routes through the worker pool instead of constructing a fresh executor per call, and runtime coverage now proves convenience invocations reuse pooled worker state without changing observable results | start `MC2` by turning `runtime.rs` into a concept-owned module tree rooted in invocation types, host-op ABI, bootstrap, and runtime construction |
 | MC2 | done; `runtime.rs` is now a runtime composition root over `runtime/invocation.rs`, `runtime/bundle.rs`, and `runtime/bootstrap.rs`, so public invocation/auth payloads, bundle identity and integrity handling, and bootstrap snapshot plus host-op ABI registration no longer live inline beside runtime construction and unmanaged invocation logic | start `MC3` by mapping the remaining ownership seams in `executor.rs` and `worker_loop.rs`, then extract admission, queue, permit, and invocation lifecycle code into dedicated modules without changing fairness or shutdown semantics |
 | MC3 | done; `executor.rs` is now the composition root over `executor/admission.rs`, `executor/queue.rs`, and `executor/lifecycle.rs`, so admission and tenant fairness, queue and shutdown plumbing, and the shared invocation lifecycle no longer live inline in one file, and `worker_loop.rs` now runs through the same lifecycle helper as the direct executor path to keep cancellation, timeout, metric, and permit-finish semantics canonical | start `MC4` by mapping the remaining grouped concepts in the engine read-service root, then split document/query APIs, durable-journal reads, verification helpers, and test hooks into dedicated modules without changing route or result semantics |
 | MC4 | done; `queries.rs` is now a narrow composition root over `queries/documents.rs`, `query_api.rs`, `journal.rs`, `verification.rs`, and `test_hooks.rs`, so the public read surface is grouped by concept instead of mixing document/list reads, query and pagination entrypoints, durable-journal access, consistency helpers, and test-only hooks in one file; the existing private planner, authorization, materialized-surface, and snapshot modules stayed in place under the same read path | start `MC5` by mapping `subscriptions.rs` into concept-owned seams for registry state, dependency derivation, batch wakeups, delivery, and policy invalidation without changing bootstrap or disconnect cleanup behavior |
@@ -440,7 +440,7 @@ Acceptance criteria:
 
 1. Decide the intended public runtime ownership model for embedders:
    - explicit `RuntimeExecutor` ownership for pooled invocation, or
-   - a stable executor owned behind `NeovexRuntime`
+   - a stable executor owned behind `NimbusRuntime`
 2. Eliminate the current public path that constructs a fresh executor for each
    `invoke_bundle*` call.
 3. Keep the runtime and worker-loop architecture aligned with the intended
@@ -451,7 +451,7 @@ Acceptance criteria:
 #### Focused verification
 
 - targeted runtime tests covering public invocation entrypoints
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-runtime`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -483,7 +483,7 @@ Acceptance criteria:
 
 - targeted runtime tests for bundle loading, op registration, and invocation
   plumbing
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-runtime`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -513,7 +513,7 @@ Acceptance criteria:
 #### Focused verification
 
 - targeted runtime tests for fairness, cancellation, timeouts, and shutdown
-- `cargo test -p neovex-runtime`
+- `cargo test -p nimbus-runtime`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -543,7 +543,7 @@ Acceptance criteria:
 #### Focused verification
 
 - targeted engine tests for CRUD, query, pagination, and journal reads
-- `cargo test -p neovex-engine`
+- `cargo test -p nimbus-engine`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -574,8 +574,8 @@ Acceptance criteria:
 
 - targeted engine and server subscription tests for bootstrap, delivery, and
   disconnect cleanup
-- `cargo test -p neovex-engine`
-- `cargo test -p neovex-server`
+- `cargo test -p nimbus-engine`
+- `cargo test -p nimbus-server`
 - `cargo check --workspace`
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -640,11 +640,11 @@ Append new rows at the top. Keep entries short and factual.
 | Date | Item | Outcome | Summary | Verification | Next Step |
 | --- | --- | --- | --- | --- | --- |
 | 2026-04-03 | MC7 | done | Closed the modularity and idiomatic Rust cleanup workstream with the final repo-wide verification sweep and plan reconciliation. Confirmed `ARCHITECTURE.md` reflects the landed runtime, read-service, and subscription ownership maps; confirmed `docs/plans/README.md` and `AGENTS.md` still point to the correct active plan entrypoints for this completed workstream state; and updated the control plane so MC0 through MC7 now match the codebase and verification history. | `make check`; `make test`; `make clippy` | workstream complete; archive or supersede this plan only when a new user task explicitly asks for that follow-up |
-| 2026-04-03 | MC6 | done | Performed the idiomatic Rust sweep against the stabilized runtime, read-service, and subscription module trees without introducing new abstraction layers. Centralized async journal read-storage plumbing in `service/queries/journal.rs`, pulled duplicated pending-registration and bootstrap publish glue into local helpers in `service/subscriptions.rs`, added a small registry mutation helper in `subscriptions/registry.rs`, and deduplicated closed-executor sender lookup plus ready-job failure handling in `neovex-runtime/src/executor/queue.rs`. | `cargo check -p neovex-runtime`; `cargo check -p neovex-engine`; `cargo test -p neovex-runtime`; `cargo test -p neovex-engine`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC7` by running the repo-wide `make check`, `make test`, and `make clippy` sweep and reconciling the remaining docs state |
-| 2026-04-03 | MC5 | done | Split tenant-local subscription ownership by concept instead of keeping registry state, dependency matching, queued wakeup coalescing, delivery dispatch, and teardown or policy invalidation in one `subscriptions.rs` file. Added `subscriptions/registry.rs`, `dependencies.rs`, `queue.rs`, `delivery.rs`, and `invalidation.rs`; reduced `subscriptions.rs` to a composition root over those concepts; and updated `ARCHITECTURE.md` to describe the new ownership map while preserving the existing `service/subscriptions.rs` bootstrap boundary and all subscription behavior. | `cargo test -p neovex-engine async_subscription_bootstrap_catches_up_writes_committed_before_activation`; `cargo test -p neovex-engine subscription_updates_publish_only_after_journal_apply`; `cargo test -p neovex-engine service_unsubscribe_stops_notifications`; `cargo test -p neovex-engine policy_revision_changes_terminate_active_authorized_subscriptions`; `cargo test -p neovex-server socket::subscriptions::websocket_disconnect_before_bootstrap_activation_cancels_pending_subscription_and_reconnects_cleanly`; `cargo test -p neovex-server socket::subscriptions::websocket_unsubscribe_stops_receiving_updates`; `cargo test -p neovex-server socket::subscriptions::websocket_disconnect_drops_subscription_without_explicit_unsubscribe`; `cargo test -p neovex-engine`; `cargo test -p neovex-server`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC6` by running the idiomatic Rust sweep now that the major ownership boundaries have stabilized |
-| 2026-04-03 | MC4 | done | Split the engine read-service public root by grouped concepts instead of keeping document/list reads, query and pagination entrypoints, durable-journal access, consistency verification helpers, and test hooks in one `queries.rs` file. Added `queries/documents.rs`, `query_api.rs`, `journal.rs`, `verification.rs`, and `test_hooks.rs`; reduced `queries.rs` to a composition root over those surfaces plus the existing private planner/materialized capability tree; and updated `ARCHITECTURE.md` to record the new ownership map without changing read behavior or test-hook contracts. | `cargo test -p neovex-engine service_missing_document_operations_return_not_found`; `cargo test -p neovex-engine query_uses_index_for_equality_filter`; `cargo test -p neovex-engine paginate_with_cursor_returns_next_page`; `cargo test -p neovex-engine durable_journal_reads_return_strictly_ordered_authoritative_records`; `cargo test -p neovex-engine`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC5` by splitting subscription ownership around registry state, dependency derivation, batch wakeups, delivery, and policy invalidation |
-| 2026-04-03 | MC3 | done | Split runtime executor ownership around grouped concepts instead of keeping admission, queueing, and invocation lifecycle semantics intertwined in `executor.rs`. Added `executor/admission.rs` for tenant fairness and shared permit ownership, `executor/queue.rs` for worker queue and shutdown plumbing, and `executor/lifecycle.rs` for the canonical invocation lifecycle path used by both direct executor entrypoints and `worker_loop.rs`. Updated `ARCHITECTURE.md` to describe `executor.rs` as the composition root over those concept-owned modules while preserving `WorkerLoopFactory` and existing runtime semantics. | `cargo check -p neovex-runtime`; `cargo test -p neovex-runtime`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC4` by splitting the engine read-service root around document/query APIs, journal reads, verification helpers, and test hooks |
-| 2026-04-03 | MC2 | done | Split `neovex-runtime/src/runtime.rs` around grouped concepts instead of keeping invocation/auth payloads, bundle identity and integrity handling, and bootstrap plus host-op ABI registration inline in one root file. Added `runtime/invocation.rs`, `runtime/bundle.rs`, and `runtime/bootstrap.rs`; kept `runtime.rs` as the composition root for public runtime construction, the runtime-owned convenience executor boundary, and unmanaged invocation; updated `ARCHITECTURE.md` to describe the new module ownership map; and kept the public exports stable. `runtime.rs` is down to 2192 lines total including tests, with the moved concepts now living in dedicated sibling modules. | `cargo check -p neovex-runtime`; `cargo test -p neovex-runtime`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC3` by decomposing runtime executor and worker lifecycle ownership now that the runtime surface and bootstrap ABI are extracted |
-| 2026-04-03 | MC1 | done | Made the public runtime convenience path canonical without spawning duplicate executor pools in explicit server-owned executor flows. `NeovexRuntime` now lazily owns a shared `RuntimeExecutor`, `invoke_bundle*` routes through the runtime-owned worker pool, and `ARCHITECTURE.md` now records that standalone convenience calls use pooled executor ownership by default while explicit server integrations still inject their own shared executor. Added `convenience_runtime_invocations_reuse_runtime_owned_executor` to prove repeated convenience calls reuse the same worker-local isolate pool instead of constructing fresh executors or bypassing pooled execution. | `cargo test -p neovex-runtime convenience_runtime_invocations_reuse_runtime_owned_executor -- --nocapture`; `cargo test -p neovex-runtime pooled_runtime_invocations_keep_module_state_fresh -- --nocapture`; `cargo test -p neovex-runtime`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC2` by splitting `runtime.rs` into concept-owned modules now that the public invocation boundary is stable |
+| 2026-04-03 | MC6 | done | Performed the idiomatic Rust sweep against the stabilized runtime, read-service, and subscription module trees without introducing new abstraction layers. Centralized async journal read-storage plumbing in `service/queries/journal.rs`, pulled duplicated pending-registration and bootstrap publish glue into local helpers in `service/subscriptions.rs`, added a small registry mutation helper in `subscriptions/registry.rs`, and deduplicated closed-executor sender lookup plus ready-job failure handling in `nimbus-runtime/src/executor/queue.rs`. | `cargo check -p nimbus-runtime`; `cargo check -p nimbus-engine`; `cargo test -p nimbus-runtime`; `cargo test -p nimbus-engine`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC7` by running the repo-wide `make check`, `make test`, and `make clippy` sweep and reconciling the remaining docs state |
+| 2026-04-03 | MC5 | done | Split tenant-local subscription ownership by concept instead of keeping registry state, dependency matching, queued wakeup coalescing, delivery dispatch, and teardown or policy invalidation in one `subscriptions.rs` file. Added `subscriptions/registry.rs`, `dependencies.rs`, `queue.rs`, `delivery.rs`, and `invalidation.rs`; reduced `subscriptions.rs` to a composition root over those concepts; and updated `ARCHITECTURE.md` to describe the new ownership map while preserving the existing `service/subscriptions.rs` bootstrap boundary and all subscription behavior. | `cargo test -p nimbus-engine async_subscription_bootstrap_catches_up_writes_committed_before_activation`; `cargo test -p nimbus-engine subscription_updates_publish_only_after_journal_apply`; `cargo test -p nimbus-engine service_unsubscribe_stops_notifications`; `cargo test -p nimbus-engine policy_revision_changes_terminate_active_authorized_subscriptions`; `cargo test -p nimbus-server socket::subscriptions::websocket_disconnect_before_bootstrap_activation_cancels_pending_subscription_and_reconnects_cleanly`; `cargo test -p nimbus-server socket::subscriptions::websocket_unsubscribe_stops_receiving_updates`; `cargo test -p nimbus-server socket::subscriptions::websocket_disconnect_drops_subscription_without_explicit_unsubscribe`; `cargo test -p nimbus-engine`; `cargo test -p nimbus-server`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC6` by running the idiomatic Rust sweep now that the major ownership boundaries have stabilized |
+| 2026-04-03 | MC4 | done | Split the engine read-service public root by grouped concepts instead of keeping document/list reads, query and pagination entrypoints, durable-journal access, consistency verification helpers, and test hooks in one `queries.rs` file. Added `queries/documents.rs`, `query_api.rs`, `journal.rs`, `verification.rs`, and `test_hooks.rs`; reduced `queries.rs` to a composition root over those surfaces plus the existing private planner/materialized capability tree; and updated `ARCHITECTURE.md` to record the new ownership map without changing read behavior or test-hook contracts. | `cargo test -p nimbus-engine service_missing_document_operations_return_not_found`; `cargo test -p nimbus-engine query_uses_index_for_equality_filter`; `cargo test -p nimbus-engine paginate_with_cursor_returns_next_page`; `cargo test -p nimbus-engine durable_journal_reads_return_strictly_ordered_authoritative_records`; `cargo test -p nimbus-engine`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC5` by splitting subscription ownership around registry state, dependency derivation, batch wakeups, delivery, and policy invalidation |
+| 2026-04-03 | MC3 | done | Split runtime executor ownership around grouped concepts instead of keeping admission, queueing, and invocation lifecycle semantics intertwined in `executor.rs`. Added `executor/admission.rs` for tenant fairness and shared permit ownership, `executor/queue.rs` for worker queue and shutdown plumbing, and `executor/lifecycle.rs` for the canonical invocation lifecycle path used by both direct executor entrypoints and `worker_loop.rs`. Updated `ARCHITECTURE.md` to describe `executor.rs` as the composition root over those concept-owned modules while preserving `WorkerLoopFactory` and existing runtime semantics. | `cargo check -p nimbus-runtime`; `cargo test -p nimbus-runtime`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC4` by splitting the engine read-service root around document/query APIs, journal reads, verification helpers, and test hooks |
+| 2026-04-03 | MC2 | done | Split `nimbus-runtime/src/runtime.rs` around grouped concepts instead of keeping invocation/auth payloads, bundle identity and integrity handling, and bootstrap plus host-op ABI registration inline in one root file. Added `runtime/invocation.rs`, `runtime/bundle.rs`, and `runtime/bootstrap.rs`; kept `runtime.rs` as the composition root for public runtime construction, the runtime-owned convenience executor boundary, and unmanaged invocation; updated `ARCHITECTURE.md` to describe the new module ownership map; and kept the public exports stable. `runtime.rs` is down to 2192 lines total including tests, with the moved concepts now living in dedicated sibling modules. | `cargo check -p nimbus-runtime`; `cargo test -p nimbus-runtime`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC3` by decomposing runtime executor and worker lifecycle ownership now that the runtime surface and bootstrap ABI are extracted |
+| 2026-04-03 | MC1 | done | Made the public runtime convenience path canonical without spawning duplicate executor pools in explicit server-owned executor flows. `NimbusRuntime` now lazily owns a shared `RuntimeExecutor`, `invoke_bundle*` routes through the runtime-owned worker pool, and `ARCHITECTURE.md` now records that standalone convenience calls use pooled executor ownership by default while explicit server integrations still inject their own shared executor. Added `convenience_runtime_invocations_reuse_runtime_owned_executor` to prove repeated convenience calls reuse the same worker-local isolate pool instead of constructing fresh executors or bypassing pooled execution. | `cargo test -p nimbus-runtime convenience_runtime_invocations_reuse_runtime_owned_executor -- --nocapture`; `cargo test -p nimbus-runtime pooled_runtime_invocations_keep_module_state_fresh -- --nocapture`; `cargo test -p nimbus-runtime`; `cargo check --workspace`; `cargo fmt --all`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` | start `MC2` by splitting `runtime.rs` into concept-owned modules now that the public invocation boundary is stable |
 | 2026-04-03 | MC0 | done | Reformatted this workstream into a standalone control plane anchored in the current architecture and current hotspots. Added explicit success criteria, a feature-preservation matrix, a dependency graph, required write-back rules, focused verification guidance per item, and a suggested autonomous resume prompt. Updated `AGENTS.md` in the same pass so new agents resume from this plan and the current worktree instead of chat state. | docs-only review and plan rewrite; no code verification rerun | start `MC1` by making the public runtime invocation boundary canonical and eliminating the per-call executor construction path |
-| 2026-04-03 | MC0 | done | Reviewed the current architecture and mapped the next cleanup hotspots from the live worktree. Confirmed that the primary remaining modularity pressure is now in `neovex-runtime`: the public runtime convenience APIs still construct a fresh executor per invocation, `runtime.rs` still mixes multiple unrelated concepts, and `executor.rs` still duplicates invocation lifecycle semantics with `worker_loop.rs`. Confirmed the next engine hotspots are `service/queries.rs` and `subscriptions.rs`, while `tenant.rs` is no longer a primary cleanup target. Authored the initial control plan to drive concept-oriented modularity and idiomatic Rust cleanup from the current architecture and current hotspots. | source review of `README.md`, `ARCHITECTURE.md`, `docs/README.md`, `docs/plans/README.md`, `crates/neovex-runtime/src/runtime.rs`, `crates/neovex-runtime/src/executor.rs`, `crates/neovex-runtime/src/worker_loop.rs`, `crates/neovex-engine/src/service/queries.rs`, and `crates/neovex-engine/src/subscriptions.rs` | keep `MC0` done and start `MC1` by making the public runtime invocation boundary canonical |
+| 2026-04-03 | MC0 | done | Reviewed the current architecture and mapped the next cleanup hotspots from the live worktree. Confirmed that the primary remaining modularity pressure is now in `nimbus-runtime`: the public runtime convenience APIs still construct a fresh executor per invocation, `runtime.rs` still mixes multiple unrelated concepts, and `executor.rs` still duplicates invocation lifecycle semantics with `worker_loop.rs`. Confirmed the next engine hotspots are `service/queries.rs` and `subscriptions.rs`, while `tenant.rs` is no longer a primary cleanup target. Authored the initial control plan to drive concept-oriented modularity and idiomatic Rust cleanup from the current architecture and current hotspots. | source review of `README.md`, `ARCHITECTURE.md`, `docs/README.md`, `docs/plans/README.md`, `crates/nimbus-runtime/src/runtime.rs`, `crates/nimbus-runtime/src/executor.rs`, `crates/nimbus-runtime/src/worker_loop.rs`, `crates/nimbus-engine/src/service/queries.rs`, and `crates/nimbus-engine/src/subscriptions.rs` | keep `MC0` done and start `MC1` by making the public runtime invocation boundary canonical |

@@ -11,7 +11,7 @@ encryption-at-rest plan closeout record.
 
 options:
   --run-id <id>                  GitHub Actions workflow run id
-  --repo <owner/name>            GitHub repository (default: agentstation/neovex)
+  --repo <owner/name>            GitHub repository (default: nimbus/nimbus)
   --output-dir <path>            Output directory (default: mktemp under TMPDIR)
   --artifact-prefix <prefix>     Artifact prefix to collect
                                  (default: sqlcipher-proof- and
@@ -25,7 +25,7 @@ examples:
   bash scripts/collect-sqlcipher-proof-bundles.sh \
     --run-id 12345678901 \
     --artifact-prefix sqlcipher-proof- \
-    --output-dir /tmp/neovex-sqlcipher-release-proof
+    --output-dir /tmp/nimbus-sqlcipher-release-proof
 EOF
 }
 
@@ -38,7 +38,7 @@ require_command() {
 }
 
 run_id=""
-repo="agentstation/neovex"
+repo="nimbus/nimbus"
 output_dir=""
 artifact_prefixes=()
 
@@ -86,7 +86,7 @@ require_command gh
 require_command python3
 
 if [[ -z "${output_dir}" ]]; then
-  output_dir="$(mktemp -d "${TMPDIR:-/tmp}/neovex-sqlcipher-proof-bundles.XXXXXX")"
+  output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-sqlcipher-proof-bundles.XXXXXX")"
 else
   mkdir -p "${output_dir}"
 fi

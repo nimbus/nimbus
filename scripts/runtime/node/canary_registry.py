@@ -41,7 +41,7 @@ def lane_metadata_root() -> Path:
     return (
         repo_root()
         / "crates"
-        / "neovex-runtime"
+        / "nimbus-runtime"
         / "src"
         / "runtime"
         / "tests"
@@ -132,7 +132,7 @@ def command_run(args: argparse.Namespace) -> None:
                 "cargo",
                 "test",
                 "-p",
-                "neovex-runtime",
+                "nimbus-runtime",
                 cargo_test,
                 "--",
                 "--nocapture",

@@ -1,6 +1,6 @@
-$ cargo test -p neovex-storage sqlite_foundation::encryption -- --nocapture
+$ cargo test -p nimbus-storage sqlite_foundation::encryption -- --nocapture
 [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.20s
-[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/neovex_storage-bf4da83bfce9bb14)
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/nimbus_storage-bf4da83bfce9bb14)
 
 running 9 tests
 test tests::sqlite_foundation::encryption::encrypted_sqlite_store_create_and_reopen ... ok

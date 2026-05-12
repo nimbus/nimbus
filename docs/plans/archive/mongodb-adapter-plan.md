@@ -6,13 +6,13 @@ a MongoDB-shaped JavaScript SDK package, and compatibility tests against the
 official MongoDB driver spec tests.
 
 This plan follows the architecture established by the Firebase adapter: adapters
-own protocol translation; Neovex core owns data primitives. Where MongoDB needs
+own protocol translation; Nimbus core owns data primitives. Where MongoDB needs
 shared behavior that overlaps with Convex or Firebase, promote that behavior to
-a protocol-neutral Neovex primitive before adding adapter-local copies.
+a protocol-neutral Nimbus primitive before adding adapter-local copies.
 
 ## Context
 
-Neovex already ships three compatibility adapters:
+Nimbus already ships three compatibility adapters:
 
 - **Convex** — deep function runtime, WebSocket subscriptions, V8 host bridge.
 - **Firebase** — data API, gRPC/REST/WebSocket, reactive Listen streams.
@@ -22,17 +22,17 @@ Neovex already ships three compatibility adapters:
 MongoDB is different from both: it uses a binary wire protocol (OP_MSG over
 TCP) with BSON-encoded command documents, not HTTP or gRPC. The adapter is a
 TCP listener that speaks the MongoDB wire protocol and translates commands into
-Neovex engine operations. There is no uploaded JavaScript, function registry,
+Nimbus engine operations. There is no uploaded JavaScript, function registry,
 or V8 host bridge involved.
 
 ### Why MongoDB
 
 MongoDB has the largest NoSQL developer base globally (~37M downloads/month
-for the Node.js driver alone, ~9.3M weekly on npm). The document model maps directly to Neovex's
+for the Node.js driver alone, ~9.3M weekly on npm). The document model maps directly to Nimbus's
 document/table model. MongoDB Atlas pricing pressure and the desire for
 self-hosted alternatives have driven the creation of FerretDB and similar
 projects with significant adoption. A MongoDB wire-protocol adapter would let
-any existing MongoDB application (using any official driver) connect to Neovex
+any existing MongoDB application (using any official driver) connect to Nimbus
 with zero client-side code changes — the most seamless migration path possible.
 
 ### Open Source Resources (Cloned)
@@ -62,7 +62,7 @@ baseline and promote a new active plan before another broad MongoDB wave.
 ## Plan Ownership And Canonical Inputs
 
 This is the completed execution record for MongoDB wire-protocol
-compatibility implementation and the Neovex primitive hardening it required.
+compatibility implementation and the Nimbus primitive hardening it required.
 
 Implementation work must keep the immediate source inputs open:
 
@@ -79,16 +79,16 @@ Implementation work must keep the immediate source inputs open:
 - MongoDB protocol sources: MongoDB wire protocol documentation, OP_MSG spec,
   BSON spec (bsonspec.org), command reference, and the cloned
   `mongodb/specifications` repo for canonical wire-version and handshake specs.
-- Neovex seam sources: core types/mutations/query, engine execution units and
+- Nimbus seam sources: core types/mutations/query, engine execution units and
   subscriptions, server router/state/security, and the existing adapter patterns
-  in `crates/neovex-server/src/adapters/{convex,firebase,cloud_functions}/`.
+  in `crates/nimbus-server/src/adapters/{convex,firebase,cloud_functions}/`.
 - Test evidence: `~/src/github.com/mongodb/specifications/` for canonical spec
   tests, `~/src/github.com/mongodb/mongo-rust-driver/` for unified test runner
   reference, `~/src/github.com/FerretDB/FerretDB/` for implementation patterns.
 
 ## Current Assessed State
 
-- Neovex's document model (schemaless JSON documents in named tables with
+- Nimbus's document model (schemaless JSON documents in named tables with
   optional schema, indexed fields, and reactive subscriptions) maps naturally
   to MongoDB's document model (schemaless BSON documents in named collections).
 - The shared atomic write batch primitive from the Firebase adapter work (F0.3)
@@ -99,13 +99,13 @@ Implementation work must keep the immediate source inputs open:
   streams with protocol translation.
 - The transaction session manager (F0.5) provides cross-RPC transaction tokens
   compatible with MongoDB's multi-document transaction model.
-- The current Neovex server accepts a caller-provided `tokio::net::TcpListener`
+- The current Nimbus server accepts a caller-provided `tokio::net::TcpListener`
   but always routes it through axum for HTTP/WebSocket. A MongoDB adapter
   requires a separate raw TCP listener for the binary OP_MSG wire protocol —
   this is architecturally new and cannot reuse the axum router.
 - There is no BSON serialization in the codebase. BSON is a superset of JSON
   types (ObjectId, Binary, Decimal128, regex, timestamp, etc.).
-- MongoDB's `_id` field convention and ObjectId generation differ from Neovex's
+- MongoDB's `_id` field convention and ObjectId generation differ from Nimbus's
   `_id` / `DocumentId` model but are compatible with the caller-provided key
   support from F0.1.
 
@@ -123,14 +123,14 @@ work without first promoting a new active MongoDB plan.
 
 ### Module Structure
 
-The MongoDB adapter lives at `crates/neovex-server/src/adapters/mongodb/` with
+The MongoDB adapter lives at `crates/nimbus-server/src/adapters/mongodb/` with
 the following initial file layout (created during M0.1):
 
 ```
 mongodb/
 ├── mod.rs              # adapter registration, MongoDbConfig, public API
 ├── wire.rs             # OP_MSG frame parser/serializer, MsgHeader, Section
-├── bson_bridge.rs      # BSON ↔ Neovex value conversion, typed scalar mapping
+├── bson_bridge.rs      # BSON ↔ Nimbus value conversion, typed scalar mapping
 ├── commands/
 │   ├── mod.rs          # command dispatch table (name → handler)
 │   ├── handshake.rs    # hello, isMaster, ping, buildInfo
@@ -155,7 +155,7 @@ concept-owned naming.
 ### Boot Sequence Integration
 
 The MongoDB TCP listener integrates into the server startup in
-`crates/neovex-server/src/lib.rs`:
+`crates/nimbus-server/src/lib.rs`:
 
 1. Add `mongodb_config: Option<MongoDbConfig>` to `ServeOptions` and a
    `.with_mongodb(config)` fluent builder method.
@@ -164,7 +164,7 @@ The MongoDB TCP listener integrates into the server startup in
    the MongoDB accept loop as a sibling `tokio::spawn` task sharing the same
    `Arc<Service>` instance. The HTTP server and MongoDB listener run
    concurrently; either failing propagates the error.
-3. In `crates/neovex-bin/src/start/boot.rs`, add a `--mongodb-port` CLI flag
+3. In `crates/nimbus-bin/src/start/boot.rs`, add a `--mongodb-port` CLI flag
    (default: disabled) that creates a `MongoDbConfig` and passes it to
    `ServeOptions::with_mongodb`.
 
@@ -174,12 +174,12 @@ The `bson` crate (v3.1.0+, MIT license) is a new workspace dependency:
 
 - Add `bson = "3.1"` to the workspace `[dependencies]` in the root
   `Cargo.toml` and reference it as `bson.workspace = true` in
-  `crates/neovex-server/Cargo.toml`.
+  `crates/nimbus-server/Cargo.toml`.
 - The `bson` crate's required features: default features plus `serde` for
   integration with `serde_json::Value`. Optional `chrono` feature is not
   needed; use `time` if datetime conversion is required.
 - Auth crates: `hmac`, `sha2`, `pbkdf2` (all MIT/Apache-2.0, likely already
-  transitive dependencies). Add to `crates/neovex-server/Cargo.toml` directly.
+  transitive dependencies). Add to `crates/nimbus-server/Cargo.toml` directly.
 - Run `make deny` after adding the dependency to confirm no license or
   advisory violations.
 
@@ -196,7 +196,7 @@ MongoDB spec test YAML/JSON files are consumed from the cloned
   unified test runner reads from `$MONGODB_SPEC_DIR` first, falling back to
   `vendor/mongodb-specifications/` relative to the workspace root.
 - Test runner integration tests live at
-  `crates/neovex-server/tests/mongodb_spec/` with a `mod.rs` that discovers
+  `crates/nimbus-server/tests/mongodb_spec/` with a `mod.rs` that discovers
   and dispatches spec test files.
 
 ## Control Plan Rules
@@ -215,7 +215,7 @@ MongoDB spec test YAML/JSON files are consumed from the cloned
    relevant source, implementation, tests, and checkpoint loaded at once, split
    the item in this plan before starting it.
 6. MongoDB work that discovers shared database behavior in any existing adapter
-   must either promote that behavior into a Neovex primitive or add a design
+   must either promote that behavior into a Nimbus primitive or add a design
    note here explaining why it remains adapter-specific.
 7. A roadmap item is not `done` until its completion gate and verification
    commands are recorded in the execution log.
@@ -234,7 +234,7 @@ Every completed item must leave durable evidence:
   run the narrowest meaningful `cargo test` or `cargo check` lane first, then
   `cargo fmt --all --check`.
 - Run `make clippy` before any PR or after shared primitive work that touches
-  `neovex-core`, `neovex-engine`, `neovex-storage`, or `neovex-server`
+  `nimbus-core`, `nimbus-engine`, `nimbus-storage`, or `nimbus-server`
   behavior broadly.
 - For JavaScript package work, run the relevant package build/typecheck/test
   command plus root `npm run typecheck` when exported API surfaces change.
@@ -249,12 +249,12 @@ Every completed item must leave durable evidence:
 | T3 | Aggregation pipeline (basic) | `aggregate` with `$match`, `$sort`, `$limit`, `$skip`, `$project`, `$count`, `$group` (basic accumulators) |
 | T4 | Transactions and sessions | `startSession`, multi-document transactions, `commitTransaction`, `abortTransaction`, causal consistency tokens |
 | T5 | Change streams | `$changeStream` aggregation stage, resume tokens, full-document lookup |
-| T6 | JavaScript SDK package | `@neovex/mongodb` package with connection string override and driver compatibility |
+| T6 | JavaScript SDK package | `@nimbus/mongodb` package with connection string override and driver compatibility |
 | Deferred | Advanced features | Sharding, replication topology, GridFS, client-side encryption, text/geospatial indexes, `$lookup`/`$graphLookup`, collation, capped collections |
 
 ## Architecture Boundary Contract
 
-### Neovex Core Owns
+### Nimbus Core Owns
 
 - Document identity and key generation (including MongoDB ObjectId mapping).
 - Atomic write batch semantics: insert, update, delete, upsert.
@@ -286,7 +286,7 @@ Every completed item must leave durable evidence:
 Before landing MongoDB work that resembles existing Firebase or Convex adapter
 logic, compare the paths:
 
-- If the logic is about Neovex data semantics (document writes, query planning,
+- If the logic is about Nimbus data semantics (document writes, query planning,
   subscriptions, transactions), move it to a shared seam and thin the adapter.
 - If the logic is about MongoDB wire-protocol shape, BSON encoding, command
   dispatch, or cursor management, keep it in the MongoDB adapter.
@@ -295,8 +295,8 @@ logic, compare the paths:
 
 ### M0.1: TCP Listener Seam
 
-Neovex currently only listens on HTTP (axum). The current `serve_with_options`
-in `crates/neovex-server/src/lib.rs` accepts a `tokio::net::TcpListener` and
+Nimbus currently only listens on HTTP (axum). The current `serve_with_options`
+in `crates/nimbus-server/src/lib.rs` accepts a `tokio::net::TcpListener` and
 routes it through axum. The MongoDB adapter needs a separate raw TCP listener
 for the binary OP_MSG wire protocol:
 
@@ -313,23 +313,23 @@ for the binary OP_MSG wire protocol:
 
 ### M0.2: BSON Value Model Bridge
 
-MongoDB uses BSON, which has types that JSON/Neovex values do not natively
+MongoDB uses BSON, which has types that JSON/Nimbus values do not natively
 represent: ObjectId, Binary (with subtypes), Decimal128, regex, JavaScript
 code, timestamp (internal), MinKey, MaxKey, etc.
 
 The bridge must:
 
-- Convert BSON documents to Neovex `serde_json::Value` documents for storage,
+- Convert BSON documents to Nimbus `serde_json::Value` documents for storage,
   using the typed scalar metadata infrastructure from F3.4b1 for types that
   cannot roundtrip through plain JSON (ObjectId, Binary, Decimal128, regex,
   timestamp).
-- Convert Neovex documents back to BSON for query responses, preserving type
+- Convert Nimbus documents back to BSON for query responses, preserving type
   fidelity through the typed scalar metadata.
 - Handle `_id` field conventions: MongoDB auto-generates ObjectId `_id` if not
-  provided; map this to Neovex's `DocumentId` with caller-provided key support.
+  provided; map this to Nimbus's `DocumentId` with caller-provided key support.
   On insert, extract `_id` from the BSON document and pass it as a
-  `DocumentId::from_key()` caller-provided key (Neovex stores `id` separately
-  from `fields` in `crates/neovex-core/src/document.rs`). On read, reconstruct
+  `DocumentId::from_key()` caller-provided key (Nimbus stores `id` separately
+  from `fields` in `crates/nimbus-core/src/document.rs`). On read, reconstruct
   the original BSON `_id` value (ObjectId, string, integer, etc.) from the
   stored `DocumentId` plus typed scalar metadata, not just a string echo.
   MongoDB `_id` can be any BSON type, not only ObjectId.
@@ -340,7 +340,7 @@ The bridge must:
 
 ### M0.3: MongoDB Error Code Mapping
 
-Map Neovex's shared error taxonomy to MongoDB error codes and response format:
+Map Nimbus's shared error taxonomy to MongoDB error codes and response format:
 
 - MongoDB errors are `{ ok: 0, errmsg: "...", code: N, codeName: "..." }`.
 - Map `NotFound` → 26 (NamespaceNotFound), `AlreadyExists` → 48
@@ -350,10 +350,10 @@ Map Neovex's shared error taxonomy to MongoDB error codes and response format:
 
 ### M0.4: MongoDB Document-to-Table Mapping
 
-MongoDB uses `database.collection` addressing. Neovex uses tenant + table:
+MongoDB uses `database.collection` addressing. Nimbus uses tenant + table:
 
-- Map MongoDB `database` to Neovex tenant.
-- Map MongoDB `collection` to Neovex table.
+- Map MongoDB `database` to Nimbus tenant.
+- Map MongoDB `collection` to Nimbus table.
 - The `admin`, `local`, and `config` databases must return appropriate
   metadata or rejection responses.
 - `system.*` collections must be handled explicitly.
@@ -492,17 +492,17 @@ Unsupported operators must return explicit errors, not silent ignores.
 
 ### M0: Wire Protocol And BSON Foundation
 
-Location: `crates/neovex-server/src/adapters/mongodb/`.
+Location: `crates/nimbus-server/src/adapters/mongodb/`.
 
 Context window budget: 6-8 focused windows.
 
 - Add `mongodb` adapter module beside `convex`, `firebase`, `cloud_functions`.
 - Add `MongoDbConfig` and optional TCP listener to server configuration.
 - Implement OP_MSG frame parser and serializer over `tokio::net::TcpStream`.
-- Add BSON-to-Neovex value bridge using the `bson` crate for
+- Add BSON-to-Nimbus value bridge using the `bson` crate for
   serialization/deserialization and the shared typed scalar metadata
   infrastructure for type-preserving roundtrips.
-- Implement `hello` / `isMaster` handshake reporting Neovex as a standalone
+- Implement `hello` / `isMaster` handshake reporting Nimbus as a standalone
   MongoDB 7.0-compatible server.
 - Implement `ping`, `buildInfo`, `whatsmyuri`, `getParameter`, `serverStatus`,
   `connectionStatus` administrative commands.
@@ -510,12 +510,12 @@ Context window budget: 6-8 focused windows.
 - Add SCRAM-SHA-256 authentication negotiation using connection-level state.
 
 Exit gate: `mongosh` can connect, authenticate, and run `db.runCommand({ping:1})`
-against the Neovex TCP listener. The official `mongodb` Rust driver can
+against the Nimbus TCP listener. The official `mongodb` Rust driver can
 complete a handshake.
 
 ### M1: Core CRUD Commands
 
-Location: `crates/neovex-server/src/adapters/mongodb/`.
+Location: `crates/nimbus-server/src/adapters/mongodb/`.
 
 Context window budget: 9-13 focused windows.
 
@@ -546,23 +546,23 @@ Context window budget: 9-13 focused windows.
   the shared query filter model.
 
 Exit gate: the official MongoDB Rust driver can insert, find, update, delete,
-and iterate cursors against Neovex. The MongoDB CRUD spec tests
+and iterate cursors against Nimbus. The MongoDB CRUD spec tests
 (`specifications/source/crud/tests/unified/`) pass for the supported operator
 subset.
 
 ### M2: Index And Collection Management
 
-Location: `crates/neovex-server/src/adapters/mongodb/`.
+Location: `crates/nimbus-server/src/adapters/mongodb/`.
 
 Context window budget: 4-6 focused windows.
 
-- Implement `createIndexes` mapping to Neovex schema index definitions,
+- Implement `createIndexes` mapping to Nimbus schema index definitions,
   including compound indexes, unique constraints, partial filter expressions,
   and TTL index metadata.
 - Implement `dropIndexes` and `listIndexes`.
 - Implement `create` (explicit collection creation) and `drop` (collection
-  drop) mapped to Neovex tenant table lifecycle.
-- Implement `listCollections` and `listDatabases` using Neovex tenant and
+  drop) mapped to Nimbus tenant table lifecycle.
+- Implement `listCollections` and `listDatabases` using Nimbus tenant and
   table enumeration.
 - Handle `system.namespaces`, `system.indexes` legacy collection queries
   gracefully.
@@ -572,7 +572,7 @@ pass for the supported subset.
 
 ### M3: Basic Aggregation Pipeline
 
-Location: `crates/neovex-server/src/adapters/mongodb/`.
+Location: `crates/nimbus-server/src/adapters/mongodb/`.
 
 Context window budget: 6-8 focused windows.
 
@@ -593,7 +593,7 @@ portion of the MongoDB spec tests passes for supported stages.
 
 ### M4: Transactions And Sessions
 
-Location: `crates/neovex-server/src/adapters/mongodb/`.
+Location: `crates/nimbus-server/src/adapters/mongodb/`.
 
 Context window budget: 4-6 focused windows.
 
@@ -610,14 +610,14 @@ The official driver can run multi-document transactions.
 
 ### M5: Change Streams
 
-Location: `crates/neovex-server/src/adapters/mongodb/`.
+Location: `crates/nimbus-server/src/adapters/mongodb/`.
 
 Context window budget: 4-6 focused windows.
 
 - Implement `$changeStream` as a special first stage in aggregation pipelines.
-- Map Neovex subscription snapshot/diff infrastructure to MongoDB change
+- Map Nimbus subscription snapshot/diff infrastructure to MongoDB change
   events. The mapping from `SubscriptionSnapshotDiff`
-  (`crates/neovex-core/src/subscription.rs`) to MongoDB change events:
+  (`crates/nimbus-core/src/subscription.rs`) to MongoDB change events:
   - Documents present in `added` → `{ operationType: "insert", fullDocument }`.
   - Documents present in `modified` → `{ operationType: "update", updateDescription, fullDocument }`.
     The `updateDescription` is computed by diffing the old and new document
@@ -636,7 +636,7 @@ Context window budget: 4-6 focused windows.
   `updateLookup` (re-fetch the current document for update events using a
   point read through the engine).
 - Implement collection-level and database-level change streams by subscribing
-  to the corresponding Neovex table or all tables within a tenant.
+  to the corresponding Nimbus table or all tables within a tenant.
 - Handle cursor-based iteration via `getMore` on change stream cursors. The
   change stream cursor is a tailable, awaitData cursor that blocks on
   `getMore` until new events arrive or `maxAwaitTimeMS` elapses.
@@ -650,35 +650,35 @@ Location: `packages/mongodb/`.
 
 Context window budget: 5-7 focused windows.
 
-- Package name: `@neovex/mongodb`.
+- Package name: `@nimbus/mongodb`.
 - Thin wrapper or connection-string helper that configures the official
-  `mongodb` Node.js driver to connect to Neovex's MongoDB-compatible listener
+  `mongodb` Node.js driver to connect to Nimbus's MongoDB-compatible listener
   instead of a real MongoDB instance.
 - Alternatively: re-export the official driver with preconfigured defaults
-  and Neovex-specific connection helpers.
-- Add Neovex-specific utilities: tenant selection, connection string builder,
+  and Nimbus-specific connection helpers.
+- Add Nimbus-specific utilities: tenant selection, connection string builder,
   migration helpers.
-- Add integration selftest against a local Neovex server.
+- Add integration selftest against a local Nimbus server.
 
-Exit gate: `@neovex/mongodb` connects the official MongoDB Node.js driver to
-Neovex and exercises CRUD, queries, aggregation, and change streams.
+Exit gate: `@nimbus/mongodb` connects the official MongoDB Node.js driver to
+Nimbus and exercises CRUD, queries, aggregation, and change streams.
 
 ### M7: Spec Test Integration And Compatibility Hardening
 
-Location: test infrastructure across `crates/neovex-server/` and
-`crates/neovex-testing/`.
+Location: test infrastructure across `crates/nimbus-server/` and
+`crates/nimbus-testing/`.
 
 Context window budget: 6-10 focused windows.
 
 - Build a unified spec test runner at
-  `crates/neovex-server/tests/mongodb_spec/runner.rs` that consumes YAML/JSON
+  `crates/nimbus-server/tests/mongodb_spec/runner.rs` that consumes YAML/JSON
   test files from the vendored spec repo. The runner parses the Unified Test
   Format v1.28.0 schema (see
   `specifications/source/unified-test-format/unified-test-format.md`):
   - `schemaVersion`: validate against supported versions.
   - `runOnRequirements`: check server version and topology; skip if not met.
   - `createEntities`: create client, database, collection, session, bucket,
-    and cursor entities backed by a local Neovex instance.
+    and cursor entities backed by a local Nimbus instance.
   - `initialData`: seed collections with documents before each test.
   - `operations`: execute sequentially; each operation has a target entity,
     name, arguments, and expected result or error.
@@ -718,7 +718,7 @@ supported/unsupported/deferred classification.
 
 - Use the official BSON corpus test files from
   `mongodb/specifications/source/bson-corpus/` (31 files).
-- Every BSON type roundtrips through Neovex storage and back to BSON.
+- Every BSON type roundtrips through Nimbus storage and back to BSON.
 - ObjectId generation and parsing.
 - Decimal128 precision preservation.
 - Binary subtypes.
@@ -815,11 +815,11 @@ deterministic seed-based scenarios for:
 | TCP listener | Separate optional listener beside HTTP | MongoDB uses raw TCP, not HTTP; must share the same engine instance |
 | BSON serialization | `bson` crate (v3.1.0+, `mongodb/bson-rust`) | Official MongoDB-maintained Rust BSON library; new dependency, not currently in workspace |
 | Type preservation | Typed scalar metadata (from F3.4b1) | BSON types like ObjectId, Binary, Decimal128 need roundtrip fidelity through JSON storage |
-| `_id` mapping | MongoDB ObjectId → Neovex DocumentId with typed scalar tag | Preserves MongoDB identity semantics while using shared key infrastructure |
-| Database mapping | MongoDB database → Neovex tenant | Natural mapping; one tenant per logical database |
-| Collection mapping | MongoDB collection → Neovex table | Direct mapping; metadata collections handled explicitly |
+| `_id` mapping | MongoDB ObjectId → Nimbus DocumentId with typed scalar tag | Preserves MongoDB identity semantics while using shared key infrastructure |
+| Database mapping | MongoDB database → Nimbus tenant | Natural mapping; one tenant per logical database |
+| Collection mapping | MongoDB collection → Nimbus table | Direct mapping; metadata collections handled explicitly |
 | Auth | SCRAM-SHA-256 | Standard MongoDB auth mechanism; maps to existing server auth/tenant identity |
-| Topology reporting | Standalone | Neovex is a single-node server; report as standalone to avoid driver confusion |
+| Topology reporting | Standalone | Nimbus is a single-node server; report as standalone to avoid driver confusion |
 | Spec tests | Unified test runner consuming YAML | Authoritative coverage; same approach as the official Rust driver |
 | Error mapping | MongoDB error codes over shared taxonomy | Preserves driver expectations for error handling |
 | Cursor model | Connection-scoped with idle timeout | Matches MongoDB server behavior; cleanup on disconnect |
@@ -849,7 +849,7 @@ deterministic seed-based scenarios for:
 
 **R1: BSON type fidelity through JSON storage (Critical, M0).** BSON has
 richer types than JSON. ObjectId, Binary, Decimal128, regex, and timestamp
-must survive Neovex's JSON-based document storage and roundtrip correctly.
+must survive Nimbus's JSON-based document storage and roundtrip correctly.
 Mitigation: use the typed scalar metadata infrastructure proven by the Firebase
 adapter for timestamp and special-double preservation; extend it for
 MongoDB-specific types.
@@ -861,7 +861,7 @@ explicit errors for unsupported operators, and use spec test coverage as the
 correctness gate.
 
 **R3: TCP listener integration (High, M0).** Adding a TCP listener alongside
-axum is architecturally new for Neovex. Mitigation: use `tokio::net::TcpListener`
+axum is architecturally new for Nimbus. Mitigation: use `tokio::net::TcpListener`
 directly; the listener spawns per-connection tasks that share the existing
 `Service` instance through the same `Arc` pattern as HTTP handlers.
 
@@ -886,8 +886,8 @@ per connection, configurable idle timeout, cleanup on disconnect.
 
 **R8: `_id` type richness versus DocumentId string constraint (Medium, M0-M1).**
 MongoDB `_id` can be any BSON type (ObjectId, integer, embedded document,
-array, binary, etc.). Neovex `DocumentId` is a validated UTF-8 string with max
-1500 bytes, no `/`, and no NUL (`crates/neovex-core/src/types.rs`
+array, binary, etc.). Nimbus `DocumentId` is a validated UTF-8 string with max
+1500 bytes, no `/`, and no NUL (`crates/nimbus-core/src/types.rs`
 `validate_document_key`). ObjectIds serialize cleanly as 24-char hex strings.
 Integer and string `_id` values map naturally. Compound `_id` values (embedded
 documents, arrays) need a canonical deterministic string encoding that fits
@@ -913,7 +913,7 @@ multiple drivers.
 | M3: Basic aggregation pipeline | `done` | 6-8 context windows | M1 is `done` | Supported aggregation stages execute correctly; spec tests pass for supported stages |
 | M4: Transactions and sessions | `done` | 4-6 context windows | M1 is `done` | Transaction spec tests pass; Rust driver completes multi-document transactions |
 | M5: Change streams | `done` | 4-6 context windows | M1 is `done` | Change stream events emit correctly; resume works after reconnect |
-| M6: `@neovex/mongodb` SDK | `done` | 5-7 context windows | M1 is `done` | Package connects official Node.js driver to Neovex; selftest passes |
+| M6: `@nimbus/mongodb` SDK | `done` | 5-7 context windows | M1 is `done` | Package connects official Node.js driver to Nimbus; selftest passes |
 | M7: Spec test integration | `done` | 6-10 context windows | M1 is `done` | Unified test runner consumes CRUD/BSON/index/transaction spec files with explicit classification |
 
 ## Roadmap Items
@@ -927,8 +927,8 @@ update loaded at once, split it before starting.
 | Item | Status | Hard deps | Completion gate | Verification evidence |
 |------|--------|-----------|-----------------|-----------------------|
 | M0.1 TCP listener scaffold and OP_MSG frame parser | `done` | none | TCP listener accepts connections, reads OP_MSG frames, dispatches to a stub command handler, and writes OP_MSG response frames. Legacy opcodes are rejected with appropriate error. | Focused tests for frame parsing, header validation, section kinds, malformed frame rejection, and legacy opcode rejection. |
-| M0.2 BSON value bridge and typed scalar extension | `done` | M0.1 | BSON documents convert to/from Neovex JSON documents via the typed scalar metadata infrastructure. ObjectId, Binary, Decimal128, regex, timestamp, MinKey, MaxKey roundtrip through storage. `_id` auto-generation produces valid ObjectIds. | BSON corpus spec tests pass. Roundtrip tests for every BSON type. ObjectId generation and parsing tests. |
-| M0.3 MongoDB command dispatch and error mapping | `done` | M0.1 | Commands dispatch by name from OP_MSG body documents. Unknown commands return `{ ok: 0, errmsg, code: 59, codeName: "CommandNotFound" }`. Error responses use correct MongoDB error code format. | Tests for known/unknown command dispatch, error envelope format, and error code mapping from shared Neovex errors. |
+| M0.2 BSON value bridge and typed scalar extension | `done` | M0.1 | BSON documents convert to/from Nimbus JSON documents via the typed scalar metadata infrastructure. ObjectId, Binary, Decimal128, regex, timestamp, MinKey, MaxKey roundtrip through storage. `_id` auto-generation produces valid ObjectIds. | BSON corpus spec tests pass. Roundtrip tests for every BSON type. ObjectId generation and parsing tests. |
+| M0.3 MongoDB command dispatch and error mapping | `done` | M0.1 | Commands dispatch by name from OP_MSG body documents. Unknown commands return `{ ok: 0, errmsg, code: 59, codeName: "CommandNotFound" }`. Error responses use correct MongoDB error code format. | Tests for known/unknown command dispatch, error envelope format, and error code mapping from shared Nimbus errors. |
 | M0.4 Handshake commands (hello/isMaster/ping/buildInfo) | `done` | M0.3 | `hello` and `isMaster` return topology, version, and feature fields that satisfy official driver handshake requirements. `ping` returns `{ ok: 1 }`. `buildInfo` returns version info. | `mongosh` connects and completes handshake. Rust driver connects without errors. Focused tests for all required `hello` response fields. |
 | M0.5 SCRAM-SHA-256 authentication | `done` | M0.4 | Connection-level SCRAM-SHA-256 authentication succeeds for configured credentials. Auth failure returns code 18 (AuthenticationFailed). | `mongosh --authenticationMechanism SCRAM-SHA-256` authenticates. Rust driver authenticates. Bad credentials are rejected. |
 | M0.6 Administrative commands and MongoDB route family | `done` | M0.4 | `whatsmyuri`, `getParameter`, `serverStatus`, `connectionStatus` return appropriate responses. MongoDB TCP listener is classified in server security policy. | Focused tests for each admin command response. Security classification tests for the MongoDB listener. |
@@ -950,7 +950,7 @@ update loaded at once, split it before starting.
 
 | Item | Status | Hard deps | Completion gate | Verification evidence |
 |------|--------|-----------|-----------------|-----------------------|
-| M2.1 createIndexes and dropIndexes | `done` | M1 done | `createIndexes` maps compound/unique/partial/TTL index definitions to Neovex schema indexes. `dropIndexes` removes them. `listIndexes` enumerates them. | Index management spec tests pass. Tests for compound, unique, partial filter, TTL, and default `_id` index. |
+| M2.1 createIndexes and dropIndexes | `done` | M1 done | `createIndexes` maps compound/unique/partial/TTL index definitions to Nimbus schema indexes. `dropIndexes` removes them. `listIndexes` enumerates them. | Index management spec tests pass. Tests for compound, unique, partial filter, TTL, and default `_id` index. |
 | M2.2 Collection lifecycle (create/drop/list) | `done` | M1 done | `create` creates tables, `drop` drops them, `listCollections` enumerates them, `listDatabases` enumerates tenants. | Collection management spec tests pass. Tests for create/drop/list/listDatabases with filter and nameOnly options. |
 
 ### M3 Work Queue: Basic Aggregation Pipeline
@@ -979,8 +979,8 @@ update loaded at once, split it before starting.
 
 | Item | Status | Hard deps | Completion gate | Verification evidence |
 |------|--------|-----------|-----------------|-----------------------|
-| M6.1 Package scaffold | `done` | M1 done | `packages/mongodb` builds as `@neovex/mongodb` with ESM/CJS/types. | Build, typecheck, export map tests. |
-| M6.2 Connection helpers and driver integration | `done` | M6.1 | Connection string builder, official `mongodb` driver integration, Neovex-specific configuration. | Selftest against local Neovex with CRUD, query, and change stream coverage. |
+| M6.1 Package scaffold | `done` | M1 done | `packages/mongodb` builds as `@nimbus/mongodb` with ESM/CJS/types. | Build, typecheck, export map tests. |
+| M6.2 Connection helpers and driver integration | `done` | M6.1 | Connection string builder, official `mongodb` driver integration, Nimbus-specific configuration. | Selftest against local Nimbus with CRUD, query, and change stream coverage. |
 
 ### M7 Work Queue: Spec Test Integration
 
@@ -1010,8 +1010,8 @@ update loaded at once, split it before starting.
 | `mongodb/mongo-rust-driver` (cloned) | `~/src/github.com/mongodb/mongo-rust-driver/` | Unified test runner reference (`driver/src/test/spec/unified_runner/`), 2,655 spec test files |
 | `FerretDB/FerretDB` (cloned) | `~/src/github.com/FerretDB/FerretDB/` | Implementation patterns (`internal/handler/msg_*.go`), dual-target test approach (`integration/*_compat_test.go`) |
 | `bson` Rust crate | crates.io (`mongodb/bson-rust` on GitHub) | BSON serialization/deserialization; MongoDB-maintained, v3.1.0+ |
-| Firebase adapter (completed) | `crates/neovex-server/src/adapters/firebase/` | Architecture pattern, typed scalar metadata, shared primitive usage |
-| Convex adapter (existing) | `crates/neovex-server/src/adapters/convex/` | Adapter registration pattern, AppState sharing |
+| Firebase adapter (completed) | `crates/nimbus-server/src/adapters/firebase/` | Architecture pattern, typed scalar metadata, shared primitive usage |
+| Convex adapter (existing) | `crates/nimbus-server/src/adapters/convex/` | Adapter registration pattern, AppState sharing |
 | Runtime-capability adapter boundary plan (completed baseline) | `docs/plans/archive/runtime-capability-adapter-boundary-plan.md` | Latest adapter/runtime ownership baseline, shared runtime-host capability posture |
 
 ## Execution Log
@@ -1019,34 +1019,34 @@ update loaded at once, split it before starting.
 | Date | Item | Status | Description | Verification |
 |------|------|--------|-------------|--------------|
 | — | — | — | Plan created | — |
-| 2026-04-26 | M0.1 | `done` | TCP listener scaffold, OP_MSG frame parser/serializer, stub command dispatch (ping), error mapping, connection state, ServeOptions integration. Files: `crates/neovex-server/src/adapters/mongodb/{mod,wire,error,connection,listener,commands/mod}.rs`, `crates/neovex-server/src/adapters/mod.rs`, `crates/neovex-server/src/lib.rs`. | `cargo test -p neovex-server -- mongodb`: 21 passed. `cargo fmt --all --check`: clean. `cargo check -p neovex-server`: clean. |
-| 2026-04-26 | M0.2 | `done` | BSON value bridge with bson crate v3.1, typed scalar extensions (ObjectId, Binary, Decimal128, Regex, MongoTimestamp, MinKey, MaxKey, JavaScriptCode) in neovex-core, bidirectional BSON↔Neovex document conversion, _id/DocumentId mapping with ObjectId auto-generation, Firebase adapter wildcard arms for new variants. Files: `crates/neovex-core/src/typed_scalar.rs`, `crates/neovex-server/src/adapters/mongodb/bson_bridge.rs`, `crates/neovex-server/src/adapters/mongodb/mod.rs`, `crates/neovex-server/src/adapters/firebase/{serializer,grpc/write_stream}.rs`, `Cargo.toml`, `crates/neovex-server/Cargo.toml`. | `cargo test -p neovex-server -- mongodb`: 40 passed (21 wire + 19 bridge). `cargo test -p neovex-core -- typed_scalar`: 13 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M0.3 | `done` | Refactored command dispatch and error module to use `bson::Document` instead of raw bytes. error.rs: replaced hand-rolled BSON builder with `bson::doc!`, added `From<neovex_core::Error>` mapping (NotFound→26, AlreadyExists→48, InvalidInput→2, PermissionDenied→13, Conflict→112, Internal→1). commands/mod.rs: dispatch signature now `(&str, &bson::Document) → Result<bson::Document, MongoError>`, extract_command_name uses `doc.keys().next()`. listener.rs: deserializes wire bytes to `bson::Document` at boundary, serializes response doc back to bytes. Files: `crates/neovex-server/src/adapters/mongodb/{error,commands/mod,listener}.rs`. | `cargo test -p neovex-server -- mongodb`: 46 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M0.4 | `done` | Handshake commands: `hello` (isWritablePrimary, helloOk, saslSupportedMechs), `isMaster`/`ismaster` (ismaster, helloOk), `buildInfo` (version 7.0.0, versionArray, wire version 21), `ping` (ok:1). Connection state now tracks connection_id. Dispatch passes ConnectionState to handlers. Files: `crates/neovex-server/src/adapters/mongodb/{commands/handshake,commands/mod,connection,listener}.rs`. | `cargo test -p neovex-server -- mongodb`: 56 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M0.6 | `done` | Administrative commands: `whatsmyuri` (client address echo), `getParameter` (null stubs with showDetails support), `serverStatus` (version/pid/connections), `connectionStatus` (auth state), `getCmdLineOpts`, `getFreeMonitoringStatus`, `getLog` (global/startupWarnings). Files: `crates/neovex-server/src/adapters/mongodb/{commands/admin,commands/mod}.rs`. | `cargo test -p neovex-server -- mongodb`: 66 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M0.5 | `done` | SCRAM-SHA-256 authentication: `saslStart`/`saslContinue` commands, full SCRAM exchange with PBKDF2 key derivation, HMAC-SHA-256, client proof verification, server signature for mutual auth. ConnectionState tracks ScramState, auth_user. Workspace deps: hmac 0.12, pbkdf2 0.12. Files: `crates/neovex-server/src/adapters/mongodb/{auth,connection,commands/mod,listener,mod}.rs`, `Cargo.toml`, `crates/neovex-server/Cargo.toml`. | `cargo test -p neovex-server -- mongodb`: 73 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M1.1 | `done` | Insert command: single/batch/ordered/unordered insert via `AtomicWrite::Set` with `WriteSetMode::Create`, auto-generates ObjectId when `_id` missing, DuplicateKey error (11000) for existing docs, MongoDB db→tenant mapping with auto-creation, `Arc<Service>` threaded through listener→dispatch→handlers. Files: `crates/neovex-server/src/adapters/mongodb/{commands/crud,commands/mod,listener,error}.rs`. | `cargo test -p neovex-server -- mongodb`: 81 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M1.2 | `done` | Find command: `find` translates MongoDB filter documents (`$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` and implicit equality) into Neovex `Query` with `Filter`/`FilterOp`. Sort (single field asc/desc via `OrderBy`), limit, skip, batchSize, projection (inclusion/exclusion with `_id` control). Returns MongoDB cursor format `{ cursor: { firstBatch, id: 0, ns }, ok: 1.0 }`. Files: `crates/neovex-server/src/adapters/mongodb/{commands/crud,commands/mod}.rs`. | `cargo test -p neovex-server -- mongodb`: 102 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M1.3 | `done` | Cursor lifecycle: `CursorStore` in `ConnectionState` holds pre-projected `bson::Document` results. `find` creates cursor when results exceed batchSize, returns cursor ID in firstBatch response. `getMore` iterates remaining batches with configurable batchSize. `killCursors` releases specific cursors with killed/notFound reporting. `kill_all` on connection cleanup. Files: `crates/neovex-server/src/adapters/mongodb/{commands/cursor,commands/mod,connection}.rs`. | `cargo test -p neovex-server -- mongodb`: 114 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M1.4a | `done` | Update command: replacement (Set/Overwrite), `$set` (Patch), `$unset` (null patch), `$rename` (null+set), `$setOnInsert` (upsert only), `$currentDate` (ServerTimestamp), `$inc` (Increment), `$min`/`$max` (Minimum/Maximum). Single/multi update, upsert with filter-field merge. `_id` direct lookup via `get_document_with_principal` for `_id` equality filters (engine stores `_id` separately from fields). Shared `query_documents` helper also used by `find`. Files: `crates/neovex-server/src/adapters/mongodb/{commands/crud,commands/mod}.rs`. | `cargo test -p neovex-server -- mongodb`: 126 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M1.4b | `done` | Numeric/array/bitwise update operators: `$mul` (read-modify-write via `bson_to_f64`, missing field → 0), `$push` (with `$each`, read-modify-write append), `$addToSet` (via `AppendMissingElements` transform, with `$each`), `$pull` (via `RemoveAllFromArray` transform), `$pullAll` (via `RemoveAllFromArray`), `$pop` (read-modify-write first/last), `$bit` (and/or/xor read-modify-write), `$rename` fixed to copy field values via current_doc. Split `crud.rs` (2196 lines) into `crud/mod.rs` (1052 lines) + `crud/tests.rs` (1143 lines) per modularity thresholds. Files: `crates/neovex-server/src/adapters/mongodb/commands/crud/{mod,tests}.rs`. | `cargo test -p neovex-server -- mongodb`: 140 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M1.5 | `done` | Delete command: single delete (limit=1), multi delete (limit=0), filter-based matching via shared `query_documents` helper, `AtomicWrite::Delete` with `missing_ok: true`. Wired `"delete"` into command dispatch. Files: `crates/neovex-server/src/adapters/mongodb/commands/crud/{mod,tests}.rs`, `commands/mod.rs`. | `cargo test -p neovex-server -- mongodb`: 148 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M1.6 | `done` | findAndModify command: update mode (returns old by default, `new: true` returns updated), remove mode (returns deleted document), upsert mode (creates if missing), replacement mode, `fields` projection support. Case-insensitive dispatch (`findAndModify`/`findandmodify`). Shared `query_documents`/`build_operator_write`/`build_replacement_write`/`apply_projection` reuse. Files: `crates/neovex-server/src/adapters/mongodb/commands/crud/{mod,tests}.rs`, `commands/mod.rs`. | `cargo test -p neovex-server -- mongodb`: 155 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M1.7 | `done` | Count and distinct commands: `count` with optional filter/skip/limit returning `{ n, ok }`, `distinct` with key field extraction including nested dot-path resolution, array unwinding for distinct values, null handling, duplicate deduplication, filter support. `resolve_field_path` helper for nested field access. Wired `count`/`distinct` into command dispatch. Files: `crates/neovex-server/src/adapters/mongodb/commands/crud/{mod,tests}.rs`, `commands/mod.rs`. | `cargo test -p neovex-server -- mongodb`: 172 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M2.1 | `done` | Index management commands: `createIndexes` adds `IndexDefinition` entries to `TableSchema` via `set_table_schema`, auto-generates index name from key fields, deduplicates by name. `dropIndexes` removes by name or `*` for all. `listIndexes` returns `_id_` default index plus user indexes in cursor format. Case-insensitive dispatch for all three. Files: `crates/neovex-server/src/adapters/mongodb/commands/{index,mod}.rs`. | `cargo test -p neovex-server -- mongodb`: 192 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M2.2 | `done` | Collection lifecycle: `create` creates empty `TableSchema` (rejects duplicates with code 48), `drop` checks schema existence before delete (returns code 26 for not-found), `listCollections` via `get_schema` with nameOnly and name filter options, `listDatabases` via `list_tenants`. CRUD insert path now calls `ensure_table_schema` to auto-create schema entries so `listCollections` discovers implicit tables. Files: `crates/neovex-server/src/adapters/mongodb/commands/{collection,mod}.rs`, `crud/mod.rs`. | `cargo test -p neovex-server -- mongodb`: 192 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M3.1-M3.3 | `done` | Full aggregation pipeline: `aggregate` command with pipeline executor supporting `$match` (in-memory BSON filter with comparison operators), `$sort` (numeric/string, asc/desc), `$limit`, `$skip`, `$project` (via shared `apply_projection`), `$addFields` (literal and field-ref expressions), `$count`, `$group` (with `$sum`, `$avg`, `$min`, `$max`, `$first`, `$last`, `$push`, `$addToSet` accumulators), `$unwind` (with `preserveNullAndEmptyArrays` and `includeArrayIndex`). Cursor-based results with batchSize. Unsupported stages return explicit errors. Files: `crates/neovex-server/src/adapters/mongodb/commands/aggregation/{mod,tests}.rs`, `commands/mod.rs`, `crud/mod.rs` (`apply_projection` made pub). | `cargo test -p neovex-server -- mongodb`: 215 passed. `cargo fmt --all --check`: clean. No warnings. |
-| 2026-04-26 | M4.1-M4.2 | `done` | Session lifecycle and multi-document transactions: `startSession` creates logical sessions with UUID v4 `lsid`, `endSessions` destroys sessions (auto-aborts active transactions), `refreshSessions` accepts keepalive. `SessionStore` on `ConnectionState` maps MongoDB `lsid` to Neovex `TransactionSessionToken`. `handle_start_transaction` intercepts `startTransaction: true` flag in dispatch to begin engine transaction sessions via `Service::begin_transaction_session`. `commitTransaction` commits via `Service::commit_transaction_session`, `abortTransaction` rolls back via `Service::rollback_transaction_session`. MongoDB error codes: NoSuchTransaction (251), WriteConflict (112). Files: `crates/neovex-server/src/adapters/mongodb/commands/{session,mod}.rs`, `connection.rs`. | `cargo test -p neovex-server -- mongodb`: 232 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M5.1 | `done` | Change stream cursor and event mapping: `$changeStream` detection as first aggregation pipeline stage, tailable cursor creation via Neovex subscription infrastructure (`Service::subscribe_with_principal`), `ChangeStreamCursor` holds `mpsc::Receiver<SubscriptionUpdate>` with `SubscriptionCleanupHandle`. `ChangeStreamStore` on `ConnectionState` maps cursor IDs to change stream cursors. `snapshot_to_change_events` maps `SubscriptionSnapshotDiff` to MongoDB change events (insert/update/delete) with `_id` resume tokens, `ns`, `documentKey`, `fullDocument`, `clusterTime`, `updateDescription`. Async `dispatch()` enables `getMore` to await subscription events with `tokio::time::timeout(maxAwaitTimeMS)`. `killCursors` cleans up change stream cursors. Files: `crates/neovex-server/src/adapters/mongodb/commands/{change_stream,mod,aggregation/mod}.rs`, `connection.rs`, `listener.rs`. | `cargo test -p neovex-server -- mongodb`: 241 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M5.2 | `done` | Resume tokens and stream recovery: `ResumeToken` struct with `parse`/`to_cluster_time` for decoding opaque `_data` strings (format: `{time:010}_{increment:010}_{document_id}`). `extract_resume_option` parses `resumeAfter` (preferred) or `startAfter` from `$changeStream` stage options. `filter_events_after_resume` filters out events at or before the resume position by comparing cluster time. Resume token stored in `ChangeStreamCursor.resume_after` and cleared after first batch of new events passes through. `invalidate_event` generates collection-drop invalidation events. `get_more_with_change_stream` in `mod.rs` applies resume filtering on awaited events. Removed duplicate `change_stream_events_from_diff` from `mod.rs` in favor of `snapshot_to_change_events_pub`. Files: `crates/neovex-server/src/adapters/mongodb/commands/{change_stream,mod,aggregation/mod}.rs`. | `cargo test -p neovex-server -- mongodb`: 255 passed. `cargo fmt --all --check`: clean. |
-| 2026-04-26 | M6.1 | `done` | Package scaffold: `packages/mongodb` as `@neovex/mongodb` with ESM bundle via esbuild, TypeScript strict typecheck, `mongodb` driver v6 dependency. Exports: `connectNeovex` (async connection helper), `buildConnectionString` (URI builder with auth, host, port, database support, `directConnection=true`). Selftest validates package.json exports, ESM bundle build, connection string builder (default, custom, auth, special char encoding), and typecheck. Added to root npm workspace. Files: `packages/mongodb/{package.json,tsconfig.json,src/{index,connect,connection-string}.ts,src/selftest.mjs}`, root `package.json`. | `npm run test --workspace packages/mongodb`: all passed (exports, build, connection string, typecheck). |
-| 2026-04-26 | M6.2 | `done` | Driver integration and smoke tests: `connectNeovex` connects the official `mongodb` v6 Node.js driver to Neovex via `MongoClient`. Selftest enhanced with `--smoke-port <port>` flag for integration testing against a running Neovex MongoDB listener. Smoke tests cover: CRUD (insertOne, insertMany, findOne, find+sort, updateOne with $set, deleteOne, countDocuments, distinct), aggregation ($group with $sum, $match, $count, $sort). Non-smoke default path remains dependency-free (build, connection strings, typecheck). Files: `packages/mongodb/src/{connect.ts,selftest.mjs}`. | `npm run test --workspace packages/mongodb`: all passed. `npm run typecheck`: all workspaces pass. |
-| 2026-04-26 | M7.1 | `done` | Unified test runner foundation: YAML spec test parser (`parse_spec_file`) reads MongoDB Unified Test Format v1.28.0 files. Parses `schemaVersion`, `createEntities` (client/database/collection/session), `initialData` (database+collection+documents), `tests` (description, operations, skipReason, runOnRequirements), and `operations` (name, object, arguments, expectResult, expectError). `yaml_value_to_bson` converts YAML scalars/sequences/mappings to BSON types. `classify_operations` classifies tests as supported/unsupported based on operation names. CRUD classification report: 189 files, 0 parse errors, 536 tests, 320 supported (59.7%), 216 unsupported. Files: `crates/neovex-server/tests/mongodb_spec/{main,runner}.rs`, `crates/neovex-server/Cargo.toml` (added `serde_yaml` dev dep). | `cargo test -p neovex-server --test mongodb_spec`: 6 passed. All 189 CRUD YAML files parse cleanly. |
-| 2026-04-26 | M7.2 | `done` | CRUD spec test corpus execution via wire protocol. Built `WireClient` (TCP OP_MSG framing: command, insert, find with getMore cursor iteration, update, delete, aggregate, drop_collection) and `SpecTestFixture` (ServiceFixture + TcpListener + run_listener). `execute_spec_file` resolves entity map (client/database/collection), seeds initial data, dispatches operations, verifies results with BSON deep-match (handles $$-prefixed special matchers, cross-type int comparison). Supports: find, insertOne, insertMany, updateOne, updateMany, deleteOne, deleteMany, aggregate, countDocuments, distinct. Core CRUD execution report: 9 files, 25 pass / 6 fail / 0 skip (80.6% pass rate). Failures are multi-batch find scenarios with empty result sets (cursor pagination edge case). Files: `crates/neovex-server/tests/mongodb_spec/{executor,wire_client,main}.rs`. | `cargo test -p neovex-server --test mongodb_spec`: 8 passed. |
-| 2026-04-26 | M7.3 | `done` | BSON corpus roundtrip and handshake wire protocol tests. BSON corpus: parsed 31 JSON corpus files (728 valid tests, 75 decode error tests). Bridge roundtrip: 695/728 pass (95.5%). 33 failures are all in deprecated types (JavaScriptCodeWithScope scope dropped, DBPointer, Symbol→String, Undefined→Null), Int64-in-Int32-range compression, DBRef key reordering, and dollar/dotted key ordering — all known and acceptable. Decode errors: 75/75 correctly rejected. Handshake: 4 wire protocol tests — hello (validates isWritablePrimary, helloOk, maxWireVersion, connectionId, readOnly, all size limits), isMaster (validates ismaster flag), buildInfo (validates version, versionArray, bits), saslSupportedMechs (validates SCRAM-SHA-256 response). Files: `crates/neovex-server/tests/mongodb_spec/{bson_corpus,main}.rs`. | `cargo test -p neovex-server --test mongodb_spec`: 13 passed. |
-| 2026-04-26 | M7.4 | `done` | Index, collection, and admin wire protocol tests. Collection: create+listCollections (verifies collection appears in listing), create+drop+listCollections (verifies collection removed), listDatabases (verifies tenant appears after insert). Index: listIndexes (verifies implicit _id_ index, error 26 for nonexistent collection). Admin: serverStatus (version, process, connections), whatsmyuri (client address), getLog (star returns names, global returns empty log). Note: createIndexes/dropIndexes require pre-declared field schemas in current model — already covered by unit tests; wire test covers listIndexes path. Files: `crates/neovex-server/tests/mongodb_spec/main.rs`. | `cargo test -p neovex-server --test mongodb_spec`: 20 passed. |
-| 2026-04-27 | M7.5 | `done` | Transaction and change stream wire protocol tests. Transaction: startSession returns UUID lsid, startTransaction+insert+commitTransaction (committed doc visible via find), startTransaction+insert+abortTransaction (abort command succeeds). Change stream: $changeStream aggregate returns non-zero cursor ID and empty firstBatch (correct for awaitable cursor). Added `start_session` method to WireClient. Note: CRUD operations within transactions are not yet transaction-isolated in the wire path (inserts commit immediately) — session management commands work, full isolation is a future enhancement. Files: `crates/neovex-server/tests/mongodb_spec/{wire_client,main}.rs`. | `cargo test -p neovex-server --test mongodb_spec`: 23 passed. |
-| 2026-04-27 | M7.6 | `done` | Verification harness integration. Created `mongodb_wire` test module in server crate with 2 deterministic test cases: `mongodb-wire-crud-roundtrip` (insert+find roundtrip over OP_MSG framing) and `mongodb-wire-handshake` (hello command returns isWritablePrimary, helloOk, maxBsonObjectSize, maxWireVersion, connectionId). Both cases registered in PR and nightly verification harness arrays (bumped from 5 to 7 cases each). Runner functions use `tokio::runtime::Builder::new_current_thread` matching the existing harness pattern. Files: `crates/neovex-server/src/tests/mongodb_wire.rs`, `crates/neovex-server/src/tests/verification_harness.rs`, `crates/neovex-server/src/tests.rs`. | `cargo test -p neovex-server verification_harness_pr -- --include-ignored`: all 7 PR cases pass including both MongoDB cases. |
+| 2026-04-26 | M0.1 | `done` | TCP listener scaffold, OP_MSG frame parser/serializer, stub command dispatch (ping), error mapping, connection state, ServeOptions integration. Files: `crates/nimbus-server/src/adapters/mongodb/{mod,wire,error,connection,listener,commands/mod}.rs`, `crates/nimbus-server/src/adapters/mod.rs`, `crates/nimbus-server/src/lib.rs`. | `cargo test -p nimbus-server -- mongodb`: 21 passed. `cargo fmt --all --check`: clean. `cargo check -p nimbus-server`: clean. |
+| 2026-04-26 | M0.2 | `done` | BSON value bridge with bson crate v3.1, typed scalar extensions (ObjectId, Binary, Decimal128, Regex, MongoTimestamp, MinKey, MaxKey, JavaScriptCode) in nimbus-core, bidirectional BSON↔Nimbus document conversion, _id/DocumentId mapping with ObjectId auto-generation, Firebase adapter wildcard arms for new variants. Files: `crates/nimbus-core/src/typed_scalar.rs`, `crates/nimbus-server/src/adapters/mongodb/bson_bridge.rs`, `crates/nimbus-server/src/adapters/mongodb/mod.rs`, `crates/nimbus-server/src/adapters/firebase/{serializer,grpc/write_stream}.rs`, `Cargo.toml`, `crates/nimbus-server/Cargo.toml`. | `cargo test -p nimbus-server -- mongodb`: 40 passed (21 wire + 19 bridge). `cargo test -p nimbus-core -- typed_scalar`: 13 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M0.3 | `done` | Refactored command dispatch and error module to use `bson::Document` instead of raw bytes. error.rs: replaced hand-rolled BSON builder with `bson::doc!`, added `From<nimbus_core::Error>` mapping (NotFound→26, AlreadyExists→48, InvalidInput→2, PermissionDenied→13, Conflict→112, Internal→1). commands/mod.rs: dispatch signature now `(&str, &bson::Document) → Result<bson::Document, MongoError>`, extract_command_name uses `doc.keys().next()`. listener.rs: deserializes wire bytes to `bson::Document` at boundary, serializes response doc back to bytes. Files: `crates/nimbus-server/src/adapters/mongodb/{error,commands/mod,listener}.rs`. | `cargo test -p nimbus-server -- mongodb`: 46 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M0.4 | `done` | Handshake commands: `hello` (isWritablePrimary, helloOk, saslSupportedMechs), `isMaster`/`ismaster` (ismaster, helloOk), `buildInfo` (version 7.0.0, versionArray, wire version 21), `ping` (ok:1). Connection state now tracks connection_id. Dispatch passes ConnectionState to handlers. Files: `crates/nimbus-server/src/adapters/mongodb/{commands/handshake,commands/mod,connection,listener}.rs`. | `cargo test -p nimbus-server -- mongodb`: 56 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M0.6 | `done` | Administrative commands: `whatsmyuri` (client address echo), `getParameter` (null stubs with showDetails support), `serverStatus` (version/pid/connections), `connectionStatus` (auth state), `getCmdLineOpts`, `getFreeMonitoringStatus`, `getLog` (global/startupWarnings). Files: `crates/nimbus-server/src/adapters/mongodb/{commands/admin,commands/mod}.rs`. | `cargo test -p nimbus-server -- mongodb`: 66 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M0.5 | `done` | SCRAM-SHA-256 authentication: `saslStart`/`saslContinue` commands, full SCRAM exchange with PBKDF2 key derivation, HMAC-SHA-256, client proof verification, server signature for mutual auth. ConnectionState tracks ScramState, auth_user. Workspace deps: hmac 0.12, pbkdf2 0.12. Files: `crates/nimbus-server/src/adapters/mongodb/{auth,connection,commands/mod,listener,mod}.rs`, `Cargo.toml`, `crates/nimbus-server/Cargo.toml`. | `cargo test -p nimbus-server -- mongodb`: 73 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M1.1 | `done` | Insert command: single/batch/ordered/unordered insert via `AtomicWrite::Set` with `WriteSetMode::Create`, auto-generates ObjectId when `_id` missing, DuplicateKey error (11000) for existing docs, MongoDB db→tenant mapping with auto-creation, `Arc<Service>` threaded through listener→dispatch→handlers. Files: `crates/nimbus-server/src/adapters/mongodb/{commands/crud,commands/mod,listener,error}.rs`. | `cargo test -p nimbus-server -- mongodb`: 81 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M1.2 | `done` | Find command: `find` translates MongoDB filter documents (`$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` and implicit equality) into Nimbus `Query` with `Filter`/`FilterOp`. Sort (single field asc/desc via `OrderBy`), limit, skip, batchSize, projection (inclusion/exclusion with `_id` control). Returns MongoDB cursor format `{ cursor: { firstBatch, id: 0, ns }, ok: 1.0 }`. Files: `crates/nimbus-server/src/adapters/mongodb/{commands/crud,commands/mod}.rs`. | `cargo test -p nimbus-server -- mongodb`: 102 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M1.3 | `done` | Cursor lifecycle: `CursorStore` in `ConnectionState` holds pre-projected `bson::Document` results. `find` creates cursor when results exceed batchSize, returns cursor ID in firstBatch response. `getMore` iterates remaining batches with configurable batchSize. `killCursors` releases specific cursors with killed/notFound reporting. `kill_all` on connection cleanup. Files: `crates/nimbus-server/src/adapters/mongodb/{commands/cursor,commands/mod,connection}.rs`. | `cargo test -p nimbus-server -- mongodb`: 114 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M1.4a | `done` | Update command: replacement (Set/Overwrite), `$set` (Patch), `$unset` (null patch), `$rename` (null+set), `$setOnInsert` (upsert only), `$currentDate` (ServerTimestamp), `$inc` (Increment), `$min`/`$max` (Minimum/Maximum). Single/multi update, upsert with filter-field merge. `_id` direct lookup via `get_document_with_principal` for `_id` equality filters (engine stores `_id` separately from fields). Shared `query_documents` helper also used by `find`. Files: `crates/nimbus-server/src/adapters/mongodb/{commands/crud,commands/mod}.rs`. | `cargo test -p nimbus-server -- mongodb`: 126 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M1.4b | `done` | Numeric/array/bitwise update operators: `$mul` (read-modify-write via `bson_to_f64`, missing field → 0), `$push` (with `$each`, read-modify-write append), `$addToSet` (via `AppendMissingElements` transform, with `$each`), `$pull` (via `RemoveAllFromArray` transform), `$pullAll` (via `RemoveAllFromArray`), `$pop` (read-modify-write first/last), `$bit` (and/or/xor read-modify-write), `$rename` fixed to copy field values via current_doc. Split `crud.rs` (2196 lines) into `crud/mod.rs` (1052 lines) + `crud/tests.rs` (1143 lines) per modularity thresholds. Files: `crates/nimbus-server/src/adapters/mongodb/commands/crud/{mod,tests}.rs`. | `cargo test -p nimbus-server -- mongodb`: 140 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M1.5 | `done` | Delete command: single delete (limit=1), multi delete (limit=0), filter-based matching via shared `query_documents` helper, `AtomicWrite::Delete` with `missing_ok: true`. Wired `"delete"` into command dispatch. Files: `crates/nimbus-server/src/adapters/mongodb/commands/crud/{mod,tests}.rs`, `commands/mod.rs`. | `cargo test -p nimbus-server -- mongodb`: 148 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M1.6 | `done` | findAndModify command: update mode (returns old by default, `new: true` returns updated), remove mode (returns deleted document), upsert mode (creates if missing), replacement mode, `fields` projection support. Case-insensitive dispatch (`findAndModify`/`findandmodify`). Shared `query_documents`/`build_operator_write`/`build_replacement_write`/`apply_projection` reuse. Files: `crates/nimbus-server/src/adapters/mongodb/commands/crud/{mod,tests}.rs`, `commands/mod.rs`. | `cargo test -p nimbus-server -- mongodb`: 155 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M1.7 | `done` | Count and distinct commands: `count` with optional filter/skip/limit returning `{ n, ok }`, `distinct` with key field extraction including nested dot-path resolution, array unwinding for distinct values, null handling, duplicate deduplication, filter support. `resolve_field_path` helper for nested field access. Wired `count`/`distinct` into command dispatch. Files: `crates/nimbus-server/src/adapters/mongodb/commands/crud/{mod,tests}.rs`, `commands/mod.rs`. | `cargo test -p nimbus-server -- mongodb`: 172 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M2.1 | `done` | Index management commands: `createIndexes` adds `IndexDefinition` entries to `TableSchema` via `set_table_schema`, auto-generates index name from key fields, deduplicates by name. `dropIndexes` removes by name or `*` for all. `listIndexes` returns `_id_` default index plus user indexes in cursor format. Case-insensitive dispatch for all three. Files: `crates/nimbus-server/src/adapters/mongodb/commands/{index,mod}.rs`. | `cargo test -p nimbus-server -- mongodb`: 192 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M2.2 | `done` | Collection lifecycle: `create` creates empty `TableSchema` (rejects duplicates with code 48), `drop` checks schema existence before delete (returns code 26 for not-found), `listCollections` via `get_schema` with nameOnly and name filter options, `listDatabases` via `list_tenants`. CRUD insert path now calls `ensure_table_schema` to auto-create schema entries so `listCollections` discovers implicit tables. Files: `crates/nimbus-server/src/adapters/mongodb/commands/{collection,mod}.rs`, `crud/mod.rs`. | `cargo test -p nimbus-server -- mongodb`: 192 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M3.1-M3.3 | `done` | Full aggregation pipeline: `aggregate` command with pipeline executor supporting `$match` (in-memory BSON filter with comparison operators), `$sort` (numeric/string, asc/desc), `$limit`, `$skip`, `$project` (via shared `apply_projection`), `$addFields` (literal and field-ref expressions), `$count`, `$group` (with `$sum`, `$avg`, `$min`, `$max`, `$first`, `$last`, `$push`, `$addToSet` accumulators), `$unwind` (with `preserveNullAndEmptyArrays` and `includeArrayIndex`). Cursor-based results with batchSize. Unsupported stages return explicit errors. Files: `crates/nimbus-server/src/adapters/mongodb/commands/aggregation/{mod,tests}.rs`, `commands/mod.rs`, `crud/mod.rs` (`apply_projection` made pub). | `cargo test -p nimbus-server -- mongodb`: 215 passed. `cargo fmt --all --check`: clean. No warnings. |
+| 2026-04-26 | M4.1-M4.2 | `done` | Session lifecycle and multi-document transactions: `startSession` creates logical sessions with UUID v4 `lsid`, `endSessions` destroys sessions (auto-aborts active transactions), `refreshSessions` accepts keepalive. `SessionStore` on `ConnectionState` maps MongoDB `lsid` to Nimbus `TransactionSessionToken`. `handle_start_transaction` intercepts `startTransaction: true` flag in dispatch to begin engine transaction sessions via `Service::begin_transaction_session`. `commitTransaction` commits via `Service::commit_transaction_session`, `abortTransaction` rolls back via `Service::rollback_transaction_session`. MongoDB error codes: NoSuchTransaction (251), WriteConflict (112). Files: `crates/nimbus-server/src/adapters/mongodb/commands/{session,mod}.rs`, `connection.rs`. | `cargo test -p nimbus-server -- mongodb`: 232 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M5.1 | `done` | Change stream cursor and event mapping: `$changeStream` detection as first aggregation pipeline stage, tailable cursor creation via Nimbus subscription infrastructure (`Service::subscribe_with_principal`), `ChangeStreamCursor` holds `mpsc::Receiver<SubscriptionUpdate>` with `SubscriptionCleanupHandle`. `ChangeStreamStore` on `ConnectionState` maps cursor IDs to change stream cursors. `snapshot_to_change_events` maps `SubscriptionSnapshotDiff` to MongoDB change events (insert/update/delete) with `_id` resume tokens, `ns`, `documentKey`, `fullDocument`, `clusterTime`, `updateDescription`. Async `dispatch()` enables `getMore` to await subscription events with `tokio::time::timeout(maxAwaitTimeMS)`. `killCursors` cleans up change stream cursors. Files: `crates/nimbus-server/src/adapters/mongodb/commands/{change_stream,mod,aggregation/mod}.rs`, `connection.rs`, `listener.rs`. | `cargo test -p nimbus-server -- mongodb`: 241 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M5.2 | `done` | Resume tokens and stream recovery: `ResumeToken` struct with `parse`/`to_cluster_time` for decoding opaque `_data` strings (format: `{time:010}_{increment:010}_{document_id}`). `extract_resume_option` parses `resumeAfter` (preferred) or `startAfter` from `$changeStream` stage options. `filter_events_after_resume` filters out events at or before the resume position by comparing cluster time. Resume token stored in `ChangeStreamCursor.resume_after` and cleared after first batch of new events passes through. `invalidate_event` generates collection-drop invalidation events. `get_more_with_change_stream` in `mod.rs` applies resume filtering on awaited events. Removed duplicate `change_stream_events_from_diff` from `mod.rs` in favor of `snapshot_to_change_events_pub`. Files: `crates/nimbus-server/src/adapters/mongodb/commands/{change_stream,mod,aggregation/mod}.rs`. | `cargo test -p nimbus-server -- mongodb`: 255 passed. `cargo fmt --all --check`: clean. |
+| 2026-04-26 | M6.1 | `done` | Package scaffold: `packages/mongodb` as `@nimbus/mongodb` with ESM bundle via esbuild, TypeScript strict typecheck, `mongodb` driver v6 dependency. Exports: `connectNimbus` (async connection helper), `buildConnectionString` (URI builder with auth, host, port, database support, `directConnection=true`). Selftest validates package.json exports, ESM bundle build, connection string builder (default, custom, auth, special char encoding), and typecheck. Added to root npm workspace. Files: `packages/mongodb/{package.json,tsconfig.json,src/{index,connect,connection-string}.ts,src/selftest.mjs}`, root `package.json`. | `npm run test --workspace packages/mongodb`: all passed (exports, build, connection string, typecheck). |
+| 2026-04-26 | M6.2 | `done` | Driver integration and smoke tests: `connectNimbus` connects the official `mongodb` v6 Node.js driver to Nimbus via `MongoClient`. Selftest enhanced with `--smoke-port <port>` flag for integration testing against a running Nimbus MongoDB listener. Smoke tests cover: CRUD (insertOne, insertMany, findOne, find+sort, updateOne with $set, deleteOne, countDocuments, distinct), aggregation ($group with $sum, $match, $count, $sort). Non-smoke default path remains dependency-free (build, connection strings, typecheck). Files: `packages/mongodb/src/{connect.ts,selftest.mjs}`. | `npm run test --workspace packages/mongodb`: all passed. `npm run typecheck`: all workspaces pass. |
+| 2026-04-26 | M7.1 | `done` | Unified test runner foundation: YAML spec test parser (`parse_spec_file`) reads MongoDB Unified Test Format v1.28.0 files. Parses `schemaVersion`, `createEntities` (client/database/collection/session), `initialData` (database+collection+documents), `tests` (description, operations, skipReason, runOnRequirements), and `operations` (name, object, arguments, expectResult, expectError). `yaml_value_to_bson` converts YAML scalars/sequences/mappings to BSON types. `classify_operations` classifies tests as supported/unsupported based on operation names. CRUD classification report: 189 files, 0 parse errors, 536 tests, 320 supported (59.7%), 216 unsupported. Files: `crates/nimbus-server/tests/mongodb_spec/{main,runner}.rs`, `crates/nimbus-server/Cargo.toml` (added `serde_yaml` dev dep). | `cargo test -p nimbus-server --test mongodb_spec`: 6 passed. All 189 CRUD YAML files parse cleanly. |
+| 2026-04-26 | M7.2 | `done` | CRUD spec test corpus execution via wire protocol. Built `WireClient` (TCP OP_MSG framing: command, insert, find with getMore cursor iteration, update, delete, aggregate, drop_collection) and `SpecTestFixture` (ServiceFixture + TcpListener + run_listener). `execute_spec_file` resolves entity map (client/database/collection), seeds initial data, dispatches operations, verifies results with BSON deep-match (handles $$-prefixed special matchers, cross-type int comparison). Supports: find, insertOne, insertMany, updateOne, updateMany, deleteOne, deleteMany, aggregate, countDocuments, distinct. Core CRUD execution report: 9 files, 25 pass / 6 fail / 0 skip (80.6% pass rate). Failures are multi-batch find scenarios with empty result sets (cursor pagination edge case). Files: `crates/nimbus-server/tests/mongodb_spec/{executor,wire_client,main}.rs`. | `cargo test -p nimbus-server --test mongodb_spec`: 8 passed. |
+| 2026-04-26 | M7.3 | `done` | BSON corpus roundtrip and handshake wire protocol tests. BSON corpus: parsed 31 JSON corpus files (728 valid tests, 75 decode error tests). Bridge roundtrip: 695/728 pass (95.5%). 33 failures are all in deprecated types (JavaScriptCodeWithScope scope dropped, DBPointer, Symbol→String, Undefined→Null), Int64-in-Int32-range compression, DBRef key reordering, and dollar/dotted key ordering — all known and acceptable. Decode errors: 75/75 correctly rejected. Handshake: 4 wire protocol tests — hello (validates isWritablePrimary, helloOk, maxWireVersion, connectionId, readOnly, all size limits), isMaster (validates ismaster flag), buildInfo (validates version, versionArray, bits), saslSupportedMechs (validates SCRAM-SHA-256 response). Files: `crates/nimbus-server/tests/mongodb_spec/{bson_corpus,main}.rs`. | `cargo test -p nimbus-server --test mongodb_spec`: 13 passed. |
+| 2026-04-26 | M7.4 | `done` | Index, collection, and admin wire protocol tests. Collection: create+listCollections (verifies collection appears in listing), create+drop+listCollections (verifies collection removed), listDatabases (verifies tenant appears after insert). Index: listIndexes (verifies implicit _id_ index, error 26 for nonexistent collection). Admin: serverStatus (version, process, connections), whatsmyuri (client address), getLog (star returns names, global returns empty log). Note: createIndexes/dropIndexes require pre-declared field schemas in current model — already covered by unit tests; wire test covers listIndexes path. Files: `crates/nimbus-server/tests/mongodb_spec/main.rs`. | `cargo test -p nimbus-server --test mongodb_spec`: 20 passed. |
+| 2026-04-27 | M7.5 | `done` | Transaction and change stream wire protocol tests. Transaction: startSession returns UUID lsid, startTransaction+insert+commitTransaction (committed doc visible via find), startTransaction+insert+abortTransaction (abort command succeeds). Change stream: $changeStream aggregate returns non-zero cursor ID and empty firstBatch (correct for awaitable cursor). Added `start_session` method to WireClient. Note: CRUD operations within transactions are not yet transaction-isolated in the wire path (inserts commit immediately) — session management commands work, full isolation is a future enhancement. Files: `crates/nimbus-server/tests/mongodb_spec/{wire_client,main}.rs`. | `cargo test -p nimbus-server --test mongodb_spec`: 23 passed. |
+| 2026-04-27 | M7.6 | `done` | Verification harness integration. Created `mongodb_wire` test module in server crate with 2 deterministic test cases: `mongodb-wire-crud-roundtrip` (insert+find roundtrip over OP_MSG framing) and `mongodb-wire-handshake` (hello command returns isWritablePrimary, helloOk, maxBsonObjectSize, maxWireVersion, connectionId). Both cases registered in PR and nightly verification harness arrays (bumped from 5 to 7 cases each). Runner functions use `tokio::runtime::Builder::new_current_thread` matching the existing harness pattern. Files: `crates/nimbus-server/src/tests/mongodb_wire.rs`, `crates/nimbus-server/src/tests/verification_harness.rs`, `crates/nimbus-server/src/tests.rs`. | `cargo test -p nimbus-server verification_harness_pr -- --include-ignored`: all 7 PR cases pass including both MongoDB cases. |
 
 ## Known Limitations
 
@@ -1073,7 +1073,7 @@ failures from this and other deprecated types.
 nested documents with typed scalar values (e.g., `$date`, `$numberDecimal`),
 the inner typed metadata is preserved only at the top level. Deeply nested
 typed values may lose their extended-JSON metadata on roundtrip through the
-Neovex document model. This affects edge cases with multiple nesting levels
+Nimbus document model. This affects edge cases with multiple nesting levels
 of extended-JSON typed scalars.
 
 **M5: `$push`/`$pop` read-modify-write non-atomicity.** Array update
