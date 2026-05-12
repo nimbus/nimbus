@@ -1,0 +1,10 @@
+mode=packaged-binary
+status=passed
+started_at_utc=2026-05-12T07:00:11Z
+finished_at_utc=2026-05-12T07:00:14Z
+cwd=/home/runner/work/neovex/neovex
+runner_os=Linux
+runner_arch=ARM64
+github_job=build
+github_run_id=25718813353
+github_run_attempt=1

@@ -3,8 +3,8 @@
 This document is the stable architecture baseline for optional, enterprise-
 ready encryption at rest across Neovex-owned local persistence.
 
-Execution sequencing, rollout, and verification live in
-[`docs/plans/encryption-at-rest-plan.md`](../../plans/encryption-at-rest-plan.md).
+Execution sequencing, rollout, and verification closed in the archived
+[`docs/plans/archive/encryption-at-rest-plan.md`](../../plans/archive/encryption-at-rest-plan.md).
 This document owns the durable design goals, boundaries, and rationale.
 
 ---

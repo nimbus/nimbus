@@ -3,10 +3,6 @@
 This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
-- `docs/plans/encryption-at-rest-plan.md`
-  - canonical execution plan for optional, enterprise-ready encryption at
-    rest across Neovex-owned local persistence: embedded SQLite, retained
-    redb, the retained redb control plane, and local libsql replica caches
 - `docs/plans/system-tenant-api-plan.md`
   - canonical execution plan for the `_neovex` system tenant and management
     API: machine/service state persistence as documents, HTTP lifecycle

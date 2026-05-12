@@ -1,0 +1,10 @@
+repo=agentstation/neovex
+run_id=24905210213
+artifact_prefixes=sqlcipher-proof- sqlcipher-package-proof- 
+output_dir=/Users/jack/src/github.com/agentstation/neovex/docs/plans/research/sqlcipher-release-proof-24905210213
+artifact_count=4
+artifacts:
+  - sqlcipher-proof-x86_64-pc-windows-msvc
+  - sqlcipher-proof-aarch64-unknown-linux-gnu
+  - sqlcipher-proof-aarch64-apple-darwin
+  - sqlcipher-proof-x86_64-unknown-linux-gnu

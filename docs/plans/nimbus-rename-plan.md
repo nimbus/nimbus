@@ -470,7 +470,7 @@ Files to update (non-exhaustive):
 - `docs/plans/windows-machine-support-plan.md`
 - `docs/plans/distribution-plan.md`
 - `docs/plans/install-script-plan.md`
-- `docs/plans/encryption-at-rest-plan.md`
+- `docs/plans/archive/encryption-at-rest-plan.md`
 - `docs/plans/raw-v8-warm-backend-plan.md`
 - `docs/plans/archive/*.md` (all archived plans)
 - `docs/plans/research/*.md` (all research docs)

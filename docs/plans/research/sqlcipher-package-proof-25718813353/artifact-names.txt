@@ -1,0 +1,2 @@
+sqlcipher-package-proof-amd64
+sqlcipher-package-proof-arm64

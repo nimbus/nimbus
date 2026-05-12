@@ -1,0 +1,6 @@
+$ dist/input/neovex/neovex encryption migrate --source /tmp/tmp.kA4Fv8uVA0/tenant.sqlite3 --target /tmp/tmp.kA4Fv8uVA0/tenant.encrypted.sqlite3 --provider sqlite --tenant-id package-proof
+Migrating SQLite database to encrypted format...
+  Source: /tmp/tmp.kA4Fv8uVA0/tenant.sqlite3
+  Target: /tmp/tmp.kA4Fv8uVA0/tenant.encrypted.sqlite3
+Migration complete: /tmp/tmp.kA4Fv8uVA0/tenant.encrypted.sqlite3
+Validation passed.

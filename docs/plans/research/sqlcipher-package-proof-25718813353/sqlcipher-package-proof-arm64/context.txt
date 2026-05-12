@@ -1,0 +1,8 @@
+script=scripts/verify-sqlcipher-proof.sh
+mode=packaged-binary
+cwd=/home/runner/work/neovex/neovex
+runner_os=Linux
+runner_arch=ARM64
+github_job=build
+github_run_id=25718813353
+github_run_attempt=1

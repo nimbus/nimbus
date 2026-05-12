@@ -1,0 +1,5 @@
+$ bash -lc $'\n    uname -a\n    if command -v cargo >/dev/null 2>&1; then\n      cargo --version\n    else\n      echo "cargo: unavailable"\n    fi\n    if command -v rustc >/dev/null 2>&1; then\n      rustc -Vv\n    else\n      echo "rustc: unavailable"\n    fi\n    if command -v python3 >/dev/null 2>&1; then\n      python3 --version\n    else\n      echo "python3: unavailable"\n    fi\n  '
+Linux dd0a3a971f15 6.12.76-linuxkit #1 SMP Sun Mar  8 14:41:59 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+cargo: unavailable
+rustc: unavailable
+Python 3.12.3

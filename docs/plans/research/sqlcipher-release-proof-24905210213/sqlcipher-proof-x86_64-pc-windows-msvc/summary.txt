@@ -1,0 +1,10 @@
+mode=cargo-lanes
+status=passed
+started_at_utc=2026-04-24T18:56:38Z
+finished_at_utc=2026-04-24T19:06:42Z
+cwd=/d/a/neovex/neovex
+runner_os=Windows
+runner_arch=X64
+github_job=build
+github_run_id=24905210213
+github_run_attempt=1

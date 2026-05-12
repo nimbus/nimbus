@@ -496,7 +496,9 @@ Key takeaways:
   digit milliseconds, while peer catch-up through the poll worker lands around
   half a second.
 
-## Related Open Work
+## Related Evidence
 
-- The hosted SQLCipher proof artifacts from the release and Linux-package
-  workflows remain a separate EAR4 closeout input, not an EAR9 benchmark gap.
+- Hosted SQLCipher release and package proof artifacts were collected as the
+  separate EAR4 closeout input under
+  `docs/plans/research/sqlcipher-release-proof-24905210213/` and
+  `docs/plans/research/sqlcipher-package-proof-25718813353/`.

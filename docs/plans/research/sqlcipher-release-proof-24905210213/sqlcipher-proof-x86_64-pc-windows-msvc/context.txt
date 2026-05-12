@@ -1,0 +1,8 @@
+script=scripts/verify-sqlcipher-proof.sh
+mode=cargo-lanes
+cwd=/d/a/neovex/neovex
+runner_os=Windows
+runner_arch=X64
+github_job=build
+github_run_id=24905210213
+github_run_attempt=1

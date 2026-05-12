@@ -1,0 +1,8 @@
+script=scripts/verify-sqlcipher-proof.sh
+mode=packaged-binary
+cwd=/
+runner_os=unknown
+runner_arch=unknown
+github_job=local
+github_run_id=local
+github_run_attempt=local

@@ -1,0 +1,8 @@
+repo=agentstation/neovex
+run_id=25718813353
+artifact_prefixes=sqlcipher-package-proof- 
+output_dir=/Users/jack/src/github.com/agentstation/neovex/docs/plans/research/sqlcipher-package-proof-25718813353
+artifact_count=2
+artifacts:
+  - sqlcipher-package-proof-amd64
+  - sqlcipher-package-proof-arm64

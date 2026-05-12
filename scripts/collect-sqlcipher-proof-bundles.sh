@@ -6,8 +6,8 @@ usage() {
 usage: collect-sqlcipher-proof-bundles.sh --run-id <id> [options]
 
 Download the uploaded SQLCipher proof artifacts from a GitHub Actions workflow
-run and write a small local summary bundle that can be cited from
-`docs/plans/encryption-at-rest-plan.md` when EAR4 closes.
+run and write a small local summary bundle that can be cited from the archived
+encryption-at-rest plan closeout record.
 
 options:
   --run-id <id>                  GitHub Actions workflow run id

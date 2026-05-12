@@ -1,0 +1,17 @@
+$ cargo test -p neovex-storage sqlite_foundation::encryption -- --nocapture
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.34s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/neovex_storage-db9e93d5cd9130db)
+
+running 9 tests
+test tests::sqlite_foundation::encryption::encrypted_sqlite_store_wrong_key_fails ... ok
+test tests::sqlite_foundation::encryption::encrypted_store_journal_operations ... ok
+test tests::sqlite_foundation::encryption::encrypted_sqlite_store_create_and_reopen ... ok
+test tests::sqlite_foundation::encryption::encrypted_store_schema_operations ... ok
+test tests::sqlite_foundation::encryption::encrypted_store_multiple_writes_and_reads ... ok
+test tests::sqlite_foundation::encryption::plaintext_store_cannot_open_encrypted ... ok
+test tests::sqlite_foundation::encryption::encrypted_to_plaintext_export ... ok
+test tests::sqlite_foundation::encryption::rekey_encrypted_database ... ok
+test tests::sqlite_foundation::encryption::plaintext_to_encrypted_migration ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 175 filtered out; finished in 0.05s
+

@@ -1,0 +1,11 @@
+$ bash -lc $'\n    uname -a\n    if command -v cargo >/dev/null 2>&1; then\n      cargo --version\n    else\n      echo "cargo: unavailable"\n    fi\n    if command -v rustc >/dev/null 2>&1; then\n      rustc -Vv\n    else\n      echo "rustc: unavailable"\n    fi\n    if command -v python3 >/dev/null 2>&1; then\n      python3 --version\n    else\n      echo "python3: unavailable"\n    fi\n  '
+Darwin sjc22-bt147-5831c62a-e1f9-43b3-abbb-eea97dc504f5-C298B98F23C0.local 23.6.0 Darwin Kernel Version 23.6.0: Tue Feb 24 20:51:46 PST 2026; root:xnu-10063.141.1.711.7~1/RELEASE_ARM64_VMAPPLE arm64
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: aarch64-apple-darwin
+release: 1.95.0
+LLVM version: 22.1.2
+Python 3.14.4

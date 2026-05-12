@@ -1,0 +1,11 @@
+$ bash -lc $'\n    uname -a\n    if command -v cargo >/dev/null 2>&1; then\n      cargo --version\n    else\n      echo "cargo: unavailable"\n    fi\n    if command -v rustc >/dev/null 2>&1; then\n      rustc -Vv\n    else\n      echo "rustc: unavailable"\n    fi\n    if command -v python3 >/dev/null 2>&1; then\n      python3 --version\n    else\n      echo "python3: unavailable"\n    fi\n  '
+MINGW64_NT-10.0-26100 runnervmxu3fp 3.6.6-1cdd4371.x86_64 2026-01-15 22:20 UTC x86_64 Msys
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-pc-windows-msvc
+release: 1.95.0
+LLVM version: 22.1.2
+Python 3.12.10
