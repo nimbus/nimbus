@@ -512,7 +512,7 @@ Keep widening by shared seam instead of by isolated file:
    remaining non-interactive `os` / `readline` helpers are isolated positives
    or symptoms of a broader unfinished seam
 3. keep the local-TCP `stream.finished()` / `stream.pipeline()` boundary, the
-   application-profile host-path/capability divergences, and the later
+   application-preset host-path/capability divergences, and the later
    `worker_threads` dependencies explicit instead of forcing them back into the
    `NLC5` denominator
 4. treat the richer interactive `readline` surface as a later deliberate
@@ -540,7 +540,7 @@ Keep widening by shared seam instead of by isolated file:
   in the corpus but is intentionally not counted in the current macOS-focused
   manifested denominator because it is a Windows-only test that self-skips on
   non-Windows hosts.
-- The current application-profile local-I/O contract now allows writes inside
+- The current application-preset local-I/O contract now allows writes inside
   the generated bundle root while continuing to deny escape writes outside the
   approved runtime roots. That owner change was needed to make the first
   bundle-root-safe `fs` batch truthful instead of tooling-only.

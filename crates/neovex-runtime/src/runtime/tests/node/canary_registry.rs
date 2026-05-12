@@ -19,7 +19,7 @@ fn canary_registry_path() -> PathBuf {
 struct NodeCompatCanaryClaim {
     id: String,
     package: String,
-    runtime_profile: String,
+    runtime_preset: String,
     lane_coverage: Vec<String>,
     nlc_family: String,
     public_claim: String,
@@ -41,7 +41,7 @@ struct NodeCompatCanaryEntry {
     status: String,
     root: String,
     bundle: String,
-    runtime_profile: String,
+    runtime_preset: String,
     nlc_family_dependency: String,
     claim_ids: Vec<String>,
     lane_runs: Vec<NodeCompatCanaryLaneRun>,
@@ -113,8 +113,8 @@ fn node_compat_canary_registry_parses_and_points_at_real_roots() {
             claim.id
         );
         assert!(
-            matches!(claim.runtime_profile.as_str(), "Application" | "Tooling"),
-            "claim {} should use a supported runtime profile",
+            matches!(claim.runtime_preset.as_str(), "Application" | "Tooling"),
+            "claim {} should use a supported runtime preset",
             claim.id
         );
         assert!(
@@ -135,8 +135,8 @@ fn node_compat_canary_registry_parses_and_points_at_real_roots() {
         assert!(seen_canary_ids.insert(canary.id.as_str()));
         assert_eq!(canary.status, "active");
         assert!(
-            matches!(canary.runtime_profile.as_str(), "Application" | "Tooling"),
-            "canary {} should use a supported runtime profile",
+            matches!(canary.runtime_preset.as_str(), "Application" | "Tooling"),
+            "canary {} should use a supported runtime preset",
             canary.id
         );
         let root = repo_root.join(&canary.root);
@@ -222,8 +222,8 @@ fn node_compat_canary_registry_maps_active_claims_to_active_canaries() {
         assert!(
             mapped_canaries
                 .iter()
-                .any(|canary| canary.runtime_profile == claim.runtime_profile),
-            "claim {} should keep profile boundaries intact",
+                .any(|canary| canary.runtime_preset == claim.runtime_preset),
+            "claim {} should keep preset boundaries intact",
             claim.id
         );
         assert!(

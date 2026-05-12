@@ -1,13 +1,13 @@
-# Node Compatibility Evidence Snapshot
+# Node.js Runtime Support Evidence Snapshot
 
-This directory is the checked-in latest snapshot of the generated Node compatibility evidence outputs.
+This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-05-12T06:15:55.742271+00:00`
+- evidence_generated_at: `2026-05-12T16:10:29.966284+00:00`
 - publish_root: `docs/architecture/runtime/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
 
-## Lane Denominators
+## Node Test Results
 
 | Lane | Upstream | Vendored test files | Documented passed | Unclassified | Pass rate |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -24,8 +24,10 @@ This directory is the checked-in latest snapshot of the generated Node compatibi
 
 ## Dashboard Coverage
 
-- slice reports: 8
-- canary reports: 2
+- representative Node test checks: 8
+- package/framework canary claims: 10
+- package/framework canary checks: 12
+- canary artifact bundles: 2
 - oracle reports: 1
 - required canary gaps: 0
 

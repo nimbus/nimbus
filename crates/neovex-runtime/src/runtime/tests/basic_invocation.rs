@@ -142,7 +142,7 @@ fn prepare_application_networking_canary_app() -> PreparedApplicationCanaryApp {
     let app_root = tempdir.path().join("app");
     let bundle_dir = app_root.join(".neovex/convex");
     std::fs::create_dir_all(&bundle_dir).expect("bundle dir should build");
-    // Application-profile package resolution is intentionally scoped to the
+    // Application-preset package resolution is intentionally scoped to the
     // generated bundle root. Copy the pinned canary dependencies fully into
     // that tree so runtime reads never escape through a top-level symlink.
     copy_dir_recursive(&canary_node_modules, &bundle_dir.join("node_modules"));
@@ -1938,6 +1938,59 @@ export {};
 }
 
 #[tokio::test]
+async fn application_node22_worker_threads_require_worker_grant() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import { Worker } from "node:worker_threads";
+
+globalThis.__neovexInvoke = function () {
+  try {
+    new Worker("require('node:worker_threads').parentPort.postMessage('ok')", {
+      eval: true,
+    });
+    return { denied: null };
+  } catch (error) {
+    return { denied: error?.message ?? String(error) };
+  }
+};
+
+export {};
+"#,
+    );
+
+    let mut limits = RuntimeLimits::application_node22();
+    limits.grants.worker.clear();
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(limits)),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("bundle should execute far enough to prove worker denial");
+
+    let denied = result["denied"]
+        .as_str()
+        .expect("worker creation should be denied by grants");
+    assert!(
+        denied.contains("runtime worker grant denied for `thread`"),
+        "unexpected worker denial: {denied}"
+    );
+}
+
+#[tokio::test]
 async fn tooling_node22_write_file_requires_preexisting_parent_directory() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let (tempdir, bundle_path) = write_app_style_bundle(
@@ -2382,7 +2435,7 @@ module.exports.exportedValue = "exports-from-app-root";
             },
         )
         .await
-        .expect("tooling profile should resolve app-root CommonJS packages");
+        .expect("tooling preset should resolve app-root CommonJS packages");
 
     assert_eq!(
         result,
@@ -2486,7 +2539,7 @@ exports.build = function build() {
             },
         )
         .await
-        .expect("esbuild-style staged binary should execute in tooling profile");
+        .expect("esbuild-style staged binary should execute in tooling preset");
 
     assert_eq!(
         result,

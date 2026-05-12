@@ -7,7 +7,7 @@ This file is the checked-in failure inventory for the currently manifested
 
 It records only the explicit red/skip remainder for the current family:
 watchpoints, validation-lane divergences, supported-lane drift, later-family
-dependencies, and profile/capability restrictions. Requirements and closeout
+dependencies, and preset/capability restrictions. Requirements and closeout
 decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 
 The pinned `NLC6` package canary lanes under
@@ -42,14 +42,14 @@ of the denominator.
 
 - `node22_networking_dgram_host_profile_boundary_batch_watchpoint`
   - classification: `nlc6_host_profile_boundary`
-  - reason: these files currently stop at the application-profile external-net
+  - reason: these files currently stop at the application-preset external-net
     and IPv6 capability boundary instead of a pure UDP semantic mismatch
   - files:
     - `test/parallel/test-dgram-error-message-address.js`
     - `test/parallel/test-dgram-ipv6only.js`
     - `test/parallel/test-dgram-udp6-link-local-address.js`
     - `test/parallel/test-dgram-udp6-send-default-host.js`
-  - owner: host/profile capability boundary
+  - owner: host/preset capability boundary
   - evidence:
     `runtime::tests::node_compat::node22_networking_dgram_host_profile_boundary_batch_watchpoint`
 
@@ -60,7 +60,7 @@ of the denominator.
   - files:
     - `test/parallel/test-https-localaddress-bind-error.js`
     - `test/parallel/test-https-connect-address-family.js`
-  - owner: host/profile capability boundary
+  - owner: host/preset capability boundary
   - evidence:
     `runtime::tests::node_compat::node22_networking_https_address_boundary_batch_watchpoint`
 

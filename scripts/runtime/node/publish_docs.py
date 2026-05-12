@@ -114,8 +114,8 @@ def latest_lines(
     lines = [
         "# Node.js Runtime Evidence",
         "",
-        "This page is generated from the checked-in Node compatibility evidence snapshots.",
-        "It is a support summary, not a blanket Node compatibility claim.",
+        "This page is generated from the checked-in Node.js runtime support evidence snapshots.",
+        "It is a support summary, not a blanket Node.js compatibility claim.",
         "",
         "## Snapshot",
         "",
@@ -128,7 +128,7 @@ def latest_lines(
     lines.extend(
         [
             "",
-            "## Version Summary",
+            "## Node Test Results",
             "",
             "| Target | Role | Upstream | Vendored official fixtures | Passed | Expected failure / known gap | Skipped / excluded | Unclassified | Official fixture pass rate | Classified coverage |",
             "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -138,16 +138,16 @@ def latest_lines(
     lines.extend(
         [
             "",
-            "## Package Canaries",
+            "## Package/Framework Canaries",
             "",
-            "| Package | Profile | Lane | Pinned version | Status |",
+            "| Package | Preset | Lane | Pinned version | Status |",
             "| --- | --- | --- | --- | --- |",
         ]
     )
     for result in canary_results(dashboard):
         lines.append(
             f"| `{result.get('package', result.get('id', 'unknown'))}` | "
-            f"{result.get('runtime_profile', 'unknown')} | "
+            f"{result.get('runtime_preset', 'unknown')} | "
             f"{lane_title(result.get('lane', 'unknown'))} | "
             f"`{result.get('pinned_version', 'unknown')}` | "
             f"{status_label(result.get('status', 'unknown'))} |"
@@ -222,7 +222,7 @@ def per_lane_lines(lane: dict[str, Any], dashboard: dict[str, Any]) -> list[str]
             "",
             "## Canary Coverage",
             "",
-            "| Package | Profile | Pinned version | Status |",
+            "| Package | Preset | Pinned version | Status |",
             "| --- | --- | --- | --- |",
         ]
     )
@@ -231,7 +231,7 @@ def per_lane_lines(lane: dict[str, Any], dashboard: dict[str, Any]) -> list[str]
         for result in lane_canaries:
             lines.append(
                 f"| `{result.get('package', result.get('id', 'unknown'))}` | "
-                f"{result.get('runtime_profile', 'unknown')} | "
+                f"{result.get('runtime_preset', 'unknown')} | "
                 f"`{result.get('pinned_version', 'unknown')}` | "
                 f"{status_label(result.get('status', 'unknown'))} |"
             )

@@ -27,7 +27,7 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 ## Canary Coverage
 
-| Package | Profile | Pinned version | Status |
+| Package | Preset | Pinned version | Status |
 | --- | --- | --- | --- |
 | `axios` | Application | `1.7.7` | Passed |
 | `express` | Application | `4.19.2` | Passed |

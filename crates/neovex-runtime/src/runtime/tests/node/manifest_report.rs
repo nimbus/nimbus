@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::node_compat_manifest_catalog::{
-    NodeCompatCapability, NodeCompatExecutionClass, NodeCompatLaneRole, NodeCompatProfile,
+    NodeCompatCapability, NodeCompatExecutionClass, NodeCompatLaneRole, NodeCompatPreset,
     NodeCompatPublicContractRole, NodeCompatSupplementaryCategory, NodeCompatTestTier,
     load_family_catalogs_from_disk, repo_root,
 };
@@ -20,10 +20,10 @@ pub(super) struct NodeCompatPlanReport<'a> {
     pub(super) test_tier: &'static str,
     pub(super) supplementary_category: Option<&'static str>,
     pub(super) execution_class: &'static str,
-    pub(super) profiles: Vec<&'static str>,
+    pub(super) presets: Vec<&'static str>,
     pub(super) capabilities: Vec<&'static str>,
     pub(super) slice_summary: NodeCompatSlicePlanSummary,
-    pub(super) profile_summaries: Vec<NodeCompatProfilePlanSummary<'a>>,
+    pub(super) preset_summaries: Vec<NodeCompatPresetPlanSummary<'a>>,
     pub(super) lane_summaries: Vec<NodeCompatLanePlanSummary<'a>>,
 }
 
@@ -37,8 +37,8 @@ pub(super) struct NodeCompatSlicePlanSummary {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct NodeCompatProfilePlanSummary<'a> {
-    pub(super) profile: &'a str,
+pub(super) struct NodeCompatPresetPlanSummary<'a> {
+    pub(super) preset: &'a str,
     pub(super) unique_fixture_count: usize,
     pub(super) lane_count: usize,
     pub(super) total_lane_fixture_entries: usize,
@@ -51,7 +51,7 @@ pub(super) struct NodeCompatLanePlanSummary<'a> {
     pub(super) lane_role: &'static str,
     pub(super) public_contract_role: &'static str,
     pub(super) runtime_execution_target: &'a str,
-    pub(super) runtime_limits_profile: &'a str,
+    pub(super) runtime_limits_preset: &'a str,
     pub(super) subset_test: &'a str,
     pub(super) fixture_count: usize,
     pub(super) fixture_ids: Vec<&'a str>,
@@ -64,14 +64,14 @@ pub(super) struct NodeCompatCatalogPlanReport<'a> {
     pub(super) slice_count: usize,
     pub(super) total_unique_fixture_seed_count: usize,
     pub(super) total_lane_fixture_entries: usize,
-    pub(super) profile_summaries: Vec<NodeCompatCatalogProfilePlanSummary<'a>>,
+    pub(super) preset_summaries: Vec<NodeCompatCatalogPresetPlanSummary<'a>>,
     pub(super) lane_summaries: Vec<NodeCompatCatalogLaneSummary<'a>>,
     pub(super) slice_reports: Vec<NodeCompatPlanReport<'a>>,
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct NodeCompatCatalogProfilePlanSummary<'a> {
-    pub(super) profile: &'a str,
+pub(super) struct NodeCompatCatalogPresetPlanSummary<'a> {
+    pub(super) preset: &'a str,
     pub(super) total_unique_fixture_seed_count: usize,
     pub(super) total_lane_fixture_entries: usize,
     pub(super) slice_count_with_entries: usize,
@@ -84,7 +84,7 @@ pub(super) struct NodeCompatCatalogLaneSummary<'a> {
     pub(super) lane_role: &'static str,
     pub(super) public_contract_role: &'static str,
     pub(super) runtime_execution_target: &'a str,
-    pub(super) runtime_limits_profile: &'a str,
+    pub(super) runtime_limits_preset: &'a str,
     pub(super) total_fixture_entries: usize,
     pub(super) slice_count_with_entries: usize,
 }
@@ -128,10 +128,10 @@ pub(super) struct NodeCompatObservedPlanReport<'a> {
     pub(super) test_tier: &'static str,
     pub(super) supplementary_category: Option<&'static str>,
     pub(super) execution_class: &'static str,
-    pub(super) profiles: Vec<&'static str>,
+    pub(super) presets: Vec<&'static str>,
     pub(super) capabilities: Vec<&'static str>,
     pub(super) slice_summary: NodeCompatObservedSliceSummary,
-    pub(super) profile_summaries: Vec<NodeCompatObservedProfileSummary<'a>>,
+    pub(super) preset_summaries: Vec<NodeCompatObservedPresetSummary<'a>>,
     pub(super) lane_summaries: Vec<NodeCompatObservedLaneSummary<'a>>,
 }
 
@@ -145,8 +145,8 @@ pub(super) struct NodeCompatObservedSliceSummary {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct NodeCompatObservedProfileSummary<'a> {
-    pub(super) profile: &'a str,
+pub(super) struct NodeCompatObservedPresetSummary<'a> {
+    pub(super) preset: &'a str,
     pub(super) total_expected_results: usize,
     pub(super) total_observed_results: usize,
     pub(super) counts: NodeCompatObservedResultCounts,
@@ -159,7 +159,7 @@ pub(super) struct NodeCompatObservedLaneSummary<'a> {
     pub(super) lane_role: &'static str,
     pub(super) public_contract_role: &'static str,
     pub(super) runtime_execution_target: &'a str,
-    pub(super) runtime_limits_profile: &'a str,
+    pub(super) runtime_limits_preset: &'a str,
     pub(super) subset_test: &'a str,
     pub(super) expected_fixture_count: usize,
     pub(super) observed_fixture_count: usize,
@@ -182,14 +182,14 @@ pub(super) struct NodeCompatObservedCatalogReport<'a> {
     pub(super) total_expected_results: usize,
     pub(super) total_observed_results: usize,
     pub(super) counts: NodeCompatObservedResultCounts,
-    pub(super) profile_summaries: Vec<NodeCompatObservedCatalogProfileSummary<'a>>,
+    pub(super) preset_summaries: Vec<NodeCompatObservedCatalogPresetSummary<'a>>,
     pub(super) lane_summaries: Vec<NodeCompatObservedCatalogLaneSummary<'a>>,
     pub(super) slice_reports: Vec<NodeCompatObservedPlanReport<'a>>,
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct NodeCompatObservedCatalogProfileSummary<'a> {
-    pub(super) profile: &'a str,
+pub(super) struct NodeCompatObservedCatalogPresetSummary<'a> {
+    pub(super) preset: &'a str,
     pub(super) total_expected_results: usize,
     pub(super) total_observed_results: usize,
     pub(super) slice_count_with_entries: usize,
@@ -203,7 +203,7 @@ pub(super) struct NodeCompatObservedCatalogLaneSummary<'a> {
     pub(super) lane_role: &'static str,
     pub(super) public_contract_role: &'static str,
     pub(super) runtime_execution_target: &'a str,
-    pub(super) runtime_limits_profile: &'a str,
+    pub(super) runtime_limits_preset: &'a str,
     pub(super) total_expected_results: usize,
     pub(super) total_observed_results: usize,
     pub(super) slice_count_with_entries: usize,
@@ -229,10 +229,10 @@ fn execution_class_label(class: NodeCompatExecutionClass) -> &'static str {
     }
 }
 
-fn profile_label(profile: NodeCompatProfile) -> &'static str {
-    match profile {
-        NodeCompatProfile::Application => "Application",
-        NodeCompatProfile::Tooling => "Tooling",
+fn preset_label(preset: NodeCompatPreset) -> &'static str {
+    match preset {
+        NodeCompatPreset::Application => "Application",
+        NodeCompatPreset::Tooling => "Tooling",
     }
 }
 
@@ -389,7 +389,7 @@ pub(super) fn build_plan_report<'a>(
                 lane.lane_metadata.public_contract_role,
             ),
             runtime_execution_target: lane.lane_metadata.runtime_execution_target.as_str(),
-            runtime_limits_profile: lane.lane_metadata.runtime_limits_profile.as_str(),
+            runtime_limits_preset: lane.lane_metadata.runtime_limits_preset.as_str(),
             subset_test: lane.subset_test,
             fixture_count: lane.fixtures.len(),
             fixture_ids: lane
@@ -421,13 +421,13 @@ pub(super) fn build_plan_report<'a>(
         .map(|lane| lane.fixture_count)
         .max()
         .unwrap_or(0);
-    let profile_summaries = plan
+    let preset_summaries = plan
         .family_catalog
-        .profiles
+        .presets
         .iter()
         .copied()
-        .map(|profile| NodeCompatProfilePlanSummary {
-            profile: profile_label(profile),
+        .map(|preset| NodeCompatPresetPlanSummary {
+            preset: preset_label(preset),
             unique_fixture_count,
             lane_count,
             total_lane_fixture_entries,
@@ -442,12 +442,12 @@ pub(super) fn build_plan_report<'a>(
         test_tier,
         supplementary_category,
         execution_class: execution_class_label(plan.family_catalog.execution_class),
-        profiles: plan
+        presets: plan
             .family_catalog
-            .profiles
+            .presets
             .iter()
             .copied()
-            .map(profile_label)
+            .map(preset_label)
             .collect(),
         capabilities: plan
             .family_catalog
@@ -463,7 +463,7 @@ pub(super) fn build_plan_report<'a>(
             min_lane_fixture_count,
             max_lane_fixture_count,
         },
-        profile_summaries,
+        preset_summaries,
         lane_summaries,
     }
 }
@@ -495,36 +495,31 @@ pub(super) fn build_catalog_plan_report<'a>(
         .iter()
         .map(|report| report.slice_summary.total_lane_fixture_entries)
         .sum();
-    let profile_ids: BTreeSet<&str> = slice_reports
+    let preset_ids: BTreeSet<&str> = slice_reports
         .iter()
-        .flat_map(|report| {
-            report
-                .profile_summaries
-                .iter()
-                .map(|profile| profile.profile)
-        })
+        .flat_map(|report| report.preset_summaries.iter().map(|preset| preset.preset))
         .collect();
-    let profile_summaries = profile_ids
+    let preset_summaries = preset_ids
         .into_iter()
-        .map(|profile| NodeCompatCatalogProfilePlanSummary {
-            profile,
+        .map(|preset| NodeCompatCatalogPresetPlanSummary {
+            preset,
             total_unique_fixture_seed_count: slice_reports
                 .iter()
-                .flat_map(|report| report.profile_summaries.iter())
-                .filter(|summary| summary.profile == profile)
+                .flat_map(|report| report.preset_summaries.iter())
+                .filter(|summary| summary.preset == preset)
                 .map(|summary| summary.unique_fixture_count)
                 .sum(),
             total_lane_fixture_entries: slice_reports
                 .iter()
-                .flat_map(|report| report.profile_summaries.iter())
-                .filter(|summary| summary.profile == profile)
+                .flat_map(|report| report.preset_summaries.iter())
+                .filter(|summary| summary.preset == preset)
                 .map(|summary| summary.total_lane_fixture_entries)
                 .sum(),
             slice_count_with_entries: slice_reports
                 .iter()
-                .flat_map(|report| report.profile_summaries.iter())
+                .flat_map(|report| report.preset_summaries.iter())
                 .filter(|summary| {
-                    summary.profile == profile && summary.total_lane_fixture_entries > 0
+                    summary.preset == preset && summary.total_lane_fixture_entries > 0
                 })
                 .count(),
         })
@@ -550,7 +545,7 @@ pub(super) fn build_catalog_plan_report<'a>(
                 lane_role: lane_summary.lane_role,
                 public_contract_role: lane_summary.public_contract_role,
                 runtime_execution_target: lane_summary.runtime_execution_target,
-                runtime_limits_profile: lane_summary.runtime_limits_profile,
+                runtime_limits_preset: lane_summary.runtime_limits_preset,
                 total_fixture_entries: matching_lane_summaries
                     .iter()
                     .map(|summary| summary.fixture_count)
@@ -569,7 +564,7 @@ pub(super) fn build_catalog_plan_report<'a>(
         slice_count,
         total_unique_fixture_seed_count,
         total_lane_fixture_entries,
-        profile_summaries,
+        preset_summaries,
         lane_summaries,
         slice_reports,
     })
@@ -636,7 +631,7 @@ pub(super) fn build_observed_plan_report<'a>(
                     lane.lane_metadata.public_contract_role,
                 ),
                 runtime_execution_target: lane.lane_metadata.runtime_execution_target.as_str(),
-                runtime_limits_profile: lane.lane_metadata.runtime_limits_profile.as_str(),
+                runtime_limits_preset: lane.lane_metadata.runtime_limits_preset.as_str(),
                 subset_test: lane.subset_test,
                 expected_fixture_count: lane.fixtures.len(),
                 observed_fixture_count,
@@ -674,13 +669,13 @@ pub(super) fn build_observed_plan_report<'a>(
             acc
         },
     );
-    let profile_summaries = plan
+    let preset_summaries = plan
         .family_catalog
-        .profiles
+        .presets
         .iter()
         .copied()
-        .map(|profile| NodeCompatObservedProfileSummary {
-            profile: profile_label(profile),
+        .map(|preset| NodeCompatObservedPresetSummary {
+            preset: preset_label(preset),
             total_expected_results,
             total_observed_results,
             counts,
@@ -695,12 +690,12 @@ pub(super) fn build_observed_plan_report<'a>(
         test_tier,
         supplementary_category,
         execution_class: execution_class_label(plan.family_catalog.execution_class),
-        profiles: plan
+        presets: plan
             .family_catalog
-            .profiles
+            .presets
             .iter()
             .copied()
-            .map(profile_label)
+            .map(preset_label)
             .collect(),
         capabilities: plan
             .family_catalog
@@ -716,7 +711,7 @@ pub(super) fn build_observed_plan_report<'a>(
             total_observed_results,
             counts,
         },
-        profile_summaries,
+        preset_summaries,
         lane_summaries,
     })
 }
@@ -766,43 +761,38 @@ pub(super) fn build_observed_catalog_report<'a>(
             acc
         },
     );
-    let profile_ids: BTreeSet<&str> = slice_reports
+    let preset_ids: BTreeSet<&str> = slice_reports
         .iter()
-        .flat_map(|report| {
-            report
-                .profile_summaries
-                .iter()
-                .map(|profile| profile.profile)
-        })
+        .flat_map(|report| report.preset_summaries.iter().map(|preset| preset.preset))
         .collect();
-    let profile_summaries = profile_ids
+    let preset_summaries = preset_ids
         .into_iter()
-        .map(|profile| {
-            let mut profile_counts = NodeCompatObservedResultCounts::default();
+        .map(|preset| {
+            let mut preset_counts = NodeCompatObservedResultCounts::default();
             let mut total_expected_results = 0usize;
             let mut total_observed_results = 0usize;
             let mut slice_count_with_entries = 0usize;
             for summary in slice_reports
                 .iter()
-                .flat_map(|report| report.profile_summaries.iter())
-                .filter(|summary| summary.profile == profile)
+                .flat_map(|report| report.preset_summaries.iter())
+                .filter(|summary| summary.preset == preset)
             {
                 total_expected_results += summary.total_expected_results;
                 total_observed_results += summary.total_observed_results;
                 if summary.total_expected_results > 0 {
                     slice_count_with_entries += 1;
                 }
-                profile_counts.passed += summary.counts.passed;
-                profile_counts.skipped += summary.counts.skipped;
-                profile_counts.failed += summary.counts.failed;
-                profile_counts.missing += summary.counts.missing;
+                preset_counts.passed += summary.counts.passed;
+                preset_counts.skipped += summary.counts.skipped;
+                preset_counts.failed += summary.counts.failed;
+                preset_counts.missing += summary.counts.missing;
             }
-            NodeCompatObservedCatalogProfileSummary {
-                profile,
+            NodeCompatObservedCatalogPresetSummary {
+                preset,
                 total_expected_results,
                 total_observed_results,
                 slice_count_with_entries,
-                counts: profile_counts,
+                counts: preset_counts,
             }
         })
         .collect();
@@ -842,7 +832,7 @@ pub(super) fn build_observed_catalog_report<'a>(
                 lane_role: lane_summary.lane_role,
                 public_contract_role: lane_summary.public_contract_role,
                 runtime_execution_target: lane_summary.runtime_execution_target,
-                runtime_limits_profile: lane_summary.runtime_limits_profile,
+                runtime_limits_preset: lane_summary.runtime_limits_preset,
                 total_expected_results,
                 total_observed_results,
                 slice_count_with_entries,
@@ -859,7 +849,7 @@ pub(super) fn build_observed_catalog_report<'a>(
         total_expected_results,
         total_observed_results,
         counts,
-        profile_summaries,
+        preset_summaries,
         lane_summaries,
         slice_reports,
     })
@@ -987,7 +977,7 @@ fn node_compat_manifest_report_schema_is_versioned_and_serializes_deterministica
     assert_eq!(json["nlc_item"], "NLC6");
     assert_eq!(json["slice"], "dns-net-foundation");
     assert_eq!(json["execution_class"], "sequential");
-    assert_eq!(json["profiles"], serde_json::json!(["Application"]));
+    assert_eq!(json["presets"], serde_json::json!(["Application"]));
     assert_eq!(
         json["capabilities"],
         serde_json::json!(["bundle-root-fs", "loopback-net"])
@@ -998,9 +988,9 @@ fn node_compat_manifest_report_schema_is_versioned_and_serializes_deterministica
     assert_eq!(json["slice_summary"]["min_lane_fixture_count"], 9);
     assert_eq!(json["slice_summary"]["max_lane_fixture_count"], 10);
     assert_eq!(
-        json["profile_summaries"],
+        json["preset_summaries"],
         serde_json::json!([{
-            "profile": "Application",
+            "preset": "Application",
             "unique_fixture_count": 10,
             "lane_count": 3,
             "total_lane_fixture_entries": 29
@@ -1028,7 +1018,7 @@ fn node_compat_manifest_report_schema_is_versioned_and_serializes_deterministica
 }
 
 #[test]
-fn node_compat_manifest_report_summarizes_lane_slice_and_profile_counts_from_execution_plan() {
+fn node_compat_manifest_report_summarizes_lane_slice_and_preset_counts_from_execution_plan() {
     let resolved = load_family_catalogs_from_disk();
     let plan = resolved
         .resolve_lane_execution_plan("networking", "dns-net-foundation")
@@ -1040,11 +1030,11 @@ fn node_compat_manifest_report_summarizes_lane_slice_and_profile_counts_from_exe
     assert_eq!(report.slice_summary.total_lane_fixture_entries, 29);
     assert_eq!(report.slice_summary.min_lane_fixture_count, 9);
     assert_eq!(report.slice_summary.max_lane_fixture_count, 10);
-    assert_eq!(report.profile_summaries.len(), 1);
-    assert_eq!(report.profile_summaries[0].profile, "Application");
-    assert_eq!(report.profile_summaries[0].unique_fixture_count, 10);
-    assert_eq!(report.profile_summaries[0].lane_count, 3);
-    assert_eq!(report.profile_summaries[0].total_lane_fixture_entries, 29);
+    assert_eq!(report.preset_summaries.len(), 1);
+    assert_eq!(report.preset_summaries[0].preset, "Application");
+    assert_eq!(report.preset_summaries[0].unique_fixture_count, 10);
+    assert_eq!(report.preset_summaries[0].lane_count, 3);
+    assert_eq!(report.preset_summaries[0].total_lane_fixture_entries, 29);
     assert_eq!(report.lane_summaries.len(), 3);
     assert_eq!(report.lane_summaries[0].upstream_fixture_line, "Node20");
     assert_eq!(report.lane_summaries[0].lane_role, "supported");
@@ -1084,14 +1074,14 @@ fn node_compat_manifest_report_builds_catalog_summary_deterministically() {
     assert_eq!(json["family_count"], 11);
     assert_eq!(json["slice_count"], 12);
     assert_eq!(json["total_unique_fixture_seed_count"], 57);
-    assert_eq!(json["total_lane_fixture_entries"], 168);
+    assert_eq!(json["total_lane_fixture_entries"], 167);
     assert_eq!(
-        json["profile_summaries"],
+        json["preset_summaries"],
         serde_json::json!([
             {
-                "profile": "Application",
+                "preset": "Application",
                 "total_unique_fixture_seed_count": 57,
-                "total_lane_fixture_entries": 168,
+                "total_lane_fixture_entries": 167,
                 "slice_count_with_entries": 12
             }
         ])
@@ -1105,8 +1095,8 @@ fn node_compat_manifest_report_builds_catalog_summary_deterministically() {
                 "lane_role": "supported",
                 "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node20",
-                "runtime_limits_profile": "application_node20",
-                "total_fixture_entries": 55,
+                "runtime_limits_preset": "application_node20",
+                "total_fixture_entries": 54,
                 "slice_count_with_entries": 12
             },
             {
@@ -1115,7 +1105,7 @@ fn node_compat_manifest_report_builds_catalog_summary_deterministically() {
                 "lane_role": "default",
                 "public_contract_role": "default_contract",
                 "runtime_execution_target": "Node22",
-                "runtime_limits_profile": "application_node22",
+                "runtime_limits_preset": "application_node22",
                 "total_fixture_entries": 57,
                 "slice_count_with_entries": 12
             },
@@ -1125,7 +1115,7 @@ fn node_compat_manifest_report_builds_catalog_summary_deterministically() {
                 "lane_role": "supported",
                 "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node24",
-                "runtime_limits_profile": "application_node24",
+                "runtime_limits_preset": "application_node24",
                 "total_fixture_entries": 56,
                 "slice_count_with_entries": 12
             }
@@ -1189,9 +1179,9 @@ fn node_compat_manifest_report_aggregates_observed_results_deterministically() {
         })
     );
     assert_eq!(
-        json["profile_summaries"],
+        json["preset_summaries"],
         serde_json::json!([{
-            "profile": "Application",
+            "preset": "Application",
             "total_expected_results": 29,
             "total_observed_results": 4,
             "counts": {
@@ -1211,7 +1201,7 @@ fn node_compat_manifest_report_aggregates_observed_results_deterministically() {
                 "lane_role": "supported",
                 "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node20",
-                "runtime_limits_profile": "application_node20",
+                "runtime_limits_preset": "application_node20",
                 "subset_test": "runtime::tests::node_compat::node20_supported_lane_executes_official_networking_subset",
                 "expected_fixture_count": 10,
                 "observed_fixture_count": 2,
@@ -1228,7 +1218,7 @@ fn node_compat_manifest_report_aggregates_observed_results_deterministically() {
                 "lane_role": "default",
                 "public_contract_role": "default_contract",
                 "runtime_execution_target": "Node22",
-                "runtime_limits_profile": "application_node22",
+                "runtime_limits_preset": "application_node22",
                 "subset_test": "runtime::tests::node_compat::node22_default_lane_executes_manifested_networking_subset",
                 "expected_fixture_count": 10,
                 "observed_fixture_count": 1,
@@ -1245,7 +1235,7 @@ fn node_compat_manifest_report_aggregates_observed_results_deterministically() {
                 "lane_role": "supported",
                 "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node24",
-                "runtime_limits_profile": "application_node24",
+                "runtime_limits_preset": "application_node24",
                 "subset_test": "runtime::tests::node_compat::node24_supported_lane_networking_watchpoint",
                 "expected_fixture_count": 9,
                 "observed_fixture_count": 1,
@@ -1387,10 +1377,10 @@ fn node_compat_manifest_report_aggregates_observed_catalog_results_deterministic
         })
     );
     assert_eq!(
-        json["profile_summaries"],
+        json["preset_summaries"],
         serde_json::json!([
             {
-                "profile": "Application",
+                "preset": "Application",
                 "total_expected_results": 58,
                 "total_observed_results": 7,
                 "slice_count_with_entries": 2,
@@ -1412,7 +1402,7 @@ fn node_compat_manifest_report_aggregates_observed_catalog_results_deterministic
                 "lane_role": "supported",
                 "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node20",
-                "runtime_limits_profile": "application_node20",
+                "runtime_limits_preset": "application_node20",
                 "total_expected_results": 19,
                 "total_observed_results": 3,
                 "slice_count_with_entries": 2,
@@ -1429,7 +1419,7 @@ fn node_compat_manifest_report_aggregates_observed_catalog_results_deterministic
                 "lane_role": "default",
                 "public_contract_role": "default_contract",
                 "runtime_execution_target": "Node22",
-                "runtime_limits_profile": "application_node22",
+                "runtime_limits_preset": "application_node22",
                 "total_expected_results": 20,
                 "total_observed_results": 2,
                 "slice_count_with_entries": 2,
@@ -1446,7 +1436,7 @@ fn node_compat_manifest_report_aggregates_observed_catalog_results_deterministic
                 "lane_role": "supported",
                 "public_contract_role": "supported_contract",
                 "runtime_execution_target": "Node24",
-                "runtime_limits_profile": "application_node24",
+                "runtime_limits_preset": "application_node24",
                 "total_expected_results": 19,
                 "total_observed_results": 2,
                 "slice_count_with_entries": 2,
@@ -1468,30 +1458,30 @@ fn node_compat_manifest_report_aggregates_observed_catalog_results_deterministic
 }
 
 #[test]
-fn node_compat_manifest_report_supports_multi_profile_catalog_summaries() {
+fn node_compat_manifest_report_supports_multi_preset_catalog_summaries() {
     let mut resolved = load_family_catalogs_from_disk();
     let process_family = resolved
         .family_catalogs
         .iter_mut()
         .find(|catalog| catalog.family == "process-and-timing")
         .expect("process-and-timing family catalog should exist");
-    process_family.profiles.push(NodeCompatProfile::Tooling);
+    process_family.presets.push(NodeCompatPreset::Tooling);
 
     let plan_report =
         build_catalog_plan_report(&resolved).expect("catalog plan report should resolve");
     let plan_json: Value =
         serde_json::to_value(&plan_report).expect("catalog plan report should serialize");
     assert_eq!(
-        plan_json["profile_summaries"],
+        plan_json["preset_summaries"],
         serde_json::json!([
             {
-                "profile": "Application",
+                "preset": "Application",
                 "total_unique_fixture_seed_count": 57,
-                "total_lane_fixture_entries": 168,
+                "total_lane_fixture_entries": 167,
                 "slice_count_with_entries": 12
             },
             {
-                "profile": "Tooling",
+                "preset": "Tooling",
                 "total_unique_fixture_seed_count": 10,
                 "total_lane_fixture_entries": 29,
                 "slice_count_with_entries": 1
@@ -1557,10 +1547,10 @@ fn node_compat_manifest_report_supports_multi_profile_catalog_summaries() {
     let observed_json: Value =
         serde_json::to_value(&observed_report).expect("observed catalog report should serialize");
     assert_eq!(
-        observed_json["profile_summaries"],
+        observed_json["preset_summaries"],
         serde_json::json!([
             {
-                "profile": "Application",
+                "preset": "Application",
                 "total_expected_results": 58,
                 "total_observed_results": 7,
                 "slice_count_with_entries": 2,
@@ -1572,7 +1562,7 @@ fn node_compat_manifest_report_supports_multi_profile_catalog_summaries() {
                 }
             },
             {
-                "profile": "Tooling",
+                "preset": "Tooling",
                 "total_expected_results": 29,
                 "total_observed_results": 3,
                 "slice_count_with_entries": 1,
@@ -1660,7 +1650,7 @@ fn node_compat_manifest_report_writes_artifacts_deterministically() {
     assert_eq!(slice_json["slice"], "dns-net-foundation");
     assert_eq!(catalog_plan_json["family_count"], 11);
     assert_eq!(
-        catalog_plan_json["profile_summaries"][0]["profile"],
+        catalog_plan_json["preset_summaries"][0]["preset"],
         "Application"
     );
     assert_eq!(observed_catalog_json["slice_count"], 1);

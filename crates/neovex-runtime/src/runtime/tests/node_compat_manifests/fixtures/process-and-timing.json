@@ -4,7 +4,7 @@
   "nlc_item": "NLC4",
   "batch_constant": "PROCESS_AND_TIMING_BATCH",
   "execution_class": "sequential",
-  "profiles": ["Application"],
+  "presets": ["Application"],
   "capabilities": ["bundle-root-fs"],
   "lane_batches": [
     {

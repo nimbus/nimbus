@@ -228,7 +228,7 @@ Package/framework canary note:
   `DENO_TEST_UTIL_DENO_EXE` and expects Deno CLI argument/process semantics,
   not `neovex` runtime invocation semantics.
 - `NLC3` therefore still needs a Neovex-owned upstream-slice runner that can:
-  - execute the pinned Node corpus against `RuntimeProfile::Application` /
+  - execute the pinned Node corpus against `RuntimePreset::Application` /
     `CompatibilityTarget::Node22`
   - capture stdout/stderr/exit status in a Node-test-shaped way
   - produce repeatable per-family pass/fail counts for both Node22 and Node20
@@ -253,7 +253,7 @@ Package/framework canary note:
   `test-assert-checktag.js`, and `test-assert-typedarray-deepequal.js`) with a
   narrow `TEST_PARALLEL` env shim that only normalizes the harness-owned
   Node22 `process.env.TEST_PARALLEL` probe to `undefined` when the underlying
-  application-profile env proxy would deny it. That keeps the public env
+  application-preset env proxy would deny it. That keeps the public env
   contract unchanged while allowing the official Node22 file to execute.
 - The same runner now also executes official Node22
   `test-assert-deep-with-error.js`, which widens the measured Node22 lane with

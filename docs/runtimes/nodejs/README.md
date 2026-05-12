@@ -7,6 +7,14 @@ are selectable, evidence-backed lanes.
 This is a measured compatibility surface, not a blanket claim that every Node
 built-in or CLI behavior is available.
 
+Node compatibility is orthogonal to permission posture. Selecting Node20,
+Node22, or Node24 chooses the JavaScript compatibility target; filesystem,
+network, environment, subprocess, secret, identity, service, FFI, worker, and
+tool access still come from the active runtime mode and explicit grants. The
+default product lane is `Standard` mode with an internal `Application` preset,
+which grants only the bounded runtime roots and Node-compatible local loopback
+surface documented by the evidence below.
+
 ## Quick Example
 
 Use `"use node"` at the top of a Convex-compatible action module:

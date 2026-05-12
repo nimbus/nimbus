@@ -15,11 +15,12 @@ tag re-publish under the new org so the main repo's `[patch.crates-io]` and
 
 ## Relationship to Main Rename Plan
 
-This plan is a **prerequisite** for `docs/plans/nimbus-rename-plan.md` Phase 0.
-The satellite repos should be renamed and their internals updated before or
-concurrently with the GitHub org transfers. The main repo's release workflow
-calls into `nimbus-machine-os` workflows and pushes to `homebrew-tap` via API,
-so both sides must agree on names at release time.
+This plan is a **prerequisite release gate** for
+`docs/plans/nimbus-rename-plan.md`: the satellite repositories do not need to
+finish before the GitHub transfer itself, but they must finish before the main
+repo's renamed release pipeline is allowed to run end-to-end. The main repo's
+release workflow calls into `nimbus-machine-os` workflows and pushes to
+`homebrew-tap` via API, so both sides must agree on names at release time.
 
 **Execution order:**
 1. Transfer neovex-specific repos to `nimbus` org and create new
@@ -27,10 +28,106 @@ so both sides must agree on names at release time.
    stays in agentstation since it is shared with other products).
    Note: the Deno-family fork is `agentstation/deno` (monorepo), not the
    old standalone `agentstation/deno_core` which is historical only.
-2. Execute this satellite plan (rename internals of each repo)
+2. Execute this satellite plan (rename internals of each repo and complete the
+   token/action/ruleset audit below)
 3. Execute main plan Phases 1-8 (rename main repo internals)
 4. Cut a release to verify end-to-end (main repo release triggers machine-os
    build and homebrew-tap update)
+
+---
+
+## Cross-Repo Admin and Token Audit
+
+This plan changes more than file names. Each satellite repo has its own
+GitHub Actions settings, release permissions, packages, rulesets, secrets,
+variables, and integrations. Before the main repo cuts a renamed release,
+verify these settings in the `nimbus` org. Use the human/admin prerequisite
+packet in `docs/plans/nimbus-rename-plan.md` as the canonical handoff checklist
+for credentials, secrets, service-console access, and manual confirmations.
+
+- **All satellite repos**: default branch, branch protection/rulesets, tag
+  protection/rulesets, required checks, release creation permissions,
+  Dependabot/security settings, webhooks, deploy keys, installed GitHub Apps,
+  and third-party action allowlists.
+- **`nimbus/nimbus-machine-os`**: Actions workflow permissions allow the
+  requested `contents`, `packages`, `id-token`, and `attestations` scopes;
+  GHCR package visibility and package ownership match the release policy;
+  any registry username/password secrets used by the workflow are reissued as
+  `NIMBUS_MACHINE_OS_*` or intentionally replaced with `GITHUB_TOKEN`.
+  `MACHINE_OS_RELEASE_APP_ID` and `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` are
+  required here as well as in `nimbus/nimbus`: `publish.yml` uses them to mint
+  an Actions-read/Contents-read token against the source repo's staged artifact,
+  and reusable `build.yml` can use them for Contents-write/Packages-write when
+  publishing machine-os releases.
+- **`nimbus/nimbus-crun`**: release workflow can create releases and upload
+  assets under the new tag format; Docker builder/cache settings do not point
+  at the old repo name; tag rules allow `v*-nimbus.*` tags.
+- **`nimbus/homebrew-tap`**: the release token principal has `contents: write`
+  to this repo only, branch/ruleset policy allows automated cask updates, and
+  the shared `agentstation/homebrew-tap` token is not reused.
+- **`nimbus/deno` and `nimbus/rusty_v8`**: Actions/release settings,
+  large-release-asset permissions, artifact retention, branch/tag protections,
+  and any upstream-sync secrets survive transfer or the upstream release
+  workflows are intentionally disabled in the Nimbus forks. `rusty_v8` release
+  assets are especially important because the main repo consumes prebuilt locker
+  assets.
+
+Concrete satellite secret/variable inventory to reconcile:
+
+GitHub secret values are write-only. Use `gh secret list` to confirm expected
+names exist, then verify value contents through the credential owner or
+source-of-truth vault, or reissue credentials when old repo/org/domain scopes
+could be embedded.
+
+| Repo | Secret/variable | Decision |
+|------|-----------------|----------|
+| `nimbus/nimbus-machine-os` | `MACHINE_OS_RELEASE_APP_ID`, `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` | Provision from the same App strategy chosen in the main plan. Required for artifact download and release/GHCR publishing paths. |
+| `nimbus/nimbus-machine-os` | `NIMBUS_MACHINE_OS_REGISTRY_USERNAME`, `NIMBUS_MACHINE_OS_REGISTRY_PASSWORD` | Prefer replacing with `GITHUB_TOKEN`/App token. If still needed, scope only to `ghcr.io/nimbus/nimbus-machine-os`. |
+| `nimbus/nimbus-crun` | none currently beyond `GITHUB_TOKEN` | Verify repo token can create releases, upload assets, attest, and use Docker Buildx. |
+| `nimbus/homebrew-tap` | no workflow secrets expected in the tap | Write access comes from `HOMEBREW_TAP_TOKEN` stored on `nimbus/nimbus`; verify the token principal is limited to this tap. |
+| `nimbus/deno` | `DENOBOT_PAT`, `DENOBOT_GIST_PAT`, `CARGO_REGISTRY_TOKEN`, `APPLE_CODESIGN_KEY`, `APPLE_CODESIGN_PASSWORD`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `GCP_SA_KEY`, `S3_SECRET_ACCESS_KEY`, `WPT_FYI_PW`, `NODE_COMPAT_SLACK_TOKEN`, `NODE_COMPAT_SLACK_CHANNEL`; vars `S3_ACCESS_KEY_ID`, `S3_ENDPOINT`, `S3_REGION` | Reprovision only if Nimbus intends to run upstream Deno release/publish/compat workflows. Otherwise disable those workflows or restrict them to the upstream `denoland/deno` condition and document that only tag reachability is required for Neovex/Nimbus. |
+| `nimbus/rusty_v8` | `DENOBOT_PAT` plus default `GITHUB_TOKEN` release permissions | Reprovision only if Nimbus intends to cut new `rusty_v8` releases from this fork. Otherwise disable release/update workflows and manually verify transferred locker tags/assets remain reachable. |
+
+Concrete third-party action allowlist additions by satellite repo:
+
+- `nimbus/nimbus-machine-os`: `actions/*`, especially
+  `actions/create-github-app-token@v2`, `actions/cache@v5`,
+  `actions/download-artifact@v8`, `actions/upload-artifact@v7`,
+  `actions/attest@v4`.
+- `nimbus/nimbus-crun`: `actions/*`, `docker/setup-buildx-action@v3`,
+  `docker/build-push-action@v6`, `actions/attest@v4`.
+- `nimbus/deno`: `actions/*`, `denoland/setup-deno`, `dsherret/rust-toolchain-file`,
+  `cargo-bins/cargo-binstall`, `softprops/action-gh-release`,
+  `google-github-actions/auth`, `google-github-actions/setup-gcloud`,
+  `azure/login`, `Azure/artifact-signing-action`.
+- `nimbus/rusty_v8`: `actions/*`, `denoland/setup-deno`,
+  `dsherret/rust-toolchain-file`, `cargo-bins/cargo-binstall`,
+  `softprops/action-gh-release`.
+
+Action-version coordination note: the main repo currently uses
+`actions/create-github-app-token@v3`, while machine-os currently uses `@v2`.
+The version mismatch is not itself a rename blocker, but do not accidentally
+mix parameter semantics during the coordination window. Either preserve each
+repo's known-good version while only changing owner/repository inputs, or
+upgrade both deliberately in a separate verified action-version change.
+
+Suggested live checks once the repos exist:
+
+```sh
+for repo in nimbus-machine-os nimbus-crun homebrew-tap deno rusty_v8; do
+  gh secret list --repo "nimbus/${repo}"
+  gh variable list --repo "nimbus/${repo}"
+  gh api "repos/nimbus/${repo}/actions/permissions"
+  gh api "repos/nimbus/${repo}/rulesets"
+  gh api "repos/nimbus/${repo}/keys"
+  gh api "repos/nimbus/${repo}/hooks"
+done
+
+gh api orgs/nimbus/actions/permissions
+gh api orgs/nimbus/actions/permissions/selected-actions
+gh api orgs/nimbus/actions/runner-groups
+gh api orgs/nimbus/actions/runners
+```
 
 ---
 
@@ -126,6 +223,10 @@ scripts/verify-publish-helper.sh
 - Release repo: `release_repository="agentstation/neovex-machine-os"` ->
   `"nimbus/nimbus-machine-os"`
 - Build output artifact: `neovex-machine-os.raw.gz` -> `nimbus-machine-os.raw.gz`
+- App credentials: after the rename, this workflow still needs
+  `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` when invoked as a reusable workflow that
+  publishes or creates a release. Ensure the main repo passes the secret and the
+  machine-os repo has its own copy for direct or dispatch-driven release paths.
 
 **`publish.yml`** (~22 references, 254 lines):
 - Input descriptions: `"Neovex release tag"` -> `"Nimbus release tag"`,
@@ -143,10 +244,21 @@ scripts/verify-publish-helper.sh
   `'nimbus/nimbus-machine-os'`
 - Build output: `neovex-machine-os.raw.gz` -> `nimbus-machine-os.raw.gz`
 - Artifact name: `neovex-machine-os-arm64-publish` -> `nimbus-machine-os-*`
+- App credentials: this workflow reads `MACHINE_OS_RELEASE_APP_ID` from repo
+  variables and `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` from repo secrets to mint
+  a token against `inputs.source_repository`. Provision both on
+  `nimbus/nimbus-machine-os` and verify the App can read Actions artifacts from
+  `nimbus/nimbus`.
 
 **Note:** The reusable workflow is pinned at `@release-workflow-v1`. After
 renaming, create a new tag or update the existing ref so the main repo can call
 `nimbus/nimbus-machine-os/.github/workflows/build.yml@release-workflow-v1`.
+
+**`.github/dependabot.yml`**:
+- Verify package ecosystem directories and any path filters after file/script
+  renames. The file may have no direct `neovex` strings today, but it must still
+  point at valid workflow, container, or package directories after the
+  `nimbus-machine-os` rename.
 
 #### MOS-2: Containerfile and image build scripts
 
@@ -389,11 +501,21 @@ since it verifies the upstream patch applies cleanly).
 - Release title: `"neovex-crun ${{ github.ref_name }}"` -> `"nimbus-crun"`
 - Verification step: `./neovex-crun-linux-amd64 --version` ->
   `./nimbus-crun-linux-amd64`
+- Release permissions: keep `contents: write`, `id-token: write`, and
+  `attestations: write`; verify the `nimbus-crun` repo/org default token policy
+  permits these explicit scopes.
+- Third-party actions: add `docker/setup-buildx-action@v3` and
+  `docker/build-push-action@v6` to any org selected-action allowlist.
 
 #### CRUN-4: Docker builder
 
 **`.github/container/Dockerfile.builder`**: Check for any neovex references in
 the builder image definition (likely minimal -- it installs build dependencies).
+
+**`.github/dependabot.yml`**:
+- Verify package ecosystem directories and any path filters after workflow and
+  Docker builder path changes. The file may have no direct `neovex` strings
+  today, but path validity should be part of the crun repo rename review.
 
 #### CRUN-5: Patch file
 
@@ -496,8 +618,9 @@ Homebrew tap for [nimbus](https://github.com/nimbus/nimbus).
 #### TAP-3: Delete neovex cask from agentstation tap
 
 Remove `Casks/neovex.rb` from `agentstation/homebrew-tap`. The other 5 products
-remain untouched in that repo. The agentstation tap's README can be updated to
-remove the neovex section, but that is out of scope for this plan.
+remain untouched in that repo. Also remove the Neovex install section and any
+other user-facing Neovex install references from the shared tap README after
+the new `nimbus/homebrew-tap` path is verified.
 
 #### TAP-4: Verification
 
@@ -529,7 +652,7 @@ What DOES change:
 
 2. **Locker tag re-publish** -- the canonical main-repo `Cargo.toml`
    `[patch.crates-io]` pins these forks at locker tags (currently
-   `v2.7.14-locker.38` for the deno-family crates and `v147.4.0-locker.1`
+   `v2.7.14-locker.41` for the deno-family crates and `v147.4.0-locker.2`
    for `rusty_v8`). After transfer:
    - Verify the existing tags survive the transfer (GitHub usually preserves
      refs on org rename) and are reachable at the new URL.
@@ -543,6 +666,19 @@ What DOES change:
 3. **CI badge / README links** in each fork repo's `README.md` if any
    reference the former `agentstation` URL or owner. Optional cleanup.
 
+4. **Workflow posture decision** -- these forks carry upstream automation that
+   can publish crates, npm packages, cloud artifacts, signed binaries, GitHub
+   releases, and Slack/GCP/S3 side effects. Decide before transfer whether the
+   Nimbus forks will run those workflows:
+   - **Tag-only dependency forks (recommended for the rename):** disable or
+     restrict upstream release/publish/update workflows in `nimbus/deno` and
+     `nimbus/rusty_v8`, preserve transferred tags/assets, and verify main-repo
+     `cargo fetch` plus `make deny`.
+   - **Actively releasing forks:** reprovision every listed secret/variable,
+     configure org action allowlists for Azure/GCP/Deno actions, recreate
+     release/tag protections, and perform a dry-run release on disposable
+     locker tags before repinning the main repo.
+
 ### Verification
 
 ```sh
@@ -554,6 +690,14 @@ git -C ~/src/github.com/nimbus/rusty_v8 remote -v  # origin -> nimbus/rusty_v8
 cd ~/src/github.com/nimbus/nimbus
 cargo fetch        # must succeed without unknown-git failures
 make deny          # must succeed once allow-git lists nimbus/* URLs
+
+# If upstream release workflows remain enabled, verify their secrets/vars are
+# intentionally present; otherwise verify they are disabled or gated so they
+# cannot publish with stale denoland/agentstation credentials.
+gh secret list --repo nimbus/deno
+gh variable list --repo nimbus/deno
+gh secret list --repo nimbus/rusty_v8
+gh variable list --repo nimbus/rusty_v8
 ```
 
 ### Out of scope for this section
@@ -644,8 +788,11 @@ verify the full pipeline.
 - **OCI media types**: `application/vnd.neovex.machine.*` is a custom media
   type used by the main repo's OCI image puller. Both sides must agree on the
   rename or image pulling will break.
-- **No published packages**: No crates.io, npm, apt, or COPR packages exist
-  yet, so no registry migration needed.
+- **No Neovex/Nimbus published packages**: No Neovex-owned crates.io, npm, apt,
+  or COPR packages exist yet, so no registry migration is needed for the main
+  product. This does not apply to the forked Deno/V8 automation, which carries
+  upstream publish/release workflows; handle those through the Repo 4 workflow
+  posture decision.
 - **License rename**: Both machine-os and crun repos use the
   `Neovex Community License`. Coordinate with the main repo's LICENSE update.
 
@@ -655,9 +802,11 @@ verify the full pipeline.
 
 The following are discovered but not covered by this plan:
 
-- **`agentstation/homebrew-tap` cleanup**: Removing the neovex section from the
-  agentstation tap's README and any other references. The `Casks/neovex.rb`
-  deletion is covered (TAP-3) but broader cleanup of the shared tap is not.
+- **Other agentstation products in `agentstation/homebrew-tap`**: starmap,
+  tokenizer, vhs, pocket, tydirium, and shared tap infrastructure stay in
+  agentstation. Removing `Casks/neovex.rb` and removing user-facing Neovex
+  install/docs references from the shared tap README are in scope for this
+  rename; changing unrelated product formulas/casks is not.
 - **Other agentstation repos** (starmap, tokenizer, vhs, pocket, tydirium,
   nix-packages, etc.): These are independent products that stay in agentstation.
   They do not reference "neovex" internally.

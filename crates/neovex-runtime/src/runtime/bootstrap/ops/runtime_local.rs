@@ -527,7 +527,7 @@ fn apply_fs_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
 #[op2(fast)]
 pub(super) fn op_bootstrap_color_depth(_state: &mut OpState) -> i32 {
     // Neovex runtimes do not own an interactive terminal surface today, so we
-    // report the most conservative color capability until a profile-scoped
+    // report the most conservative color capability until a grant-scoped
     // stdio contract exists.
     1
 }

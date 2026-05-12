@@ -181,7 +181,7 @@ work is in progress.
   `test-sqlite-named-parameters.js` are green in the carried denominator after
   the public URI/open semantics were restored for `file:` sqlite locations,
   `SQLTagStore.size` was aligned to the Node getter contract, `gc.js` was
-  staged for the template-tag fixture, and the checked-in sqlite build-profile
+  staged for the template-tag fixture, and the checked-in sqlite build-preset
   contract widened the bundled SQL function family. The only remaining staged
   file in this family is `test-sqlite.js`, which now stays explicit as a
   bundled-percentile boundary instead of a fuzzy harness failure.

@@ -7,7 +7,7 @@ This file is the checked-in failure inventory for the currently manifested
 
 It records only the explicit red/skip remainder for the current family:
 watchpoints, validation-lane divergences, supported-lane drift, later-family
-dependencies, and profile/capability restrictions. Requirements and closeout
+dependencies, and preset/capability restrictions. Requirements and closeout
 decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 
 ## Node22 Upstream Slice Status
@@ -23,7 +23,7 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 - `test/parallel/test-stream-finished.js`
   - classification: `nlc5_nlc6_boundary_watchpoint`
   - reason: the official file opens a local TCP server with
-    `Server.listen(0)`, which currently fails under the application-profile
+    `Server.listen(0)`, which currently fails under the application-preset
     no-net contract before the rest of the callback-style `stream.finished()`
     assertions run
   - owner: networking-family capability boundary, not the green pure-stream
@@ -35,7 +35,7 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
   - classification: `nlc5_nlc6_boundary_watchpoint`
   - reason: the official file opens local TCP servers through `http` /
     `net`, so it currently fails at `Server.listen(0)` under the
-    application-profile no-net contract before the rest of the callback-style
+    application-preset no-net contract before the rest of the callback-style
     `stream.pipeline()` assertions run
   - owner: networking-family capability boundary, not the green
     `stream/promises.pipeline()` and non-socket pipeline semantics already
@@ -44,19 +44,19 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
     `runtime::tests::node_compat::node22_stream_pipeline_watchpoint`
 
 - `test/parallel/test-fs-open.js`
-  - classification: `application_profile_path_policy_divergence`
+  - classification: `application_preset_path_policy_divergence`
   - reason: the official file expects `ENOENT` for an absolute missing host
     path outside the generated bundle root, while Neovex intentionally denies
-    that path before raw host open in the application profile
+    that path before raw host open in the application preset
   - owner: runtime path-policy contract difference, not a Node22 positive-path
     `fs` regression
   - evidence:
     `runtime::tests::node_compat::node22_fs_open_watchpoint`
 
 - `test/parallel/test-fs-readdir-buffer.js`
-  - classification: `application_profile_path_policy_divergence`
+  - classification: `application_preset_path_policy_divergence`
   - reason: the official macOS-only file probes `/dev` with
-    `Buffer.from('/dev')`, but the application profile intentionally denies
+    `Buffer.from('/dev')`, but the application preset intentionally denies
     host paths outside the generated bundle root instead of claiming broad
     host-filesystem parity
   - owner: runtime path-policy contract difference, not the green
@@ -65,10 +65,10 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
     `runtime::tests::node_compat::node22_fs_readdir_buffer_watchpoint`
 
 - `test/parallel/test-fs-filehandle-use-after-close.js`
-  - classification: `application_profile_path_policy_divergence`
+  - classification: `application_preset_path_policy_divergence`
   - reason: the official file reopens `process.execPath`, which resolves to
     the host-side test binary outside the generated bundle root, so the
-    application profile intentionally denies that absolute host path before the
+    application preset intentionally denies that absolute host path before the
     later closed-filehandle `EBADF` assertion can run
   - owner: runtime path-policy contract difference, not a Node22 positive-path
     `fs.promises.FileHandle` regression inside approved roots
@@ -267,7 +267,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
 ## Current Holdout Summary
 
 The remaining Node22 watchpoints are currently classified as later-family
-boundaries or documented application-profile limitations:
+boundaries or documented application-preset limitations:
 
 - `test-stream-finished.js` and `test-stream-pipeline.js`
   - `NLC5` / `NLC6` networking boundary (`Server.listen(0)`)
@@ -275,7 +275,7 @@ boundaries or documented application-profile limitations:
   - later `async_hooks` / task-accounting ownership
 - `test-fs-open.js`, `test-fs-readdir-buffer.js`, and
   `test-fs-filehandle-use-after-close.js`
-  - application-profile path/capability divergences
+  - application-preset path/capability divergences
 - `test-fs-realpath.js` and `test-fs-write-file-sync.js`
   - later `worker_threads` ownership
 

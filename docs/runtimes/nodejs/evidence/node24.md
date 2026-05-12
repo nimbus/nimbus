@@ -27,7 +27,7 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 ## Canary Coverage
 
-| Package | Profile | Pinned version | Status |
+| Package | Preset | Pinned version | Status |
 | --- | --- | --- | --- |
 | none in current snapshot | n/a | n/a | n/a |
 

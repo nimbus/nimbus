@@ -4,7 +4,7 @@
   "nlc_item": "NLC7",
   "batch_constant": "LOADER_CONTEXT_BATCH",
   "execution_class": "sequential",
-  "profiles": ["Application"],
+  "presets": ["Application"],
   "capabilities": ["bundle-root-fs"],
   "lane_batches": [
     {

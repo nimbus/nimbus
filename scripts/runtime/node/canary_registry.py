@@ -22,15 +22,15 @@ def load_registry() -> dict:
         return json.load(handle)
 
 
-def active_canaries(registry: dict, profile: str | None = None) -> list[dict]:
+def active_canaries(registry: dict, preset: str | None = None) -> list[dict]:
     canaries = [
         canary
         for canary in registry["canaries"]
         if canary.get("status") == "active"
-        and (profile is None or canary["runtime_profile"].lower() == profile.lower())
+        and (preset is None or canary["runtime_preset"].lower() == preset.lower())
     ]
-    if profile is not None and not canaries:
-        raise SystemExit(f"no active canaries found for profile={profile}")
+    if preset is not None and not canaries:
+        raise SystemExit(f"no active canaries found for preset={preset}")
     return canaries
 
 
@@ -58,9 +58,9 @@ def load_lane_metadata_map() -> dict[str, dict]:
     return metadata_by_lane
 
 
-def canary_report_path(output_root: Path, profile: str) -> Path:
-    slug = profile.lower().replace(" ", "-")
-    return output_root / f"profile-{slug}.json"
+def canary_report_path(output_root: Path, preset: str) -> Path:
+    slug = preset.lower().replace(" ", "-")
+    return output_root / f"preset-{slug}.json"
 
 
 def ensure_bootstrapped(root: Path) -> None:
@@ -82,7 +82,7 @@ def command_bootstrap(args: argparse.Namespace) -> None:
     registry = load_registry()
     roots = {
         repo_root() / canary["root"]
-        for canary in active_canaries(registry, args.profile)
+        for canary in active_canaries(registry, args.preset)
     }
     for root in sorted(roots):
         ensure_bootstrapped(root)
@@ -91,7 +91,7 @@ def command_bootstrap(args: argparse.Namespace) -> None:
 def command_run(args: argparse.Namespace) -> None:
     registry = load_registry()
     lane_metadata_by_lane = load_lane_metadata_map()
-    canaries = active_canaries(registry, args.profile)
+    canaries = active_canaries(registry, args.preset)
     roots = {repo_root() / canary["root"] for canary in canaries}
     for root in sorted(roots):
         ensure_bootstrapped(root)
@@ -107,7 +107,7 @@ def command_run(args: argparse.Namespace) -> None:
                     "canary_id": canary["id"],
                     "package": canary["package"],
                     "pinned_version": canary["pinned_version"],
-                    "runtime_profile": canary["runtime_profile"],
+                    "runtime_preset": canary["runtime_preset"],
                     "claim_ids": canary["claim_ids"],
                     "lane": lane_run["lane"],
                     "compatibility_target": lane_run["compatibility_target"],
@@ -121,7 +121,7 @@ def command_run(args: argparse.Namespace) -> None:
 
     if not cargo_tests:
         raise SystemExit(
-            f"no active canary cargo tests matched profile={args.profile} lane={args.lane or 'all'}"
+            f"no active canary cargo tests matched preset={args.preset} lane={args.lane or 'all'}"
         )
 
     cargo_test_status: dict[str, str] = {}
@@ -157,7 +157,7 @@ def command_run(args: argparse.Namespace) -> None:
                 "id": lane_run["canary_id"],
                 "package": lane_run["package"],
                 "pinned_version": lane_run["pinned_version"],
-                "runtime_profile": lane_run["runtime_profile"],
+                "runtime_preset": lane_run["runtime_preset"],
                 "claim_ids": lane_run["claim_ids"],
                 "lane": lane_run["lane"],
                 "compatibility_target": lane_run["compatibility_target"],
@@ -166,7 +166,7 @@ def command_run(args: argparse.Namespace) -> None:
                 "lane_role": lane_run["lane_metadata"]["lane_role"],
                 "public_contract_role": lane_run["lane_metadata"]["public_contract_role"],
                 "runtime_execution_target": lane_run["lane_metadata"]["runtime_execution_target"],
-                "runtime_limits_profile": lane_run["lane_metadata"]["runtime_limits_profile"],
+                "runtime_limits_preset": lane_run["lane_metadata"]["runtime_limits_preset"],
                 "status": status,
             }
         )
@@ -180,7 +180,7 @@ def command_run(args: argparse.Namespace) -> None:
                 "lane_role": lane_run["lane_metadata"]["lane_role"],
                 "public_contract_role": lane_run["lane_metadata"]["public_contract_role"],
                 "runtime_execution_target": lane_run["lane_metadata"]["runtime_execution_target"],
-                "runtime_limits_profile": lane_run["lane_metadata"]["runtime_limits_profile"],
+                "runtime_limits_preset": lane_run["lane_metadata"]["runtime_limits_preset"],
                 "cargo_tests": [],
                 "canary_count": 0,
                 "passed": 0,
@@ -201,10 +201,10 @@ def command_run(args: argparse.Namespace) -> None:
         else default_report_output_root()
     )
     output_root.mkdir(parents=True, exist_ok=True)
-    report_path = canary_report_path(output_root, args.profile)
+    report_path = canary_report_path(output_root, args.preset)
     report = {
         "schema_version": 1,
-        "profile": canaries[0]["runtime_profile"],
+        "runtime_preset": canaries[0]["runtime_preset"],
         "canary_count": len(canary_results),
         "passed": sum(1 for result in canary_results if result["status"] == "pass"),
         "failed": sum(1 for result in canary_results if result["status"] == "fail"),
@@ -261,11 +261,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     bootstrap = subparsers.add_parser("bootstrap")
-    bootstrap.add_argument("--profile", default=None)
+    bootstrap.add_argument("--preset", default=None)
     bootstrap.set_defaults(func=command_bootstrap)
 
     run = subparsers.add_parser("run")
-    run.add_argument("--profile", required=True)
+    run.add_argument("--preset", required=True)
     run.add_argument("--lane", default=None)
     run.add_argument("--output-root", default=None)
     run.set_defaults(func=command_run)

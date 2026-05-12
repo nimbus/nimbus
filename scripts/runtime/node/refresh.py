@@ -216,7 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--run-representative-slices",
         action="store_true",
-        help="run the representative live slice reports before dashboard generation",
+        help="run representative live Node test checks before dashboard generation",
     )
     return parser
 

@@ -8,13 +8,15 @@ relocating all repositories from the `agentstation` GitHub organization to
 
 `pending` -- not yet started.
 
-## Prerequisites
+## Prerequisite Release Gate
 
 - `docs/plans/nimbus-rename-satellite-repos-plan.md` -- rename internals of
   `nimbus-machine-os`, `nimbus-crun`, `homebrew-tap`, and re-publish the
   Deno/`rusty_v8` fork locker tags under `nimbus/*` (Repo 4) so both sides
   of cross-repo interfaces and the `[patch.crates-io]` URL surface agree on
-  names at release time.
+  names at release time. The satellite plan does not need to finish before
+  Phase 0 repository transfer, but it must finish before any renamed
+  end-to-end release run.
 
 ## Context
 
@@ -50,9 +52,9 @@ ready to receive transfers.
 | **Homebrew cask** `agentstation/tap/neovex` | `nimbus/tap/nimbus` |
 | **Release assets** `neovex_linux_arm64.tar.gz` | `nimbus_linux_arm64.tar.gz` |
 | **COPR project** `agentstation/neovex` | `nimbus/nimbus` |
-| **Install script URL** `neovex.dev/install.sh` | `nimbus.dev/install.sh` (or equivalent) |
-| **Domain** `neovex.dev` | TBD (nimbus domain) |
-| **APT GPG email** `apt@neovex.dev` | `apt@nimbus.dev` (or equivalent) |
+| **Install script URL** `neovex.dev/install.sh` | `nimbus.dev/install.sh` (or chosen final domain) |
+| **Domain** `neovex.dev` | Final Nimbus domain; must be decided before Phase 4 scripts and Phase 7 docs |
+| **APT GPG email** `apt@neovex.dev` | `apt@<final-nimbus-domain>` |
 | **Homebrew cask token** `neovex-dev` | `nimbus-dev` |
 | **HTTP headers** `x-neovex-*` | `x-nimbus-*` |
 | **WebSocket protocol** `neovex.v1`, `neovex.v2` | `nimbus.v1`, `nimbus.v2` |
@@ -111,6 +113,61 @@ complete before any code changes.
 
 ---
 
+## Human/Admin Prerequisite Packet
+
+Before an agent starts Phase 0a or any release verification, a human with
+GitHub/org admin access should either complete these items manually or provide
+the agent with short-lived credentials and exact values to apply. Do **not**
+commit secret values to the repo or paste them into plan files; use GitHub
+Secrets, service consoles, or a local one-time environment file that is deleted
+after use.
+
+### Access the agent may need
+
+- A GitHub login/token with admin access to the `nimbus` org and these repos:
+  `nimbus/nimbus`, `nimbus/nimbus-machine-os`, `nimbus/nimbus-crun`,
+  `nimbus/homebrew-tap`, `nimbus/deno`, and `nimbus/rusty_v8`.
+- Permission to read and update GitHub Actions secrets, variables,
+  environments, Pages, repository rulesets, branch/tag protections, deploy
+  keys, webhooks, installed GitHub Apps, releases, and GHCR package settings.
+- Service-console access or human-confirmed outputs for Codecov, COPR, DNS,
+  GPG key generation, and any release-token principal used for Homebrew.
+
+### Values to provide or confirm
+
+| Item | Needed value / decision | How to apply |
+|------|--------------------------|--------------|
+| `GOOGLESOURCE_COOKIE` | Existing cookie value, if still required for V8/Deno fetches | `gh secret set GOOGLESOURCE_COOKIE --repo nimbus/nimbus` |
+| `CODECOV_TOKEN` | New Codecov token for `nimbus/nimbus` | `gh secret set CODECOV_TOKEN --repo nimbus/nimbus` |
+| `COPR_CONFIG` | New COPR config if the project moves to `nimbus/nimbus` | `gh secret set COPR_CONFIG --repo nimbus/nimbus` |
+| `MACHINE_OS_RELEASE_APP_ID` | Existing or new GitHub App ID for the main release dispatcher | `gh variable set MACHINE_OS_RELEASE_APP_ID --repo nimbus/nimbus --body ...` |
+| `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` | Existing or new GitHub App private key for the main release dispatcher | `gh secret set MACHINE_OS_RELEASE_APP_PRIVATE_KEY --repo nimbus/nimbus` |
+| `MACHINE_OS_RELEASE_APP_ID` | Same App ID, also required by the machine-os publish workflow when it downloads staged artifacts from the main repo | `gh variable set MACHINE_OS_RELEASE_APP_ID --repo nimbus/nimbus-machine-os --body ...` |
+| `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` | Same private key, also required by the machine-os publish workflow when it downloads staged artifacts from the main repo | `gh secret set MACHINE_OS_RELEASE_APP_PRIVATE_KEY --repo nimbus/nimbus-machine-os` |
+| `HOMEBREW_TAP_TOKEN` | Fine-grained PAT or App token with write access only to `nimbus/homebrew-tap` | `gh secret set HOMEBREW_TAP_TOKEN --repo nimbus/nimbus` |
+| `APT_REPOSITORY_SIGNING_KEY` | New armored GPG private key for the Nimbus apt repo identity | `gh secret set APT_REPOSITORY_SIGNING_KEY --repo nimbus/nimbus` |
+| `APT_REPOSITORY_SIGNING_PASSPHRASE` | Passphrase for the new apt signing key | `gh secret set APT_REPOSITORY_SIGNING_PASSPHRASE --repo nimbus/nimbus` |
+| `APT_REPOSITORY_PUBLISH` | Boolean release default | `gh variable set APT_REPOSITORY_PUBLISH --repo nimbus/nimbus --body true/false` |
+| `COPR_SUBMIT_RELEASES` | Boolean release default | `gh variable set COPR_SUBMIT_RELEASES --repo nimbus/nimbus --body true/false` |
+| `APT_REPOSITORY_CNAME` | New apt repo custom domain, if used | `gh variable set APT_REPOSITORY_CNAME --repo nimbus/nimbus --body apt.<domain>` |
+| Domain/DNS | Final product domain, apt CNAME, email identity for signing keys | DNS/service-console update, then verify in Phase 0a.12 |
+| GitHub App strategy | Reinstall existing App vs create a new `nimbus`-owned App | Complete in GitHub App settings before release workflow verification |
+| GHCR visibility | Public/private policy for `nimbus/nimbus-machine-os` packages | GitHub package settings |
+
+### Human-only confirmations
+
+- Repository transfers and `nimbus/homebrew-tap` creation are complete.
+- The shared `agentstation/homebrew-tap` is not transferred; only the Neovex
+  cask is removed after the Nimbus tap is ready.
+- Branch/tag rulesets and required checks have been recreated or confirmed in
+  the `nimbus` org.
+- GitHub Actions policy allows all required first-party, third-party, and
+  cross-repo reusable workflow references.
+- Pages, DNS, Codecov, COPR, GHCR, and the machine-os GitHub App are verified
+  in their service consoles, not only by static repo grep.
+
+---
+
 ## Phase 0a: Re-provision Secrets, Variables, Apps, and Pages
 
 The release pipeline is held together by ~7 GitHub secrets, 4 repository
@@ -118,18 +175,28 @@ variables, 1 GitHub App, 1 Codecov project, 1 COPR project, 1 GPG key, and
 1 GitHub Pages site. None of these are stored in the repo; they are
 configured in GitHub/Codecov/COPR consoles and must be re-provisioned
 under the new org/repo before any release workflow on `nimbus/nimbus` can
-succeed end-to-end.
+succeed end-to-end. Treat this as a live admin audit, not a one-time copy:
+verify repository secrets, environment secrets, organization secrets, variables,
+installed Apps, deploy keys, webhooks, rulesets, package permissions, Pages, and
+external service tokens before releasing under the new name.
 
 This phase is **manual admin work** owned by the repo owner.
 
 ### 0a.1 Repository secrets (Settings -> Secrets and variables -> Actions)
 
 Port these secrets from `agentstation/neovex` to `nimbus/nimbus`. Some are
-straight copies; others require re-issuance under the new identity.
+straight copies; others require re-issuance under the new identity. The
+machine-os repo also needs its own App secret copy; see 0a.3 and the human/admin
+packet above.
+
+GitHub can list secret names but cannot reveal secret values. For any value that
+might contain `agentstation`, `neovex`, old domains, or old repo scopes, verify
+through the secret owner, source-of-truth vault, or by reissuing the credential.
+Do not treat a matching secret name as proof that the value is rename-safe.
 
 | Secret | Used in | Action |
 |--------|---------|--------|
-| `GOOGLESOURCE_COOKIE` | ci.yml (5x), release.yml (2x) | Copy value as-is. chromium.googlesource.com auth cookie, not org-bound. |
+| `GOOGLESOURCE_COOKIE` | ci.yml (5x), release.yml (2x), node-compat-nightly.yml | Copy value as-is. chromium.googlesource.com auth cookie, not org-bound. |
 | `CODECOV_TOKEN` | ci.yml | **Re-issue.** Onboard `nimbus/nimbus` on Codecov; Codecov assigns a new repo-bound token. |
 | `COPR_CONFIG` | copr-srpms.yml | **Re-issue if COPR project moves.** If renaming COPR project to `nimbus/nimbus` (see contract.env), regenerate `~/.config/copr` for the new project owner and store as the secret. If COPR project stays under agentstation owner, keep existing config. |
 | `MACHINE_OS_RELEASE_APP_PRIVATE_KEY` | release.yml | **Re-issue or re-install App.** See 0a.3. |
@@ -138,6 +205,10 @@ straight copies; others require re-issuance under the new identity.
 | `APT_REPOSITORY_SIGNING_PASSPHRASE` | apt-repo.yml | Re-issue alongside the new GPG key. |
 
 ### 0a.2 Repository variables (Settings -> Secrets and variables -> Actions -> Variables)
+
+Port these variables from `agentstation/neovex` to `nimbus/nimbus`. The
+machine-os repo also needs its own App ID variable; see 0a.3 and the
+human/admin packet above.
 
 | Variable | Used in | Action |
 |----------|---------|--------|
@@ -152,14 +223,20 @@ straight copies; others require re-issuance under the new identity.
 can dispatch and observe the satellite repo's release workflow. The App is
 currently scoped to `owner: agentstation, repositories: neovex-machine-os`
 (literal strings hardcoded in `release.yml:284-285` -- see Phase 3a).
+The same App credentials are also read by `nimbus-machine-os` workflows:
+its reusable `build.yml` can mint a token to create/update the machine-os
+release and push GHCR packages, and its `publish.yml` mints a token to read
+the staged artifact from the source `nimbus/nimbus` release run. Therefore
+provision the App ID/private key on both `nimbus/nimbus` and
+`nimbus/nimbus-machine-os`.
 
 Choose one of:
 
 - **(A) Reinstall existing App on `nimbus` org.** GitHub Apps support
   multi-org installation. Install the existing App on `nimbus`, grant it
-  access to `nimbus/nimbus-machine-os` (workflows: read/write, contents:
-  read). Reuse the existing `MACHINE_OS_RELEASE_APP_ID` and private key
-  secret. Lowest churn.
+  access to `nimbus/nimbus` and `nimbus/nimbus-machine-os` with GitHub App
+  permissions matching the full cross-repo release flow. Reuse the existing
+  `MACHINE_OS_RELEASE_APP_ID` and private key secret. Lowest churn.
 
 - **(B) Create a new GitHub App owned by the `nimbus` org.** Generate a
   new App ID and private key. Update the `MACHINE_OS_RELEASE_APP_ID`
@@ -168,6 +245,19 @@ Choose one of:
 
 Either way the hardcoded `owner:` / `repositories:` strings in
 `release.yml:284-285` must be rewritten in Phase 3a.
+
+Required App permission matrix:
+
+| Caller | Target repo | Token purpose | GitHub App permissions |
+|--------|-------------|---------------|------------------------|
+| `nimbus/nimbus` `release.yml` | `nimbus/nimbus-machine-os` | Dispatch `publish.yml` and watch the run | Actions read/write, Contents read |
+| `nimbus/nimbus-machine-os` reusable `build.yml` | `nimbus/nimbus-machine-os` | Create/update machine-os releases and push package artifacts when `publish=true` or `create_release=true` | Contents read/write, Packages write |
+| `nimbus/nimbus-machine-os` `publish.yml` | `nimbus/nimbus` | Download the staged machine-os artifact from the source release run | Actions read, Contents read |
+
+If GitHub App permissions are split by installation or by separate Apps, record
+which App serves each row before running release verification. Do not broaden a
+PAT as a shortcut; use a GitHub App or a fine-grained token scoped only to the
+needed repos.
 
 ### 0a.4 Codecov project
 
@@ -206,6 +296,23 @@ the org transfer:
 - The published apt repo URL (used by end-user `apt-get` configurations
   in `scripts/install.sh` and docs) changes; this is covered in Phase 4.
 
+### 0a.6b Domain decision gate
+
+The final Nimbus domain is a hard prerequisite before Phase 4 script edits and
+Phase 7 documentation edits. Decide and record:
+
+- Product domain used for install/docs URLs (`nimbus.dev` or chosen equivalent)
+- Apt repository CNAME (`apt.<domain>` or chosen equivalent)
+- Signing-key identities (`apt@<domain>`, `oss@<domain>`, and
+  `opensource@<domain>` or chosen equivalents)
+- Schema `$id` URL host for JSON schemas currently using `neovex.dev` or
+  `neovex.local`
+
+Do not leave `neovex.dev` as a deferred residual unless a separate
+domain-transition note explicitly owns every remaining reference. The install
+script, apt GPG key identity, schema `$id` values, and install-script docs all
+depend on this decision.
+
 ### 0a.7 GitHub App: dependabot, codeql, etc.
 
 - `.github/dependabot.yml` -- no neovex/agentstation refs; carries over
@@ -227,6 +334,36 @@ the org transfer:
 - Actions permissions -- "Allow all actions and reusable workflows" or
   the equivalent allowlist must include any third-party actions used (see
   the Phase 0a.9 list).
+- Workflow permissions -- confirm the new repo/org allows workflow-declared
+  write scopes. Current workflows request `contents: write`, `packages: write`,
+  `pages: write`, `id-token: write`, and `attestations: write`; a restrictive
+  org default can silently block release, Pages, GHCR, or attestation jobs even
+  when the YAML is correct.
+- `GITHUB_TOKEN` default policy -- verify both the `nimbus` org and each repo
+  permit workflow-declared write permissions. A read-only org default is fine
+  only if workflows can elevate through explicit `permissions:` blocks.
+- Billing/spending limits -- verify the `nimbus` org has sufficient Actions
+  minutes, artifact/storage quota, package storage, and Pages availability for
+  the release pipeline. These limits do not transfer from `agentstation`.
+- GitHub Packages policy -- verify org package-creation policy, default
+  visibility, package ownership, and repo access grants permit
+  `nimbus/nimbus-machine-os` GHCR publication.
+- Org webhooks -- audit org-level webhooks in addition to repo-level hooks;
+  remove or update any old `agentstation/neovex` forwarding only after the
+  renamed pipeline passes a release dry run.
+- Codespaces/dev containers -- confirm no `.devcontainer/` or Codespaces org
+  policy references old repo paths. Current repo state has no checked-in
+  `.devcontainer/`, but keep the audit explicit for the transfer.
+- Rulesets/tag protection -- audit branch rulesets, tag rulesets, release
+  creation permissions, and required checks. The rename touches release tags,
+  reusable workflow refs, and branch protection check names, so both branch and
+  tag policies must be revalidated after transfer.
+- Environments -- verify the `github-pages` environment still exists and that
+  any reviewers or deployment branch rules allow the renamed workflow to deploy.
+- Integration inventory -- list installed GitHub Apps, webhooks, deploy keys,
+  Dependabot/security settings, and Codecov/COPR/GHCR integrations. Remove
+  stale `agentstation/neovex` grants only after the renamed pipeline has passed
+  one full release dry run.
 
 ### 0a.9 Third-party action allowlist (Settings -> Actions -> General)
 
@@ -248,6 +385,11 @@ Plus the cross-repo reusable workflow:
 - `nimbus/nimbus-machine-os/.github/workflows/build.yml@release-workflow-v1`
 
 (After rename. Currently `agentstation/neovex-machine-os/...`.)
+
+Also audit satellite-repo action allowlists from
+`docs/plans/nimbus-rename-satellite-repos-plan.md`; the machine-os, crun,
+Deno, and `rusty_v8` repositories use additional third-party actions that are
+not present in this main repo.
 
 ### 0a.10 Self-hosted runners
 
@@ -292,11 +434,46 @@ Before proceeding to Phase 0.5, verify:
 gh secret list  --repo nimbus/nimbus
 gh variable list --repo nimbus/nimbus
 
-# GitHub App is installed on nimbus org with access to nimbus-machine-os
-gh api orgs/nimbus/installations --jq '.installations[] | {id, app_slug, repository_selection}'
-
 # Pages is configured
 gh api repos/nimbus/nimbus/pages
+
+# Actions permissions and rulesets do not block requested workflow scopes
+gh api repos/nimbus/nimbus/actions/permissions
+gh api repos/nimbus/nimbus/rulesets
+gh api orgs/nimbus/actions/permissions
+gh api orgs/nimbus/actions/permissions/selected-actions
+
+# Org-level runner groups/labels, variables, secrets, and teams are accounted for
+gh api orgs/nimbus/actions/runner-groups
+gh api orgs/nimbus/actions/runners
+gh secret list --org nimbus
+gh variable list --org nimbus
+gh api orgs/nimbus/teams
+gh api orgs/nimbus/hooks
+gh api "orgs/nimbus/packages?package_type=container"
+
+# Secret values are write-only in GitHub. Confirm values through the credential
+# owner/vault or reissue credentials when values may encode old repo/org/domain
+# names.
+
+# Billing/spending limits are service-console checks. Verify Actions minutes,
+# artifact/package storage, and Pages availability for the nimbus org.
+
+# GitHub App installation can access both repos required by the cross-repo flow
+gh api orgs/nimbus/installations --jq '.installations[] | {id, app_slug, repository_selection}'
+gh api repos/nimbus/nimbus-machine-os/actions/permissions
+gh api repos/nimbus/nimbus-machine-os/rulesets
+gh secret list --repo nimbus/nimbus-machine-os
+gh variable list --repo nimbus/nimbus-machine-os
+
+# Environment, deploy keys, webhooks, and installed integrations are accounted for
+gh api repos/nimbus/nimbus/environments
+gh api repos/nimbus/nimbus/keys
+gh api repos/nimbus/nimbus/hooks
+
+# GHCR/package settings are confirmed in the service console or API.
+# At minimum, verify package ownership/visibility and workflow package write access.
+gh api orgs/nimbus/packages/container/nimbus-machine-os
 
 # Codecov repo exists (HTTP probe)
 curl -fsSL https://app.codecov.io/gh/nimbus/nimbus >/dev/null && echo OK
@@ -362,9 +539,9 @@ crates/neovex-testing/ -> crates/nimbus-testing/
 - `[patch.crates-io]`:
   - **Canonical published form** points the 20 deno-family entries at
     `git = "https://github.com/agentstation/deno"` with the current locker
-    tag (e.g. `tag = "v2.7.14-locker.38"`), and the 1 v8 entry at
+    tag (currently `tag = "v2.7.14-locker.41"`), and the 1 v8 entry at
     `git = "https://github.com/agentstation/rusty_v8"` with its own locker
-    tag (`v147.4.0-locker.1`). Rewrite both to the renamed forks
+    tag (`v147.4.0-locker.2`). Rewrite both to the renamed forks
     (`nimbus/deno` and `nimbus/rusty_v8`) preserving the locker tag.
   - **Temporary Codex debug state**: the working tree may have those 20
     entries replaced with `path = "/Users/jack/src/github.com/agentstation/deno/..."`
@@ -386,9 +563,10 @@ For every crate:
 - `[dependencies]` internal refs: `neovex-*` -> `nimbus-*`
 - `[dev-dependencies]` internal refs: same
 
-### 1d. Update all Rust source code
+### 1d. Update Rust source code and crate-path fixtures
 
-Global find-replace across all `.rs` files, most-specific first to avoid
+Global find-replace across all `.rs` files plus the non-Rust contract fixtures
+that embed crate paths or runtime symbol names, most-specific first to avoid
 partial matches.
 
 **Crate imports and qualified paths:**
@@ -543,6 +721,24 @@ partial matches.
 - `Symbol.for("neovex.readlineTabCompletePatched")` ->
   `Symbol.for("nimbus.readlineTabCompletePatched")`
 
+**Node compatibility manifests and schema fixtures** (JSON files with crate
+paths or schema IDs; update alongside the `crates/nimbus-runtime` directory
+rename):
+- `crates/nimbus-runtime/src/runtime/tests/node_compat_manifests/schema.json`:
+  `$id` `https://neovex.dev/schemas/node-compat-manifests.schema.json` ->
+  final Nimbus schema URL from the domain decision gate
+- `crates/nimbus-runtime/src/runtime/tests/node_compat_manifests/lanes/{node20,node22,node24}.json`:
+  `vendored_fixture_root` paths `crates/neovex-runtime/...` ->
+  `crates/nimbus-runtime/...`
+- `tests/runtime/node/schemas/*.schema.json`: `$id` URLs
+  `https://neovex.local/node-compat/...` -> final Nimbus schema URL host
+- `tests/runtime/node/schemas/rust-watchpoints.schema.json`: embedded
+  `crates/neovex-runtime/src/runtime/tests/node/mod.rs` constants ->
+  `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`
+- `tests/runtime/node/expectations/rust-watchpoints.json`: all
+  `source_path` entries `crates/neovex-runtime/src/runtime/tests/node/mod.rs`
+  -> `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`
+
 **JS codegen marker constants** in `packages/codegen/src/constants.mjs`:
 - `__neovexConvexArg` -> `__nimbusConvexArg`
 - `__neovexConvexOperation` -> `__nimbusConvexOperation`
@@ -564,6 +760,18 @@ partial matches.
   service/compose.rs
 - `"not yet supported by neovex"` -> `"not yet supported by nimbus"` in
   service/compose.rs
+
+**Init scaffolding templates** in `crates/nimbus-bin/templates/`:
+- Directory moves automatically with `crates/neovex-bin/` ->
+  `crates/nimbus-bin/`, but template contents must also be updated.
+- `templates/{convex,cloud-functions}/gitignore`: `.neovex/` -> `.nimbus/`
+- `templates/convex/package.json.tmpl`: `@neovex/codegen` ->
+  `@nimbus/codegen`
+- `templates/cloud-functions/functions/package.json.tmpl`: `@neovex/codegen`
+  -> `@nimbus/codegen`
+- Re-run or add a focused scaffold assertion so `nimbus init convex` and
+  `nimbus init cloud-functions` emit Nimbus-branded package metadata and
+  ignore paths.
 
 **Hardcoded local paths in tests/benchmarks** (remove or make generic):
 - `/Users/jack/src/github.com/agentstation/neovex/` references in:
@@ -740,6 +948,21 @@ Demo env vars and script literals to update:
   each contains `globalThis.__neovexInvoke` and `x-neovex-trace` header --
   rewrite to `__nimbusInvoke` / `x-nimbus-trace` in all 5 bundle fixtures
 - Regenerate `tests/runtime/node/networking-canaries/package-lock.json`
+- `tests/runtime/node/tooling-canaries/package.json`:
+  `"name": "neovex-tooling-canaries"` -> `"nimbus-tooling-canaries"`
+- `tests/runtime/node/tooling-canaries/README.md`: absolute repo paths and
+  `neovex-runtime` references -> renamed repo/path/crate names
+- `tests/runtime/node/tooling-canaries/bundles/{tsx,ts-node,prisma,next,jest}.mjs`:
+  `globalThis.__neovexInvoke` -> `globalThis.__nimbusInvoke` and
+  `"neovex-host-node"` -> `"nimbus-host-node"` in all 5 bundle fixtures
+- `tests/runtime/node/tooling-canaries/bundles/prisma.mjs` and
+  `tests/runtime/node/tooling-canaries/fixtures/next-app/next.config.mjs`:
+  `.neovex` scratch paths -> `.nimbus`
+- Regenerate `tests/runtime/node/tooling-canaries/package-lock.json`
+- Re-run the node compatibility canary generation/check targets that own these
+  fixtures (`make node-compat-canaries`, `make node-compat-validate-claims`, or
+  the narrower target used by the active plan) so checked-in JSON expectations
+  and generated bundle state agree with source.
 
 ### 2g. Regenerate package-lock.json
 
@@ -755,6 +978,12 @@ npm install
 - `demos/index.html`
 - Demo source files (`demos/*/src/*.ts`, `demos/*/node/*.ts`)
 - All `_generated/` files in demos
+- `tests/runtime/node/networking-canaries/**`
+- `tests/runtime/node/tooling-canaries/**`
+- `tests/runtime/node/schemas/**`
+- `tests/runtime/node/expectations/rust-watchpoints.json`
+- `crates/nimbus-runtime/src/runtime/tests/node_compat_manifests/**`
+- `crates/nimbus-bin/templates/**`
 - `package-lock.json`
 
 ---
@@ -784,6 +1013,10 @@ The most reference-dense file.
 - `release.yml:284-285` -- hardcoded App scope strings
   `owner: agentstation` -> `owner: nimbus`,
   `repositories: neovex-machine-os` -> `repositories: nimbus-machine-os`
+- `release.yml:280` currently uses `actions/create-github-app-token@v3`; the
+  machine-os satellite workflows currently use `@v2`. Preserve known-good
+  action versions during the rename unless intentionally doing a separate,
+  verified action-version upgrade.
 - `release.yml:312` -- GH API path
   `repos/agentstation/neovex-machine-os/actions/workflows/publish.yml/dispatches`
   -> `repos/nimbus/nimbus-machine-os/...`
@@ -916,6 +1149,15 @@ Builds and submits SRPMs to COPR.
 
 - Self-hosted runner label: `neovex-machine-os` -> `nimbus-machine-os`
 
+### 3i. .github/workflows/node-compat-nightly.yml
+
+- Workflow body is mostly project-name agnostic, but it still depends on the
+  `GOOGLESOURCE_COOKIE` secret and Node compatibility package-lock paths.
+- Verify any renamed runtime crate/package paths in `make node-compat-*`
+  targets continue to resolve after the Rust/JS rename.
+- Keep the workflow name product-neutral unless product branding is desired;
+  if renamed, update any required-check or dashboard references.
+
 **Key files:**
 - `.github/workflows/release.yml` (~60+ changes)
 - `.github/workflows/ci.yml` (~20 changes)
@@ -924,6 +1166,7 @@ Builds and submits SRPMs to COPR.
 - `.github/workflows/linux-packages.yml` (~33 changes)
 - `.github/workflows/apt-repo.yml` (~40 changes)
 - `.github/workflows/copr-srpms.yml` (~36 changes)
+- `.github/workflows/node-compat-nightly.yml`
 - `.github/actionlint.yaml`
 
 ---
@@ -989,7 +1232,8 @@ Also update `scripts/single-flight.sh`:
 reference-dense script (146 refs). Group the rewrite into these distinct
 sub-categories so none gets skipped:
 
-1. Domain URLs: `neovex.dev` install URL, docs URL.
+1. Domain URLs: `neovex.dev` install URL, docs URL. The final Nimbus domain
+   must already be decided by the Phase 0a.6b domain gate.
 2. Release URLs: `agentstation/neovex`, `agentstation/neovex-crun` GitHub API
    endpoints (must follow the renamed repos).
 3. Binary literals: `neovex` throughout, including `neovex --version`,
@@ -1086,6 +1330,11 @@ node_compat)
 - **`cliff.toml`**: `owner = "agentstation"` -> `"nimbus"`, `repo = "neovex"` ->
   `"nimbus"`
 - **`.gitignore`**: `.neovex` and `**/.neovex` -> `.nimbus` and `**/.nimbus`
+- **`.env` / `.env.example`**: update checked-in sample keys and local
+  developer defaults from `NEOVEX_*` / `.neovex` / `agentstation` to their
+  `NIMBUS_*` equivalents. Do not commit private local secret values.
+- **`codecov.yml`**: no current repo-name references, but verify coverage
+  status names/path filters still match after crate/package directory renames.
 - **`compose.yaml`**: (~13 references) `neovex` -> `nimbus` in service
   commands, database names, usernames, passwords, healthcheck commands
 - **`CLAUDE.md`**: Update workspace layout table (all crate names), verification
@@ -1194,6 +1443,10 @@ Files to update (non-exhaustive):
 - `docs/plans/archive/*.md` (all archived plans)
 - `docs/plans/research/*.md` (all research docs)
 - `docs/plans/prompts/*.md`
+  - `docs/plans/prompts/nimbus-rename-audit-prompt.md` is especially
+    self-referential: update its old repo path, crate/package inventory, Deno
+    tag values, and audit search tokens so future rename audits do not describe
+    the pre-rename project.
 - `docs/plans/security/*.md`
 - `docs/architecture/*.md`
 
@@ -1222,19 +1475,24 @@ Phases must be executed in this order due to dependencies:
    re-provisioning. Manual admin work; can begin in parallel with Phase 0.5
    but must complete before any release workflow runs end-to-end on the
    renamed repo.
-3. **Phase 0.5** -- capture baseline reference counts (cheap, prevents
+3. **Satellite release gate** -- after the transfer, complete
+   `docs/plans/nimbus-rename-satellite-repos-plan.md` before any renamed
+   end-to-end release verification. The main repo code rename can proceed in
+   parallel with satellite edits as long as cross-repo interfaces are kept in
+   lockstep before release.
+4. **Phase 0.5** -- capture baseline reference counts (cheap, prevents
    silent residuals; rerun after each phase below)
-4. **Phase 1** -- Rust crates (core rename, generates new Cargo.lock).
+5. **Phase 1** -- Rust crates (core rename, generates new Cargo.lock).
    Phase 1g (deny.toml) requires the satellite plan's Repo 4 locker tag
    re-publish to have completed.
-5. **Phase 2** -- JS packages (depends on directory structure from Phase 1)
-6. **Phase 3** -- CI/CD workflows (references crate/package names from 1-2,
+6. **Phase 2** -- JS packages (depends on directory structure from Phase 1)
+7. **Phase 3** -- CI/CD workflows (references crate/package names from 1-2,
    AND the secrets/vars/Apps/Pages re-provisioned in Phase 0a)
-7. **Phase 4** -- Scripts (references binary/env names from Phase 1)
-8. **Phase 5** -- Makefile (references everything)
-9. **Phase 6** -- Config & top-level files
-10. **Phase 7** -- Documentation (bulk text replacement, lowest risk)
-11. **Phase 8** -- Memory & Claude config (housekeeping)
+8. **Phase 4** -- Scripts (references binary/env names from Phase 1)
+9. **Phase 5** -- Makefile (references everything)
+10. **Phase 6** -- Config & top-level files
+11. **Phase 7** -- Documentation (bulk text replacement, lowest risk)
+12. **Phase 8** -- Memory & Claude config (housekeeping)
 
 Run `make check && make clippy && make deny` after Phase 1 and again after
 Phase 2 (see Verification > Per-phase gate). Compile failures here surface
@@ -1424,18 +1682,18 @@ validated by static text grep.
 - **Network interface**: Changing `neovex0` -> `nimbus0` is safe pre-launch.
 - **Deno fork URL**: Canonical `[patch.crates-io]` form points at
   `https://github.com/agentstation/deno` with the locker tag (currently
-  `v2.7.14-locker.38` for the deno-family crates and `v147.4.0-locker.1`
+  `v2.7.14-locker.41` for the deno-family crates and `v147.4.0-locker.2`
   for `rusty_v8`). The Cargo.toml in the working tree may temporarily use
   `path = "..."` overrides while Codex iterates against the local Deno
   worktree -- restore the canonical git+tag form before merging the rename.
   The `deny.toml` `allow-git` entry for `agentstation/deno_core` is stale
   and must be deleted (not rewritten); add `nimbus/deno` if `unknown-git`
   is denied.
-- **`.cargo/config.toml` `RUSTY_V8_VERSION` drift**: the env value
-  `147.0.0-locker.2` does not match the v8 crate tag `v147.4.0-locker.1`
-  in `Cargo.toml`. This is an existing drift, not introduced by the rename,
-  but the rename PR is the natural moment to either reconcile or document
-  the mismatch -- decide before Phase 1f regenerates `Cargo.lock`.
+- **`.cargo/config.toml` `RUSTY_V8_VERSION` lockstep**: keep the prebuilt
+  asset version aligned with the v8 crate tag. Current repo state is
+  `RUSTY_V8_VERSION = "147.4.0-locker.2"` and Cargo pins
+  `v147.4.0-locker.2`; preserve that lockstep when rewriting to
+  `nimbus/rusty_v8`.
 - **Checked-in data files**: `data/neovex-control.db` (~3.6MB) and
   `data/demo.redb` (~1.5MB) are committed binary artifacts. Decide
   rename-vs-regenerate-vs-delete explicitly during Phase 1:
@@ -1444,6 +1702,11 @@ validated by static text grep.
   - Delete and let the runtime recreate on first boot under the renamed
     filename. (Plan recommendation: delete -- the file is not source of
     truth, regeneration verifies the renamed code path end-to-end.)
+- **Generated service/project data**: if `data/services/projects/` or other
+  generated service-state directories exist in the working tree during the
+  rename, inspect them with structured tools or delete/regenerate them rather
+  than assuming the top-level `data/*.db` inventory is exhaustive. Current
+  checked-in state only has `data/demo.redb` and `data/neovex-control.db`.
 - **Vendor bundle regeneration**: `demos/convex/vendor/browser.bundle.js`
   must be deleted and rebuilt from the renamed SDK in Phase 2e, not
   sed-rewritten in place. A sed rewrite leaves binary minified state

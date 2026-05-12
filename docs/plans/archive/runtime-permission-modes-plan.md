@@ -1,19 +1,17 @@
 # Runtime Permission Modes Plan
 
-Status: pending
+Status: done
 
 Follow-on proposal for replacing the current purpose-heavy runtime permission
 story with a permissions-first model that is easier to explain to users,
 safer for AI-generated code, and more consistent with modern serverless and
 agent-hosting platforms.
 
-This document is intentionally a focused draft plan, not an active control
-plane. It should be promoted into `docs/plans/README.md` only when the repo is
-ready to make permission-mode work an owned implementation slice.
+This document is the active control plane for permission-mode work.
 
 ## Status
 
-- **Plan status:** `pending`
+- **Plan status:** `done`
 - **Primary owner when activated:** this plan for runtime permission taxonomy,
   fine-grained grant design, migration from `Application` / `Tooling`, and
   verification posture
@@ -27,6 +25,53 @@ ready to make permission-mode work an owned implementation slice.
   for this slice, and remains the default when no runtime language is
   specified. `Python` and other runtime languages are taxonomy placeholders for
   future plans, not implementation commitments here.
+
+## Readiness Audit
+
+Reviewed 2026-05-12 before activation. This readiness section records the
+pre-work starting point; the progress log below records subsequent cutovers.
+
+The implementation surface is concentrated enough to execute safely:
+
+- At activation, `crates/neovex-runtime/src/limits.rs` owned the current
+  `RuntimeProfile::{Application, Tooling}` terminology, constructor helpers,
+  normalization invariants, and exported runtime policy shape.
+- At activation, `crates/neovex-runtime/src/runtime_capabilities.rs` owned the effective
+  filesystem, env, subprocess, network, FFI, and sys permission construction,
+  currently deriving most decisions from `RuntimeProfile` plus
+  `RuntimeSubprocessPolicy`.
+- `crates/neovex-runtime/src/runtime/bootstrap/state.rs` and
+  `crates/neovex-runtime/src/runtime/bootstrap/ops/shared.rs` expose runtime
+  contract metadata to JavaScript and must move from preset language to
+  mode/preset language without changing compatibility-target semantics.
+- `crates/neovex-server/src/protocol.rs` exposes runtime diagnostics and must
+  report permission mode, grants, language, and preset distinctly once the new
+  model lands.
+- `crates/neovex-server/src/adapters/convex/**` creates the product runtime
+  lanes and should keep Convex adapter decisions at the adapter boundary while
+  lowering into core runtime mode/grant/preset primitives.
+- `crates/neovex-bin/src/codegen.rs` is the embedded tooling lane and should
+  become a `RuntimePreset::Tooling` user rather than a permission-mode special
+  case.
+- Node compatibility manifests and docs may retain historical
+  `application_node20` / `application_node22` / `application_node24` preset
+  labels only while the execution harness is being migrated; closeout requires
+  either migration or an explicit compatibility-evidence naming note.
+
+Implementation guardrails:
+
+- Do not widen host access while renaming terms; RPM1 should be behavior
+  preserving.
+- Add the data model before broad call-site churn so compile errors guide the
+  migration.
+- Keep compatibility targets (`WebStandardIsolate`, `Node20`, `Node22`,
+  `Node24`) orthogonal to permission modes.
+- Keep JavaScript as the only implemented runtime language for this plan; do
+  not introduce Python execution while adding `RuntimeLanguage`.
+- Prefer typed grant structs over stringly typed ad hoc fields, but keep
+  defaults small and serializable so diagnostics and docs can report them.
+- Every enforcement widening must be paired with a negative test and an audit
+  or diagnostic representation.
 
 ## Objective
 
@@ -366,7 +411,7 @@ Important rule:
 - the repo should prefer a direct breaking terminology cutover over indefinite
   dual naming
 - workloads that need non-default posture should specify mode and grants
-  directly instead of stretching the legacy profile names
+  directly instead of stretching the legacy preset names
 
 Transitional implementation rule:
 
@@ -559,11 +604,46 @@ When more differentiation is needed, Neovex should add grants, not more modes.
 
 | Item | Status | Depends on | Outcome |
 | --- | --- | --- | --- |
-| RPM1 Permission taxonomy and terminology closeout | `pending` | none | The repo adopts `RuntimeMode::{Restricted, Standard, Privileged}` as the canonical permission vocabulary through a direct breaking rename, with explicit migration guidance from `Application` / `Tooling`. |
-| RPM2 Grant vocabulary, data model, and preset layer | `pending` | RPM1 | Runtime configuration supports a Deno-like `RuntimeGrants` model with path-, host-, env-, secret-, identity-, service-, and command-scoped declarations, plus a small internal `RuntimePreset` layer that resolves to explicit mode-and-grant bundles. |
-| RPM3 Runtime enforcement hardening | `pending` | RPM2 | Filesystem, subprocess, env, network, FFI, and metadata boundaries are enforced by mode plus grants rather than by scattered ad hoc checks. |
-| RPM4 Product and adapter contract migration | `pending` | RPM3 | Public docs, surface matrices, and runtime entrypoints use the new mode language consistently, and any temporary alias layer is removed before closeout. |
-| RPM5 Verification and operator evidence | `pending` | RPM4 | Negative tests, canaries, and audit/reporting prove that `Restricted`, `Standard`, and `Privileged` actually enforce their intended ceilings. |
+| RPM1 Permission taxonomy and terminology closeout | `done` | none | The repo adopts `RuntimeMode::{Restricted, Standard, Privileged}` as the canonical permission vocabulary through a direct breaking rename, with explicit migration guidance from `Application` / `Tooling`. |
+| RPM2 Grant vocabulary, data model, and preset layer | `done` | RPM1 | Runtime configuration supports a Deno-like `RuntimeGrants` model with path-, host-, env-, secret-, identity-, service-, and command-scoped declarations, plus a small internal `RuntimePreset` layer that resolves to explicit mode-and-grant bundles. |
+| RPM3 Runtime enforcement hardening | `done` | RPM2 | Filesystem, subprocess, env, network, FFI, worker, service, and metadata boundaries are enforced by mode plus grants rather than by scattered ad hoc checks. |
+| RPM4 Product and adapter contract migration | `done` | RPM3 | Public docs, surface matrices, and runtime entrypoints use the new mode language consistently, and any temporary alias layer is removed before closeout. |
+| RPM5 Verification and operator evidence | `done` | RPM4 | Negative tests, canaries, and audit/reporting prove that `Restricted`, `Standard`, and `Privileged` actually enforce their intended ceilings. |
+
+## Progress Log
+
+- 2026-05-12: Activated the plan, promoted it into `docs/plans/README.md`,
+  added the readiness audit, and landed the behavior-preserving foundation:
+  `RuntimeMode`, `RuntimeLanguage`, `RuntimePreset`, and `RuntimeGrants` now
+  exist in the runtime policy surface. Existing application and tooling
+  behavior still lowers through the same enforcement paths, while runtime
+  diagnostics and the JS runtime contract now expose mode/language/preset/grant
+  metadata separately from compatibility target.
+- 2026-05-12: Moved filesystem, environment, network, and system metadata
+  permission construction to `RuntimeGrants` and added focused negative tests
+  proving that preset names and Node target selection do not silently widen
+  access. Added the active architecture reference at
+  `docs/architecture/runtime/permission-model.md` and updated runtime-facing
+  docs to explain permission posture separately from Node compatibility.
+- 2026-05-12: Removed the remaining subprocess policy enum from the active
+  runtime surface. Subprocess access now comes from `RuntimeGrants::run` with
+  explicit symbolic grants for the compat self-exec seam, host self-exec seam,
+  and discovered tooling binaries; focused tests prove run targets are grant
+  driven rather than preset-name driven.
+- 2026-05-12: Added host-call enforcement for `RuntimeGrants::service`.
+  `ctx.services.get(...)` now fails before reaching the host bridge unless the
+  runtime contract grants the requested service name; snapshot-only service
+  property reads remain host-call-free.
+- 2026-05-12: Closed the remaining runtime admission gaps. Mode ceilings now
+  reject disallowed grant families during normalization, FFI permissions are
+  sourced from `RuntimeGrants::ffi`, and worker-thread creation requires
+  `RuntimeGrants::worker = ["thread"]`. Focused tests cover restricted,
+  standard, privileged, service, worker, and secret/identity non-materialization
+  behavior.
+- 2026-05-12: Regenerated the checked-in Node compatibility evidence and
+  user-facing runtime docs with `preset` terminology, removing stale
+  `runtime_profile` / `runtime_limits_profile` keys from active evidence while
+  preserving unrelated profiling/timing vocabulary.
 
 ## Phase Details
 
@@ -625,6 +705,13 @@ When more differentiation is needed, Neovex should add grants, not more modes.
   - service binding access without a matching `service` grant
   - overly broad network access
   - FFI / native addon admission
+  - worker-thread admission without a matching `worker` grant
+
+Secret and identity grants are represented in `RuntimeGrants` and surfaced in
+diagnostics, but this slice intentionally does not add a secret-store or
+service-identity materialization API. The verified runtime rule is that a
+declared `secret` grant does not place secret material in env or globals, and a
+declared `identity` grant does not synthesize request auth identity.
 
 ### RPM4 Product And Adapter Contract Migration
 

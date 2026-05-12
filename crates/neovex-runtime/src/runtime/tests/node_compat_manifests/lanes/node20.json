@@ -5,7 +5,7 @@
   "lane_role": "supported",
   "public_contract_role": "supported_contract",
   "runtime_execution_target": "Node20",
-  "runtime_limits_profile": "application_node20",
+  "runtime_limits_preset": "application_node20",
   "upstream": {
     "repo": "nodejs/node",
     "tag": "v20.20.2",

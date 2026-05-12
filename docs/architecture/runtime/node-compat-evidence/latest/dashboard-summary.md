@@ -1,7 +1,9 @@
-# Node Compatibility Dashboard
+# Node.js Runtime Support Dashboard
 
-- Slice reports: 8
-- Canary reports: 2
+- Representative Node test checks: 8
+- Package/framework canary claims: 10
+- Package/framework canary checks: 12
+- Canary artifact bundles: 2
 - Oracle reports: 1
 - Inventory reports: 3
 
@@ -26,9 +28,9 @@
 | `node22` | `v22.15.0` | 1283 | 876 | 407 | 1283 | 0 | 876 | 876 | 407 | 0 | 0 | 0 |
 | `node24` | `v24.15.0` | 1495 | 925 | 570 | 1495 | 0 | 925 | 925 | 570 | 0 | 0 | 0 |
 
-## Slice Reports
+## Representative Node Test Checks
 
-| Family | Slice | NLC | Execution | Passed | Skipped | Failed | Missing | Lanes |
+| API family | Check | NLC | Execution | Passed | Skipped | Failed | Missing | Lanes |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `loader-context-supplementary` | `supplementary-builtin-completeness` | `NCF3` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
 | `loader-context-supplementary-global-injection` | `supplementary-global-injection-fidelity` | `NCF3` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
@@ -39,9 +41,9 @@
 | `runtime-supplementary` | `supplementary-resource-safety` | `NCF3` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
 | `runtime-supplementary-signal-lifecycle` | `supplementary-signal-listener-lifecycle` | `NCF3` | Expected failure | 0 | 0 | 3 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
 
-## Canary Claims
+## Package/Framework Canaries
 
-| Claim | Profile | Status | Required lanes | Observed lanes |
+| Claim | Preset | Status | Required lanes | Observed lanes |
 | --- | --- | --- | --- | --- |
 | `application-networking-express` | `Application` | Passed | node22, node20 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract |
 | `application-networking-fastify` | `Application` | Passed | node22, node20 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract |

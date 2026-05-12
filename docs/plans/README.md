@@ -36,6 +36,9 @@ archived plans only when you need historical execution detail.
     machine API, host-resident `neovex start`, and proof-helper entrypoints
 - `docs/architecture/runtime/adapter-boundary.md`
   - current runtime and adapter ownership boundary
+- `docs/architecture/runtime/permission-model.md`
+  - current runtime permission-mode, grant, language, compatibility-target,
+    and preset baseline
 - `docs/architecture/server/auth-runtime-trust.md`
   - current server-owned auth and runtime trust boundary
 - `docs/architecture/runtime/node-compat-surface-matrix.md`

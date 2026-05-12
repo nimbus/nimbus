@@ -13,10 +13,8 @@ use tempfile::tempdir;
 use crate::InvocationKind;
 use crate::InvocationRequest;
 use crate::RuntimeBundle;
-use crate::RuntimeLimits;
 use crate::RuntimePolicy;
 use crate::backends::v8::embedder::{JsErrorBox, OpState, op2, v8};
-use crate::limits::{RuntimeCompatibilityTarget, RuntimeProfile};
 use crate::runtime::NeovexRuntime;
 use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
 use crate::runtime::bootstrap::state::{InstalledRuntimeContract, InstalledRuntimeHostBridge};
@@ -150,35 +148,6 @@ impl RuntimeTestProcessStateSnapshot {
             })?;
         }
         Ok(())
-    }
-}
-
-fn runtime_limits_for_contract(contract: InstalledRuntimeContract) -> RuntimeLimits {
-    match (contract.profile, contract.compatibility_target) {
-        (RuntimeProfile::Application, RuntimeCompatibilityTarget::Node20) => {
-            RuntimeLimits::application_node20()
-        }
-        (RuntimeProfile::Application, RuntimeCompatibilityTarget::Node22) => {
-            RuntimeLimits::application_node22()
-        }
-        (RuntimeProfile::Application, RuntimeCompatibilityTarget::Node24) => {
-            RuntimeLimits::application_node24()
-        }
-        (RuntimeProfile::Tooling, RuntimeCompatibilityTarget::Node22) => {
-            RuntimeLimits::tooling_node22()
-        }
-        (
-            RuntimeProfile::Tooling,
-            RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node24,
-        ) => {
-            unreachable!("tooling runtimes currently support only Node22 compatibility targets")
-        }
-        (RuntimeProfile::Application, RuntimeCompatibilityTarget::WebStandardIsolate) => {
-            RuntimeLimits::application_web_standard()
-        }
-        (RuntimeProfile::Tooling, RuntimeCompatibilityTarget::WebStandardIsolate) => {
-            unreachable!("tooling runtimes do not support web-standard compatibility targets")
-        }
     }
 }
 
@@ -2427,10 +2396,10 @@ fn prepare_runtime_test_spawn_invocation(
         let state = state.borrow();
         (
             state.borrow::<InstalledRuntimeHostBridge>().slot.current(),
-            *state.borrow::<InstalledRuntimeContract>(),
+            state.borrow::<InstalledRuntimeContract>().clone(),
         )
     };
-    let limits = runtime_limits_for_contract(contract);
+    let limits = contract.limits;
     let runtime = NeovexRuntime::with_policy(host, Arc::new(RuntimePolicy::new(limits)));
     let (tempdir, bundle_path, file_output_syncs) = write_runtime_test_spawn_bundle(&plan)?;
     let process_state_snapshot = RuntimeTestProcessStateSnapshot::capture();

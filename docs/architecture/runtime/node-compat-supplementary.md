@@ -28,9 +28,9 @@ Current measured slices:
     `process.release.lts` shape for the carried Node20, Node22, and Node24
     lines
   - Measured outcome:
-    - `node20`: red, still reports `v22.0.0-neovex` instead of a Node20 line
-    - `node22`: red, still omits the expected `process.release.lts` label
-    - `node24`: red, still reports `v22.0.0-neovex` instead of a Node24 line
+    - `node20`: expected failure, still reports `v22.0.0-neovex` instead of a Node20 line
+    - `node22`: expected failure, still omits the expected `process.release.lts` label
+    - `node24`: expected failure, still reports `v22.0.0-neovex` instead of a Node24 line
 - `supplementary-resource-safety`
   - Category: `resource_safety`
   - Scope: file-handle close/use-after-close behavior, abortable

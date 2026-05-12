@@ -33,6 +33,8 @@ pass claim.
 
 - Node22 is the default compatibility target.
 - Node20 and Node24 are supported selectable targets.
+- Node target selection does not grant ambient host access. Runtime permission
+  mode and explicit grants remain separate from Node compatibility target.
 - Convex-compatible `"use node"` action modules can select Node20, Node22, or
   Node24 through `convex.json`.
 - Neovex does not currently claim full Node built-in compatibility for any

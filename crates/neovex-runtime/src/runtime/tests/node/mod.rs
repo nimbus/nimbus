@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use super::*;
 use crate::RuntimeLimits;
-use crate::limits::RuntimeSubprocessPolicy;
 use crate::test_support::acquire_runtime_suite_lock;
 
 mod supplementary_batches;
@@ -3857,10 +3856,10 @@ fn runtime_limits_for_node_compat_fixture(test_relative_path: &str) -> RuntimeLi
     if node_compat_fixture_requires_runtime_self_exec(test_relative_path) {
         // These compat fixtures respawn the copied harness binary via
         // process.execPath to prove Node CLI/reporter/WASI behavior. Keep the
-        // rest of the application-profile contract intact, but allow the
+        // rest of the application-preset contract intact, but allow the
         // synthetic compat exec target so the fixture can drive its own child
         // runtime without reopening general host subprocess access.
-        limits.subprocess_policy = RuntimeSubprocessPolicy::RuntimeSelfExecOnly;
+        limits.grants.run = vec!["$runtime_self_exec".to_string()];
     }
     if matches!(
         test_relative_path,
@@ -3879,31 +3878,22 @@ fn runtime_limits_for_node_compat_fixture(test_relative_path: &str) -> RuntimeLi
 fn node_compat_runtime_limits_only_grant_self_exec_to_known_respawn_fixtures() {
     let runner_limits =
         runtime_limits_for_node_compat_fixture("test/parallel/test-runner-reporters.js");
-    assert_eq!(
-        runner_limits.subprocess_policy,
-        RuntimeSubprocessPolicy::RuntimeSelfExecOnly
-    );
+    assert_eq!(runner_limits.grants.run, vec!["$runtime_self_exec"]);
 
     let wasi_limits = runtime_limits_for_node_compat_fixture("test/wasi/test-wasi-stdio.js");
-    assert_eq!(
-        wasi_limits.subprocess_policy,
-        RuntimeSubprocessPolicy::RuntimeSelfExecOnly
-    );
+    assert_eq!(wasi_limits.grants.run, vec!["$runtime_self_exec"]);
 
     let ordinary_limits =
         runtime_limits_for_node_compat_fixture("test/parallel/test-runner-assert.js");
     assert_eq!(
-        ordinary_limits.subprocess_policy,
-        RuntimeSubprocessPolicy::RuntimeSelfExecOnly,
-        "test-runner fixtures currently opt into the compat self-exec seam as a family"
+        ordinary_limits.grants.run,
+        vec!["$runtime_self_exec"],
+        "test-runner fixtures currently opt into the compat self-exec seam as a family",
     );
 
     let non_respawn_limits =
         runtime_limits_for_node_compat_fixture("test/parallel/test-repl-mode.js");
-    assert_eq!(
-        non_respawn_limits.subprocess_policy,
-        RuntimeSubprocessPolicy::Denied
-    );
+    assert!(non_respawn_limits.grants.run.is_empty());
 }
 
 fn execute_manifested_node_compat_test(
@@ -5144,7 +5134,7 @@ const NODE22_NETWORKING_DGRAM_CLUSTER_BOUNDARY_FIXTURES: &[&str] = &[
     "test/parallel/test-dgram-unref-in-cluster.js",
 ];
 
-const NODE22_NETWORKING_DGRAM_HOST_PROFILE_BOUNDARY_FIXTURES: &[&str] = &[
+const NODE22_NETWORKING_DGRAM_HOST_PRESET_BOUNDARY_FIXTURES: &[&str] = &[
     "test/parallel/test-dgram-error-message-address.js",
     "test/parallel/test-dgram-ipv6only.js",
     "test/parallel/test-dgram-udp6-link-local-address.js",
@@ -7932,8 +7922,8 @@ const LOADER_CONTEXT_BATCH: &[NodeCompatBatchEntry] = &[
 // fixture bodies twice.
 
 #[test]
-#[ignore = "Pinned application-profile restriction: process.env string-key mutation and deletion are intentionally denied outside tooling-owned host surfaces"]
-fn node22_process_env_delete_application_profile_watchpoint() {
+#[ignore = "Pinned application-preset restriction: process.env string-key mutation and deletion are intentionally denied outside tooling-owned host surfaces"]
+fn node22_process_env_delete_application_preset_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-process-env-delete.js",
         "node22/test/parallel/test-process-env-delete.js",
@@ -7942,8 +7932,8 @@ fn node22_process_env_delete_application_profile_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned application-profile restriction: process.env string-key mutation and deletion are intentionally denied outside tooling-owned host surfaces"]
-fn node20_process_env_delete_application_profile_watchpoint() {
+#[ignore = "Pinned application-preset restriction: process.env string-key mutation and deletion are intentionally denied outside tooling-owned host surfaces"]
+fn node20_process_env_delete_application_preset_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-process-env-delete.js",
         "node20/test/parallel/test-process-env-delete.js",
@@ -8121,7 +8111,7 @@ fn node20_stream_readable_infinite_read_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned application-profile path-policy divergence: test-fs-open.js expects ENOENT for an absolute missing host path outside the generated bundle root, while Neovex intentionally denies that path before raw host open"]
+#[ignore = "Pinned application-preset path-policy divergence: test-fs-open.js expects ENOENT for an absolute missing host path outside the generated bundle root, while Neovex intentionally denies that path before raw host open"]
 fn node22_fs_open_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-open.js",
@@ -8221,7 +8211,7 @@ fn node22_fs_promises_watch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned application-profile divergence: test-fs-readdir-buffer.js probes /dev outside the generated bundle root, so the runtime intentionally denies that host path instead of claiming broad host-fs parity"]
+#[ignore = "Pinned application-preset divergence: test-fs-readdir-buffer.js probes /dev outside the generated bundle root, so the runtime intentionally denies that host path instead of claiming broad host-fs parity"]
 fn node22_fs_readdir_buffer_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-readdir-buffer.js",
@@ -8231,7 +8221,7 @@ fn node22_fs_readdir_buffer_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned application-profile divergence: official test-fs-filehandle-use-after-close.js reopens process.execPath outside the generated bundle root, so the runtime intentionally denies that absolute host path before the later EBADF assertion can run"]
+#[ignore = "Pinned application-preset divergence: official test-fs-filehandle-use-after-close.js reopens process.execPath outside the generated bundle root, so the runtime intentionally denies that absolute host path before the later EBADF assertion can run"]
 fn node22_fs_filehandle_use_after_close_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-filehandle-use-after-close.js",
@@ -9468,8 +9458,8 @@ fn node22_nlc9_sqlite_foundation_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned NLC9 sqlite build-profile watchpoint: test-sqlite.js now narrows to the bundled percentile capability seam because the current bundled SQLCipher sqlite source does not expose percentile() even after the Node-style URI/path and SQLTagStore fixes"]
-fn node22_nlc9_sqlite_build_profile_watchpoint() {
+#[ignore = "Pinned NLC9 sqlite build-preset watchpoint: test-sqlite.js now narrows to the bundled percentile capability seam because the current bundled SQLCipher sqlite source does not expose percentile() even after the Node-style URI/path and SQLTagStore fixes"]
+fn node22_nlc9_sqlite_build_preset_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-sqlite.js",
         "test/parallel/test-sqlite.js",
@@ -10070,7 +10060,7 @@ fn node20_tls_connect_hwm_option_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned NLC6 host/profile boundary batch: these https files currently stop at explicit local-address or IPv6 capability boundaries rather than plain HTTPS semantics"]
+#[ignore = "Pinned NLC6 host/preset boundary batch: these https files currently stop at explicit local-address or IPv6 capability boundaries rather than plain HTTPS semantics"]
 fn node22_networking_https_address_boundary_batch_watchpoint() {
     run_node_compat_watchpoint_batch(
         "node22-networking-https-address-boundary-batch",
@@ -10092,12 +10082,12 @@ fn node22_networking_dgram_cluster_boundary_batch_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned NLC6 host/profile boundary batch: these dgram files currently depend on external-net or IPv6 capability beyond the current application profile"]
-fn node22_networking_dgram_host_profile_boundary_batch_watchpoint() {
+#[ignore = "Pinned NLC6 host/preset boundary batch: these dgram files currently depend on external-net or IPv6 capability beyond the current application preset"]
+fn node22_networking_dgram_host_preset_boundary_batch_watchpoint() {
     run_node_compat_watchpoint_batch(
-        "node22-networking-dgram-host-profile-boundary-batch",
+        "node22-networking-dgram-host-preset-boundary-batch",
         "node22",
-        NODE22_NETWORKING_DGRAM_HOST_PROFILE_BOUNDARY_FIXTURES,
+        NODE22_NETWORKING_DGRAM_HOST_PRESET_BOUNDARY_FIXTURES,
         &[],
     );
 }

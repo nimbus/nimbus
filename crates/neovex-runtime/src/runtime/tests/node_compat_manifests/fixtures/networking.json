@@ -4,7 +4,7 @@
   "nlc_item": "NLC6",
   "batch_constant": "NETWORKING_BATCH",
   "execution_class": "sequential",
-  "profiles": ["Application"],
+  "presets": ["Application"],
   "capabilities": ["bundle-root-fs", "loopback-net"],
   "lane_batches": [
     {

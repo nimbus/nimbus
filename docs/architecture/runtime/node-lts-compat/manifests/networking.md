@@ -28,7 +28,7 @@ before socket/listen/request noise takes over.
 | --- | --- |
 | `node:dns` | `test/parallel/test-dns-*.js`, focused first on `Resolver#getServers()` and default-result-order files that probe ordering semantics without requiring successful external resolution |
 | `node:net` | `test/parallel/test-net-*.js`, focused first on pure IP helpers and `createConnection()` option validation |
-| `node:dgram` | `test/parallel/test-dgram-*.js`, now widened through the local-socket helper, bind/lifecycle, connected-send, callback-send, and broader fd/multicast/error waves, with cluster, host/profile, and `reusePort` boundaries still held explicit |
+| `node:dgram` | `test/parallel/test-dgram-*.js`, now widened through the local-socket helper, bind/lifecycle, connected-send, callback-send, and broader fd/multicast/error waves, with cluster, host/preset, and `reusePort` boundaries still held explicit |
 | `node:tls` | `test/parallel/test-tls-*.js`, with the first `https` helper/server wave now promoted and the remaining legacy TLSv1.1 protocol seam kept explicit |
 | `node:http` / `node:https` | `test/parallel/test-http-*.js`, `test/parallel/test-https-*.js`, now widened through `http.Agent`, request/response/server, the first crypto-gated `https` helper/server wave, the follow-on local `https` lifecycle/socket wave, and the next client/server semantics wave |
 | `node:http2` | `test/parallel/test-http2-*.js`, now widened through the first internal utility/helper wave including `getPackedSettings()`, the first compat request/response core wave, the follow-on compat server-response lifecycle wave, and the remaining compat request/control/socket wave |
@@ -498,6 +498,6 @@ enforcement, response-splitting stripping, custom `Http2ServerRequest` /
 `Http2ServerResponse` option hooks, zero-length header handling, and
 multiheader / raw-header ordering all now pass in-family. The remaining
 explicit watchpoints in this family are now the legacy TLSv1.1 boundary, the
-cross-family `process.report` / embedded-exit dependency, the host/profile
+cross-family `process.report` / embedded-exit dependency, the host/preset
 and `dgram` boundary batches, the Node20 supported divergences, and the
 Node24-only `test-stream-pipeline.js` drift.

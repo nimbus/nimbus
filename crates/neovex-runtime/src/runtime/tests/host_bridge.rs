@@ -1,6 +1,20 @@
 use crate::HostBridgeFuture;
+use crate::limits::RuntimePolicy;
 
 use super::*;
+
+fn run_to_completion_policy_with_service_grant(service_name: &str) -> Arc<RuntimePolicy> {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.grants.service = vec![service_name.to_string()];
+    Arc::new(RuntimePolicy::new(limits))
+}
+
+fn run_to_completion_policy_with_secret_and_identity_grants() -> Arc<RuntimePolicy> {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.grants.secret = vec!["stripe/live".to_string()];
+    limits.grants.identity = vec!["service:agent-prod".to_string()];
+    Arc::new(RuntimePolicy::new(limits))
+}
 
 #[tokio::test]
 async fn runtime_async_ops_use_async_host_bridge_path() {
@@ -173,6 +187,60 @@ export {};
 }
 
 #[tokio::test]
+async fn runtime_secret_and_identity_grants_do_not_materialize_without_request_auth_or_secret_api()
+{
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request });
+  return {
+    user: await ctx.auth.getUserIdentity(),
+    verified: await ctx.auth.getVerifiedIdentity(),
+    contractGlobalType: typeof globalThis.__neovexRuntimeContract,
+    secretGlobalType: typeof globalThis.__neovexSecrets,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NeovexRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        run_to_completion_policy_with_secret_and_identity_grants(),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "auth:whoami".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("runtime should execute without materializing grants");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "user": null,
+            "verified": null,
+            "contractGlobalType": "undefined",
+            "secretGlobalType": "undefined",
+        })
+    );
+}
+
+#[tokio::test]
 async fn runtime_exposes_service_bindings_from_invocation_request() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -340,7 +408,7 @@ export {};
     let host = Arc::new(ServiceLookupHost::default());
     let runtime = NeovexRuntime::with_policy(
         host.clone(),
-        run_to_completion_snapshot_runtime_test_policy(),
+        run_to_completion_policy_with_service_grant("db"),
     );
     let result = runtime
         .invoke_bundle(
@@ -460,7 +528,7 @@ export {};
     let host = Arc::new(ServiceLookupHost::default());
     let runtime = NeovexRuntime::with_policy(
         host.clone(),
-        run_to_completion_snapshot_runtime_test_policy(),
+        run_to_completion_policy_with_service_grant("db"),
     );
     let result = runtime
         .invoke_bundle(
@@ -519,6 +587,85 @@ export {};
             "service_name": "db",
             "session_id": "session-1",
         })
+    );
+}
+
+#[tokio::test]
+async fn runtime_services_get_requires_matching_service_grant() {
+    #[derive(Default)]
+    struct ServiceLookupHost {
+        async_calls: std::sync::Mutex<Vec<HostCallRequest>>,
+    }
+
+    impl HostBridge for ServiceLookupHost {
+        fn call(&self, request: HostCallRequest) -> Result<Value> {
+            Err(NeovexRuntimeError::Contract(format!(
+                "unexpected sync host op during service grant denial test: {}",
+                request.operation
+            )))
+        }
+
+        fn call_async(
+            &self,
+            request: HostCallRequest,
+            _cancellation: HostCallCancellation,
+        ) -> HostBridgeFuture {
+            self.async_calls
+                .lock()
+                .expect("service lookup async host lock should not be poisoned")
+                .push(request);
+            Box::pin(async { Ok(serde_json::json!({ "status": "ok", "value": null })) })
+        }
+    }
+
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__neovexInvoke = async function (request) {
+  const ctx = globalThis.__neovexCreateContext({ request });
+  await ctx.services.get("db");
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let host = Arc::new(ServiceLookupHost::default());
+    let runtime = NeovexRuntime::with_policy(
+        host.clone(),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let error = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "services:denied".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect_err("runtime should deny service lookup without a matching grant");
+
+    assert!(
+        error
+            .to_string()
+            .contains("runtime service grant denied for `db`"),
+        "unexpected service grant denial: {error}",
+    );
+    assert!(
+        host.async_calls
+            .lock()
+            .expect("service lookup async host lock should not be poisoned")
+            .is_empty(),
+        "denied service lookup should not reach the host bridge",
     );
 }
 

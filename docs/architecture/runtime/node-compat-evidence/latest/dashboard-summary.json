@@ -3,6 +3,8 @@
   "artifacts_root": "target/node-compat",
   "slice_report_count": 8,
   "canary_report_count": 2,
+  "canary_claim_count": 10,
+  "canary_check_count": 12,
   "oracle_report_count": 1,
   "inventory_report_count": 3,
   "suite_status_report": {
@@ -14,7 +16,7 @@
         "lane_role": "supported",
         "public_contract_role": "supported_contract",
         "runtime_execution_target": "Node20",
-        "runtime_limits_profile": "application_node20",
+        "runtime_limits_preset": "application_node20",
         "upstream": {
           "repo": "nodejs/node",
           "tag": "v20.20.2",
@@ -133,7 +135,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-exclusive-implicit-bind.js",
@@ -147,7 +149,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-reuseport.js",
@@ -161,14 +163,14 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-udp6-send-default-host.js",
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-unref-in-cluster.js",
@@ -266,7 +268,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "process-and-timing/process-host",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_profile_watchpoint, node22_process_env_delete_application_profile_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_preset_watchpoint, node22_process_env_delete_application_preset_watchpoint"
             },
             {
               "test_path": "test/parallel/test-process-features.js",
@@ -3263,7 +3265,7 @@
         "lane_role": "default",
         "public_contract_role": "default_contract",
         "runtime_execution_target": "Node22",
-        "runtime_limits_profile": "application_node22",
+        "runtime_limits_preset": "application_node22",
         "upstream": {
           "repo": "nodejs/node",
           "tag": "v22.15.0",
@@ -3340,7 +3342,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-exclusive-implicit-bind.js",
@@ -3354,7 +3356,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-reuseport.js",
@@ -3368,14 +3370,14 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-udp6-send-default-host.js",
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-unref-in-cluster.js",
@@ -3466,7 +3468,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "process-and-timing/process-host",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_profile_watchpoint, node22_process_env_delete_application_profile_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_preset_watchpoint, node22_process_env_delete_application_preset_watchpoint"
             },
             {
               "test_path": "test/parallel/test-process-finalization.mjs",
@@ -6547,7 +6549,7 @@
         "lane_role": "supported",
         "public_contract_role": "supported_contract",
         "runtime_execution_target": "Node24",
-        "runtime_limits_profile": "application_node24",
+        "runtime_limits_preset": "application_node24",
         "upstream": {
           "repo": "nodejs/node",
           "tag": "v24.15.0",
@@ -6658,7 +6660,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-exclusive-implicit-bind.js",
@@ -6672,7 +6674,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-reuseport.js",
@@ -6686,14 +6688,14 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-udp6-send-default-host.js",
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/dgram",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_profile_boundary_batch_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_dgram_host_preset_boundary_batch_watchpoint"
             },
             {
               "test_path": "test/parallel/test-dgram-unref-in-cluster.js",
@@ -6770,7 +6772,7 @@
               "expectation": "expected_failure",
               "classification": "rust_watchpoint_expected_failure",
               "owner": "process-and-timing/process-host",
-              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_profile_watchpoint, node22_process_env_delete_application_profile_watchpoint"
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_preset_watchpoint, node22_process_env_delete_application_preset_watchpoint"
             },
             {
               "test_path": "test/parallel/test-process-finalization.mjs",
@@ -11212,7 +11214,7 @@
       "slice": "supplementary-builtin-completeness",
       "nlc_item": "NCF3",
       "execution_class": "sequential",
-      "profiles": [
+      "presets": [
         "Application"
       ],
       "capabilities": [
@@ -11233,7 +11235,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node20",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11250,7 +11252,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node22",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11267,7 +11269,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node24",
-          "runtime_limits_profile": "application_node24",
+          "runtime_limits_preset": "application_node24",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node24",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11286,7 +11288,7 @@
       "slice": "supplementary-global-injection-fidelity",
       "nlc_item": "NCF3",
       "execution_class": "sequential",
-      "profiles": [
+      "presets": [
         "Application"
       ],
       "capabilities": [
@@ -11307,7 +11309,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node20",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11324,7 +11326,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node22",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11341,7 +11343,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node24",
-          "runtime_limits_profile": "application_node24",
+          "runtime_limits_preset": "application_node24",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node24",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11360,7 +11362,7 @@
       "slice": "supplementary-module-resolution-bridge",
       "nlc_item": "NCF3",
       "execution_class": "sequential",
-      "profiles": [
+      "presets": [
         "Application"
       ],
       "capabilities": [
@@ -11381,7 +11383,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node20",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11398,7 +11400,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node22",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11415,7 +11417,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node24",
-          "runtime_limits_profile": "application_node24",
+          "runtime_limits_preset": "application_node24",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node24",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11434,7 +11436,7 @@
       "slice": "dns-net-foundation",
       "nlc_item": "NLC6",
       "execution_class": "sequential",
-      "profiles": [
+      "presets": [
         "Application"
       ],
       "capabilities": [
@@ -11456,7 +11458,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node20_supported_lane_executes_official_networking_subset",
           "expected_fixture_count": 10,
           "observed_fixture_count": 10,
@@ -11473,7 +11475,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "subset_test": "runtime::tests::node_compat::node22_default_lane_executes_manifested_networking_subset",
           "expected_fixture_count": 10,
           "observed_fixture_count": 10,
@@ -11490,7 +11492,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node24",
-          "runtime_limits_profile": "application_node24",
+          "runtime_limits_preset": "application_node24",
           "subset_test": "runtime::tests::node_compat::node24_supported_lane_networking_watchpoint",
           "expected_fixture_count": 9,
           "observed_fixture_count": 9,
@@ -11509,7 +11511,7 @@
       "slice": "supplementary-process-release-shape",
       "nlc_item": "NCF3",
       "execution_class": "expected_failure",
-      "profiles": [
+      "presets": [
         "Application"
       ],
       "capabilities": [
@@ -11530,7 +11532,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node20",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11547,7 +11549,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node22",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11564,7 +11566,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node24",
-          "runtime_limits_profile": "application_node24",
+          "runtime_limits_preset": "application_node24",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node24",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11583,7 +11585,7 @@
       "slice": "supplementary-framework-loader-patterns",
       "nlc_item": "NCF3",
       "execution_class": "sequential",
-      "profiles": [
+      "presets": [
         "Application"
       ],
       "capabilities": [
@@ -11604,7 +11606,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node20",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11621,7 +11623,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node22",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11638,7 +11640,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node24",
-          "runtime_limits_profile": "application_node24",
+          "runtime_limits_preset": "application_node24",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node24",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11657,7 +11659,7 @@
       "slice": "supplementary-resource-safety",
       "nlc_item": "NCF3",
       "execution_class": "sequential",
-      "profiles": [
+      "presets": [
         "Application"
       ],
       "capabilities": [
@@ -11678,7 +11680,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node20",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11695,7 +11697,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node22",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11712,7 +11714,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node24",
-          "runtime_limits_profile": "application_node24",
+          "runtime_limits_preset": "application_node24",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node24",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11731,7 +11733,7 @@
       "slice": "supplementary-signal-listener-lifecycle",
       "nlc_item": "NCF3",
       "execution_class": "expected_failure",
-      "profiles": [
+      "presets": [
         "Application"
       ],
       "capabilities": [
@@ -11752,7 +11754,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_signal_lifecycle_watchpoint_node20",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11769,7 +11771,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_signal_lifecycle_watchpoint_node22",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11786,7 +11788,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node24",
-          "runtime_limits_profile": "application_node24",
+          "runtime_limits_preset": "application_node24",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_signal_lifecycle_watchpoint_node24",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
@@ -11802,8 +11804,8 @@
   ],
   "canary_reports": [
     {
-      "path": "target/node-compat/canaries/profile-application.json",
-      "profile": "Application",
+      "path": "target/node-compat/canaries/preset-application.json",
+      "runtime_preset": "Application",
       "canary_count": 7,
       "passed": 7,
       "failed": 0,
@@ -11815,7 +11817,7 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "cargo_tests": [
             "application_node20_networking_supported_canary_batch"
           ],
@@ -11830,7 +11832,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "cargo_tests": [
             "application_node22_networking_package_canary_batch"
           ],
@@ -11844,7 +11846,7 @@
           "id": "express",
           "package": "express",
           "pinned_version": "4.19.2",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-express"
           ],
@@ -11855,14 +11857,14 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "status": "pass"
         },
         {
           "id": "fastify",
           "package": "fastify",
           "pinned_version": "4.28.1",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-fastify"
           ],
@@ -11873,14 +11875,14 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "status": "pass"
         },
         {
           "id": "axios",
           "package": "axios",
           "pinned_version": "1.7.7",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-axios"
           ],
@@ -11891,14 +11893,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         },
         {
           "id": "express",
           "package": "express",
           "pinned_version": "4.19.2",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-express"
           ],
@@ -11909,14 +11911,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         },
         {
           "id": "fastify",
           "package": "fastify",
           "pinned_version": "4.28.1",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-fastify"
           ],
@@ -11927,14 +11929,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         },
         {
           "id": "socket-io",
           "package": "socket.io",
           "pinned_version": "4.7.5",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-socket-io"
           ],
@@ -11945,14 +11947,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         },
         {
           "id": "undici",
           "package": "undici",
           "pinned_version": "6.19.8",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-undici"
           ],
@@ -11963,14 +11965,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
     },
     {
-      "path": "target/node-compat/canaries/profile-tooling.json",
-      "profile": "Tooling",
+      "path": "target/node-compat/canaries/preset-tooling.json",
+      "runtime_preset": "Tooling",
       "canary_count": 5,
       "passed": 5,
       "failed": 0,
@@ -11982,7 +11984,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "cargo_tests": [
             "tooling_node22_package_canary_batch"
           ],
@@ -11996,7 +11998,7 @@
           "id": "jest",
           "package": "jest",
           "pinned_version": "30.4.2",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-jest"
           ],
@@ -12007,14 +12009,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         },
         {
           "id": "next",
           "package": "next",
           "pinned_version": "16.2.6",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-next"
           ],
@@ -12025,14 +12027,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         },
         {
           "id": "prisma",
           "package": "prisma",
           "pinned_version": "7.8.0",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-prisma"
           ],
@@ -12043,14 +12045,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         },
         {
           "id": "ts-node",
           "package": "ts-node",
           "pinned_version": "10.9.2",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-ts-node"
           ],
@@ -12061,14 +12063,14 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         },
         {
           "id": "tsx",
           "package": "tsx",
           "pinned_version": "4.21.0",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-tsx"
           ],
@@ -12079,7 +12081,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12095,7 +12097,7 @@
       "lane_role": "default",
       "public_contract_role": "default_contract",
       "runtime_execution_target": "Node22",
-      "runtime_limits_profile": "application_node22",
+      "runtime_limits_preset": "application_node22",
       "fixture": "test/parallel/test-buffer-alloc.js",
       "runtime_state": "pass",
       "oracle_state": "pass",
@@ -12107,7 +12109,7 @@
     {
       "id": "application-networking-express",
       "package": "express",
-      "runtime_profile": "Application",
+      "runtime_preset": "Application",
       "lane_coverage": [
         "node22",
         "node20"
@@ -12134,7 +12136,7 @@
           "id": "express",
           "package": "express",
           "pinned_version": "4.19.2",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-express"
           ],
@@ -12145,14 +12147,14 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "status": "pass"
         },
         {
           "id": "express",
           "package": "express",
           "pinned_version": "4.19.2",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-express"
           ],
@@ -12163,7 +12165,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12171,7 +12173,7 @@
     {
       "id": "application-networking-fastify",
       "package": "fastify",
-      "runtime_profile": "Application",
+      "runtime_preset": "Application",
       "lane_coverage": [
         "node22",
         "node20"
@@ -12198,7 +12200,7 @@
           "id": "fastify",
           "package": "fastify",
           "pinned_version": "4.28.1",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-fastify"
           ],
@@ -12209,14 +12211,14 @@
           "lane_role": "supported",
           "public_contract_role": "supported_contract",
           "runtime_execution_target": "Node20",
-          "runtime_limits_profile": "application_node20",
+          "runtime_limits_preset": "application_node20",
           "status": "pass"
         },
         {
           "id": "fastify",
           "package": "fastify",
           "pinned_version": "4.28.1",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-fastify"
           ],
@@ -12227,7 +12229,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12235,7 +12237,7 @@
     {
       "id": "application-networking-socket-io",
       "package": "socket.io",
-      "runtime_profile": "Application",
+      "runtime_preset": "Application",
       "lane_coverage": [
         "node22"
       ],
@@ -12255,7 +12257,7 @@
           "id": "socket-io",
           "package": "socket.io",
           "pinned_version": "4.7.5",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-socket-io"
           ],
@@ -12266,7 +12268,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12274,7 +12276,7 @@
     {
       "id": "application-networking-undici",
       "package": "undici",
-      "runtime_profile": "Application",
+      "runtime_preset": "Application",
       "lane_coverage": [
         "node22"
       ],
@@ -12294,7 +12296,7 @@
           "id": "undici",
           "package": "undici",
           "pinned_version": "6.19.8",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-undici"
           ],
@@ -12305,7 +12307,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12313,7 +12315,7 @@
     {
       "id": "application-networking-axios",
       "package": "axios",
-      "runtime_profile": "Application",
+      "runtime_preset": "Application",
       "lane_coverage": [
         "node22"
       ],
@@ -12333,7 +12335,7 @@
           "id": "axios",
           "package": "axios",
           "pinned_version": "1.7.7",
-          "runtime_profile": "Application",
+          "runtime_preset": "Application",
           "claim_ids": [
             "application-networking-axios"
           ],
@@ -12344,7 +12346,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12352,7 +12354,7 @@
     {
       "id": "tooling-loader-tsx",
       "package": "tsx",
-      "runtime_profile": "Tooling",
+      "runtime_preset": "Tooling",
       "lane_coverage": [
         "node22"
       ],
@@ -12372,7 +12374,7 @@
           "id": "tsx",
           "package": "tsx",
           "pinned_version": "4.21.0",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-tsx"
           ],
@@ -12383,7 +12385,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12391,7 +12393,7 @@
     {
       "id": "tooling-loader-ts-node",
       "package": "ts-node",
-      "runtime_profile": "Tooling",
+      "runtime_preset": "Tooling",
       "lane_coverage": [
         "node22"
       ],
@@ -12411,7 +12413,7 @@
           "id": "ts-node",
           "package": "ts-node",
           "pinned_version": "10.9.2",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-ts-node"
           ],
@@ -12422,7 +12424,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12430,7 +12432,7 @@
     {
       "id": "tooling-loader-jest",
       "package": "jest",
-      "runtime_profile": "Tooling",
+      "runtime_preset": "Tooling",
       "lane_coverage": [
         "node22"
       ],
@@ -12450,7 +12452,7 @@
           "id": "jest",
           "package": "jest",
           "pinned_version": "30.4.2",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-jest"
           ],
@@ -12461,7 +12463,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12469,7 +12471,7 @@
     {
       "id": "tooling-loader-prisma",
       "package": "prisma",
-      "runtime_profile": "Tooling",
+      "runtime_preset": "Tooling",
       "lane_coverage": [
         "node22"
       ],
@@ -12489,7 +12491,7 @@
           "id": "prisma",
           "package": "prisma",
           "pinned_version": "7.8.0",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-prisma"
           ],
@@ -12500,7 +12502,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]
@@ -12508,7 +12510,7 @@
     {
       "id": "tooling-loader-next",
       "package": "next",
-      "runtime_profile": "Tooling",
+      "runtime_preset": "Tooling",
       "lane_coverage": [
         "node22"
       ],
@@ -12528,7 +12530,7 @@
           "id": "next",
           "package": "next",
           "pinned_version": "16.2.6",
-          "runtime_profile": "Tooling",
+          "runtime_preset": "Tooling",
           "claim_ids": [
             "tooling-loader-next"
           ],
@@ -12539,7 +12541,7 @@
           "lane_role": "default",
           "public_contract_role": "default_contract",
           "runtime_execution_target": "Node22",
-          "runtime_limits_profile": "application_node22",
+          "runtime_limits_preset": "application_node22",
           "status": "pass"
         }
       ]

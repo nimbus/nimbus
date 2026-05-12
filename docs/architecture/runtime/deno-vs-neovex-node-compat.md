@@ -26,7 +26,7 @@ Neovex's primary advantage is **verification depth**, not implementation
 breadth. Both runtimes share the same `ext/node` codebase. But Neovex has
 run 876 lane-local official upstream Node.js test files in the Node22 default
 lane, supports Node20 and Node24 as first-class lanes, verified 10 package
-canaries across Application and Tooling profiles, and fixed issues that
+canaries across Application and Tooling presets, and fixed issues that
 stock Deno has not.
 
 ## Status Legend
@@ -36,7 +36,7 @@ stock Deno has not.
 - **Partial** — Implementation exists with known gaps
 - **Partial+** — Neovex has verified and/or improved beyond Deno's partial baseline
 - **Stub** — Module exports exist but are non-functional
-- **Restricted** — Supported but intentionally scoped by runtime profile
+- **Restricted** — Supported but intentionally scoped by runtime preset
 - **Inherited** — Uses Deno's implementation, not yet separately verified by Neovex
 - **N/A** — Intentionally excluded from scope
 
@@ -60,7 +60,7 @@ stock Deno has not.
 
 | Module | Symbols | Deno | Neovex | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
-| `process` | 1 | Partial | Partial+ | 48 Node22 tests green | Neovex verified; env allowlist-scoped in Application profile |
+| `process` | 1 | Partial | Partial+ | 48 Node22 tests green | Neovex verified; env allowlist-scoped in Application preset |
 | `timers` | 21 | Full | Full | 48 Node22 tests green | Neovex verified with upstream tests |
 | `util` | 99 | Partial | Partial+ | 48 Node22 tests green | Neovex verified; MIMEType/MIMEParams work |
 | `diagnostics_channel` | 62 | Full | Full | 48 Node22 tests green | Neovex verified with upstream tests |
@@ -71,7 +71,7 @@ stock Deno has not.
 | Module | Symbols | Deno | Neovex | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
 | `stream` | 77 | Full | Full | 317 Node22 tests green | Neovex verified with upstream tests |
-| `fs` | 159 | Full\* | Full (scoped) | 317 Node22 tests green | Neovex verified; path-scoped to approved roots in Application profile |
+| `fs` | 159 | Full\* | Full (scoped) | 317 Node22 tests green | Neovex verified; path-scoped to approved roots in Application preset |
 | `fs/promises` | 1 | Full\* | Full (scoped) | 317 Node22 tests green | Neovex verified; same path scoping; custom error mapping |
 | `readline` | 37 | Full | Full | 317 Node22 tests green | Neovex verified with upstream tests |
 | `tty` | 12 | Full | Full | 317 Node22 tests green | Neovex verified with upstream tests |
@@ -107,7 +107,7 @@ stock Deno has not.
 
 | Module | Symbols | Deno | Neovex | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
-| `child_process` | 20 | Full | Restricted | spawnSync for staged binaries only | Neovex scopes to Tooling profile; Application profile: not supported |
+| `child_process` | 20 | Full | Restricted | spawnSync for staged binaries only | Neovex scopes to Tooling preset; Application preset: not supported |
 | `vm` | 21 | Partial | Partial+ | 6-file basics wave green | Neovex fixes filename/stack fidelity and weak-handle teardown abort |
 | `v8` | 56 | Partial | Partial+ | 5-file helper wave green | Deno: most APIs throw; Neovex: cachedDataVersionTag, serdes, stats, setFlagsFromString work |
 | `worker_threads` | 40 | Partial | Partial+ | 15-file verified contract across 3 lanes | Neovex: Worker, MessageChannel, MessagePort, ref/unref, bootstrap/process verified |
@@ -187,16 +187,15 @@ stock Deno has not shipped:
 
 | Area | Deno Advantage | Neovex Status |
 | ---- | -------------- | ------------- |
-| `child_process` in Application profile | Full access, no restrictions | Intentionally restricted to Tooling profile with staged binaries only |
+| `child_process` in Application preset | Full access, no restrictions | Intentionally restricted to Tooling preset with staged binaries only |
 | `fs` path freedom | No root restrictions | Intentionally scoped to approved bundle/app/tmp/cache roots |
-| `process.env` access | Full host env access | Intentionally allowlist-only (Application: 1 var, Tooling: ~30 vars) |
-| `net` remote hosts | Any host allowed | Intentionally restricted to localhost/loopback in Application profile |
+| `process.env` access | Full host env access | Intentionally allowlist-only (Application preset: 1 var, Tooling preset: ~30 vars) |
+| `net` remote hosts | Any host allowed | Intentionally restricted to localhost/loopback in Application preset |
 | N-API / native addons | Supported via `deno_napi` | Not yet wired up (planned via `deno_napi`) |
 | `npm:` specifier support | Native npm specifier resolution | Not supported; uses staged `node_modules` |
 
 Note: Neovex's "disadvantages" in `child_process`, `fs`, `process.env`, and
-`net` are **intentional security restrictions** for the Application runtime
-profile, not missing implementations. The Tooling profile has broader access.
+`net` are **intentional security restrictions** for the Application preset, not missing implementations. The Tooling preset has broader access.
 
 ### NLC Plan Deliverables (Complete)
 
@@ -222,10 +221,11 @@ constants verified with truthful support states across three LTS lanes.
   and version-matched Node20/Node22/Node24 sweeps
 - Dashboard aggregation (`make node-compat-dashboard`) → JSON + Markdown
 - Nightly CI workflow (`.github/workflows/node-compat-nightly.yml`)
-  with seeded slice replays, canary lanes, oracle samples, and artifact upload
+  with representative Node test checks, canary lanes, oracle samples, and
+  artifact upload
 
 Public support claim: **"Node20, Node22, and Node24 compatibility targets with
-Node22 as the default and documented profile-scoped exclusions"** —
+Node22 as the default and documented preset-scoped exclusions"** —
 evidence-backed rather than aspirational.
 
 ## Methodology Notes
@@ -252,6 +252,7 @@ evidence-backed rather than aspirational.
 - The **876** upstream test count represents lane-local official
   `nodejs/node v22.15.0` test files (not Deno's own test suite) that are
   path-owned by non-ignored Neovex compatibility tests across the Node22
-  default lane after excluding explicit red/gap/skip classifications. Earlier
+  default lane after excluding explicit expected-failure/gap/skip
+  classifications. Earlier
   family prose counts summed higher, but the generated status dashboard now
   prefers reconstructable path evidence over prose counts when the two disagree.

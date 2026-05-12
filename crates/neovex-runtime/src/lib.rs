@@ -32,9 +32,9 @@ pub use host::{
     RuntimeSyncQueryOrderPayload, RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
 };
 pub use limits::{
-    RuntimeBackendKind, RuntimeCompatibilityTarget, RuntimeExecutionModel, RuntimeLimits,
-    RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind, RuntimeProfile,
-    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeSubprocessPolicy,
+    RuntimeBackendKind, RuntimeCompatibilityTarget, RuntimeExecutionModel, RuntimeGrants,
+    RuntimeLanguage, RuntimeLimits, RuntimeMode, RuntimeModuleStateSemantics, RuntimePolicy,
+    RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,

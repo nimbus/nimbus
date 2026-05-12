@@ -612,7 +612,7 @@ def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> lis
                 "lane_role": lane["lane_role"],
                 "public_contract_role": lane["public_contract_role"],
                 "runtime_execution_target": lane["runtime_execution_target"],
-                "runtime_limits_profile": lane["runtime_limits_profile"],
+                "runtime_limits_preset": lane["runtime_limits_preset"],
                 "upstream": lane["upstream"],
                 "vendored_fixture_root": lane["vendored_fixture_root"],
                 "denominator_kind": "vendored_fixture_root_test_files",

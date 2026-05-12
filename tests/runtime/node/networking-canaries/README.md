@@ -20,18 +20,18 @@ Current package set:
 Install the pinned dependencies locally:
 
 ```bash
-make node-compat-canaries-bootstrap PROFILE=application
+make node-compat-canaries-bootstrap PRESET=application
 ```
 
 Run the current batched runtime canaries:
 
 ```bash
-make node-compat-canaries PROFILE=application
+make node-compat-canaries PRESET=application
 ```
 
 That command now emits a machine-readable report at:
 
-- `target/node-compat/canaries/profile-application.json`
+- `target/node-compat/canaries/preset-application.json`
 
 Current lane mapping:
 

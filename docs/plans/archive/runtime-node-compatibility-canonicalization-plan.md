@@ -74,7 +74,9 @@ Create one canonical Node runtime compatibility system with clear ownership:
 - Do not preserve old path names as long-lived compatibility shims. Neovex is
   pre-launch; use direct moves with clean references.
 - Do not redesign runtime permissions in this plan. Permission-mode taxonomy is
-  owned by `docs/plans/runtime-permission-modes-plan.md` if activated.
+  now captured by `docs/architecture/runtime/permission-model.md`; the
+  completed execution history lives in
+  `docs/plans/archive/runtime-permission-modes-plan.md`.
 
 ## Canonical Path Decisions
 

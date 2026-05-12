@@ -41,7 +41,7 @@ Apply a deliberate lane tag and fixture refresh:
 make node-compat-refresh LANE=node24 TAG=v24.15.0 APPLY=1
 ```
 
-Run representative live slices during the refresh when validating runtime
+Run representative live Node test checks during the refresh when validating runtime
 behavior, not just metadata and generated reports:
 
 ```bash
@@ -58,7 +58,7 @@ The refresh command performs these steps:
 | Step | Purpose |
 | --- | --- |
 | `sync` | Builds or applies the fixture sync plan for the selected lane. |
-| `report:*` | Optional representative live slice reports when `RUN_SLICES=1`. |
+| `report:*` | Optional representative live Node test checks when `RUN_SLICES=1`. |
 | `expectations` | Validates Rust watchpoint expectations against the current harness inventory. |
 | `status` | Recomputes suite-wide lane denominators and classifications. |
 | `inventory` | Recomputes the selected lane's vendored fixture inventory. |

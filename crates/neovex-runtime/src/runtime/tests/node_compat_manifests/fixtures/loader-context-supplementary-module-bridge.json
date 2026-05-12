@@ -4,7 +4,7 @@
   "nlc_item": "NCF3",
   "batch_constant": "LOADER_CONTEXT_SUPPLEMENTARY_MODULE_BRIDGE_BATCH",
   "execution_class": "sequential",
-  "profiles": ["Application"],
+  "presets": ["Application"],
   "capabilities": ["bundle-root-fs"],
   "lane_batches": [
     {

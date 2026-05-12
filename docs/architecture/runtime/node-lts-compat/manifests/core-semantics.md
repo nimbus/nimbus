@@ -193,7 +193,7 @@ Current Neovex-owned harness capabilities:
   Neovex stages both official LTS bodies directly instead of flattening those
   differences away, and the checked-in `test/common` shim now intercepts only
   the harness-owned `TEST_PARALLEL` env probe so the official Node22 file can
-  execute without broadening the public application-profile env contract.
+  execute without broadening the public application-preset env contract.
 - The next assert batch keeps the same source-first rule but mixes one paired
   LTS file and one Node22-only file: `test-assert-typedarray-deepequal.js`
   plus `test-assert-deep-with-error.js`. `typedarray-deepequal` differs

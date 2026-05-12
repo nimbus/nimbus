@@ -1,16 +1,16 @@
 # Node.js Runtime Evidence
 
-This page is generated from the checked-in Node compatibility evidence snapshots.
-It is a support summary, not a blanket Node compatibility claim.
+This page is generated from the checked-in Node.js runtime support evidence snapshots.
+It is a support summary, not a blanket Node.js compatibility claim.
 
 ## Snapshot
 
-- generated at: `2026-05-12T06:15:55.742271+00:00`
+- generated at: `2026-05-12T16:10:29.966284+00:00`
 - status source: `docs/architecture/runtime/node-compat-evidence/latest/status-summary.json`
 - dashboard source: `docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json`
 - trend source: `docs/architecture/runtime/node-compat-evidence/latest/trend-summary.json`
 
-## Version Summary
+## Node Test Results
 
 | Target | Role | Upstream | Vendored official fixtures | Passed | Expected failure / known gap | Skipped / excluded | Unclassified | Official fixture pass rate | Classified coverage |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -18,9 +18,9 @@ It is a support summary, not a blanket Node compatibility claim.
 | Node22 | Default | `v22.15.0` | 1283 | 876 | 403 | 4 | 0 | 68.3% | 100.0% |
 | Node24 | Supported | `v24.15.0` | 1495 | 925 | 567 | 3 | 0 | 61.9% | 100.0% |
 
-## Package Canaries
+## Package/Framework Canaries
 
-| Package | Profile | Lane | Pinned version | Status |
+| Package | Preset | Lane | Pinned version | Status |
 | --- | --- | --- | --- | --- |
 | `express` | Application | Node20 | `4.19.2` | Passed |
 | `fastify` | Application | Node20 | `4.28.1` | Passed |
