@@ -191,7 +191,7 @@ case "\$last_arg" in
     printf '{"tag_name":"v0.1.14"}'
     ;;
   https://api.github.com/repos/nimbus/nimbus-crun/releases/latest)
-    printf '{"tag_name":"v1.27-nimbus.1"}'
+    printf '{"tag_name":"v1.27-nimbus.2"}'
     ;;
   *)
     exit 97

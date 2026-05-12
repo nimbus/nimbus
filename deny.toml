@@ -11,16 +11,21 @@ unmaintained = "workspace"
 unsound = "all"
 # Lint level for crates that have been yanked
 yanked = "deny"
-# `RUSTSEC-2026-0097` requires `rand`'s `log` + `thread_rng` features plus a
-# custom `log` logger path. The remaining transitive `rand 0.8.5` lane in this
-# workspace does not enable `log`, and Nimbus uses `tracing_subscriber` rather
-# than a custom `log::Log` implementation.
-ignore = ["RUSTSEC-2026-0097"]
+ignore = [
+  # Requires `rand`'s `log` + `thread_rng` features plus a custom `log` logger
+  # path. The remaining transitive `rand 0.8.5` lane in this workspace does
+  # not enable `log`, and Nimbus uses `tracing_subscriber`.
+  { id = "RUSTSEC-2026-0097", reason = "Requires rand log + thread_rng features plus a custom log::Log path; Nimbus does not enable rand log and uses tracing_subscriber." },
+  { id = "RUSTSEC-2023-0071", reason = "RustCrypto rsa has no safe fixed release; exposure is limited to user-authored Deno/Node crypto operations, so keep the audit visible until upstream replaces the implementation." },
+]
 
 [licenses]
 version = 2
 # Confidence threshold for license detection
 confidence-threshold = 0.8
+exceptions = [
+  { crate = "ar_archive_writer", allow = ["Apache-2.0 WITH LLVM-exception"] },
+]
 # Workspace crates use the Nimbus Community License (custom, not SPDX)
 private = { ignore = true }
 # All licenses are denied unless explicitly in the allow list
@@ -49,6 +54,20 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 # duplicate versions.
 multiple-versions = "deny"
 wildcards = "allow"
+skip = [
+    { crate = "base16ct@1.0.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "crypto-bigint@0.7.3", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "der@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "elliptic-curve@0.14.0-rc.28", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "hashbrown@0.14.5", reason = "The pinned Deno SWC stack still carries hashbrown 0.14 while newer workspace stacks use hashbrown 0.15." },
+    { crate = "keccak@0.2.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "nix@0.30.1", reason = "The pinned Deno filesystem and permission stack still carries nix 0.30 while newer workspace stacks use nix 0.31." },
+    { crate = "pkcs8@0.11.0-rc.11", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "sec1@0.8.1", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "sha3@0.11.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "spki@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "tonic@0.12.3", reason = "The pinned Deno telemetry stack still carries tonic 0.12 while the server gRPC stack has moved forward." },
+]
 skip-tree = [
     { crate = "aws-config@1.8.16", reason = "AWS SDK transport crates intentionally carry a parallel HTTP and crypto stack." },
     { crate = "oci-client@0.16.1", reason = "OCI registry interactions currently pin their own reqwest/rustls lane." },
@@ -58,7 +77,7 @@ skip-tree = [
     { crate = "bson@3.1.0", reason = "The MongoDB adapter stack currently carries its own BSON/rand support lane." },
     { crate = "bollard@0.20.2", reason = "The container/buildkit stack carries tonic 0.14 and related transport crates independently from server gRPC." },
     { crate = "testcontainers@0.27.2", reason = "The dev-only external-provider harness carries additional legacy utility crates." },
-    { crate = "deno_core@0.395.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
+    { crate = "deno_core@0.400.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
 ]
 
 [sources]

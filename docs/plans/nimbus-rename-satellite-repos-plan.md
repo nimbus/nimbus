@@ -453,7 +453,7 @@ scripts/verify-patch.sh
 | Release assets `nimbus-crun-linux-amd64` | `nimbus-crun-linux-amd64` |
 | Release assets `nimbus-crun-linux-arm64` | `nimbus-crun-linux-arm64` |
 | Builder image tag `nimbus-crun-builder:*` | `nimbus-crun-builder:*` |
-| Git tag `v1.27-nimbus.1` | `v1.27-nimbus.1` |
+| Git tag `v1.27-nimbus.2` | `v1.27-nimbus.2` |
 | License `Nimbus Community License` | `Nimbus Community License` |
 
 ### Changes required
@@ -540,7 +540,7 @@ references.
 
 #### CRUN-7: Git tag format
 
-Current tag: `v1.27-nimbus.1`. Future tags should use `v1.27-nimbus.1` or
+Current tag: `v1.27-nimbus.2`. Future tags should use `v1.27-nimbus.2` or
 similar. No existing tags need to be moved (pre-launch, no consumers).
 
 #### CRUN-8: Verification

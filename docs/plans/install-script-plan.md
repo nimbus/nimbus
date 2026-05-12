@@ -137,7 +137,7 @@ POSIX `sh` — no bashisms. Following the conventions of:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--version <tag>` | latest | Pin nimbus version (e.g., `v0.1.14`). Linux only in the initial cut; macOS installs the current Homebrew cask and does not support arbitrary historical version pins. |
-| `--crun-version <tag>` | latest `nimbus/nimbus-crun` release | Pin nimbus-crun version (Linux only; accepts the full release tag, e.g., `v1.27-nimbus.1`) |
+| `--crun-version <tag>` | latest `nimbus/nimbus-crun` release | Pin nimbus-crun version (Linux only; accepts the full release tag, e.g., `v1.27-nimbus.2`) |
 | `--prefix <path>` | `/usr/local` | Install prefix for nimbus binary (Linux only; ignored on macOS where Homebrew manages the prefix) |
 | `--skip-deps` | false | Skip system dependency installation |
 | `--dry-run` | false | Print what would happen, don't do anything |
@@ -220,7 +220,7 @@ GET https://api.github.com/repos/nimbus/nimbus/releases/latest
   → .tag_name → v0.1.14
 
 GET https://api.github.com/repos/nimbus/nimbus-crun/releases/latest
-  → .tag_name → v1.27-nimbus.1
+  → .tag_name → v1.27-nimbus.2
 ```
 
 If rate-limited (HTTP 403), suggest `--version` on Linux or `GITHUB_TOKEN`.
@@ -271,7 +271,7 @@ enterprise-trust surface where it can:
   SHA validation to the cask metadata; do not invent a second manual macOS
   tarball path just to verify attestations
 - `nimbus/nimbus-crun` is an external release source, but its live
-  `v1.27-nimbus.1` release already carries GitHub artifact attestations from
+  `v1.27-nimbus.2` release already carries GitHub artifact attestations from
   `.github/workflows/build.yml`; the install script can therefore verify the
   downloaded `nimbus-crun-linux-*` binary against that external provenance as
   part of the same optional/fail-closed trust model
@@ -414,7 +414,7 @@ result              supported (0 failures)
 | nimbus binary CI (`release.yml`) | exists, publishes tagged releases | Phase I2 |
 | nimbus-crun release source (`nimbus/nimbus-crun`) | exists, publishes tagged releases | Phase I2 |
 | At least one `v*` Nimbus release tag | pushed (`v0.1.14`) | Phase I2 |
-| At least one `nimbus/nimbus-crun` release tag | pushed (`v1.27-nimbus.1`) | Phase I2 |
+| At least one `nimbus/nimbus-crun` release tag | pushed (`v1.27-nimbus.2`) | Phase I2 |
 | Homebrew cask auto-update in release workflow | exists | Phase I4 |
 | `github.com/nimbus/nimbus` domain serving script | not configured | Phase I5 |
 | libkrun prebuilt .so CI | does not exist | Phase I3 |

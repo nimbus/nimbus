@@ -530,7 +530,7 @@ curl -L -o nimbus.tar.gz \
 
 # Download the matching Linux private runtime separately
 curl -L -o nimbus-crun \
-  https://github.com/nimbus/nimbus-crun/releases/download/v1.27-nimbus.1/nimbus-crun-linux-amd64
+  https://github.com/nimbus/nimbus-crun/releases/download/v1.27-nimbus.2/nimbus-crun-linux-amd64
 
 # Extract
 tar xzf nimbus.tar.gz
