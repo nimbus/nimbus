@@ -185,6 +185,202 @@
       "classification": "requires_native_async_resource_accounting",
       "owner": "loader-context/async-hooks",
       "reason": "This official async-hooks fixture asserts native TTYWRAP provider accounting. The current embedded Node22 lane does not yet own TTY provider-level async resource fidelity, so it is classified as an async-hooks resource-accounting gap."
+    },
+    {
+      "test_path": "test/known_issues/test-fs-writeFileSync-invalid-windows.js",
+      "expectation": "expected_gap",
+      "classification": "upstream_known_issue_or_platform_boundary",
+      "owner": "streams-local-io/fs-platform",
+      "reason": "This file is under upstream Node's known_issues tree and exercises platform-specific filesystem behavior. The current Node22 support claim does not count known-issue platform probes as green without a dedicated owner and measured runtime path."
+    },
+    {
+      "test_path": "test/known_issues/test-stream-writable-sync-error.js",
+      "expectation": "expected_gap",
+      "classification": "upstream_known_issue_or_platform_boundary",
+      "owner": "streams-local-io/stream-known-issues",
+      "reason": "This file is under upstream Node's known_issues tree and exercises stream error timing. The current Node22 support claim does not count known-issue probes as green without a dedicated owner and measured runtime path."
+    },
+    {
+      "test_path": "test/wpt/test-streams.js",
+      "expectation": "expected_gap",
+      "classification": "requires_wpt_harness",
+      "owner": "streams-local-io/wpt-harness",
+      "reason": "This official WPT fixture depends on Web Platform Test harness conventions. The current embedded Node22 lane does not yet own a WPT runner, so this remains a harness gap rather than a green claim."
+    },
+    {
+      "test_path": "test/wpt/test-timers.js",
+      "expectation": "expected_gap",
+      "classification": "requires_wpt_harness",
+      "owner": "process-and-timing/wpt-harness",
+      "reason": "This official WPT fixture depends on Web Platform Test harness conventions. The current embedded Node22 lane does not yet own a WPT runner, so this remains a harness gap rather than a green claim."
+    },
+    {
+      "test_path": "test/pummel/test-fs-largefile.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "streams-local-io/fs-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own pummel-scale filesystem stress execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-fs-readfile-tostring-fail.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "streams-local-io/fs-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own pummel-scale filesystem stress execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-fs-watch-file-slow.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "streams-local-io/fs-watch-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own pummel-scale filesystem watcher execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-fs-watch-file.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "streams-local-io/fs-watch-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own pummel-scale filesystem watcher execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-fs-watch-non-recursive.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "streams-local-io/fs-watch-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own pummel-scale filesystem watcher execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-fs-watch-system-limit.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "streams-local-io/fs-watch-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own pummel-scale filesystem watcher limit execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-next-tick-infinite-calls.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "process-and-timing/tick-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own infinite nextTick stress execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-process-cpuUsage.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "process-and-timing/process-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own process CPU accounting stress execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-process-hrtime.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "process-and-timing/process-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own high-resolution timing stress execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-stream-pipe-multi.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "streams-local-io/stream-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own pummel-scale stream pipe execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/pummel/test-timers.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pummel_stress_harness",
+      "owner": "process-and-timing/timer-stress",
+      "reason": "This official pummel fixture is a stress/limit test. The current embedded Node22 lane does not yet own pummel-scale timer execution, so it is classified as a stress-harness gap."
+    },
+    {
+      "test_path": "test/sequential/test-fs-opendir-recursive.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "streams-local-io/fs-sequential",
+      "reason": "This official sequential fixture relies on ordered host filesystem state. The current embedded Node22 lane has not promoted this sequential host-state slice, so it remains a precise fs harness gap."
+    },
+    {
+      "test_path": "test/sequential/test-fs-readdir-recursive.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "streams-local-io/fs-sequential",
+      "reason": "This official sequential fixture relies on ordered host filesystem state. The current embedded Node22 lane has not promoted this sequential host-state slice, so it remains a precise fs harness gap."
+    },
+    {
+      "test_path": "test/sequential/test-fs-stat-sync-overflow.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "streams-local-io/fs-sequential",
+      "reason": "This official sequential fixture relies on ordered host filesystem state and overflow-sensitive stat behavior. The current embedded Node22 lane has not promoted this sequential host-state slice, so it remains a precise fs harness gap."
+    },
+    {
+      "test_path": "test/sequential/test-fs-watch.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "streams-local-io/fs-watch-sequential",
+      "reason": "This official sequential fixture relies on ordered host filesystem watcher state. The current embedded Node22 lane has not promoted this sequential watcher slice, so it remains a precise fs watch harness gap."
+    },
+    {
+      "test_path": "test/sequential/test-next-tick-error-spin.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "process-and-timing/tick-sequential",
+      "reason": "This official sequential fixture exercises ordered error spinning through nextTick. The current embedded Node22 lane has not promoted this sequential scheduler slice, so it remains a precise process/timing gap."
+    },
+    {
+      "test_path": "test/sequential/test-perf-hooks.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "process-and-timing/perf-hooks-sequential",
+      "reason": "This official sequential fixture relies on ordered performance timing state. The current embedded Node22 lane has not promoted this sequential perf-hooks slice, so it remains a precise timing harness gap."
+    },
+    {
+      "test_path": "test/sequential/test-process-title.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "process-and-timing/process-sequential",
+      "reason": "This official sequential fixture mutates process title state. The current embedded Node22 lane has not promoted host process title mutation semantics, so it remains a precise process-host gap."
+    },
+    {
+      "test_path": "test/sequential/test-process-warnings.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "process-and-timing/process-sequential",
+      "reason": "This official sequential fixture relies on ordered process warning state. The current embedded Node22 lane has not promoted this sequential process-warning slice, so it remains a precise process-host gap."
+    },
+    {
+      "test_path": "test/sequential/test-stream2-fs.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "streams-local-io/stream-fs-sequential",
+      "reason": "This official sequential fixture combines stream2 behavior with ordered filesystem state. The current embedded Node22 lane has not promoted this sequential stream/fs slice, so it remains a precise host-state gap."
+    },
+    {
+      "test_path": "test/sequential/test-stream2-stderr-sync.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "streams-local-io/stdio-sequential",
+      "reason": "This official sequential fixture relies on ordered stderr synchronization. The current embedded Node22 lane has not promoted this sequential stdio slice, so it remains a precise host stdio gap."
+    },
+    {
+      "test_path": "test/sequential/test-timers-block-eventloop.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "process-and-timing/timer-sequential",
+      "reason": "This official sequential fixture relies on ordered timer and event-loop blocking behavior. The current embedded Node22 lane has not promoted this sequential timer slice, so it remains a precise timing harness gap."
+    },
+    {
+      "test_path": "test/sequential/test-timers-set-interval-excludes-callback-duration.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "process-and-timing/timer-sequential",
+      "reason": "This official sequential fixture relies on ordered timer interval accounting. The current embedded Node22 lane has not promoted this sequential timer slice, so it remains a precise timing harness gap."
+    },
+    {
+      "test_path": "test/sequential/test-util-debug.js",
+      "expectation": "expected_gap",
+      "classification": "requires_sequential_host_state_harness",
+      "owner": "process-and-timing/util-sequential",
+      "reason": "This official sequential fixture relies on ordered util.debuglog process state. The current embedded Node22 lane has not promoted this sequential util/process slice, so it remains a precise process-host gap."
     }
   ]
 }
