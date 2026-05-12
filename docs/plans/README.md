@@ -3,13 +3,6 @@
 This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
-- `docs/plans/node-lts-compatibility-plan.md`
-  - canonical execution plan for full Node.js built-in compatibility on top
-    of the landed `deno_core`/V8 runtime baseline: generated Node20/Node22
-    symbol inventories, Deno-family implementation audit, Node22 primary
-    contract with a Node20 validation lane, upstream Node test integration,
-    package/framework canaries, and evidence-backed public compatibility
-    claims
 - `docs/plans/encryption-at-rest-plan.md`
   - canonical execution plan for optional, enterprise-ready encryption at
     rest across Neovex-owned local persistence: embedded SQLite, retained
@@ -45,7 +38,40 @@ This directory prefers a small-number-of-plans model with clear ownership.
     state to `~/.config/neovex/` (license, future auth), add deployment
     identity via `.env.local` with `NEOVEX_DEPLOYMENT=local:<slug>`;
     follows the Convex hybrid pattern verified from source
+- `docs/plans/node-compat-matrix-classification-plan.md`
+  - active post-evidence-hardening Node compatibility plan: move practical
+    long-tail fixture inventory out of historical Rust-only tables, make the
+    Node22 denominator machine-readable, and classify the remaining Node22
+    vendored test files into green manifests, expected failures, expected
+    skips, or precise owner-backed gaps
 ## Stable implementation baselines
+
+- `docs/plans/node-lts-compatibility-plan.md`
+  - completed Node LTS closeout baseline for the landed Node22 primary
+    contract, Node20 validation lane, Node24 preview visibility, family
+    manifests/failure inventories, canaries, oracle wiring, and evidence-backed
+    public compatibility claims. Future lane scalability and correctness
+    expansion are now captured in the completed successor baseline below; any
+    new Node-compat roadmap wave should start from a fresh active plan.
+- `docs/plans/node-compat-test-infrastructure-plan.md`
+  - completed companion baseline for the Node compatibility harness that
+    closed the NLC10 evidence layer: manifest-driven fixture declaration,
+    per-lane provenance, report/oracle/canary infrastructure, nightly
+    dashboard workflow, and measured artifact production. Future Node26+ lane
+    scalability and correctness-expansion work is no longer active under this
+    plan; the completed successor wave is captured in the baseline below.
+- `docs/plans/node-compat-future-lanes-and-correctness-plan.md`
+  - completed successor baseline for post-`NLC10` Node compatibility follow-on:
+    lane-keyed future-lane onboarding substrate, explicit lane lifecycle versus
+    public-claim separation across generated artifacts, and the first
+    supplementary correctness tier with measured green and expected-failure
+    slices
+- `docs/plans/node-compat-evidence-hardening-plan.md`
+  - completed post-NLC trust hardening baseline for Node compatibility evidence:
+    suite-wide status denominator, machine-readable expectations, fixture sync
+    tooling, harness decomposition, supplementary Deno/Bun-inspired coverage,
+    durable dashboard/trend/published evidence, and a coordinated
+    `node-compat-refresh` workflow
 
 - `docs/architecture/sandbox/microvm-service-baseline.md`
   - concise current baseline for the landed krun-backed microVM runtime,

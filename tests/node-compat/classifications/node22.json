@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "catalog_kind": "node_compat_lane_classifications",
+  "lane": "node22",
+  "contract": "Classifies vendored lane-local test files that are not documented green. Entries must not be counted as pass claims; they reduce only the unmanifested/unclassified remainder.",
+  "entries": [
+    {
+      "test_path": "test/parallel/test-assert-class.js",
+      "expectation": "expected_skip",
+      "classification": "vendored_non_official_placeholder",
+      "owner": "core-semantics/assert",
+      "reason": "The vendored Node22 file is a zero-byte placeholder and official nodejs/node v22.15.0 has no test/parallel/test-assert-class.js counterpart, so it is not a runnable public-support claim."
+    },
+    {
+      "test_path": "test/parallel/test-crypto-default-shake-lengths-oneshot.js",
+      "expectation": "expected_skip",
+      "classification": "vendored_non_official_placeholder",
+      "owner": "ncf-crypto/xof",
+      "reason": "The vendored Node22 file is a zero-byte placeholder and official nodejs/node v22.15.0 has no test/parallel/test-crypto-default-shake-lengths-oneshot.js counterpart, so it is not a runnable public-support claim."
+    },
+    {
+      "test_path": "test/parallel/test-crypto-default-shake-lengths.js",
+      "expectation": "expected_skip",
+      "classification": "vendored_non_official_placeholder",
+      "owner": "ncf-crypto/xof",
+      "reason": "The vendored Node22 file is a zero-byte placeholder and official nodejs/node v22.15.0 has no test/parallel/test-crypto-default-shake-lengths.js counterpart, so it is not a runnable public-support claim."
+    },
+    {
+      "test_path": "test/parallel/test-crypto-oneshot-hash-xof.js",
+      "expectation": "expected_skip",
+      "classification": "vendored_non_official_placeholder",
+      "owner": "ncf-crypto/xof",
+      "reason": "The vendored Node22 file is a zero-byte placeholder and official nodejs/node v22.15.0 has no test/parallel/test-crypto-oneshot-hash-xof.js counterpart, so it is not a runnable public-support claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-color-support-warning-2.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-color-support-warning.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-color-support.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-isatty.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-stdin-call-end.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-stdin-end.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-stdout-end.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-stdout-resize.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-stream-constructors.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-window-size.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/pseudo-tty/test-tty-wrap.js",
+      "expectation": "expected_gap",
+      "classification": "requires_pseudo_tty_host_harness",
+      "owner": "process-and-timing/tty-host",
+      "reason": "Official Node pseudo-tty coverage requires a PTY-backed host harness and interactive terminal surface; the current embedded Node22 lane has no pseudo-terminal owner yet, so this is classified as a host-harness gap rather than an unknown or green claim."
+    },
+    {
+      "test_path": "test/fixtures/test-fs-readfile-error.js",
+      "expectation": "expected_skip",
+      "classification": "support_fixture_not_top_level_test",
+      "owner": "node-compat-denominator/fixture-sync",
+      "reason": "This file lives under test/fixtures and is support data for other official Node tests, not a top-level runnable compatibility test. It is counted by the broad vendored test-* denominator only because its filename starts with test-."
+    },
+    {
+      "test_path": "test/fixtures/test-fs-stat-sync-overflow.js",
+      "expectation": "expected_skip",
+      "classification": "support_fixture_not_top_level_test",
+      "owner": "node-compat-denominator/fixture-sync",
+      "reason": "This file lives under test/fixtures and is support data for other official Node tests, not a top-level runnable compatibility test. It is counted by the broad vendored test-* denominator only because its filename starts with test-."
+    },
+    {
+      "test_path": "test/fixtures/wpt/streams/resources/test-utils.js",
+      "expectation": "expected_skip",
+      "classification": "support_fixture_not_top_level_test",
+      "owner": "node-compat-denominator/fixture-sync",
+      "reason": "This file lives under test/fixtures and is support data for WPT stream tests, not a top-level runnable compatibility test. It is counted by the broad vendored test-* denominator only because its filename starts with test-."
+    },
+    {
+      "test_path": "test/abort/test-process-abort-exitcode.js",
+      "expectation": "expected_gap",
+      "classification": "requires_host_process_abort_harness",
+      "owner": "process-and-timing/process-host",
+      "reason": "This official abort fixture asserts host process abort and exit-code behavior. The embedded Node22 runtime lane does not currently own destructive process-abort execution, so it remains a process-host gap rather than a green claim."
+    },
+    {
+      "test_path": "test/addons/non-node-context/test-perf-hooks-timerify.js",
+      "expectation": "expected_gap",
+      "classification": "requires_native_addon_non_node_context_harness",
+      "owner": "loader-context/native-addon-host",
+      "reason": "This official addon fixture depends on native addon loading in a non-Node context. The current embedded runtime lane does not own native-addon host execution, so it is classified as a loader/native-addon gap rather than an unknown."
+    }
+  ]
+}

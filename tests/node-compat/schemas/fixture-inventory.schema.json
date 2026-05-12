@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neovex.local/node-compat/fixture-inventory.schema.json",
+  "title": "Node compatibility fixture inventory",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "report_kind",
+    "lane",
+    "upstream",
+    "vendored_fixture_root",
+    "counts",
+    "contracts",
+    "unreferenced_by_directory",
+    "unreferenced_by_prefix",
+    "unreferenced_tests",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "report_kind": {
+      "const": "node_compat_fixture_inventory"
+    },
+    "lane": {
+      "type": "string",
+      "minLength": 1
+    },
+    "upstream": {
+      "type": "object"
+    },
+    "vendored_fixture_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "counts": {
+      "type": "object"
+    },
+    "contracts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unreferenced_by_directory": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "unreferenced_by_prefix": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "unreferenced_tests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": false
+}

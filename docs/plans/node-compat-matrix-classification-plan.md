@@ -1,0 +1,97 @@
+# Node Compatibility Matrix Classification Plan
+
+Status: `in_progress`
+
+Owner: Node-compatible runtime / test infrastructure
+
+This plan owns the post-evidence-hardening wave after the completed Node LTS
+compatibility closeout. It starts from checkpoint commit `17a6bf48`, where the
+suite-wide status/dashboard/trend/publish workflows are already in place.
+
+## Objective
+
+Drive the Node22 lane from `994 / 1283` documented-green vendored test files
+toward full classified coverage by moving long-tail fixture inventory out of
+historical Rust-only tables where practical, then classifying every remaining
+Node22 vendored `test-*` file as one of:
+
+- manifest-owned green coverage
+- expected failure with an owner-backed runtime/platform reason
+- expected skip with an owner-backed non-contract reason
+- precise gap assigned to a future roadmap owner
+
+## Guardrails
+
+- Do not weaken tests, delete assertions, or convert failures into green claims.
+- Do not treat prose counts as sufficient when a machine-owned file inventory is
+  practical.
+- Keep public support claims tied to generated status, dashboard, trend, and
+  published evidence artifacts.
+- Preserve the completed NLC baselines; new Node-compat roadmap work belongs in
+  this plan until it is archived.
+- Keep `node_compat.rs` as the execution engine and fixture-harness owner, not
+  the long-term inventory database.
+
+## Baseline
+
+- Node20 validation lane: `913 / 1308` documented green, `395`
+  unmanifested/unclassified.
+- Node22 primary lane: `994 / 1283` documented green, `289`
+  unmanifested/unclassified.
+- Node24 preview lane: `925 / 1495` documented green, `570`
+  unmanifested/unclassified.
+- The first inventory audit shows the current Node22 dashboard numerator is
+  evidence-backed by family docs, but the exact green file list is not yet fully
+  reconstructable from manifest-owned data. Closing that source-of-truth gap is
+  the first batch before adding more coverage.
+
+## Checkpoints
+
+| ID | Status | Exit criteria |
+| --- | --- | --- |
+| NCM1 Inventory truth source | `done` | `make node-compat-inventory LANE=node22` emits JSON/Markdown showing vendored denominator, documented green count, Rust-referenced fixture paths, unreferenced candidates, and any reconstructability warnings. |
+| NCM2 Manifest-owned matrix seam | `in_progress` | Long-tail fixture batches that are practical to data-own are moved from inline historical Rust tables into manifest/generated inventory, with tests proving the generated inventory matches the execution set. |
+| NCM3 First Node22 classification batch | `done` | A small owner-coherent Node22 unclassified group is classified as green/expected-failure/skip/gap, with status/dashboard/trend deltas updated and focused runtime evidence recorded. |
+| NCM4 Iterative coverage batches | `in_progress` | Repeat NCM3 in family-sized batches until the Node22 unclassified count is zero or every remaining item has a precise owner-backed classification. |
+| NCM5 Closeout audit | `pending` | Final review confirms docs, manifests, generated inventories, dashboards, and runtime tests agree; archive this plan only after the evidence is reproducible from make targets. |
+
+## Verification Gates
+
+- `make node-compat-inventory LANE=node22`
+- `make node-compat-status`
+- `make node-compat-dashboard`
+- `make node-compat-trends`
+- `make node-compat-publish-evidence`
+- focused `cargo test -p neovex-runtime ... -- --nocapture --test-threads=1`
+  for each promoted batch
+- `cargo fmt --all --check`
+- `git diff --check`
+
+## Progress Log
+
+- `2026-05-12`: Started from checkpoint commit `17a6bf48` after completing the
+  Node compatibility evidence-hardening baseline. First focus is making the
+  Node22 unclassified denominator and Rust-vs-manifest source-of-truth gap
+  machine-readable.
+- `2026-05-12`: Completed NCM1. Added `make node-compat-inventory`, a
+  schema-validated Node22 fixture inventory report, dashboard integration, and
+  refresh orchestration. The first generated report preserves the public
+  `994 / 1283` documented-green status while exposing a `93`-file
+  documented-green reconstructability gap and `382` Rust-unreferenced candidate
+  paths, which makes NCM2 the correct next root-cause slice.
+- `2026-05-12`: Completed NCM3 first batch. Added a lane classification catalog
+  and classified four zero-byte, non-official Node22 vendored placeholders as
+  `expected_skip` without increasing the green numerator. Node22 now reports
+  `994` documented green, `4` classified non-green, and `285`
+  unmanifested/unclassified vendored files.
+- `2026-05-12`: Continued NCM4 with the first host-harness classification
+  slice. Classified eleven official pseudo-TTY fixtures as
+  `requires_pseudo_tty_host_harness` / `expected_gap`, owned by the
+  process/TTY host seam. Node22 now reports `994` documented green, `15`
+  classified non-green, and `274` unmanifested/unclassified vendored files.
+- `2026-05-12`: Continued NCM4 with denominator-cleanliness and host-boundary
+  classifications. Classified three `test/fixtures/**` support files as
+  non-runnable support fixtures, `test-process-abort-exitcode.js` as a
+  process-abort host gap, and the non-Node-context addon timerify fixture as a
+  native-addon host gap. Node22 now reports `994` documented green, `20`
+  classified non-green, and `269` unmanifested/unclassified vendored files.

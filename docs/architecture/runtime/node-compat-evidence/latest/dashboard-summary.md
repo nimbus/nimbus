@@ -3,6 +3,7 @@
 - Slice reports: 8
 - Canary reports: 2
 - Oracle reports: 1
+- Inventory reports: 1
 
 ## Suite Status
 - source: `target/node-compat/status/status-summary.json`
@@ -11,11 +12,17 @@
 | Lane | Upstream | Role | Green | Vendored | Unclassified | Ratio |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | `validation` | 913 | 1308 | 395 | 69.8% |
-| `node22` | `v22.15.0` | `primary` | 994 | 1283 | 289 | 77.5% |
+| `node22` | `v22.15.0` | `primary` | 994 | 1283 | 269 | 77.5% |
 | `node24` | `v24.15.0` | `preview` | 925 | 1495 | 570 | 61.9% |
 
 ### Suite Warnings
 - none
+
+## Fixture Inventory
+
+| Lane | Upstream | Vendored | Documented green | Classified non-green | Status unclassified | Rust-referenced | Rust-unreferenced | Reconstructability gap | Warnings |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `node22` | `v22.15.0` | 1283 | 994 | 20 | 269 | 901 | 382 | 93 | 2 |
 
 ## Slice Reports
 

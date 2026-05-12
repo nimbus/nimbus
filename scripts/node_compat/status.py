@@ -23,6 +23,11 @@ from expectations import (  # noqa: E402
 
 
 TEST_FILE_SUFFIXES = {".js", ".mjs", ".cjs"}
+VALID_LANE_CLASSIFICATION_EXPECTATIONS = {
+    "expected_failure",
+    "expected_gap",
+    "expected_skip",
+}
 
 
 def repo_root() -> Path:
@@ -100,6 +105,10 @@ def public_node22_claim_count() -> int | None:
 
 def default_expectation_catalog_path() -> Path:
     return repo_root() / DEFAULT_CATALOG_PATH
+
+
+def lane_classification_catalog_path(lane: str) -> Path:
+    return repo_root() / "tests" / "node-compat" / "classifications" / f"{lane}.json"
 
 
 def display_path(path: Path) -> str:
@@ -186,16 +195,186 @@ def build_family_summaries(lanes: list[dict]) -> list[dict]:
     return summaries
 
 
+def validate_lane_classification_catalog(
+    lane: str,
+    catalog: dict,
+    fixtures: set[str],
+) -> list[dict]:
+    errors: list[dict] = []
+    if catalog.get("schema_version") != 1:
+        errors.append(
+            {
+                "kind": "lane_classification_invalid_schema_version",
+                "lane": lane,
+                "actual": catalog.get("schema_version"),
+            }
+        )
+    if catalog.get("catalog_kind") != "node_compat_lane_classifications":
+        errors.append(
+            {
+                "kind": "lane_classification_invalid_catalog_kind",
+                "lane": lane,
+                "actual": catalog.get("catalog_kind"),
+            }
+        )
+    if catalog.get("lane") != lane:
+        errors.append(
+            {
+                "kind": "lane_classification_lane_mismatch",
+                "lane": lane,
+                "actual": catalog.get("lane"),
+            }
+        )
+    entries = catalog.get("entries")
+    if not isinstance(entries, list):
+        return [
+            *errors,
+            {
+                "kind": "lane_classification_entries_not_array",
+                "lane": lane,
+            },
+        ]
+
+    seen_paths: set[str] = set()
+    required_fields = {"test_path", "expectation", "classification", "owner", "reason"}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            errors.append(
+                {
+                    "kind": "lane_classification_entry_not_object",
+                    "lane": lane,
+                    "index": index,
+                }
+            )
+            continue
+        missing = sorted(required_fields - set(entry))
+        if missing:
+            errors.append(
+                {
+                    "kind": "lane_classification_entry_missing_fields",
+                    "lane": lane,
+                    "index": index,
+                    "fields": missing,
+                }
+            )
+        test_path = entry.get("test_path")
+        if not isinstance(test_path, str) or not test_path:
+            errors.append(
+                {
+                    "kind": "lane_classification_invalid_test_path",
+                    "lane": lane,
+                    "index": index,
+                }
+            )
+            continue
+        if test_path in seen_paths:
+            errors.append(
+                {
+                    "kind": "lane_classification_duplicate_test_path",
+                    "lane": lane,
+                    "test_path": test_path,
+                }
+            )
+        seen_paths.add(test_path)
+        normalized_path = test_path[5:] if test_path.startswith("test/") else test_path
+        if normalized_path not in fixtures:
+            errors.append(
+                {
+                    "kind": "lane_classification_unknown_fixture",
+                    "lane": lane,
+                    "test_path": test_path,
+                }
+            )
+        if entry.get("expectation") not in VALID_LANE_CLASSIFICATION_EXPECTATIONS:
+            errors.append(
+                {
+                    "kind": "lane_classification_invalid_expectation",
+                    "lane": lane,
+                    "test_path": test_path,
+                    "expectation": entry.get("expectation"),
+                }
+            )
+        for field in ("classification", "owner", "reason"):
+            if not isinstance(entry.get(field), str) or not entry[field]:
+                errors.append(
+                    {
+                        "kind": f"lane_classification_invalid_{field}",
+                        "lane": lane,
+                        "test_path": test_path,
+                    }
+                )
+    return errors
+
+
+def build_lane_classification_summary(lane: str, fixtures: set[str]) -> dict:
+    path = lane_classification_catalog_path(lane)
+    summary = {
+        "catalog_path": display_path(path),
+        "catalog_present": path.is_file(),
+        "classified_non_green_count": 0,
+        "by_expectation": {},
+        "by_classification": {},
+        "validation_errors": [],
+        "entries": [],
+    }
+    if not path.is_file():
+        return summary
+
+    catalog = load_json(path)
+    errors = validate_lane_classification_catalog(lane, catalog, fixtures)
+    entries = catalog.get("entries", []) if isinstance(catalog.get("entries"), list) else []
+    by_expectation: dict[str, int] = {}
+    by_classification: dict[str, int] = {}
+    valid_entries = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        test_path = entry.get("test_path")
+        normalized_path = (
+            test_path[5:]
+            if isinstance(test_path, str) and test_path.startswith("test/")
+            else test_path
+        )
+        if not isinstance(normalized_path, str) or normalized_path not in fixtures:
+            continue
+        valid_entries.append(entry)
+        expectation = entry.get("expectation")
+        classification = entry.get("classification")
+        if isinstance(expectation, str):
+            by_expectation[expectation] = by_expectation.get(expectation, 0) + 1
+        if isinstance(classification, str):
+            by_classification[classification] = (
+                by_classification.get(classification, 0) + 1
+            )
+    summary.update(
+        {
+            "classified_non_green_count": len(valid_entries),
+            "by_expectation": dict(sorted(by_expectation.items())),
+            "by_classification": dict(sorted(by_classification.items())),
+            "validation_errors": errors,
+            "entries": valid_entries,
+        }
+    )
+    return summary
+
+
 def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> list[dict]:
     summaries: list[dict] = []
     for lane in lanes:
         fixture_root = repo_root() / lane["vendored_fixture_root"]
         fixtures = discover_fixture_files(fixture_root)
+        fixture_set = set(fixtures)
         documented_green = sum(
             family["documented_manifested_green_by_lane"].get(lane["lane"]) or 0
             for family in family_summaries
         )
-        unmanifested_or_unclassified = max(0, len(fixtures) - documented_green)
+        classification_summary = build_lane_classification_summary(
+            lane["lane"], fixture_set
+        )
+        classified_non_green = classification_summary["classified_non_green_count"]
+        unmanifested_or_unclassified = max(
+            0, len(fixtures) - documented_green - classified_non_green
+        )
         ratio = documented_green / len(fixtures) if fixtures else 0
         summaries.append(
             {
@@ -210,8 +389,10 @@ def build_lane_summaries(lanes: list[dict], family_summaries: list[dict]) -> lis
                 "denominator_kind": "vendored_fixture_root_test_files",
                 "vendored_test_file_count": len(fixtures),
                 "documented_manifested_green_count": documented_green,
+                "classified_non_green_count": classified_non_green,
                 "unmanifested_or_unclassified_count": unmanifested_or_unclassified,
                 "documented_manifested_green_ratio": round(ratio, 6),
+                "classification_catalog": classification_summary,
             }
         )
     return summaries
@@ -241,6 +422,14 @@ def build_summary(
         for error in expectation_summary["validation_errors"]
     )
     warnings.extend(expectation_summary["unexpected_passes"])
+    for lane_summary in lane_summaries:
+        warnings.extend(
+            {
+                "kind": "lane_classification_catalog_validation_error",
+                **error,
+            }
+            for error in lane_summary["classification_catalog"]["validation_errors"]
+        )
     if public_claim is not None and node22_summary is not None:
         documented_green = node22_summary["documented_manifested_green_count"]
         if documented_green < public_claim:
@@ -258,9 +447,10 @@ def build_summary(
         "report_kind": "node_compat_suite_status",
         "status_contract": (
             "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then "
-            "compares that denominator to the documented manifested green subset. "
-            "The remainder is intentionally reported as unmanifested_or_unclassified, "
-            "not as pass or fail."
+            "compares that denominator to the documented manifested green subset "
+            "plus explicit lane classification catalogs. Classified non-green "
+            "entries are not pass claims; the remaining remainder is intentionally "
+            "reported as unmanifested_or_unclassified, not as pass or fail."
         ),
         "lane_count": len(lane_summaries),
         "family_count": len(family_summaries),
@@ -287,8 +477,8 @@ def build_markdown(summary: dict) -> str:
         "",
         "## Lane Summary",
         "",
-        "| Lane | Role | Upstream | Vendored test files | Documented green | Unmanifested/unclassified | Ratio |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+        "| Lane | Role | Upstream | Vendored test files | Documented green | Classified non-green | Unmanifested/unclassified | Ratio |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for lane in summary["lane_summaries"]:
         ratio = lane["documented_manifested_green_ratio"] * 100
@@ -297,8 +487,26 @@ def build_markdown(summary: dict) -> str:
             f"`{lane['upstream']['tag']}` | "
             f"{lane['vendored_test_file_count']} | "
             f"{lane['documented_manifested_green_count']} | "
+            f"{lane['classified_non_green_count']} | "
             f"{lane['unmanifested_or_unclassified_count']} | "
             f"{ratio:.1f}% |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Lane Classification Catalogs",
+            "",
+            "| Lane | Catalog | Classified non-green | By expectation | By classification |",
+            "| --- | --- | ---: | --- | --- |",
+        ]
+    )
+    for lane in summary["lane_summaries"]:
+        catalog = lane["classification_catalog"]
+        lines.append(
+            f"| `{lane['lane']}` | `{catalog['catalog_path']}` | "
+            f"{catalog['classified_non_green_count']} | "
+            f"`{json.dumps(catalog['by_expectation'], sort_keys=True)}` | "
+            f"`{json.dumps(catalog['by_classification'], sort_keys=True)}` |"
         )
     lines.extend(
         [
