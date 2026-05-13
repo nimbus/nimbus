@@ -69,7 +69,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable
+          shared-key: ci-ubuntu-stable-clippy
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
@@ -102,15 +102,51 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable
+          shared-key: ci-ubuntu-stable-runtime
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
       - name: Run isolated runtime test lane
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
         # CI keeps a dedicated runtime lane instead of falling back to a global
-        # single-thread workaround.
-        run: cargo test -p nimbus-runtime
+        # single-thread workaround. The official Node compatibility corpus is a
+        # conformance signal with its own scheduled/manual lane below; keep PR
+        # runtime tests focused on product runtime behavior and lightweight
+        # manifest/unit checks.
+        run: "cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::"
+
+  node-compat:
+    name: Node Compatibility Corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-ubuntu-stable-node-compat
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
+
+      - name: Run official Node compatibility corpus
+        run: "cargo test -p nimbus-runtime runtime::tests::node_compat:: -- --nocapture --test-threads=1"
 
   workspace-test:
     name: Workspace Tests
@@ -138,7 +174,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable
+          shared-key: ci-ubuntu-stable-workspace
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
@@ -206,7 +242,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable
+          shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
@@ -243,7 +279,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable
+          shared-key: ci-ubuntu-stable-harness-nightly-${{ matrix.surface }}
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
@@ -275,7 +311,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable
+          shared-key: ci-ubuntu-stable-deny
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 

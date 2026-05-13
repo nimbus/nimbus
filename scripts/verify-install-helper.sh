@@ -266,7 +266,7 @@ echo ""
 echo "Checking dry-run output..."
 
 # Use a mock version to avoid GitHub API calls
-if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 \
+if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.27-nimbus.2 \
     > "${output_dir}/dry-run.txt" 2>&1; then
 
   if grep -q "Install Plan" "${output_dir}/dry-run.txt"; then

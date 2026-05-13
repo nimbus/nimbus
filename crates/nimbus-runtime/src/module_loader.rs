@@ -381,10 +381,12 @@ export default fsBuiltin;
 "#;
 
 const NODE_FS_PROMISES_MODULE_SOURCE: &str = r#"
+import Module, { getBuiltinModule as getNimbusBuiltinModule } from "node:nimbus/module";
+
 const processBuiltin = globalThis.process;
-const fsBuiltin = processBuiltin?.getBuiltinModule?.("fs");
+const fsBuiltin = getNimbusBuiltinModule?.("fs") ?? processBuiltin?.getBuiltinModule?.("fs");
 const fsPromisesBuiltin = fsBuiltin?.promises;
-const moduleBuiltin = processBuiltin?.getBuiltinModule?.("module");
+const moduleBuiltin = Module ?? processBuiltin?.getBuiltinModule?.("module");
 const internalFsUtils = moduleBuiltin?._load?.("internal/fs/utils", null, false);
 if (
   !fsPromisesBuiltin ||
@@ -1879,6 +1881,32 @@ function isInvalidOpenThrow(error) {
   return error instanceof TypeError && error.message === "invalid_argument";
 }
 
+function openFlagsRequireExclusiveCreate(flags, fsConstants) {
+  if (typeof flags === "number") {
+    return (flags & fsConstants.O_EXCL) !== 0;
+  }
+  const normalizedFlags = typeof flags === "string" && flags.length > 0 ? flags : "r";
+  return normalizedFlags.includes("x");
+}
+
+function normalizeInvalidOpenThrow(fsBuiltin, path, flags, error, callback) {
+  if (!isInvalidOpenThrow(error)) {
+    callback(error);
+    return;
+  }
+  return fsBuiltin.stat(path, (statError) => {
+    if (statError?.code === "ENOENT") {
+      callback(createOpenEnoentError(path, statError));
+      return;
+    }
+    if (!statError && openFlagsRequireExclusiveCreate(flags, fsBuiltin.constants)) {
+      callback(createOpenEexistError(path, error));
+      return;
+    }
+    callback(error);
+  });
+}
+
 function sanitizeRmdirOptions(options) {
   if (options === undefined) {
     return undefined;
@@ -2410,20 +2438,37 @@ function writeFileWithCurrentFsBindings(fsModule, fsBuiltin, path, data, options
     validatedPath,
   } = normalizeWriteFileOptions(path, options, defaultFlag);
   const sanitizedOptions = sanitizeWriteFileOptions(normalizedOptions);
+  const finishWriteFile = (error) => {
+    if (!error) {
+      callback(null);
+      return;
+    }
+    normalizeInvalidOpenThrow(fsBuiltin, validatedPath, flag, error, callback);
+  };
 
   if (!hasExplicitFlush) {
-    return fsBuiltin.writeFile(validatedPath, data, sanitizedOptions, callback);
+    try {
+      return fsBuiltin.writeFile(validatedPath, data, sanitizedOptions, finishWriteFile);
+    } catch (error) {
+      return normalizeInvalidOpenThrow(fsBuiltin, validatedPath, flag, error, callback);
+    }
   }
 
   if (!flush) {
     return fsBuiltin.writeFile(validatedPath, data, sanitizedOptions, (error) => {
-      invokeFsCallbackAsync(callback, error);
+      if (!error) {
+        invokeFsCallbackAsync(callback, null);
+        return;
+      }
+      normalizeInvalidOpenThrow(fsBuiltin, validatedPath, flag, error, (normalizedError) => {
+        invokeFsCallbackAsync(callback, normalizedError);
+      });
     });
   }
 
   return fsBuiltin.writeFile(validatedPath, data, sanitizedOptions, (writeError) => {
     if (writeError) {
-      callback(writeError);
+      normalizeInvalidOpenThrow(fsBuiltin, validatedPath, flag, writeError, callback);
       return;
     }
     flushWrittenFile(fsModule, fsBuiltin, validatedPath, isUserFd, callback);
@@ -2861,13 +2906,6 @@ function createNimbusFsModule(fsPromisesModule) {
       });
     });
   }
-  function openFlagsRequireExclusiveCreate(flags) {
-    if (typeof flags === "number") {
-      return (flags & fsBuiltin.constants.O_EXCL) !== 0;
-    }
-    const normalizedFlags = typeof flags === "string" && flags.length > 0 ? flags : "r";
-    return normalizedFlags.includes("x");
-  }
   function normalizeOpenError(path, flags, error, callback) {
     if (!isInvalidOpenThrow(error)) {
       callback(error);
@@ -2878,7 +2916,7 @@ function createNimbusFsModule(fsPromisesModule) {
         callback(createOpenEnoentError(path, statError));
         return;
       }
-      if (!statError && openFlagsRequireExclusiveCreate(flags)) {
+      if (!statError && openFlagsRequireExclusiveCreate(flags, fsBuiltin.constants)) {
         callback(createOpenEexistError(path, error));
         return;
       }
@@ -2906,7 +2944,7 @@ function createNimbusFsModule(fsPromisesModule) {
         throw createOpenEnoentError(path, statError);
       }
     }
-    if (openFlagsRequireExclusiveCreate(flags)) {
+    if (openFlagsRequireExclusiveCreate(flags, fsBuiltin.constants)) {
       throw createOpenEexistError(path, error);
     }
     throw error;

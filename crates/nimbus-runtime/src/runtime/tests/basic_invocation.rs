@@ -2005,6 +2005,7 @@ globalThis.__nimbusInvoke = async function () {
     return {
       ok: false,
       code: error?.code ?? null,
+      syscall: error?.syscall ?? null,
       message: error?.message ?? String(error),
     };
   }
@@ -2036,13 +2037,26 @@ export {};
         .await
         .expect("bundle should execute");
 
-    assert_eq!(result["ok"], serde_json::json!(false));
-    assert_eq!(result["code"], serde_json::json!("ENOENT"));
+    assert_eq!(
+        result["ok"],
+        serde_json::json!(false),
+        "unexpected missing-parent write result: {result}"
+    );
+    assert_eq!(
+        result["code"],
+        serde_json::json!("ENOENT"),
+        "unexpected missing-parent write result: {result}"
+    );
+    assert_eq!(
+        result["syscall"],
+        serde_json::json!("open"),
+        "unexpected missing-parent write result: {result}"
+    );
     let message = result["message"]
         .as_str()
         .expect("missing parent write failure should include a message");
     assert!(
-        message.contains("writeFile"),
+        message.contains("no such file or directory"),
         "unexpected write failure: {message}"
     );
     assert!(
