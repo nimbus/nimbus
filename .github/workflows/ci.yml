@@ -77,6 +77,41 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  deny:
+    name: Rust Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-ubuntu-stable-deny
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Run cargo deny
+        run: cargo deny check
+
   rust-runtime-tests:
     name: Rust Runtime Tests
     runs-on: ubuntu-latest
@@ -111,7 +146,7 @@ jobs:
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
         # CI keeps a dedicated runtime lane instead of falling back to a global
         # single-thread workaround. The official Node compatibility corpus is a
-        # conformance signal with its own dedicated workflow; keep PR
+        # conformance signal with its own dedicated workflow; keep required
         # runtime tests focused on product runtime behavior and lightweight
         # manifest/unit checks.
         run: "cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::"
@@ -121,6 +156,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event_name != 'schedule'
+    env:
+      NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
 
     steps:
       - name: Check out repository
@@ -171,6 +208,7 @@ jobs:
     needs:
       - rust-format
       - rust-clippy
+      - deny
       - rust-runtime-tests
       - rust-workspace-tests
 
@@ -179,15 +217,18 @@ jobs:
         env:
           FORMAT_RESULT: ${{ needs['rust-format'].result }}
           CLIPPY_RESULT: ${{ needs['rust-clippy'].result }}
+          DEPENDENCY_AUDIT_RESULT: ${{ needs['deny'].result }}
           RUNTIME_TEST_RESULT: ${{ needs['rust-runtime-tests'].result }}
           WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
         run: |
           printf 'format=%s\n' "${FORMAT_RESULT}"
           printf 'clippy=%s\n' "${CLIPPY_RESULT}"
+          printf 'dependency-audit=%s\n' "${DEPENDENCY_AUDIT_RESULT}"
           printf 'runtime-test=%s\n' "${RUNTIME_TEST_RESULT}"
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
           test "${FORMAT_RESULT}" = success
           test "${CLIPPY_RESULT}" = success
+          test "${DEPENDENCY_AUDIT_RESULT}" = success
           test "${RUNTIME_TEST_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
 
@@ -236,9 +277,7 @@ jobs:
           cache-on-failure: "true"
 
       - name: Run required verification harness corpus
-        # The harness script's `pr` mode is the fast required corpus used for
-        # both pull_request and push CI. Keep the job label event-neutral.
-        run: bash scripts/verification-harness.sh pr ${{ matrix.surface }}
+        run: bash scripts/verification-harness.sh required ${{ matrix.surface }}
 
   harness-nightly:
     name: Nightly ${{ matrix.surface-label }} Verification Harness
@@ -284,41 +323,6 @@ jobs:
 
       - name: Run nightly verification harness corpus
         run: bash scripts/verification-harness.sh nightly ${{ matrix.surface }}
-
-  deny:
-    name: Rust Dependency Audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ci-ubuntu-stable-deny
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@cargo-deny
-
-      - name: Run cargo deny
-        run: cargo deny check
 
   js:
     name: JavaScript Build and Test

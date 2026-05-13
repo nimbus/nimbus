@@ -15,7 +15,7 @@ pub(crate) const TENANT_FAIRNESS_NO_STARVATION_CASE: RuntimeReproCase = RuntimeR
 
 fn runtime_harness_repro(case: RuntimeReproCase) -> String {
     format!(
-        "bash scripts/verification-harness.sh repro runtime pr {}",
+        "bash scripts/verification-harness.sh repro runtime required {}",
         case.id()
     )
 }

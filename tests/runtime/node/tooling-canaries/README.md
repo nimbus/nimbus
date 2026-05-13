@@ -1,7 +1,7 @@
 # Tooling Package Canaries
 
 This root holds the pinned `RuntimePreset::Tooling` package canaries used by
-`NLC10` closeout evidence.
+tooling evidence.
 
 The current canary set covers:
 

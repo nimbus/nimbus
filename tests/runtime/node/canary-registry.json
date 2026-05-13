@@ -1,12 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "claims": [
     {
       "id": "application-networking-express",
       "package": "express",
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node20"],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "public_claim": "Express application networking smoke is fixture-backed for the Node22 default lane and Node20 supported lane.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -15,7 +15,7 @@
       "package": "fastify",
       "runtime_preset": "Application",
       "lane_coverage": ["node22", "node20"],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "public_claim": "Fastify application networking smoke is fixture-backed for the Node22 default lane and Node20 supported lane.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -24,7 +24,7 @@
       "package": "socket.io",
       "runtime_preset": "Application",
       "lane_coverage": ["node22"],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "public_claim": "Socket.IO application networking smoke is fixture-backed for the Node22 default lane.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -33,7 +33,7 @@
       "package": "undici",
       "runtime_preset": "Application",
       "lane_coverage": ["node22"],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "public_claim": "Undici application networking smoke is fixture-backed for the Node22 default lane.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -42,7 +42,7 @@
       "package": "axios",
       "runtime_preset": "Application",
       "lane_coverage": ["node22"],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "public_claim": "Axios application networking smoke is fixture-backed for the Node22 default lane.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -51,7 +51,7 @@
       "package": "tsx",
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22"],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "public_claim": "tsx tooling smoke is fixture-backed for the Node22 default lane.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -60,7 +60,7 @@
       "package": "ts-node",
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22"],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "public_claim": "ts-node tooling smoke is fixture-backed for the Node22 default lane.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -69,7 +69,7 @@
       "package": "jest",
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22"],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "public_claim": "jest tooling smoke is fixture-backed for the Node22 default lane.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -78,7 +78,7 @@
       "package": "prisma",
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22"],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "public_claim": "Prisma tooling smoke is fixture-backed for the Node22 default lane and records either a successful SQLite roundtrip or a documented unsupported engine boundary.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
@@ -87,7 +87,7 @@
       "package": "next",
       "runtime_preset": "Tooling",
       "lane_coverage": ["node22"],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "public_claim": "Next tooling smoke is fixture-backed for the Node22 default lane with a checked build and route-response probe.",
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     }
@@ -101,7 +101,7 @@
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "express.mjs",
       "runtime_preset": "Application",
-      "nlc_family_dependency": "networking",
+      "compat_family_dependency": "networking",
       "claim_ids": ["application-networking-express"],
       "lane_runs": [
         {
@@ -124,7 +124,7 @@
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "fastify.mjs",
       "runtime_preset": "Application",
-      "nlc_family_dependency": "networking",
+      "compat_family_dependency": "networking",
       "claim_ids": ["application-networking-fastify"],
       "lane_runs": [
         {
@@ -147,7 +147,7 @@
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "socket-io.mjs",
       "runtime_preset": "Application",
-      "nlc_family_dependency": "networking",
+      "compat_family_dependency": "networking",
       "claim_ids": ["application-networking-socket-io"],
       "lane_runs": [
         {
@@ -165,7 +165,7 @@
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "undici.mjs",
       "runtime_preset": "Application",
-      "nlc_family_dependency": "networking",
+      "compat_family_dependency": "networking",
       "claim_ids": ["application-networking-undici"],
       "lane_runs": [
         {
@@ -183,7 +183,7 @@
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "axios.mjs",
       "runtime_preset": "Application",
-      "nlc_family_dependency": "networking",
+      "compat_family_dependency": "networking",
       "claim_ids": ["application-networking-axios"],
       "lane_runs": [
         {
@@ -201,7 +201,7 @@
       "root": "tests/runtime/node/tooling-canaries",
       "bundle": "tsx.mjs",
       "runtime_preset": "Tooling",
-      "nlc_family_dependency": "loader-context",
+      "compat_family_dependency": "loader-context",
       "claim_ids": ["tooling-loader-tsx"],
       "lane_runs": [
         {
@@ -219,7 +219,7 @@
       "root": "tests/runtime/node/tooling-canaries",
       "bundle": "ts-node.mjs",
       "runtime_preset": "Tooling",
-      "nlc_family_dependency": "loader-context",
+      "compat_family_dependency": "loader-context",
       "claim_ids": ["tooling-loader-ts-node"],
       "lane_runs": [
         {
@@ -237,7 +237,7 @@
       "root": "tests/runtime/node/tooling-canaries",
       "bundle": "jest.mjs",
       "runtime_preset": "Tooling",
-      "nlc_family_dependency": "loader-context",
+      "compat_family_dependency": "loader-context",
       "claim_ids": ["tooling-loader-jest"],
       "lane_runs": [
         {
@@ -255,7 +255,7 @@
       "root": "tests/runtime/node/tooling-canaries",
       "bundle": "prisma.mjs",
       "runtime_preset": "Tooling",
-      "nlc_family_dependency": "loader-context",
+      "compat_family_dependency": "loader-context",
       "claim_ids": ["tooling-loader-prisma"],
       "lane_runs": [
         {
@@ -273,7 +273,7 @@
       "root": "tests/runtime/node/tooling-canaries",
       "bundle": "next.mjs",
       "runtime_preset": "Tooling",
-      "nlc_family_dependency": "loader-context",
+      "compat_family_dependency": "loader-context",
       "claim_ids": ["tooling-loader-next"],
       "lane_runs": [
         {

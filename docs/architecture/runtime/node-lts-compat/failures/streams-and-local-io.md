@@ -3,7 +3,7 @@
 Status: `classified`
 
 This file is the checked-in failure inventory for the currently manifested
-`NLC5` streams and local I/O subset.
+`streams-and-local-io` subset.
 
 It records only the explicit red/skip remainder for the current family:
 watchpoints, validation-lane divergences, supported-lane drift, later-family
@@ -21,25 +21,25 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 ### Explicit Node22 Watchpoints
 
 - `test/parallel/test-stream-finished.js`
-  - classification: `nlc5_nlc6_boundary_watchpoint`
+  - classification: `stream_networking_boundary_watchpoint`
   - reason: the official file opens a local TCP server with
     `Server.listen(0)`, which currently fails under the application-preset
     no-net contract before the rest of the callback-style `stream.finished()`
     assertions run
   - owner: networking-family capability boundary, not the green pure-stream
-    `stream/promises.finished()` semantics already counted in `NLC5`
+    `stream/promises.finished()` semantics already counted in `streams-and-local-io` family
   - evidence:
     `runtime::tests::node_compat::node22_stream_finished_watchpoint`
 
 - `test/parallel/test-stream-pipeline.js`
-  - classification: `nlc5_nlc6_boundary_watchpoint`
+  - classification: `stream_networking_boundary_watchpoint`
   - reason: the official file opens local TCP servers through `http` /
     `net`, so it currently fails at `Server.listen(0)` under the
     application-preset no-net contract before the rest of the callback-style
     `stream.pipeline()` assertions run
   - owner: networking-family capability boundary, not the green
     `stream/promises.pipeline()` and non-socket pipeline semantics already
-    counted in `NLC5`
+    counted in `streams-and-local-io` family
   - evidence:
     `runtime::tests::node_compat::node22_stream_pipeline_watchpoint`
 
@@ -79,14 +79,14 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
   - classification: `cross_family_repromotion_pending`
   - reason: the old `worker_threads.isMainThread` self-skip is now gone after
     the embedded main-isolate bootstrap fix, and the official file executes
-    cleanly in the focused `NLC8` worker/main-thread batch. It stays out of
-    the counted `NLC5` denominator only because that family has not been
+    cleanly in the focused loader-context worker/main-thread batch. It stays out of
+    the counted `streams-and-local-io` family denominator only because that family has not been
     replayed and re-promoted formally on top of the new worker baseline yet.
-  - owner: cross-family follow-up after the `NLC8` main-thread bootstrap
+  - owner: cross-family follow-up after the loader-context main-thread bootstrap
     closeout, not a remaining sync `fs.writeFileSync()` / `appendFileSync()`
     runtime bug
   - evidence:
-    `runtime::tests::node_compat::node22_nlc8_worker_main_thread_batch_fixture`
+    `runtime::tests::node_compat::node22_loader_context_followup_worker_main_thread_batch_fixture`
 
 - `test/parallel/test-fs-realpath.js`
   - classification: `cross_family_realpath_symlink_seam`
@@ -96,10 +96,10 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
     `AlreadyExists` instead of preserving the upstream tmpdir/realpath
     contract.
   - owner: shared `node:fs` realpath/tmpdir/symlink setup semantics, exposed
-    by the `NLC8` main-thread worker bootstrap fix rather than hidden behind a
+    by the loader-context main-thread worker bootstrap fix rather than hidden behind a
     worker-family gate
   - evidence:
-    `runtime::tests::node_compat::node22_nlc8_worker_main_thread_batch_fixture`
+    `runtime::tests::node_compat::node22_loader_context_followup_worker_main_thread_batch_fixture`
 
 - `test/parallel/test-stream-writable-samecb-singletick.js`
   - classification: `later_family_dependency`
@@ -270,7 +270,7 @@ The remaining Node22 watchpoints are currently classified as later-family
 boundaries or documented application-preset limitations:
 
 - `test-stream-finished.js` and `test-stream-pipeline.js`
-  - `NLC5` / `NLC6` networking boundary (`Server.listen(0)`)
+  - `streams-and-local-io` family / `networking` family networking boundary (`Server.listen(0)`)
 - `test-stream-writable-samecb-singletick.js`
   - later `async_hooks` / task-accounting ownership
 - `test-fs-open.js`, `test-fs-readdir-buffer.js`, and

@@ -22,7 +22,8 @@
       "const": "rust_ignore_attributes"
     },
     "source_path": {
-      "const": "crates/nimbus-runtime/src/runtime/tests/node/mod.rs"
+      "type": "string",
+      "minLength": 1
     },
     "contract": {
       "type": "string",
@@ -82,7 +83,8 @@
             "minLength": 1
           },
           "source_path": {
-            "const": "crates/nimbus-runtime/src/runtime/tests/node/mod.rs"
+            "type": "string",
+            "minLength": 1
           },
           "source_line": {
             "type": "integer",

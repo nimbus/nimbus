@@ -51,4 +51,4 @@ Current measured slices:
     unavailable in this host path
 
 These probes are successor-scope correctness evidence. They do not widen the
-completed `NLC` support denominator by themselves.
+completed `Node compatibility` support denominator by themselves.

@@ -1,6 +1,6 @@
 # Networking Node Test Slices
 
-Current upstream Node test-slice manifest for `NLC6`.
+Current upstream Node test-slice manifest for `networking` family.
 
 This file records the currently counted green denominator and staged upstream
 corpus for the family. Requirements, closeout gates, and roadmap decisions
@@ -17,7 +17,7 @@ Source corpus:
 - staged future Node24 supported corpus:
   `nodejs/node @ v24.15.0`
 
-The first `NLC6` slice follows the same fast pattern that worked for `NLC5`:
+The first `networking` family slice follows the same fast pattern that worked for `streams-and-local-io` family:
 import official Node files as data, batch them by shared runtime seam, and keep
 the first denominator intentionally narrow so real builtin/runtime gaps surface
 before socket/listen/request noise takes over.
@@ -49,7 +49,7 @@ servers, requests, sockets, and the heavier `tls` / `http2` families.
 
 ## Current Manifested Official Subset
 
-The manifested `NLC6` batch is now live in
+The manifested `networking` family batch is now live in
 [`NETWORKING_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs).
 
 Current manifested batch counts:
@@ -61,7 +61,7 @@ Current manifested batch counts:
 
 ## Package Canary Evidence
 
-Pinned package canaries for the `NLC6` networking family now live under
+Pinned package canaries for the `networking` family now live under
 [`tests/runtime/node/networking-canaries/`](../../../../tests/runtime/node/networking-canaries/).
 
 Current checked-in package set:

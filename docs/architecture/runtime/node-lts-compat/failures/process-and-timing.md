@@ -3,7 +3,7 @@
 Status: `classified`
 
 This file is the checked-in failure inventory for the currently manifested
-`NLC4` process and timing subset.
+`process-and-timing` subset.
 
 ## Node22 Upstream Slice Status
 
@@ -12,7 +12,7 @@ This file is the checked-in failure inventory for the currently manifested
   - `48` official files passed
   - `0` failed
   - `0` current Node22 watchpoints inside the manifested subset
-- Current green subset families:
+- Current green subset modules:
   - `process` including `loadEnvFile()`
   - `nextTick`
   - core `timers`
@@ -98,7 +98,7 @@ Integrated ownership result:
     `before-exit.mjs`, and `unregister.mjs` are green; the only remaining
     failure is `different-registry-per-thread.mjs`, which depends on
     `node:worker_threads` and therefore belongs to the later VM/worker family
-    instead of the `NLC4` process/timing family
+    instead of the `process-and-timing` family process/timing family
   - evidence:
     `runtime::tests::node_compat::node22_process_finalization_close_fixture`,
     `runtime::tests::node_compat::node22_process_finalization_before_exit_fixture`,
@@ -125,9 +125,9 @@ Integrated ownership result:
     - reason: SharedArrayBuffer inspect output still prints `byteLength`
       instead of Node24's `[byteLength]` formatting
 
-## `NLC4` Closeout Note
+## `process-and-timing` family Closeout Note
 
-`NLC4` no longer has an unexplained in-scope runtime gap. The imported
+`process-and-timing` family no longer has an unexplained in-scope runtime gap. The imported
 official files for the family now break down into three honest buckets:
 
 - the green Node22 manifested subset (`48 / 48`)
@@ -137,7 +137,7 @@ official files for the family now break down into three honest buckets:
   - `later_family_dependency`
 
 That satisfies the family closeout contract and promotes the next active work
-to `NLC5`.
+to `streams-and-local-io` family.
 
 ## Current Local Evidence
 

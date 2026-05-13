@@ -33,7 +33,7 @@ make node-compat-canaries PRESET=application
 make node-compat-canaries-bootstrap PRESET=tooling
 make node-compat-canaries PRESET=tooling
 make node-compat-oracle LANE=node22 SAMPLE=test/parallel/test-buffer-alloc.js
-make node-compat-expectations-validate
+make node-compat-validate-watchpoints
 make node-compat-sync LANE=node22 DRY_RUN=1
 make node-compat-refresh LANE=node22 TAG=v22.15.0 DRY_RUN=1
 make node-compat-status
@@ -78,7 +78,7 @@ pass or fail. The same report validates
 JSON file is provided through `OBSERVED_RESULTS`.
 
 `make node-compat-sync`, `make node-compat-refresh`, `make node-compat-trends`,
-and `make node-compat-expectations-validate` validate their JSON outputs or
+and `make node-compat-validate-watchpoints` validate their JSON outputs or
 catalogs against the checked-in schemas in `tests/runtime/node/schemas/`.
 `make node-compat-trends` compares the current generated status/dashboard
 against the checked-in latest evidence snapshot before `make

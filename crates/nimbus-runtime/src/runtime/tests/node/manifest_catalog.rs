@@ -152,7 +152,6 @@ pub(super) enum NodeCompatCapability {
 pub(super) struct NodeCompatFamilyCatalog {
     pub(super) schema_version: u32,
     pub(super) family: String,
-    pub(super) nlc_item: String,
     pub(super) batch_constant: String,
     pub(super) execution_class: NodeCompatExecutionClass,
     pub(super) presets: Vec<NodeCompatPreset>,

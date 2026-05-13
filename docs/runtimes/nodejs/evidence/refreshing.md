@@ -59,7 +59,7 @@ The refresh command performs these steps:
 | --- | --- |
 | `sync` | Builds or applies the fixture sync plan for the selected lane. |
 | `report:*` | Optional representative live Node test checks when `RUN_SLICES=1`. |
-| `expectations` | Validates Rust watchpoint expectations against the current harness inventory. |
+| `watchpoints` | Validates Rust ignored watchpoint expectations against the current harness inventory. |
 | `status` | Recomputes suite-wide lane denominators and classifications. |
 | `inventory` | Recomputes the selected lane's vendored fixture inventory. |
 | `dashboard` | Aggregates status, inventory, slice, canary, and oracle evidence. |

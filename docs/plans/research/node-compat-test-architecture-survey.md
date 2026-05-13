@@ -86,17 +86,17 @@ not upstream-support labels.
 
 Source: `node_compat.rs` lines 101–112 (enum), line 3041 (Node24 skip logic).
 
-### 1.4 NLC plan slices
+### 1.4 Compatibility family slices
 
 Batch constants map to numbered slices in `docs/plans/archive/node-lts-compatibility-plan.md`:
 
 | Batch constant | Plan slice | Approximate entry count |
 |----------------|-----------|------------------------|
-| `CORE_SEMANTICS_BATCH` | NLC-3 | ~200 |
-| `PROCESS_AND_TIMING_BATCH` | NLC-4 | ~80 |
-| `STREAMS_AND_LOCAL_IO_BATCH` | NLC-5 | ~150 |
-| `NETWORKING_BATCH` | NLC-6 | ~400 |
-| `LOADER_CONTEXT_BATCH` | NLC-7 | ~300+ |
+| `CORE_SEMANTICS_BATCH` | Node compatibility-3 | ~200 |
+| `PROCESS_AND_TIMING_BATCH` | Node compatibility-4 | ~80 |
+| `STREAMS_AND_LOCAL_IO_BATCH` | Node compatibility-5 | ~150 |
+| `NETWORKING_BATCH` | Node compatibility-6 | ~400 |
+| `LOADER_CONTEXT_BATCH` | Node compatibility-7 | ~300+ |
 
 Source: `grep -c` on batch constant ranges in `node_compat.rs`.
 
@@ -825,7 +825,7 @@ Source: `Makefile` lines 36–37 (`test` target) and 84–97 (harness targets);
 - Individual fixtures inside a batch test are not addressable. When
   `node22_primary_lane_executes_manifested_core_semantics_subset` fails, you
   cannot run just one fixture within it — you must rerun the entire batch.
-- There is no way to run "all Node 20 tests" or "all NLC-3 tests" without
+- There is no way to run "all Node 20 tests" or "all Node compatibility-3 tests" without
   knowing the specific test function names.
 - There is no way to list which tests exist, which are ignored, or what their
   status is without reading the Rust source.
@@ -834,8 +834,8 @@ Source: `Makefile` lines 36–37 (`test` target) and 84–97 (harness targets);
 
 **Reporting:** Batch tests emit progress to stderr during execution:
 ```
-node_compat nlc3-core-semantics node22 -> test/parallel/test-assert-async.js
-node_compat nlc3-core-semantics node22 summary -> passed: 42, skipped: 3, failed: 0
+node_compat core-semantics node22 -> test/parallel/test-assert-async.js
+node_compat core-semantics node22 summary -> passed: 42, skipped: 3, failed: 0
 ```
 No structured output. No persisted reports.
 
@@ -1084,7 +1084,7 @@ three-step process:
 | **Run single test** | `cargo test -- <name>` | `cargo test --test node_compat -- <filter>` | `bun bd <file>` | `node test/wpt/test-url.js` |
 | **Run single fixture in batch** | Not possible | N/A (no batches) | N/A | N/A (per-module runners) |
 | **Run by version lane** | Know the function name | N/A (single version) | N/A | N/A |
-| **Run by NLC slice** | Know the batch function name | N/A | N/A | Run module runner script |
+| **Run by compatibility family** | Know the batch function name | N/A | N/A | Run module runner script |
 | **List all tests** | Read Rust source | Read `config.jsonc` | List files in `test/` | List `test/wpt/test-*.js` |
 | **List ignored tests** | `grep '#\[ignore' node_compat.rs` | `grep '"ignore"' config.jsonc` | N/A | Read status files |
 | **Sync from upstream** | Manual copy | `vendor.ts` (20 lines) | Manual copy | `git node wpt <module>` |
@@ -1117,8 +1117,8 @@ established verification-harness pattern:
 # Run all node_compat tests for a lane
 make node-compat LANE=node22
 
-# Run a specific NLC slice
-make node-compat LANE=node22 SLICE=nlc3
+# Run a specific compatibility family
+make node-compat LANE=node22 SLICE=core-semantics
 
 # Run a single fixture by path
 make node-compat FIXTURE=test/parallel/test-assert-async.js
@@ -1183,10 +1183,10 @@ scripts/node-compat-query.sh missing --lane=node24
 # Which tests are application-profile compatible but blocked on main-thread or TTY requirements?
 scripts/node-compat-query.sh gated --profile=application --requires=main-thread,tty
 
-# Coverage by NLC slice
+# Coverage by compatibility family
 scripts/node-compat-query.sh coverage-by-slice --lane=node22
-#   nlc3: 195/200 (97.5%)
-#   nlc4: 78/82 (95.1%)
+#   core-semantics: 195/200 (97.5%)
+#   process-and-timing: 78/82 (95.1%)
 #   ...
 ```
 
@@ -1212,7 +1212,7 @@ Following Deno's pattern, emit a JSON report after each test run:
     "node24": { "passed": 380, "skipped": 45, "expectedFailure": 15, "failed": 0 }
   },
   "slices": {
-    "nlc3": {
+    "core-semantics": {
       "node20": { "passed": 180, "skipped": 5 },
       "node22": { "passed": 195, "skipped": 3 },
       "node24": { "passed": 160, "skipped": 20 }
@@ -1254,7 +1254,7 @@ Deno's `node-test-viewer.deno.dev` and Cloudflare's
 this space.
 
 A Nimbus dashboard could be unique by showing **multi-version data**: three
-lanes with per-NLC-slice breakdowns, trend lines, and provenance links to the
+lanes with per-compatibility-family breakdowns, trend lines, and provenance links to the
 upstream Node tag each fixture set came from. This would be a first in the
 space — no other runtime publishes cross-version compat data.
 
@@ -1835,7 +1835,7 @@ a JSON Schema:
   "$schema": "./node_compat_manifest.schema.json",
   "tests": {
     "test/parallel/test-assert-async.js": {
-      "slice": "nlc3",
+      "slice": "core-semantics",
       "profiles": ["application"],
       "executionClass": "parallel",
       "requires": [],
@@ -1844,7 +1844,7 @@ a JSON Schema:
       "node24": { "fixture": "node24" }
     },
     "test/parallel/test-process-env-delete.js": {
-      "slice": "nlc4",
+      "slice": "process-and-timing",
       "profiles": ["application"],
       "executionClass": "sequential",
       "requires": ["process-env-write"],
@@ -1973,8 +1973,8 @@ Emit a JSON report after each test run:
     "node24": { "tag": "v24.x.y", "upstreamStatus": "lts", "laneRole": "preview" }
   },
   "slices": {
-    "nlc3": { "node20": { "passed": 180, "skipped": 5, "expectedFailure": 3 }, ... },
-    "nlc4": { ... },
+    "core-semantics": { "node20": { "passed": 180, "skipped": 5, "expectedFailure": 3 }, ... },
+    "process-and-timing": { ... },
     ...
   },
   "totals": {
@@ -2173,7 +2173,7 @@ Example dimensions to track:
 | Reference | Path |
 |-----------|------|
 | Nimbus node_compat.rs | `crates/nimbus-runtime/src/runtime/tests/node/mod.rs` |
-| Nimbus NLC plan | `docs/plans/archive/node-lts-compatibility-plan.md` |
+| Nimbus Node compatibility roadmap | `docs/plans/archive/node-lts-compatibility-plan.md` |
 | Nimbus fixture root | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/` |
 | Node core test harness overview | `~/src/github.com/nodejs/node/test/README.md` |
 | Node core test runner | `~/src/github.com/nodejs/node/tools/test.py` |

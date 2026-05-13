@@ -1,6 +1,6 @@
 # Core Semantics Node Test Slices
 
-Current upstream Node test-slice manifest for `NLC3`.
+Current upstream Node test-slice manifest for `core-semantics` family.
 
 Source corpus:
 
@@ -14,7 +14,7 @@ Source corpus:
   `nodejs/node @ v20.20.2`
 
 This file records the pinned Node test globs and the currently manifested
-official-fixture subset for the `NLC3` core semantics family. The canonical
+official-fixture subset for the `core-semantics` family. The canonical
 source of truth for the executed subset is
 [`CORE_SEMANTICS_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs)
 plus the explicit watchpoints in the same Rust file; this document summarizes
@@ -72,7 +72,7 @@ Imported public-core official corpus status:
 
 - `104` imported official Node20 public-core files are now represented by
   either the manifested green batch or an explicit watchpoint
-- no imported public-core fixture files remain unstaged in the current `NLC3`
+- no imported public-core fixture files remain unstaged in the current `core-semantics` family
   corpus
 - the Node24 supported corpus is staged from official `nodejs/node v24.15.0`,
   but it is not currently a green claim: the explicit supported lane still aborts
@@ -133,13 +133,13 @@ Current Nimbus-owned harness capabilities:
 - The vendored Deno `node_compat` runner is a useful corpus source, but it is
   not a drop-in Nimbus harness. Its Rust test runner shells out to a Deno CLI
   executable via `DENO_TEST_UTIL_DENO_EXE` and assumes Deno CLI argument and
-  process semantics, so Nimbus needs a dedicated slice runner before `NLC3`
+  process semantics, so Nimbus needs a dedicated slice runner before `core-semantics` family
   can claim upstream pass-rate evidence.
 - `node:url` currently includes `urlpattern`-adjacent coverage in the vendored
-  corpus, but `NLC3` should keep the final Node22 pass-rate calculation scoped
+  corpus, but `core-semantics` family should keep the final Node22 pass-rate calculation scoped
   to the `node:url` contract it publicly claims.
 - The current green subset is no longer just runner-viability evidence. It is
-  now the full imported public-core corpus for the families owned by `NLC3`,
+  now the full imported public-core corpus owned by the `core-semantics` family,
   split cleanly into:
   - manifested green batch entries
   - explicit classified watchpoints
@@ -158,10 +158,10 @@ Current Nimbus-owned harness capabilities:
   composite lane stays a harness-stability watchpoint rather than a support
   claim.
 - The current remaining-file inventory is now explicit instead of implicit:
-  no imported public-core official files remain unstaged for `NLC3`; the only
+  no imported public-core official files remain unstaged for the `core-semantics` family; the only
   remaining tracked items are explicit watchpoints, 16 official files that
   clearly map to later host/process/TTY/module families, and 3 upstream
-  internal-only helpers that should not count toward the public `NLC3`
+  internal-only helpers that should not count toward the public `core-semantics` family
   denominator.
 - The current Node20 supported lane uses the official `nodejs/node v20.20.2`
   files for the same staged subset instead of reusing the Deno-vendored
@@ -216,7 +216,7 @@ Current Nimbus-owned harness capabilities:
   - later host/process seams (`test-assert-builtins-not-read-from-filesystem.js`,
     `test-assert-calltracker-calls.js`, and
     `test-assert-esm-cjs-message-verify.js`)
-  That means further `NLC3` batching should prefer other core-semantics families
+  That means further `core-semantics` batching should prefer other public-core module groups
   until the plan intentionally promotes the subprocess / exit-handler seam.
 - A broader local assert-suite triage against `~/src/github.com/nodejs/node`
   now separates the remaining files into:
@@ -224,7 +224,7 @@ Current Nimbus-owned harness capabilities:
     value formatting, selected `CallTracker` follow-ons)
   - later host/process seams (`builtins-not-read-from-filesystem`,
     `esm-cjs-message-verify`, `CallTracker.calls()` exit behavior)
-  This is the batching rule future `NLC3` work should keep following instead of
+  This is the batching rule future `core-semantics` family work should keep following instead of
   treating every remaining assert file as independent.
 - The newest shared-LTS path/querystring batch now covers
   `test-path-extname.js`, `test-path-parse-format.js`,

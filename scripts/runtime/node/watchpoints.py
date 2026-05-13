@@ -13,7 +13,12 @@ from schema import default_schema_path, validate_payload_against_schema
 
 DEFAULT_CATALOG_PATH = Path("tests/runtime/node/expectations/rust-watchpoints.json")
 CATALOG_SCHEMA_PATH = default_schema_path("rust-watchpoints.schema.json")
-RUST_NODE_COMPAT_PATH = Path("crates/nimbus-runtime/src/runtime/tests/node/mod.rs")
+RUST_NODE_COMPAT_ROOT = Path("crates/nimbus-runtime/src/runtime/tests/node")
+RUST_WATCHPOINT_SOURCE_GLOBS = (
+    "cases/watchpoints_core.rs",
+    "cases/watchpoints_loader_and_tools.rs",
+    "cases/watchpoints_extended.rs",
+)
 PASS_OUTCOMES = {"green", "ok", "pass", "passed", "success"}
 
 
@@ -21,8 +26,9 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def source_path() -> Path:
-    return repo_root() / RUST_NODE_COMPAT_PATH
+def source_paths() -> list[Path]:
+    root = repo_root() / RUST_NODE_COMPAT_ROOT
+    return [root / relative_path for relative_path in RUST_WATCHPOINT_SOURCE_GLOBS]
 
 
 def default_catalog_path() -> Path:
@@ -50,27 +56,28 @@ def expectation_for_entry(test_name: str | None, reason: str) -> tuple[str, str]
 
 
 def rust_ignore_inventory() -> list[dict[str, Any]]:
-    path = source_path()
     entries: list[dict[str, Any]] = []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    for index, line in enumerate(lines):
-        match = re.search(r'#\[ignore = "(?P<reason>.*)"\]', line)
-        if match is None:
-            continue
-        test_name = None
-        for probe_line in lines[index + 1 : index + 8]:
-            function_match = re.search(r"\bfn\s+([A-Za-z0-9_]+)\s*\(", probe_line)
-            if function_match is not None:
-                test_name = function_match.group(1)
-                break
-        entries.append(
-            {
-                "test_name": test_name,
-                "reason": match.group("reason"),
-                "source_path": str(RUST_NODE_COMPAT_PATH),
-                "source_line": index + 1,
-            }
-        )
+    for path in source_paths():
+        relative_path = path.relative_to(repo_root())
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            match = re.search(r'#\[ignore = "(?P<reason>.*)"\]', line)
+            if match is None:
+                continue
+            test_name = None
+            for probe_line in lines[index + 1 : index + 8]:
+                function_match = re.search(r"\bfn\s+([A-Za-z0-9_]+)\s*\(", probe_line)
+                if function_match is not None:
+                    test_name = function_match.group(1)
+                    break
+            entries.append(
+                {
+                    "test_name": test_name,
+                    "reason": match.group("reason"),
+                    "source_path": str(relative_path),
+                    "source_line": index + 1,
+                }
+            )
     return entries
 
 
@@ -97,7 +104,7 @@ def build_catalog() -> dict[str, Any]:
         "schema_version": 1,
         "catalog_kind": "node_compat_rust_watchpoint_expectations",
         "generated_from": "rust_ignore_attributes",
-        "source_path": str(RUST_NODE_COMPAT_PATH),
+        "source_path": str(RUST_NODE_COMPAT_ROOT),
         "contract": (
             "Each entry mirrors a Rust #[ignore] watchpoint in the Node compatibility "
             "harness. A passing observed result for any cataloged entry is treated as "
@@ -205,12 +212,13 @@ def validate_catalog(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                     "expectation": entry.get("expectation"),
                 }
             )
-        if entry.get("source_path") != str(RUST_NODE_COMPAT_PATH):
+        source_path = entry.get("source_path")
+        if not isinstance(source_path, str) or not source_path:
             errors.append(
                 {
                     "kind": "entry_invalid_source_path",
                     "index": index,
-                    "source_path": entry.get("source_path"),
+                    "source_path": source_path,
                 }
             )
         if not isinstance(entry.get("source_line"), int) or entry["source_line"] < 1:
@@ -321,15 +329,17 @@ def write_catalog(catalog: dict[str, Any], path: Path) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Manage Node compatibility expected-failure catalogs"
+        description="Manage the Node compatibility Rust watchpoint catalog"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    sync_parser = subparsers.add_parser("sync", help="regenerate the watchpoint catalog")
+    sync_parser = subparsers.add_parser(
+        "sync", help="regenerate the Rust watchpoint catalog"
+    )
     sync_parser.add_argument("--catalog", default=str(default_catalog_path()))
 
     validate_parser = subparsers.add_parser(
-        "validate", help="validate the watchpoint catalog against Rust #[ignore] data"
+        "validate", help="validate the Rust watchpoint catalog against #[ignore] data"
     )
     validate_parser.add_argument("--catalog", default=str(default_catalog_path()))
     validate_parser.add_argument(
@@ -342,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
 def sync(args: argparse.Namespace) -> int:
     path = Path(args.catalog).resolve()
     write_catalog(build_catalog(), path)
-    print(f"wrote node-compat watchpoint expectations to {path}")
+    print(f"wrote node-compat watchpoint catalog to {path}")
     return 0
 
 
@@ -351,15 +361,16 @@ def validate(args: argparse.Namespace) -> int:
     catalog = load_catalog(path)
     errors = validate_catalog_against_inventory(catalog, rust_ignore_inventory())
     if args.observed_results:
-        errors.extend(detect_unexpected_passes(catalog, load_json(Path(args.observed_results))))
+        errors.extend(
+            detect_unexpected_passes(catalog, load_json(Path(args.observed_results)))
+        )
     if errors:
         for error in errors:
             print(f"error: {json.dumps(error, sort_keys=True)}")
         return 1
     summary = summarize_catalog(catalog)
     print(
-        "validated node-compat watchpoint expectations: "
-        f"{summary['entry_count']} entries"
+        f"validated node-compat watchpoint catalog: {summary['entry_count']} entries"
     )
     return 0
 

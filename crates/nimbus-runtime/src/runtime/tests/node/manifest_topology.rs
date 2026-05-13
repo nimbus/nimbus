@@ -44,7 +44,23 @@ const RUNTIME_SUPPLEMENTARY_JSON: &str =
     include_str!("../node_compat_manifests/fixtures/runtime-supplementary.json");
 const RUNTIME_SUPPLEMENTARY_SIGNAL_LIFECYCLE_JSON: &str =
     include_str!("../node_compat_manifests/fixtures/runtime-supplementary-signal-lifecycle.json");
-const NODE_COMPAT_RS: &str = include_str!("mod.rs");
+const NODE_COMPAT_BATCH_SOURCES: &str = concat!(
+    include_str!("batches.rs"),
+    include_str!("batches/core_semantics.rs"),
+    include_str!("batches/process_and_streams.rs"),
+    include_str!("batches/networking.rs"),
+    include_str!("cases/networking_fixtures.rs"),
+    include_str!("cases/loader_context_foundation.rs"),
+    include_str!("cases/loader_context_zlib_crypto.rs"),
+    include_str!("cases/loader_context_catalog.rs"),
+);
+const NODE_COMPAT_TEST_SOURCES: &str = concat!(
+    include_str!("mod.rs"),
+    include_str!("behavior.rs"),
+    include_str!("cases/watchpoints_core.rs"),
+    include_str!("cases/watchpoints_loader_and_tools.rs"),
+    include_str!("cases/watchpoints_extended.rs"),
+);
 const PENDING_DEPRECATION_FIXTURE: &str =
     include_str!("../node_compat_fixtures/node20/test/parallel/test-buffer-pending-deprecation.js");
 
@@ -62,7 +78,6 @@ fn node_compat_manifest_topology_schema_documents_family_and_named_behavior_cata
     for field in [
         "schema_version",
         "family",
-        "nlc_item",
         "batch_constant",
         "execution_class",
         "presets",
@@ -140,7 +155,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             CORE_SEMANTICS_JSON,
             "core-semantics",
-            "NLC3",
             "CORE_SEMANTICS_BATCH",
             "docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md",
             "docs/architecture/runtime/node-lts-compat/failures/core-semantics.md",
@@ -162,7 +176,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             PROCESS_AND_TIMING_JSON,
             "process-and-timing",
-            "NLC4",
             "PROCESS_AND_TIMING_BATCH",
             "docs/architecture/runtime/node-lts-compat/manifests/process-and-timing.md",
             "docs/architecture/runtime/node-lts-compat/failures/process-and-timing.md",
@@ -184,7 +197,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             STREAMS_AND_LOCAL_IO_JSON,
             "streams-and-local-io",
-            "NLC5",
             "STREAMS_AND_LOCAL_IO_BATCH",
             "docs/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md",
             "docs/architecture/runtime/node-lts-compat/failures/streams-and-local-io.md",
@@ -206,7 +218,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             NETWORKING_JSON,
             "networking",
-            "NLC6",
             "NETWORKING_BATCH",
             "docs/architecture/runtime/node-lts-compat/manifests/networking.md",
             "docs/architecture/runtime/node-lts-compat/failures/networking.md",
@@ -228,7 +239,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             LOADER_CONTEXT_JSON,
             "loader-context",
-            "NLC7",
             "LOADER_CONTEXT_BATCH",
             "docs/architecture/runtime/node-lts-compat/manifests/loader-context.md",
             "docs/architecture/runtime/node-lts-compat/failures/loader-context.md",
@@ -250,7 +260,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             LOADER_CONTEXT_SUPPLEMENTARY_GLOBAL_INJECTION_JSON,
             "loader-context-supplementary-global-injection",
-            "NCF3",
             "LOADER_CONTEXT_SUPPLEMENTARY_GLOBAL_INJECTION_BATCH",
             "docs/architecture/runtime/node-compat-supplementary.md",
             "docs/architecture/runtime/node-compat-supplementary-failures.md",
@@ -272,7 +281,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             LOADER_CONTEXT_SUPPLEMENTARY_MODULE_BRIDGE_JSON,
             "loader-context-supplementary-module-bridge",
-            "NCF3",
             "LOADER_CONTEXT_SUPPLEMENTARY_MODULE_BRIDGE_BATCH",
             "docs/architecture/runtime/node-compat-supplementary.md",
             "docs/architecture/runtime/node-compat-supplementary-failures.md",
@@ -294,7 +302,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             LOADER_CONTEXT_SUPPLEMENTARY_JSON,
             "loader-context-supplementary",
-            "NCF3",
             "LOADER_CONTEXT_SUPPLEMENTARY_BATCH",
             "docs/architecture/runtime/node-compat-supplementary.md",
             "docs/architecture/runtime/node-compat-supplementary-failures.md",
@@ -316,7 +323,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             PROCESS_AND_TIMING_SUPPLEMENTARY_JSON,
             "process-and-timing-supplementary",
-            "NCF3",
             "PROCESS_AND_TIMING_SUPPLEMENTARY_BATCH",
             "docs/architecture/runtime/node-compat-supplementary.md",
             "docs/architecture/runtime/node-compat-supplementary-failures.md",
@@ -338,7 +344,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             RUNTIME_SUPPLEMENTARY_JSON,
             "runtime-supplementary",
-            "NCF3",
             "RUNTIME_SUPPLEMENTARY_BATCH",
             "docs/architecture/runtime/node-compat-supplementary.md",
             "docs/architecture/runtime/node-compat-supplementary-failures.md",
@@ -360,7 +365,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         (
             RUNTIME_SUPPLEMENTARY_SIGNAL_LIFECYCLE_JSON,
             "runtime-supplementary-signal-lifecycle",
-            "NCF3",
             "RUNTIME_SUPPLEMENTARY_SIGNAL_LIFECYCLE_BATCH",
             "docs/architecture/runtime/node-compat-supplementary.md",
             "docs/architecture/runtime/node-compat-supplementary-failures.md",
@@ -385,7 +389,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
     for (
         json,
         expected_family,
-        expected_nlc_item,
         expected_batch_constant,
         expected_manifest_doc,
         expected_failure_doc,
@@ -396,7 +399,6 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             serde_json::from_str(json).expect("family catalog should parse");
         assert_eq!(catalog.schema_version, 1);
         assert_eq!(catalog.family, expected_family);
-        assert_eq!(catalog.nlc_item, expected_nlc_item);
         assert_eq!(catalog.batch_constant, expected_batch_constant);
         let expected_execution_class = if matches!(
             expected_family,
@@ -443,8 +445,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             failure_doc.display(),
         );
         assert!(
-            NODE_COMPAT_RS.contains(&catalog.batch_constant),
-            "node_compat.rs should still carry batch constant {}",
+            NODE_COMPAT_BATCH_SOURCES.contains(&catalog.batch_constant),
+            "node_compat batch sources should still carry batch constant {}",
             catalog.batch_constant,
         );
 
@@ -472,8 +474,8 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
                 .next()
                 .expect("subset test should end with a function name");
             assert!(
-                NODE_COMPAT_RS.contains(function_name),
-                "node_compat.rs should still carry subset test function {}",
+                NODE_COMPAT_TEST_SOURCES.contains(function_name),
+                "node_compat test sources should still carry subset test function {}",
                 function_name,
             );
         }
@@ -1173,7 +1175,6 @@ fn node_compat_preset_capability_model_rejects_ambiguous_seed_entries() {
     let invalid_execution_class = serde_json::json!({
         "schema_version": 1,
         "family": "core-semantics",
-        "nlc_item": "NLC3",
         "batch_constant": "CORE_SEMANTICS_BATCH",
         "execution_class": "nonsense",
         "presets": ["Application"],

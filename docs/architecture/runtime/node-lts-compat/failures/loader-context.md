@@ -3,7 +3,7 @@
 Status: `in_progress`
 
 This file is the checked-in explicit-drift inventory for the carried
-loader-context denominator while `NLC10` full validation and public closeout
+loader-context denominator while final validation and public closeout
 work is in progress.
 
 ## Current Staged Slice Status
@@ -77,7 +77,7 @@ work is in progress.
     the current runtime still returns the older
     `ERR_CRYPTO_SCRYPT_INVALID_PARAMETER` shape
 - `test/parallel/test-sqlite.js`
-  - classification: `sqlite_build_profile_boundary`
+  - classification: `sqlite_build_preset_boundary`
   - reason: the first Node22-default `node:sqlite` foundation subset is now
     green, but the remaining upstream file still reaches `no such function:
     percentile` because the current bundled SQLCipher sqlite source does not
@@ -89,7 +89,7 @@ work is in progress.
   covers the first staged CommonJS / loader-helper wave plus the first pure
   `AsyncLocalStorage` semantics slice.
 - The carried denominator now also includes the staged `node:domain`
-  foundation wave under `NLC9`, and that 16-file tranche is now green across
+  foundation wave under node-tools coverage, and that 16-file tranche is now green across
   Node22, Node20, and Node24. The cross-lane widening did not uncover a new
   runtime seam: Node20 shares the Node22 official file contents for the whole
   batch, Node24 only diverges in `test-domain-promise.js`, and the focused
@@ -98,7 +98,7 @@ work is in progress.
   `node:domain` watchpoints in the carried denominator; any broader domain
   coverage is future work by omission rather than an open staged seam.
 - The carried denominator now also includes the first Node22-default
-  `node:constants` foundation wave under `NLC9`. That five-file slice is now
+  `node:constants` foundation wave under node-tools coverage. That five-file slice is now
   green after the public `node:constants` export was frozen, the internal
   constants binding was restored to Node-shaped null-prototype objects, and
   platform-unsupported fs constants like `O_NOATIME` stopped leaking into the
@@ -111,7 +111,7 @@ work is in progress.
   denominator; any broader constants coverage is future work by omission rather
   than an open staged seam.
 - The first Node22-default `trace_events` foundation wave is now fully
-  promoted under `NLC9`. The final closeout required two more real owner
+  promoted under node-tools coverage. The final closeout required two more real owner
   fixes on top of the earlier `fork()` shape widening and IPC lifetime
   correction: the emulated fork child now stops presenting itself as a worker
   thread when fixtures probe `worker_threads.isMainThread`, and the
@@ -127,7 +127,7 @@ work is in progress.
   `test-trace-events-console.js`, `test-trace-events-dynamic-enable.js`,
   `test-trace-events-environment.js`, `test-trace-events-metadata.js`,
   `test-trace-events-none.js`, and `test-trace-events-process-exit.js`.
-- The first staged `node:test` family under `NLC9` is now promoted as a
+- The first staged `node:test` family under node-tools coverage is now promoted as a
   coherent Node22-default helper, context-metadata, `run()` event-metadata,
   option-validation, planning, and syntax-error file-load wave.
   `test-runner-aliases.js`, `test-runner-typechecking.js`,
@@ -176,7 +176,7 @@ work is in progress.
   staged file. Fixing that path and rerunning the full Node22 / Node20 /
   Node24 lanes promoted the alias contract truthfully across all three lanes.
 - The first Node22-default `node:sqlite` foundation wave is now partially
-  promoted under `NLC9`. `test-sqlite-config.js`,
+  promoted under node-tools coverage. `test-sqlite-config.js`,
   `test-sqlite-statement-sync.js`, `test-sqlite-template-tag.js`, and
   `test-sqlite-named-parameters.js` are green in the carried denominator after
   the public URI/open semantics were restored for `file:` sqlite locations,
@@ -227,7 +227,7 @@ work is in progress.
   `test-crypto-dh-stateless.js` derivation-error drift, and one Node20-only
   DH validation-message divergence.
   The handed-off `async_hooks` promise pocket is now fully promoted under
-  `NLC8` after the bundle writer moved the official CommonJS promise fixtures
+  loader-context coverage after the bundle writer moved the official CommonJS promise fixtures
   off the embedder-only ESM evaluation path and back onto a Node-shaped sync
   require envelope. The widened pure `node:v8` helper wave is now fully
   promoted, including the lane-aware heap-space contract in
@@ -239,100 +239,13 @@ work is in progress.
   native addon path learned to surface Node-shaped format errors for obviously
   non-library `.node` payloads without weakening the real FFI gate for valid
   addons. The inspector front-edge contract is now fully promoted too, so the
-  current `NLC8` remainder is therefore cleaner than the first classification
+  current loader-context remainder is therefore cleaner than the first classification
   map: only the lane-only drifts remain explicit. The former shared
   `test-zlib-invalid-input-memory.js` gap is now promoted after the generic
   tick-payload retention fix in `../deno/libs/core/01_core.js`.
 
 ## Current Local Evidence
 
-- `runtime::tests::node_compat::node22_nlc7_module_commonjs_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_async_local_storage_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_async_hooks_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_async_hooks_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_async_hooks_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_async_hooks_promise_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_async_hooks_promise_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_async_hooks_promise_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_worker_main_thread_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_worker_basic_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc8_worker_basic_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc8_worker_basic_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_worker_bootstrap_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc8_worker_bootstrap_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc8_worker_bootstrap_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_worker_contract_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc8_worker_contract_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc8_worker_contract_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_worker_message_port_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_worker_message_channel_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_module_commonjs_remainder_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc8_module_commonjs_remainder_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc8_module_commonjs_remainder_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_module_wrapper_official_watchpoint`
-- `runtime::tests::node_compat::node22_nlc9_domain_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc9_domain_promise_watchpoint`
-- `runtime::tests::node_compat::node22_nlc9_constants_foundation_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc9_constants_foundation_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc9_constants_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc9_sys_foundation_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc9_sys_foundation_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc9_sys_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc9_sqlite_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc9_sqlite_build_profile_watchpoint`
-- `runtime::tests::node_compat::node22_nlc9_sea_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc9_wasi_validation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc9_repl_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc9_trace_events_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_v8_helper_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc8_v8_helper_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc8_v8_helper_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_v8_green_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc8_v8_green_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc8_v8_green_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc8_vm_basic_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc8_vm_basic_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc8_vm_basic_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_async_hooks_promise_core_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_async_hooks_promise_core_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_async_hooks_promise_core_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_zlib_foundation_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_zlib_foundation_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_zlib_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_zlib_stream_lifecycle_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_zlib_stream_lifecycle_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_zlib_stream_lifecycle_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_zlib_decompression_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_zlib_decompression_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_zlib_decompression_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_zlib_brotli_and_control_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_zlib_brotli_and_control_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_zlib_brotli_and_control_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_crypto_hash_random_foundation_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_hash_random_foundation_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_crypto_hash_random_foundation_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_crypto_kdf_and_stream_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_kdf_and_stream_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_crypto_kdf_and_stream_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_crypto_cipher_and_padding_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_cipher_and_padding_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_crypto_cipher_and_padding_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_crypto_dh_and_ecdh_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_dh_and_ecdh_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_crypto_dh_and_ecdh_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_crypto_dh_safe_prime_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_dh_safe_prime_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_crypto_dh_safe_prime_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_xof_extension_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_crypto_xof_extension_batch_fixture`
-- `runtime::tests::node_compat::node22_nlc7_crypto_authenticated_and_aes_wrap_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_authenticated_and_aes_wrap_batch_fixture`
-- `runtime::tests::node_compat::node24_nlc7_crypto_authenticated_and_aes_wrap_batch_fixture`
-- `runtime::tests::node_compat::node20_nlc7_crypto_authenticated_supported_watchpoint_batch`
-- `runtime::tests::node_compat::node22_nlc7_crypto_dh_and_ecdh_watchpoint_batch`
-- `runtime::tests::node_compat::node20_nlc7_crypto_dh_supported_watchpoint_batch`
-- `runtime::tests::node_compat::node24_nlc7_crypto_scrypt_watchpoint`
-- `runtime::tests::node_compat::node24_nlc7_async_local_storage_batch_fixture`
 - `runtime::tests::node_compat::node22_default_lane_executes_manifested_loader_context_subset`
 - `runtime::tests::node_compat::node20_supported_lane_executes_official_loader_context_subset`
 - `runtime::tests::node_compat::node24_supported_lane_executes_manifested_loader_context_subset`

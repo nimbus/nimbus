@@ -947,16 +947,16 @@ async fn generated_task_history_matches_model_across_live_shadow_and_embedded_re
 }
 
 #[tokio::test]
-#[ignore = "verification harness PR corpus runs in dedicated harness lanes"]
-async fn verification_harness_pr_generated_history_seed_corpus_matches_model() {
-    for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::PullRequest)
-        .expect("pull-request corpus should resolve")
+#[ignore = "verification harness required corpus runs in dedicated harness lanes"]
+async fn verification_harness_required_generated_history_seed_corpus_matches_model() {
+    for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::Required)
+        .expect("required corpus should resolve")
     {
         let history = case.history("engine-generated-history");
         assert_generated_task_history_matches_model_across_surfaces(
             &history,
             Some(case),
-            "verification_harness_pr_generated_history_seed_corpus_matches_model",
+            "verification_harness_required_generated_history_seed_corpus_matches_model",
         )
         .await;
     }

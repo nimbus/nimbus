@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 TEST_FILE_SUFFIXES = {".js", ".mjs", ".cjs"}
-RUST_NODE_COMPAT_PATH = Path("crates/nimbus-runtime/src/runtime/tests/node/mod.rs")
+RUST_NODE_COMPAT_ROOT = Path("crates/nimbus-runtime/src/runtime/tests/node")
 LANE_AWARE_BATCH_MACROS = {
     "node20_only_batch_case",
     "node22_default_only_batch_case",
@@ -87,7 +87,11 @@ def discover_fixture_files(lane: str) -> set[str]:
 
 
 def rust_source_lines() -> list[str]:
-    return (repo_root() / RUST_NODE_COMPAT_PATH).read_text(encoding="utf-8").splitlines()
+    root = repo_root() / RUST_NODE_COMPAT_ROOT
+    lines: list[str] = []
+    for path in sorted(root.rglob("*.rs")):
+        lines.extend(path.read_text(encoding="utf-8").splitlines())
+    return lines
 
 
 def fixture_literals(text: str) -> set[str]:

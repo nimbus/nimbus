@@ -20,18 +20,18 @@ Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that d
 
 ## Family Passed Denominator
 
-| Family | NLC | node20 | node22 | node24 |
-| --- | --- | ---: | ---: | ---: |
-| `core-semantics` | `NLC3` | 115 | 17 | 123 |
-| `loader-context` | `NLC7` | 162 | 188 | 164 |
-| `networking` | `NLC6` | 260 | 270 | 265 |
-| `process-and-timing` | `NLC4` | 46 | 48 | 48 |
-| `streams-and-local-io` | `NLC5` | 311 | 317 | 315 |
+| Family | node20 | node22 | node24 |
+| --- | ---: | ---: | ---: |
+| `core-semantics` | 115 | 17 | 123 |
+| `loader-context` | 162 | 188 | 164 |
+| `networking` | 260 | 270 | 265 |
+| `process-and-timing` | 46 | 48 | 48 |
+| `streams-and-local-io` | 311 | 317 | 315 |
 
 ## Rust Ignored Test Inventory
 
 - ignored Rust node_compat tests: 61
-- source: `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`
+- source: `crates/nimbus-runtime/src/runtime/tests/node/`
 
 ## Expectation Catalog
 

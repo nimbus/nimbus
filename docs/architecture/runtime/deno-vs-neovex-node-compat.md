@@ -6,7 +6,7 @@ High-level comparison of Node.js built-in module compatibility between stock
 Deno and Nimbus. Nimbus builds on Deno's `ext/node` stack, so the baseline
 implementation is shared. This document captures where the two diverge:
 where Nimbus has verified or improved beyond Deno, and where Nimbus has
-intentional restrictions. The NLC plan (NLC0-NLC10) is now complete.
+intentional restrictions. The Node compatibility plan (the completed Node compatibility roadmap) is now complete.
 
 ## Executive Summary
 
@@ -42,7 +42,7 @@ stock Deno has not.
 
 ## Per-Module Comparison
 
-### P0: Core Semantics (NLC3 — done)
+### P0: Core Semantics (the core-semantics family — done)
 
 | Module | Symbols | Deno | Nimbus | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
@@ -56,7 +56,7 @@ stock Deno has not.
 | `string_decoder` | 3 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
 | `url` | 30 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
 
-### P0: Process and Timing (NLC4 — done)
+### P0: Process and Timing (the process and timing family — done)
 
 | Module | Symbols | Deno | Nimbus | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
@@ -66,7 +66,7 @@ stock Deno has not.
 | `diagnostics_channel` | 62 | Full | Full | 48 Node22 tests green | Nimbus verified with upstream tests |
 | `perf_hooks` | 43 | Partial | Partial+ | Custom impl + verified | Nimbus replaces Deno's stubs with working perf_hooks (histogram, monitorEventLoopDelay) |
 
-### P0: Streams and Local I/O (NLC5 — done)
+### P0: Streams and Local I/O (the streams and local I/O family — done)
 
 | Module | Symbols | Deno | Nimbus | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
@@ -77,7 +77,7 @@ stock Deno has not.
 | `tty` | 12 | Full | Full | 317 Node22 tests green | Nimbus verified with upstream tests |
 | `os` | 20 | Full | Full | 317 Node22 tests green | Nimbus verified with upstream tests |
 
-### P0/P1: Networking (NLC6 — done)
+### P0/P1: Networking (the networking family — done)
 
 | Module | Symbols | Deno | Nimbus | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
@@ -89,21 +89,21 @@ stock Deno has not.
 | `https` | 11 | Partial | Partial+ | 270 Node22 tests green, TLS cert waves | Nimbus verified with upstream tests |
 | `http2` | 105 | Partial | Partial+ | 270 Node22 tests green, compat waves | Nimbus verified; header/status/compat request/response waves |
 
-### P0/P1: Crypto and Compression (NLC7 — done)
+### P0/P1: Crypto and Compression (crypto-compression coverage — done)
 
 | Module | Symbols | Deno | Nimbus | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
 | `crypto` | 110 | Full\* | Full (verified) | Hash, HMAC, random, KDF, cipher, DH/ECDH, auth/wrap waves | Deno claims "full" but has many stubs; Nimbus has upstream test evidence |
 | `zlib` | 50 | Partial | Partial+ | 4 verified slices: foundation, stream-lifecycle, decompression, Brotli | Nimbus verified Brotli, dictionary, GC paths Deno lists as unsupported |
 
-### P0/P1: Loader and Async Context (NLC7-NLC8 — done)
+### P0/P1: Loader and Async Context (the loader and async-context phase — done)
 
 | Module | Symbols | Deno | Nimbus | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
 | `module` | 19 | Full\* | Full (verified) | Loader-context manifest, CommonJS/ESM bridge | Nimbus verified createRequire, builtinModules, Module.wrapper, CommonJS loading |
 | `async_hooks` | 24 | Partial | Partial+ | ALS, execution-context, promise-hook waves | Deno lists AsyncResource/executionAsyncId as stubs; Nimbus has working verified impl |
 
-### P1/P2: VM, Runtime Internals, Workers (NLC8 — done)
+### P1/P2: VM, Runtime Internals, Workers (the deep runtime family — done)
 
 | Module | Symbols | Deno | Nimbus | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
@@ -113,7 +113,7 @@ stock Deno has not.
 | `worker_threads` | 40 | Partial | Partial+ | 15-file verified contract across 3 lanes | Nimbus: Worker, MessageChannel, MessagePort, ref/unref, bootstrap/process verified |
 | `inspector` | 18 | Partial | Partial+ | 5-file front-edge contract green | Deno: stubs; Nimbus: module, open, enabled, NodeTracing path work |
 
-### P2/P3: Long-Tail and Host-Heavy (NLC9 — done)
+### P2/P3: Long-Tail and Host-Heavy (the long-tail runtime family — done)
 
 | Module | Symbols | Deno | Nimbus | Evidence | Difference |
 | ------ | ------: | ---- | ------ | -------- | ---------- |
@@ -139,7 +139,7 @@ stock Deno has not.
 | Deno (self-reported) | 22 | 16 | 6 | 86% |
 | Nimbus (verified) | 24 | 19 | 1 | 98% |
 
-The NLC plan (NLC0-NLC10, now complete) verified all 44 modules with
+The Node compatibility plan (the completed Node compatibility roadmap, now complete) verified all 44 modules with
 upstream Node tests. 18 modules are improved beyond Deno's baseline.
 Only `sea` remains intentionally scoped (truthful non-SEA contract
 rather than full SEA support, which is host-binary-specific).
@@ -197,23 +197,23 @@ stock Deno has not shipped:
 Note: Nimbus's "disadvantages" in `child_process`, `fs`, `process.env`, and
 `net` are **intentional security restrictions** for the Application preset, not missing implementations. The Tooling preset has broader access.
 
-### NLC Plan Deliverables (Complete)
+### Node compatibility Plan Deliverables (Complete)
 
-The NLC plan (NLC0-NLC10) is now complete. All 11 roadmap items are `done`.
+The Node compatibility plan (the completed Node compatibility roadmap) is now complete. All 11 roadmap items are `done`.
 
-**NLC0-NLC2** (truth and control plane): Generated compatibility matrix,
+**the truth and control-plane phase** (truth and control plane): Generated compatibility matrix,
 versioned public contract with Node22 default plus Node20 and Node24 supported lanes.
 
-**NLC3-NLC7** (foundation built-ins): Core semantics, process/timing,
+**the foundation built-ins phase** (foundation built-ins): Core semantics, process/timing,
 streams/I/O, networking, crypto/compression, and loader/async context
 families verified with upstream Node tests, failure inventories, and
 package canaries.
 
-**NLC8-NLC9** (deep runtime and long-tail): Loader, VM, workers, inspector,
+**the deep runtime and long-tail phase** (deep runtime and long-tail): Loader, VM, workers, inspector,
 cluster, repl, test, sqlite, wasi, sea, domain, trace_events, sys, and
 constants verified with truthful support states across three LTS lanes.
 
-**NLC10** (validation and closeout): Delivered the full evidence layer:
+**the validation and closeout phase** (validation and closeout): Delivered the full evidence layer:
 - Machine-readable manifest catalogs for all 5 carried families
 - `scripts/runtime/node/report.sh` with `--capture-live` measured artifact capture
 - 10 package canaries verified (5 Application networking + 5 Tooling)
@@ -238,7 +238,7 @@ evidence-backed rather than aspirational.
 - **Nimbus status** is derived from the checked-in manifests and failure
   inventories under `docs/architecture/runtime/node-lts-compat/`, the
   verified surface matrix at `node-compat-surface-matrix.md`, and the
-  archived NLC baseline at `docs/plans/archive/node-lts-compatibility-plan.md`.
+  archived Node compatibility baseline at `docs/plans/archive/node-lts-compatibility-plan.md`.
 - **Symbol counts** come from the generated `node-lts-compat-matrix.csv`
   baseline (Node 22 column).
 - **"Full\*"** marks modules where Deno claims "fully supported" but has

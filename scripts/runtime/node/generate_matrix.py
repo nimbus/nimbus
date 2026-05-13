@@ -544,7 +544,7 @@ def build_summary(
     lines = [
         "# Node LTS Compatibility Summary",
         "",
-        "Generated machine-owned baseline for NLC1.",
+        "Generated machine-owned Node compatibility baseline.",
         "",
         "## Metadata",
         "",
@@ -601,7 +601,7 @@ def build_summary(
             "",
             "- This first generated baseline is intentionally conservative.",
             "- Module and symbol coverage unresolved from the source scrape remain `NeedsVerification` instead of being guessed.",
-            "- `support_state` values in this baseline are source- and docs-derived starting points; NLC2 and later family items must refine them with measured Nimbus verification.",
+            "- `support_state` values in this baseline are source- and docs-derived starting points; later compatibility-family work must refine them with measured Nimbus verification.",
         ]
     )
     return "\n".join(lines) + "\n"

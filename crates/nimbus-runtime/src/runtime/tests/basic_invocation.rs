@@ -2185,7 +2185,7 @@ export {};
 }
 
 #[tokio::test]
-#[ignore = "Pinned NLC6 networking canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
+#[ignore = "Pinned networking package canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
 async fn application_node22_networking_package_canary_batch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let app = prepare_application_networking_canary_app();
@@ -2200,7 +2200,7 @@ async fn application_node22_networking_package_canary_batch() {
 }
 
 #[tokio::test]
-#[ignore = "Pinned NLC6 Node20 supported canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
+#[ignore = "Pinned networking Node20 supported canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
 async fn application_node20_networking_supported_canary_batch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let app = prepare_application_networking_canary_app();
@@ -2234,7 +2234,7 @@ async fn run_application_networking_canary_batch(
 }
 
 #[tokio::test]
-#[ignore = "Pinned NLC10 tooling canary batch: requires `npm ci --prefix tests/runtime/node/tooling-canaries` before execution"]
+#[ignore = "Pinned tooling package canary batch: requires `npm ci --prefix tests/runtime/node/tooling-canaries` before execution"]
 async fn tooling_node22_package_canary_batch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let app = prepare_tooling_canary_app();

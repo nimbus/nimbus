@@ -40,6 +40,47 @@ protect instead of piling up only in crate-root `tests.rs` files:
 New regressions should prefer those concept-owned files over reopening one flat
 root.
 
+## Canonical CI Buckets
+
+CI intentionally separates fast correctness, adversarial harnesses, external
+conformance, and reporting-only proof surfaces. Keep new tests in the narrowest
+bucket that proves the behavior without making unrelated lanes slower or
+harder to diagnose:
+
+- `Rust Format` and `Rust Clippy` prove Rust style and lint health only.
+- `Rust Workspace Tests` runs the ordinary non-runtime Rust workspace suite
+  through `cargo nextest`, plus explicit doctests because nextest does not run
+  doctests.
+- `Rust Runtime Tests` runs the runtime crate's ordinary product tests and
+  lightweight manifest/unit checks while skipping the official Node
+  compatibility corpus.
+- `Rust Dependency Audit` is a Rust trust gate for licenses, bans, duplicate
+  dependencies, and advisories. It lives beside the Rust format/lint/test
+  lanes in the workflow and is included in `Rust Gate Summary`, even though it
+  is security-oriented rather than a compile/test step.
+- `<Surface> Verification Harness` runs the required ignored corpus for one
+  deterministic surface: storage, engine, server, or runtime. The script mode
+  and visible CI label both use `required` because this lane runs on pushes as
+  well as pull requests.
+- `Nightly <Surface> Verification Harness` runs the heavier scheduled corpus
+  for the same deterministic surfaces.
+- `Rust Node Compatibility Corpus` and `Node Compatibility Evidence` live in
+  the separate Node compatibility workflow. They are external conformance and
+  evidence lanes, not the runtime verification harness.
+- `JavaScript Build and Test` runs package and demo self-tests through the npm
+  workspace scripts.
+- `Proof Helper Checks` and `Coverage` are specialized trust/reporting lanes.
+  Coverage excludes `nimbus-runtime` so V8 and Node-compatibility behavior
+  stays in the runtime, harness, and conformance lanes instead of being rerun
+  under instrumentation.
+
+The local `make test` target remains a full Rust libtest sweep for developers
+who intentionally want the broad local run. `make ci` uses the same required
+bucket shape as hosted CI: format, clippy, dependency audit, runtime tests,
+workspace tests, doctests, required verification harness, JavaScript build/test,
+and proof-helper checks. Hosted CI still owns coverage upload and the separate
+scheduled/manual Node compatibility evidence workflow.
+
 ## Simulation Seams
 
 The first concrete seam layer now lives in `nimbus-storage::simulation`.
@@ -130,13 +171,14 @@ same inputs. Operators can request that report through
 
 The harness now has an operational seed corpus rather than only ad hoc
 scenario constructors. `nimbus-storage::simulation` defines named generated-
-history seeds for explicit `pr` and `nightly` modes, and failure context for
-those corpus runs prints a one-command repro that pins the exact named case
+history seeds for explicit `required` and `nightly` modes, and failure context
+for those corpus runs prints a one-command repro that pins the exact named case
 through `NIMBUS_VERIFY_CASE`.
 
-CI runs the focused PR corpus separately from the heavier scheduled nightly
-corpus, and local entrypoints live in `scripts/verification-harness.sh` plus
-the matching `make verify-harness-*` targets.
+CI runs the focused required corpus separately from the heavier scheduled
+nightly corpus, and local entrypoints live in
+`scripts/verification-harness.sh` plus the matching `make verify-harness-*`
+targets.
 
 That taxonomy now includes first-class surfaces for:
 
@@ -148,7 +190,7 @@ That taxonomy now includes first-class surfaces for:
 The server harness surface also owns a transport-liveness corpus in addition
 to the generated-history replay corpus: websocket disconnect cleanup,
 auth-change resubscribe semantics, scheduler history publication, and runtime
-fairness rejection paths all run through the same named `pr` / `nightly` /
+fairness rejection paths all run through the same named `required` / `nightly` /
 `repro` entrypoints instead of remaining isolated to ordinary unit-test names.
 
 Those harness corpus tests are ignored by default inside the ordinary workspace
@@ -157,3 +199,35 @@ harness launcher fails if a requested corpus surface matches zero tests, and
 only the server harness surface currently narrows to `--test-threads=1`
 because that dedicated ignored corpus still boots multiple ephemeral HTTP
 fixtures that need serialized port binding.
+
+## Runtime Compatibility Buckets
+
+Runtime tests have three separate owners:
+
+- Ordinary runtime tests prove Nimbus runtime behavior: bundle integrity,
+  host-bridge contracts, timeout/cancellation behavior, locker lifecycle,
+  cooperative scheduling, warm-pool reuse, and executor fairness.
+- The runtime verification harness proves product liveness and isolation
+  invariants under deterministic hardship: product-default bundle health,
+  repeated integrity checks, concurrent dispatch, tenant queue limits,
+  tenant fairness, cooperative parking/resume paths, warm-pool cycles, and
+  locker snapshot/interleave cases.
+- The Node compatibility corpus proves the embedded Node surface against
+  vendored upstream Node fixtures, manifest topology, supported Node20/22/24
+  lane expectations, application/tooling canaries, oracle samples, and
+  published evidence artifacts.
+
+The Node compatibility runner is deliberately split by ownership while keeping
+test names stable: `node/mod.rs` owns execution, `node/behavior.rs` owns named
+prelude/postlude behavior data, `node/batches.rs` plus `node/batches/` own
+manifest batch data, and `node/cases/` owns the included fixture groups and
+explicit watchpoints. Those case files are included at the `node_compat` module
+root so checked-in manifest paths such as
+`runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset`
+do not churn when the files are reorganized.
+
+Do not promote a Node-compatibility fixture into the runtime verification
+harness just because it is runtime-owned. Put compatibility semantics in the
+Node workflow, product runtime invariants in ordinary runtime tests or the
+runtime harness, and cross-surface storage/engine/server invariants in the
+surface harness that owns the behavior.

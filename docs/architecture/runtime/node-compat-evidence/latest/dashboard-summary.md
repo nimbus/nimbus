@@ -30,16 +30,16 @@
 
 ## Representative Node Test Checks
 
-| API family | Check | NLC | Execution | Passed | Skipped | Failed | Missing | Lanes |
-| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
-| `loader-context-supplementary` | `supplementary-builtin-completeness` | `NCF3` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
-| `loader-context-supplementary-global-injection` | `supplementary-global-injection-fidelity` | `NCF3` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
-| `loader-context-supplementary-module-bridge` | `supplementary-module-resolution-bridge` | `NCF3` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
-| `networking` | `dns-net-foundation` | `NLC6` | Sequential | 29 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
-| `process-and-timing-supplementary` | `supplementary-process-release-shape` | `NCF3` | Expected failure | 0 | 0 | 3 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
-| `runtime-supplementary` | `supplementary-framework-loader-patterns` | `NCF3` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
-| `runtime-supplementary` | `supplementary-resource-safety` | `NCF3` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
-| `runtime-supplementary-signal-lifecycle` | `supplementary-signal-listener-lifecycle` | `NCF3` | Expected failure | 0 | 0 | 3 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| API family | Check | Execution | Passed | Skipped | Failed | Missing | Lanes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| `loader-context-supplementary` | `supplementary-builtin-completeness` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `loader-context-supplementary-global-injection` | `supplementary-global-injection-fidelity` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `loader-context-supplementary-module-bridge` | `supplementary-module-resolution-bridge` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `networking` | `dns-net-foundation` | Sequential | 29 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `process-and-timing-supplementary` | `supplementary-process-release-shape` | Expected failure | 0 | 0 | 3 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `runtime-supplementary` | `supplementary-framework-loader-patterns` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `runtime-supplementary` | `supplementary-resource-safety` | Sequential | 3 | 0 | 0 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `runtime-supplementary-signal-lifecycle` | `supplementary-signal-listener-lifecycle` | Expected failure | 0 | 0 | 3 | 0 | node20:Node20/supported/supported_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
 
 ## Package/Framework Canaries
 

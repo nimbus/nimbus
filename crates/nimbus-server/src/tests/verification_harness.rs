@@ -33,7 +33,7 @@ impl ServerVerificationHarnessCase {
     }
 }
 
-const PR_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 7] = [
+const REQUIRED_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 7] = [
     ServerVerificationHarnessCase::new(
         super::auth::websocket_auth::WEBSOCKET_DISCONNECT_CLEANUP_CASE,
         run_websocket_disconnect_cleanup_case,
@@ -163,7 +163,7 @@ fn server_verification_corpus(
     mode: VerificationHarnessMode,
 ) -> &'static [ServerVerificationHarnessCase] {
     match mode {
-        VerificationHarnessMode::PullRequest => &PR_SERVER_VERIFICATION_CASES,
+        VerificationHarnessMode::Required => &REQUIRED_SERVER_VERIFICATION_CASES,
         VerificationHarnessMode::Nightly => &NIGHTLY_SERVER_VERIFICATION_CASES,
     }
 }
@@ -229,11 +229,11 @@ fn run_server_verification_corpus(mode: VerificationHarnessMode, test_name: &str
 }
 
 #[test]
-#[ignore = "verification harness PR corpus runs in dedicated harness lanes"]
-fn verification_harness_pr_transport_liveness_campaigns() {
+#[ignore = "verification harness required corpus runs in dedicated harness lanes"]
+fn verification_harness_required_transport_liveness_campaigns() {
     run_server_verification_corpus(
-        VerificationHarnessMode::PullRequest,
-        "verification_harness_pr_transport_liveness_campaigns",
+        VerificationHarnessMode::Required,
+        "verification_harness_required_transport_liveness_campaigns",
     );
 }
 

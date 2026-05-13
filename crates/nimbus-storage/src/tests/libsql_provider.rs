@@ -19,7 +19,8 @@ use testcontainers_modules::testcontainers::{
 
 use super::{
     Duration, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
-    require_explicit_external_provider_fixture_envs, tempdir, timeout,
+    implicit_external_provider_fixtures_disabled, require_explicit_external_provider_fixture_envs,
+    tempdir, timeout,
 };
 use crate::async_storage::TenantReadStorage;
 use crate::libsql::libsql_transport_connector;
@@ -869,6 +870,9 @@ async fn test_connection() -> Option<TestConnection> {
         "libsql provider",
         &[LIBSQL_URL_ENV, LIBSQL_ADMIN_URL_ENV],
     );
+    if implicit_external_provider_fixtures_disabled("libsql provider") {
+        return None;
+    }
 
     let image = GenericImage::new("ghcr.io/tursodatabase/libsql-server", "latest")
         // The image's wrapper/log stream is not a stable readiness seam for

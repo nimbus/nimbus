@@ -1,6 +1,6 @@
 # Process And Timing Node Test Slices
 
-Current upstream Node test-slice manifest for `NLC4`.
+Current upstream Node test-slice manifest for `process-and-timing` family.
 
 Source corpus:
 
@@ -14,7 +14,7 @@ Source corpus:
   `nodejs/node @ v24.15.0`
 
 This file records the currently manifested official-fixture subset for the
-`NLC4` process and timing family. The canonical source of truth for the
+`process-and-timing` family process and timing family. The canonical source of truth for the
 executed subset is
 [`PROCESS_AND_TIMING_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs)
 plus the explicit watchpoints in the same Rust file; this document summarizes
@@ -100,7 +100,7 @@ Family-level notes:
   contaminates later manifested fixtures in the same Rust process.
 - `perf_hooks` histogram is now part of the manifested green denominator
   instead of a separate watchpoint. `process.finalization.*` is no longer an
-  active `NLC4` seam in its own right: the direct official fixture bodies
+  active `process-and-timing` family seam in its own right: the direct official fixture bodies
   (`close.mjs`, `before-exit.mjs`, and `unregister.mjs`) now run green through
   the Nimbus-owned sync subprocess harness, and the only remaining failure in
   the top-level official wrapper file `test-process-finalization.mjs` is
@@ -129,7 +129,7 @@ Family-level notes:
 
 ## Notes
 
-- `NLC4` now follows the same fast path that worked for `NLC3`: official Node
+- The `process-and-timing` family now follows the same fast path that worked for the `core-semantics` family: official Node
   files are imported as data, run through a manifested subset, and widened in
   batches by shared runtime seam instead of adding bespoke Rust test wrappers.
 - Local Deno-fork `unit_node` verification is partially blocked on this machine:

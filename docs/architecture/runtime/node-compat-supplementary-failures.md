@@ -33,5 +33,5 @@ Active measured failure slice:
     `Deno.addSignalListener`
 
 If a future successor probe fails, record the owner seam and measured lane
-impact here instead of folding it back into the completed `NLC` family
+impact here instead of folding it back into the completed `Node compatibility` family
 inventories.

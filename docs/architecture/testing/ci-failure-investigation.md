@@ -20,7 +20,7 @@ Before changing code, gather:
 - the exact failing test, harness case, or binary target
 - the failing commit SHA and date
 - the CI environment details that matter: OS, runner class, containerized or
-  host, and whether the lane was `pr`, `nightly`, or ordinary workspace
+  host, and whether the lane was `required`, `nightly`, or ordinary workspace
   coverage
 - the raw stderr/stdout and any linked artifacts
 
@@ -47,7 +47,7 @@ Prefer the narrowest faithful repro:
 - a focused crate lane such as `cargo test -p nimbus-engine postgres_provider`
 - a focused surface such as `cargo test -p nimbus-storage sqlite_foundation`
 - a harness repro such as
-  `make verify-harness-repro SURFACE=<surface> MODE=<pr|nightly> CASE=<case-id>`
+  `make verify-harness-repro SURFACE=<surface> MODE=<required|nightly> CASE=<case-id>`
 - a single ignored subprocess lane when the failure output already provides the
   exact command
 

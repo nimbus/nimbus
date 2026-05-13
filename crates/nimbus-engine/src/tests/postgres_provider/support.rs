@@ -118,6 +118,9 @@ async fn test_connection() -> Option<TestConnection> {
     }
 
     require_explicit_external_provider_fixture_envs("Postgres engine", &[TEST_POSTGRES_URL_ENV]);
+    if implicit_external_provider_fixtures_disabled("Postgres engine") {
+        return None;
+    }
 
     let container = match postgres::Postgres::default().start().await {
         Ok(container) => container,

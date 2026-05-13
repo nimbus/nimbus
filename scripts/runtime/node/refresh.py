@@ -145,8 +145,8 @@ def build_steps(args: argparse.Namespace, metadata: dict[str, Any]) -> list[tupl
     steps.extend(
         [
             (
-                "expectations",
-                ["python3", "scripts/runtime/node/expectations.py", "validate"],
+                "watchpoints",
+                ["python3", "scripts/runtime/node/watchpoints.py", "validate"],
             ),
             ("status", ["python3", "scripts/runtime/node/status.py"]),
             (

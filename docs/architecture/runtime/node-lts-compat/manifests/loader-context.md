@@ -1,7 +1,7 @@
 # Loader-Context Node Test Slices
 
 Current upstream Node test-slice manifest for the carried loader-context
-denominator during active `NLC10` work.
+denominator during active validation and closeout phase work.
 
 Source corpus:
 
@@ -320,8 +320,8 @@ Current staged official files:
   are observed, which isolates the intended recursive contract from later
   embedded-runner `Immediate` tail activity without changing the public
   runtime semantics.
-- The handed-off async_hooks promise pocket from the NLC7 closeout is now
-  fully promoted under `NLC8`. The decisive harness-owner fix was to stop
+- The handed-off async_hooks promise pocket from the crypto-compression closeout is now
+  fully promoted under loader-context coverage. The decisive harness-owner fix was to stop
   evaluating the official CommonJS promise fixtures at ESM top level and
   instead require them synchronously inside the sync invoke envelope after
   module evaluation has already completed. That removes the embedder-only
@@ -467,8 +467,8 @@ Current staged official files:
   older warning ordering without `DEP0182`, so it stays out of the Node20
   validation denominator as an explicit watchpoint instead of blocking the
   shared crypto surface.
-- This document now carries the closed `NLC7`-through-`NLC9` loader-context
-  denominator forward while `NLC10` full validation and public closeout work
+- This document now carries the closed loader-context, crypto-compression, and
+  node-tools coverage forward while final validation and public closeout work
   is in progress. Broader unstaged families still need the same batch-first
-  classification before they can enter the denominator, but the `NLC9`
-  long-tail family gate is now closed.
+  classification before they can enter the denominator, but the node-tools
+  long-tail gate is now closed.

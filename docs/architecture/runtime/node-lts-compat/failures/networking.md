@@ -3,14 +3,14 @@
 Status: `classified`
 
 This file is the checked-in failure inventory for the currently manifested
-`NLC6` networking subset.
+`networking` subset.
 
 It records only the explicit red/skip remainder for the current family:
 watchpoints, validation-lane divergences, supported-lane drift, later-family
 dependencies, and preset/capability restrictions. Requirements and closeout
 decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 
-The pinned `NLC6` package canary lanes under
+The pinned `networking` family package canary lanes under
 `tests/runtime/node/networking-canaries/` are green and do not add any
 unexplained networking failures. Only the explicit remainder below stays out
 of the denominator.
@@ -24,7 +24,7 @@ of the denominator.
   - explicit Node22 remainder is classified below
 
 - `node22_networking_dgram_cluster_boundary_batch_watchpoint`
-  - classification: `nlc6_cross_family_cluster_process_boundary`
+  - classification: `networking_cluster_process_boundary`
   - reason: these files currently stop at `cluster.fork(): no script path
     available in process.argv`, so they are blocked on broader
     cluster/child-process execution semantics rather than plain UDP runtime
@@ -41,7 +41,7 @@ of the denominator.
     `runtime::tests::node_compat::node22_networking_dgram_cluster_boundary_batch_watchpoint`
 
 - `node22_networking_dgram_host_profile_boundary_batch_watchpoint`
-  - classification: `nlc6_host_profile_boundary`
+  - classification: `networking_host_profile_boundary`
   - reason: these files currently stop at the application-preset external-net
     and IPv6 capability boundary instead of a pure UDP semantic mismatch
   - files:
@@ -54,7 +54,7 @@ of the denominator.
     `runtime::tests::node_compat::node22_networking_dgram_host_profile_boundary_batch_watchpoint`
 
 - `node22_networking_https_address_boundary_batch_watchpoint`
-  - classification: `nlc6_host_profile_boundary`
+  - classification: `networking_host_profile_boundary`
   - reason: these files currently stop at explicit local-address / IPv6
     capability boundaries instead of a plain HTTPS semantic mismatch
   - files:
@@ -65,7 +65,7 @@ of the denominator.
     `runtime::tests::node_compat::node22_networking_https_address_boundary_batch_watchpoint`
 
 - `test/parallel/test-dgram-reuseport.js`
-  - classification: `nlc6_dgram_reuseport_watchpoint`
+  - classification: `networking_dgram_reuseport_watchpoint`
   - reason: `../common/udp` now materializes correctly, so the old
     module-not-found issue is gone; the file now blocks in `reusePort`
     bind/lifecycle behavior and stays explicit until that owner seam is fixed
@@ -76,7 +76,7 @@ of the denominator.
 ### Other Explicit Node22 Watchpoints
 
 - `test/parallel/test-http-agent-reuse-drained-socket-only.js`
-  - classification: `nlc6_cross_family_process_report_exit_watchpoint`
+  - classification: `networking_process_report_exit_watchpoint`
   - reason: the official file no longer narrows to a pure `http.Agent`
     networking seam; it currently blocks in `process.report.getReport()`, and
     when that call is bypassed it proceeds far enough to hit `process.exit(0)`,
@@ -89,12 +89,12 @@ of the denominator.
     `runtime::tests::node_compat::node22_http_agent_reuse_drained_socket_only_watchpoint`
 
 - `test/parallel/test-https-agent-additional-options.js`
-  - classification: `nlc6_nlc7_boundary_watchpoint`
+  - classification: `networking_crypto_boundary_watchpoint`
   - reason: the official file now narrows cleanly to the legacy
     `secureProtocol: 'TLSv1_1_method'` / `minVersion: 'TLSv1.1'` path, which
     the current rustls-backed TLS owner layer rejects as `unsupported
     protocol`
-  - owner: `NLC6`/`NLC7` boundary between the current networking-family `https`
+  - owner: `networking` family/`loader-context` and crypto-compression family boundary between the current networking-family `https`
     helper contract and the broader legacy TLS protocol / crypto fidelity work
   - evidence:
     `runtime::tests::node_compat::node22_https_agent_additional_options_watchpoint`

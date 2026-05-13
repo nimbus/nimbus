@@ -1,6 +1,6 @@
 # Networking Canaries
 
-This root holds the checked-in package canaries for the `NLC6` networking
+This root holds the checked-in package canaries for the networking
 family.
 
 These are not prerelease "canary builds". They are pinned package smoke tests

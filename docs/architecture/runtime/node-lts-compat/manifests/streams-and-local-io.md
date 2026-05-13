@@ -1,6 +1,6 @@
 # Streams And Local I/O Node Test Slices
 
-Current upstream Node test-slice manifest for `NLC5`.
+Current upstream Node test-slice manifest for `streams-and-local-io` family.
 
 This file records the currently counted green denominator and staged upstream
 corpus for the family. Requirements, closeout gates, and roadmap decisions
@@ -17,7 +17,7 @@ Source corpus:
 - staged future Node24 supported corpus:
   `nodejs/node @ v24.15.0`
 
-The current work starts the same way `NLC3` and `NLC4` eventually succeeded:
+The current work starts the same way `core-semantics` family and `process-and-timing` family eventually succeeded:
 import official Node files as data, batch them by shared runtime seam, and let
 the focused Node22/Node20 lanes reveal the real compatibility boundaries
 instead of hand-maintaining bespoke behavior claims.
@@ -42,12 +42,12 @@ The first-pass official candidate corpus from the canonical local
 - Node24 supported: `627` files
 
 These are intentionally broad candidate counts, not the future green
-denominator. The next `NLC5` step is to carve out the first manifested batch by
+denominator. The next `streams-and-local-io` family step is to carve out the first manifested batch by
 shared seam instead of trying to run all `512+` files at once.
 
 ## Current Manifested Official Subset
 
-The first manifested `NLC5` batch is now live in
+The first manifested `streams-and-local-io` family batch is now live in
 [`STREAMS_AND_LOCAL_IO_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs).
 
 Current manifested batch counts:
@@ -514,7 +514,7 @@ Keep widening by shared seam instead of by isolated file:
 3. keep the local-TCP `stream.finished()` / `stream.pipeline()` boundary, the
    application-preset host-path/capability divergences, and the later
    `worker_threads` dependencies explicit instead of forcing them back into the
-   `NLC5` denominator
+   `streams-and-local-io` family denominator
 4. treat the richer interactive `readline` surface as a later deliberate
    harness/TTY contract decision while the default `TERM=dumb` node_compat lane
    remains intentionally non-interactive

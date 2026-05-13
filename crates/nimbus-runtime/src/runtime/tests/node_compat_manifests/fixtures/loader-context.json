@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "family": "loader-context",
-  "nlc_item": "NLC7",
   "batch_constant": "LOADER_CONTEXT_BATCH",
   "execution_class": "sequential",
   "presets": ["Application"],

@@ -60,7 +60,6 @@ def discover_slice_reports(artifacts_root: Path) -> list[dict]:
                 "path": str(path.relative_to(repo_root())),
                 "family": report["family"],
                 "slice": report["slice"],
-                "nlc_item": report["nlc_item"],
                 "execution_class": report["execution_class"],
                 "presets": required_key(report, path, "presets"),
                 "capabilities": report["capabilities"],
@@ -192,7 +191,7 @@ def build_claim_summaries(registry: dict, canary_reports: list[dict]) -> list[di
                 "package": claim["package"],
                 "runtime_preset": claim["runtime_preset"],
                 "lane_coverage": claim["lane_coverage"],
-                "nlc_family": claim["nlc_family"],
+                "compat_family": claim["compat_family"],
                 "status": summary_status,
                 "missing_lanes": missing_lanes,
                 "observed_lane_metadata": [
@@ -246,7 +245,7 @@ def build_dashboard_summary(artifacts_root: Path) -> dict:
     )
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "artifacts_root": str(artifacts_root.relative_to(repo_root())),
         "slice_report_count": len(slice_reports),
         "canary_report_count": len(canary_reports),
@@ -364,8 +363,8 @@ def build_markdown(summary: dict) -> str:
             "",
             "## Representative Node Test Checks",
             "",
-            "| API family | Check | NLC | Execution | Passed | Skipped | Failed | Missing | Lanes |",
-            "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
+            "| API family | Check | Execution | Passed | Skipped | Failed | Missing | Lanes |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
         ]
     )
     for report in summary["slice_reports"]:
@@ -375,7 +374,6 @@ def build_markdown(summary: dict) -> str:
         )
         lines.append(
             f"| `{report['family']}` | `{report['slice']}` | "
-            f"`{report['nlc_item']}` | "
             f"{label(report['execution_class'])} | "
             f"{counts['passed']} | {counts['skipped']} | "
             f"{counts['failed']} | {counts['missing']} | {lane_details} |"

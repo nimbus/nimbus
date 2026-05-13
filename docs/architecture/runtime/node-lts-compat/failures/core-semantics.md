@@ -2,11 +2,11 @@
 
 Status: `closeout_ready`
 
-This file is the checked-in failure inventory for `NLC3`.
+This file is the checked-in failure inventory for `core-semantics` family.
 
 It now records the measured official Node22 and Node20 public-core corpus for
-the `NLC3` families. No imported public-core fixture files remain unstaged;
-the only remaining `NLC3` deltas are explicit classified watchpoints and the
+the `core-semantics` family. No imported public-core fixture files remain unstaged;
+the only remaining `core-semantics` family deltas are explicit classified watchpoints and the
 later-family/internal buckets called out below.
 
 ## Node22 Upstream Slice Status
@@ -30,7 +30,7 @@ later-family/internal buckets called out below.
       runtime on both the Node20 diff-shape assertion and the Node22 GH-14441
       circular deep-equality cases. The Deno-vendored corpus has drifted away
       from the official Node22 expectation here, so the vendored green state is
-      not authoritative for `NLC3`.
+      not authoritative for `core-semantics` family.
   - `test/parallel/test-assert-partial-deep-equal.js`
     - classification: `known_runtime_gap`
     - reason: the official Node22 file currently aborts through a
@@ -135,7 +135,7 @@ later-family/internal buckets called out below.
     measured Node22 lane.
   - `test-assert-deep.js` is now a shared official-LTS ignored repro instead of
     a counted green subset file. The same official file currently diverges in
-    both lanes, so `NLC3` records it as a pinned watchpoint instead of
+    both lanes, so `core-semantics` family records it as a pinned watchpoint instead of
     pretending either LTS line is green there.
   - `test-assert-deep-with-error.js` has no official `nodejs/node v20.20.2`
     counterpart, so it currently widens only the measured Node22 lane.
@@ -165,7 +165,7 @@ later-family/internal buckets called out below.
   - `test-url-invalid-file-url-path-input.js` has no official `nodejs/node
     v20.20.2` counterpart, so it currently widens only the measured Node22 lane
 - Closeout state:
-  - the imported official Node20 public-core corpus for `NLC3` is now fully
+  - the imported official Node20 public-core corpus for `core-semantics` family is now fully
     represented by either the green manifested batch or an explicit watchpoint
   - no imported public-core official files remain unstaged
   - all current Node20 divergences from Node22 are recorded in this inventory
@@ -173,11 +173,11 @@ later-family/internal buckets called out below.
 
 ## Remaining Official-File Buckets
 
-- Public-core `NLC3` work still unstaged: `0` files
+- Public-core `core-semantics` family work still unstaged: `0` files
   - all imported official public-core fixture files are now represented by
     either the manifested batch or an explicit watchpoint
 - Cross-family files that should move with later roadmap items instead of
-  inflating the `NLC3` denominator: `16` files
+  inflating the `core-semantics` family denominator: `16` files
   - examples:
     - `test-assert-esm-cjs-message-verify.js` → loader / host-process seam
     - `test-console-diagnostics-channels.js` → `diagnostics_channel`
@@ -215,7 +215,7 @@ later-family/internal buckets called out below.
 
 Package/framework canary note:
 
-- no package or framework canaries are mapped exclusively to the `NLC3`
+- no package or framework canaries are mapped exclusively to the `core-semantics` family
   built-in core-semantics family yet
 - broader ecosystem canaries start in later families where `process`,
   streams, filesystem, networking, and loader/host-process behavior become the
@@ -227,7 +227,7 @@ Package/framework canary note:
   Nimbus directly. It shells out to a Deno CLI executable via
   `DENO_TEST_UTIL_DENO_EXE` and expects Deno CLI argument/process semantics,
   not `nimbus` runtime invocation semantics.
-- `NLC3` therefore still needs a Nimbus-owned upstream-slice runner that can:
+- `core-semantics` family therefore still needs a Nimbus-owned upstream-slice runner that can:
   - execute the pinned Node corpus against `RuntimePreset::Application` /
     `CompatibilityTarget::Node22`
   - capture stdout/stderr/exit status in a Node-test-shaped way
@@ -291,7 +291,7 @@ Package/framework canary note:
   `test-url-domain-ascii-unicode.js`, `test-url-format-whatwg.js`,
   `test-url-fileurltopath.js`, and `test-url-parse-format.js`) via the embedded
   `Deno.test` bridge, but broader `node:test` hooks, suites, reporters, and
-  full CLI semantics are still out of contract for `NLC3`.
+  full CLI semantics are still out of contract for `core-semantics` family.
 - The matching Deno-fork regression source now exists in
   `~/src/github.com/nimbus/deno/tests/unit_node/vm_test.ts`, but this
   machine could not execute the fork-built Deno lane because the local toolchain
@@ -312,7 +312,7 @@ Package/framework canary note:
 
 ## Open Closeout Work
 
-- Add an upstream slice runner or documented manual invocation for the `NLC3`
+- Add an upstream slice runner or documented manual invocation for the `core-semantics` family
   test corpus.
 - Record Node22 pass-rate results.
 - Record Node20 pass-rate results and any divergence.

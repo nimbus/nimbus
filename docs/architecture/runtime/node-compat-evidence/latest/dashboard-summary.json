@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "artifacts_root": "target/node-compat",
   "slice_report_count": 8,
   "canary_report_count": 2,
@@ -23,7 +23,7 @@
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
+        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1308,
         "documented_manifested_green_count": 904,
@@ -3272,7 +3272,7 @@
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
+        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1283,
         "documented_manifested_green_count": 876,
@@ -6556,7 +6556,7 @@
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
+        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1495,
         "documented_manifested_green_count": 925,
@@ -11212,7 +11212,6 @@
       "path": "target/node-compat/loader-context-supplementary/supplementary-builtin-completeness/slice-observed-loader-context-supplementary-supplementary-builtin-completeness.json",
       "family": "loader-context-supplementary",
       "slice": "supplementary-builtin-completeness",
-      "nlc_item": "NCF3",
       "execution_class": "sequential",
       "presets": [
         "Application"
@@ -11286,7 +11285,6 @@
       "path": "target/node-compat/loader-context-supplementary-global-injection/supplementary-global-injection-fidelity/slice-observed-loader-context-supplementary-global-injection-supplementary-global-injection-fidelity.json",
       "family": "loader-context-supplementary-global-injection",
       "slice": "supplementary-global-injection-fidelity",
-      "nlc_item": "NCF3",
       "execution_class": "sequential",
       "presets": [
         "Application"
@@ -11360,7 +11358,6 @@
       "path": "target/node-compat/loader-context-supplementary-module-bridge/supplementary-module-resolution-bridge/slice-observed-loader-context-supplementary-module-bridge-supplementary-module-resolution-bridge.json",
       "family": "loader-context-supplementary-module-bridge",
       "slice": "supplementary-module-resolution-bridge",
-      "nlc_item": "NCF3",
       "execution_class": "sequential",
       "presets": [
         "Application"
@@ -11434,7 +11431,6 @@
       "path": "target/node-compat/networking/dns-net-foundation/slice-observed-networking-dns-net-foundation.json",
       "family": "networking",
       "slice": "dns-net-foundation",
-      "nlc_item": "NLC6",
       "execution_class": "sequential",
       "presets": [
         "Application"
@@ -11509,7 +11505,6 @@
       "path": "target/node-compat/process-and-timing-supplementary/supplementary-process-release-shape/slice-observed-process-and-timing-supplementary-supplementary-process-release-shape.json",
       "family": "process-and-timing-supplementary",
       "slice": "supplementary-process-release-shape",
-      "nlc_item": "NCF3",
       "execution_class": "expected_failure",
       "presets": [
         "Application"
@@ -11583,7 +11578,6 @@
       "path": "target/node-compat/runtime-supplementary/supplementary-framework-loader-patterns/slice-observed-runtime-supplementary-supplementary-framework-loader-patterns.json",
       "family": "runtime-supplementary",
       "slice": "supplementary-framework-loader-patterns",
-      "nlc_item": "NCF3",
       "execution_class": "sequential",
       "presets": [
         "Application"
@@ -11657,7 +11651,6 @@
       "path": "target/node-compat/runtime-supplementary/supplementary-resource-safety/slice-observed-runtime-supplementary-supplementary-resource-safety.json",
       "family": "runtime-supplementary",
       "slice": "supplementary-resource-safety",
-      "nlc_item": "NCF3",
       "execution_class": "sequential",
       "presets": [
         "Application"
@@ -11731,7 +11724,6 @@
       "path": "target/node-compat/runtime-supplementary-signal-lifecycle/supplementary-signal-listener-lifecycle/slice-observed-runtime-supplementary-signal-lifecycle-supplementary-signal-listener-lifecycle.json",
       "family": "runtime-supplementary-signal-lifecycle",
       "slice": "supplementary-signal-listener-lifecycle",
-      "nlc_item": "NCF3",
       "execution_class": "expected_failure",
       "presets": [
         "Application"
@@ -12114,7 +12106,7 @@
         "node22",
         "node20"
       ],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12178,7 +12170,7 @@
         "node22",
         "node20"
       ],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12241,7 +12233,7 @@
       "lane_coverage": [
         "node22"
       ],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12280,7 +12272,7 @@
       "lane_coverage": [
         "node22"
       ],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12319,7 +12311,7 @@
       "lane_coverage": [
         "node22"
       ],
-      "nlc_family": "networking",
+      "compat_family": "networking",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12358,7 +12350,7 @@
       "lane_coverage": [
         "node22"
       ],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12397,7 +12389,7 @@
       "lane_coverage": [
         "node22"
       ],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12436,7 +12428,7 @@
       "lane_coverage": [
         "node22"
       ],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12475,7 +12467,7 @@
       "lane_coverage": [
         "node22"
       ],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [
@@ -12514,7 +12506,7 @@
       "lane_coverage": [
         "node22"
       ],
-      "nlc_family": "loader-context",
+      "compat_family": "loader-context",
       "status": "passed",
       "missing_lanes": [],
       "observed_lane_metadata": [

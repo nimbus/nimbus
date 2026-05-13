@@ -21,7 +21,7 @@ struct NodeCompatCanaryClaim {
     package: String,
     runtime_preset: String,
     lane_coverage: Vec<String>,
-    nlc_family: String,
+    compat_family: String,
     public_claim: String,
     doc_path: String,
 }
@@ -42,7 +42,7 @@ struct NodeCompatCanaryEntry {
     root: String,
     bundle: String,
     runtime_preset: String,
-    nlc_family_dependency: String,
+    compat_family_dependency: String,
     claim_ids: Vec<String>,
     lane_runs: Vec<NodeCompatCanaryLaneRun>,
 }
@@ -102,7 +102,7 @@ fn node_compat_canary_registry_parses_and_points_at_real_roots() {
     )
     .expect("basic_invocation.rs should read");
 
-    assert_eq!(registry.schema_version, 1);
+    assert_eq!(registry.schema_version, 2);
 
     let mut seen_claim_ids = BTreeSet::new();
     for claim in &registry.claims {
@@ -229,8 +229,8 @@ fn node_compat_canary_registry_maps_active_claims_to_active_canaries() {
         assert!(
             mapped_canaries
                 .iter()
-                .all(|canary| canary.nlc_family_dependency == claim.nlc_family),
-            "claim {} should only map to canaries for the same NLC family",
+                .all(|canary| canary.compat_family_dependency == claim.compat_family),
+            "claim {} should only map to canaries for the same compatibility family",
             claim.id
         );
         assert!(

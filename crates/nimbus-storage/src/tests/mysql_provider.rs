@@ -17,7 +17,8 @@ use testcontainers_modules::{
 
 use super::{
     DurableMutationRecord, Duration, FieldSchema, FieldType, MySqlProvider, MySqlProviderConfig,
-    TenantReadStorage, require_explicit_external_provider_fixture_envs, timeout,
+    TenantReadStorage, implicit_external_provider_fixtures_disabled,
+    require_explicit_external_provider_fixture_envs, timeout,
 };
 use crate::{ResolvedScheduleOp, ResolvedWrite};
 
@@ -876,6 +877,9 @@ async fn test_connection() -> Option<TestConnection> {
     }
 
     require_explicit_external_provider_fixture_envs("MySQL provider", &[MYSQL_URL_ENV]);
+    if implicit_external_provider_fixtures_disabled("MySQL provider") {
+        return None;
+    }
 
     let container = match mysql::Mysql::default().start().await {
         Ok(container) => container,
