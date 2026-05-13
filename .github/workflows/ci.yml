@@ -191,15 +191,23 @@ jobs:
           test "${RUNTIME_TEST_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
 
-  harness-required:
-    name: Verification Harness (Required / ${{ matrix.surface }})
+  harness:
+    name: ${{ matrix.surface-label }} Verification Harness
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
-        surface: [storage, engine, server, runtime]
+        include:
+          - surface: storage
+            surface-label: Storage
+          - surface: engine
+            surface-label: Engine
+          - surface: server
+            surface-label: Server
+          - surface: runtime
+            surface-label: Runtime
 
     steps:
       - name: Check out repository
@@ -233,14 +241,22 @@ jobs:
         run: bash scripts/verification-harness.sh pr ${{ matrix.surface }}
 
   harness-nightly:
-    name: Verification Harness (Nightly / ${{ matrix.surface }})
+    name: Nightly ${{ matrix.surface-label }} Verification Harness
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event_name == 'schedule'
     strategy:
       fail-fast: false
       matrix:
-        surface: [storage, engine, server, runtime]
+        include:
+          - surface: storage
+            surface-label: Storage
+          - surface: engine
+            surface-label: Engine
+          - surface: server
+            surface-label: Server
+          - surface: runtime
+            surface-label: Runtime
 
     steps:
       - name: Check out repository
