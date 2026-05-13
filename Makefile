@@ -2,7 +2,7 @@
 export
 
 .PHONY: all build release check fmt fmt-check clippy test test-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime node-compat-report node-compat-dashboard node-compat-status node-compat-inventory node-compat-classifications node-compat-sync node-compat-refresh node-compat-publish-evidence node-compat-publish-docs node-compat-trends node-compat-sync-watchpoints node-compat-validate-watchpoints node-compat-oracle node-compat-canaries-bootstrap node-compat-canaries node-compat-validate-claims check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-nimbus-machine-diagnostics collect-nimbus-machine-cli-proof collect-nimbus-machine-guest-proof collect-nimbus-machine-service-proof collect-nimbus-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-nimbus-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-nimbus-machine prepare-linux-vmm-validation-bundle verify-build-nimbus-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-nimbus-machine-diagnostics-helper verify-nimbus-machine-recreate-helper verify-nimbus-machine-cli-proof-helper verify-nimbus-machine-guest-proof-helper verify-nimbus-machine-service-proof-helper verify-nimbus-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
-.PHONY: test-rust-runtime test-rust-workspace test-rust-docs proof-helpers ci-required
+.PHONY: test-rust-runtime test-rust-workspace test-rust-docs test-external-providers proof-helpers ci-required
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -43,11 +43,15 @@ test-rust-runtime:
 
 # Run the CI workspace Rust test bucket
 test-rust-workspace:
-	$(SINGLE_FLIGHT) --key cargo-nextest-workspace-ci -- cargo nextest run --workspace --exclude nimbus-runtime
+	NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 $(SINGLE_FLIGHT) --key cargo-nextest-workspace-ci -- cargo nextest run --workspace --exclude nimbus-runtime
 
 # Run the CI workspace doctest bucket
 test-rust-docs:
 	$(SINGLE_FLIGHT) --key cargo-doc-tests-workspace-ci -- cargo test --workspace --exclude nimbus-runtime --doc
+
+# Run explicit service-backed storage/engine provider integration tests
+test-external-providers:
+	$(SINGLE_FLIGHT) --key cargo-test-external-providers -- bash scripts/test-external-providers.sh
 
 # Build JS packages
 build-js:
@@ -181,7 +185,7 @@ node-compat-publish-evidence:
 	python3 scripts/runtime/node/publish_evidence.py $(if $(ARTIFACTS_ROOT),--artifacts-root "$(ARTIFACTS_ROOT)",) $(if $(PUBLISH_ROOT),--publish-root "$(PUBLISH_ROOT)",)
 
 node-compat-publish-docs:
-	python3 scripts/runtime/node/publish_docs.py $(if $(EVIDENCE_ROOT),--evidence-root "$(EVIDENCE_ROOT)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",)
+	python3 scripts/runtime/node/publish_docs.py $(if $(EVIDENCE_ROOT),--evidence-root "$(EVIDENCE_ROOT)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",) $(if $(CHECK),--check,)
 
 node-compat-trends:
 	python3 scripts/runtime/node/trends.py $(if $(ARTIFACTS_ROOT),--artifacts-root "$(ARTIFACTS_ROOT)",) $(if $(BASELINE_ROOT),--baseline-root "$(BASELINE_ROOT)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",)

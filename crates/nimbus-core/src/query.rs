@@ -70,10 +70,9 @@ pub enum OrderDirection {
 
 /// Parser-facing structured query surface for Firestore-style query metadata.
 ///
-/// This intentionally lives beside the legacy planner `Query` type instead of
-/// replacing it in one pass. The engine still consumes the narrower legacy
-/// query during `F0.4a`; `F0.4b` will own the translation/adoption and
-/// unsupported-feature behavior.
+/// The engine-facing `Query` type above remains the normalized single-table
+/// execution shape. This type preserves the richer adapter request surface
+/// until adapter planning lowers it into that engine contract.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StructuredQuery {

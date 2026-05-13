@@ -7,8 +7,8 @@ use super::file::DEFAULT_COMPOSE_FILE;
 
 const DEFAULT_COMPOSE_OVERRIDE_FILE: &str = "compose.override.yaml";
 const MODERN_FALLBACK_COMPOSE_FILE: &str = "compose.yml";
-const LEGACY_COMPOSE_FILE_YAML: &str = "docker-compose.yaml";
-const LEGACY_COMPOSE_FILE_YML: &str = "docker-compose.yml";
+const DOCKER_COMPOSE_COMPAT_FILE_YAML: &str = "docker-compose.yaml";
+const DOCKER_COMPOSE_COMPAT_FILE_YML: &str = "docker-compose.yml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComposeSelectionOrigin {
@@ -231,20 +231,20 @@ fn discover_primary_compose_file(
         return Ok(Some(modern_fallback));
     }
 
-    let legacy_yaml = directory.join(LEGACY_COMPOSE_FILE_YAML);
-    let legacy_yml = directory.join(LEGACY_COMPOSE_FILE_YML);
-    let legacy_yaml_exists = is_file(&legacy_yaml);
-    let legacy_yml_exists = is_file(&legacy_yml);
+    let docker_compose_yaml = directory.join(DOCKER_COMPOSE_COMPAT_FILE_YAML);
+    let docker_compose_yml = directory.join(DOCKER_COMPOSE_COMPAT_FILE_YML);
+    let docker_compose_yaml_exists = is_file(&docker_compose_yaml);
+    let docker_compose_yml_exists = is_file(&docker_compose_yml);
 
-    match (legacy_yaml_exists, legacy_yml_exists) {
+    match (docker_compose_yaml_exists, docker_compose_yml_exists) {
         (true, true) => Err(ComposeDiscoveryError::new(format!(
             "multiple Compose files found in {}: {}, {}. Remove one or pass an explicit compose path with --compose-file or --file.",
             directory.display(),
-            LEGACY_COMPOSE_FILE_YAML,
-            LEGACY_COMPOSE_FILE_YML
+            DOCKER_COMPOSE_COMPAT_FILE_YAML,
+            DOCKER_COMPOSE_COMPAT_FILE_YML
         ))),
-        (true, false) => Ok(Some(legacy_yaml)),
-        (false, true) => Ok(Some(legacy_yml)),
+        (true, false) => Ok(Some(docker_compose_yaml)),
+        (false, true) => Ok(Some(docker_compose_yml)),
         (false, false) => Ok(None),
     }
 }
@@ -533,12 +533,12 @@ mod tests {
     }
 
     #[test]
-    fn auto_discovery_prefers_modern_fallback_over_legacy_filenames() {
+    fn auto_discovery_prefers_compose_yml_over_docker_compose_filenames() {
         let tempdir = tempfile::tempdir().expect("tempdir should build");
         let root = tempdir.path();
         write_file(&root.join(MODERN_FALLBACK_COMPOSE_FILE));
-        write_file(&root.join(LEGACY_COMPOSE_FILE_YAML));
-        write_file(&root.join(LEGACY_COMPOSE_FILE_YML));
+        write_file(&root.join(DOCKER_COMPOSE_COMPAT_FILE_YAML));
+        write_file(&root.join(DOCKER_COMPOSE_COMPAT_FILE_YML));
 
         let selection = resolve_compose_selection(&[], root)
             .expect("modern discovery should succeed")
@@ -567,14 +567,14 @@ mod tests {
     }
 
     #[test]
-    fn auto_discovery_errors_on_ambiguous_legacy_candidates() {
+    fn auto_discovery_errors_on_ambiguous_docker_compose_candidates() {
         let tempdir = tempfile::tempdir().expect("tempdir should build");
         let root = tempdir.path();
-        write_file(&root.join(LEGACY_COMPOSE_FILE_YAML));
-        write_file(&root.join(LEGACY_COMPOSE_FILE_YML));
+        write_file(&root.join(DOCKER_COMPOSE_COMPAT_FILE_YAML));
+        write_file(&root.join(DOCKER_COMPOSE_COMPAT_FILE_YML));
 
         let error = resolve_compose_selection(&[], root)
-            .expect_err("ambiguous legacy candidates should fail");
+            .expect_err("ambiguous docker-compose candidates should fail");
 
         assert!(error.to_string().contains("multiple Compose files found"));
         assert!(error.to_string().contains("--compose-file"));

@@ -93,14 +93,46 @@ fn package_versions_for_root(root: &std::path::Path) -> BTreeMap<String, String>
         .collect()
 }
 
+fn basic_invocation_sources(repo_root: &std::path::Path) -> String {
+    let basic_invocation_root =
+        repo_root.join("crates/nimbus-runtime/src/runtime/tests/basic_invocation.rs");
+    let basic_invocation_dir =
+        repo_root.join("crates/nimbus-runtime/src/runtime/tests/basic_invocation");
+    let mut sources = String::new();
+    sources.push_str(
+        &std::fs::read_to_string(&basic_invocation_root).unwrap_or_else(|error| {
+            panic!(
+                "failed to read {}: {error}",
+                basic_invocation_root.display()
+            )
+        }),
+    );
+    let mut entries: Vec<_> = std::fs::read_dir(&basic_invocation_dir)
+        .unwrap_or_else(|error| {
+            panic!("failed to read {}: {error}", basic_invocation_dir.display())
+        })
+        .map(|entry| {
+            entry
+                .expect("basic invocation source entry should load")
+                .path()
+        })
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect();
+    entries.sort();
+    for path in entries {
+        sources.push_str(
+            &std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
+        );
+    }
+    sources
+}
+
 #[test]
 fn node_compat_canary_registry_parses_and_points_at_real_roots() {
     let repo_root = repo_root();
     let registry = load_canary_registry();
-    let basic_invocation_source = std::fs::read_to_string(
-        repo_root.join("crates/nimbus-runtime/src/runtime/tests/basic_invocation.rs"),
-    )
-    .expect("basic_invocation.rs should read");
+    let basic_invocation_source = basic_invocation_sources(&repo_root);
 
     assert_eq!(registry.schema_version, 2);
 
@@ -193,10 +225,9 @@ fn node_compat_canary_registry_parses_and_points_at_real_roots() {
 fn node_compat_canary_registry_maps_active_claims_to_active_canaries() {
     let repo_root = repo_root();
     let registry = load_canary_registry();
-    let surface_matrix = std::fs::read_to_string(
-        repo_root.join("docs/architecture/runtime/node-compat-surface-matrix.md"),
-    )
-    .expect("surface matrix should read");
+    let generated_evidence =
+        std::fs::read_to_string(repo_root.join("docs/runtimes/nodejs/evidence/latest.md"))
+            .expect("generated Node runtime evidence should read");
 
     let canaries_by_claim: BTreeMap<&str, Vec<&NodeCompatCanaryEntry>> = registry
         .canaries
@@ -234,8 +265,8 @@ fn node_compat_canary_registry_maps_active_claims_to_active_canaries() {
             claim.id
         );
         assert!(
-            surface_matrix.contains(&claim.package),
-            "surface matrix should mention claimed package {}",
+            generated_evidence.contains(&claim.package),
+            "generated Node runtime evidence should mention claimed package {}",
             claim.package
         );
     }

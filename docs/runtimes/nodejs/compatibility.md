@@ -6,15 +6,16 @@ canary, oracle, or classification evidence.
 
 ## Current Version Support
 
-| Node target | Product role | Upstream fixture line | Official fixture pass rate | Classified coverage |
-| --- | --- | --- | ---: | ---: |
-| Node20 | Supported selectable target | `v20.20.2` | 70.1% | 100.0% |
-| Node22 | Default selectable target | `v22.15.0` | 68.5% | 100.0% |
-| Node24 | Supported selectable target | `v24.15.0` | 61.9% | 100.0% |
+The current generated support table lives in
+[`evidence/latest.md`](evidence/latest.md). It is generated from the checked-in
+status, dashboard, and trend snapshots so this overview does not carry
+hand-maintained pass-rate numbers.
 
-These percentages come from the current checked-in evidence snapshot. They
-should be regenerated through the Node compatibility workflow after any fixture,
-classification, or runtime behavior change.
+Current product roles:
+
+- Node20: supported selectable target
+- Node22: default selectable target
+- Node24: supported selectable target
 
 ## Status Vocabulary
 

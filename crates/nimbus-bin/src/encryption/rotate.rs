@@ -834,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn infer_new_provider_defaults_to_master_key_file_from_legacy_flag() {
+    fn infer_new_provider_defaults_to_master_key_file_from_master_key_file_input() {
         let mut command = base_rotate_kek_command();
         command.new_master_key_file = Some(PathBuf::from("/secure/new.key"));
 

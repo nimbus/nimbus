@@ -34,7 +34,7 @@ codegen reruns, and local activation. `nimbus deploy` pushes generated app
 artifacts to an explicit self-hosted target. `nimbus codegen` is the
 first-party artifact-generation command. `nimbus start` is the foreground
 server-start path. The retired `nimbus serve` command is not retained as a
-legacy alias.
+compatibility alias.
 
 Current shipped compose-management commands:
 
@@ -283,7 +283,7 @@ discovery rule:
 - when auto-discovery selects canonical `compose.yaml` and
   `compose.override.yaml` exists beside it, both files are loaded in that
   order as one logical Compose project
-- if both legacy names exist in the same directory, Nimbus fails with an
+- if both docker-compose filenames exist in the same directory, Nimbus fails with an
   actionable error instead of guessing
 - relative paths in explicit flag lists and `COMPOSE_FILE` entries resolve from
   the current working directory, and `files[0]` remains the project identity
