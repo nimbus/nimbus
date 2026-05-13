@@ -44,7 +44,7 @@ pub(super) fn render_runtime_test_spawn_bundle_source(
                 if plan.permission_restricted {
                     source.clone()
                 } else {
-                    rewrite_bundle_string(source, source_bundle_root, &bundle_dir)
+                    rewrite_bundle_string(source, source_bundle_root, bundle_dir)
                 }
             } else {
                 source.clone()
@@ -84,7 +84,7 @@ if (__nimbusEvalResult !== undefined) {
                         if plan.permission_restricted {
                             base_path
                         } else {
-                            rewrite_bundle_path(&base_path, source_bundle_root, &bundle_dir)
+                            rewrite_bundle_path(&base_path, source_bundle_root, bundle_dir)
                         }
                     } else {
                         base_path
@@ -158,7 +158,7 @@ stderr += "`node --debug` and `node --debug-brk` are invalid. Please use `node -
                 if plan.permission_restricted {
                     value.to_string()
                 } else {
-                    rewrite_bundle_string(value, source_bundle_root, &bundle_dir)
+                    rewrite_bundle_string(value, source_bundle_root, bundle_dir)
                 }
             } else {
                 value.to_string()
@@ -184,7 +184,7 @@ stderr += "`node --debug` and `node --debug-brk` are invalid. Please use `node -
                 if plan.permission_restricted {
                     cwd.to_path_buf()
                 } else {
-                    rewrite_bundle_path(cwd, source_bundle_root, &bundle_dir)
+                    rewrite_bundle_path(cwd, source_bundle_root, bundle_dir)
                 }
             } else {
                 cwd.to_path_buf()
@@ -736,7 +736,7 @@ require("node:inspector").open({rendered_port}, undefined, {wait_for_session});
     };
     let working_directory_setup = if let Some(cwd) = plan.cwd.as_deref() {
         let rendered_cwd = if let Some(source_bundle_root) = plan.source_bundle_root.as_deref() {
-            rewrite_bundle_path(cwd, source_bundle_root, &bundle_dir)
+            rewrite_bundle_path(cwd, source_bundle_root, bundle_dir)
                 .to_string_lossy()
                 .into_owned()
         } else {
@@ -781,7 +781,7 @@ if (__nimbusOriginalCwdDescriptor) {
             if plan.permission_restricted {
                 env_file.to_string_lossy().into_owned()
             } else {
-                rewrite_bundle_path(env_file, source_bundle_root, &bundle_dir)
+                rewrite_bundle_path(env_file, source_bundle_root, bundle_dir)
                     .to_string_lossy()
                     .into_owned()
             }
@@ -800,7 +800,7 @@ if (__nimbusOriginalCwdDescriptor) {
             if plan.permission_restricted {
                 env.clone()
             } else {
-                rewrite_bundle_env(env, source_bundle_root, &bundle_dir)
+                rewrite_bundle_env(env, source_bundle_root, bundle_dir)
             }
         } else {
             env.clone()
