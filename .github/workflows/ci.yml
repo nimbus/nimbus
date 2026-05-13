@@ -191,8 +191,8 @@ jobs:
           test "${RUNTIME_TEST_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
 
-  harness-pr:
-    name: Verification Harness (PR / ${{ matrix.surface }})
+  harness-required:
+    name: Verification Harness (Required / ${{ matrix.surface }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name != 'schedule'
@@ -227,7 +227,9 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
-      - name: Run PR verification harness corpus
+      - name: Run required verification harness corpus
+        # The harness script's `pr` mode is the fast required corpus used for
+        # both pull_request and push CI. Keep the job label event-neutral.
         run: bash scripts/verification-harness.sh pr ${{ matrix.surface }}
 
   harness-nightly:
