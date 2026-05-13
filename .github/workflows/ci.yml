@@ -23,8 +23,8 @@ permissions:
   contents: read
 
 jobs:
-  format:
-    name: Format
+  rust-format:
+    name: Rust Format
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.event_name != 'schedule'
@@ -41,8 +41,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
-  clippy:
-    name: Clippy
+  rust-clippy:
+    name: Rust Clippy
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event_name != 'schedule'
@@ -76,8 +76,8 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-  runtime-test:
-    name: Runtime Tests
+  rust-runtime-tests:
+    name: Rust Runtime Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event_name != 'schedule'
@@ -110,46 +110,13 @@ jobs:
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
         # CI keeps a dedicated runtime lane instead of falling back to a global
         # single-thread workaround. The official Node compatibility corpus is a
-        # conformance signal with its own scheduled/manual lane below; keep PR
+        # conformance signal with its own dedicated workflow; keep PR
         # runtime tests focused on product runtime behavior and lightweight
         # manifest/unit checks.
         run: "cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::"
 
-  node-compat:
-    name: Node Compatibility Corpus
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ci-ubuntu-stable-node-compat
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-
-      - name: Run official Node compatibility corpus
-        run: "cargo test -p nimbus-runtime runtime::tests::node_compat:: -- --nocapture --test-threads=1"
-
-  workspace-test:
-    name: Workspace Tests
+  rust-workspace-tests:
+    name: Rust Workspace Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event_name != 'schedule'
@@ -184,24 +151,24 @@ jobs:
         # main workspace suite outside the runtime crate.
         run: cargo test --workspace --exclude nimbus-runtime
 
-  test:
-    name: Format + Clippy + Test
+  rust-gate-summary:
+    name: Rust Gate Summary
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always() && github.event_name != 'schedule'
     needs:
-      - format
-      - clippy
-      - runtime-test
-      - workspace-test
+      - rust-format
+      - rust-clippy
+      - rust-runtime-tests
+      - rust-workspace-tests
 
     steps:
       - name: Check Rust gate results
         env:
-          FORMAT_RESULT: ${{ needs.format.result }}
-          CLIPPY_RESULT: ${{ needs.clippy.result }}
-          RUNTIME_TEST_RESULT: ${{ needs['runtime-test'].result }}
-          WORKSPACE_TEST_RESULT: ${{ needs['workspace-test'].result }}
+          FORMAT_RESULT: ${{ needs['rust-format'].result }}
+          CLIPPY_RESULT: ${{ needs['rust-clippy'].result }}
+          RUNTIME_TEST_RESULT: ${{ needs['rust-runtime-tests'].result }}
+          WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
         run: |
           printf 'format=%s\n' "${FORMAT_RESULT}"
           printf 'clippy=%s\n' "${CLIPPY_RESULT}"
@@ -287,7 +254,7 @@ jobs:
         run: bash scripts/verification-harness.sh nightly ${{ matrix.surface }}
 
   deny:
-    name: Dependency audit
+    name: Rust Dependency Audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -322,7 +289,7 @@ jobs:
         run: cargo deny check
 
   js:
-    name: JS Build + Test
+    name: JavaScript Build and Test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: github.event_name != 'schedule'
@@ -347,7 +314,7 @@ jobs:
         run: npm run test --workspaces --if-present
 
   proof-helpers:
-    name: Proof Helper Verifiers
+    name: Proof Helper Checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name != 'schedule'
