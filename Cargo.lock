@@ -5676,6 +5676,7 @@ dependencies = [
  "deno_web",
  "deno_webidl",
  "deno_websocket",
+ "libc",
  "node_resolver",
  "serde",
  "serde_json",
