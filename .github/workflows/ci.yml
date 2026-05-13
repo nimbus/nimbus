@@ -16,6 +16,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
 
@@ -145,11 +146,22 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+          fallback: none
+
       - name: Run workspace test lane
         # Verification-harness corpus tests are ignored by default and run in
         # the dedicated harness matrix below, so this lane stays focused on the
         # main workspace suite outside the runtime crate.
-        run: cargo test --workspace --exclude nimbus-runtime
+        run: cargo nextest run --workspace --exclude nimbus-runtime
+
+      - name: Run workspace doctests
+        # nextest intentionally does not run doctests, so keep this explicit
+        # libtest pass to preserve the coverage of the previous cargo test lane.
+        run: cargo test --workspace --exclude nimbus-runtime --doc
 
   rust-gate-summary:
     name: Rust Gate Summary
@@ -205,6 +217,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2

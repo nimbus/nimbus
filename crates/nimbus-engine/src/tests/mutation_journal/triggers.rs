@@ -12,7 +12,7 @@ use tempfile::{TempDir, tempdir};
 
 use super::support::{
     expect_blocking_wait_reaches_state, expect_future_within, mutation_journal_catch_up_timeout,
-    mutation_journal_progress_timeout, new_faulted_service,
+    mutation_journal_poll_interval, mutation_journal_progress_timeout, new_faulted_service,
 };
 use super::*;
 
@@ -214,7 +214,7 @@ async fn trigger_candidates_publish_only_after_journal_apply() {
     wait_for_value(
         "trigger candidates should arrive after apply",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .pending_trigger_candidate_count_for_testing(&tenant_id)
@@ -294,7 +294,7 @@ async fn trigger_candidate_worker_pause_does_not_block_mutation_completion() {
     wait_for_value(
         "trigger candidates should arrive after worker pause release",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .pending_trigger_candidate_count_for_testing(&tenant_id)
@@ -356,7 +356,7 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
     wait_for_value(
         "trigger candidate bootstrap should replay commits after the persisted cursor",
         mutation_journal_catch_up_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .pending_trigger_candidate_count_for_testing(&tenant_id)
@@ -421,7 +421,7 @@ async fn trigger_invocations_materialize_exact_and_wildcard_matches() {
     wait_for_value(
         "trigger invocations should materialize for exact and wildcard matches",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .list_trigger_invocations_for_testing(&tenant_id)
@@ -515,7 +515,7 @@ async fn trigger_invocations_advance_cursor_when_registry_is_ready_but_no_match_
     wait_for_value(
         "trigger delivery cursor should advance even when no registrations match",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .trigger_delivery_cursor_for_testing(&tenant_id)
@@ -569,7 +569,7 @@ async fn trigger_execution_claims_pending_invocations_and_marks_completion() {
     wait_for_value(
         "trigger execution should mark the durable invocation as completed",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .list_trigger_invocations_for_testing(&tenant_id)
@@ -636,7 +636,7 @@ async fn trigger_execution_persists_terminal_failures() {
     wait_for_value(
         "trigger execution should persist terminal failure state",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .list_trigger_invocations_for_testing(&tenant_id)
@@ -701,7 +701,7 @@ async fn trigger_execution_retries_retryable_failures_until_completion() {
     wait_for_value(
         "trigger execution should persist retry-pending state after a retryable failure",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .list_trigger_invocations_for_testing(&tenant_id)
@@ -722,7 +722,7 @@ async fn trigger_execution_retries_retryable_failures_until_completion() {
     wait_for_value(
         "trigger execution should replay the retry and complete successfully",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .list_trigger_invocations_for_testing(&tenant_id)
@@ -784,7 +784,7 @@ async fn trigger_execution_promotes_exhausted_retries_to_terminal_failure() {
         wait_for_value(
             "trigger execution should persist each retry-pending attempt before the next retry",
             mutation_journal_progress_timeout(),
-            Duration::ZERO,
+            mutation_journal_poll_interval(),
             || async {
                 service
                     .list_trigger_invocations_for_testing(&tenant_id)
@@ -808,7 +808,7 @@ async fn trigger_execution_promotes_exhausted_retries_to_terminal_failure() {
     wait_for_value(
         "trigger execution should cap retryable failures at a terminal attempt budget",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .list_trigger_invocations_for_testing(&tenant_id)
@@ -862,7 +862,7 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
         wait_for_value(
             "trigger materialization should persist pending invocation before restart",
             mutation_journal_progress_timeout(),
-            Duration::ZERO,
+            mutation_journal_poll_interval(),
             || async {
                 service
                     .list_trigger_invocations_for_testing(&tenant_id)
@@ -898,7 +898,7 @@ async fn installing_executor_bootstraps_pending_invocations_after_restart() {
     wait_for_value(
         "installing the executor should replay pending durable trigger invocations",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .list_trigger_invocations_for_testing(&tenant_id)
@@ -970,7 +970,7 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
         wait_for_value(
             "trigger execution should persist retry-pending state before restart",
             mutation_journal_progress_timeout(),
-            Duration::ZERO,
+            mutation_journal_poll_interval(),
             || async {
                 service
                     .list_trigger_invocations_for_testing(&tenant_id)
@@ -1014,7 +1014,7 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
     wait_for_value(
         "installing the executor should replay due retry-pending invocations after restart",
         mutation_journal_progress_timeout(),
-        Duration::ZERO,
+        mutation_journal_poll_interval(),
         || async {
             service
                 .list_trigger_invocations_for_testing(&tenant_id)
