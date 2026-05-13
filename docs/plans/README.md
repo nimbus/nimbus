@@ -20,11 +20,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
-- `docs/plans/reliability-and-modularity-cleanup-plan.md`
-  - active cleanup plan for deterministic CI/provider lanes, large-file
-    decomposition, generated Node compatibility documentation, and prelaunch
-    legacy removal; use it for repo-wide reliability and modularity polish not
-    owned by a feature-specific active plan
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not

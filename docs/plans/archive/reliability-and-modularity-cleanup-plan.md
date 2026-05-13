@@ -1,9 +1,14 @@
 # Reliability and Modularity Cleanup Plan
 
-Status: active
+Archived on 2026-05-13 after `ER1` through `ER5` completed. This file is a
+historical record, not an active control plane. For current work, start at
+`docs/plans/README.md` and promote a new active plan if no listed plan owns the
+slice.
 
-This plan owns the next reliability, CI clarity, and large-file cleanup wave.
-It follows the current testing reliability posture and CI failure investigation
+Status: completed
+
+This plan owned the reliability, CI clarity, and large-file cleanup wave that
+followed the current testing reliability posture and CI failure investigation
 guidance rather than reopening archived historical plans.
 
 ## Principles
@@ -20,7 +25,7 @@ guidance rather than reopening archived historical plans.
 
 ## ER1: External Provider Test Lane
 
-Status: in_progress
+Status: complete
 
 Own the Postgres, MySQL, and libsql provider suites as an explicit integration
 lane.
@@ -53,7 +58,7 @@ behind narrower modules.
 Completion gate:
 
 - No runtime module-loader source file is over the repo modularity threshold
-  unless the active plan records a specific ownership exception.
+  unless this plan records a specific ownership exception.
 - Existing module-loader tests keep their behavioral assertions and names unless
   a rename improves the public failure signal.
 
@@ -117,6 +122,7 @@ Completion gate:
 | --- | --- | --- | --- |
 | 2026-05-13 | ER0 | complete | Created active plan from current reliability guidance and current file/CI review. |
 | 2026-05-13 | ER1 | in_progress | Starting explicit external-provider CI lane and local `make` entrypoint. |
+| 2026-05-13 | ER1 | complete | Added an explicit provider CI lane and local service-backed entrypoint for Postgres, MySQL, and libsql provider suites. Verified `make -n test-external-providers`, `git diff --check`, and hosted CI run `25816650090` on `672eee17`, where `External Provider Integration Tests` and `Rust Gate Summary` passed as distinct proof lanes. |
 | 2026-05-13 | ER2 | complete | Split embedded Node builtin sources and bundle code-cache state out of `module_loader.rs`; root loader and all owned source assets are below the modularity threshold. Verified with `cargo check -p nimbus-runtime`, `cargo test -p nimbus-runtime module_loader`, and a focused Node22 fs/promises runtime invocation test. |
 | 2026-05-13 | ER3 | in_progress | Split `runtime/tests/basic_invocation.rs` into support, web-standard, Node bootstrap, Node capability, and package-resolution modules; updated canary registry validation to scan the split source set. Verified with `cargo test -p nimbus-runtime basic_invocation -- --list`, the canary registry topology test, and a focused Node capability invocation. |
 | 2026-05-13 | ER3 | in_progress | Split `nimbus-bin/src/start/tests.rs` into CLI surface, app-dir/codegen, persistence, krun, encryption, and license modules. Verified with `cargo test -p nimbus-bin start::tests -- --list` and a focused CLI help test. |
@@ -124,3 +130,4 @@ Completion gate:
 | 2026-05-13 | ER3 | complete | Split `nimbus-server/src/adapters/mongodb/commands/crud/tests.rs` into Mongo command-family modules for insert, find, update, delete, findAndModify, count, and distinct. Verified with `cargo test -p nimbus-server adapters::mongodb::commands::crud::tests -- --list` and `cargo test -p nimbus-server adapters::mongodb::commands::crud::tests` (88 tests passed). |
 | 2026-05-13 | ER4 | complete | Added `--check` support to the generated Node.js evidence publisher, exposed it through `make node-compat-publish-docs CHECK=1`, regenerated the checked-in public evidence page, and turned the architecture surface matrix into a generated-evidence index instead of a hand-maintained duplicate table. Verified with `make node-compat-publish-docs CHECK=1` and the canary registry claim test. |
 | 2026-05-13 | ER5 | complete | Removed active-surface transition labels from query comments, CLI docs, compose discovery naming, and CLI tests. Remaining `legacy` and `NLC*` hits are archival history, upstream fixture names, or protocol names rather than active Nimbus compatibility scaffolding. Verified with focused core, compose discovery, parse/help, encryption, and retired-command tests. |
+| 2026-05-13 | ER5 | complete | Replaced remaining non-archived research survey numbered Node compatibility slice labels with domain-owned family names. Verified `rg -n "Node compatibility-[0-9]\|NLC[0-9]+\|nlc_item" docs/plans/research/node-compat-test-architecture-survey.md docs crates scripts packages --glob '!docs/plans/archive/**' --glob '!docs/private/**'` produced no matches, and `make node-compat-publish-docs CHECK=1` passed. |
