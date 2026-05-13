@@ -12,6 +12,10 @@ pub(super) fn mutation_journal_catch_up_timeout() -> Duration {
     ci_or_local_duration(Duration::from_secs(3), Duration::from_secs(6))
 }
 
+pub(super) fn mutation_journal_poll_interval() -> Duration {
+    ci_or_local_duration(Duration::from_millis(1), Duration::from_millis(5))
+}
+
 pub(super) async fn expect_blocking_wait_reaches_state<F>(description: &str, wait: F)
 where
     F: FnOnce(Duration) -> bool + Send + 'static,
