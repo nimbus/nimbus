@@ -93,12 +93,15 @@ run_surface_filter() {
   local test_name="$3"
   local package
   local selected
+  local list_output
   local cargo_args
   package="$(surface_package "$surface")"
-  selected="$(
-    cargo test -p "$package" "$test_name" -- --ignored --list 2>/dev/null |
-      awk '/: test$/{count++} END{print count+0}'
-  )"
+  if ! list_output="$(cargo test -p "$package" "$test_name" -- --ignored --list 2>&1)"; then
+    echo "verification harness ${mode}/${surface} failed while listing tests for filter ${test_name}" >&2
+    printf '%s\n' "$list_output" >&2
+    exit 1
+  fi
+  selected="$(printf '%s\n' "$list_output" | awk '/: test$/{count++} END{print count+0}')"
   if [[ "$selected" -eq 0 ]]; then
     echo "verification harness ${mode}/${surface} matched zero tests for filter ${test_name}" >&2
     exit 1
