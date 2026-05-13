@@ -63,9 +63,9 @@ fn compose_leaf_help_uses_shared_template_and_examples() {
 }
 
 #[test]
-fn legacy_service_namespace_is_not_supported() {
+fn retired_service_namespace_is_not_supported() {
     let error = RootCli::try_parse_from(["nimbus", "service", "up"])
-        .expect_err("legacy service namespace should not parse");
+        .expect_err("retired service namespace should not parse");
     assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
 }
 

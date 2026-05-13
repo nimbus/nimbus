@@ -250,27 +250,56 @@ def per_lane_lines(lane: dict[str, Any], dashboard: dict[str, Any]) -> list[str]
     return lines
 
 
-def publish(evidence_root: Path, output_root: Path) -> None:
+def rendered_docs(evidence_root: Path) -> dict[Path, list[str]]:
     status = load_json(evidence_root / "status-summary.json")
     dashboard = load_json(evidence_root / "dashboard-summary.json")
     trend_path = evidence_root / "trend-summary.json"
     trends = load_json(trend_path) if trend_path.exists() else None
 
-    write(output_root / "latest.md", latest_lines(status, dashboard, trends))
+    rendered = {Path("latest.md"): latest_lines(status, dashboard, trends)}
     for lane in lane_summaries(status):
-        write(output_root / f"{lane['lane']}.md", per_lane_lines(lane, dashboard))
+        rendered[Path(f"{lane['lane']}.md")] = per_lane_lines(lane, dashboard)
+    return rendered
 
 
-def main() -> None:
+def publish(evidence_root: Path, output_root: Path) -> None:
+    for relative_path, lines in rendered_docs(evidence_root).items():
+        write(output_root / relative_path, lines)
+
+
+def check(evidence_root: Path, output_root: Path) -> bool:
+    ok = True
+    for relative_path, lines in rendered_docs(evidence_root).items():
+        path = output_root / relative_path
+        expected = "\n".join(lines).rstrip() + "\n"
+        actual = path.read_text(encoding="utf-8") if path.exists() else ""
+        if actual != expected:
+            print(f"stale Node.js runtime evidence doc: {path}")
+            ok = False
+    return ok
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Publish user-facing Node.js runtime evidence Markdown"
     )
     parser.add_argument("--evidence-root", type=Path, default=default_evidence_root())
     parser.add_argument("--output-root", type=Path, default=default_output_root())
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify checked-in generated docs match the current evidence snapshots",
+    )
     args = parser.parse_args()
+    if args.check:
+        if check(args.evidence_root, args.output_root):
+            print(f"Node.js runtime evidence docs are current in {args.output_root}")
+            return 0
+        return 1
     publish(args.evidence_root, args.output_root)
     print(f"published Node.js runtime evidence docs to {args.output_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

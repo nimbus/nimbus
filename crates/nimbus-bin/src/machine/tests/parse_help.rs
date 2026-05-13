@@ -126,19 +126,19 @@ fn machine_init_accepts_short_flag_aliases() {
 }
 
 #[test]
-fn machine_init_rejects_legacy_flag_names() {
-    for legacy_flag in [
+fn machine_init_rejects_removed_flag_names() {
+    for removed_flag in [
         "--ssh-identity",
         "--ignition-file",
         "--efi-store",
         "--memory-mib",
         "--disk-gib",
     ] {
-        let error = RootCli::try_parse_from(["nimbus", "machine", "init", legacy_flag, "value"])
-            .expect_err("legacy flag should be rejected");
+        let error = RootCli::try_parse_from(["nimbus", "machine", "init", removed_flag, "value"])
+            .expect_err("removed flag should be rejected");
         assert_eq!(error.kind(), ErrorKind::UnknownArgument);
         let rendered = error.to_string();
-        assert!(rendered.contains(legacy_flag));
+        assert!(rendered.contains(removed_flag));
         assert!(rendered.contains("unexpected argument"));
     }
 }

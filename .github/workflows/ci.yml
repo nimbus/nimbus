@@ -200,6 +200,94 @@ jobs:
         # libtest pass to preserve the coverage of the previous cargo test lane.
         run: cargo test --workspace --exclude nimbus-runtime --doc
 
+  external-provider-tests:
+    name: External Provider Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+    env:
+      NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
+      NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
+      NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
+      NIMBUS_LIBSQL_URL: http://127.0.0.1:18080
+      NIMBUS_LIBSQL_ADMIN_URL: http://127.0.0.1:18081
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-ubuntu-stable-external-providers
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
+
+      - name: Start libsql provider fixture
+        run: |
+          docker run --detach \
+            --name nimbus-libsql-provider-tests \
+            --publish 18080:8080 \
+            --publish 18081:8081 \
+            --env SQLD_ADMIN_LISTEN_ADDR=0.0.0.0:8081 \
+            ghcr.io/tursodatabase/libsql-server:latest \
+            /bin/sqld --enable-namespaces --no-welcome
+
+      - name: Wait for libsql provider fixture
+        run: |
+          for _ in {1..60}; do
+            if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/nimbus_provider_probe/create \
+              -H 'content-type: application/json' \
+              --data '{}' >/dev/null; then
+              curl -fsS -X DELETE http://127.0.0.1:18081/v1/namespaces/nimbus_provider_probe >/dev/null || true
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs nimbus-libsql-provider-tests
+          exit 1
+
+      - name: Run external provider integration tests
+        run: make test-external-providers
+
   rust-gate-summary:
     name: Rust Gate Summary
     runs-on: ubuntu-latest
@@ -211,6 +299,7 @@ jobs:
       - deny
       - rust-runtime-tests
       - rust-workspace-tests
+      - external-provider-tests
 
     steps:
       - name: Check Rust gate results
@@ -220,17 +309,20 @@ jobs:
           DEPENDENCY_AUDIT_RESULT: ${{ needs['deny'].result }}
           RUNTIME_TEST_RESULT: ${{ needs['rust-runtime-tests'].result }}
           WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
+          EXTERNAL_PROVIDER_TEST_RESULT: ${{ needs['external-provider-tests'].result }}
         run: |
           printf 'format=%s\n' "${FORMAT_RESULT}"
           printf 'clippy=%s\n' "${CLIPPY_RESULT}"
           printf 'dependency-audit=%s\n' "${DEPENDENCY_AUDIT_RESULT}"
           printf 'runtime-test=%s\n' "${RUNTIME_TEST_RESULT}"
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
+          printf 'external-provider-test=%s\n' "${EXTERNAL_PROVIDER_TEST_RESULT}"
           test "${FORMAT_RESULT}" = success
           test "${CLIPPY_RESULT}" = success
           test "${DEPENDENCY_AUDIT_RESULT}" = success
           test "${RUNTIME_TEST_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
+          test "${EXTERNAL_PROVIDER_TEST_RESULT}" = success
 
   harness:
     name: ${{ matrix.surface-label }} Verification Harness
