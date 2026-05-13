@@ -700,19 +700,19 @@ fn capture_current_thread_handle() -> u64 {
 fn get_thread_cpu_usage_by_handle(handle: u64) -> (f64, f64) {
     let tid = handle as i32;
     let path = format!("/proc/self/task/{tid}/stat");
-    if let Ok(contents) = std::fs::read_to_string(&path) {
-        if let Some(position) = contents.rfind(')') {
-            let rest = &contents[position + 2..];
-            let fields: Vec<&str> = rest.split_whitespace().collect();
-            if fields.len() > 12 {
-                let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
-                let utime = fields[11].parse::<f64>().unwrap_or(0.0);
-                let stime = fields[12].parse::<f64>().unwrap_or(0.0);
-                return (
-                    utime / ticks_per_second * 1e6,
-                    stime / ticks_per_second * 1e6,
-                );
-            }
+    if let Ok(contents) = std::fs::read_to_string(&path)
+        && let Some(position) = contents.rfind(')')
+    {
+        let rest = &contents[position + 2..];
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        if fields.len() > 12 {
+            let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
+            let utime = fields[11].parse::<f64>().unwrap_or(0.0);
+            let stime = fields[12].parse::<f64>().unwrap_or(0.0);
+            return (
+                utime / ticks_per_second * 1e6,
+                stime / ticks_per_second * 1e6,
+            );
         }
     }
     (0.0, 0.0)
