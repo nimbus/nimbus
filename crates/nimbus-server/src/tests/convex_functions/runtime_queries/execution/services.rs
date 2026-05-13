@@ -111,6 +111,12 @@ impl SandboxServiceCatalog for DeclaredSandboxServiceCatalog {
     }
 }
 
+fn runtime_limits_with_service_grant(service_name: &str) -> nimbus_runtime::RuntimeLimits {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.grants.service = vec![service_name.to_owned()];
+    limits
+}
+
 struct ManagedSandboxBackend {
     start_calls: AtomicUsize,
     stop_calls: AtomicUsize,
@@ -402,9 +408,10 @@ globalThis.__nimbusInvoke = async function(request) {
 };
 
 export {};
-"#,
+	"#,
         ),
-    );
+    )
+    .with_runtime_limits(runtime_limits_with_service_grant("db"));
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> =
         Arc::new(StubRuntimeServiceRegistry {
             binding: InvocationServiceBinding {
@@ -529,9 +536,10 @@ globalThis.__nimbusInvoke = async function(request) {
 };
 
 export {};
-"#,
+	"#,
         ),
-    );
+    )
+    .with_runtime_limits(runtime_limits_with_service_grant("db"));
     let runtime_service_registry = Arc::new(ActivatingRuntimeServiceRegistry {
         binding: InvocationServiceBinding {
             host: "127.0.0.1".to_string(),
@@ -642,9 +650,10 @@ globalThis.__nimbusInvoke = async function(request) {
 };
 
 export {};
-"#,
+	"#,
         ),
-    );
+    )
+    .with_runtime_limits(runtime_limits_with_service_grant("db"));
     let sandbox_backend = Arc::new(ManagedSandboxBackend::new(2));
     let sandbox_service_manager = Arc::new(
         SandboxServiceManager::new(
@@ -786,9 +795,10 @@ globalThis.__nimbusInvoke = async function(request) {
 };
 
 export {};
-"#,
+	"#,
         ),
-    );
+    )
+    .with_runtime_limits(runtime_limits_with_service_grant("db"));
     let sandbox_backend = Arc::new(ManagedSandboxBackend::new(1));
     let sandbox_service_manager = Arc::new(
         SandboxServiceManager::new(
@@ -912,9 +922,10 @@ globalThis.__nimbusInvoke = async function(request) {
 };
 
 export {};
-"#,
+	"#,
         ),
-    );
+    )
+    .with_runtime_limits(runtime_limits_with_service_grant("db"));
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
     let host_port = env_u16("NIMBUS_KRUN_SMOKE_M4_HOST_PORT").unwrap_or(18090);
     let guest_port = env_u16("NIMBUS_KRUN_SMOKE_M4_GUEST_PORT").unwrap_or(8090);
