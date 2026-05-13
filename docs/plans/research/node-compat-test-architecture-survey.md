@@ -88,15 +88,15 @@ Source: `node_compat.rs` lines 101–112 (enum), line 3041 (Node24 skip logic).
 
 ### 1.4 Compatibility family slices
 
-Batch constants map to numbered slices in `docs/plans/archive/node-lts-compatibility-plan.md`:
+Batch constants map to domain-owned compatibility families:
 
-| Batch constant | Plan slice | Approximate entry count |
-|----------------|-----------|------------------------|
-| `CORE_SEMANTICS_BATCH` | Node compatibility-3 | ~200 |
-| `PROCESS_AND_TIMING_BATCH` | Node compatibility-4 | ~80 |
-| `STREAMS_AND_LOCAL_IO_BATCH` | Node compatibility-5 | ~150 |
-| `NETWORKING_BATCH` | Node compatibility-6 | ~400 |
-| `LOADER_CONTEXT_BATCH` | Node compatibility-7 | ~300+ |
+| Batch constant | Compatibility family | Approximate entry count |
+|----------------|----------------------|------------------------|
+| `CORE_SEMANTICS_BATCH` | Core semantics | ~200 |
+| `PROCESS_AND_TIMING_BATCH` | Process and timing | ~80 |
+| `STREAMS_AND_LOCAL_IO_BATCH` | Streams and local I/O | ~150 |
+| `NETWORKING_BATCH` | Networking | ~400 |
+| `LOADER_CONTEXT_BATCH` | Loader context | ~300+ |
 
 Source: `grep -c` on batch constant ranges in `node_compat.rs`.
 
@@ -825,7 +825,7 @@ Source: `Makefile` lines 36–37 (`test` target) and 84–97 (harness targets);
 - Individual fixtures inside a batch test are not addressable. When
   `node22_primary_lane_executes_manifested_core_semantics_subset` fails, you
   cannot run just one fixture within it — you must rerun the entire batch.
-- There is no way to run "all Node 20 tests" or "all Node compatibility-3 tests" without
+- There is no way to run "all Node 20 tests" or "all core semantics tests" without
   knowing the specific test function names.
 - There is no way to list which tests exist, which are ignored, or what their
   status is without reading the Rust source.
