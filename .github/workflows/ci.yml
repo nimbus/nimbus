@@ -16,15 +16,35 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: Format + Clippy + Test
+  format:
+    name: Format
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 10
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: github.event_name != 'schedule'
 
     steps:
@@ -44,7 +64,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -53,11 +73,38 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
-      - name: Check formatting
-        run: cargo fmt --all --check
-
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  runtime-test:
+    name: Runtime Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-ubuntu-stable
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
 
       - name: Run isolated runtime test lane
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
@@ -65,11 +112,69 @@ jobs:
         # single-thread workaround.
         run: cargo test -p nimbus-runtime
 
+  workspace-test:
+    name: Workspace Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-ubuntu-stable
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
+
       - name: Run workspace test lane
         # Verification-harness corpus tests are ignored by default and run in
         # the dedicated harness matrix below, so this lane stays focused on the
         # main workspace suite outside the runtime crate.
         run: cargo test --workspace --exclude nimbus-runtime
+
+  test:
+    name: Format + Clippy + Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always() && github.event_name != 'schedule'
+    needs:
+      - format
+      - clippy
+      - runtime-test
+      - workspace-test
+
+    steps:
+      - name: Check Rust gate results
+        env:
+          FORMAT_RESULT: ${{ needs.format.result }}
+          CLIPPY_RESULT: ${{ needs.clippy.result }}
+          RUNTIME_TEST_RESULT: ${{ needs['runtime-test'].result }}
+          WORKSPACE_TEST_RESULT: ${{ needs['workspace-test'].result }}
+        run: |
+          printf 'format=%s\n' "${FORMAT_RESULT}"
+          printf 'clippy=%s\n' "${CLIPPY_RESULT}"
+          printf 'runtime-test=%s\n' "${RUNTIME_TEST_RESULT}"
+          printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
+          test "${FORMAT_RESULT}" = success
+          test "${CLIPPY_RESULT}" = success
+          test "${RUNTIME_TEST_RESULT}" = success
+          test "${WORKSPACE_TEST_RESULT}" = success
 
   harness-pr:
     name: Verification Harness (PR / ${{ matrix.surface }})
@@ -334,13 +439,19 @@ jobs:
       - name: Generate coverage report
         # Coverage now provisions explicit external provider fixtures for
         # Postgres, MySQL, and libsql so provider suites run against the same
-        # explicit env-driven fixture contract the tests already support. The runtime
-        # crate's V8-sensitive tests still self-isolate inside the harness.
+        # explicit env-driven fixture contract the tests already support.
+        #
+        # Keep runtime correctness in the blocking runtime test lane, the
+        # verification harness matrix, and the scheduled/manual Node compatibility
+        # evidence workflow. Do not run the V8/Node compatibility corpus again
+        # under coverage instrumentation; it is a conformance signal, not useful
+        # line-coverage input, and instrumentation has made it exceed the PR
+        # coverage budget.
         #
         # Keep the instrumented workspace build serialized. GitHub-hosted Linux
         # runners have shown rust-lld bus errors when multiple large coverage
         # test binaries link in parallel.
-        run: cargo llvm-cov -j 1 --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov -j 1 --workspace --exclude nimbus-runtime --lcov --output-path lcov.info
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
