@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "family": "process-and-timing",
-  "nlc_item": "NLC4",
   "batch_constant": "PROCESS_AND_TIMING_BATCH",
   "execution_class": "sequential",
   "presets": ["Application"],

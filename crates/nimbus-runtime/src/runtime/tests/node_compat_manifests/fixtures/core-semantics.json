@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "family": "core-semantics",
-  "nlc_item": "NLC3",
   "batch_constant": "CORE_SEMANTICS_BATCH",
   "execution_class": "sequential",
   "presets": ["Application"],

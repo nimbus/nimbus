@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from expectations import (  # noqa: E402
+from watchpoints import (  # noqa: E402
     DEFAULT_CATALOG_PATH,
     detect_unexpected_passes,
     load_catalog,
@@ -222,7 +222,6 @@ def build_family_summaries(lanes: list[dict]) -> list[dict]:
         summaries.append(
             {
                 "family": catalog["family"],
-                "nlc_item": catalog["nlc_item"],
                 "manifest_doc": catalog["manifest_doc"],
                 "failure_doc": catalog["failure_doc"],
                 "documented_manifested_green_by_lane": lane_counts,
@@ -699,7 +698,7 @@ def build_summary(
                 }
             )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "report_kind": "node_compat_suite_status",
         "status_contract": (
@@ -794,12 +793,12 @@ def build_markdown(summary: dict) -> str:
         ]
     )
     lane_ids = [lane["lane"] for lane in summary["lane_summaries"]]
-    lines.append("| Family | NLC | " + " | ".join(lane_ids) + " |")
-    lines.append("| --- | --- | " + " | ".join("---:" for _ in lane_ids) + " |")
+    lines.append("| Family | " + " | ".join(lane_ids) + " |")
+    lines.append("| --- | " + " | ".join("---:" for _ in lane_ids) + " |")
     for family in summary["family_summaries"]:
         counts = family["documented_manifested_green_by_lane"]
         lines.append(
-            f"| `{family['family']}` | `{family['nlc_item']}` | "
+            f"| `{family['family']}` | "
             + " | ".join(str(counts.get(lane) or 0) for lane in lane_ids)
             + " |"
         )
@@ -812,7 +811,7 @@ def build_markdown(summary: dict) -> str:
                 f"- ignored Rust node_compat tests: "
                 f"{summary['rust_ignore_count']}"
             ),
-            "- source: `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`",
+            "- source: `crates/nimbus-runtime/src/runtime/tests/node/`",
             "",
             "## Expectation Catalog",
             "",

@@ -55,7 +55,8 @@ mod queries;
 mod subscriptions;
 
 pub(crate) use provider_fixtures::{
-    expect_external_provider_future_within, require_explicit_external_provider_fixture_envs,
+    expect_external_provider_future_within, implicit_external_provider_fixtures_disabled,
+    require_explicit_external_provider_fixture_envs,
 };
 
 pub(crate) fn tasks_table() -> TableName {

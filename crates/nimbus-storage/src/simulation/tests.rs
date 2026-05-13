@@ -136,22 +136,23 @@ async fn generated_task_history_async_replay_preserves_slot_bindings() {
 }
 
 #[test]
-fn verification_harness_seed_corpus_has_explicit_pr_and_nightly_modes() {
-    let pr = generated_task_history_seed_corpus(VerificationHarnessMode::PullRequest);
+fn verification_harness_seed_corpus_has_explicit_required_and_nightly_modes() {
+    let required = generated_task_history_seed_corpus(VerificationHarnessMode::Required);
     let nightly = generated_task_history_seed_corpus(VerificationHarnessMode::Nightly);
 
-    assert_eq!(pr.len(), 2);
+    assert_eq!(required.len(), 2);
     assert!(
-        pr.iter()
-            .all(|case| case.mode == VerificationHarnessMode::PullRequest)
+        required
+            .iter()
+            .all(|case| case.mode == VerificationHarnessMode::Required)
     );
-    assert!(nightly.len() > pr.len());
+    assert!(nightly.len() > required.len());
     assert!(
         nightly
             .iter()
             .all(|case| case.mode == VerificationHarnessMode::Nightly)
     );
-    assert!(pr.iter().all(|case| {
+    assert!(required.iter().all(|case| {
         nightly
             .iter()
             .any(|nightly_case| nightly_case.id == case.id)
@@ -174,12 +175,12 @@ fn verification_harness_seed_corpus_can_filter_to_one_named_case() {
 
 #[test]
 fn verification_harness_seed_case_formats_deterministic_repro_command() {
-    let case = generated_task_history_seed_corpus(VerificationHarnessMode::PullRequest)[1];
+    let case = generated_task_history_seed_corpus(VerificationHarnessMode::Required)[1];
     assert_eq!(
         case.repro_command(
             "nimbus-engine",
-            "verification_harness_pr_generated_history_seed_corpus_matches_model"
+            "verification_harness_required_generated_history_seed_corpus_matches_model"
         ),
-        "NIMBUS_VERIFY_CASE=regression-two-page-pagination-41 cargo test -p nimbus-engine verification_harness_pr_generated_history_seed_corpus_matches_model -- --ignored --nocapture"
+        "NIMBUS_VERIFY_CASE=regression-two-page-pagination-41 cargo test -p nimbus-engine verification_harness_required_generated_history_seed_corpus_matches_model -- --ignored --nocapture"
     );
 }

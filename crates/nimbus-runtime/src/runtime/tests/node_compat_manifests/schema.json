@@ -226,7 +226,6 @@
       "required": [
         "schema_version",
         "family",
-        "nlc_item",
         "batch_constant",
         "execution_class",
         "presets",
@@ -243,10 +242,6 @@
         "family": {
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
-        },
-        "nlc_item": {
-          "type": "string",
-          "pattern": "^(NLC[0-9]+|NCF[0-9]+)$"
         },
         "batch_constant": {
           "type": "string",

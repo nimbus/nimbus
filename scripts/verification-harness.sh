@@ -7,12 +7,12 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/verification-harness.sh pr [storage|engine|server|runtime|all]
+  bash scripts/verification-harness.sh required [storage|engine|server|runtime|all]
   bash scripts/verification-harness.sh nightly [storage|engine|server|runtime|all]
-  bash scripts/verification-harness.sh repro <storage|engine|server|runtime> <pr|nightly> <case-id>
+  bash scripts/verification-harness.sh repro <storage|engine|server|runtime> <required|nightly> <case-id>
 
 Examples:
-  bash scripts/verification-harness.sh pr
+  bash scripts/verification-harness.sh required
   bash scripts/verification-harness.sh nightly engine
   bash scripts/verification-harness.sh repro server nightly adversarial-long-tail-131
 EOF
@@ -35,10 +35,10 @@ surface_test_name() {
   local mode="$1"
   local surface="$2"
   case "${mode}:${surface}" in
-    pr:storage) echo "verification_harness_pr_generated_history_seed_corpus_matches_model" ;;
-    pr:engine) echo "verification_harness_pr_generated_history_seed_corpus_matches_model" ;;
-    pr:server) echo "verification_harness_pr_generated_history_seed_corpus_matches_model" ;;
-    pr:runtime) echo "verification_harness_pr_runtime_liveness_and_integrity_cases" ;;
+    required:storage) echo "verification_harness_required_generated_history_seed_corpus_matches_model" ;;
+    required:engine) echo "verification_harness_required_generated_history_seed_corpus_matches_model" ;;
+    required:server) echo "verification_harness_required_generated_history_seed_corpus_matches_model" ;;
+    required:runtime) echo "verification_harness_required_runtime_liveness_and_integrity_cases" ;;
     nightly:storage) echo "verification_harness_nightly_generated_history_seed_corpus_matches_model" ;;
     nightly:engine) echo "verification_harness_nightly_generated_history_seed_corpus_matches_model" ;;
     nightly:server) echo "verification_harness_nightly_generated_history_seed_corpus_matches_model" ;;
@@ -54,7 +54,7 @@ surface_additional_test_name() {
   local mode="$1"
   local surface="$2"
   case "${mode}:${surface}" in
-    pr:server) echo "verification_harness_pr_transport_liveness_campaigns" ;;
+    required:server) echo "verification_harness_required_transport_liveness_campaigns" ;;
     nightly:server) echo "verification_harness_nightly_transport_liveness_campaigns" ;;
     *) echo "" ;;
   esac
@@ -63,7 +63,7 @@ surface_additional_test_name() {
 server_transport_test_name() {
   local mode="$1"
   case "$mode" in
-    pr) echo "verification_harness_pr_transport_liveness_campaigns" ;;
+    required) echo "verification_harness_required_transport_liveness_campaigns" ;;
     nightly) echo "verification_harness_nightly_transport_liveness_campaigns" ;;
     *)
       echo "unknown verification mode for server transport harness: $mode" >&2
@@ -163,7 +163,7 @@ run_repro() {
 main() {
   local command="${1:-}"
   case "$command" in
-    pr|nightly)
+    required|nightly)
       run_mode "$command" "${2:-all}"
       ;;
     repro)

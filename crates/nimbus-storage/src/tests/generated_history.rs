@@ -306,16 +306,16 @@ fn generated_task_history_matches_model_on_storage_surface() {
 }
 
 #[test]
-#[ignore = "verification harness PR corpus runs in dedicated harness lanes"]
-fn verification_harness_pr_generated_history_seed_corpus_matches_model() {
-    for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::PullRequest)
-        .expect("pull-request corpus should resolve")
+#[ignore = "verification harness required corpus runs in dedicated harness lanes"]
+fn verification_harness_required_generated_history_seed_corpus_matches_model() {
+    for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::Required)
+        .expect("required corpus should resolve")
     {
         let history = case.history("storage-history");
         assert_generated_task_history_matches_model_on_storage_surface(
             &history,
             Some(case),
-            "verification_harness_pr_generated_history_seed_corpus_matches_model",
+            "verification_harness_required_generated_history_seed_corpus_matches_model",
         );
     }
 }

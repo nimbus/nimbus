@@ -7,14 +7,14 @@ const VERIFICATION_CASE_FILTER_ENV: &str = "NIMBUS_VERIFY_CASE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeVerificationHarnessMode {
-    PullRequest,
+    Required,
     Nightly,
 }
 
 impl RuntimeVerificationHarnessMode {
     fn as_str(self) -> &'static str {
         match self {
-            Self::PullRequest => "pr",
+            Self::Required => "required",
             Self::Nightly => "nightly",
         }
     }
@@ -49,7 +49,7 @@ impl RuntimeVerificationHarnessCase {
     }
 }
 
-const PR_RUNTIME_VERIFICATION_CASES: [RuntimeVerificationHarnessCase; 5] = [
+const REQUIRED_RUNTIME_VERIFICATION_CASES: [RuntimeVerificationHarnessCase; 5] = [
     RuntimeVerificationHarnessCase::new(
         super::bundle_integrity::BUNDLE_INTEGRITY_RECHECK_CASE,
         run_bundle_integrity_recheck_after_prior_success_case,
@@ -185,7 +185,7 @@ fn runtime_verification_corpus(
     mode: RuntimeVerificationHarnessMode,
 ) -> &'static [RuntimeVerificationHarnessCase] {
     match mode {
-        RuntimeVerificationHarnessMode::PullRequest => &PR_RUNTIME_VERIFICATION_CASES,
+        RuntimeVerificationHarnessMode::Required => &REQUIRED_RUNTIME_VERIFICATION_CASES,
         RuntimeVerificationHarnessMode::Nightly => &NIGHTLY_RUNTIME_VERIFICATION_CASES,
     }
 }
@@ -251,11 +251,11 @@ fn run_runtime_verification_corpus(mode: RuntimeVerificationHarnessMode, test_na
 }
 
 #[test]
-#[ignore = "verification harness PR corpus runs in dedicated harness lanes"]
-fn verification_harness_pr_runtime_liveness_and_integrity_cases() {
+#[ignore = "verification harness required corpus runs in dedicated harness lanes"]
+fn verification_harness_required_runtime_liveness_and_integrity_cases() {
     run_runtime_verification_corpus(
-        RuntimeVerificationHarnessMode::PullRequest,
-        "verification_harness_pr_runtime_liveness_and_integrity_cases",
+        RuntimeVerificationHarnessMode::Required,
+        "verification_harness_required_runtime_liveness_and_integrity_cases",
     );
 }
 

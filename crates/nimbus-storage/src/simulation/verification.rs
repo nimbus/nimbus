@@ -9,14 +9,14 @@ pub const VERIFICATION_CASE_FILTER_ENV: &str = "NIMBUS_VERIFY_CASE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerificationHarnessMode {
-    PullRequest,
+    Required,
     Nightly,
 }
 
 impl VerificationHarnessMode {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::PullRequest => "pr",
+            Self::Required => "required",
             Self::Nightly => "nightly",
         }
     }
@@ -76,14 +76,14 @@ impl GeneratedTaskHistorySeedCase {
     }
 }
 
-const PR_GENERATED_TASK_HISTORY_CASES: [GeneratedTaskHistorySeedCase; 2] = [
+const REQUIRED_GENERATED_TASK_HISTORY_CASES: [GeneratedTaskHistorySeedCase; 2] = [
     GeneratedTaskHistorySeedCase::new(
         "smoke-storage-baseline-31",
         31,
         24,
         false,
         "baseline smoke seed for cross-surface generated-history replay",
-        VerificationHarnessMode::PullRequest,
+        VerificationHarnessMode::Required,
     ),
     GeneratedTaskHistorySeedCase::new(
         "regression-two-page-pagination-41",
@@ -91,7 +91,7 @@ const PR_GENERATED_TASK_HISTORY_CASES: [GeneratedTaskHistorySeedCase; 2] = [
         48,
         true,
         "regression seed that guarantees multi-page query and pagination coverage",
-        VerificationHarnessMode::PullRequest,
+        VerificationHarnessMode::Required,
     ),
 ];
 
@@ -134,7 +134,7 @@ pub fn generated_task_history_seed_corpus(
     mode: VerificationHarnessMode,
 ) -> &'static [GeneratedTaskHistorySeedCase] {
     match mode {
-        VerificationHarnessMode::PullRequest => &PR_GENERATED_TASK_HISTORY_CASES,
+        VerificationHarnessMode::Required => &REQUIRED_GENERATED_TASK_HISTORY_CASES,
         VerificationHarnessMode::Nightly => &NIGHTLY_GENERATED_TASK_HISTORY_CASES,
     }
 }

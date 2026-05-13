@@ -895,6 +895,9 @@ async fn test_connection() -> Option<TestConnection> {
         "libsql replica engine",
         &[LIBSQL_URL_ENV, LIBSQL_ADMIN_URL_ENV],
     );
+    if implicit_external_provider_fixtures_disabled("libsql replica engine") {
+        return None;
+    }
 
     let image = GenericImage::new("ghcr.io/tursodatabase/libsql-server", "latest")
         .with_wait_for(WaitFor::seconds(1))

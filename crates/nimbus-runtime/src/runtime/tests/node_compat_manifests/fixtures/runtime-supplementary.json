@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "family": "runtime-supplementary",
-  "nlc_item": "NCF3",
   "batch_constant": "RUNTIME_SUPPLEMENTARY_BATCH",
   "execution_class": "sequential",
   "presets": ["Application"],

@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "family": "streams-and-local-io",
-  "nlc_item": "NLC5",
   "batch_constant": "STREAMS_AND_LOCAL_IO_BATCH",
   "execution_class": "sequential",
   "presets": ["Application"],
