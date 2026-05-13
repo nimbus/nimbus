@@ -1,4 +1,4 @@
-name: Node Compatibility Evidence
+name: Node Compatibility
 
 on:
   workflow_dispatch:
@@ -16,8 +16,40 @@ permissions:
   contents: read
 
 jobs:
+  rust-corpus:
+    name: Rust Node Compatibility Corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: node-compat-rust-corpus-ubuntu-stable
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
+
+      - name: Run Rust Node compatibility corpus
+        run: "cargo test -p nimbus-runtime runtime::tests::node_compat:: -- --nocapture --test-threads=1"
+
   node-compat-evidence:
-    name: Nightly Node Compatibility Evidence
+    name: Node Compatibility Evidence
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
