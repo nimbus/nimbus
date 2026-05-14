@@ -32,12 +32,17 @@ exist ahead of the final Fedora 45 release train, but it should not be the
 stable baseline until Fedora 45 is actually released and Nimbus deliberately
 promotes it.
 
-As of the 2026-05-14 refresh, `quay.io/fedora/fedora-bootc:44` resolves to the
-arm64 manifest digest
-`sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94`.
-That refreshed image still carries `selinux-policy-44.1-1.fc44` and
-`bootupd-0.2.33-1.fc44`, so it is the correct freshness update but not, by
-itself, evidence that the Fedora-base `bootupd_t` AVC blocker is resolved.
+As of the later 2026-05-14 release-run refresh,
+`quay.io/fedora/fedora-bootc:44` resolves to the arm64 manifest digest
+`sha256:5f2aa40538a71e32eba8dcdf9059dda10600bac68acef4588cb1aecedcfc6fe2`
+with image version annotation `44.20260514.0`. The prior same-day arm64 digest
+`sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94`
+returned `manifest unknown` during the `v0.1.30` release-candidate build.
+Fedora does not currently publish a matching `44.20260514.0` tag in this
+repository, so the release recipe must continue to pin the current arm64
+digest and let CI pre-pull catch stale pins before artifact publication. This
+freshness update is not, by itself, evidence that the Fedora-base `bootupd_t`
+AVC blocker is resolved.
 
 The target document is intentionally bootc-only. Transition sequencing now
 belongs in `docs/plans/bootc-machine-default-plan.md`; prior MOS0-MOS2 and
