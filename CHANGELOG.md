@@ -7,14 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.29] - 2026-05-14
 
-### Machine OS
+### Documentation
 
-- Include machine-os build and OCI layout evidence assets in the paired release bundle.
-- Harden the machine-os release contract so required evidence assets cannot be dropped from future release uploads.
+- Update CHANGELOG.md for v0.1.28 by @github-actions[bot]
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.28...v0.1.29
 
 ## [0.1.28] - 2026-05-14
+
+
 
 **Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.27...v0.1.28
 
