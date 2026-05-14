@@ -25,7 +25,6 @@ use super::manager::{
 };
 use super::protocol::{
     MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
-    MachineApiBootcUpgradeRequest,
 };
 use super::record::{
     MachineConfigRecord, MachineGuestProvisioning, MachineImageSource, MachineLifecycle,
@@ -797,23 +796,11 @@ fn run_bootc_machine_os_upgrade(
         return Ok(());
     }
 
-    let current_repository = before
-        .booted_image
-        .as_deref()
-        .map(|image| machine_image_reference_repository(&format!("docker://{image}")))
-        .unwrap_or_default();
-    if current_repository == stream.repository {
-        let _operation = client.bootc_upgrade(MachineApiBootcUpgradeRequest {
-            check: false,
-            tag: None,
-        })?;
-    } else {
-        let (transport, image) = bootc_switch_target(&stream.target_image);
-        let _operation = client.bootc_switch(MachineApiBootcSwitchRequest {
-            image,
-            transport: Some(transport),
-        })?;
-    }
+    let (transport, image) = bootc_switch_target(&stream.target_image);
+    let _operation = client.bootc_switch(MachineApiBootcSwitchRequest {
+        image,
+        transport: Some(transport),
+    })?;
     let restarted = if command.restart {
         restart_bootc_machine(paths, config, state)?;
         true
