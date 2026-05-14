@@ -331,6 +331,23 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
                 serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
             )
             .expect("first insert should succeed");
+        wait_for_value(
+            "first trigger cursor should settle before pausing the second commit",
+            mutation_journal_catch_up_timeout(),
+            mutation_journal_poll_interval(),
+            || async {
+                service
+                    .trigger_delivery_cursor_for_testing(&tenant_id)
+                    .expect("trigger delivery cursor should load")
+            },
+            |cursor| cursor.materialized_through == SequenceNumber(1),
+        )
+        .await;
+
+        let pause = service
+            .trigger_candidate_pause_handle_for_testing(&tenant_id)
+            .expect("trigger candidate pause handle should load");
+        pause.arm();
         service
             .insert_document_with_id(
                 &tenant_id,
@@ -339,6 +356,15 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
                 serde_json::Map::from_iter([("title".to_string(), json!("second"))]),
             )
             .expect("second insert should succeed");
+        let pause_for_wait = pause.clone();
+        expect_blocking_wait_reaches_state(
+            "second trigger candidate worker should pause before cursor advance",
+            move |timeout| pause_for_wait.wait_until_entered(timeout),
+        )
+        .await;
+        service
+            .shutdown_trigger_candidates_for_testing(&tenant_id)
+            .expect("paused trigger candidate worker should shut down without advancing cursor");
         service
             .set_trigger_delivery_cursor_for_testing(
                 &tenant_id,

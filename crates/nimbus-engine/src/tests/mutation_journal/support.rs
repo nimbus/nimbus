@@ -9,7 +9,7 @@ pub(super) fn mutation_journal_pending_window() -> Duration {
 }
 
 pub(super) fn mutation_journal_catch_up_timeout() -> Duration {
-    ci_or_local_duration(Duration::from_secs(6), Duration::from_secs(12))
+    ci_or_local_duration(Duration::from_secs(3), Duration::from_secs(6))
 }
 
 pub(super) fn mutation_journal_poll_interval() -> Duration {
