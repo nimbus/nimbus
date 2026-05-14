@@ -14,7 +14,8 @@ pub(super) enum RootCommand {
 pub(super) fn expected_default_machine_image() -> String {
     if cfg!(target_os = "macos") {
         format!(
-            "docker://{DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY}@{DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST}"
+            "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}@{DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST}",
+            current_machine_release_tag()
         )
     } else {
         format!(
@@ -64,7 +65,7 @@ impl Drop for GuestBinaryOverrideEnvGuard {
 
 pub(super) fn supported_stream_current_image_for_upgrade_test() -> String {
     if cfg!(target_os = "macos") {
-        "docker://quay.io/podman/machine-os@sha256:abc123".to_owned()
+        "docker://ghcr.io/nimbus/machine-os:v0.1.29@sha256:abc123".to_owned()
     } else {
         "docker://ghcr.io/nimbus/machine-os:v0.1.0".to_owned()
     }
@@ -72,7 +73,7 @@ pub(super) fn supported_stream_current_image_for_upgrade_test() -> String {
 
 pub(super) fn supported_stream_digest_image_for_upgrade_test() -> String {
     if cfg!(target_os = "macos") {
-        format!("docker://{DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY}@sha256:abc123")
+        format!("docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}@sha256:abc123")
     } else {
         "docker://ghcr.io/nimbus/machine-os@sha256:abc123".to_owned()
     }
@@ -80,7 +81,7 @@ pub(super) fn supported_stream_digest_image_for_upgrade_test() -> String {
 
 pub(super) fn expected_upgrade_target_version() -> String {
     if cfg!(target_os = "macos") {
-        DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST.to_owned()
+        DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST.to_owned()
     } else {
         current_machine_release_tag()
     }

@@ -39,6 +39,27 @@ fn machine_image_reference_repository_strips_tag_and_digest() {
 }
 
 #[test]
+fn build_digest_reference_replaces_tag_and_existing_digest() {
+    let child = build_digest_reference(
+        "docker://ghcr.io/nimbus/machine-os:v0.1.30@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    )
+    .expect("child digest reference should build");
+
+    assert_eq!(child.registry(), "ghcr.io");
+    assert_eq!(child.repository(), "nimbus/machine-os");
+    assert_eq!(child.tag(), None);
+    assert_eq!(
+        child.digest(),
+        Some("sha256:2222222222222222222222222222222222222222222222222222222222222222")
+    );
+    assert_eq!(
+        child.to_string(),
+        "ghcr.io/nimbus/machine-os@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    );
+}
+
+#[test]
 fn podman_machine_os_requires_host_guest_nimbus_sync() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let image_path = temp_dir.path().join("disk.raw");

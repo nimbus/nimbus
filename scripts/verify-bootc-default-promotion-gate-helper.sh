@@ -103,7 +103,9 @@ present aardvark-dns /usr/libexec/podman/aardvark-dns
 present fuse-overlayfs /usr/bin/fuse-overlayfs
 EOF
 cat >"${proof_dir}/guest-nimbus-socket-status.txt" <<'EOF'
-SubState=listening
+LoadState=loaded
+ActiveState=active
+SubState=running
 EOF
 cat >"${proof_dir}/guest-nimbus-service-status.txt" <<'EOF'
 SubState=running

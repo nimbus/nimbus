@@ -131,9 +131,9 @@ fn machine_init_writes_config_and_status_files() {
     );
     assert_eq!(
         config.guest.provisioning,
-        MachineGuestProvisioning::Ignition
+        MachineGuestProvisioning::BootcMachineConfig
     );
-    assert_eq!(config.guest.ssh_user, DEFAULT_MACHINE_SSH_USER);
+    assert_eq!(config.guest.ssh_user, DEFAULT_BOOTC_MACHINE_SSH_USER);
     assert_eq!(config.guest.ssh_identity_path, None);
     assert_eq!(config.guest.ignition_file_path, None);
     assert_eq!(config.guest.efi_variable_store_path, None);

@@ -14,7 +14,7 @@ fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
                 cpus: DEFAULT_MACHINE_CPUS,
                 memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
                 disk_gib: DEFAULT_MACHINE_DISK_GIB,
-                image: "docker://ghcr.io/nimbus/machine-os:v0.1.0".to_owned(),
+                image: "docker://quay.io/podman/machine-os@sha256:legacy".to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
                 bootc_native: false,
@@ -36,10 +36,7 @@ fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
         MachineCommand {
             command: MachineSubcommand::Os(MachineOsCommand {
                 command: MachineOsSubcommand::Apply(MachineOsApplyCommand {
-                    image: format!(
-                        "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
-                        current_machine_release_tag()
-                    ),
+                    image: default_machine_image(),
                     restart: false,
                 }),
             }),
@@ -58,12 +55,15 @@ fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
     assert_eq!(
         config.guest.image_source,
         MachineImageSource::OciReference {
-            reference: format!(
-                "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
-                current_machine_release_tag()
-            ),
+            reference: default_machine_image(),
         }
     );
+    assert_eq!(
+        config.guest.provisioning,
+        MachineGuestProvisioning::BootcMachineConfig
+    );
+    assert_eq!(config.guest.ssh_user, DEFAULT_BOOTC_MACHINE_SSH_USER);
+    assert_eq!(config.guest.ignition_file_path, None);
     assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
     assert_eq!(state.manager, MachineManagerState::Unconfigured);
     assert!(!paths.materialized_image_path.exists());
@@ -71,7 +71,7 @@ fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
 }
 
 #[test]
-fn bootc_native_init_requires_explicit_image_before_default_promotion() {
+fn default_nimbus_image_initializes_bootc_native_machine_config() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::new(
         temp_dir.path().join("config"),
@@ -79,7 +79,7 @@ fn bootc_native_init_requires_explicit_image_before_default_promotion() {
         temp_dir.path().join("runtime"),
     );
 
-    let error = run_machine_command_for_test(
+    run_machine_command_for_test(
         MachineCommand {
             command: MachineSubcommand::Init(MachineInitCommand {
                 cpus: DEFAULT_MACHINE_CPUS,
@@ -88,7 +88,7 @@ fn bootc_native_init_requires_explicit_image_before_default_promotion() {
                 image: default_machine_image(),
                 ssh_identity: None,
                 ignition_file: None,
-                bootc_native: true,
+                bootc_native: false,
                 efi_store: None,
                 volumes: Vec::new(),
                 now: false,
@@ -97,17 +97,19 @@ fn bootc_native_init_requires_explicit_image_before_default_promotion() {
         },
         &layout,
     )
-    .expect_err("bootc-native default image should be blocked before promotion");
+    .expect("default Nimbus image should initialize as bootc-native after promotion");
 
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("requires an explicit --image"),
-        "{rendered}"
+    let config = read_json_file_if_exists::<MachineConfigRecord>(
+        &layout.paths(DEFAULT_MACHINE_NAME).config_path,
+    )
+    .expect("config should read")
+    .expect("config should exist");
+    assert_eq!(
+        config.guest.provisioning,
+        MachineGuestProvisioning::BootcMachineConfig
     );
-    assert!(
-        !layout.paths(DEFAULT_MACHINE_NAME).config_path.exists(),
-        "failed init must not persist a machine config"
-    );
+    assert_eq!(config.guest.ssh_user, DEFAULT_BOOTC_MACHINE_SSH_USER);
+    assert_eq!(config.guest.ignition_file_path, None);
 }
 
 #[test]
@@ -159,7 +161,7 @@ fn machine_os_upgrade_plan_uses_supported_stream_target() {
 }
 
 #[test]
-fn host_managed_macos_stream_uses_podman_repository_contract() {
+fn default_macos_stream_uses_nimbus_bootc_contract() {
     let config = MachineConfigRecord {
         version: CURRENT_MACHINE_CONFIG_VERSION,
         name: DEFAULT_MACHINE_NAME.to_owned(),
@@ -190,10 +192,7 @@ fn host_managed_macos_stream_uses_podman_repository_contract() {
     let desired = desired_machine_image_source(&config);
 
     assert_eq!(desired, config.guest.image_source);
-    assert_eq!(
-        uses_host_managed_machine_image_contract(&config),
-        cfg!(target_os = "macos")
-    );
+    assert!(!uses_host_managed_machine_image_contract(&config));
 }
 
 #[test]
@@ -228,6 +227,10 @@ fn explicit_podman_override_does_not_get_rewritten_to_default_digest() {
     assert_eq!(
         desired_machine_image_source(&config),
         config.guest.image_source
+    );
+    assert_eq!(
+        uses_host_managed_machine_image_contract(&config),
+        cfg!(target_os = "macos")
     );
 }
 

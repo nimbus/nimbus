@@ -61,7 +61,7 @@ OUT
   exit 0
 fi
 
-if [[ "\${1:-}" != "service" ]]; then
+if [[ "\${1:-}" != "compose" ]]; then
   echo "unexpected args: \$*" >&2
   exit 64
 fi
@@ -107,7 +107,7 @@ OUT
   status: starting
 OUT
     ;;
-  list)
+  ps)
     if [[ "\$(cat "\${state_file}")" == "down" ]]; then
       echo "[]"
     else
@@ -153,7 +153,7 @@ OUT
 OUT
     fi
     ;;
-  ps)
+  top)
     cat <<'OUT'
 runtime_pid: 2002
 conmon_pid: 1001
@@ -178,7 +178,7 @@ OUT
 OUT
     ;;
   *)
-    echo "unexpected service args: \$subcommand \$*" >&2
+    echo "unexpected compose args: \$subcommand \$*" >&2
     exit 64
     ;;
 esac

@@ -9,12 +9,12 @@ usage() {
 usage: collect-nimbus-machine-service-proof.sh --compose-file <path> --service <name> [options]
 
 Collect host-side proof for the macOS forwarded machine-API and explicit
-`nimbus service ...` workflow. This is the checked-in MAC5/MAC6/MAC7 evidence
+`nimbus compose ...` workflow. This is the checked-in MAC5/MAC6/MAC7 evidence
 lane for:
 
 - host `<machine>-api.sock` health and capabilities
 - direct host-side machine-API sandbox listing through the forwarded socket
-- `nimbus service up/list/inspect/ps/logs/down` against a container-backed
+- `nimbus compose up/ps/inspect/top/logs/down` against a container-backed
   image-backed or build-backed Compose project
 - optional localhost connectivity proof for one published guest service
 
@@ -271,13 +271,13 @@ capture_command \
   "capture.service_config" \
   "${output_dir}/service-config-command.txt" \
   "${output_dir}/service-config.txt" \
-  "${base_cmd[@]}" service config --file "${compose_file}" || true
+  "${base_cmd[@]}" compose config --file "${compose_file}" || true
 
 capture_command \
   "capture.service_up" \
   "${output_dir}/service-up-command.txt" \
   "${output_dir}/service-up.txt" \
-  "${base_cmd[@]}" service up --file "${compose_file}" || true
+  "${base_cmd[@]}" compose up --file "${compose_file}" || true
 
 capture_command_with_retries \
   "capture.service_ready" \
@@ -286,7 +286,7 @@ capture_command_with_retries \
   '^[[:space:]]*status: ready$|"status"[[:space:]]*:[[:space:]]*"ready"' \
   '^[[:space:]]*status: (failed|stopped)$|"status"[[:space:]]*:[[:space:]]*"(failed|stopped)"' \
   30 \
-  "${base_cmd[@]}" service inspect "${service_name}" --file "${compose_file}" || true
+  "${base_cmd[@]}" compose inspect "${service_name}" --file "${compose_file}" || true
 
 capture_command \
   "capture.machine_api_service_sandboxes" \
@@ -298,19 +298,19 @@ capture_command \
   "capture.service_list" \
   "${output_dir}/service-list-command.txt" \
   "${output_dir}/service-list.txt" \
-  "${base_cmd[@]}" service list --file "${compose_file}" || true
+  "${base_cmd[@]}" compose ps --file "${compose_file}" || true
 
 capture_command \
   "capture.service_ps" \
   "${output_dir}/service-ps-command.txt" \
   "${output_dir}/service-ps.txt" \
-  "${base_cmd[@]}" service ps "${service_name}" --file "${compose_file}" || true
+  "${base_cmd[@]}" compose top "${service_name}" --file "${compose_file}" || true
 
 capture_command \
   "capture.service_logs" \
   "${output_dir}/service-logs-command.txt" \
   "${output_dir}/service-logs.txt" \
-  "${base_cmd[@]}" service logs "${service_name}" --file "${compose_file}" || true
+  "${base_cmd[@]}" compose logs "${service_name}" --file "${compose_file}" || true
 
 if [[ -n "${published_url}" ]]; then
   capture_command_with_retries \
@@ -329,12 +329,12 @@ capture_command \
   "capture.service_down" \
   "${output_dir}/service-down-command.txt" \
   "${output_dir}/service-down.txt" \
-  "${base_cmd[@]}" service down --file "${compose_file}" || true
+  "${base_cmd[@]}" compose down --file "${compose_file}" || true
 
 capture_command \
   "capture.service_list_after_down" \
   "${output_dir}/service-list-after-down-command.txt" \
   "${output_dir}/service-list-after-down.txt" \
-  "${base_cmd[@]}" service list --file "${compose_file}" || true
+  "${base_cmd[@]}" compose ps --file "${compose_file}" || true
 
 print_line "result" "captured"
