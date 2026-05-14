@@ -7,13 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.30] - 2026-05-14
 
-### CI/CD
-
-- Require public GHCR readability and stronger SELinux bootupd evidence before machine-os default promotion.
-
 ### Documentation
 
-- Update the bootc machine default plan with the v0.1.29 proof blocker and v0.1.30 candidate requirements.
+- Update CHANGELOG.md for v0.1.29 by @github-actions[bot]
 
 
 
