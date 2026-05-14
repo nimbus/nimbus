@@ -69,6 +69,18 @@ fi
 grep -F "MACHINE_OS_REPOSITORY: nimbus/machine-os" \
   "${tmp_dir}/bad-repository.out" >/dev/null
 
+bad_fedora_drift="${tmp_dir}/bad-fedora-drift.yml"
+sed 's|sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"|sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" quay.io/fedora/fedora-bootc@sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94|' \
+  "${repo_root}/.github/workflows/release.yml" >"${bad_fedora_drift}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_fedora_drift}" \
+  >"${tmp_dir}/bad-fedora-drift.out" 2>&1; then
+  echo "expected release ref contract to reject divergent Fedora bootc image references" >&2
+  exit 1
+fi
+grep -F "release workflow must use one Fedora bootc image reference" \
+  "${tmp_dir}/bad-fedora-drift.out" >/dev/null
+
 bad_build_publish="${tmp_dir}/bad-build-publish.yml"
 awk '
   $0 == "  publish-machine-os:" && inserted == 0 {
@@ -187,4 +199,4 @@ fi
 grep -F "release must contain: needs: [build-linux-arm64, build, publish-machine-os]" \
   "${tmp_dir}/bad-release-needs.out" >/dev/null
 
-printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy repository names, loose run discovery, and build/publish DAG regressions\n'
+printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy repository names, divergent Fedora bootc refs, loose run discovery, and build/publish DAG regressions\n'

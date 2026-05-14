@@ -3,6 +3,8 @@
 
 [sandbox_workspace_write]
 writable_roots = [
-  "/Users/jack/src/github.com/nimbus/deno",
-  "/Users/jack/src/github.com/nimbus/rusty_v8",
+  "~/src/github.com/nimbus/deno",
+  "~/src/github.com/nimbus/rusty_v8",
+  "~/src/github.com/nimbus/nimbus-crun",
+  "~/src/github.com/nimbus/machine-os",
 ]
