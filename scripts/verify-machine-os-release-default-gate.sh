@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: verify-machine-os-release-default-gate.sh --release-dir <path> --expected-tag <vX.Y.Z>
+usage: verify-machine-os-release-default-gate.sh --release-dir <path> --expected-tag <vX.Y.Z> [--require-ghcr-public]
 
 Verify that a nimbus-machine-os release bundle is complete enough to be used
 as the source of a future macOS default digest pin.
@@ -20,9 +20,10 @@ Required release assets:
 - machine-image-reference.txt
 
 Options:
-  --release-dir <path>   Directory containing downloaded machine-os assets
-  --expected-tag <tag>   Nimbus/machine-os release tag, for example v0.1.23
-  -h, --help             Show this help
+  --release-dir <path>     Directory containing downloaded machine-os assets
+  --expected-tag <tag>     Nimbus/machine-os release tag, for example v0.1.23
+  --require-ghcr-public    Require the GHCR image digest to be anonymously pullable
+  -h, --help               Show this help
 EOF
 }
 
@@ -54,8 +55,42 @@ assert_sha256_hex() {
   [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || die "${label} must be 64 hex chars, got '${value}'"
 }
 
+assert_ghcr_anonymous_pull() {
+  local reference="$1"
+  local digest="$2"
+  local repository_path token_response token status manifest_url token_url
+
+  command -v curl >/dev/null 2>&1 || die "curl is required for --require-ghcr-public"
+  [[ "${reference}" == ghcr.io/* ]] || die "GHCR public check requires ghcr.io reference, got ${reference}"
+
+  repository_path="${reference#ghcr.io/}"
+  repository_path="${repository_path%%:*}"
+  [[ -n "${repository_path}" ]] || die "failed to parse GHCR repository path from ${reference}"
+
+  token_url="https://ghcr.io/token?service=ghcr.io&scope=repository:${repository_path}:pull"
+  token_response="$(curl -sS "${token_url}")" || die "failed to request anonymous GHCR pull token for ${repository_path}"
+  token="$(
+    printf '%s\n' "${token_response}" |
+      sed -nE 's/.*"(token|access_token)"[[:space:]]*:[[:space:]]*"([^"]+)".*/\2/p' |
+      head -n 1
+  )"
+
+  [[ -n "${token}" ]] || die "GHCR package ${repository_path} is not anonymously readable; token endpoint did not issue a pull token"
+
+  manifest_url="https://ghcr.io/v2/${repository_path}/manifests/${digest}"
+  status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+      -H "Authorization: Bearer ${token}" \
+      -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+      "${manifest_url}"
+  )" || die "failed to request GHCR manifest ${repository_path}@${digest}"
+
+  [[ "${status}" == "200" ]] || die "GHCR manifest ${repository_path}@${digest} is not anonymously readable; got HTTP ${status}"
+}
+
 release_dir=""
 expected_tag=""
+require_ghcr_public=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -66,6 +101,10 @@ while [[ $# -gt 0 ]]; do
     --expected-tag)
       expected_tag="${2:-}"
       shift 2
+      ;;
+    --require-ghcr-public)
+      require_ghcr_public=1
+      shift
       ;;
     -h|--help)
       usage
@@ -150,5 +189,9 @@ grep -F "${expected_tag}" "${sbom}" >/dev/null || die "SBOM must include embedde
 grep -F "${nimbus_binary_sha256}" "${sbom}" >/dev/null || die "SBOM must include embedded nimbus SHA-256 ${nimbus_binary_sha256}"
 grep -F '"name": "podman"' "${sbom}" >/dev/null || die "SBOM must include podman"
 grep -F "${digest}" "${machine_reference}" >/dev/null || die "machine-image-reference must include the promoted digest"
+
+if [[ "${require_ghcr_public}" -eq 1 ]]; then
+  assert_ghcr_anonymous_pull "${expected_reference}" "${digest}"
+fi
 
 printf 'verified: machine-os release %s has digest, embedded nimbus version/hash, SBOM, checksum, OCI, and bootc promotion evidence\n' "${expected_tag}"

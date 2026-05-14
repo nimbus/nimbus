@@ -86,6 +86,61 @@ bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
   >"${tmp_dir}/good.out"
 grep -F "verified: machine-os release ${expected_tag}" "${tmp_dir}/good.out" >/dev/null
 
+fake_curl_dir="${tmp_dir}/fake-curl-ok"
+mkdir -p "${fake_curl_dir}"
+cat >"${fake_curl_dir}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+last_arg=""
+for arg in "$@"; do
+  last_arg="${arg}"
+done
+if [[ "${last_arg}" == *"/token?"* ]]; then
+  printf '{"token":"fake-anonymous-token"}'
+  exit 0
+fi
+if [[ "${last_arg}" == *"/manifests/sha256:"* ]]; then
+  printf '200'
+  exit 0
+fi
+printf 'unexpected fake curl invocation: %s\n' "$*" >&2
+exit 2
+EOF
+chmod +x "${fake_curl_dir}/curl"
+PATH="${fake_curl_dir}:${PATH}" bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
+  --release-dir "${good_dir}" \
+  --expected-tag "${expected_tag}" \
+  --require-ghcr-public \
+  >"${tmp_dir}/good-public.out"
+grep -F "verified: machine-os release ${expected_tag}" "${tmp_dir}/good-public.out" >/dev/null
+
+fake_private_curl_dir="${tmp_dir}/fake-curl-private"
+mkdir -p "${fake_private_curl_dir}"
+cat >"${fake_private_curl_dir}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+last_arg=""
+for arg in "$@"; do
+  last_arg="${arg}"
+done
+if [[ "${last_arg}" == *"/token?"* ]]; then
+  printf '{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}'
+  exit 0
+fi
+printf 'unexpected fake curl invocation: %s\n' "$*" >&2
+exit 2
+EOF
+chmod +x "${fake_private_curl_dir}/curl"
+if PATH="${fake_private_curl_dir}:${PATH}" bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
+  --release-dir "${good_dir}" \
+  --expected-tag "${expected_tag}" \
+  --require-ghcr-public \
+  >"${tmp_dir}/private-public.out" 2>&1; then
+  echo "expected machine-os release gate to reject private GHCR visibility" >&2
+  exit 1
+fi
+grep -F "not anonymously readable" "${tmp_dir}/private-public.out" >/dev/null
+
 cp -R "${good_dir}/." "${bad_dir}/"
 sed -i.bak 's/disk_type=applehv/disk_type=raw/' "${bad_dir}/oci-layout-summary.txt"
 rm -f "${bad_dir}/oci-layout-summary.txt.bak"
@@ -111,4 +166,4 @@ if bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
 fi
 grep -F "disk_type=applehv" "${tmp_dir}/bad.out" >/dev/null
 
-printf 'verified: machine-os release default gate helper accepts complete evidence and rejects non-applehv artifacts\n'
+printf 'verified: machine-os release default gate helper accepts complete evidence, verifies GHCR public-read checks, and rejects non-applehv artifacts\n'

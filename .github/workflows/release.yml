@@ -571,7 +571,8 @@ jobs:
         run: |
           bash scripts/verify-machine-os-release-default-gate.sh \
             --release-dir "${RELEASE_DIR}" \
-            --expected-tag "${{ github.ref_name }}"
+            --expected-tag "${{ github.ref_name }}" \
+            --require-ghcr-public
 
       - name: Create or update machine-os GitHub release
         env:

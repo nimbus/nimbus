@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-bootc-default-promotion-gate.XXXXXX")"
 trap 'rm -rf "${tmp_dir}"' EXIT
+export NIMBUS_MACHINE_OS_SKIP_GHCR_PUBLIC_CHECK=1
 
 release_dir="${tmp_dir}/release"
 proof_dir="${tmp_dir}/proof"
