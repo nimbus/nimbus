@@ -6,7 +6,8 @@ usage() {
 usage: verify-machine-os-release-ref-contract.sh [--workflow <path>] [--machine-os-repo <path>]
 
 Verify that the Nimbus release workflow builds the nimbus-machine-os bootc
-artifact directly from one explicit source ref inside the release graph.
+artifact from one explicit source ref inside the release graph, then publishes
+it only after the full CLI release target matrix has passed.
 
 This prevents the default release path from drifting back to the older
 cross-repo dispatch/watch handoff or to a separate release-workflow branch.
@@ -19,6 +20,40 @@ EOF
 die() {
   printf '%s\n' "$*" >&2
   exit 1
+}
+
+job_section() {
+  local job_name="$1"
+  awk -v job_name="${job_name}" '
+    $0 ~ "^  " job_name ":" {
+      in_job = 1
+      print
+      next
+    }
+    in_job && $0 ~ "^  [A-Za-z0-9_-]+:" {
+      exit
+    }
+    in_job {
+      print
+    }
+  ' "${workflow_path}"
+}
+
+require_in_section() {
+  local section_name="$1"
+  local section="$2"
+  local needle="$3"
+  grep -F "${needle}" <<<"${section}" >/dev/null || \
+    die "${section_name} must contain: ${needle}"
+}
+
+reject_in_section() {
+  local section_name="$1"
+  local section="$2"
+  local needle="$3"
+  if grep -F "${needle}" <<<"${section}" >/dev/null; then
+    die "${section_name} must not contain: ${needle}"
+  fi
 }
 
 workflow_path=".github/workflows/release.yml"
@@ -74,24 +109,48 @@ if grep -F "gh run watch" "${workflow_path}" >/dev/null; then
   die "release workflow must not watch a second asynchronous machine-os workflow"
 fi
 
-grep -F "build-machine-os:" "${workflow_path}" >/dev/null || \
-  die "release workflow must define build-machine-os"
-grep -F "repository: nimbus/nimbus-machine-os" "${workflow_path}" >/dev/null || \
-  die "release workflow must check out nimbus/nimbus-machine-os"
-grep -F 'ref: ${{ env.MACHINE_OS_SOURCE_REF }}' "${workflow_path}" >/dev/null || \
-  die "machine-os checkout must use MACHINE_OS_SOURCE_REF"
-grep -F "path: nimbus-machine-os" "${workflow_path}" >/dev/null || \
-  die "machine-os checkout must use a stable nimbus-machine-os path"
-grep -F "bash scripts/build.sh" "${workflow_path}" >/dev/null || \
-  die "release workflow must run the machine-os build script in the release graph"
-grep -F "bash scripts/package-oci.sh" "${workflow_path}" >/dev/null || \
-  die "release workflow must package the machine-os OCI artifact in the release graph"
-grep -F "bash scripts/publish.sh" "${workflow_path}" >/dev/null || \
-  die "release workflow must publish the machine-os OCI artifact in the release graph"
-grep -F "bash scripts/verify-machine-os-release-default-gate.sh" "${workflow_path}" >/dev/null || \
-  die "release workflow must run the machine-os release default gate before creating releases"
-grep -F "needs: [build-linux-arm64, build, build-machine-os]" "${workflow_path}" >/dev/null || \
-  die "Nimbus release job must depend on build-machine-os"
+build_machine_os_section="$(job_section build-machine-os)"
+publish_machine_os_section="$(job_section publish-machine-os)"
+release_section="$(job_section release)"
+
+[[ -n "${build_machine_os_section}" ]] || die "release workflow must define build-machine-os"
+[[ -n "${publish_machine_os_section}" ]] || die "release workflow must define publish-machine-os"
+[[ -n "${release_section}" ]] || die "release workflow must define release"
+
+require_in_section build-machine-os "${build_machine_os_section}" "needs: [build-linux-arm64]"
+require_in_section build-machine-os "${build_machine_os_section}" "contents: read"
+require_in_section build-machine-os "${build_machine_os_section}" "repository: nimbus/nimbus-machine-os"
+require_in_section build-machine-os "${build_machine_os_section}" 'ref: ${{ env.MACHINE_OS_SOURCE_REF }}'
+require_in_section build-machine-os "${build_machine_os_section}" "path: nimbus-machine-os"
+require_in_section build-machine-os "${build_machine_os_section}" "machine_os_source_revision:"
+require_in_section build-machine-os "${build_machine_os_section}" "bash scripts/build.sh"
+require_in_section build-machine-os "${build_machine_os_section}" "bash scripts/package-oci.sh"
+require_in_section build-machine-os "${build_machine_os_section}" "name: nimbus-machine-os-arm64-staged"
+require_in_section build-machine-os "${build_machine_os_section}" '${{ env.LAYOUT_DIR }}/**'
+reject_in_section build-machine-os "${build_machine_os_section}" "packages: write"
+reject_in_section build-machine-os "${build_machine_os_section}" "id-token: write"
+reject_in_section build-machine-os "${build_machine_os_section}" "attestations: write"
+reject_in_section build-machine-os "${build_machine_os_section}" "permission-packages: write"
+reject_in_section build-machine-os "${build_machine_os_section}" "bash scripts/publish.sh"
+reject_in_section build-machine-os "${build_machine_os_section}" "bash scripts/verify-machine-os-release-default-gate.sh"
+reject_in_section build-machine-os "${build_machine_os_section}" "gh release"
+reject_in_section build-machine-os "${build_machine_os_section}" "actions/attest"
+
+require_in_section publish-machine-os "${publish_machine_os_section}" "needs: [build-linux-arm64, build, build-machine-os]"
+require_in_section publish-machine-os "${publish_machine_os_section}" "packages: write"
+require_in_section publish-machine-os "${publish_machine_os_section}" "id-token: write"
+require_in_section publish-machine-os "${publish_machine_os_section}" "attestations: write"
+require_in_section publish-machine-os "${publish_machine_os_section}" "repository: nimbus/nimbus-machine-os"
+require_in_section publish-machine-os "${publish_machine_os_section}" 'ref: ${{ needs.build-machine-os.outputs.machine_os_source_revision }}'
+require_in_section publish-machine-os "${publish_machine_os_section}" "name: nimbus-machine-os-arm64-staged"
+require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/publish.sh"
+require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/verify-machine-os-release-default-gate.sh"
+require_in_section publish-machine-os "${publish_machine_os_section}" "gh release create"
+require_in_section publish-machine-os "${publish_machine_os_section}" "actions/attest@v4"
+require_in_section publish-machine-os "${publish_machine_os_section}" "name: nimbus-machine-os-arm64-release"
+
+require_in_section release "${release_section}" "needs: [build-linux-arm64, build, publish-machine-os]"
+reject_in_section release "${release_section}" "needs: [build-linux-arm64, build, build-machine-os]"
 
 if [[ -n "${machine_os_repo}" ]]; then
   [[ -d "${machine_os_repo}" ]] || die "machine-os repo not found: ${machine_os_repo}"
@@ -117,4 +176,4 @@ if [[ -n "${machine_os_repo}" ]]; then
   fi
 fi
 
-printf 'verified: machine-os release source contract builds nimbus/nimbus-machine-os@%s inside the release graph\n' "${source_ref}"
+printf 'verified: machine-os release source contract builds nimbus/nimbus-machine-os@%s in a staged job and publishes only after release targets pass\n' "${source_ref}"
