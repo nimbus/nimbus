@@ -56,11 +56,11 @@ jobs:
           MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
         run: |
           if [[ -z "${MACHINE_OS_RELEASE_APP_ID}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_ID must be configured so this workflow can check out nimbus-machine-os, publish GHCR artifacts, and create the matching machine-os release." >&2
+            echo "MACHINE_OS_RELEASE_APP_ID must be configured so this workflow can check out nimbus-machine-os and create the matching machine-os release." >&2
             exit 1
           fi
           if [[ -z "${MACHINE_OS_RELEASE_APP_PRIVATE_KEY}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so this workflow can check out nimbus-machine-os, publish GHCR artifacts, and create the matching machine-os release." >&2
+            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so this workflow can check out nimbus-machine-os and create the matching machine-os release." >&2
             exit 1
           fi
 
@@ -434,7 +434,6 @@ jobs:
           owner: nimbus
           repositories: nimbus-machine-os
           permission-contents: write
-          permission-packages: write
 
       - name: Check out machine-os repository
         uses: actions/checkout@v6
@@ -511,8 +510,8 @@ jobs:
 
       - name: Publish packaged OCI artifact
         env:
-          NIMBUS_MACHINE_OS_REGISTRY_USERNAME: ${{ steps.machine_os_token.outputs.app-slug != '' && format('{0}[bot]', steps.machine_os_token.outputs.app-slug) || github.actor }}
-          NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ steps.machine_os_token.outputs.token }}
+          NIMBUS_MACHINE_OS_REGISTRY_USERNAME: ${{ github.actor }}
+          NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd "${MACHINE_OS_DIR}"
           bash scripts/publish.sh \

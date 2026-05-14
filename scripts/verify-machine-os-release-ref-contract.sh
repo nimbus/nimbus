@@ -143,11 +143,15 @@ require_in_section publish-machine-os "${publish_machine_os_section}" "attestati
 require_in_section publish-machine-os "${publish_machine_os_section}" "repository: nimbus/nimbus-machine-os"
 require_in_section publish-machine-os "${publish_machine_os_section}" 'ref: ${{ needs.build-machine-os.outputs.machine_os_source_revision }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" "name: nimbus-machine-os-arm64-staged"
+require_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_USERNAME: ${{ github.actor }}'
+require_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/publish.sh"
 require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/verify-machine-os-release-default-gate.sh"
 require_in_section publish-machine-os "${publish_machine_os_section}" "gh release create"
 require_in_section publish-machine-os "${publish_machine_os_section}" "actions/attest@v4"
 require_in_section publish-machine-os "${publish_machine_os_section}" "name: nimbus-machine-os-arm64-release"
+reject_in_section publish-machine-os "${publish_machine_os_section}" "permission-packages: write"
+reject_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ steps.machine_os_token.outputs.token }}'
 
 require_in_section release "${release_section}" "needs: [build-linux-arm64, build, publish-machine-os]"
 reject_in_section release "${release_section}" "needs: [build-linux-arm64, build, build-machine-os]"
