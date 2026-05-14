@@ -1,6 +1,6 @@
 {
   "name": "@nimbus/firebase",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",

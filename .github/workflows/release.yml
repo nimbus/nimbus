@@ -559,6 +559,8 @@ jobs:
           Included assets:
           - \`nimbus-machine-os.raw.gz\`
           - \`nimbus-machine-os.sbom.cdx.json\`
+          - \`build-summary.txt\`
+          - \`oci-layout-summary.txt\`
           - \`checksums.txt\`
           - \`publish-summary.txt\`
           - \`published-digests.txt\`
@@ -581,6 +583,8 @@ jobs:
           assets=(
             "${BUILD_OUTPUT_DIR}/nimbus-machine-os.raw.gz"
             "${BUILD_OUTPUT_DIR}/nimbus-machine-os.sbom.cdx.json"
+            "${RELEASE_DIR}/build-summary.txt"
+            "${RELEASE_DIR}/oci-layout-summary.txt"
             "${RELEASE_DIR}/checksums.txt"
             "${RELEASE_DIR}/publish-summary.txt"
             "${RELEASE_DIR}/published-digests.txt"
@@ -609,6 +613,8 @@ jobs:
             ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.ociarchive
             ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.raw.gz
             ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.sbom.cdx.json
+            ${{ env.RELEASE_DIR }}/build-summary.txt
+            ${{ env.RELEASE_DIR }}/oci-layout-summary.txt
             ${{ env.RELEASE_DIR }}/checksums.txt
             ${{ env.RELEASE_DIR }}/published-digests.txt
             ${{ env.RELEASE_DIR }}/machine-image-reference.txt
@@ -619,11 +625,11 @@ jobs:
           name: nimbus-machine-os-arm64-release
           if-no-files-found: error
           path: |
-            ${{ env.BUILD_OUTPUT_DIR }}/summary.txt
             ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.raw.gz
             ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.sbom.cdx.json
-            ${{ env.LAYOUT_DIR }}/summary.txt
             ${{ env.LAYOUT_DIR }}/index.json
+            ${{ env.RELEASE_DIR }}/build-summary.txt
+            ${{ env.RELEASE_DIR }}/oci-layout-summary.txt
             ${{ env.RELEASE_DIR }}/checksums.txt
             ${{ env.RELEASE_DIR }}/publish-summary.txt
             ${{ env.RELEASE_DIR }}/published-digests.txt

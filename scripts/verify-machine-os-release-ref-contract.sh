@@ -147,6 +147,8 @@ require_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MA
 require_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/publish.sh"
 require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/verify-machine-os-release-default-gate.sh"
+require_in_section publish-machine-os "${publish_machine_os_section}" '${RELEASE_DIR}/build-summary.txt'
+require_in_section publish-machine-os "${publish_machine_os_section}" '${RELEASE_DIR}/oci-layout-summary.txt'
 require_in_section publish-machine-os "${publish_machine_os_section}" "gh release create"
 require_in_section publish-machine-os "${publish_machine_os_section}" "actions/attest@v4"
 require_in_section publish-machine-os "${publish_machine_os_section}" "name: nimbus-machine-os-arm64-release"
