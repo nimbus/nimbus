@@ -12,11 +12,16 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
+use super::DEFAULT_BOOTC_MACHINE_SSH_USER;
 use super::command::MachineGuestConfigApplyCommand;
+#[cfg(any(unix, test))]
 use super::files::write_json_file;
+#[cfg(any(unix, test))]
 use super::manager::mount_tag;
-use super::{DEFAULT_BOOTC_MACHINE_SSH_USER, MachineConfigRecord, MachinePaths, MachineVolume};
+#[cfg(any(unix, test))]
+use super::{MachineConfigRecord, MachinePaths, MachineVolume};
 
+#[cfg(any(unix, test))]
 pub(super) const GUEST_MACHINE_CONFIG_MOUNT_TAG: &str = "nimbus-machine-config";
 const CURRENT_GUEST_MACHINE_CONFIG_VERSION: u32 = 1;
 const GUEST_MACHINE_CONFIG_EVIDENCE_PATH: &str =
@@ -24,6 +29,7 @@ const GUEST_MACHINE_CONFIG_EVIDENCE_PATH: &str =
 const GUEST_NIMBUS_CONTROL_DIR: &str = "/var/lib/nimbus/control";
 const GUEST_NIMBUS_DATA_DIR: &str = "/var/lib/nimbus/data";
 const GUEST_NIMBUS_RUN_DIR: &str = "/run/nimbus";
+#[cfg(any(unix, test))]
 const VIRTIOFS_SELINUX_CONTEXT: &str = "system_u:object_r:nfs_t:s0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +101,7 @@ impl GuestConfigApplyOptions {
     }
 }
 
+#[cfg(any(unix, test))]
 pub(super) fn render_machine_config_bundle(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
@@ -211,6 +218,7 @@ fn apply_machine_guest_config_with_options(
     Ok(())
 }
 
+#[cfg(any(unix, test))]
 fn read_authorized_key(identity_path: &Path, machine_name: &str) -> Result<String, Error> {
     let public_key_path = PathBuf::from(format!("{}.pub", identity_path.display()));
     let raw = fs::read_to_string(&public_key_path).map_err(|error| {
@@ -231,6 +239,7 @@ fn read_authorized_key(identity_path: &Path, machine_name: &str) -> Result<Strin
     Ok(key.to_owned())
 }
 
+#[cfg(any(unix, test))]
 fn volume_config(volume: &MachineVolume) -> VolumeConfig {
     VolumeConfig {
         source: volume.source.clone(),
@@ -768,6 +777,7 @@ fn file_sha256(path: &Path) -> Result<String, Error> {
     Ok(format!("{:x}", Sha256::digest(&bytes)))
 }
 
+#[cfg(any(unix, test))]
 fn remove_dir_if_exists(path: &Path) -> Result<(), Error> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
