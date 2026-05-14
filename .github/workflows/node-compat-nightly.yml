@@ -83,8 +83,8 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
-            tests/node-compat/networking-canaries/package-lock.json
-            tests/node-compat/tooling-canaries/package-lock.json
+            tests/runtime/node/networking-canaries/package-lock.json
+            tests/runtime/node/tooling-canaries/package-lock.json
 
       - name: Emit seeded slice reports
         run: |
