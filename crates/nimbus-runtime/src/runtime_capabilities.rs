@@ -657,6 +657,7 @@ fn is_executable_candidate(path: &Path, metadata: &std::fs::Metadata) -> bool {
     }
     #[cfg(windows)]
     {
+        let _ = metadata;
         path.extension()
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| {

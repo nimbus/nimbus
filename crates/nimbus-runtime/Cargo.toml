@@ -47,6 +47,9 @@ tracing.workspace = true
 twox-hash.workspace = true
 url.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [dev-dependencies]
 criterion = "0.8.2"
 tracing-subscriber.workspace = true
