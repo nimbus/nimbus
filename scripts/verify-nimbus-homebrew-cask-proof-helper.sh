@@ -6,19 +6,26 @@ tmp_base="${TMPDIR:-/tmp}"
 tmp_base="${tmp_base%/}"
 tmp_dir="$(mktemp -d "${tmp_base}/nimbus-homebrew-cask-proof-verify.XXXXXX")"
 tmp_dir="$(cd "${tmp_dir}" && pwd)"
+runtime_tmp_base="/private/tmp"
+if [[ ! -d "${runtime_tmp_base}" ]]; then
+  runtime_tmp_base="/tmp"
+fi
+short_runtime_root="$(mktemp -d "${runtime_tmp_base}/nimbus-homebrew-runtime.XXXXXX")"
 cleanup() {
   local status="$1"
   if [[ "${status}" -eq 0 ]]; then
     rm -rf "${tmp_dir}"
+    rm -rf "${short_runtime_root}"
   else
     echo "debug: preserved helper tmp dir at ${tmp_dir}" >&2
+    echo "debug: preserved helper runtime root at ${short_runtime_root}" >&2
   fi
 }
 trap 'cleanup "$?"' EXIT
 
 output_dir="${tmp_dir}/output"
 home_dir="${tmp_dir}/home"
-runtime_root="${tmp_dir}/runtime-root"
+runtime_root="${short_runtime_root}"
 bin_dir="${tmp_dir}/bin"
 brew_prefix="${tmp_dir}/brew-prefix"
 tap_root="${tmp_dir}/taps"
@@ -49,6 +56,9 @@ host_version="__HOST_VERSION__"
 runtime_root="${NIMBUS_MACHINE_RUNTIME_ROOT:-/tmp/nimbus}"
 machine_name="default"
 machine_log="${runtime_root%/}/${machine_name}.log"
+api_socket="${runtime_root%/}/${machine_name}-api.sock"
+api_pid="${runtime_root%/}/${machine_name}-api.pid"
+identity_record="${runtime_root%/}/${machine_name}.identity"
 
 brew_prefix="$(cd "$(dirname "$0")/.." && pwd)"
 gvproxy_path="${brew_prefix}/Caskroom/nimbus-dev/${host_version}/libexec/gvproxy"
@@ -68,6 +78,22 @@ shift 2
 
 case "${subcommand}" in
   init)
+    identity_path=""
+    while [[ "$#" -gt 0 ]]; do
+      case "$1" in
+        --identity)
+          identity_path="${2:?missing identity path}"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    if [[ -n "${identity_path}" ]]; then
+      mkdir -p "$(dirname "${identity_record}")"
+      printf '%s\n' "${identity_path}" > "${identity_record}"
+    fi
     printf 'result: initialized\n' >&2
     ;;
   start)
@@ -77,6 +103,109 @@ booting ${machine_name}
 guest nimbus ${host_version}
 machine ready
 OUT
+    if [[ -f "${api_pid}" ]]; then
+      kill "$(cat "${api_pid}")" >/dev/null 2>&1 || true
+      rm -f "${api_pid}"
+    fi
+    rm -f "${api_socket}"
+    python3 - "${api_socket}" <<'PY' >"${runtime_root%/}/${machine_name}-api.log" 2>&1 &
+import json
+import os
+import socket
+import sys
+
+socket_path = sys.argv[1]
+try:
+    os.unlink(socket_path)
+except FileNotFoundError:
+    pass
+
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(socket_path)
+server.listen(16)
+
+bootc_status = {
+    "status": {
+        "status": {
+            "booted": {
+                "image": {
+                    "image": {
+                        "image": "ghcr.io/nimbus/nimbus-machine-os:v9.9.9"
+                    },
+                    "imageDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+                }
+            },
+            "staged": None,
+            "rollback": None,
+        }
+    },
+    "booted_image": "ghcr.io/nimbus/nimbus-machine-os:v9.9.9",
+    "booted_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    "staged_image": None,
+    "staged_digest": None,
+    "rollback_image": None,
+    "rollback_digest": None,
+}
+
+responses = {
+    "/healthz": {
+        "status": "ok",
+        "role": "guest-machine-api",
+        "protocol_version": "v1alpha2",
+    },
+    "/v1/machine-api/capabilities": {
+        "protocol_version": "v1alpha2",
+        "service_execution_ready": True,
+        "service_execution_mode": "standard_containers",
+        "supported_service_backends": ["container"],
+        "supported_operations": [
+            "healthz",
+            "capabilities",
+            "service-sandboxes.image-start",
+            "service-sandboxes.stop",
+            "service-sandboxes.logs",
+            "os.bootc.status",
+            "os.bootc.switch",
+            "os.bootc.upgrade",
+            "os.bootc.rollback",
+        ],
+        "binary_statuses": [],
+        "operation_statuses": [],
+        "service_execution_blockers": [],
+    },
+    "/v1/machine-api/os/bootc/status": bootc_status,
+}
+
+while True:
+    connection, _ = server.accept()
+    with connection:
+        request = connection.recv(4096).decode("utf-8", "replace")
+        first_line = request.splitlines()[0] if request else ""
+        parts = first_line.split()
+        request_path = parts[1] if len(parts) >= 2 else "/"
+        body_object = responses.get(request_path)
+        if body_object is None:
+            status = "404 Not Found"
+            body = json.dumps({"error": "not found"}, separators=(",", ":"))
+        else:
+            status = "200 OK"
+            body = json.dumps(body_object, separators=(",", ":"))
+        response = (
+            f"HTTP/1.1 {status}\r\n"
+            "content-type: application/json\r\n"
+            f"content-length: {len(body.encode('utf-8'))}\r\n"
+            "\r\n"
+            f"{body}"
+        )
+        connection.sendall(response.encode("utf-8"))
+PY
+    printf '%s\n' "$!" > "${api_pid}"
+    for _ in $(seq 1 50); do
+      if [[ -S "${api_socket}" ]]; then
+        break
+      fi
+      sleep 0.1
+    done
     printf 'result: started\n' >&2
     ;;
   status)
@@ -95,13 +224,31 @@ guest_binary_contract:
   desired_version: v${host_version}
 OUT
     ;;
+  inspect)
+    cat <<OUT
+{"config":{"guest":{}},"state":{"runtime":{"ssh_port":10000}}}
+OUT
+    ;;
   stop)
+    if [[ -f "${api_pid}" ]]; then
+      kill "$(cat "${api_pid}")" >/dev/null 2>&1 || true
+      rm -f "${api_pid}"
+    fi
+    rm -f "${api_socket}"
     printf 'result: stopped\n' >&2
     ;;
   rm)
+    if [[ -f "${api_pid}" ]]; then
+      kill "$(cat "${api_pid}")" >/dev/null 2>&1 || true
+      rm -f "${api_pid}"
+    fi
+    rm -f "${api_socket}" "${identity_record}"
     printf 'result: removed\n' >&2
     ;;
   ssh)
+    if [[ "${1:-}" == "${machine_name}" ]]; then
+      shift
+    fi
     if [[ "${1:-}" != "--" ]]; then
       echo "expected machine ssh -- ..." >&2
       exit 64
@@ -142,6 +289,27 @@ SubState=dead
 OUT
     elif [[ "${command_string}" == *"findmnt --noheadings --output TARGET,SOURCE,FSTYPE,OPTIONS -T \"/Users\""* ]]; then
       printf '/Users usershare virtiofs rw,nosuid,nodev,relatime\n'
+    elif [[ "${command_string}" == *"command -v getenforce"* ]]; then
+      printf 'Enforcing\n'
+    elif [[ "${command_string}" == *"rpm -q bootupd selinux-policy selinux-policy-targeted systemd util-linux-core podman crun netavark aardvark-dns bootc policycoreutils"* ]]; then
+      cat <<OUT
+# package versions
+bootupd-0.2.33-1.fc44.aarch64
+selinux-policy-44.1-1.fc44.noarch
+selinux-policy-targeted-44.1-1.fc44.noarch
+systemd-259.5-1.fc44.aarch64
+util-linux-core-2.41.4-7.fc44.aarch64
+podman-5.8.2-1.fc44.aarch64
+crun-1.27.1-1.fc44.aarch64
+netavark-1.17.2-1.fc44.aarch64
+aardvark-dns-1.17.2-1.fc44.aarch64
+bootc-1.15.2-1.fc44.aarch64
+policycoreutils-3.9-1.fc44.aarch64
+# bootloader units
+bootloader-update.service enabled
+# bootloader-update.service
+ExecStart=/usr/bin/bootupctl update
+OUT
     elif [[ "${command_string}" == *"http://localhost/healthz"* ]]; then
       cat <<OUT
 HTTP/1.1 200 OK
