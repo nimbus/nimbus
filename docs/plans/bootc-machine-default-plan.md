@@ -4,10 +4,10 @@ Canonical execution plan for pivoting Nimbus macOS machine OS work away from
 the abandoned MOS3A/FCOS-derived build path and toward a direct bootc-native
 Nimbus machine image.
 
-The current shipped default remains the pinned Podman machine image until the
-bootc-native path proves parity. Do not promote a Nimbus-owned image, delete
-legacy host mutation code, or remove the Podman fallback until this plan's
-proof gates are complete.
+BMD6 has promoted the proven Nimbus-owned bootc image as the checked-in macOS
+default. The Podman-compatible image remains available only as an explicit
+compatibility/repair override until BMD7 decides whether to remove or further
+demote that path.
 
 ---
 
@@ -37,50 +37,49 @@ also exposed a release-infrastructure mismatch:
 - The local rootful Podman proof built the FCOS-derived OCI image but failed
   raw disk conversion in BIB/osbuild before producing an AppleHV artifact.
 
-Therefore Nimbus should not spend more implementation effort making MOS3A work
-as a default. The plan is now:
+Therefore Nimbus did not spend more implementation effort making MOS3A work as
+a default. This plan's executed path was:
 
-1. keep the current pinned Podman image as the stable macOS default,
-2. preserve the useful Podman-machine-os-aligned stabilization,
+1. preserve the useful Podman-machine-os-aligned stabilization,
    artifact-contract, and version-baseline work already done,
-3. promote the direct Fedora bootc proof into the primary `nimbus-machine-os`
+2. promote the direct Fedora bootc proof into the primary `machine-os`
    implementation path,
-4. prove the bootc-native guest contract end to end,
-5. replace the macOS default flow that downloads and boots Podman's
-   `machine-os` only after bootc parity succeeds,
-6. then remove legacy FCOS/Podman-image reliance and host-side guest mutation.
+3. prove the bootc-native guest contract end to end,
+4. replace the macOS default flow that downloaded and booted Podman's
+   `machine-os` after bootc parity succeeded,
+5. remove or demote remaining legacy FCOS/Podman-image reliance and
+   host-side guest mutation in BMD7.
 
 ## Current Stable Default
 
-The current macOS default remains:
+The current macOS default after BMD6 is the Nimbus-owned bootc artifact:
 
 ```text
-docker://quay.io/podman/machine-os@sha256:57e19d2a4e3ae698a0f127ec7495067ac4c4df5177625034e1e700aba94ee8c5
+docker://ghcr.io/nimbus/machine-os:v0.1.30@sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d
 ```
 
-This is a stabilization baseline, not the final architecture. It stays in
-place until the bootc-native image passes build, boot, parity, lifecycle, and
-rollback gates below.
+This digest is the immutable output of the paired `v0.1.30` Nimbus and
+machine-os releases. It embeds the matching Linux `nimbus 0.1.30` binary and
+uses the bootc-native machine-config contract instead of Ignition.
 
 This means the already-landed/current-flow work from
 `docs/plans/archive/machine-os-adoption-plan.md` remains relevant as evidence:
-the pinned Podman image, Podman-compatible OCI artifact selection,
-`disktype=applehv` contract, and guest bootstrap evidence are the safe current
-macOS workflow. The bootc plan does not discard that path prematurely; it
-defines the evidence required to replace it.
+the pinned Podman image, Podman-compatible OCI artifact selection, and
+`disktype=applehv` contract remain the compatibility baseline for explicit
+Podman-image overrides and BMD7 removal decisions.
 
-## Keep, Rework, Abandon
+## Initial Keep, Rework, Abandon
 
 ### Keep
 
-Keep these changes and treat them as inputs to this plan:
+The initial pivot kept these changes and treated them as inputs to this plan:
 
 - main repo MOS0: live Podman fallback digest and current macOS architecture
   docs.
 - main repo MOS2: host OCI selector coverage proving `disktype=raw` is ignored
   and `disktype=applehv` is selected.
-- superseded plan evidence for the current Podman-machine-os-based macOS
-  workflow, because it remains the default until BMD6.
+- superseded plan evidence for the prior Podman-machine-os-based macOS
+  workflow, because it remained the default until BMD6.
 - `nimbus-machine-os` MOS2 packaging: default `disktype=applehv`, source
   revision metadata, Nimbus version metadata, attestation repository metadata,
   and verifier coverage.
@@ -93,17 +92,17 @@ Keep these changes and treat them as inputs to this plan:
 
 ### Rework
 
-Rework these changes before implementation continues:
+These areas were reworked before implementation continued:
 
 - `nimbus-machine-os/images/` should become the bootc-native primary recipe,
   not an FCOS-derived MOS3A recipe.
 - `.github/workflows/build.yml` should stop pulling FCOS as the default
   machine image base and should build only the bootc-native recipe for
   non-contract validation.
-- `nimbus-machine-os` README files should describe the current shipped Podman
-  fallback plus the bootc-native future path, not an FCOS-derived default.
-- host startup code should gain a bootc-native mode, but current
-  FCOS/Podman-image bootstrapping remains the default until parity succeeds.
+- `nimbus-machine-os` README files should describe the shipped bootc-native
+  path and explicit compatibility/repair fallback, not an FCOS-derived
+  default.
+- host startup code should promote bootc-native mode after parity succeeds.
 
 ### Abandon
 
@@ -116,15 +115,15 @@ Do not continue these paths:
 - GitHub-hosted Ubuntu Actions + BIB as "proven enough" merely because local
   deterministic shell verifiers pass.
 
-## Dirty Work Classification
+## Initial Dirty Work Classification
 
-Current dirty work should be handled this way before BMD1 proceeds:
+Dirty work was classified this way before BMD1 proceeded:
 
 | Repository | Path or area | Classification | Reason |
 |------------|--------------|----------------|--------|
-| `nimbus` | `crates/nimbus-bin/src/machine/mod.rs` | Keep | Contains the live Podman fallback digest from MOS0; current default should remain this path. |
+| `nimbus` | `crates/nimbus-bin/src/machine/mod.rs` | Keep then update in BMD6 | Initially contained the live Podman fallback digest from MOS0; BMD6 replaced the default with the proven Nimbus bootc digest. |
 | `nimbus` | `crates/nimbus-bin/src/machine/manager/tests/support.rs` | Keep | Strengthens host OCI selection by proving `disktype=raw` is ignored in favor of `disktype=applehv`. |
-| `nimbus` | `docs/architecture/sandbox/macos-machine-flow.md` | Keep, then update later | Correctly documents current pinned Podman fallback; later BMD phases should add bootc-native future state without removing current default prematurely. |
+| `nimbus` | `docs/architecture/sandbox/macos-machine-flow.md` | Keep, then update in BMD6 | Initially documented the pinned Podman fallback; BMD6 updated it after bootc evidence passed. |
 | `nimbus` | `docs/plans/archive/machine-os-adoption-plan.md` | Keep as archived evidence | Preserves MOS0-MOS2 and MOS3A failure evidence, but no longer owns active execution. |
 | `nimbus` | `.codex/config.toml` | Ignore | Pre-existing unrelated dirty file; do not edit or revert. |
 | `nimbus-machine-os` | `scripts/package-oci.sh`, `scripts/verify-oci-layout-helper.sh`, `scripts/verify-publish-helper.sh` | Keep | These are provider-artifact contract fixes: `disktype=applehv`, source revision, Nimbus version, and attestation metadata. |
@@ -186,7 +185,7 @@ This matches the existing source shape. The current Podman/FCOS path already
 has release-asset download, cache, hash inspection, and
 `NIMBUS_MACHINE_GUEST_BINARY` override logic for a Linux guest `nimbus`
 binary. The bootc path moves that same version-coupling earlier: the
-`nimbus/nimbus` release builds the Linux arm64 binary, `nimbus-machine-os`
+`nimbus/nimbus` release builds the Linux arm64 binary, `machine-os`
 embeds it, records its version and SHA-256 in the build summary/SBOM, and
 normal updates happen through bootc image switch/upgrade/rollback.
 Promotion and upgrade proof must compare that recorded version/hash with the
@@ -210,7 +209,7 @@ storage, or explicit service-sandbox flows.
 | Phase | Required evidence |
 |-------|-------------------|
 | BMD0: Pivot Cleanup | `machine-os-adoption-plan.md` archived after MOS2; this plan registered as active; dirty work classified as keep/rework/abandon; MOS3A default path no longer described as the target. |
-| BMD1: Bootc Recipe Ownership | `nimbus-machine-os/images/` or equivalent primary recipe starts from digest-pinned `quay.io/fedora/fedora-bootc:44`; FCOS-derived defaults removed from active recipe/workflow docs; proof lane promoted or merged; package inventory, systemd units, users, and SELinux expectations recorded. |
+| BMD1: Bootc Recipe Ownership | `machine-os/images/` or equivalent primary recipe starts from digest-pinned `quay.io/fedora/fedora-bootc:44`; FCOS-derived defaults removed from active recipe/workflow docs; proof lane promoted or merged; package inventory, systemd units, users, and SELinux expectations recorded. |
 | BMD2: Build Artifact Proof | Direct bootc image builds on the chosen release builder; raw disk is produced; compressed disk and OCI layout are produced; `disktype=applehv`, source revision, base digest, builder digest, rootfs, checksums, and package inventory are recorded. |
 | BMD3: Machine-Config Channel | Host writes versioned machine config bundle; guest applies it through a baked service; invalid/missing config fails clearly; SSH keys, volumes, trust material, and readiness are proven without Ignition. |
 | BMD4: macOS Boot Parity | A macOS VM boots from the bootc artifact, reaches multi-user target, exposes machine API readiness, runs `podman info`, activates `nimbus.socket`, handles `/Users` virtiofs read/write, starts a representative service, and records SELinux/AVC evidence. |
@@ -222,13 +221,13 @@ storage, or explicit service-sandbox flows.
 
 | Phase | Status | Gate |
 |-------|--------|------|
-| BMD0: Pivot Cleanup | `done` | Active docs point here; MOS3A is abandoned; current default remains pinned Podman fallback. |
-| BMD1: Bootc Recipe Ownership | `done` | Direct bootc recipe is the primary `nimbus-machine-os` path and FCOS recipe assumptions are gone. |
+| BMD0: Pivot Cleanup | `done` | Active docs point here; MOS3A is abandoned; the then-current default remained the pinned Podman fallback while bootc proof work started. |
+| BMD1: Bootc Recipe Ownership | `done` | Direct bootc recipe is the primary `machine-os` path and FCOS recipe assumptions are gone. |
 | BMD2: Build Artifact Proof | `done` | Chosen builder produces bootc raw disk and OCI layout with evidence. |
 | BMD3: Machine-Config Channel | `done` | Bootc-native config channel works without Ignition. |
 | BMD4: macOS Boot Parity | `done` | Real macOS guest parity proof passes with SELinux evidence recorded. |
 | BMD5: bootc Lifecycle | `done` | Apply, upgrade, rollback, and repair evidence exists. |
-| BMD6: Promote Default | `blocked` | Nimbus-owned bootc artifact becomes default by immutable digest only after the machine-os repository/package identity is canonicalized to `nimbus/machine-os` and `ghcr.io/nimbus/machine-os:<tag>`, a fresh release with the bootupd SELinux recipe fix is published from the machine-os-owned package context, macOS guest proof passes, and the composed SELinux/GHCR/default gate evidence passes. The canceled `v0.1.30` tag must be recreated only after the rename/release-flow repair lands. |
+| BMD6: Promote Default | `done` | `v0.1.30` published from canonical `nimbus/machine-os`, `ghcr.io/nimbus/machine-os:v0.1.30` is public, the release gate and real macOS guest/service proofs passed, and the checked-in macOS default now pins the immutable Nimbus bootc digest. |
 | BMD7: Remove Legacy | `pending` | Legacy FCOS/Podman-image reliance is removed from stable paths. |
 
 ## Execution Detail
@@ -383,7 +382,7 @@ Promotion blocker disposition:
 |---------|---------------------|------------------|
 | `sshd_session_t` AVCs while connecting/writing to `/run/nimbus/nimbus.sock` | Fixed and proved in the current SELinux-hardened candidate: `nimbus.service` runs in `container_runtime_t`, the socket is relabeled `container_var_run_t`, and a narrow `nimbus-machine-api` CIL module permits the forwarded SSH session to connect. The 2026-05-14 strict macOS proof recorded `nimbus_socket_avcs=0`. | Keep this as a regression check in the final composed gate: a release-candidate proof must preserve the expected process/socket labels and report zero Nimbus socket AVCs. |
 | `systemd_sysctl_t` getattr denial on Netavark `/run/sysctl.d/10-netavark-nimbus0.conf` | Not observed in the latest strict macOS proof (`netavark_sysctl_avcs=0`). Keep it listed as a watched regression because the BMD4 capture saw it during representative Podman networking. | Rerun rootless Podman service proof and audit collection for the final release candidate; closure is zero Netavark AVCs in the composed promotion proof or a concrete upstream/local-policy disposition if it returns. |
-| `bootupd`/`lsblk` userdb/passwd AVCs | Fixed in the next `nimbus-machine-os` recipe by the explicitly approved narrow compatibility path. The release-candidate guest proved Fedora 44 ships `bootupd_t` as a permissive domain and `restorecon -n` maps `/boot/bootupd-state.json` from `unlabeled_t` to `boot_t`. The recipe now installs a separate `nimbus-bootupd-fedora-base` CIL module with only the observed bootupd userdb/mount permissions, plus `nimbus-boot-restorecon.service` ordered before `bootloader-update.service`. This is intentionally separate from `nimbus-machine-api` policy and does not disable SELinux, set global booleans, or weaken the AVC gate. | Publish a new release candidate containing this recipe, then require a clean real guest audit capture. The checked-in release gate now requires `selinux_expectation=container-runtime-domain-container-socket-policy-plus-fedora-bootupd-compat-plus-runtime-avc-gate`, so `v0.1.29` remains non-promotable even if GHCR visibility is fixed. |
+| `bootupd`/`lsblk` userdb/passwd AVCs | Fixed and promoted in `v0.1.30` by the explicitly approved narrow compatibility path. Fedora 44 ships `bootupd_t` as a permissive domain and `restorecon -n` maps `/boot/bootupd-state.json` from `unlabeled_t` to `boot_t`; the recipe installs a separate `nimbus-bootupd-fedora-base` CIL module with only the observed bootupd userdb/mount permissions, plus `nimbus-boot-restorecon.service` ordered before `bootloader-update.service`. This remains intentionally separate from `nimbus-machine-api` policy and does not disable SELinux, set global booleans, or weaken the AVC gate. | `v0.1.30` release evidence records `selinux_expectation=container-runtime-domain-container-socket-policy-plus-fedora-bootupd-compat-plus-runtime-avc-gate`, and the final real guest audit capture passed the machine-os AVC checker with zero blocking AVCs. |
 
 Default promotion runbook:
 
@@ -410,6 +409,28 @@ Default promotion runbook:
    ```
 
 6. Change the macOS default digest only after that composed gate passes.
+
+Executed promotion:
+
+- Tag: `v0.1.30`
+- Release image:
+  `docker://ghcr.io/nimbus/machine-os:v0.1.30@sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d`
+- Machine-os source revision:
+  `495469ecf8cce364824adca1e05a289a252381b6`
+- Raw disk SHA-256:
+  `6972db1e1642067d629f8c0d470241e8f3bcd74ba1d16d826b499c4a16967b32`
+- Fedora bootc base:
+  `quay.io/fedora/fedora-bootc@sha256:5f2aa40538a71e32eba8dcdf9059dda10600bac68acef4588cb1aecedcfc6fe2`
+- Bootc image builder:
+  `quay.io/centos-bootc/bootc-image-builder@sha256:754fc17718f977313885379e2c779066aba7d15af88fe04b486baec74759f574`
+- Local release gate:
+  `bash scripts/verify-machine-os-release-default-gate.sh --release-dir /private/tmp/nimbus-machine-os-v0.1.30-metadata --expected-tag v0.1.30 --require-ghcr-public`
+- Real macOS proof:
+  `/private/tmp/nimbus-bmd6-v0.1.30-default-proof`
+- Service proof:
+  `/private/tmp/nimbus-bmd6-v0.1.30-service-proof`
+- Composed promotion gate:
+  `bash scripts/verify-bootc-default-promotion-gate.sh --release-dir /private/tmp/nimbus-machine-os-v0.1.30-metadata --guest-proof-dir /private/tmp/nimbus-bmd6-v0.1.30-default-proof --expected-tag v0.1.30`
 
 Rollback runbook:
 
@@ -451,8 +472,9 @@ bash scripts/verify-bootc-default-promotion-gate-helper.sh
 ```
 
 Proof gates now include deterministic release-asset, release-ref, guest-proof,
-guest-local/API bootc-status, and SELinux AVC checks; BMD6 still requires a
-real release-candidate run.
+guest-local/API bootc-status, and SELinux AVC checks. BMD6's real
+release-candidate run passed for `v0.1.30`; keep these commands as regression
+checks while BMD7 removes remaining legacy reliance.
 
 ## Execution Log
 
@@ -528,3 +550,4 @@ real release-candidate run.
 | 2026-05-14 | BMD6 | `in_progress` | Re-ran `v0.1.30` after the Fedora digest repair and found a second stale reference in the release workflow cache path. The machine-os image build completed successfully with the new Fedora digest, but `Save base image to cache` still tried to save the removed `sha256:187d...` image and failed before any package publish. The workflow now uses one shared digest-pinned Fedora bootc env var for both pull and cache save, and the release-ref contract rejects divergent Fedora bootc references. | Release run `25871742090` on tag `v0.1.30`, `Build machine-os` job `76033420093`, passed checkout, Linux arm64 artifact download, requirements, cache restore/load, `Pull base images`, and `Build machine-os guest image`; bootc-image-builder reported `Build complete! Results saved in /output`; the job then failed at `Save base image to cache` because `sudo podman save ... quay.io/fedora/fedora-bootc@sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94` returned `image not known`. Updated `/Users/jack/src/github.com/nimbus/nimbus/.github/workflows/release.yml`, `scripts/verify-machine-os-release-ref-contract.sh`, and `scripts/verify-machine-os-release-ref-contract-helper.sh`. Verification passed: `bash scripts/verify-machine-os-release-ref-contract-helper.sh`; `bash scripts/verify-machine-os-release-ref-contract.sh --machine-os-repo /Users/jack/src/github.com/nimbus/machine-os`; `bash -n scripts/verify-machine-os-release-ref-contract.sh scripts/verify-machine-os-release-ref-contract-helper.sh`; `bash scripts/verify-release-version-contract.sh v0.1.30`; `actionlint .github/workflows/release.yml .github/workflows/ci.yml /Users/jack/src/github.com/nimbus/machine-os/.github/workflows/build.yml /Users/jack/src/github.com/nimbus/machine-os/.github/workflows/publish.yml`; `git diff --check`. | Commit and push the cache-drift repair, delete/recreate `v0.1.30` from the repaired main commit, rerun the release workflow, then continue with GHCR public-read, release-gate, macOS guest proof, SELinux AVC gate, and composed default-promotion proof before any default flip. |
 | 2026-05-14 | BMD6 | `in_progress` | Re-ran `v0.1.30` after the cache-drift repair and proved the staged release DAG through all platform builds plus the early machine-os image build. The next failure moved to the cross-repo publish workflow before any GHCR package, machine-os GitHub Release, attestation, final Nimbus release, or default flip: `nimbus/machine-os` rejected `source_repository=nimbus/nimbus` because its OWNER/REPO validation incorrectly disallowed matching owner and repo names. The workflow is now corrected to allow the canonical `nimbus/nimbus` repository name while still rejecting malformed multi-segment inputs, and GitHub App token steps now use `client-id` after pinning `actions/create-github-app-token@v3.2.0` so runner and actionlint metadata agree. | Release run `25873789862` on tag `v0.1.30` passed `Verify release contract`, Linux arm64, Linux x86_64, macOS arm64, Windows x86_64, and `Build machine-os`; `Build machine-os` completed in 6m59s with checkout, Linux arm64 artifact download, base image cache restore/load, base pulls, guest image build, base save, raw-disk OCI packaging, staged artifact assembly, and staged artifact upload. `Publish machine-os` dispatched exact run `25877131452` in `nimbus/machine-os`, then failed while waiting because `Publish machine-os (linux arm64)` stopped at `Resolve source repository coordinates` with `source_repository must be in OWNER/REPO form; got 'nimbus/nimbus'.` Local repair updated `/Users/jack/src/github.com/nimbus/machine-os/.github/workflows/publish.yml` source-coordinate validation and changed its source-artifact token to `client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}`. Local repair also updated `/Users/jack/src/github.com/nimbus/nimbus/.github/workflows/release.yml` to use `MACHINE_OS_RELEASE_APP_CLIENT_ID` and `HOMEBREW_TAP_CLIENT_ID`, pinned `actions/create-github-app-token@v3.2.0`, and updated the release-ref contract/helper to reject deprecated `app-id` usage. | Verify both workflow repairs, commit and push `nimbus/machine-os`, commit and push `nimbus/nimbus`, delete/recreate `v0.1.30` from the repaired main commit, rerun the release workflow, then continue with GHCR public-read, release-gate, macOS guest proof, SELinux AVC gate, and composed default-promotion proof before any default flip. |
 | 2026-05-14 | BMD6 | `in_progress` | Re-ran `v0.1.30` after the publish input repair and exposed a macOS arm64 release-cache hygiene failure before any machine-os publish. The cache restored `~/.cargo/bin` from a poisoned archive, so `cargo build` executed `rustup-init` and failed with `unexpected argument 'build' found`. Release, CI, and node-compat Rust caches now avoid caching executable shims and use fresh cache keys so old archives cannot overwrite the runner toolchain. | Release run `25877669864` on tag `v0.1.30` passed `Verify release contract` with the new `client-id` setup, then `Build (aarch64-apple-darwin)` job `76049070755` failed at `Build release binary`: `cargo build --release -p nimbus-bin` produced `error: unexpected argument 'build' found` and `Usage: rustup-init[EXE] [OPTIONS]`. The restored cache listed `/Users/runner/.cargo/bin` among cache paths, confirming executable-cache contamination. The failed run was canceled after the hard failure. Local repair updated `.github/workflows/release.yml` release cache keys from `v3` to `v4` and set `cache-bin: "false"`; `.github/workflows/ci.yml` and `.github/workflows/node-compat-nightly.yml` now use `*-no-bin-v1` shared keys and `cache-bin: "false"`. Verification passed: `actionlint .github/workflows/release.yml .github/workflows/ci.yml .github/workflows/node-compat-nightly.yml /Users/jack/src/github.com/nimbus/machine-os/.github/workflows/build.yml /Users/jack/src/github.com/nimbus/machine-os/.github/workflows/publish.yml`; `bash scripts/verify-machine-os-release-ref-contract-helper.sh`; `bash scripts/verify-machine-os-release-ref-contract.sh --machine-os-repo /Users/jack/src/github.com/nimbus/machine-os`; `bash scripts/verify-release-version-contract.sh v0.1.30`; `git diff --check`. | Commit and push the cache hygiene fix, delete/recreate `v0.1.30` from the repaired main commit, rerun the release workflow, then continue with GHCR public-read, release-gate, macOS guest proof, SELinux AVC gate, and composed default-promotion proof before any default flip. |
+| 2026-05-14 | BMD6 | `done` | Published and promoted the canonical Nimbus bootc machine OS. The `v0.1.30` release workflow passed all platform CLI targets, built the machine-os artifact early, published `ghcr.io/nimbus/machine-os:v0.1.30` from the machine-os repository context, verified public GHCR readability, created both GitHub releases, booted the immutable digest on macOS, proved forwarded service lifecycle, passed the machine-os AVC checker, and changed the checked-in macOS default from Podman machine-os to the Nimbus bootc digest. New default machine initialization now infers bootc-native machine-config provisioning from the Nimbus machine-os repository, while explicit Podman image overrides remain on the legacy Ignition contract for compatibility/repair until BMD7. | Release workflow `25878102657` attempt 2 completed successfully. Nimbus release `v0.1.30` and machine-os release `v0.1.30` are published. Promoted digest: `ghcr.io/nimbus/machine-os:v0.1.30@sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d`. Machine-os source revision: `495469ecf8cce364824adca1e05a289a252381b6`. Raw disk SHA-256: `6972db1e1642067d629f8c0d470241e8f3bcd74ba1d16d826b499c4a16967b32`. Fedora bootc base: `sha256:5f2aa40538a71e32eba8dcdf9059dda10600bac68acef4588cb1aecedcfc6fe2`. BIB: `sha256:754fc17718f977313885379e2c779066aba7d15af88fe04b486baec74759f574`. Local gates passed: `verify-machine-os-release-default-gate.sh --require-ghcr-public`; real macOS guest proof with `/Users/jack/src/github.com/nimbus/machine-os/scripts/check-selinux-avcs.sh`; default-machine service proof in `/private/tmp/nimbus-bmd6-v0.1.30-service-proof`; final guest proof in `/private/tmp/nimbus-bmd6-v0.1.30-default-proof`; composed `verify-bootc-default-promotion-gate.sh` for `v0.1.30`; `cargo test -p nimbus-bin machine::tests::os_image -- --nocapture` with 7 tests; `verify-bootc-default-promotion-gate-helper.sh`; `verify-nimbus-machine-service-proof-helper.sh`. | Start BMD7: remove or further demote stable-path legacy reliance. Keep explicit Podman image overrides only where needed for repair/diagnostic compatibility, and prove bootc machines never use host-side guest-binary sync, host-installed systemd unit mutation, Ignition, or normal host-side disk replacement for OS lifecycle. |

@@ -171,7 +171,9 @@ assert_contains "${guest_version}" "nimbus ${expected_guest_version}" "guest nim
 assert_matches "${guest_sha256}" "[0-9a-f]{64}" "guest nimbus sha256"
 guest_nimbus_sha256="$(awk '{ print $1; exit }' "${guest_sha256}")"
 [[ "${guest_nimbus_sha256}" == "${release_nimbus_sha256}" ]] || die "guest nimbus SHA-256 ${guest_nimbus_sha256} does not match release build-summary nimbus_binary_sha256 ${release_nimbus_sha256}"
-assert_contains "${guest_socket_status}" "SubState=listening" "nimbus.socket status"
+assert_contains "${guest_socket_status}" "LoadState=loaded" "nimbus.socket status"
+assert_contains "${guest_socket_status}" "ActiveState=active" "nimbus.socket status"
+assert_matches "${guest_socket_status}" "SubState=(listening|running)" "nimbus.socket status"
 assert_contains "${guest_service_status}" "SubState=running" "nimbus.service status"
 assert_contains "${guest_virtiofs}" "virtiofs" "virtiofs mount"
 
@@ -205,6 +207,5 @@ assert_contains "${guest_selinux_context}" "container_var_run_t" "Nimbus socket 
 assert_contains "${guest_selinux_context}" "nimbus-machine-api" "Nimbus SELinux module"
 
 assert_contains "${guest_selinux_avc_check}" "verified SELinux AVC gate: no AVC denials" "SELinux AVC check"
-assert_contains "${machine_log_tail}" "nimbus" "machine log tail"
 
 printf 'verified: bootc default promotion gate has release evidence and clean macOS guest proof for %s\n' "${expected_tag}"

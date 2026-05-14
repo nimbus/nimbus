@@ -169,10 +169,14 @@ Current command taxonomy:
 
 ## Bootc Default Promotion And Rollback
 
-The current macOS default remains the pinned Podman-compatible machine image
-until a Nimbus-owned bootc release candidate passes the composed promotion
-gate. A direct bootc artifact is default-promotable only when all of these are
-true:
+The current macOS default is the Nimbus-owned bootc image promoted in BMD6:
+
+```text
+docker://ghcr.io/nimbus/machine-os:v0.1.30@sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d
+```
+
+Future direct bootc artifacts are default-promotable only when all of these
+are true:
 
 1. A paired `nimbus/nimbus` release and `nimbus/machine-os` release exist for
    the same tag.
@@ -193,16 +197,16 @@ bash scripts/verify-bootc-default-promotion-gate.sh \
 ```
 
 Only after that gate passes should the checked-in macOS default image digest
-move from the Podman-compatible artifact to the Nimbus-owned bootc artifact.
+move to a new Nimbus-owned bootc artifact.
 
 Rollback has two supported shapes. For a healthy bootc-native machine, use
 `nimbus machine os rollback --restart` so the guest stages the previous bootc
 deployment and reboots through the normal readiness path. If the guest machine
 API cannot answer, or if the fleet default itself must move back to a prior
 artifact, use `nimbus machine os apply <previous-digest> --restart` or an
-explicit repair/recreate flow. The current Podman-compatible path stays
-available until the bootc default has passed the promotion gate and the later
-legacy-removal phase deliberately removes it.
+explicit repair/recreate flow. The Podman-compatible path stays
+available only as an explicit compatibility/repair override until the
+legacy-removal phase deliberately removes or further demotes it.
 
 ## Core Flags
 
@@ -703,9 +707,10 @@ Current scope:
   and log paths
 - persists the machine provider, typed guest image source, guest SSH user,
   guest resources, and future virtiofs volume mappings
-- on macOS `krunkit`, defaults the guest image source to the pinned Podman
-  machine-image digest owned by the host release
-  (`docker://quay.io/podman/machine-os@sha256:...`) instead of a floating tag
+- on macOS `krunkit`, defaults the guest image source to the pinned
+  Nimbus-owned bootc machine-image digest owned by the host release
+  (`docker://ghcr.io/nimbus/machine-os:v0.1.30@sha256:...`) instead of a
+  floating tag
 - for the supported Apple Silicon Homebrew install surface, expects `krunkit`
   as the explicit formula dependency and prefers a bundled `libexec/gvproxy`
   that ships beside the packaged `nimbus` binary; helper lookup now mirrors
@@ -716,19 +721,17 @@ Current scope:
   `prefix/bin/nimbus` plus `prefix/libexec/gvproxy` layout, or set
   `NIMBUS_MACHINE_HELPER_BINARY_DIR` explicitly; moving only the `nimbus`
   binary is not a supported machine install shape
-- auto-generates a Nimbus-owned Ignition file when no explicit
-  `--ignition-path` override is configured, carrying the machine ready signal,
-  guest `nimbus.socket` plus `nimbus.service`, and virtiofs mount-unit wiring
-  into the guest
+- for the default Nimbus bootc image, generates and attaches a
+  bootc-native machine-config bundle; explicit Podman-image overrides remain
+  on the legacy Ignition contract
 - auto-generates a machine-owned SSH identity under the Nimbus machine data
-  root for the host-managed macOS contract when no explicit `--identity`
-  override was recorded, so the default `machine start` path does not require
-  a separate SSH-key setup step
+  root when no explicit `--identity` override was recorded, so the default
+  `machine start` path does not require a separate SSH-key setup step
 - makes `nimbus machine start` the primary convergence path on macOS: cache
   missing machine-image artifacts, rebuild boot artifacts when the recorded
   base image drifts from the desired digest, hash-sync
-  `/usr/local/bin/nimbus` only for the current Podman/FCOS host-managed
-  fallback, and report success only after the forwarded machine API is
+  `/usr/local/bin/nimbus` only for explicit Podman/FCOS host-managed
+  fallback machines, and report success only after the forwarded machine API is
   reachable. Bootc-native machines instead boot with the matching Linux
   `nimbus` binary already baked into the image.
 - treats mutating machine commands as action-oriented UX surfaces: `init`,

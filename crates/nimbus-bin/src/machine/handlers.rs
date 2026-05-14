@@ -39,10 +39,10 @@ use super::render::{
 };
 use super::{
     DEFAULT_MACHINE_NAME, DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
-    DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST, DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY,
     default_machine_image_for_provider, default_machine_volumes, describe_machine_image_source,
     invalidate_materialized_machine_os, machine_image_reference_repository,
-    machine_image_reference_version_label,
+    machine_image_reference_version_label, uses_nimbus_bootc_machine_image_source,
+    uses_podman_machine_image_source,
 };
 
 pub(crate) async fn run_machine_command(command: MachineCommand) -> Result<(), Error> {
@@ -254,23 +254,24 @@ fn initialize_machine_record(
         now: _,
         name: _,
     } = command;
+    let image_source = MachineImageSource::parse(&image)?;
+    let bootc_native = bootc_native || uses_nimbus_bootc_machine_image_source(&image_source);
+    if bootc_native && ignition_file.is_some() {
+        return Err(Error::InvalidInput(
+            "bootc-native machine images use Nimbus machine-config provisioning and cannot also use an Ignition file; use a Podman machine-os image override for the legacy Ignition contract".to_owned(),
+        ));
+    }
     let provisioning = if bootc_native {
         super::record::MachineGuestProvisioning::BootcMachineConfig
     } else {
         super::record::MachineGuestProvisioning::Ignition
     };
-    if bootc_native && image == default_machine_image_for_provider(MachineProvider::Krunkit) {
-        return Err(Error::InvalidInput(format!(
-            "bootc-native machine initialization requires an explicit --image until a Nimbus-owned bootc artifact is promoted as the default; current default is {}",
-            default_machine_image_for_provider(MachineProvider::Krunkit)
-        )));
-    }
     let config = MachineConfigRecord {
         version: super::CURRENT_MACHINE_CONFIG_VERSION,
         name: machine_name,
         provider: MachineProvider::Krunkit,
         guest: super::record::MachineGuestConfig {
-            image_source: MachineImageSource::parse(&image)?,
+            image_source,
             provisioning,
             ssh_user: if bootc_native {
                 super::DEFAULT_BOOTC_MACHINE_SSH_USER.to_owned()
@@ -856,12 +857,11 @@ fn default_bootc_machine_os_upgrade_stream() -> MachineOsUpgradeStream {
     MachineOsUpgradeStream {
         repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
         additional_supported_repositories: &[],
-        target_image: format!(
-            "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
-            super::current_machine_release_tag()
-        ),
-        target_version: super::current_machine_release_tag(),
-        follows_host_release: true,
+        target_image: default_machine_image_for_provider(MachineProvider::Krunkit),
+        target_version: machine_image_reference_version_label(&default_machine_image_for_provider(
+            MachineProvider::Krunkit,
+        )),
+        follows_host_release: false,
     }
 }
 
@@ -989,7 +989,17 @@ fn apply_machine_os_change(
         stop_machine(paths, config, state)?;
     }
 
+    let target_uses_bootc_native = uses_nimbus_bootc_machine_image_source(&target_source);
+    let target_uses_host_managed = uses_podman_machine_image_source(&target_source);
     config.guest.image_source = target_source;
+    if target_uses_bootc_native {
+        config.guest.provisioning = MachineGuestProvisioning::BootcMachineConfig;
+        config.guest.ssh_user = super::DEFAULT_BOOTC_MACHINE_SSH_USER.to_owned();
+        config.guest.ignition_file_path = None;
+    } else if target_uses_host_managed {
+        config.guest.provisioning = MachineGuestProvisioning::Ignition;
+        config.guest.ssh_user = super::DEFAULT_MACHINE_SSH_USER.to_owned();
+    }
     invalidate_materialized_machine_os(paths)?;
     *state = MachineStateRecord::initialized();
     write_json_file(&paths.config_path, config)?;
@@ -1061,10 +1071,12 @@ pub(super) fn plan_machine_os_upgrade(
 fn default_machine_os_upgrade_stream(config: &MachineConfigRecord) -> MachineOsUpgradeStream {
     match config.provider {
         MachineProvider::Krunkit if cfg!(target_os = "macos") => MachineOsUpgradeStream {
-            repository: DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY,
+            repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
             additional_supported_repositories: &[],
             target_image: default_machine_image_for_provider(config.provider),
-            target_version: DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST.to_owned(),
+            target_version: machine_image_reference_version_label(
+                &default_machine_image_for_provider(config.provider),
+            ),
             follows_host_release: false,
         },
         MachineProvider::Krunkit | MachineProvider::Wsl2 => MachineOsUpgradeStream {

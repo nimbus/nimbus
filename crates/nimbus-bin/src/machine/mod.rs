@@ -87,9 +87,9 @@ use self::render::*;
 
 const DEFAULT_MACHINE_NAME: &str = "default";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/machine-os";
+const DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST: &str =
+    "sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d";
 const DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY: &str = "quay.io/podman/machine-os";
-const DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST: &str =
-    "sha256:57e19d2a4e3ae698a0f127ec7495067ac4c4df5177625034e1e700aba94ee8c5";
 
 fn current_machine_release_tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
@@ -102,7 +102,8 @@ fn default_machine_image() -> String {
 fn default_machine_image_for_provider(provider: MachineProvider) -> String {
     match provider {
         MachineProvider::Krunkit if cfg!(target_os = "macos") => format!(
-            "docker://{DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY}@{DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST}"
+            "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}@{DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST}",
+            current_machine_release_tag()
         ),
         MachineProvider::Krunkit | MachineProvider::Wsl2 => format!(
             "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
@@ -138,16 +139,31 @@ fn machine_image_reference_version_label(reference: &str) -> String {
     stripped.to_owned()
 }
 
+fn machine_image_source_repository(source: &MachineImageSource) -> Option<String> {
+    match source {
+        MachineImageSource::OciReference { reference } => {
+            Some(machine_image_reference_repository(reference))
+        }
+        MachineImageSource::HttpUrl { .. } | MachineImageSource::LocalDisk { .. } => None,
+    }
+}
+
+fn uses_nimbus_bootc_machine_image_source(source: &MachineImageSource) -> bool {
+    machine_image_source_repository(source).as_deref()
+        == Some(DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY)
+}
+
+fn uses_podman_machine_image_source(source: &MachineImageSource) -> bool {
+    machine_image_source_repository(source).as_deref()
+        == Some(DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY)
+}
+
 fn uses_host_managed_machine_image_contract(config: &MachineConfigRecord) -> bool {
     if !(cfg!(target_os = "macos") && config.provider == MachineProvider::Krunkit) {
         return false;
     }
 
-    matches!(
-        &config.guest.image_source,
-        MachineImageSource::OciReference { reference }
-            if machine_image_reference_repository(reference) == DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY
-    )
+    uses_podman_machine_image_source(&config.guest.image_source)
 }
 
 fn desired_machine_image_source(config: &MachineConfigRecord) -> MachineImageSource {

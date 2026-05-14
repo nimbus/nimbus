@@ -19,9 +19,9 @@ use super::helpers::{
     write_helper_stub,
 };
 use super::image::{
-    attestation_repositories_for_reference, current_machine_oci_architectures,
-    machine_artifact_metadata_from_annotations, materialize_cached_disk,
-    resolve_bootable_image_path,
+    attestation_repositories_for_reference, build_digest_reference,
+    current_machine_oci_architectures, machine_artifact_metadata_from_annotations,
+    materialize_cached_disk, resolve_bootable_image_path,
 };
 use super::launch::{MachineCommandLine, MachineLaunchPlan, build_virtio_vsock_listen_arg};
 use super::ports::{

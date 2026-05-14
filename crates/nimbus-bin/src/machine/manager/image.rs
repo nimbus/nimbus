@@ -558,21 +558,20 @@ pub(super) fn current_machine_oci_architectures() -> &'static [&'static str] {
     }
 }
 
-fn build_digest_reference(reference: &str, digest: &str) -> Result<Reference, Error> {
+pub(super) fn build_digest_reference(reference: &str, digest: &str) -> Result<Reference, Error> {
     let reference = strip_docker_reference_prefix(reference);
-    let repository = reference
+    let reference = reference
         .split_once('@')
-        .map(|(value, _)| value.to_owned())
-        .unwrap_or_else(|| {
-            let last_slash = reference.rfind('/');
-            let last_colon = reference.rfind(':');
-            match (last_slash, last_colon) {
-                (_, None) => reference.clone(),
-                (Some(slash), Some(colon)) if colon > slash => reference[..colon].to_owned(),
-                (None, Some(_colon)) if !reference.contains('/') => reference.clone(),
-                _ => reference.clone(),
-            }
-        });
+        .map(|(value, _)| value)
+        .unwrap_or(&reference);
+    let last_slash = reference.rfind('/');
+    let last_colon = reference.rfind(':');
+    let repository = match (last_slash, last_colon) {
+        (_, Some(colon)) if last_slash.is_none_or(|slash| colon > slash) => {
+            reference[..colon].to_owned()
+        }
+        _ => reference.to_owned(),
+    };
     Reference::try_from(format!("{repository}@{digest}")).map_err(|error| {
         Error::InvalidInput(format!(
             "failed to build machine guest OCI digest reference '{repository}@{digest}': {error}"

@@ -43,8 +43,10 @@ fn machine_status_renders_release_asset_guest_binary_contract() {
         name: DEFAULT_MACHINE_NAME.to_owned(),
         provider: MachineProvider::Krunkit,
         guest: MachineGuestConfig {
-            image_source: MachineImageSource::parse(&default_machine_image())
-                .expect("default image should parse"),
+            image_source: MachineImageSource::parse(
+                "docker://quay.io/podman/machine-os@sha256:hostmanaged",
+            )
+            .expect("legacy host-managed image should parse"),
             provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: Some(temp_dir.path().join("nimbus-test-ed25519")),
@@ -123,8 +125,10 @@ fn machine_status_renders_explicit_override_guest_binary_contract() {
         name: DEFAULT_MACHINE_NAME.to_owned(),
         provider: MachineProvider::Krunkit,
         guest: MachineGuestConfig {
-            image_source: MachineImageSource::parse(&default_machine_image())
-                .expect("default image should parse"),
+            image_source: MachineImageSource::parse(
+                "docker://quay.io/podman/machine-os@sha256:hostmanaged",
+            )
+            .expect("legacy host-managed image should parse"),
             provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: Some(temp_dir.path().join("nimbus-test-ed25519")),
