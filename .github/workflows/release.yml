@@ -262,29 +262,27 @@ jobs:
           compression-level: 0
 
   build-machine-os:
-    name: Build and release machine-os
-    needs: [build-linux-arm64, build]
+    name: Build machine-os
+    needs: [build-linux-arm64]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 150
+    outputs:
+      machine_os_source_revision: ${{ steps.machine_os_source.outputs.revision }}
     permissions:
       contents: read
-      packages: write
-      id-token: write
-      attestations: write
     steps:
       - name: Check out Nimbus repository
         uses: actions/checkout@v6
 
-      - name: Create machine-os release token
-        id: machine_os_token
+      - name: Create machine-os source token
+        id: machine_os_source_token
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
           owner: nimbus
           repositories: nimbus-machine-os
-          permission-contents: write
-          permission-packages: write
+          permission-contents: read
 
       - name: Check out machine-os repository
         uses: actions/checkout@v6
@@ -292,7 +290,7 @@ jobs:
           repository: nimbus/nimbus-machine-os
           ref: ${{ env.MACHINE_OS_SOURCE_REF }}
           path: nimbus-machine-os
-          token: ${{ steps.machine_os_token.outputs.token }}
+          token: ${{ steps.machine_os_source_token.outputs.token }}
 
       - name: Initialize machine-os directories
         run: |
@@ -300,12 +298,10 @@ jobs:
             echo "MACHINE_OS_DIR=${GITHUB_WORKSPACE}/nimbus-machine-os"
             echo "BUILD_OUTPUT_DIR=${RUNNER_TEMP}/nimbus-machine-os"
             echo "LAYOUT_DIR=${RUNNER_TEMP}/nimbus-machine-os-layout"
-            echo "RELEASE_DIR=${RUNNER_TEMP}/nimbus-machine-os-release"
           } >> "${GITHUB_ENV}"
           mkdir -p \
             "${RUNNER_TEMP}/nimbus-machine-os" \
-            "${RUNNER_TEMP}/nimbus-machine-os-layout" \
-            "${RUNNER_TEMP}/nimbus-machine-os-release"
+            "${RUNNER_TEMP}/nimbus-machine-os-layout"
 
       - name: Download Linux arm64 nimbus artifact
         uses: actions/download-artifact@v8
@@ -321,7 +317,7 @@ jobs:
           echo "NIMBUS_LINUX_ARM64_BINARY=${RUNNER_TEMP}/nimbus-linux-arm64/nimbus" >> "${GITHUB_ENV}"
 
       - name: Resolve machine-os source revision
-        id: machine-os-source
+        id: machine_os_source
         run: |
           revision="$(git -C "${MACHINE_OS_DIR}" rev-parse HEAD)"
           echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
@@ -334,7 +330,6 @@ jobs:
           command -v podman
           command -v gzip
           command -v sha256sum
-          command -v skopeo
           sudo -n true
 
       - name: Restore container image cache
@@ -368,7 +363,7 @@ jobs:
           sudo bash scripts/build.sh \
             --nimbus-binary "${NIMBUS_LINUX_ARM64_BINARY}" \
             --nimbus-version "${{ github.ref_name }}" \
-            --source-revision "${{ steps.machine-os-source.outputs.revision }}" \
+            --source-revision "${{ steps.machine_os_source.outputs.revision }}" \
             --output-dir "${BUILD_OUTPUT_DIR}"
           sudo chown -R "$(id -u):$(id -g)" \
             "${BUILD_OUTPUT_DIR}"
@@ -390,9 +385,120 @@ jobs:
             --layout-dir "${LAYOUT_DIR}" \
             --arch arm64 \
             --source-repository-url "https://github.com/nimbus/nimbus-machine-os" \
-            --source-revision "${{ steps.machine-os-source.outputs.revision }}" \
+            --source-revision "${{ steps.machine_os_source.outputs.revision }}" \
             --attestation-repository "${{ github.repository }}" \
             --nimbus-version "${{ github.ref_name }}"
+
+      - name: Upload staged machine-os artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nimbus-machine-os-arm64-staged
+          if-no-files-found: error
+          path: |
+            ${{ env.BUILD_OUTPUT_DIR }}/summary.txt
+            ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.ociarchive
+            ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.raw.gz
+            ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.sbom.cdx.json
+            ${{ env.LAYOUT_DIR }}/**
+          compression-level: 0
+
+  publish-machine-os:
+    name: Publish machine-os
+    needs: [build-linux-arm64, build, build-machine-os]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out Nimbus repository
+        uses: actions/checkout@v6
+
+      - name: Create machine-os release token
+        id: machine_os_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
+          private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
+          owner: nimbus
+          repositories: nimbus-machine-os
+          permission-contents: write
+          permission-packages: write
+
+      - name: Check out machine-os repository
+        uses: actions/checkout@v6
+        with:
+          repository: nimbus/nimbus-machine-os
+          ref: ${{ needs.build-machine-os.outputs.machine_os_source_revision }}
+          path: nimbus-machine-os
+          token: ${{ steps.machine_os_token.outputs.token }}
+
+      - name: Initialize machine-os publish directories
+        run: |
+          {
+            echo "MACHINE_OS_DIR=${GITHUB_WORKSPACE}/nimbus-machine-os"
+            echo "STAGE_DIR=${RUNNER_TEMP}/nimbus-machine-os-stage"
+            echo "BUILD_OUTPUT_DIR=${RUNNER_TEMP}/nimbus-machine-os-stage/nimbus-machine-os"
+            echo "LAYOUT_DIR=${RUNNER_TEMP}/nimbus-machine-os-stage/nimbus-machine-os-layout"
+            echo "RELEASE_DIR=${RUNNER_TEMP}/nimbus-machine-os-release"
+          } >> "${GITHUB_ENV}"
+          mkdir -p \
+            "${RUNNER_TEMP}/nimbus-machine-os-stage" \
+            "${RUNNER_TEMP}/nimbus-machine-os-release"
+
+      - name: Download staged machine-os artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: nimbus-machine-os-arm64-staged
+          path: ${{ runner.temp }}/nimbus-machine-os-stage
+
+      - name: Hydrate staged machine-os artifact
+        run: |
+          expected_revision="${{ needs.build-machine-os.outputs.machine_os_source_revision }}"
+          for required_path in \
+            "${BUILD_OUTPUT_DIR}/summary.txt" \
+            "${BUILD_OUTPUT_DIR}/nimbus-machine-os.ociarchive" \
+            "${BUILD_OUTPUT_DIR}/nimbus-machine-os.raw.gz" \
+            "${BUILD_OUTPUT_DIR}/nimbus-machine-os.sbom.cdx.json" \
+            "${LAYOUT_DIR}/summary.txt" \
+            "${LAYOUT_DIR}/index.json" \
+            "${LAYOUT_DIR}/blobs"; do
+            if [[ ! -e "${required_path}" ]]; then
+              echo "staged machine-os artifact is missing ${required_path}" >&2
+              exit 66
+            fi
+          done
+
+          staged_revision="$(awk -F= '$1 == "source_revision" { print substr($0, length($1) + 2) }' "${BUILD_OUTPUT_DIR}/summary.txt" | tail -n 1)"
+          if [[ "${staged_revision}" != "${expected_revision}" ]]; then
+            echo "staged machine-os source revision ${staged_revision} did not match expected ${expected_revision}" >&2
+            exit 65
+          fi
+
+          summary_tmp="$(mktemp)"
+          awk -F= \
+            -v oci_archive_path="${BUILD_OUTPUT_DIR}/nimbus-machine-os.ociarchive" \
+            -v raw_disk_path="<not-staged>" \
+            -v compressed_raw_disk_path="${BUILD_OUTPUT_DIR}/nimbus-machine-os.raw.gz" \
+            -v sbom_path="${BUILD_OUTPUT_DIR}/nimbus-machine-os.sbom.cdx.json" \
+            '
+              BEGIN { OFS = "=" }
+              $1 == "oci_archive_path" { $0 = "oci_archive_path=" oci_archive_path }
+              $1 == "raw_disk_path" { $0 = "raw_disk_path=" raw_disk_path }
+              $1 == "compressed_raw_disk_path" { $0 = "compressed_raw_disk_path=" compressed_raw_disk_path }
+              $1 == "sbom_path" { $0 = "sbom_path=" sbom_path }
+              { print }
+            ' "${BUILD_OUTPUT_DIR}/summary.txt" >"${summary_tmp}"
+          mv "${summary_tmp}" "${BUILD_OUTPUT_DIR}/summary.txt"
+
+      - name: Verify publish-host requirements
+        run: |
+          command -v gh
+          command -v git
+          command -v sha256sum
+          command -v skopeo
 
       - name: Publish packaged OCI artifact
         env:
@@ -440,7 +546,7 @@ jobs:
           - \`https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\`
 
           Source machine-os revision:
-          - \`${{ steps.machine-os-source.outputs.revision }}\`
+          - \`${{ needs.build-machine-os.outputs.machine_os_source_revision }}\`
 
           Included assets:
           - \`nimbus-machine-os.raw.gz\`
@@ -463,7 +569,7 @@ jobs:
         run: |
           release_tag="${{ github.ref_name }}"
           release_repository="nimbus/nimbus-machine-os"
-          release_target_sha="${{ steps.machine-os-source.outputs.revision }}"
+          release_target_sha="${{ needs.build-machine-os.outputs.machine_os_source_revision }}"
           assets=(
             "${BUILD_OUTPUT_DIR}/nimbus-machine-os.raw.gz"
             "${BUILD_OUTPUT_DIR}/nimbus-machine-os.sbom.cdx.json"
@@ -520,7 +626,7 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [build-linux-arm64, build, build-machine-os]
+    needs: [build-linux-arm64, build, publish-machine-os]
     permissions:
       contents: write
       id-token: write

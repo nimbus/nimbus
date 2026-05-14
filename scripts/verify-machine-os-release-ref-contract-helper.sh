@@ -57,4 +57,56 @@ if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
 fi
 grep -F "MACHINE_OS_RELEASE_WORKFLOW_REF" "${tmp_dir}/bad-workflow.out" >/dev/null
 
-printf 'verified: machine-os release source contract helper rejects ambiguous refs and legacy dispatch state\n'
+bad_build_publish="${tmp_dir}/bad-build-publish.yml"
+awk '
+  $0 == "  publish-machine-os:" && inserted == 0 {
+    print "      - name: Forbidden publish in build stage"
+    print "        run: bash scripts/publish.sh"
+    inserted = 1
+  }
+  { print }
+' "${repo_root}/.github/workflows/release.yml" >"${bad_build_publish}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_build_publish}" \
+  >"${tmp_dir}/bad-build-publish.out" 2>&1; then
+  echo "expected release ref contract to reject publishing from build-machine-os" >&2
+  exit 1
+fi
+grep -F "build-machine-os must not contain: bash scripts/publish.sh" \
+  "${tmp_dir}/bad-build-publish.out" >/dev/null
+
+bad_publish_gate="${tmp_dir}/bad-publish-gate.yml"
+awk '
+  $0 ~ /bash scripts\/verify-machine-os-release-default-gate\.sh/ {
+    next
+  }
+  { print }
+' "${repo_root}/.github/workflows/release.yml" >"${bad_publish_gate}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_publish_gate}" \
+  >"${tmp_dir}/bad-publish-gate.out" 2>&1; then
+  echo "expected release ref contract to reject publish-machine-os without the default gate" >&2
+  exit 1
+fi
+grep -F "publish-machine-os must contain: bash scripts/verify-machine-os-release-default-gate.sh" \
+  "${tmp_dir}/bad-publish-gate.out" >/dev/null
+
+bad_release_needs="${tmp_dir}/bad-release-needs.yml"
+awk '
+  $0 == "    needs: [build-linux-arm64, build, publish-machine-os]" && replaced == 0 {
+    print "    needs: [build-linux-arm64, build, build-machine-os]"
+    replaced = 1
+    next
+  }
+  { print }
+' "${repo_root}/.github/workflows/release.yml" >"${bad_release_needs}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_release_needs}" \
+  >"${tmp_dir}/bad-release-needs.out" 2>&1; then
+  echo "expected release ref contract to reject final release bypassing publish-machine-os" >&2
+  exit 1
+fi
+grep -F "release must contain: needs: [build-linux-arm64, build, publish-machine-os]" \
+  "${tmp_dir}/bad-release-needs.out" >/dev/null
+
+printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy dispatch state, and build/publish DAG regressions\n'
