@@ -175,7 +175,7 @@ assert_sha256_digest "OCI manifest_digest" "$(summary_value "${oci_summary}" man
 [[ "$(summary_value "${build_summary}" candidate)" == "direct-fedora-bootc" ]] || die "build summary must record candidate=direct-fedora-bootc"
 [[ "$(summary_value "${build_summary}" bootc_image_builder_rootfs)" == "ext4" ]] || die "build summary must record bootc_image_builder_rootfs=ext4"
 [[ "$(summary_value "${build_summary}" provisioning_contract)" == "bootc-native-no-ignition-primary" ]] || die "build summary must record the bootc-native provisioning contract"
-[[ "$(summary_value "${build_summary}" selinux_expectation)" == "container-runtime-domain-container-socket-policy-plus-runtime-avc-gate" ]] || die "build summary must record the container-runtime SELinux policy and AVC promotion gate expectation"
+[[ "$(summary_value "${build_summary}" selinux_expectation)" == "container-runtime-domain-container-socket-policy-plus-fedora-bootupd-compat-plus-runtime-avc-gate" ]] || die "build summary must record the container-runtime SELinux policy, Fedora bootupd compatibility policy, and AVC promotion gate expectation"
 [[ "$(summary_value "${build_summary}" nimbus_version)" == "${expected_tag}" ]] || die "build summary nimbus_version must match ${expected_tag}"
 nimbus_binary_sha256="$(summary_value "${build_summary}" nimbus_binary_sha256)"
 assert_sha256_hex "build summary nimbus_binary_sha256" "${nimbus_binary_sha256}"

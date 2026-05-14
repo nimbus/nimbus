@@ -37,7 +37,7 @@ fedora_bootc_base_image=quay.io/fedora/fedora-bootc@${base_digest}
 bib_image=quay.io/centos-bootc/bootc-image-builder@${bib_digest}
 bootc_image_builder_rootfs=ext4
 provisioning_contract=bootc-native-no-ignition-primary
-selinux_expectation=container-runtime-domain-container-socket-policy-plus-runtime-avc-gate
+selinux_expectation=container-runtime-domain-container-socket-policy-plus-fedora-bootupd-compat-plus-runtime-avc-gate
 nimbus_version=${expected_tag}
 nimbus_binary_sha256=${nimbus_binary_sha256}
 EOF
