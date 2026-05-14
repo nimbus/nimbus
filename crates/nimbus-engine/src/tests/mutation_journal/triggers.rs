@@ -353,7 +353,7 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
         .ensure_tenant_exists(&tenant_id)
         .expect("tenant should load and bootstrap trigger candidates");
 
-    wait_for_value(
+    let replayed_count = wait_for_value(
         "trigger candidate bootstrap should replay commits after the persisted cursor",
         mutation_journal_catch_up_timeout(),
         mutation_journal_poll_interval(),
@@ -362,9 +362,13 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
                 .pending_trigger_candidate_count_for_testing(&tenant_id)
                 .expect("pending trigger candidate count should load")
         },
-        |count| *count == 2,
+        |count| *count >= 2,
     )
     .await;
+    assert_eq!(
+        replayed_count, 2,
+        "trigger bootstrap should replay only the commit after the persisted cursor"
+    );
 
     let candidates = service
         .drain_trigger_candidates_for_testing(&tenant_id)
