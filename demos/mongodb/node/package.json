@@ -6,7 +6,7 @@
     "demo": "node --experimental-strip-types ./script.ts"
   },
   "dependencies": {
-    "@nimbus/mongodb": "0.1.28",
+    "@nimbus/mongodb": "0.1.29",
     "mongodb": "^6.16.0"
   },
   "devDependencies": {

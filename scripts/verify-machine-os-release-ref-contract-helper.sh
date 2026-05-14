@@ -107,6 +107,22 @@ fi
 grep -F 'publish-machine-os must contain: NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}' \
   "${tmp_dir}/bad-registry-token.out" >/dev/null
 
+bad_release_evidence="${tmp_dir}/bad-release-evidence.yml"
+awk '
+  $0 ~ /\$[{]RELEASE_DIR[}]\/build-summary\.txt/ {
+    next
+  }
+  { print }
+' "${repo_root}/.github/workflows/release.yml" >"${bad_release_evidence}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_release_evidence}" \
+  >"${tmp_dir}/bad-release-evidence.out" 2>&1; then
+  echo "expected release ref contract to reject missing machine-os release evidence asset" >&2
+  exit 1
+fi
+grep -F 'publish-machine-os must contain: ${RELEASE_DIR}/build-summary.txt' \
+  "${tmp_dir}/bad-release-evidence.out" >/dev/null
+
 bad_release_needs="${tmp_dir}/bad-release-needs.yml"
 awk '
   $0 == "    needs: [build-linux-arm64, build, publish-machine-os]" && replaced == 0 {
