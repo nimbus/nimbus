@@ -41,7 +41,8 @@ fn annotate_machine_start_error_hints_when_guest_reaches_login_prompt() {
     let message = error.to_string();
     assert!(message.contains("gvproxy exited before machine readiness"));
     assert!(message.contains("guest reached a console login prompt"));
-    assert!(message.contains("generic fedora-bootc raw images"));
+    assert!(message.contains("legacy Ignition payload"));
+    assert!(message.contains("default Nimbus bootc machine OS uses the machine-config channel"));
 }
 
 #[test]

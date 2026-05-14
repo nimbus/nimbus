@@ -281,10 +281,7 @@ fn registry_image_reference_reuses_materialized_disk_when_present() {
         provider: MachineProvider::Krunkit,
         guest: MachineGuestConfig {
             image_source: MachineImageSource::OciReference {
-                reference: format!(
-                    "docker://ghcr.io/nimbus/machine-os:v{}",
-                    env!("CARGO_PKG_VERSION")
-                ),
+                reference: "docker://quay.io/podman/machine-os@sha256:legacy-cached".to_owned(),
             },
             provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: "core".to_owned(),

@@ -478,7 +478,9 @@ fn machine_init_help_uses_user_facing_flag_descriptions() {
     assert!(rendered.contains("Disk size in GiB"));
     assert!(rendered.contains("Machine OS image"));
     assert!(rendered.contains("Path to SSH identity for guest access"));
-    assert!(rendered.contains("Path to Ignition config file"));
+    assert!(
+        rendered.contains("Legacy Ignition config file for explicit non-bootc image overrides")
+    );
     assert!(rendered.contains("Path to EFI variable store"));
     assert!(rendered.contains("Host:guest volume mount"));
     assert!(!rendered.contains("to record in the machine config"));
@@ -720,7 +722,7 @@ fn machine_leaf_help_uses_shared_template_and_examples() {
         ),
         (
             vec!["nimbus", "machine", "os", "apply", "--help"],
-            "nimbus machine os apply docker://quay.io/podman/machine-os@sha256:<digest>",
+            "nimbus machine os apply docker://ghcr.io/nimbus/machine-os:vX.Y.Z@sha256:<digest>",
         ),
         (
             vec!["nimbus", "machine", "os", "upgrade", "--help"],
