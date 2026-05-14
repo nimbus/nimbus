@@ -15,7 +15,7 @@ pub(super) fn expected_default_machine_image() -> String {
     if cfg!(target_os = "macos") {
         format!(
             "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}@{DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST}",
-            current_machine_release_tag()
+            DEFAULT_NIMBUS_MACHINE_IMAGE_TAG
         )
     } else {
         format!(

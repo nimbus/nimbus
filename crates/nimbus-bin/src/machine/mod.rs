@@ -87,6 +87,7 @@ use self::render::*;
 
 const DEFAULT_MACHINE_NAME: &str = "default";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/machine-os";
+const DEFAULT_NIMBUS_MACHINE_IMAGE_TAG: &str = "v0.1.30";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST: &str =
     "sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d";
 const DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY: &str = "quay.io/podman/machine-os";
@@ -103,7 +104,7 @@ fn default_machine_image_for_provider(provider: MachineProvider) -> String {
     match provider {
         MachineProvider::Krunkit if cfg!(target_os = "macos") => format!(
             "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}@{DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST}",
-            current_machine_release_tag()
+            DEFAULT_NIMBUS_MACHINE_IMAGE_TAG
         ),
         MachineProvider::Krunkit | MachineProvider::Wsl2 => format!(
             "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
