@@ -228,7 +228,7 @@ storage, or explicit service-sandbox flows.
 | BMD3: Machine-Config Channel | `done` | Bootc-native config channel works without Ignition. |
 | BMD4: macOS Boot Parity | `done` | Real macOS guest parity proof passes with SELinux evidence recorded. |
 | BMD5: bootc Lifecycle | `done` | Apply, upgrade, rollback, and repair evidence exists. |
-| BMD6: Promote Default | `in_progress` | Nimbus-owned bootc artifact becomes default by immutable digest; paired `v0.1.29` release assets exist, but default promotion is blocked until GHCR anonymous public-read, a fresh `v0.1.30` release with the bootupd SELinux recipe fix, macOS guest proof, and SELinux gate evidence pass. The `v0.1.30` candidate metadata is prepared and branch CI is green, but the tag/release remains blocked while `ghcr.io/nimbus/nimbus-machine-os` is not anonymously readable. |
+| BMD6: Promote Default | `blocked` | Nimbus-owned bootc artifact becomes default by immutable digest; paired `v0.1.29` release assets exist, but default promotion is blocked until GHCR anonymous public-read, a fresh `v0.1.30` release with the bootupd SELinux recipe fix, macOS guest proof, and SELinux gate evidence pass. The `v0.1.30` candidate metadata is on `main` with green CI, but the tag/release remains blocked while `ghcr.io/nimbus/nimbus-machine-os` is not anonymously readable. |
 | BMD7: Remove Legacy | `pending` | Legacy FCOS/Podman-image reliance is removed from stable paths. |
 
 ## Execution Detail
