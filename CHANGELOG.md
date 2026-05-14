@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.23] - 2026-05-14
+
+### Machine OS
+
+- Add the bootc-native Nimbus machine image release path and promotion gates.
+- Keep the current macOS default on the pinned Podman machine image until paired release assets and macOS guest proof pass.
+- Harden guest binary, bootc lifecycle, SBOM, SELinux, and release-ref evidence for default promotion.
+
 ## [0.1.22] - 2026-04-24
 
 ### Codegen
