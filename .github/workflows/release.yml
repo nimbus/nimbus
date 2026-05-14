@@ -15,17 +15,18 @@ env:
   # binary inside the darwin archive instead of publishing gvproxy as a
   # separate Nimbus release asset or depending on Podman at runtime.
   GVPROXY_VERSION: v0.8.8
-  # Dedicated machine-os workflow ref used for staging, publishing, and run
-  # lookup. Keep this in sync with stage-machine-os.uses; the release ref
-  # contract verifier fails if the dispatch/watch paths drift.
-  MACHINE_OS_RELEASE_WORKFLOW_REF: release-workflow-v1
+  # Dedicated machine-os source ref used by the release graph. The release
+  # workflow checks out this repository directly and builds/publishes the
+  # bootc artifact in-process so the default release path does not depend on a
+  # second asynchronous workflow dispatch.
+  MACHINE_OS_SOURCE_REF: main
 
 permissions:
   contents: read
 
 jobs:
   verify-release-contract:
-    name: Verify cross-repo release contract
+    name: Verify release contract
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -52,11 +53,11 @@ jobs:
           MACHINE_OS_RELEASE_APP_PRIVATE_KEY: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
         run: |
           if [[ -z "${MACHINE_OS_RELEASE_APP_ID}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_ID must be configured so this workflow can dispatch and observe the matching nimbus-machine-os release workflow." >&2
+            echo "MACHINE_OS_RELEASE_APP_ID must be configured so this workflow can check out nimbus-machine-os, publish GHCR artifacts, and create the matching machine-os release." >&2
             exit 1
           fi
           if [[ -z "${MACHINE_OS_RELEASE_APP_PRIVATE_KEY}" ]]; then
-            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so this workflow can dispatch and observe the matching nimbus-machine-os release workflow." >&2
+            echo "MACHINE_OS_RELEASE_APP_PRIVATE_KEY must be configured so this workflow can check out nimbus-machine-os, publish GHCR artifacts, and create the matching machine-os release." >&2
             exit 1
           fi
 
@@ -260,143 +261,266 @@ jobs:
           path: nimbus_${{ matrix.os }}_${{ matrix.arch }}.${{ matrix.archive }}
           compression-level: 0
 
-  stage-machine-os:
-    name: Stage machine-os bundle
-    needs: build-linux-arm64
-    # Keep this in sync with MACHINE_OS_RELEASE_WORKFLOW_REF; reusable workflow
-    # `uses:` targets must remain literal, so the verifier enforces the match.
-    # Use github.run_id for the staged bundle handoff because the downstream
-    # publish workflow must still find the artifact across reruns. Reserve
-    # github.run_attempt for per-attempt diagnostics, not durable artifact
-    # names.
-    uses: nimbus/nimbus-machine-os/.github/workflows/build.yml@release-workflow-v1
-    with:
-      nimbus_version: ${{ github.ref_name }}
-      nimbus_artifact_name: nimbus_linux_arm64
-      create_release: false
-      publish: false
-      image_reference: "docker://ghcr.io/nimbus/nimbus-machine-os:${{ github.ref_name }}"
-      stage_artifact_name: nimbus-machine-os-${{ github.run_id }}
+  build-machine-os:
+    name: Build and release machine-os
+    needs: [build-linux-arm64, build]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
     permissions:
-      contents: write
+      contents: read
       packages: write
       id-token: write
       attestations: write
-
-  release-machine-os:
-    name: Release machine-os
-    needs: [build-linux-arm64, build, stage-machine-os]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out Nimbus repository
+        uses: actions/checkout@v6
 
-      - name: Create machine-os dispatch token
-        id: release_app_token
+      - name: Create machine-os release token
+        id: machine_os_token
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
           owner: nimbus
           repositories: nimbus-machine-os
-          permission-actions: write
-          permission-contents: read
+          permission-contents: write
+          permission-packages: write
 
-      - name: Dispatch machine-os publish workflow
-        id: dispatch
-        env:
-          GH_TOKEN: ${{ steps.release_app_token.outputs.token }}
+      - name: Check out machine-os repository
+        uses: actions/checkout@v6
+        with:
+          repository: nimbus/nimbus-machine-os
+          ref: ${{ env.MACHINE_OS_SOURCE_REF }}
+          path: nimbus-machine-os
+          token: ${{ steps.machine_os_token.outputs.token }}
+
+      - name: Initialize machine-os directories
         run: |
-          expected_title="Publish machine-os (${{ github.ref_name }}) from ${{ github.repository }}#${{ github.run_id }} (attempt ${{ github.run_attempt }})"
-          cat > /tmp/machine-os-dispatch.json <<EOF
           {
-            "ref": "${MACHINE_OS_RELEASE_WORKFLOW_REF}",
-            "inputs": {
-              "source_repository": "${{ github.repository }}",
-              "source_run_id": "${{ github.run_id }}",
-              "source_run_attempt": "${{ github.run_attempt }}",
-              "nimbus_version": "${{ github.ref_name }}",
-              "release_tag": "${{ github.ref_name }}",
-              "stage_artifact_name": "nimbus-machine-os-${{ github.run_id }}",
-              "image_reference": "docker://ghcr.io/nimbus/nimbus-machine-os:${{ github.ref_name }}",
-              "create_release": true
-            }
-          }
-          EOF
+            echo "MACHINE_OS_DIR=${GITHUB_WORKSPACE}/nimbus-machine-os"
+            echo "BUILD_OUTPUT_DIR=${RUNNER_TEMP}/nimbus-machine-os"
+            echo "LAYOUT_DIR=${RUNNER_TEMP}/nimbus-machine-os-layout"
+            echo "RELEASE_DIR=${RUNNER_TEMP}/nimbus-machine-os-release"
+          } >> "${GITHUB_ENV}"
+          mkdir -p \
+            "${RUNNER_TEMP}/nimbus-machine-os" \
+            "${RUNNER_TEMP}/nimbus-machine-os-layout" \
+            "${RUNNER_TEMP}/nimbus-machine-os-release"
 
-          gh api \
-            repos/nimbus/nimbus-machine-os/actions/workflows/publish.yml/dispatches \
-            --method POST \
-            --input /tmp/machine-os-dispatch.json
+      - name: Download Linux arm64 nimbus artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: nimbus_linux_arm64
+          path: ${{ runner.temp }}/nimbus-linux-arm64
 
-          echo "expected_title=${expected_title}" >> "${GITHUB_OUTPUT}"
-
-      - name: Wait for machine-os publish workflow
-        env:
-          GH_TOKEN: ${{ steps.release_app_token.outputs.token }}
-          EXPECTED_TITLE: ${{ steps.dispatch.outputs.expected_title }}
+      - name: Extract nimbus binary
         run: |
-          deadline=$(( $(date +%s) + 600 ))
-          run_id=""
+          tar xzf "${RUNNER_TEMP}/nimbus-linux-arm64/nimbus_linux_arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/nimbus-linux-arm64"
+          chmod +x "${RUNNER_TEMP}/nimbus-linux-arm64/nimbus"
+          echo "NIMBUS_LINUX_ARM64_BINARY=${RUNNER_TEMP}/nimbus-linux-arm64/nimbus" >> "${GITHUB_ENV}"
 
-          while [[ $(date +%s) -lt "${deadline}" ]]; do
-            run_id="$(
-              gh run list \
-                --repo nimbus/nimbus-machine-os \
-                --workflow publish.yml \
-                --branch "${MACHINE_OS_RELEASE_WORKFLOW_REF}" \
-                --event workflow_dispatch \
-                --limit 20 \
-                --json databaseId,displayTitle \
-                | jq -r --arg expected "${EXPECTED_TITLE}" '.[] | select(.displayTitle == $expected) | .databaseId' \
-                | head -n1
-            )"
-            if [[ -n "${run_id}" ]]; then
-              break
+      - name: Resolve machine-os source revision
+        id: machine-os-source
+        run: |
+          revision="$(git -C "${MACHINE_OS_DIR}" rev-parse HEAD)"
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          echo "machine-os source revision: ${revision}"
+
+      - name: Verify build-host requirements
+        run: |
+          command -v sudo
+          command -v git
+          command -v podman
+          command -v gzip
+          command -v sha256sum
+          command -v skopeo
+          sudo -n true
+
+      - name: Restore container image cache
+        id: image-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/image-cache
+          key: machine-os-base-image-arm64-${{ hashFiles('nimbus-machine-os/images/Containerfile', 'nimbus-machine-os/images/build-common.sh', 'nimbus-machine-os/images/build.sh') }}
+          restore-keys: |
+            machine-os-base-image-arm64-
+
+      - name: Load cached container images
+        run: |
+          cache_dir="${RUNNER_TEMP}/image-cache"
+          for archive in "${cache_dir}"/*.tar; do
+            if [[ -f "${archive}" ]]; then
+              echo "Loading $(basename "${archive}")..."
+              sudo podman load -i "${archive}"
             fi
-            sleep 5
           done
 
-          if [[ -z "${run_id}" ]]; then
-            echo "Failed to locate dispatched nimbus-machine-os publish run with title '${EXPECTED_TITLE}'." >&2
-            gh run list \
-              --repo nimbus/nimbus-machine-os \
-              --workflow publish.yml \
-              --branch "${MACHINE_OS_RELEASE_WORKFLOW_REF}" \
-              --event workflow_dispatch \
-              --limit 20
-            exit 1
+      - name: Pull base images
+        run: |
+          sudo podman pull quay.io/fedora/fedora-bootc@sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94 &
+          sudo podman pull quay.io/centos-bootc/bootc-image-builder@sha256:754fc17718f977313885379e2c779066aba7d15af88fe04b486baec74759f574 &
+          wait
+
+      - name: Build machine-os guest image
+        run: |
+          cd "${MACHINE_OS_DIR}"
+          sudo bash scripts/build.sh \
+            --nimbus-binary "${NIMBUS_LINUX_ARM64_BINARY}" \
+            --nimbus-version "${{ github.ref_name }}" \
+            --source-revision "${{ steps.machine-os-source.outputs.revision }}" \
+            --output-dir "${BUILD_OUTPUT_DIR}"
+          sudo chown -R "$(id -u):$(id -g)" \
+            "${BUILD_OUTPUT_DIR}"
+
+      - name: Save base image to cache
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          cache_dir="${RUNNER_TEMP}/image-cache"
+          mkdir -p "${cache_dir}"
+          sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" quay.io/fedora/fedora-bootc@sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94
+          sudo chown -R "$(id -u):$(id -g)" "${cache_dir}"
+
+      - name: Package raw-disk OCI layout
+        run: |
+          cd "${MACHINE_OS_DIR}"
+          bash scripts/package-oci.sh \
+            --build-output-dir "${BUILD_OUTPUT_DIR}" \
+            --image-reference "docker://ghcr.io/nimbus/nimbus-machine-os:${{ github.ref_name }}" \
+            --layout-dir "${LAYOUT_DIR}" \
+            --arch arm64 \
+            --source-repository-url "https://github.com/nimbus/nimbus-machine-os" \
+            --source-revision "${{ steps.machine-os-source.outputs.revision }}" \
+            --attestation-repository "${{ github.repository }}" \
+            --nimbus-version "${{ github.ref_name }}"
+
+      - name: Publish packaged OCI artifact
+        env:
+          NIMBUS_MACHINE_OS_REGISTRY_USERNAME: ${{ steps.machine_os_token.outputs.app-slug != '' && format('{0}[bot]', steps.machine_os_token.outputs.app-slug) || github.actor }}
+          NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ steps.machine_os_token.outputs.token }}
+        run: |
+          cd "${MACHINE_OS_DIR}"
+          bash scripts/publish.sh \
+            --layout-dir "${LAYOUT_DIR}" \
+            --build-output-dir "${BUILD_OUTPUT_DIR}" \
+            --image-reference "docker://ghcr.io/nimbus/nimbus-machine-os:${{ github.ref_name }}" \
+            --release-dir "${RELEASE_DIR}"
+
+      - name: Prepare machine-os release bundle
+        run: |
+          primary_digest="$(awk -F= '$1 == "image_digest" { print substr($0, length($1) + 2) }' "${RELEASE_DIR}/publish-summary.txt" | tail -n 1)"
+          digest_reference="$(awk -F= '$1 == "image_digest_reference" { print substr($0, length($1) + 2) }' "${RELEASE_DIR}/publish-summary.txt" | tail -n 1)"
+          if [[ -z "${primary_digest}" || -z "${digest_reference}" ]]; then
+            echo "publish-summary.txt must include image_digest and image_digest_reference before release creation" >&2
+            exit 65
           fi
 
-          echo "Watching nimbus-machine-os run ${run_id} (${EXPECTED_TITLE})"
-          if ! gh run watch "${run_id}" --repo nimbus/nimbus-machine-os --exit-status; then
-            gh run view "${run_id}" --repo nimbus/nimbus-machine-os --log-failed || true
-            exit 1
-          fi
+          cat > "${RELEASE_DIR}/machine-image-reference.txt" <<EOF
+          tag_reference=ghcr.io/nimbus/nimbus-machine-os:${{ github.ref_name }}
+          digest_reference=${digest_reference}
+          digest=${primary_digest}
+          EOF
+          (
+            cd "${RELEASE_DIR}"
+            rm -f checksums.txt
+            sha256sum ./* >checksums.txt
+          )
+
+          cat > "${RELEASE_DIR}/release-notes.md" <<EOF
+          nimbus-machine-os release ${{ github.ref_name }}
+
+          OCI image:
+          - tag: \`ghcr.io/nimbus/nimbus-machine-os:${{ github.ref_name }}\`
+          - digest: \`${digest_reference}\`
+
+          Source nimbus release:
+          - \`https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}\`
+
+          Source workflow run:
+          - \`https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\`
+
+          Source machine-os revision:
+          - \`${{ steps.machine-os-source.outputs.revision }}\`
+
+          Included assets:
+          - \`nimbus-machine-os.raw.gz\`
+          - \`nimbus-machine-os.sbom.cdx.json\`
+          - \`checksums.txt\`
+          - \`publish-summary.txt\`
+          - \`published-digests.txt\`
+          - \`machine-image-reference.txt\`
+          EOF
 
       - name: Verify machine-os release default gate
-        env:
-          GH_TOKEN: ${{ steps.release_app_token.outputs.token }}
         run: |
-          release_dir="${RUNNER_TEMP}/nimbus-machine-os-release-${{ github.ref_name }}"
-          rm -rf "${release_dir}"
-          mkdir -p "${release_dir}"
-
-          gh release download "${{ github.ref_name }}" \
-            --repo nimbus/nimbus-machine-os \
-            --dir "${release_dir}"
-
           bash scripts/verify-machine-os-release-default-gate.sh \
-            --release-dir "${release_dir}" \
+            --release-dir "${RELEASE_DIR}" \
             --expected-tag "${{ github.ref_name }}"
+
+      - name: Create or update machine-os GitHub release
+        env:
+          GH_TOKEN: ${{ steps.machine_os_token.outputs.token }}
+        run: |
+          release_tag="${{ github.ref_name }}"
+          release_repository="nimbus/nimbus-machine-os"
+          release_target_sha="${{ steps.machine-os-source.outputs.revision }}"
+          assets=(
+            "${BUILD_OUTPUT_DIR}/nimbus-machine-os.raw.gz"
+            "${BUILD_OUTPUT_DIR}/nimbus-machine-os.sbom.cdx.json"
+            "${RELEASE_DIR}/checksums.txt"
+            "${RELEASE_DIR}/publish-summary.txt"
+            "${RELEASE_DIR}/published-digests.txt"
+            "${RELEASE_DIR}/machine-image-reference.txt"
+          )
+
+          if gh release view "${release_tag}" --repo "${release_repository}" >/dev/null 2>&1; then
+            gh release edit "${release_tag}" \
+              --repo "${release_repository}" \
+              --title "${release_tag}" \
+              --notes-file "${RELEASE_DIR}/release-notes.md"
+            gh release upload "${release_tag}" "${assets[@]}" --repo "${release_repository}" --clobber
+          else
+            gh release create "${release_tag}" \
+              --repo "${release_repository}" \
+              --target "${release_target_sha}" \
+              --title "${release_tag}" \
+              --notes-file "${RELEASE_DIR}/release-notes.md" \
+              "${assets[@]}"
+          fi
+
+      - name: Attest machine-os provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.ociarchive
+            ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.raw.gz
+            ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.sbom.cdx.json
+            ${{ env.RELEASE_DIR }}/checksums.txt
+            ${{ env.RELEASE_DIR }}/published-digests.txt
+            ${{ env.RELEASE_DIR }}/machine-image-reference.txt
+
+      - name: Upload machine-os release bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: nimbus-machine-os-arm64-release
+          if-no-files-found: error
+          path: |
+            ${{ env.BUILD_OUTPUT_DIR }}/summary.txt
+            ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.raw.gz
+            ${{ env.BUILD_OUTPUT_DIR }}/nimbus-machine-os.sbom.cdx.json
+            ${{ env.LAYOUT_DIR }}/summary.txt
+            ${{ env.LAYOUT_DIR }}/index.json
+            ${{ env.RELEASE_DIR }}/checksums.txt
+            ${{ env.RELEASE_DIR }}/publish-summary.txt
+            ${{ env.RELEASE_DIR }}/published-digests.txt
+            ${{ env.RELEASE_DIR }}/machine-image-reference.txt
+          compression-level: 0
 
   release:
     name: Create Release
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [build-linux-arm64, build, release-machine-os]
+    needs: [build-linux-arm64, build, build-machine-os]
     permissions:
       contents: write
       id-token: write
