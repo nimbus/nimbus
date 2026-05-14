@@ -1,6 +1,6 @@
 {
   "name": "@nimbus/codegen",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
