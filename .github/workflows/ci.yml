@@ -70,9 +70,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-clippy
+          shared-key: ci-ubuntu-stable-clippy-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -102,9 +103,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-deny
+          shared-key: ci-ubuntu-stable-deny-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
@@ -138,9 +140,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-runtime
+          shared-key: ci-ubuntu-stable-runtime-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Run isolated runtime test lane
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
@@ -179,9 +182,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-workspace
+          shared-key: ci-ubuntu-stable-workspace-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -257,9 +261,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-external-providers
+          shared-key: ci-ubuntu-stable-external-providers-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Start libsql provider fixture
         run: |
@@ -364,9 +369,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}
+          shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Run required verification harness corpus
         run: bash scripts/verification-harness.sh required ${{ matrix.surface }}
@@ -409,9 +415,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-harness-nightly-${{ matrix.surface }}
+          shared-key: ci-ubuntu-stable-harness-nightly-${{ matrix.surface }}-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Run nightly verification harness corpus
         run: bash scripts/verification-harness.sh nightly ${{ matrix.surface }}
@@ -552,8 +559,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: ci-ubuntu-stable-coverage-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov

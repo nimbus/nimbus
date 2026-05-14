@@ -41,9 +41,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: node-compat-rust-corpus-ubuntu-stable
+          shared-key: node-compat-rust-corpus-ubuntu-stable-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Run Rust Node compatibility corpus
         run: "cargo test -p nimbus-runtime runtime::tests::node_compat:: -- --nocapture --test-threads=1"
@@ -73,9 +74,10 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: node-compat-nightly-ubuntu-stable
+          shared-key: node-compat-nightly-ubuntu-stable-no-bin-v1
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          cache-bin: "false"
 
       - name: Set up Node.js 22 for seeded slices and canaries
         uses: actions/setup-node@v6

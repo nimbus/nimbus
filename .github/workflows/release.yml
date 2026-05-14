@@ -96,12 +96,12 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          # Flush the previously poisoned release cache once, but continue
-          # caching successful target/ artifacts for faster reruns. The real
-          # fix is to avoid saving failed Windows V8 link states.
-          key: release-aarch64-unknown-linux-gnu-v3
+          # Cache build outputs only. Toolchain-managed executables under
+          # ~/.cargo/bin must not be restored over the runner's cargo shim.
+          key: release-aarch64-unknown-linux-gnu-v4
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "false"
+          cache-bin: "false"
 
       - name: Build release binary
         run: cargo build --release -p nimbus-bin
@@ -211,13 +211,12 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          # Flush the previously poisoned release caches once, then keep
-          # successful target/ artifacts reusable. The key guardrail is that
-          # failed release builds must not overwrite the cache with partial
-          # Windows V8 state.
-          key: release-${{ matrix.target }}-v3
+          # Cache build outputs only. Toolchain-managed executables under
+          # ~/.cargo/bin must not be restored over the runner's cargo shim.
+          key: release-${{ matrix.target }}-v4
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "false"
+          cache-bin: "false"
 
       - name: Build release binary
         run: cargo build --release -p nimbus-bin
