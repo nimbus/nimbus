@@ -43,7 +43,7 @@ require_in_section() {
   local section_name="$1"
   local section="$2"
   local needle="$3"
-  grep -F "${needle}" <<<"${section}" >/dev/null || \
+  grep -F -- "${needle}" <<<"${section}" >/dev/null || \
     die "${section_name} must contain: ${needle}"
 }
 
@@ -51,7 +51,7 @@ reject_in_section() {
   local section_name="$1"
   local section="$2"
   local needle="$3"
-  if grep -F "${needle}" <<<"${section}" >/dev/null; then
+  if grep -F -- "${needle}" <<<"${section}" >/dev/null; then
     die "${section_name} must not contain: ${needle}"
   fi
 }
@@ -147,6 +147,7 @@ require_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MA
 require_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/publish.sh"
 require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/verify-machine-os-release-default-gate.sh"
+require_in_section publish-machine-os "${publish_machine_os_section}" "--require-ghcr-public"
 require_in_section publish-machine-os "${publish_machine_os_section}" '${RELEASE_DIR}/build-summary.txt'
 require_in_section publish-machine-os "${publish_machine_os_section}" '${RELEASE_DIR}/oci-layout-summary.txt'
 require_in_section publish-machine-os "${publish_machine_os_section}" "gh release create"

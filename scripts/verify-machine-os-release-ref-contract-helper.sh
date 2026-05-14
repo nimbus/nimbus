@@ -91,6 +91,22 @@ fi
 grep -F "publish-machine-os must contain: bash scripts/verify-machine-os-release-default-gate.sh" \
   "${tmp_dir}/bad-publish-gate.out" >/dev/null
 
+bad_public_gate="${tmp_dir}/bad-public-gate.yml"
+awk '
+  $0 ~ /--require-ghcr-public/ {
+    next
+  }
+  { print }
+' "${repo_root}/.github/workflows/release.yml" >"${bad_public_gate}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_public_gate}" \
+  >"${tmp_dir}/bad-public-gate.out" 2>&1; then
+  echo "expected release ref contract to reject publish-machine-os without GHCR public-read gate" >&2
+  exit 1
+fi
+grep -F "publish-machine-os must contain: --require-ghcr-public" \
+  "${tmp_dir}/bad-public-gate.out" >/dev/null
+
 bad_registry_token="${tmp_dir}/bad-registry-token.yml"
 awk '
   {

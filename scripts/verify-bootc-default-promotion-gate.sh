@@ -95,9 +95,15 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 release_dir="$(cd "${release_dir}" && pwd)"
 guest_proof_dir="$(cd "${guest_proof_dir}" && pwd)"
 
-bash "${script_dir}/verify-machine-os-release-default-gate.sh" \
-  --release-dir "${release_dir}" \
-  --expected-tag "${expected_tag}" >/dev/null
+release_gate_args=(
+  --release-dir "${release_dir}"
+  --expected-tag "${expected_tag}"
+)
+if [[ "${NIMBUS_MACHINE_OS_SKIP_GHCR_PUBLIC_CHECK:-}" != "1" ]]; then
+  release_gate_args+=(--require-ghcr-public)
+fi
+
+bash "${script_dir}/verify-machine-os-release-default-gate.sh" "${release_gate_args[@]}" >/dev/null
 
 release_build_summary="${release_dir}/build-summary.txt"
 release_nimbus_version="$(summary_value "${release_build_summary}" nimbus_version)"
