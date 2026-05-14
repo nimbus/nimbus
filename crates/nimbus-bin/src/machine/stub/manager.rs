@@ -1,11 +1,10 @@
 use std::env;
-#[cfg(test)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use nimbus::Error;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{
     MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
@@ -126,6 +125,11 @@ pub(super) fn build_scp_command(
     _host_path: &str,
 ) -> Result<Command, Error> {
     Err(unsupported_machine_host_error())
+}
+
+pub(super) fn mount_tag(target: &Path) -> String {
+    let digest = Sha256::digest(target.as_os_str().as_encoded_bytes());
+    format!("{digest:x}")[..36].to_owned()
 }
 
 pub(super) fn release_machine_ssh_port(
