@@ -89,22 +89,44 @@ const expectedVersion = process.argv[3];
 const readJson = (relativePath) =>
   JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), "utf8"));
 
-const convex = readJson("packages/convex/package.json");
-const nimbus = readJson("packages/nimbus/package.json");
-const codegen = readJson("packages/codegen/package.json");
+const root = readJson("package.json");
 const lock = readJson("package-lock.json");
-const checks = [
-  ["packages/codegen/package.json version", codegen.version],
-  ["packages/convex/package.json version", convex.version],
-  ["packages/convex/package.json dependency @nimbus/codegen", convex.dependencies?.["@nimbus/codegen"]],
-  ["packages/convex/package.json dependency nimbus", convex.dependencies?.["nimbus"]],
-  ["packages/nimbus/package.json version", nimbus.version],
-  ["packages/codegen version", lock.packages?.["packages/codegen"]?.version],
-  ["packages/convex version", lock.packages?.["packages/convex"]?.version],
-  ["packages/convex dependency @nimbus/codegen", lock.packages?.["packages/convex"]?.dependencies?.["@nimbus/codegen"]],
-  ["packages/convex dependency nimbus", lock.packages?.["packages/convex"]?.dependencies?.["nimbus"]],
-  ["packages/nimbus version", lock.packages?.["packages/nimbus"]?.version],
-];
+
+const workspacePaths = root.workspaces ?? [];
+const packageWorkspacePaths = workspacePaths.filter((workspacePath) =>
+  workspacePath.startsWith("packages/")
+);
+const packageWorkspaces = packageWorkspacePaths.map((workspacePath) => [
+  workspacePath,
+  readJson(`${workspacePath}/package.json`),
+]);
+const localPackageNames = new Set(
+  packageWorkspaces.map(([, workspacePackage]) => workspacePackage.name)
+);
+const checks = [];
+
+for (const [workspacePath, workspacePackage] of packageWorkspaces) {
+  checks.push([`${workspacePath}/package.json version`, workspacePackage.version]);
+  checks.push([`${workspacePath} package-lock version`, lock.packages?.[workspacePath]?.version]);
+}
+
+for (const workspacePath of workspacePaths) {
+  const workspacePackage = readJson(`${workspacePath}/package.json`);
+  const packageLockEntry = lock.packages?.[workspacePath];
+  for (const dependencyKind of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+    for (const [name, actual] of Object.entries(workspacePackage[dependencyKind] ?? {})) {
+      if (localPackageNames.has(name) && actual !== "*") {
+        checks.push([`${workspacePath}/package.json ${dependencyKind} ${name}`, actual]);
+      }
+    }
+
+    for (const [name, actual] of Object.entries(packageLockEntry?.[dependencyKind] ?? {})) {
+      if (localPackageNames.has(name) && actual !== "*") {
+        checks.push([`${workspacePath} package-lock ${dependencyKind} ${name}`, actual]);
+      }
+    }
+  }
+}
 
 const failures = checks
   .filter(([, actual]) => actual !== expectedVersion)
