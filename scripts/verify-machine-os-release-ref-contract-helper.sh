@@ -91,6 +91,22 @@ fi
 grep -F "publish-machine-os must contain: bash scripts/verify-machine-os-release-default-gate.sh" \
   "${tmp_dir}/bad-publish-gate.out" >/dev/null
 
+bad_registry_token="${tmp_dir}/bad-registry-token.yml"
+awk '
+  {
+    gsub(/\$\{\{ secrets\.GITHUB_TOKEN \}\}/, "${{ steps.machine_os_token.outputs.token }}")
+    print
+  }
+' "${repo_root}/.github/workflows/release.yml" >"${bad_registry_token}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_registry_token}" \
+  >"${tmp_dir}/bad-registry-token.out" 2>&1; then
+  echo "expected release ref contract to reject app-token GHCR publishing" >&2
+  exit 1
+fi
+grep -F 'publish-machine-os must contain: NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}' \
+  "${tmp_dir}/bad-registry-token.out" >/dev/null
+
 bad_release_needs="${tmp_dir}/bad-release-needs.yml"
 awk '
   $0 == "    needs: [build-linux-arm64, build, publish-machine-os]" && replaced == 0 {
