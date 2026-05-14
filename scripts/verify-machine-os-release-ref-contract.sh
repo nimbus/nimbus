@@ -112,6 +112,15 @@ grep -F "MACHINE_OS_REPOSITORY: nimbus/machine-os" "${workflow_path}" >/dev/null
   die "release workflow must set MACHINE_OS_REPOSITORY: nimbus/machine-os"
 grep -F "MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os" "${workflow_path}" >/dev/null || \
   die "release workflow must set MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os"
+grep -F "MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:" "${workflow_path}" >/dev/null || \
+  die "release workflow must set MACHINE_OS_FEDORA_BOOTC_IMAGE to a digest-pinned Fedora bootc image"
+fedora_bootc_refs="$(
+  grep -Eo 'quay\.io/fedora/fedora-bootc(@sha256:[0-9a-f]{64}|:[A-Za-z0-9._-]+)?' \
+    "${workflow_path}" | sort -u
+)"
+fedora_bootc_ref_count="$(printf '%s\n' "${fedora_bootc_refs}" | sed '/^$/d' | wc -l | tr -d ' ')"
+[[ "${fedora_bootc_ref_count}" == "1" ]] || \
+  die "release workflow must use one Fedora bootc image reference; found: ${fedora_bootc_refs}"
 
 build_machine_os_section="$(job_section build-machine-os)"
 publish_machine_os_section="$(job_section publish-machine-os)"
@@ -133,6 +142,8 @@ require_in_section build-machine-os "${build_machine_os_section}" 'name: ${{ env
 require_in_section build-machine-os "${build_machine_os_section}" 'path: ${{ env.STAGE_DIR }}/**'
 require_in_section build-machine-os "${build_machine_os_section}" "docker://\${{ env.MACHINE_OS_PACKAGE }}:"
 require_in_section build-machine-os "${build_machine_os_section}" "https://github.com/\${{ env.MACHINE_OS_REPOSITORY }}"
+require_in_section build-machine-os "${build_machine_os_section}" 'sudo podman pull "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"'
+require_in_section build-machine-os "${build_machine_os_section}" 'sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"'
 require_in_section build-machine-os "${build_machine_os_section}" "build-output"
 require_in_section build-machine-os "${build_machine_os_section}" "layout"
 reject_in_section build-machine-os "${build_machine_os_section}" "packages: write"
