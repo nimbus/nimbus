@@ -61,7 +61,7 @@ fn bootc_machine_os_uses_baked_nimbus_binary_without_host_sync() {
     fs::write(&image_path, []).expect("image should write");
     let mut config = sample_config(&image_path);
     config.guest.image_source = MachineImageSource::OciReference {
-        reference: "docker://ghcr.io/nimbus/nimbus-machine-os:v0.1.22".to_owned(),
+        reference: "docker://ghcr.io/nimbus/machine-os:v0.1.22".to_owned(),
     };
     config.guest.provisioning = MachineGuestProvisioning::BootcMachineConfig;
     config.guest.ssh_user = DEFAULT_BOOTC_MACHINE_SSH_USER.to_owned();

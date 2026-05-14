@@ -153,8 +153,8 @@ pub(super) fn serve_fake_oci_registry(layer_body: Vec<u8>) -> String {
                 },
                 "annotations": {
                     "disktype": MachineProvider::Krunkit.oci_artifact_disk_type(),
-                    "org.opencontainers.image.source": "https://github.com/nimbus/nimbus-machine-os",
-                    "io.nimbus.machine.attestation.repository": "nimbus/nimbus-machine-os",
+                    "org.opencontainers.image.source": "https://github.com/nimbus/machine-os",
+                    "io.nimbus.machine.attestation.repository": "nimbus/machine-os",
                     "io.nimbus.machine.nimbus.version": "v1.2.3"
                 }
             }

@@ -60,7 +60,7 @@ archived plans only when you need historical execution detail.
 
 - `docs/plans/nimbus-rename-satellite-repos-plan.md`
   - prerequisite plan for renaming internals of satellite repositories
-    (`nimbus-machine-os`, `nimbus-crun`) and creating a new `nimbus/homebrew-tap`
+    (`machine-os`, `nimbus-crun`) and creating a new `nimbus/homebrew-tap`
     before the main repo rename: guest image paths, systemd units, OCI media
     types, OCI annotations, build scripts, workflow inputs, Homebrew cask, and
     cross-repo interface coordination

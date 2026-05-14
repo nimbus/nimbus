@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn attestation_repository_prefers_explicit_metadata() {
     assert_eq!(
-        attestation_repositories_for_reference("nimbus/nimbus-machine-os", Some("nimbus/nimbus")),
+        attestation_repositories_for_reference("nimbus/machine-os", Some("nimbus/nimbus")),
         vec!["nimbus/nimbus".to_owned()]
     );
 }
@@ -11,11 +11,8 @@ fn attestation_repository_prefers_explicit_metadata() {
 #[test]
 fn attestation_repository_falls_back_to_known_repo_order() {
     assert_eq!(
-        attestation_repositories_for_reference("nimbus/nimbus-machine-os", None),
-        vec![
-            "nimbus/nimbus-machine-os".to_owned(),
-            "nimbus/nimbus".to_owned()
-        ]
+        attestation_repositories_for_reference("nimbus/machine-os", None),
+        vec!["nimbus/machine-os".to_owned(), "nimbus/nimbus".to_owned()]
     );
 }
 
@@ -29,7 +26,7 @@ fn machine_artifact_metadata_uses_primary_then_fallback_annotations() {
     let mut fallback = BTreeMap::new();
     fallback.insert(
         OCI_ANNOTATION_SOURCE.to_owned(),
-        "https://github.com/nimbus/nimbus-machine-os".to_owned(),
+        "https://github.com/nimbus/machine-os".to_owned(),
     );
     fallback.insert(
         OCI_ANNOTATION_MACHINE_NIMBUS_VERSION.to_owned(),
@@ -44,7 +41,7 @@ fn machine_artifact_metadata_uses_primary_then_fallback_annotations() {
     );
     assert_eq!(
         metadata.source_repository_url.as_deref(),
-        Some("https://github.com/nimbus/nimbus-machine-os")
+        Some("https://github.com/nimbus/machine-os")
     );
     assert_eq!(metadata.nimbus_version.as_deref(), Some("v1.2.3"));
 }

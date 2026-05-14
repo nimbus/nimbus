@@ -217,13 +217,13 @@ mod tests {
             "status": {
                 "booted": {
                     "image": {
-                        "image": {"image": "ghcr.io/nimbus/nimbus-machine-os:v1"},
+                        "image": {"image": "ghcr.io/nimbus/machine-os:v1"},
                         "imageDigest": "sha256:booted"
                     }
                 },
                 "staged": {
                     "image": {
-                        "image": {"image": "ghcr.io/nimbus/nimbus-machine-os:v2"},
+                        "image": {"image": "ghcr.io/nimbus/machine-os:v2"},
                         "imageDigest": "sha256:staged"
                     }
                 },
@@ -233,7 +233,7 @@ mod tests {
 
         assert_eq!(
             deployment_image(&status, "booted").as_deref(),
-            Some("ghcr.io/nimbus/nimbus-machine-os:v1")
+            Some("ghcr.io/nimbus/machine-os:v1")
         );
         assert_eq!(
             deployment_digest(&status, "staged").as_deref(),

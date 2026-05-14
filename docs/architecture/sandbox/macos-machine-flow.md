@@ -21,7 +21,7 @@ evidence are complete.
 Reviewed against:
 
 - `.github/workflows/release.yml`
-- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/.github/workflows/build.yml`
+- `/Users/jack/src/github.com/nimbus/machine-os/.github/workflows/build.yml`
 - [crates/nimbus-bin/src/machine/mod.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/mod.rs)
 - [crates/nimbus-bin/src/machine/manager.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/manager.rs)
 - [crates/nimbus-bin/src/machine/api.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/api.rs)
@@ -29,9 +29,9 @@ Reviewed against:
 - [crates/nimbus-bin/src/machine/backend.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/backend.rs)
 - [crates/nimbus-bin/src/start/mod.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/start/mod.rs)
 - [crates/nimbus-bin/src/compose/mod.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/compose/mod.rs)
-- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/package-oci.sh`
-- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/publish.sh`
-- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/check-selinux-avcs.sh`
+- `/Users/jack/src/github.com/nimbus/machine-os/scripts/package-oci.sh`
+- `/Users/jack/src/github.com/nimbus/machine-os/scripts/publish.sh`
+- `/Users/jack/src/github.com/nimbus/machine-os/scripts/check-selinux-avcs.sh`
 
 ## Overview
 
@@ -42,7 +42,7 @@ The current macOS architecture is a hybrid control plane:
 - the Linux guest owns a narrow machine API and standard-container execution
   lane for service workloads
 - the current bring-up image comes from Podman's published machine-image
-  stream on Quay, while `nimbus/nimbus-machine-os` is the active bootc-native
+  stream on Quay, while `nimbus/machine-os` is the active bootc-native
   image-ownership candidate
 - the host `nimbus` release owns the desired Podman image reference/digest and
   the matching Linux guest `nimbus` asset for the local host architecture
@@ -99,13 +99,13 @@ flowchart TD
     C --> D["build nimbus binaries for supported targets"]
     D --> E["run reusable machine-os workflow as contract build<br/>publish=false"]
     D --> F["create nimbus/nimbus GitHub Release"]
-    F --> G["dispatch native nimbus/nimbus-machine-os release<br/>release_tag=vX.Y.Z publish=true"]
+    F --> G["dispatch native nimbus/machine-os release<br/>release_tag=vX.Y.Z publish=true"]
     G --> H["nimbus-machine-os build workflow"]
     H --> I["build/publish machine-os raw guest artifact<br/>current checked-in repo flow"]
     I --> J["emit bootable raw-image metadata for the macOS release flow"]
     J --> K["prove parity against Podman machine image when needed"]
     K --> L["wrap raw disk as OCI layout<br/>annotations include disktype=applehv"]
-    L --> M["publish to GHCR<br/>ghcr.io/nimbus/nimbus-machine-os:vX.Y.Z"]
+    L --> M["publish to GHCR<br/>ghcr.io/nimbus/machine-os:vX.Y.Z"]
     M --> N["record digest reference<br/>machine-image-reference.txt"]
     N --> O["create nimbus-machine-os GitHub Release<br/>SBOM, checksums, attestations"]
 ```
@@ -114,7 +114,7 @@ flowchart TD
 
 - `nimbus/nimbus`
   owns host CLI/server/runtime binaries and the host GitHub Release
-- `nimbus/nimbus-machine-os`
+- `nimbus/machine-os`
   owns the guest VM image build, GHCR publish, machine-image GitHub Release,
   SBOM, checksum, digest-reference, and SELinux AVC gate artifacts
 
@@ -124,7 +124,7 @@ The host repo uses the machine-os workflow twice for different reasons:
 
 1. reusable workflow call
    proves the cross-repo build contract against the exact host release inputs
-2. native workflow dispatch in `nimbus/nimbus-machine-os`
+2. native workflow dispatch in `nimbus/machine-os`
    lets the machine-image repo own its own GHCR publish and GitHub Release
 
 That keeps the release ownership aligned with the repo boundary, which mirrors
@@ -144,7 +144,7 @@ flowchart LR
     E --> L["io.nimbus.machine.nimbus.version"]
     D --> M["publish.sh"]
     M --> N["skopeo copy"]
-    N --> O["docker://ghcr.io/nimbus/nimbus-machine-os:vX.Y.Z"]
+    N --> O["docker://ghcr.io/nimbus/machine-os:vX.Y.Z"]
     M --> P["published-digests.txt"]
     M --> Q["machine-image-reference.txt"]
     M --> R["nimbus-machine-os.sbom.cdx.json"]
@@ -158,7 +158,7 @@ Current decision:
 - the checked-in `nimbus-machine-os` packaging flow above is therefore the
   active image-ownership candidate, not the current shipped macOS default
 - any separate `fedora-bootc` image pipeline work in
-  `nimbus/nimbus-machine-os` must produce a digest-pinned, SELinux-gated,
+  `nimbus/machine-os` must produce a digest-pinned, SELinux-gated,
   Podman-compatible `disktype=applehv` artifact before promotion
 
 Machine OS lifecycle split:

@@ -228,7 +228,7 @@ storage, or explicit service-sandbox flows.
 | BMD3: Machine-Config Channel | `done` | Bootc-native config channel works without Ignition. |
 | BMD4: macOS Boot Parity | `done` | Real macOS guest parity proof passes with SELinux evidence recorded. |
 | BMD5: bootc Lifecycle | `done` | Apply, upgrade, rollback, and repair evidence exists. |
-| BMD6: Promote Default | `blocked` | Nimbus-owned bootc artifact becomes default by immutable digest; paired `v0.1.29` release assets exist, but default promotion is blocked until GHCR anonymous public-read, a fresh `v0.1.30` release with the bootupd SELinux recipe fix, macOS guest proof, and SELinux gate evidence pass. The `v0.1.30` candidate metadata is on `main` with green CI, but the tag/release remains blocked while `ghcr.io/nimbus/nimbus-machine-os` is not anonymously readable. |
+| BMD6: Promote Default | `blocked` | Nimbus-owned bootc artifact becomes default by immutable digest only after the machine-os repository/package identity is canonicalized to `nimbus/machine-os` and `ghcr.io/nimbus/machine-os:<tag>`, a fresh release with the bootupd SELinux recipe fix is published from the machine-os-owned package context, macOS guest proof passes, and the composed SELinux/GHCR/default gate evidence passes. The canceled `v0.1.30` tag must be recreated only after the rename/release-flow repair lands. |
 | BMD7: Remove Legacy | `pending` | Legacy FCOS/Podman-image reliance is removed from stable paths. |
 
 ## Execution Detail
@@ -314,42 +314,50 @@ Tasks:
 
 Release architecture decision:
 
-- Keep `nimbus-machine-os` as the source-of-truth repository for the bootc OS
-  recipe, SELinux policy, image scripts, and deterministic recipe validators.
-  This mirrors the containers org split between `podman` and
-  `podman-machine-os`, keeps privileged OS-image work out of everyday Nimbus
-  application development, and gives enterprise reviewers a focused
-  supply-chain boundary for base digests, bootc-image-builder inputs, package
-  inventory, SELinux policy, SBOMs, and disk artifacts.
-- Make `nimbus/nimbus` release the product-level orchestration point for the
-  bootc image. The Nimbus release already owns the guest binary version that is
-  baked into the OS, so the release workflow should build the Linux arm64
-  binary, check out `nimbus-machine-os` at a recorded source revision, run the
-  machine-os build/package/publish scripts, collect the machine-os release
-  assets, and run the composed promotion gates in one release graph.
-- Retire the cross-repo dispatch/watch release handoff once the in-release
-  build path is implemented. The reusable `nimbus-machine-os` workflow can
-  remain useful for PR validation or manual canaries, but the default release
-  should not depend on a second asynchronous workflow run, branch-name polling,
-  or a separate `release-workflow-v1` ref.
-- Publish evidence from the orchestrating Nimbus release: Nimbus tag and
-  commit, `nimbus-machine-os` commit, Fedora bootc base digest,
-  bootc-image-builder digest, raw disk checksum, OCI digest reference, SBOM,
-  checksums, and SELinux proof status. A separate `nimbus-machine-os` GitHub
-  Release is optional; the default gate only needs one canonical release asset
-  location plus the GHCR digest.
-- Publish GHCR packages with the orchestrating workflow's `GITHUB_TOKEN` and
-  `packages: write`, which is GitHub's documented GitHub Actions path for
-  GHCR publishing and first-time package linkage. Keep the `nimbus-machine-os`
-  GitHub App token scoped to cross-repo checkout and release mutation; do not
-  use that App installation token as the container-registry credential.
+- Canonicalize the bootc OS project as `nimbus/machine-os`, with
+  `ghcr.io/nimbus/machine-os:<tag>` as the public machine image reference.
+  The old `nimbus/nimbus-machine-os` repository and
+  `ghcr.io/nimbus/nimbus-machine-os` package are historical artifacts from the
+  Podman-machine-os-derived era and must not be the promoted default identity.
+- Keep the machine-os repository as the source-of-truth for the bootc OS
+  recipe, SELinux policy, image scripts, deterministic recipe validators,
+  SBOMs, release assets, and GHCR package. This mirrors the containers org
+  split between `podman` and `podman-machine-os`, keeps privileged OS-image
+  work out of everyday Nimbus application development, and gives enterprise
+  reviewers a focused supply-chain boundary for base digests,
+  bootc-image-builder inputs, package inventory, SELinux policy, SBOMs, and
+  disk artifacts.
+- Keep `nimbus/nimbus` as the product-level orchestration point and version
+  source for the baked Linux arm64 guest binary. The Nimbus release graph must
+  still prove that all CLI/platform release targets pass before public
+  machine-os publication or final Nimbus release creation.
+- Publish GHCR from the machine-os repository context, not from
+  `nimbus/nimbus`'s `GITHUB_TOKEN`. Publishing from the machine-os workflow's
+  `GITHUB_TOKEN` with `packages: write` links the package to the machine-os
+  repository and keeps the user-facing pull target and repository owner
+  aligned.
+- Use the good part of the old Neovex design, not the whole old mechanism:
+  machine-os owns package/release publication, while Nimbus supplies the exact
+  release binary and orchestrates the all-target gate. Avoid a permanent
+  `release-workflow-v1` branch, branch-name polling, or loosely matched
+  asynchronous release runs. If cross-repo workflow dispatch is required, it
+  must run from `main` or an immutable ref, carry the Nimbus run id/artifact
+  name/tag explicitly, and be waited on by run id/conclusion with release
+  evidence copied back into the Nimbus release gate.
+- Preserve the current stronger Nimbus evidence set: Nimbus tag and commit,
+  machine-os commit, Fedora bootc base digest, bootc-image-builder digest, raw
+  disk checksum, OCI digest reference, SBOM, checksums, public GHCR read proof,
+  provenance attestation, and SELinux proof status.
 - The release contract must inject the exact versioned Linux `nimbus` binary
   into the bootc image. A bootc-native default should never depend on normal
   host-side binary sync after first boot.
 
 Tasks:
 
-- publish immutable Nimbus-owned bootc artifact
+- rename/refactor the OS-image repository and package identity to
+  `nimbus/machine-os` and `ghcr.io/nimbus/machine-os:<tag>`
+- publish immutable Nimbus-owned bootc artifact from the machine-os-owned
+  package context
 - settle GHCR visibility/auth policy; the default public image path must prove
   anonymous GHCR pull/read access unless Nimbus deliberately adds a separate
   machine-image authentication design
@@ -379,19 +387,19 @@ Promotion blocker disposition:
 
 Default promotion runbook:
 
-1. Land the host and machine-os release workflow changes, then ensure the
-   selected `MACHINE_OS_SOURCE_REF` resolves to the merged direct bootc
-   machine-os recipe.
-2. Publish paired `nimbus/nimbus` and `nimbus-machine-os` releases for the
-   same tag through the Nimbus release workflow. The workflow must build,
-   package, publish, verify, and release the machine-os artifact inside the
-   same release graph; the default release path must not depend on a second
-   asynchronous `nimbus-machine-os` workflow dispatch.
+1. Rename/refactor the OS-image project to `nimbus/machine-os`, update release
+   contracts and docs to use `ghcr.io/nimbus/machine-os:<tag>`, and ensure the
+   selected machine-os source ref resolves to the merged direct bootc recipe.
+2. Publish paired `nimbus/nimbus` and `nimbus/machine-os` releases for the
+   same tag through a composed release graph. The workflow must build, package,
+   publish, verify, and release the machine-os artifact from the machine-os
+   repository/package context, while the final Nimbus release remains gated on
+   all CLI archives and successful machine-os publication.
 3. Download the machine-os release assets to a local release directory and run
    `bash scripts/verify-machine-os-release-default-gate.sh --release-dir <downloaded-machine-os-release-assets> --expected-tag vX.Y.Z --require-ghcr-public`.
 4. Boot a real macOS release-candidate VM from that artifact and collect proof
    with `scripts/collect-nimbus-machine-guest-proof.sh`, passing
-   `--selinux-avc-checker /Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/check-selinux-avcs.sh`.
+   `--selinux-avc-checker /Users/jack/src/github.com/nimbus/machine-os/scripts/check-selinux-avcs.sh`.
 5. Run:
 
    ```sh
@@ -435,9 +443,9 @@ Current focused checks while this plan is being prepared:
 ```sh
 cargo test -p nimbus-bin machine
 cargo fmt --all --check
-bash /Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/verify-fedora-bootc-proof.sh
-bash /Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/verify-oci-layout-helper.sh
-bash /Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/verify-publish-helper.sh
+bash /Users/jack/src/github.com/nimbus/machine-os/scripts/verify-fedora-bootc-proof.sh
+bash /Users/jack/src/github.com/nimbus/machine-os/scripts/verify-oci-layout-helper.sh
+bash /Users/jack/src/github.com/nimbus/machine-os/scripts/verify-publish-helper.sh
 bash scripts/verify-machine-os-release-default-gate-helper.sh
 bash scripts/verify-bootc-default-promotion-gate-helper.sh
 ```
@@ -512,3 +520,5 @@ real release-candidate run.
 | 2026-05-14 | BMD6 | `in_progress` | Prepared the next `v0.1.30` release-candidate metadata without tagging it while GHCR remains private. The release version contract now covers every `packages/*` JavaScript workspace and non-wildcard local workspace dependency pins, which caught and fixed the stale MongoDB demo pin during the version bump. | In `/Users/jack/src/github.com/nimbus/nimbus`: bumped Rust workspace/Cargo.lock and JavaScript package/package-lock versions to `0.1.30`; updated `demos/mongodb/node` to depend on `@nimbus/mongodb` `0.1.30`; hardened `scripts/verify-release-version-contract.sh` to discover `packages/*` workspaces and local dependency pins from `package.json`/`package-lock.json`. Verification passed: `bash scripts/verify-release-version-contract.sh v0.1.30`; `npm install --package-lock-only --ignore-scripts --offline`; `bash -n scripts/verify-release-version-contract.sh`; `cargo metadata --locked --format-version=1 --no-deps`; `git diff --check`. Anonymous GHCR token check still returned `UNAUTHORIZED` for `repository:nimbus/nimbus-machine-os:pull`, so the `v0.1.30` tag/release remains blocked until package visibility/auth policy is resolved. | Commit and push the `v0.1.30` candidate metadata. After GHCR is publicly readable or a deliberate image-auth design is implemented, tag `v0.1.30`, watch the release workflow, download the new machine-os assets, and rerun the public-read release gate plus fresh macOS guest proof before default promotion. |
 | 2026-05-14 | BMD6 | `blocked` | Checkpointed the pushed `v0.1.30` candidate and confirmed the only current release/default blocker is GHCR anonymous readability. The release workflow already has `packages: write` for the GHCR publish job and previous `v0.1.29` evidence proved publishing with `GITHUB_TOKEN`; what remains is package visibility or a deliberate authenticated image-pull design. GitHub's package visibility docs say public Container registry packages support anonymous pulls, and also warn that a public package cannot be made private again, so this is intentionally not automated with the current local token. | GitHub Actions run `25861575047` on `nimbus/nimbus` branch `codex/bootc-machine-default` at `b1b89a6ff1ba64c5f2f1289db253f3a3f5d2428a` completed successfully. Passing jobs: Rust Format, Rust Runtime Tests, JavaScript Build and Test, Rust Clippy, Proof Helper Checks, Coverage, Engine Verification Harness, Server Verification Harness, Storage Verification Harness, Runtime Verification Harness, Rust Workspace Tests, External Provider Integration Tests, Rust Dependency Audit, and Rust Gate Summary; the nightly matrix job skipped as expected for workflow dispatch. Live GHCR check still failed: `curl -sS --max-time 20 'https://ghcr.io/token?service=ghcr.io&scope=repository:nimbus/nimbus-machine-os:pull'` returned `{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}`. | Make `ghcr.io/nimbus/nimbus-machine-os` publicly readable, or choose and implement an authenticated machine-image pull design. After that, verify anonymous GHCR token/manifest access, tag `v0.1.30`, watch the release workflow, download the new machine-os assets, rerun the public-read release gate, boot a fresh macOS VM from the new digest, and run the composed bootc default promotion gate before any default flip. |
 | 2026-05-14 | BMD6 | `blocked` | Fast-forwarded the green `v0.1.30` candidate to `main` without tagging or publishing a release. This puts the next release candidate on the normal release line while preserving the GHCR public-read gate: the default must still not flip, and `v0.1.30` must still not be tagged until the machine image is anonymously readable or Nimbus deliberately implements authenticated image pulls. | `git push origin HEAD:main` advanced `nimbus/nimbus` from `edb9da0f` to `3c5d2e66`. Main CI run `25862940094` at `3c5d2e66df756b23d2b4de94703b24c25b1bd798` completed successfully: Rust Dependency Audit, Rust Format, Rust Workspace Tests, External Provider Integration Tests, Rust Clippy, Coverage, Storage Verification Harness, Proof Helper Checks, Engine Verification Harness, Rust Runtime Tests, JavaScript Build and Test, Runtime Verification Harness, Server Verification Harness, and Rust Gate Summary passed; the nightly matrix job skipped as expected. Release audit still shows latest `nimbus/nimbus` and `nimbus/nimbus-machine-os` releases as `v0.1.29`; GHCR anonymous token check still returns `UNAUTHORIZED` for `repository:nimbus/nimbus-machine-os:pull`. | Package visibility remains the only immediate blocker. Once GHCR public-read is fixed, verify the token and manifest, tag `v0.1.30` from `main`, watch the release workflow, download assets, run `verify-machine-os-release-default-gate.sh --require-ghcr-public`, boot a fresh macOS VM from the new digest, and run the composed bootc default promotion gate before changing the checked-in macOS default. |
+| 2026-05-14 | BMD6 | `blocked` | Pivoted the release identity plan after comparing the old Neovex split with the current Nimbus flow. Neovex had the better ownership boundary because the machine-os repository published its own GHCR package and GitHub Release, but Nimbus has the better evidence model and all-target release gating. The canonical path is now a hybrid: rename/refactor to `nimbus/machine-os`, publish `ghcr.io/nimbus/machine-os:<tag>` from the machine-os repository context, keep Nimbus as the product-level orchestrator and binary source, and preserve the stronger SBOM/attestation/public-read/SELinux gates. | Neovex evidence: `agentstation/neovex` release tags are normal app tags `v0.1.0` through `v0.1.22` plus old `machine-os/v0.1.x` tags; `agentstation/neovex-machine-os` has its own `v0.1.x` tags and a `release-workflow-v1` branch. The Neovex app release workflow stages machine-os from the Linux arm64 artifact, then dispatches `neovex-machine-os/.github/workflows/publish.yml`; the machine-os workflow publishes `ghcr.io/agentstation/neovex-machine-os:<tag>` with the machine-os repo `GITHUB_TOKEN`. Compared with Nimbus, that preserves package ownership but keeps cross-repo dispatch/watch and a special release branch, and its evidence is weaker: floating `fedora-bootc:42`, floating BIB `latest`, no required public-read gate, and fewer release evidence assets. Current Nimbus `v0.1.29` proved the stronger DAG/evidence path, and the user made the old `ghcr.io/nimbus/nimbus-machine-os` package publicly readable, but that package/repo name is no longer the desired canonical identity. Release run `25865064305` for `v0.1.30` was canceled before publish completed, and both local and remote `v0.1.30` tags were deleted. | Implement the rename/release-flow repair before recreating `v0.1.30`: canonical repo `nimbus/machine-os`, canonical package `ghcr.io/nimbus/machine-os:<tag>`, package publication from the machine-os repo context, no permanent `release-workflow-v1` branch, and no macOS default flip until the fresh release gate and real macOS guest proof pass. |
+| 2026-05-14 | BMD6 | `in_progress` | Researched current GitHub Actions/GHCR behavior and encoded the canonical split release path. GitHub's workflow dispatch API now supports returned run details, so Nimbus can dispatch `nimbus/machine-os` and wait on the exact returned run id instead of doing Neovex-style run-title/list polling. GitHub Packages documentation says packages published with a workflow `GITHUB_TOKEN` inherit/default-admin to the workflow repository, so `ghcr.io/nimbus/machine-os:<tag>` must be published by the machine-os repo if that repo should own the package. GitHub's repository rename docs also warn that Actions/reusable-workflow references do not follow renamed action repositories, which reinforces updating the release contract before recreating `v0.1.30`. | Sources reviewed: GitHub Changelog "Workflow dispatch API now returns run IDs" (2026-02-19); GitHub REST workflow dispatch docs showing `return_run_details` and response fields `workflow_run_id`, `run_url`, and `html_url`; GitHub Packages docs for `GITHUB_TOKEN`, package inheritance, public Container registry pulls, and Actions access; GitHub reusable workflow and repository rename docs warning that Actions/reusable workflow references do not redirect after repo renames. Local implementation prepared `nimbus/nimbus` release DAG with `build-machine-os` as stage-only, `publish-machine-os` dispatching `nimbus/machine-os/.github/workflows/publish.yml` with `return_run_details=true`, exact run-id wait/download, and final release gating on `publish-machine-os`; the machine-os workflow now owns GHCR publish/release/attestation with its repo `GITHUB_TOKEN`. | Rename the GitHub repository and local checkout to `nimbus/machine-os`, push the coordinated workflow/docs changes in both repos, then recreate `v0.1.30` only after the canonical repo/package path is live. |

@@ -106,12 +106,12 @@ Reviewed against:
   every release (`.github/workflows/release.yml`). V8/deno_core compiles on
   Windows today via GitHub Actions `windows-latest` runners. The remaining work
   is machine lifecycle, transport, and developer workflow — not compilation.
-- Shared machine-image policy is now more explicit too: the active macOS/MAC4
-  decision is FCOS-first for raw-disk VM providers, but that does not change
-  WSL2's provider-specific tarball and shell-bootstrap contract. The shared
-  `nimbus/nimbus-machine-os` repo may carry separate artifact families
-  for FCOS raw/vhdx providers, WSL tar roots, and future `fedora-bootc`
-  experiments without collapsing them into one runtime contract.
+- Shared machine-image policy is now more explicit too: the active macOS
+  bootc plan keeps the pinned Podman image as the current default while
+  proving `nimbus/machine-os` as the future bootc-native raw-disk provider.
+  That does not change WSL2's provider-specific tarball and shell-bootstrap
+  contract; future Windows artifacts should stay provider-specific rather than
+  forcing all machine providers into one disk-image shape.
 - The machine module stubs all lifecycle operations with explicit errors on
   non-Unix hosts. The sandbox backends gate on Linux at runtime.
 - The distribution plan lists Windows as `Future` with `WSL2` as the execution

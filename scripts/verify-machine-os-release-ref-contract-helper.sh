@@ -32,7 +32,7 @@ git -C "${machine_os_repo}" commit -q -m "seed"
 bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
   --machine-os-repo "${machine_os_repo}" \
   >"${tmp_dir}/clean.out"
-grep -F "nimbus/nimbus-machine-os@${source_ref}" \
+grep -F "nimbus/machine-os@${source_ref}" \
   "${tmp_dir}/clean.out" >/dev/null
 
 git -C "${machine_os_repo}" tag "${source_ref}"
@@ -56,6 +56,18 @@ if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
   exit 1
 fi
 grep -F "MACHINE_OS_RELEASE_WORKFLOW_REF" "${tmp_dir}/bad-workflow.out" >/dev/null
+
+bad_repository="${tmp_dir}/bad-repository.yml"
+sed 's|MACHINE_OS_REPOSITORY: nimbus/machine-os|MACHINE_OS_REPOSITORY: nimbus/nimbus-machine-os|' \
+  "${repo_root}/.github/workflows/release.yml" >"${bad_repository}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_repository}" \
+  >"${tmp_dir}/bad-repository.out" 2>&1; then
+  echo "expected release ref contract to reject the legacy machine-os repository name" >&2
+  exit 1
+fi
+grep -F "MACHINE_OS_REPOSITORY: nimbus/machine-os" \
+  "${tmp_dir}/bad-repository.out" >/dev/null
 
 bad_build_publish="${tmp_dir}/bad-build-publish.yml"
 awk '
@@ -107,37 +119,55 @@ fi
 grep -F "publish-machine-os must contain: --require-ghcr-public" \
   "${tmp_dir}/bad-public-gate.out" >/dev/null
 
-bad_registry_token="${tmp_dir}/bad-registry-token.yml"
+bad_dispatch_return="${tmp_dir}/bad-dispatch-return.yml"
 awk '
-  {
-    gsub(/\$\{\{ secrets\.GITHUB_TOKEN \}\}/, "${{ steps.machine_os_token.outputs.token }}")
-    print
-  }
-' "${repo_root}/.github/workflows/release.yml" >"${bad_registry_token}"
-if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
-  --workflow "${bad_registry_token}" \
-  >"${tmp_dir}/bad-registry-token.out" 2>&1; then
-  echo "expected release ref contract to reject app-token GHCR publishing" >&2
-  exit 1
-fi
-grep -F 'publish-machine-os must contain: NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}' \
-  "${tmp_dir}/bad-registry-token.out" >/dev/null
-
-bad_release_evidence="${tmp_dir}/bad-release-evidence.yml"
-awk '
-  $0 ~ /\$[{]RELEASE_DIR[}]\/build-summary\.txt/ {
+  $0 ~ /return_run_details=true/ {
     next
   }
   { print }
-' "${repo_root}/.github/workflows/release.yml" >"${bad_release_evidence}"
+' "${repo_root}/.github/workflows/release.yml" >"${bad_dispatch_return}"
 if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
-  --workflow "${bad_release_evidence}" \
-  >"${tmp_dir}/bad-release-evidence.out" 2>&1; then
-  echo "expected release ref contract to reject missing machine-os release evidence asset" >&2
+  --workflow "${bad_dispatch_return}" \
+  >"${tmp_dir}/bad-dispatch-return.out" 2>&1; then
+  echo "expected release ref contract to reject dispatch without returned run details" >&2
   exit 1
 fi
-grep -F 'publish-machine-os must contain: ${RELEASE_DIR}/build-summary.txt' \
-  "${tmp_dir}/bad-release-evidence.out" >/dev/null
+grep -F "publish-machine-os must contain: return_run_details=true" \
+  "${tmp_dir}/bad-dispatch-return.out" >/dev/null
+
+bad_run_discovery="${tmp_dir}/bad-run-discovery.yml"
+awk '
+  $0 == "      - name: Wait for machine-os publish workflow" && inserted == 0 {
+    print "      - name: Forbidden loose run discovery"
+    print "        run: gh run list --repo \"${MACHINE_OS_REPOSITORY}\" --workflow publish.yml"
+    inserted = 1
+  }
+  { print }
+' "${repo_root}/.github/workflows/release.yml" >"${bad_run_discovery}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_run_discovery}" \
+  >"${tmp_dir}/bad-run-discovery.out" 2>&1; then
+  echo "expected release ref contract to reject loose machine-os run discovery" >&2
+  exit 1
+fi
+grep -F "must not discover machine-os publish runs by listing recent runs" \
+  "${tmp_dir}/bad-run-discovery.out" >/dev/null
+
+bad_release_artifact="${tmp_dir}/bad-release-artifact.yml"
+awk '
+  $0 ~ /MACHINE_OS_RELEASE_ARTIFACT/ {
+    next
+  }
+  { print }
+' "${repo_root}/.github/workflows/release.yml" >"${bad_release_artifact}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_release_artifact}" \
+  >"${tmp_dir}/bad-release-artifact.out" 2>&1; then
+  echo "expected release ref contract to reject missing machine-os release artifact handoff" >&2
+  exit 1
+fi
+grep -F 'publish-machine-os must contain: name: ${{ env.MACHINE_OS_RELEASE_ARTIFACT }}' \
+  "${tmp_dir}/bad-release-artifact.out" >/dev/null
 
 bad_release_needs="${tmp_dir}/bad-release-needs.yml"
 awk '
@@ -157,4 +187,4 @@ fi
 grep -F "release must contain: needs: [build-linux-arm64, build, publish-machine-os]" \
   "${tmp_dir}/bad-release-needs.out" >/dev/null
 
-printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy dispatch state, and build/publish DAG regressions\n'
+printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy repository names, loose run discovery, and build/publish DAG regressions\n'

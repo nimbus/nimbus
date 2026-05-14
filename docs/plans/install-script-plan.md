@@ -24,9 +24,9 @@ Fedora/RHEL) and macOS (Apple Silicon).
     machine-os, and updates the Homebrew cask
   - `nimbus/nimbus-crun` release workflow — publishes
     `nimbus-crun-linux-amd64` and `nimbus-crun-linux-arm64`
-  - `nimbus/nimbus-machine-os/.github/workflows/build.yml` — machine
-    guest image build/publish lane, called from the nimbus `v*` release
-    workflow and available for standalone image-repo `v*` tags
+  - `nimbus/machine-os/.github/workflows/publish.yml` — machine guest image
+    publish/release lane dispatched from the nimbus `v*` release workflow
+    after the staged bootc artifact and all CLI release targets pass
 
 ## Control Plan Rules
 

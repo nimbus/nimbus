@@ -411,11 +411,12 @@ by pinned immutable reference owned by the host `nimbus` release:
 - provisioning scope: narrow Ignition only (SSH keys, guest units, virtiofs
   mounts, readiness wiring)
 
-**Future supply-side track:** `nimbus/nimbus-machine-os` remains the
-later Nimbus-owned image pipeline once it preserves the same Podman-aligned
-FCOS/ignition/libkrun semantics. That repo split still mirrors Podman's
-`containers/podman` + `containers/podman-machine-os` ownership model, but it
-is not the current shipped macOS dependency contract.
+**Future supply-side track:** `nimbus/machine-os` remains the Nimbus-owned
+bootc image pipeline once the active bootc default plan proves parity and
+promotion evidence. The repo split still mirrors Podman's
+`containers/podman` + `containers/podman-machine-os` ownership model, while
+the bootc implementation deliberately moves away from FCOS/Ignition as the
+future default contract.
 
 The Podman machine-os source remains the canonical implementation reference for
 the guest package shape: standard container tooling (`crun`, `conmon`,
@@ -752,9 +753,9 @@ future image ownership separate.
   Nimbus dirs, guest units, virtiofs mounts, readiness wiring
 - explicit `nimbus machine os apply` / `nimbus machine os upgrade` surfaces
   remain host-managed rollout controls rather than ad hoc guest mutation
-- a Nimbus-owned FCOS-derived image in `nimbus/nimbus-machine-os`
-  remains the later ownership/supply-side track once it preserves the same
-  Podman-aligned FCOS/ignition/libkrun semantics
+- a Nimbus-owned bootc image in `nimbus/machine-os` remains the later
+  ownership/supply-side track once the active bootc default plan proves
+  macOS parity and lifecycle evidence
 
 **Acceptance criteria:**
 - `nimbus machine init` records the pinned Podman digest instead of a floating
@@ -822,7 +823,7 @@ ledger row.
 | D2: Apt repo (Debian/Ubuntu) | `in_progress` | D1 | shared `nfpm` package builder, signed static apt-repo builder, and release-driven mirror workflow landed; GitHub Pages deploy path exists, but final `nimbus.github.io/apt` cutover and Debian `libkrun` ownership remain |
 | D3: COPR (Fedora) | `in_progress` | D1 | shared `nfpm`-based package builder, deterministic Fedora/COPR SRPM bridge, and release-driven mirror workflow landed; live COPR publication and first `dnf copr enable ...` proof still remain |
 | D4a: Homebrew + krunkit | `done` | D1 | Apple Silicon, macOS 14+ cask ships bundled `gvproxy`, owns `krunkit`, auto-updates from the release workflow, and now has both isolated release-proof and real `brew upgrade` validation |
-| D4b: Guest VM image | `done` | D4a | current macOS v1 contract is the pinned Podman machine image plus host-managed guest-binary sync; `nimbus/nimbus-machine-os` remains the future Nimbus-owned supply-side track |
+| D4b: Guest VM image | `done` | D4a | current macOS v1 contract is the pinned Podman machine image plus host-managed guest-binary sync; `nimbus/machine-os` remains the future Nimbus-owned bootc supply-side track |
 | D4c: API + port forwarding | `done` | D4b | `nimbus start` now auto-starts an initialized macOS machine for container-backed Compose projects, then proves host `/health`, forwarded machine API, `ctx.services` activation, localhost service reachability, native `/ws` push, and tenant teardown on the real host |
 | D5: Cloud VM images | `todo` | D2 or D3 | Packer |
 

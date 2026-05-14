@@ -204,7 +204,7 @@ OUT
 HTTP/1.1 200 OK
 content-type: application/json
 
-{"status":{"status":{"booted":{"image":{"image":{"image":"ghcr.io/nimbus/nimbus-machine-os:v9.9.9"},"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}},"staged":null,"rollback":null}},"booted_image":"ghcr.io/nimbus/nimbus-machine-os:v9.9.9","booted_digest":"sha256:9999999999999999999999999999999999999999999999999999999999999999","staged_image":null,"staged_digest":null,"rollback_image":null,"rollback_digest":null}
+{"status":{"status":{"booted":{"image":{"image":{"image":"ghcr.io/nimbus/machine-os:v9.9.9"},"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}},"staged":null,"rollback":null}},"booted_image":"ghcr.io/nimbus/machine-os:v9.9.9","booted_digest":"sha256:9999999999999999999999999999999999999999999999999999999999999999","staged_image":null,"staged_digest":null,"rollback_image":null,"rollback_digest":null}
 OUT
     ;;
   *)
@@ -223,7 +223,7 @@ rendered="$*"
 case "${rendered}" in
   *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"bootc status --json"*)
     cat <<'OUT'
-{"status":{"booted":{"image":{"image":{"image":"ghcr.io/nimbus/nimbus-machine-os:v9.9.9"},"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}},"staged":null,"rollback":null}}
+{"status":{"booted":{"image":{"image":{"image":"ghcr.io/nimbus/machine-os:v9.9.9"},"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}},"staged":null,"rollback":null}}
 OUT
     ;;
   *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"ps -eZ"*"semodule --list-modules=full"*)

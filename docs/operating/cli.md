@@ -174,7 +174,7 @@ until a Nimbus-owned bootc release candidate passes the composed promotion
 gate. A direct bootc artifact is default-promotable only when all of these are
 true:
 
-1. A paired `nimbus/nimbus` release and `nimbus-machine-os` release exist for
+1. A paired `nimbus/nimbus` release and `nimbus/machine-os` release exist for
    the same tag.
 2. The machine-os release assets include the AppleHV OCI layout, checksums,
    SBOM, digest evidence, bootc build summary, and artifact attestations.
@@ -182,7 +182,7 @@ true:
    captured with `scripts/collect-nimbus-machine-guest-proof.sh`, including
    package context, SELinux context, and AVC evidence.
 4. The captured proof uses the host-side AVC checker from
-   `/Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/check-selinux-avcs.sh`.
+   `/Users/jack/src/github.com/nimbus/machine-os/scripts/check-selinux-avcs.sh`.
 5. The final composed gate passes:
 
 ```bash
