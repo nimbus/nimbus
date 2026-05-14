@@ -9,9 +9,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Machine OS
 
-- Add the bootc-native Nimbus machine image release path and promotion gates.
-- Keep the current macOS default on the pinned Podman machine image until paired release assets and macOS guest proof pass.
-- Harden guest binary, bootc lifecycle, SBOM, SELinux, and release-ref evidence for default promotion.
+- Include machine-os build and OCI layout evidence assets in the paired release bundle.
+- Harden the machine-os release contract so required evidence assets cannot be dropped from future release uploads.
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.28...v0.1.29
+
+## [0.1.28] - 2026-05-14
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.27...v0.1.28
+
+## [0.1.27] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.26...v0.1.27
+
+## [0.1.26] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.25...v0.1.26
+
+## [0.1.25] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.24...v0.1.25
+
+## [0.1.24] - 2026-05-14
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.23...v0.1.24
+
+## [0.1.23] - 2026-05-14
+
+### CI/CD
+
+- Stabilize test lanes and node compat catalogs by @jackspirou
+- Title case harness check names by @jackspirou
+- Make harness gate names event-neutral by @jackspirou
+- Speed workspace tests with nextest by @jackspirou
+- Clarify workflow gate names by @jackspirou
+- Stabilize checks after locker repin by @jackspirou
+- Split Rust gates and trim coverage by @jackspirou
+- Fix linux sqlcipher package proof by @jackspirou
+
+### Documentation
+
+- Update runtime compatibility and rename plans by @jackspirou
+- Archive encryption at rest plan by @jackspirou
+- Add generated node lts baseline by @jackspirou
+- Update CHANGELOG.md for v0.1.22 by @github-actions[bot]
+
+### Fixed
+
+- Satisfy runtime linux clippy by @jackspirou
+- Declare runtime libc dependency by @jackspirou
+- Complete neovex→nimbus rename in remaining files by @jackspirou
+- Fix hex encoding allocation, stale doc reference, add license path tests by @jackspirou
+- Fix sanitize_dir_name edge cases, hoist allocation in env_local writer by @jackspirou
+
+### Cli
+
+- Harden onboarding flow and add node runtime plan by @jackspirou
+
+### Deps
+
+- Repin Deno fork to rusty_v8 locker release by @jackspirou
+- Repin Deno fork security release by @jackspirou
+
+### Rename
+
+- Complete neovex→nimbus rebrand across entire codebase by @jackspirou
+
+### Runtime
+
+- Land node22 groundwork and lts plan by @jackspirou
+
+
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.22...v0.1.23
 
 ## [0.1.22] - 2026-04-24
 
@@ -43,7 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Support native nimbus source roots by @jackspirou
+- Support native neovex source roots by @jackspirou
 
 ### Build
 
@@ -294,7 +372,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### CI/CD
 
-- Release machine-os before nimbus by @jackspirou
+- Release machine-os before neovex by @jackspirou
 
 
 
