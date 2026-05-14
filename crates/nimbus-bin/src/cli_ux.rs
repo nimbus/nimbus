@@ -158,7 +158,7 @@ Examples:
 pub(crate) const MACHINE_OS_APPLY_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus machine os apply docker://quay.io/podman/machine-os@sha256:<digest>
-  nimbus machine os apply docker://ghcr.io/nimbus/nimbus-machine-os:v0.1.20 --restart";
+  nimbus machine os apply docker://ghcr.io/nimbus/machine-os:v0.1.20 --restart";
 
 pub(crate) const MACHINE_OS_UPGRADE_HELP_EXAMPLES: &str = "\
 Examples:

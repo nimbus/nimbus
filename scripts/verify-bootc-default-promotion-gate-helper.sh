@@ -41,24 +41,24 @@ nimbus_version=${expected_tag}
 nimbus_binary_sha256=${nimbus_binary_sha256}
 EOF
 cat >"${release_dir}/oci-layout-summary.txt" <<EOF
-image_reference=docker://ghcr.io/nimbus/nimbus-machine-os:${expected_tag}
+image_reference=docker://ghcr.io/nimbus/machine-os:${expected_tag}
 disk_type=applehv
-source_repository_url=https://github.com/nimbus/nimbus-machine-os
+source_repository_url=https://github.com/nimbus/machine-os
 nimbus_version=${expected_tag}
 layer_digest=${layer_digest}
 manifest_digest=${manifest_digest}
 EOF
 cat >"${release_dir}/publish-summary.txt" <<EOF
-image_reference=docker://ghcr.io/nimbus/nimbus-machine-os:${expected_tag}
+image_reference=docker://ghcr.io/nimbus/machine-os:${expected_tag}
 image_digest=${digest}
-image_digest_reference=ghcr.io/nimbus/nimbus-machine-os:${expected_tag}@${digest}
+image_digest_reference=ghcr.io/nimbus/machine-os:${expected_tag}@${digest}
 EOF
 cat >"${release_dir}/published-digests.txt" <<EOF
-ghcr.io/nimbus/nimbus-machine-os:${expected_tag}=${digest}
+ghcr.io/nimbus/machine-os:${expected_tag}=${digest}
 EOF
 cat >"${release_dir}/machine-image-reference.txt" <<EOF
-tag_reference=ghcr.io/nimbus/nimbus-machine-os:${expected_tag}
-digest_reference=ghcr.io/nimbus/nimbus-machine-os:${expected_tag}@${digest}
+tag_reference=ghcr.io/nimbus/machine-os:${expected_tag}
+digest_reference=ghcr.io/nimbus/machine-os:${expected_tag}@${digest}
 digest=${digest}
 EOF
 (
@@ -78,7 +78,7 @@ cat >"${proof_dir}/summary.txt" <<EOF
 output.dir                         ${proof_dir}
 machine.name                       bootc-default-proof
 privileged.guest_evidence          root-ssh port=10000 identity=${tmp_dir}/machine-key
-selinux.avc_checker                ${repo_root}/../nimbus-machine-os/scripts/check-selinux-avcs.sh
+selinux.avc_checker                ${repo_root}/../machine-os/scripts/check-selinux-avcs.sh
 result                             captured
 EOF
 cat >"${proof_dir}/machine-status.txt" <<'EOF'
@@ -120,10 +120,10 @@ cat >"${proof_dir}/guest-machine-api-capabilities.txt" <<'EOF'
 EOF
 cat >"${proof_dir}/guest-machine-api-bootc-status.txt" <<'EOF'
 HTTP/1.1 200 OK
-{"status":{"status":{"booted":{"image":{"image":{"image":"ghcr.io/nimbus/nimbus-machine-os:v9.9.9"},"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}},"staged":null,"rollback":null}},"booted_image":"ghcr.io/nimbus/nimbus-machine-os:v9.9.9","booted_digest":"sha256:9999999999999999999999999999999999999999999999999999999999999999","staged_image":null,"staged_digest":null,"rollback_image":null,"rollback_digest":null}
+{"status":{"status":{"booted":{"image":{"image":{"image":"ghcr.io/nimbus/machine-os:v9.9.9"},"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}},"staged":null,"rollback":null}},"booted_image":"ghcr.io/nimbus/machine-os:v9.9.9","booted_digest":"sha256:9999999999999999999999999999999999999999999999999999999999999999","staged_image":null,"staged_digest":null,"rollback_image":null,"rollback_digest":null}
 EOF
 cat >"${proof_dir}/guest-bootc-status.txt" <<'EOF'
-{"status":{"booted":{"image":{"image":{"image":"ghcr.io/nimbus/nimbus-machine-os:v9.9.9"},"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}},"staged":null,"rollback":null}}
+{"status":{"booted":{"image":{"image":{"image":"ghcr.io/nimbus/machine-os:v9.9.9"},"imageDigest":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}},"staged":null,"rollback":null}}
 EOF
 cat >"${proof_dir}/guest-selinux-mode.txt" <<'EOF'
 Enforcing

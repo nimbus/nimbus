@@ -14,7 +14,7 @@ fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
                 cpus: DEFAULT_MACHINE_CPUS,
                 memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
                 disk_gib: DEFAULT_MACHINE_DISK_GIB,
-                image: "docker://ghcr.io/nimbus/nimbus-machine-os:v0.1.0".to_owned(),
+                image: "docker://ghcr.io/nimbus/machine-os:v0.1.0".to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
                 bootc_native: false,
@@ -279,10 +279,10 @@ fn machine_os_upgrade_handles_digest_pinned_supported_streams() {
 #[test]
 fn machine_image_source_parse_supports_published_local_and_url_sources() {
     assert_eq!(
-        MachineImageSource::parse("ghcr.io/nimbus/nimbus-machine-os:test")
+        MachineImageSource::parse("ghcr.io/nimbus/machine-os:test")
             .expect("bare registry ref should parse"),
         MachineImageSource::OciReference {
-            reference: "docker://ghcr.io/nimbus/nimbus-machine-os:test".to_owned(),
+            reference: "docker://ghcr.io/nimbus/machine-os:test".to_owned(),
         }
     );
     assert_eq!(

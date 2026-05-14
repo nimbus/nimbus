@@ -49,7 +49,7 @@ fn parses_machine_init_with_resource_overrides() {
         "--disk-size",
         "40",
         "--image",
-        "docker://ghcr.io/nimbus/nimbus-machine-os:test",
+        "docker://ghcr.io/nimbus/machine-os:test",
         "--identity",
         "/tmp/nimbus-test-ed25519",
         "--ignition-path",
@@ -68,7 +68,7 @@ fn parses_machine_init_with_resource_overrides() {
             assert_eq!(init.cpus, 4);
             assert_eq!(init.memory_mib, 4096);
             assert_eq!(init.disk_gib, 40);
-            assert_eq!(init.image, "docker://ghcr.io/nimbus/nimbus-machine-os:test");
+            assert_eq!(init.image, "docker://ghcr.io/nimbus/machine-os:test");
             assert_eq!(
                 init.ssh_identity,
                 Some(PathBuf::from("/tmp/nimbus-test-ed25519"))
@@ -184,7 +184,7 @@ fn machine_start_parses_create_if_missing_overrides() {
         "--disk-size",
         "40",
         "--image",
-        "docker://ghcr.io/nimbus/nimbus-machine-os:test",
+        "docker://ghcr.io/nimbus/machine-os:test",
         "--identity",
         "/tmp/nimbus-test-ed25519",
         "--ignition-path",
@@ -205,7 +205,7 @@ fn machine_start_parses_create_if_missing_overrides() {
             assert_eq!(start.disk_gib, Some(40));
             assert_eq!(
                 start.image,
-                Some("docker://ghcr.io/nimbus/nimbus-machine-os:test".to_owned())
+                Some("docker://ghcr.io/nimbus/machine-os:test".to_owned())
             );
             assert_eq!(
                 start.ssh_identity,
@@ -745,7 +745,7 @@ fn parses_machine_os_subcommands() {
         "machine",
         "os",
         "apply",
-        "ghcr.io/nimbus/nimbus-machine-os:v9.9.9",
+        "ghcr.io/nimbus/machine-os:v9.9.9",
         "--restart",
     ]);
     let Some(RootCommand::Machine(machine)) = cli.command else {
@@ -754,7 +754,7 @@ fn parses_machine_os_subcommands() {
     match machine.command {
         MachineSubcommand::Os(os) => match os.command {
             MachineOsSubcommand::Apply(apply) => {
-                assert_eq!(apply.image, "ghcr.io/nimbus/nimbus-machine-os:v9.9.9");
+                assert_eq!(apply.image, "ghcr.io/nimbus/machine-os:v9.9.9");
                 assert!(apply.restart);
             }
             _ => panic!("expected machine os apply subcommand"),

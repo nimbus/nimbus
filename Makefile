@@ -399,7 +399,7 @@ verify-nimbus-homebrew-cask-proof-helper:
 verify-install-helper:
 	bash scripts/verify-install-helper.sh
 
-# machine-os build/package/publish targets moved to nimbus/nimbus-machine-os
+# machine-os build/package/publish targets moved to nimbus/machine-os
 
 # Verify the Linux-host LH1-LH6 command-bundle generator against deterministic fake inputs
 verify-linux-vmm-validation-bundle-helper:

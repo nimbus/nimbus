@@ -43,27 +43,27 @@ nimbus_binary_sha256=${nimbus_binary_sha256}
 EOF
 
 cat >"${good_dir}/oci-layout-summary.txt" <<EOF
-image_reference=docker://ghcr.io/nimbus/nimbus-machine-os:${expected_tag}
+image_reference=docker://ghcr.io/nimbus/machine-os:${expected_tag}
 disk_type=applehv
-source_repository_url=https://github.com/nimbus/nimbus-machine-os
+source_repository_url=https://github.com/nimbus/machine-os
 nimbus_version=${expected_tag}
 layer_digest=${layer_digest}
 manifest_digest=${manifest_digest}
 EOF
 
 cat >"${good_dir}/publish-summary.txt" <<EOF
-image_reference=docker://ghcr.io/nimbus/nimbus-machine-os:${expected_tag}
+image_reference=docker://ghcr.io/nimbus/machine-os:${expected_tag}
 image_digest=${digest}
-image_digest_reference=ghcr.io/nimbus/nimbus-machine-os:${expected_tag}@${digest}
+image_digest_reference=ghcr.io/nimbus/machine-os:${expected_tag}@${digest}
 EOF
 
 cat >"${good_dir}/published-digests.txt" <<EOF
-ghcr.io/nimbus/nimbus-machine-os:${expected_tag}=${digest}
+ghcr.io/nimbus/machine-os:${expected_tag}=${digest}
 EOF
 
 cat >"${good_dir}/machine-image-reference.txt" <<EOF
-tag_reference=ghcr.io/nimbus/nimbus-machine-os:${expected_tag}
-digest_reference=ghcr.io/nimbus/nimbus-machine-os:${expected_tag}@${digest}
+tag_reference=ghcr.io/nimbus/machine-os:${expected_tag}
+digest_reference=ghcr.io/nimbus/machine-os:${expected_tag}@${digest}
 digest=${digest}
 EOF
 

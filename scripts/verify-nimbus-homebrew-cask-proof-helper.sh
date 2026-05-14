@@ -130,7 +130,7 @@ bootc_status = {
             "booted": {
                 "image": {
                     "image": {
-                        "image": "ghcr.io/nimbus/nimbus-machine-os:v9.9.9"
+                        "image": "ghcr.io/nimbus/machine-os:v9.9.9"
                     },
                     "imageDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
                 }
@@ -139,7 +139,7 @@ bootc_status = {
             "rollback": None,
         }
     },
-    "booted_image": "ghcr.io/nimbus/nimbus-machine-os:v9.9.9",
+    "booted_image": "ghcr.io/nimbus/machine-os:v9.9.9",
     "booted_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
     "staged_image": None,
     "staged_digest": None,

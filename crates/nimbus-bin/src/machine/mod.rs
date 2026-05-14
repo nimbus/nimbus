@@ -86,7 +86,7 @@ use self::record::{MachineGuestConfig, MachineResources};
 use self::render::*;
 
 const DEFAULT_MACHINE_NAME: &str = "default";
-const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/nimbus-machine-os";
+const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/machine-os";
 const DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY: &str = "quay.io/podman/machine-os";
 const DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST: &str =
     "sha256:57e19d2a4e3ae698a0f127ec7495067ac4c4df5177625034e1e700aba94ee8c5";

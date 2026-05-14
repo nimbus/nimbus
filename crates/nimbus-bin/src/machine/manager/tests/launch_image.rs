@@ -282,7 +282,7 @@ fn registry_image_reference_reuses_materialized_disk_when_present() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::OciReference {
                 reference: format!(
-                    "docker://ghcr.io/nimbus/nimbus-machine-os:v{}",
+                    "docker://ghcr.io/nimbus/machine-os:v{}",
                     env!("CARGO_PKG_VERSION")
                 ),
             },

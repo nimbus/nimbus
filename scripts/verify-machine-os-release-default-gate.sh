@@ -150,7 +150,7 @@ assert_file "${build_summary}"
 tag_reference="$(summary_value "${machine_reference}" tag_reference)"
 digest_reference="$(summary_value "${machine_reference}" digest_reference)"
 digest="$(summary_value "${machine_reference}" digest)"
-expected_reference="ghcr.io/nimbus/nimbus-machine-os:${expected_tag}"
+expected_reference="ghcr.io/nimbus/machine-os:${expected_tag}"
 
 [[ "${tag_reference}" == "${expected_reference}" ]] || die "machine-image-reference tag_reference expected ${expected_reference}, got ${tag_reference}"
 assert_sha256_digest "machine-image-reference digest" "${digest}"
@@ -167,7 +167,7 @@ summary_digest_reference="$(summary_value "${publish_summary}" image_digest_refe
 [[ "${summary_digest_reference}" == "${expected_reference}@${digest}" ]] || die "publish-summary image_digest_reference does not match machine-image-reference digest_reference"
 
 [[ "$(summary_value "${oci_summary}" disk_type)" == "applehv" ]] || die "OCI layout summary must record disk_type=applehv"
-[[ "$(summary_value "${oci_summary}" source_repository_url)" == "https://github.com/nimbus/nimbus-machine-os" ]] || die "OCI source repository must be nimbus/nimbus-machine-os"
+[[ "$(summary_value "${oci_summary}" source_repository_url)" == "https://github.com/nimbus/machine-os" ]] || die "OCI source repository must be nimbus/machine-os"
 [[ "$(summary_value "${oci_summary}" nimbus_version)" == "${expected_tag}" ]] || die "OCI nimbus_version must match ${expected_tag}"
 assert_sha256_digest "OCI layer_digest" "$(summary_value "${oci_summary}" layer_digest)"
 assert_sha256_digest "OCI manifest_digest" "$(summary_value "${oci_summary}" manifest_digest)"
