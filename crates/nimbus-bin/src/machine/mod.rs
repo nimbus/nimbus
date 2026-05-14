@@ -58,12 +58,13 @@ use self::command::MachineApiCommand;
 use self::files::write_json_file;
 #[cfg(any(unix, test))]
 use self::record::MachineBootstrapMode;
+#[cfg(any(unix, test))]
+use self::record::MachineGuestProvisioning;
 #[cfg(test)]
 use self::record::MachineImageFormat;
 use self::record::{
-    MachineConfigRecord, MachineGuestProvisioning, MachineImageSource, MachineLifecycle,
-    MachineManagerState, MachinePaths, MachineProvider, MachineRootLayout, MachineStateRecord,
-    MachineVolume,
+    MachineConfigRecord, MachineImageSource, MachineLifecycle, MachineManagerState, MachinePaths,
+    MachineProvider, MachineRootLayout, MachineStateRecord, MachineVolume,
 };
 
 #[cfg(test)]
@@ -192,6 +193,7 @@ fn default_machine_volumes() -> Vec<MachineVolume> {
     }
 }
 
+#[cfg(any(unix, test))]
 fn machine_bootstrap_mode(config: &MachineConfigRecord) -> MachineBootstrapMode {
     match config.guest.provisioning {
         MachineGuestProvisioning::BootcMachineConfig => MachineBootstrapMode::BootcMachineConfig,

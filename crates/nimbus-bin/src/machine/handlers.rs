@@ -23,6 +23,7 @@ use super::manager::{
     build_scp_command, build_ssh_command, refresh_machine_state, release_machine_ssh_port,
     start_machine, stop_machine,
 };
+#[cfg(unix)]
 use super::protocol::{
     MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
 };
@@ -637,6 +638,7 @@ fn run_machine_os_upgrade(
     Ok(())
 }
 
+#[cfg(unix)]
 fn run_machine_os_rollback(
     command: MachineOsRollbackCommand,
     roots: &MachineRootLayout,
@@ -672,6 +674,14 @@ fn run_machine_os_rollback(
     emit_machine_stdout(&summary)?;
     drop(operation);
     Ok(())
+}
+
+#[cfg(not(unix))]
+fn run_machine_os_rollback(
+    _command: MachineOsRollbackCommand,
+    _roots: &MachineRootLayout,
+) -> Result<(), Error> {
+    Err(unsupported_bootc_machine_os_error())
 }
 
 fn emit_machine_stdout(rendered: &str) -> Result<(), Error> {
@@ -713,6 +723,7 @@ fn uses_bootc_native_os_lifecycle(config: &MachineConfigRecord) -> bool {
     )
 }
 
+#[cfg(unix)]
 fn apply_bootc_machine_os_change(
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
@@ -756,6 +767,18 @@ fn apply_bootc_machine_os_change(
     })
 }
 
+#[cfg(not(unix))]
+fn apply_bootc_machine_os_change(
+    _paths: &MachinePaths,
+    _config: &mut MachineConfigRecord,
+    _state: &mut MachineStateRecord,
+    _target_source: MachineImageSource,
+    _restart: bool,
+) -> Result<MachineOsApplyOutcome, Error> {
+    Err(unsupported_bootc_machine_os_error())
+}
+
+#[cfg(unix)]
 fn run_bootc_machine_os_upgrade(
     command: MachineOsUpgradeCommand,
     paths: &MachinePaths,
@@ -818,6 +841,17 @@ fn run_bootc_machine_os_upgrade(
     Ok(())
 }
 
+#[cfg(not(unix))]
+fn run_bootc_machine_os_upgrade(
+    _command: MachineOsUpgradeCommand,
+    _paths: &MachinePaths,
+    _config: &mut MachineConfigRecord,
+    _state: &mut MachineStateRecord,
+) -> Result<(), Error> {
+    Err(unsupported_bootc_machine_os_error())
+}
+
+#[cfg(unix)]
 fn default_bootc_machine_os_upgrade_stream() -> MachineOsUpgradeStream {
     MachineOsUpgradeStream {
         repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
@@ -831,6 +865,7 @@ fn default_bootc_machine_os_upgrade_stream() -> MachineOsUpgradeStream {
     }
 }
 
+#[cfg(unix)]
 fn require_running_bootc_machine_api_client(
     paths: &MachinePaths,
     state: &MachineStateRecord,
@@ -853,6 +888,7 @@ fn require_running_bootc_machine_api_client(
     Ok(client)
 }
 
+#[cfg(unix)]
 fn restart_bootc_machine(
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
@@ -862,6 +898,7 @@ fn restart_bootc_machine(
     start_machine(paths, config, state)
 }
 
+#[cfg(unix)]
 fn bootc_target_reference_from_source(source: &MachineImageSource) -> Result<String, Error> {
     match source {
         MachineImageSource::OciReference { reference } => Ok(reference.clone()),
@@ -876,11 +913,13 @@ fn bootc_target_reference_from_source(source: &MachineImageSource) -> Result<Str
     }
 }
 
+#[cfg(unix)]
 fn bootc_switch_target(reference: &str) -> (String, String) {
     let stripped = reference.trim_start_matches("docker://");
     ("registry".to_owned(), stripped.to_owned())
 }
 
+#[cfg(unix)]
 fn bootc_status_matches_target(status: &MachineApiBootcStatusResponse, target: &str) -> bool {
     let normalized_target = target.trim_start_matches("docker://");
     if let Some((_, digest)) = normalized_target.rsplit_once('@') {
@@ -891,6 +930,7 @@ fn bootc_status_matches_target(status: &MachineApiBootcStatusResponse, target: &
         || status.staged_image.as_deref() == Some(normalized_target)
 }
 
+#[cfg(unix)]
 fn describe_bootc_status_image(status: &MachineApiBootcStatusResponse) -> String {
     match (&status.booted_image, &status.booted_digest) {
         (Some(image), Some(digest)) => format!("docker://{image}@{digest}"),
@@ -898,6 +938,14 @@ fn describe_bootc_status_image(status: &MachineApiBootcStatusResponse) -> String
         (None, Some(digest)) => digest.clone(),
         (None, None) => "unknown bootc image".to_owned(),
     }
+}
+
+#[cfg(not(unix))]
+fn unsupported_bootc_machine_os_error() -> Error {
+    Error::InvalidInput(
+        "bootc-native machine OS lifecycle requires a unix host with the guest machine API"
+            .to_owned(),
+    )
 }
 
 fn apply_machine_os_change(
