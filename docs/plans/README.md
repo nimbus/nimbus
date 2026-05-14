@@ -20,11 +20,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
-- `docs/plans/bootc-machine-default-plan.md`
-  - canonical execution plan for keeping the pinned Podman machine image as
-    the current macOS default while proving a direct Fedora bootc-derived
-    Nimbus machine image, promoting it only after macOS parity and bootc
-    lifecycle evidence, then removing legacy FCOS/Podman-image reliance.
 
 ## Current Reference Baselines
 
@@ -32,14 +27,21 @@ Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/bootc-machine-default-plan.md`
+  - completed execution record for BMD0-BMD7: direct Fedora bootc machine-os
+    recipe ownership, build artifact proof, bootc-native machine-config,
+    macOS parity, bootc lifecycle, default promotion to
+    `ghcr.io/nimbus/machine-os:v0.1.30@sha256:f565...`, and legacy
+    Podman/FCOS demotion to explicit diagnostic/repair overrides
 - `docs/architecture/sandbox/microvm-service-baseline.md`
   - concise current baseline for the landed krun-backed microVM runtime,
     service activation, Compose-backed `nimbus compose ...` surface, and the
     Linux-versus-macOS platform model
 - `docs/architecture/sandbox/macos-machine-flow.md`
   - concise current reference for the settled macOS developer-machine contract:
-    pinned Podman image digest, host-managed guest binary sync, forwarded
-    machine API, host-resident `nimbus start`, and proof-helper entrypoints
+    pinned Nimbus bootc machine image digest, bootc-native machine-config,
+    forwarded machine API, host-resident `nimbus start`, explicit legacy
+    Podman/FCOS diagnostic overrides, and proof-helper entrypoints
 - `docs/architecture/runtime/adapter-boundary.md`
   - current runtime and adapter ownership boundary
 - `docs/architecture/runtime/permission-model.md`
