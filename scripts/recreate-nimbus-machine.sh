@@ -10,7 +10,7 @@ usage: recreate-nimbus-machine.sh [options]
 
 Recreate a Nimbus macOS machine using the shipped `nimbus machine ...` surface.
 This is the Nimbus-owned macOS repair lane for stale config/runtime state.
-By default it follows the current host-managed machine-image contract recorded
+By default it follows the current Nimbus bootc machine-config contract recorded
 by `nimbus machine init`; `--image` is only for explicit diagnostic overrides.
 
 options:
@@ -23,7 +23,8 @@ options:
   --image <source>             Explicit machine image source override passed to
                                `nimbus machine init` for diagnostics only
   --identity <path>            SSH identity path for guest debugging
-  --ignition-path <path>       Ignition file to serve over first-boot vsock
+  --ignition-path <path>       Legacy Ignition file for explicit Podman image
+                               diagnostic overrides only
   --firmware <path>            EFI variable-store path
   --cpus <count>               Guest CPU count (default: 2)
   --memory <mib>               Guest memory MiB (default: 2048)
@@ -37,8 +38,7 @@ examples:
   bash scripts/recreate-nimbus-machine.sh \
     --home /tmp/nimbus-home \
     --runtime-root /tmp/nimbus \
-    --identity /absolute/path/to/machine-key \
-    --ignition-path /absolute/path/to/nimbus-machine.ign
+    --identity /absolute/path/to/machine-key
 EOF
 }
 
@@ -187,6 +187,20 @@ if [[ ! -x "${nimbus_bin}" ]]; then
   exit 64
 fi
 
+uses_legacy_podman_image=0
+if [[ -n "${image_path}" ]]; then
+  case "${image_path}" in
+    docker://quay.io/podman/machine-os*|quay.io/podman/machine-os*)
+      uses_legacy_podman_image=1
+      ;;
+  esac
+fi
+
+if [[ -n "${ignition_file}" && "${uses_legacy_podman_image}" -ne 1 ]]; then
+  echo "--ignition-path is only supported by this repair helper with an explicit Podman machine-os --image override; the default Nimbus bootc machine OS uses machine-config provisioning" >&2
+  exit 64
+fi
+
 if [[ -z "${output_dir}" ]]; then
   output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-machine-recreate.XXXXXX")"
 else
@@ -206,12 +220,20 @@ print_line "nimbus.bin" "${nimbus_bin}"
 if [[ -n "${image_path}" ]]; then
   print_line "image.source" "${image_path}"
 else
-  print_line "image.source" "default (host-managed pinned machine image contract)"
+  print_line "image.source" "default (Nimbus bootc machine-config contract)"
 fi
-if [[ -n "${NIMBUS_MACHINE_GUEST_BINARY:-}" ]]; then
-  print_line "guest.binary.override" "${NIMBUS_MACHINE_GUEST_BINARY}"
+if [[ "${uses_legacy_podman_image}" -eq 1 ]]; then
+  if [[ -n "${NIMBUS_MACHINE_GUEST_BINARY:-}" ]]; then
+    print_line "guest.binary.override" "${NIMBUS_MACHINE_GUEST_BINARY}"
+  else
+    print_line "guest.binary.override" "<release asset>"
+  fi
 else
-  print_line "guest.binary.override" "<release asset>"
+  if [[ -n "${NIMBUS_MACHINE_GUEST_BINARY:-}" ]]; then
+    print_line "guest.binary.override" "ignored for bootc-native default"
+  else
+    print_line "guest.binary.override" "<baked into bootc image>"
+  fi
 fi
 if [[ -n "${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS:-}" ]]; then
   print_line "machine.api.ready_timeout_secs" "${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS}"
@@ -303,7 +325,7 @@ if [[ "${init_status}" -eq 0 ]]; then
     "HOME=${home_dir}"
     "NIMBUS_MACHINE_RUNTIME_ROOT=${runtime_root}"
   )
-  if [[ -n "${NIMBUS_MACHINE_GUEST_BINARY:-}" ]]; then
+  if [[ "${uses_legacy_podman_image}" -eq 1 && -n "${NIMBUS_MACHINE_GUEST_BINARY:-}" ]]; then
     start_cmd+=( "NIMBUS_MACHINE_GUEST_BINARY=${NIMBUS_MACHINE_GUEST_BINARY}" )
   fi
   if [[ -n "${NIMBUS_MACHINE_API_READY_TIMEOUT_SECS:-}" ]]; then

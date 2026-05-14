@@ -204,9 +204,9 @@ Rollback has two supported shapes. For a healthy bootc-native machine, use
 deployment and reboots through the normal readiness path. If the guest machine
 API cannot answer, or if the fleet default itself must move back to a prior
 artifact, use `nimbus machine os apply <previous-digest> --restart` or an
-explicit repair/recreate flow. The Podman-compatible path stays
-available only as an explicit compatibility/repair override until the
-legacy-removal phase deliberately removes or further demotes it.
+explicit repair/recreate flow. The Podman-compatible path is no longer a stable
+default path; it is available only as an explicit diagnostic override for
+legacy/repair investigation.
 
 ## Core Flags
 
@@ -696,7 +696,7 @@ The current landed machine surface is the checked-in macOS machine contract:
 | `nimbus machine cp [--quiet] SRC_PATH DEST_PATH` | recursively copy files or directories between the host and a running machine using Podman-style `NAME:/path` guest endpoints and the machine's configured SSH contract |
 | `nimbus machine ssh [NAME] [COMMAND...]` | run a command through the configured guest SSH user and identity once the machine is running; as with Podman, if the first argument names an existing machine it is treated as `NAME`, otherwise it is passed through as the guest command on `default` |
 | `nimbus machine rm [NAME]` | remove the persisted config, state, and short runtime-root layout for the named machine when it is not running |
-| `nimbus machine os apply <oci-ref-or-digest>` | apply an explicit immutable OCI machine-image rollout; current host-managed machines recreate boot artifacts from the recorded image, while bootc-native machines ask the guest machine API to stage `bootc switch` and then require a restart into the staged deployment |
+| `nimbus machine os apply <oci-ref-or-digest>` | apply an explicit immutable OCI machine-image rollout; bootc-native machines ask the guest machine API to stage `bootc switch` and then require a restart into the staged deployment, while explicit legacy host-managed machines recreate boot artifacts from the recorded image |
 | `nimbus machine os upgrade` | move back to the host-supported machine-image stream for this `nimbus` version; on bootc-native machines this stages `bootc upgrade` through the guest machine API, and `--dry-run` reports the current/target image pair as a concise action summary instead of a structured status dump |
 | `nimbus machine os rollback` | for bootc-native machines, ask the guest machine API to stage `bootc rollback`; restart the machine to boot the previous deployment |
 
@@ -739,9 +739,9 @@ Current scope:
   `machine status` and `machine inspect` remain the structured diagnostic
   surfaces
 - emits step-oriented progress to stderr during long-running `machine start`
-  convergence phases such as image pull/materialization, guest-binary fetch,
-  VM boot, SSH readiness, and forwarded machine-API readiness, so first-start
-  waits look active instead of silent
+  convergence phases such as image pull/materialization, optional legacy
+  guest-binary fetch, VM boot, SSH readiness, and forwarded machine-API
+  readiness, so first-start waits look active instead of silent
 - keeps `machine start` Podman-aligned on output controls: `--quiet` suppresses
   phase/progress chatter but still prints the final success summary on stdout,
   while `--no-info` only suppresses advisory `info:` notices and leaves the
@@ -763,9 +763,10 @@ Current scope:
   bit
 - keeps `nimbus machine os apply`, `nimbus machine os upgrade`, and
   `nimbus machine os rollback` as explicit machine-image lifecycle surfaces:
-  current host-managed machines use controlled disk recreation, while
   bootc-native machines use the guest machine API to stage `bootc`
-  switch/upgrade/rollback and keep disk replacement as a repair/recreate path
+  switch/upgrade/rollback, while explicit legacy host-managed machines use
+  controlled disk recreation. Normal bootc OS lifecycle does not replace the
+  host disk; disk replacement is a repair/recreate path.
 - treats `nimbus machine rm` as a full config/state-root removal, including the
   per-machine image and guest-binary caches under the state root, so a clean
   recreate path intentionally repulls or rehydrates artifacts on the next boot

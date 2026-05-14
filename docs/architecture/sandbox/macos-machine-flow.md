@@ -13,8 +13,8 @@ shipped macOS contract and the direct bootc evidence captured in
 [bootc-machine-default-plan.md](/Users/jack/src/github.com/nimbus/nimbus/docs/plans/bootc-machine-default-plan.md).
 The settled current macOS contract now uses Nimbus's published bootc image by
 pinned immutable reference. Podman's published machine image remains a
-compatibility/repair override until the BMD7 legacy-removal phase decides its
-final disposition.
+compatibility/repair diagnostic override; stable macOS bring-up no longer
+depends on that Podman/FCOS image stream.
 
 Reviewed against:
 
@@ -70,8 +70,8 @@ Current contract note:
   not at the host-state layer; Nimbus does not reuse Podman's machine records,
   VM disks, sockets, or local image store
 - the Podman/FCOS image stream remains available only through explicit image
-  overrides for compatibility/repair while BMD7 removes or demotes legacy
-  reliance
+  overrides for compatibility/repair diagnostics; stable macOS bring-up uses
+  the Nimbus bootc image and machine-config channel
 - the bootc image carries a narrow SELinux policy for the
   host-forwarded machine API: `nimbus.service` runs as
   `container_runtime_t`, `/run/nimbus/nimbus.sock` is relabeled
@@ -168,13 +168,13 @@ Machine OS lifecycle split:
 
 Current implementation note:
 
-- as of 2026-04-16, the checked-in macOS default already points at the pinned
-  immutable Podman digest above
-- the full start-time convergence contract has now been proved end to end,
-  including guest-binary sync, forwarded machine-API readiness, host service
-  control, runtime `ctx.services.<name>.port` snapshot reads,
-  `await ctx.services.get("<name>")` activation, and the supported recreate
-  drill on isolated roots
+- as of BMD6, the checked-in macOS default points at the pinned immutable
+  Nimbus bootc digest above
+- the full start-time convergence contract has now been proved end to end for
+  the bootc-native path, including machine-config apply, forwarded machine-API
+  readiness, host service control, runtime `ctx.services.<name>.port` snapshot
+  reads, `await ctx.services.get("<name>")` activation, and the supported
+  recreate drill on isolated roots
 
 ### Important Packaging Contract
 
@@ -197,11 +197,15 @@ select `wsl` without changing the current macOS rule.
 ```mermaid
 flowchart TD
     A["nimbus machine start<br/>or nimbus machine init"] --> B["config.json records image source"]
-    B --> C["docker://quay.io/podman/machine-os:<pinned-ref-or-digest>"]
+    B --> C["default:<br/>docker://ghcr.io/nimbus/machine-os:vX.Y.Z@sha256:..."]
+    B --> C2["explicit diagnostic override:<br/>docker://quay.io/podman/machine-os@sha256:..."]
     C --> D["nimbus machine start"]
+    C2 --> D
     D --> E["converge desired artifacts"]
     E --> F["ensure machine image artifact is cached"]
-    E --> G["ensure matching linux guest nimbus asset is cached"]
+    E --> G{"explicit host-managed Podman/FCOS image?"}
+    G -->|yes| G1["ensure matching linux guest nimbus asset is cached"]
+    G -->|no| G2["use baked linux nimbus binary from bootc image"]
     F --> H["resolve_bootable_image_path()"]
     H --> I{"image source kind"}
     I -->|OciReference| J["materialize_oci_image()"]
@@ -222,7 +226,7 @@ flowchart TD
     L --> U["launch uses local raw disk path"]
     R --> V["boot or rebuild machine from desired image"]
     U --> V
-    V --> W{"host-managed Podman/FCOS image?"}
+    V --> W{"explicit host-managed Podman/FCOS image?"}
     W -->|yes| X["sync guest /usr/local/bin/nimbus by hash"]
     W -->|bootc| Y["use baked /usr/local/bin/nimbus from image"]
     X --> Z["repair nimbus.socket activation state"]
@@ -407,7 +411,7 @@ The repo now owns four checked-in macOS proof collectors for this flow:
   does not touch the installed/Homebrew binary or the user's default machine
   roots. For real contract proof, leave the image unset so the helper
   exercises the shipped pinned-image path; `--image` is a debug-only override
-  and can bypass the host-managed machine-image contract
+  and can bypass the bootc machine-image contract
 - `make collect-nimbus-machine-guest-proof`
   captures guest-image and guest machine-API proof through `nimbus machine ssh`
 - `make collect-nimbus-machine-service-proof`
@@ -421,8 +425,9 @@ The repo now owns four checked-in macOS proof collectors for this flow:
   `machine start`, `machine status`, guest `nimbus --version`, nested guest
   machine-API proof, guest SSH, and `machine stop` proof without touching the
   user's shipped `nimbus` cask token or default machine roots. The default
-  collector path uses the tagged guest release asset; `--guest-binary` is only
-  an explicit override for local guest-build debugging
+  collector path uses the baked guest binary in the promoted bootc image;
+  `--guest-binary` is only an explicit override for legacy host-managed
+  guest-build debugging
 
 The repo also now owns deterministic verifiers for the isolated CLI, guest,
 service, and Homebrew/cask proof harnesses, including
@@ -432,7 +437,7 @@ packaged macOS path. Those helper verifiers are the CI-safe automation lane
 for the harness logic itself; the full `krunkit` guest boot remains a
 checked-in local proof lane rather than a GitHub-hosted runner contract.
 
-The current real-host cask-proof bundle at
+Historical pre-bootc real-host cask-proof bundle at
 `/tmp/nimbus-d4a-proof-release-asset` shows `guest.binary.override <none>`,
 host `nimbus 0.1.11`, guest `nimbus 0.1.11`,
 `runtime.helper_binaries.gvproxy:
@@ -441,17 +446,17 @@ host `nimbus 0.1.11`, guest `nimbus 0.1.11`,
 proof plus `protocol_version: v1alpha2`, and `/Users` virtiofs reachability,
 then cleans up the temporary `local/nimbus-proof` tap and `nimbus-dev` cask
 token afterward.
-Current status-output note: `nimbus machine status` now includes a
+Status-output note: `nimbus machine status` includes a
 `guest_binary_contract` block for the macOS host-managed path so operators can
 see the desired guest-binary provenance (`release-asset` vs
 `explicit-override`), desired version/hash/cache path, and, when the machine is
 running, the observed guest `/usr/local/bin/nimbus` version/hash too.
-The current no-ambient-`PATH` hardening rerun at
+Historical no-ambient-`PATH` hardening rerun at
 `/tmp/nimbus-d4a-proof-no-path` revalidated that same packaged/Homebrew
 contract after helper resolution stopped trusting shell `PATH`; the bundle
 again recorded packaged `gvproxy`, guest `nimbus 0.1.10`, machine API
 readiness, and `/Users` virtiofs reachability before cleanup.
-The current Podman-default-directory rerun at
+Historical Podman-default-directory rerun at
 `/tmp/nimbus-d4a-proof-podman-dirs` then revalidated the same contract after
 the named fallback directories were aligned to Podman's darwin
 `helper_binaries_dir` defaults; the bundle again recorded packaged
@@ -467,7 +472,7 @@ shows `service config` lowering with `source.kind: build`, a resolved
 available=true`, successful `compose up/ps/inspect/top/logs/down`, and
 localhost `HTTP/1.1 200 OK` on `http://127.0.0.1:18080/healthz`.
 
-The current real-host `start` auto-start proof bundle at
+Historical pre-bootc real-host `start` auto-start proof bundle at
 `/tmp/nimbus-mac-closeout.FNcv0I/start-proof-d4c-autostart` then closes the
 next host-resident DX seam on the same pinned Podman contract: the machine was
 stopped before startup, `nimbus start` on port `18084` brought it back to
@@ -498,13 +503,11 @@ The repo also owns two checked-in operator drill helpers for the same contract:
 
 ## Current Reliability Notes
 
-- Current Podman/FCOS host convergence stages the guest binary under
+- Explicit Podman/FCOS diagnostic host convergence stages the guest binary under
   `/usr/local/bin/nimbus`, backed by FCOS's writable `/var/usrlocal`, then
   repairs `nimbus.socket` activation before it trusts the forwarded machine
-  API. The active macOS fallback does not rely on Ignition to fetch or version
-  that binary, and it does not expect macOS users to build a Linux guest
-  binary locally; the normal fallback path is the matching cached release
-  asset.
+  API. This path is no longer the stable default; it remains scoped to
+  explicit legacy image overrides.
 - Bootc-native convergence does not stage a replacement guest binary. The
   matching Linux `nimbus` binary and systemd units are baked into the
   Nimbus-owned bootc image, and host readiness validates the bootc
@@ -573,16 +576,14 @@ If you want the shortest accurate explanation:
    by the writable `/var/usrlocal/bin/nimbus` path with executable labeling.
    For bootc-native machines, the host treats `/usr/local/bin/nimbus` as image
    content and validates readiness instead of scp-ing a new binary into place.
-6. If the host-managed macOS contract does not already have an explicit SSH
-   identity recorded, `nimbus machine start` auto-generates a machine-owned
-   keypair under the Nimbus machine data root before it boots the guest, so
-   first-run SSH and guest-binary sync do not require a separate manual key
-   provisioning step.
-7. The same host convergence step then repairs guest socket activation
-   (`daemon-reload`, clears failed `nimbus` units, removes any stale
-   `/run/nimbus/nimbus.sock`, and starts `nimbus.socket`) before validating
-   the forwarded machine API, so a fresh Podman-image boot does not get stuck
-   on a pre-sync `start-limit-hit`.
+6. If the machine does not already have an explicit SSH identity recorded,
+   `nimbus machine start` auto-generates a machine-owned keypair under the
+   Nimbus machine data root before it boots the guest, so first-run machine API
+   validation does not require a separate manual key provisioning step.
+7. Only explicit host-managed Podman/FCOS diagnostic machines run the legacy
+   guest socket activation repair (`daemon-reload`, clears failed `nimbus`
+   units, removes any stale `/run/nimbus/nimbus.sock`, and starts
+   `nimbus.socket`) before validating the forwarded machine API.
 8. On macOS container-backed Compose projects, `nimbus start` now reuses that
    same convergence path: if the initialized default machine is stopped, the
    host starts it before it wires the forwarded guest backend.
@@ -605,5 +606,4 @@ For rollback, a healthy bootc-native machine should use the guest-mediated
 or when the released fleet default itself must move back, operators should use
 `nimbus machine os apply <previous-digest> --restart` or an explicit
 repair/recreate path. The Podman-compatible image remains available only as an
-explicit compatibility/repair override until BMD7 removes or further demotes
-it.
+explicit diagnostic override for legacy/repair investigation.

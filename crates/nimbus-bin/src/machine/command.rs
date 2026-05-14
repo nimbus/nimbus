@@ -150,7 +150,7 @@ pub(super) struct MachineInitCommand {
     #[arg(long = "identity", value_name = "PATH")]
     pub(super) ssh_identity: Option<PathBuf>,
 
-    /// Path to Ignition config file.
+    /// Legacy Ignition config file for explicit non-bootc image overrides.
     #[arg(long = "ignition-path", value_name = "PATH")]
     pub(super) ignition_file: Option<PathBuf>,
 
@@ -212,7 +212,7 @@ pub(super) struct MachineStartCommand {
     #[arg(long = "identity", value_name = "PATH")]
     pub(super) ssh_identity: Option<PathBuf>,
 
-    /// Path to Ignition config file if start creates the machine.
+    /// Legacy Ignition config file if start creates a machine from an explicit non-bootc image.
     #[arg(long = "ignition-path", value_name = "PATH")]
     pub(super) ignition_file: Option<PathBuf>,
 

@@ -92,7 +92,7 @@ Examples:
 pub(crate) const MACHINE_OS_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus machine os upgrade --dry-run
-  nimbus machine os apply docker://quay.io/podman/machine-os@sha256:<digest>";
+  nimbus machine os apply docker://ghcr.io/nimbus/machine-os:vX.Y.Z@sha256:<digest>";
 
 pub(crate) const MACHINE_INIT_HELP_EXAMPLES: &str = "\
 Examples:
@@ -157,8 +157,8 @@ Examples:
 
 pub(crate) const MACHINE_OS_APPLY_HELP_EXAMPLES: &str = "\
 Examples:
-  nimbus machine os apply docker://quay.io/podman/machine-os@sha256:<digest>
-  nimbus machine os apply docker://ghcr.io/nimbus/machine-os:v0.1.20 --restart";
+  nimbus machine os apply docker://ghcr.io/nimbus/machine-os:vX.Y.Z@sha256:<digest>
+  nimbus machine os apply docker://ghcr.io/nimbus/machine-os:vX.Y.Z --restart";
 
 pub(crate) const MACHINE_OS_UPGRADE_HELP_EXAMPLES: &str = "\
 Examples:

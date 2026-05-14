@@ -211,7 +211,7 @@ fn detect_guest_bootstrap_hint(
     }
 
     Some(
-        "guest reached a console login prompt without consuming the first-boot ignition payload. On macOS, Nimbus guest images must stay Podman-aligned (Fedora CoreOS/libkrun ignition path); generic fedora-bootc raw images are not a supported substitute",
+        "guest reached a console login prompt without consuming the legacy Ignition payload. This hint applies only to explicit legacy image overrides; the default Nimbus bootc machine OS uses the machine-config channel instead of Ignition",
     )
 }
 
