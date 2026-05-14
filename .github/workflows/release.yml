@@ -10,6 +10,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Force Cargo through the git CLI so GitHub-hosted Windows runners can use
+  # Git's long-path support for large Deno-family dependency submodules.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   # Mirror Podman's macOS packaging model: ship a pinned upstream gvproxy
   # binary inside the darwin archive instead of publishing gvproxy as a
@@ -192,6 +195,12 @@ jobs:
           "PERL=$perlExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPENSSL_SRC_PERL=$perlExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           & $perlExe -MLocale::Maketext::Simple -e "print qq(Strawberry Perl OK`n)"
+
+      - name: Enable Windows long paths for Cargo git dependencies
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
