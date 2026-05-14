@@ -13,7 +13,10 @@ use tempfile::NamedTempFile;
 use crate::cli_ux;
 
 use super::super::bootstrap::{GUEST_NIMBUS_BIN, GUEST_NIMBUS_SOCKET};
-use super::super::{MachineConfigRecord, MachinePaths, MachineStateRecord};
+use super::super::{
+    MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineStateRecord,
+    machine_bootstrap_mode,
+};
 use super::image::{compute_sha256, file_size, run_blocking_in_thread};
 use super::readiness::{
     required_child, resolve_machine_api_ready_wait_timeout, wait_for_machine_api_ready,
@@ -31,7 +34,9 @@ pub(super) fn ensure_machine_bootstrap_identity(
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
 ) -> Result<(), Error> {
-    if !requires_host_guest_nimbus_sync(config) || config.guest.ssh_identity_path.is_some() {
+    let requires_identity =
+        requires_host_guest_nimbus_sync(config) || requires_bootc_machine_config(config);
+    if !requires_identity || config.guest.ssh_identity_path.is_some() {
         return Ok(());
     }
 
@@ -167,13 +172,27 @@ pub(super) fn machine_image_rebuild_reason(
 pub(super) fn validate_machine_bootstrap_contract(
     config: &MachineConfigRecord,
 ) -> Result<(), Error> {
-    if !requires_host_guest_nimbus_sync(config) {
+    let requires_host_sync = requires_host_guest_nimbus_sync(config);
+    let requires_bootc_config = requires_bootc_machine_config(config);
+    if !requires_host_sync && !requires_bootc_config {
         return Ok(());
     }
 
+    if requires_bootc_config && config.guest.ignition_file_path.is_some() {
+        return Err(Error::InvalidInput(format!(
+            "machine '{}' uses bootc-native machine-config provisioning and cannot also use an Ignition file",
+            config.name
+        )));
+    }
+
     let identity_path = config.guest.ssh_identity_path.as_ref().ok_or_else(|| {
+        let contract = if requires_bootc_config {
+            "bootc-native machine-config provisioning"
+        } else {
+            "the host-managed macOS machine-image contract"
+        };
         Error::InvalidInput(format!(
-            "machine '{}' uses the host-managed macOS machine-image contract and requires `--identity <path>` so nimbus can stage the guest binary and validate the forwarded machine API",
+            "machine '{}' uses {contract} and requires `--identity <path>` or a generated machine identity so nimbus can validate the forwarded machine API",
             config.name
         ))
     })?;
@@ -191,6 +210,11 @@ pub(super) fn validate_machine_bootstrap_contract(
 pub(super) fn requires_host_guest_nimbus_sync(config: &MachineConfigRecord) -> bool {
     config.provider == super::super::MachineProvider::Krunkit
         && super::super::uses_host_managed_machine_image_contract(config)
+}
+
+pub(super) fn requires_bootc_machine_config(config: &MachineConfigRecord) -> bool {
+    config.provider == super::super::MachineProvider::Krunkit
+        && machine_bootstrap_mode(config) == MachineBootstrapMode::BootcMachineConfig
 }
 
 pub(super) fn ensure_guest_machine_api_ready(

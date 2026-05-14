@@ -10,6 +10,7 @@ fn parses_machine_init_defaults_to_version_pinned_release_image() {
     match machine.command {
         MachineSubcommand::Init(init) => {
             assert_eq!(init.image, expected_default_machine_image());
+            assert!(!init.bootc_native);
             if cfg!(target_os = "macos") {
                 assert!(init.volumes.is_empty());
                 assert_eq!(
@@ -76,6 +77,7 @@ fn parses_machine_init_with_resource_overrides() {
                 init.ignition_file,
                 Some(PathBuf::from("/tmp/nimbus-test.ign"))
             );
+            assert!(!init.bootc_native);
             assert_eq!(init.efi_store, Some(PathBuf::from("/tmp/nimbus-test.efi")));
             assert_eq!(
                 init.volumes,
@@ -157,6 +159,19 @@ fn machine_init_parses_now_flag() {
 }
 
 #[test]
+fn machine_init_parses_hidden_bootc_native_provisioning_flag() {
+    let cli = RootCli::parse_from(["nimbus", "machine", "init", "--bootc-native"]);
+    let Some(RootCommand::Machine(machine)) = cli.command else {
+        panic!("machine init should parse");
+    };
+
+    match machine.command {
+        MachineSubcommand::Init(init) => assert!(init.bootc_native),
+        _ => panic!("expected init subcommand"),
+    }
+}
+
+#[test]
 fn machine_start_parses_create_if_missing_overrides() {
     let cli = RootCli::parse_from([
         "nimbus",
@@ -200,6 +215,7 @@ fn machine_start_parses_create_if_missing_overrides() {
                 start.ignition_file,
                 Some(PathBuf::from("/tmp/nimbus-test.ign"))
             );
+            assert!(!start.bootc_native);
             assert_eq!(start.efi_store, Some(PathBuf::from("/tmp/nimbus-test.efi")));
             assert_eq!(
                 start.volumes,
@@ -210,6 +226,23 @@ fn machine_start_parses_create_if_missing_overrides() {
             );
             assert!(!start.quiet);
             assert!(!start.no_info);
+        }
+        _ => panic!("expected start subcommand"),
+    }
+}
+
+#[test]
+fn machine_start_parses_hidden_bootc_native_create_flag() {
+    let cli = RootCli::parse_from(["nimbus", "machine", "start", "--bootc-native"]);
+    let Some(RootCommand::Machine(machine)) = cli.command else {
+        panic!("machine start should parse");
+    };
+
+    match machine.command {
+        MachineSubcommand::Start(start) => {
+            assert!(start.bootc_native);
+            assert!(start.has_create_overrides());
+            assert!(start.into_init_command().bootc_native);
         }
         _ => panic!("expected start subcommand"),
     }

@@ -37,9 +37,10 @@ use super::stop::{
 use super::*;
 use crate::machine::bootstrap::GUEST_NIMBUS_SOCKET;
 use crate::machine::{
-    CURRENT_MACHINE_CONFIG_VERSION, DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY, MachineBootstrapMode,
-    MachineGuestConfig, MachineImageFormat, MachineImageSource, MachineProvider, MachineResources,
-    MachineRootLayout, MachineVolume, current_machine_release_tag,
+    CURRENT_MACHINE_CONFIG_VERSION, DEFAULT_BOOTC_MACHINE_SSH_USER,
+    DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY, MachineBootstrapMode, MachineGuestConfig,
+    MachineGuestProvisioning, MachineImageFormat, MachineImageSource, MachineProvider,
+    MachineResources, MachineRootLayout, MachineVolume, current_machine_release_tag,
     default_machine_image_for_provider, describe_machine_image_source,
     machine_image_reference_repository,
 };

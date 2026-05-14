@@ -56,6 +56,48 @@ pub(crate) struct MachineApiOperationStatus {
     pub(crate) blockers: Vec<String>,
 }
 
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiBootcStatusResponse {
+    pub(crate) status: serde_json::Value,
+    pub(crate) booted_image: Option<String>,
+    pub(crate) booted_digest: Option<String>,
+    pub(crate) staged_image: Option<String>,
+    pub(crate) staged_digest: Option<String>,
+    pub(crate) rollback_image: Option<String>,
+    pub(crate) rollback_digest: Option<String>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiBootcSwitchRequest {
+    pub(crate) image: String,
+    #[serde(default)]
+    pub(crate) transport: Option<String>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiBootcUpgradeRequest {
+    #[serde(default)]
+    pub(crate) check: bool,
+    #[serde(default)]
+    pub(crate) tag: Option<String>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiBootcRollbackRequest {}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MachineApiBootcOperationResponse {
+    pub(crate) before: MachineApiBootcStatusResponse,
+    pub(crate) after: MachineApiBootcStatusResponse,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+}
+
 impl MachineApiCapabilityResponse {
     pub(crate) fn blockers_for_operations<'a>(
         &self,

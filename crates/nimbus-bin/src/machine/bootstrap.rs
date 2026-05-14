@@ -241,8 +241,8 @@ mod tests {
 
     use super::*;
     use crate::machine::{
-        CURRENT_MACHINE_CONFIG_VERSION, MachineGuestConfig, MachineImageSource, MachineProvider,
-        MachineResources, MachineRootLayout,
+        CURRENT_MACHINE_CONFIG_VERSION, MachineGuestConfig, MachineGuestProvisioning,
+        MachineImageSource, MachineProvider, MachineResources, MachineRootLayout,
     };
 
     fn sample_config(temp_dir: &TempDir) -> MachineConfigRecord {
@@ -254,6 +254,7 @@ mod tests {
                 image_source: MachineImageSource::LocalDisk {
                     path: temp_dir.path().join("disk.raw"),
                 },
+                provisioning: MachineGuestProvisioning::Ignition,
                 ssh_user: "core".to_owned(),
                 ssh_identity_path: None,
                 ignition_file_path: None,

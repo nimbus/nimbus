@@ -55,6 +55,27 @@ fn podman_machine_os_requires_host_guest_nimbus_sync() {
 }
 
 #[test]
+fn bootc_machine_os_uses_baked_nimbus_binary_without_host_sync() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    fs::write(&image_path, []).expect("image should write");
+    let mut config = sample_config(&image_path);
+    config.guest.image_source = MachineImageSource::OciReference {
+        reference: "docker://ghcr.io/nimbus/nimbus-machine-os:v0.1.22".to_owned(),
+    };
+    config.guest.provisioning = MachineGuestProvisioning::BootcMachineConfig;
+    config.guest.ssh_user = DEFAULT_BOOTC_MACHINE_SSH_USER.to_owned();
+
+    assert!(requires_bootc_machine_config(&config));
+    assert!(!requires_host_guest_nimbus_sync(&config));
+
+    let error = validate_machine_bootstrap_contract(&config)
+        .expect_err("bootc-native provisioning should still require machine SSH identity");
+    assert!(error.to_string().contains("bootc-native"));
+    assert!(error.to_string().contains("--identity"));
+}
+
+#[test]
 fn podman_machine_os_bootstrap_contract_requires_ssh_identity() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let image_path = temp_dir.path().join("disk.raw");

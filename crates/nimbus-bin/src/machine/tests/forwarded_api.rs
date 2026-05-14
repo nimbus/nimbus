@@ -45,6 +45,7 @@ fn machine_status_renders_release_asset_guest_binary_contract() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::parse(&default_machine_image())
                 .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: Some(temp_dir.path().join("nimbus-test-ed25519")),
             ignition_file_path: None,
@@ -124,6 +125,7 @@ fn machine_status_renders_explicit_override_guest_binary_contract() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::parse(&default_machine_image())
                 .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: Some(temp_dir.path().join("nimbus-test-ed25519")),
             ignition_file_path: None,
@@ -300,6 +302,7 @@ fn machine_status_reports_forwarding_contract_when_machine_identity_exists() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::parse(&default_machine_image())
                 .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: Some(PathBuf::from("/tmp/nimbus-test-ed25519")),
             ignition_file_path: None,

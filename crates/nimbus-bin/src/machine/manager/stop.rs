@@ -11,7 +11,7 @@ use nimbus::Error;
 
 use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachineLifecycle, MachinePaths, MachineProvider,
-    MachineStateRecord,
+    MachineStateRecord, machine_bootstrap_mode,
 };
 use super::{HARD_STOP_WAIT_TIMEOUT, MachineManagerState, POLL_INTERVAL};
 
@@ -191,7 +191,7 @@ fn detect_guest_bootstrap_hint(
     error: &Error,
 ) -> Option<&'static str> {
     if config.provider != MachineProvider::Krunkit
-        || config.provider.bootstrap_mode() != MachineBootstrapMode::Ignition
+        || machine_bootstrap_mode(config) != MachineBootstrapMode::Ignition
     {
         return None;
     }

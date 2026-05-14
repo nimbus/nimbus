@@ -29,6 +29,7 @@ mod client;
 mod client;
 mod command;
 mod files;
+mod guest_config;
 mod handlers;
 #[cfg(unix)]
 mod manager;
@@ -60,8 +61,9 @@ use self::record::MachineBootstrapMode;
 #[cfg(test)]
 use self::record::MachineImageFormat;
 use self::record::{
-    MachineConfigRecord, MachineImageSource, MachineLifecycle, MachineManagerState, MachinePaths,
-    MachineProvider, MachineRootLayout, MachineStateRecord, MachineVolume,
+    MachineConfigRecord, MachineGuestProvisioning, MachineImageSource, MachineLifecycle,
+    MachineManagerState, MachinePaths, MachineProvider, MachineRootLayout, MachineStateRecord,
+    MachineVolume,
 };
 
 #[cfg(test)]
@@ -86,7 +88,7 @@ const DEFAULT_MACHINE_NAME: &str = "default";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/nimbus-machine-os";
 const DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY: &str = "quay.io/podman/machine-os";
 const DEFAULT_PODMAN_MACHINE_IMAGE_DIGEST: &str =
-    "sha256:972a9fb73e96c903320b3bef32cd212eb0c386f9b6a19737878a063d4703c6ff";
+    "sha256:57e19d2a4e3ae698a0f127ec7495067ac4c4df5177625034e1e700aba94ee8c5";
 
 fn current_machine_release_tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
@@ -160,12 +162,13 @@ fn describe_machine_image_source(source: &MachineImageSource) -> String {
 }
 
 const DEFAULT_MACHINE_SSH_USER: &str = "core";
+const DEFAULT_BOOTC_MACHINE_SSH_USER: &str = "nimbus";
 const DEFAULT_MACHINE_RUNTIME_ROOT: &str = "/tmp/nimbus";
 const MACHINE_RUNTIME_ROOT_ENV: &str = "NIMBUS_MACHINE_RUNTIME_ROOT";
 const DEFAULT_MACHINE_CPUS: u8 = 2;
 const DEFAULT_MACHINE_MEMORY_MIB: u32 = 2048;
 const DEFAULT_MACHINE_DISK_GIB: u32 = 20;
-const CURRENT_MACHINE_CONFIG_VERSION: u32 = 2;
+const CURRENT_MACHINE_CONFIG_VERSION: u32 = 3;
 const CURRENT_MACHINE_STATE_VERSION: u32 = 1;
 
 fn default_machine_volumes() -> Vec<MachineVolume> {
@@ -186,6 +189,13 @@ fn default_machine_volumes() -> Vec<MachineVolume> {
         ]
     } else {
         Vec::new()
+    }
+}
+
+fn machine_bootstrap_mode(config: &MachineConfigRecord) -> MachineBootstrapMode {
+    match config.guest.provisioning {
+        MachineGuestProvisioning::BootcMachineConfig => MachineBootstrapMode::BootcMachineConfig,
+        MachineGuestProvisioning::Ignition => config.provider.bootstrap_mode(),
     }
 }
 

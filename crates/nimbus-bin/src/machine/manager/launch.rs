@@ -7,9 +7,10 @@ use std::process::{Child, Command, Stdio};
 use nimbus::Error;
 
 use super::super::bootstrap::{GUEST_NIMBUS_SOCKET, resolve_ignition_file};
+use super::super::guest_config::{GUEST_MACHINE_CONFIG_MOUNT_TAG, render_machine_config_bundle};
 use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineStateRecord, MachineVolume,
-    describe_machine_image_source,
+    describe_machine_image_source, machine_bootstrap_mode,
 };
 use super::image::resolve_bootable_image_path;
 use super::ports::allocate_machine_ssh_port;
@@ -24,6 +25,7 @@ pub(super) struct MachineLaunchPlan {
     pub(super) gvproxy_command: MachineCommandLine,
     pub(super) krunkit_command: MachineCommandLine,
     pub(super) ignition_file_path: Option<PathBuf>,
+    pub(super) machine_config_bundle_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,11 +72,21 @@ impl MachineLaunchPlan {
         let helper_binaries = MachineHelperBinaryPaths::resolve()?;
         let image_path =
             resolve_bootable_image_path(paths, &config.guest.image_source, config.provider)?;
-        let ignition_file_path = match config.provider.bootstrap_mode() {
+        let bootstrap_mode = machine_bootstrap_mode(config);
+        let ignition_file_path = match bootstrap_mode {
             MachineBootstrapMode::Ignition => {
                 Some(resolve_ignition_file(paths, config, READY_VSOCK_PORT)?)
             }
+            MachineBootstrapMode::BootcMachineConfig | MachineBootstrapMode::ShellScript => None,
+        };
+        let machine_config_bundle_dir = match bootstrap_mode {
+            MachineBootstrapMode::BootcMachineConfig => Some(render_machine_config_bundle(
+                paths,
+                config,
+                READY_VSOCK_PORT,
+            )?),
             MachineBootstrapMode::ShellScript => None,
+            MachineBootstrapMode::Ignition => None,
         };
         let ssh_port = allocate_machine_ssh_port(&config.roots, &config.name, state)?;
         let rest_uri = format!("unix://{}", paths.krunkit_endpoint_path.display());
@@ -127,12 +139,25 @@ impl MachineLaunchPlan {
                 paths.machine_log_path.display()
             ),
         ];
-        if config.provider.bootstrap_mode() == MachineBootstrapMode::Ignition {
+        if matches!(
+            bootstrap_mode,
+            MachineBootstrapMode::Ignition | MachineBootstrapMode::BootcMachineConfig
+        ) {
             krunkit_args.extend([
                 "--device".to_owned(),
                 build_virtio_vsock_listen_arg(READY_VSOCK_PORT, &paths.ready_socket_path),
+            ]);
+        }
+        if bootstrap_mode == MachineBootstrapMode::Ignition {
+            krunkit_args.extend([
                 "--device".to_owned(),
                 build_virtio_vsock_listen_arg(1024, &paths.ignition_socket_path),
+            ]);
+        }
+        if let Some(bundle_dir) = machine_config_bundle_dir.as_ref() {
+            krunkit_args.extend([
+                "--device".to_owned(),
+                build_virtiofs_arg(bundle_dir, GUEST_MACHINE_CONFIG_MOUNT_TAG),
             ]);
         }
         krunkit_args.extend(
@@ -153,6 +178,7 @@ impl MachineLaunchPlan {
             gvproxy_command,
             krunkit_command,
             ignition_file_path,
+            machine_config_bundle_dir,
         })
     }
 
@@ -209,10 +235,10 @@ pub(super) fn build_virtio_vsock_listen_arg(port: u32, socket_path: &Path) -> St
 fn build_virtiofs_args(volume: &MachineVolume) -> Vec<String> {
     vec![
         "--device".to_owned(),
-        format!(
-            "virtio-fs,sharedDir={},mountTag={}",
-            volume.source.display(),
-            mount_tag(&volume.target)
-        ),
+        build_virtiofs_arg(&volume.source, &mount_tag(&volume.target)),
     ]
+}
+
+fn build_virtiofs_arg(source: &Path, tag: &str) -> String {
+    format!("virtio-fs,sharedDir={},mountTag={}", source.display(), tag)
 }

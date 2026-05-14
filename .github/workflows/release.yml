@@ -15,6 +15,10 @@ env:
   # binary inside the darwin archive instead of publishing gvproxy as a
   # separate Nimbus release asset or depending on Podman at runtime.
   GVPROXY_VERSION: v0.8.8
+  # Dedicated machine-os workflow ref used for staging, publishing, and run
+  # lookup. Keep this in sync with stage-machine-os.uses; the release ref
+  # contract verifier fails if the dispatch/watch paths drift.
+  MACHINE_OS_RELEASE_WORKFLOW_REF: release-workflow-v1
 
 permissions:
   contents: read
@@ -29,6 +33,18 @@ jobs:
 
       - name: Verify tag matches workspace/package versions
         run: bash scripts/verify-release-version-contract.sh "${{ github.ref_name }}"
+
+      - name: Verify machine-os release default gate helper
+        run: bash scripts/verify-machine-os-release-default-gate-helper.sh
+
+      - name: Verify bootc default promotion gate helper
+        run: bash scripts/verify-bootc-default-promotion-gate-helper.sh
+
+      - name: Verify machine-os release ref contract
+        run: bash scripts/verify-machine-os-release-ref-contract.sh
+
+      - name: Verify machine-os release ref contract helper
+        run: bash scripts/verify-machine-os-release-ref-contract-helper.sh
 
       - name: Require machine-os release app credentials
         env:
@@ -247,8 +263,8 @@ jobs:
   stage-machine-os:
     name: Stage machine-os bundle
     needs: build-linux-arm64
-    # Keep this on a dedicated stable ref so machine-os workflow fixes do not
-    # require raw-SHA repins in nimbus for every change.
+    # Keep this in sync with MACHINE_OS_RELEASE_WORKFLOW_REF; reusable workflow
+    # `uses:` targets must remain literal, so the verifier enforces the match.
     # Use github.run_id for the staged bundle handoff because the downstream
     # publish workflow must still find the artifact across reruns. Reserve
     # github.run_attempt for per-attempt diagnostics, not durable artifact
@@ -275,6 +291,8 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v6
+
       - name: Create machine-os dispatch token
         id: release_app_token
         uses: actions/create-github-app-token@v3
@@ -294,7 +312,7 @@ jobs:
           expected_title="Publish machine-os (${{ github.ref_name }}) from ${{ github.repository }}#${{ github.run_id }} (attempt ${{ github.run_attempt }})"
           cat > /tmp/machine-os-dispatch.json <<EOF
           {
-            "ref": "release-workflow-v1",
+            "ref": "${MACHINE_OS_RELEASE_WORKFLOW_REF}",
             "inputs": {
               "source_repository": "${{ github.repository }}",
               "source_run_id": "${{ github.run_id }}",
@@ -328,7 +346,7 @@ jobs:
               gh run list \
                 --repo nimbus/nimbus-machine-os \
                 --workflow publish.yml \
-                --branch release-workflow-v1 \
+                --branch "${MACHINE_OS_RELEASE_WORKFLOW_REF}" \
                 --event workflow_dispatch \
                 --limit 20 \
                 --json databaseId,displayTitle \
@@ -346,7 +364,7 @@ jobs:
             gh run list \
               --repo nimbus/nimbus-machine-os \
               --workflow publish.yml \
-              --branch release-workflow-v1 \
+              --branch "${MACHINE_OS_RELEASE_WORKFLOW_REF}" \
               --event workflow_dispatch \
               --limit 20
             exit 1
@@ -357,6 +375,22 @@ jobs:
             gh run view "${run_id}" --repo nimbus/nimbus-machine-os --log-failed || true
             exit 1
           fi
+
+      - name: Verify machine-os release default gate
+        env:
+          GH_TOKEN: ${{ steps.release_app_token.outputs.token }}
+        run: |
+          release_dir="${RUNNER_TEMP}/nimbus-machine-os-release-${{ github.ref_name }}"
+          rm -rf "${release_dir}"
+          mkdir -p "${release_dir}"
+
+          gh release download "${{ github.ref_name }}" \
+            --repo nimbus/nimbus-machine-os \
+            --dir "${release_dir}"
+
+          bash scripts/verify-machine-os-release-default-gate.sh \
+            --release-dir "${release_dir}" \
+            --expected-tag "${{ github.ref_name }}"
 
   release:
     name: Create Release

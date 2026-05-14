@@ -17,6 +17,7 @@ fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
                 image: "docker://ghcr.io/nimbus/nimbus-machine-os:v0.1.0".to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
+                bootc_native: false,
                 efi_store: None,
                 volumes: Vec::new(),
                 now: false,
@@ -70,6 +71,46 @@ fn machine_os_apply_updates_config_and_invalidates_materialized_artifacts() {
 }
 
 #[test]
+fn bootc_native_init_requires_explicit_image_before_default_promotion() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::new(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+
+    let error = run_machine_command_for_test(
+        MachineCommand {
+            command: MachineSubcommand::Init(MachineInitCommand {
+                cpus: DEFAULT_MACHINE_CPUS,
+                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
+                disk_gib: DEFAULT_MACHINE_DISK_GIB,
+                image: default_machine_image(),
+                ssh_identity: None,
+                ignition_file: None,
+                bootc_native: true,
+                efi_store: None,
+                volumes: Vec::new(),
+                now: false,
+                name: None,
+            }),
+        },
+        &layout,
+    )
+    .expect_err("bootc-native default image should be blocked before promotion");
+
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("requires an explicit --image"),
+        "{rendered}"
+    );
+    assert!(
+        !layout.paths(DEFAULT_MACHINE_NAME).config_path.exists(),
+        "failed init must not persist a machine config"
+    );
+}
+
+#[test]
 fn machine_os_upgrade_plan_uses_supported_stream_target() {
     let config = MachineConfigRecord {
         version: CURRENT_MACHINE_CONFIG_VERSION,
@@ -79,6 +120,7 @@ fn machine_os_upgrade_plan_uses_supported_stream_target() {
             image_source: MachineImageSource::OciReference {
                 reference: supported_stream_current_image_for_upgrade_test(),
             },
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,
@@ -126,6 +168,7 @@ fn host_managed_macos_stream_uses_podman_repository_contract() {
             image_source: MachineImageSource::OciReference {
                 reference: default_machine_image(),
             },
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,
@@ -163,6 +206,7 @@ fn explicit_podman_override_does_not_get_rewritten_to_default_digest() {
             image_source: MachineImageSource::OciReference {
                 reference: "docker://quay.io/podman/machine-os@sha256:customoverride".to_owned(),
             },
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,
@@ -197,6 +241,7 @@ fn machine_os_upgrade_handles_digest_pinned_supported_streams() {
             image_source: MachineImageSource::OciReference {
                 reference: supported_stream_digest_image_for_upgrade_test(),
             },
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,

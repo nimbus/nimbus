@@ -389,6 +389,11 @@ fn requires_host_guest_nimbus_sync(config: &MachineConfigRecord) -> bool {
     self::guest::requires_host_guest_nimbus_sync(config)
 }
 
+#[cfg(test)]
+fn requires_bootc_machine_config(config: &MachineConfigRecord) -> bool {
+    self::guest::requires_bootc_machine_config(config)
+}
+
 fn ensure_guest_machine_api_ready(
     paths: &MachinePaths,
     config: &MachineConfigRecord,

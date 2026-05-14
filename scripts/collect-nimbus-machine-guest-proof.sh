@@ -12,10 +12,14 @@ Collect guest-image contract proof from a booted Nimbus macOS machine using the
 shipped `nimbus machine ...` surface. This is the MAC4 proof lane for:
 
 - guest `nimbus --version`
+- guest-local `bootc status --json`
 - guest required runtime binaries
 - guest `nimbus.socket` / `nimbus.service` state
-- guest machine-API health/capabilities on `/run/nimbus/nimbus.sock`
+- forwarded machine-API health/capabilities through the host API socket
+- forwarded machine-API bootc status through the host API socket
 - virtiofs mount presence
+- SELinux mode and AVC evidence
+- package, bootloader, and SELinux label context for AVC triage
 - host-side first-boot machine log tail
 
 options:
@@ -30,6 +34,8 @@ options:
   --guest-binary-path <path>     Guest nimbus binary path
                                  (default: /usr/local/bin/nimbus)
   --guest-socket-path <path>     Guest machine-API socket (default: /run/nimbus/nimbus.sock)
+  --selinux-avc-checker <path>   Optional host-side AVC checker to run against
+                                 the captured guest SELinux AVC evidence
   --log-lines <count>            Number of host machine-log lines to capture
   -h, --help                     Show this help
 
@@ -109,6 +115,7 @@ image_artifact=""
 guest_volume_path="/Users"
 guest_binary_path="/usr/local/bin/nimbus"
 guest_socket_path="/run/nimbus/nimbus.sock"
+selinux_avc_checker=""
 log_lines=120
 
 while [[ $# -gt 0 ]]; do
@@ -149,6 +156,10 @@ while [[ $# -gt 0 ]]; do
       guest_socket_path="${2:?missing guest socket path}"
       shift 2
       ;;
+    --selinux-avc-checker)
+      selinux_avc_checker="${2:?missing SELinux AVC checker path}"
+      shift 2
+      ;;
     --log-lines)
       log_lines="${2:?missing log line count}"
       shift 2
@@ -179,6 +190,10 @@ if [[ -n "${image_artifact}" && ! -f "${image_artifact}" ]]; then
   echo "image artifact does not exist at ${image_artifact}" >&2
   exit 64
 fi
+if [[ -n "${selinux_avc_checker}" && ! -x "${selinux_avc_checker}" ]]; then
+  echo "SELinux AVC checker is not executable at ${selinux_avc_checker}" >&2
+  exit 64
+fi
 
 if [[ -z "${output_dir}" ]]; then
   output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-machine-guest-proof.XXXXXX")"
@@ -191,16 +206,19 @@ summary_file="${output_dir}/summary.txt"
 : > "${summary_file}"
 
 machine_log="${runtime_root%/}/${machine_name}.log"
+host_api_socket_path="${runtime_root%/}/${machine_name}-api.sock"
 
 print_line "output.dir" "${output_dir}"
 print_line "machine.name" "${machine_name}"
 print_line "home.dir" "${home_dir}"
 print_line "runtime.root" "${runtime_root}"
 print_line "runtime.machine_log" "${machine_log}"
+print_line "host.api_socket_path" "${host_api_socket_path}"
 print_line "nimbus.bin" "${nimbus_bin}"
 print_line "guest.volume_path" "${guest_volume_path}"
 print_line "guest.binary_path" "${guest_binary_path}"
 print_line "guest.socket_path" "${guest_socket_path}"
+print_line "selinux.avc_checker" "${selinux_avc_checker:-<unspecified>}"
 print_line "image.artifact" "${image_artifact:-<unspecified>}"
 
 base_cmd=(
@@ -210,14 +228,42 @@ base_cmd=(
   "${nimbus_bin}"
 )
 
-status_cmd=("${base_cmd[@]}" machine status)
+status_cmd=("${base_cmd[@]}" machine status "${machine_name}")
 capture_command \
   "capture.machine_status" \
   "${output_dir}/machine-status-command.txt" \
   "${output_dir}/machine-status.txt" \
   "${status_cmd[@]}" || true
 
-ssh_base=("${base_cmd[@]}" machine ssh --)
+inspect_cmd=("${base_cmd[@]}" machine inspect "${machine_name}" -f json)
+capture_command \
+  "capture.machine_inspect" \
+  "${output_dir}/machine-inspect-command.txt" \
+  "${output_dir}/machine-inspect.txt" \
+  "${inspect_cmd[@]}" || true
+
+root_ssh_identity_path=""
+root_ssh_port=""
+if [[ -s "${output_dir}/machine-inspect.txt" ]]; then
+  root_ssh_identity_path="$(
+    sed -n 's/.*"ssh_identity_path": "\([^"]*\)".*/\1/p' \
+      "${output_dir}/machine-inspect.txt" \
+      | head -n1
+  )"
+  root_ssh_port="$(
+    sed -n 's/.*"ssh_port": \([0-9][0-9]*\).*/\1/p' \
+      "${output_dir}/machine-inspect.txt" \
+      | head -n1
+  )"
+fi
+
+if [[ -n "${root_ssh_identity_path}" && -n "${root_ssh_port}" && -f "${root_ssh_identity_path}" ]]; then
+  print_line "privileged.guest_evidence" "root-ssh port=${root_ssh_port} identity=${root_ssh_identity_path}"
+else
+  print_line "privileged.guest_evidence" "unavailable"
+fi
+
+ssh_base=("${base_cmd[@]}" machine ssh "${machine_name}" --)
 
 version_cmd=("${ssh_base[@]}" "${guest_binary_path}" --version)
 capture_command \
@@ -295,8 +341,12 @@ capture_command \
   "${virtiofs_cmd[@]}" || true
 
 health_cmd=(
-  "${ssh_base[@]}"
-  "/bin/sh -lc 'sudo curl --silent --show-error --include --unix-socket ${guest_socket_path} http://localhost/healthz'"
+  curl
+  --silent
+  --show-error
+  --include
+  --unix-socket "${host_api_socket_path}"
+  http://localhost/healthz
 )
 capture_command \
   "capture.guest_machine_api_health" \
@@ -305,14 +355,140 @@ capture_command \
   "${health_cmd[@]}" || true
 
 capabilities_cmd=(
-  "${ssh_base[@]}"
-  "/bin/sh -lc 'sudo curl --silent --show-error --include --unix-socket ${guest_socket_path} http://localhost/v1/machine-api/capabilities'"
+  curl
+  --silent
+  --show-error
+  --include
+  --unix-socket "${host_api_socket_path}"
+  http://localhost/v1/machine-api/capabilities
 )
 capture_command \
   "capture.guest_machine_api_capabilities" \
   "${output_dir}/guest-machine-api-capabilities-command.txt" \
   "${output_dir}/guest-machine-api-capabilities.txt" \
   "${capabilities_cmd[@]}" || true
+
+api_bootc_status_cmd=(
+  curl
+  --silent
+  --show-error
+  --include
+  --unix-socket "${host_api_socket_path}"
+  http://localhost/v1/machine-api/os/bootc/status
+)
+capture_command \
+  "capture.guest_machine_api_bootc_status" \
+  "${output_dir}/guest-machine-api-bootc-status-command.txt" \
+  "${output_dir}/guest-machine-api-bootc-status.txt" \
+  "${api_bootc_status_cmd[@]}" || true
+
+selinux_mode_cmd=(
+  "${ssh_base[@]}"
+  "/bin/sh -lc 'if command -v getenforce >/dev/null 2>&1; then getenforce; else printf \"%s\n\" unavailable; fi'"
+)
+capture_command \
+  "capture.guest_selinux_mode" \
+  "${output_dir}/guest-selinux-mode-command.txt" \
+  "${output_dir}/guest-selinux-mode.txt" \
+  "${selinux_mode_cmd[@]}" || true
+
+package_context_cmd=(
+  "${ssh_base[@]}"
+  "/bin/sh -lc 'printf \"%s\n\" \"# package versions\"; rpm -q bootupd selinux-policy selinux-policy-targeted systemd util-linux-core podman crun netavark aardvark-dns bootc policycoreutils 2>&1 || true; printf \"%s\n\" \"# bootloader units\"; systemctl list-unit-files \"*boot*\" --no-pager 2>&1 || true; printf \"%s\n\" \"# bootloader-update.service\"; systemctl cat bootloader-update.service --no-pager 2>&1 || true'"
+)
+capture_command \
+  "capture.guest_package_context" \
+  "${output_dir}/guest-package-context-command.txt" \
+  "${output_dir}/guest-package-context.txt" \
+  "${package_context_cmd[@]}" || true
+
+if [[ -n "${root_ssh_identity_path}" && -n "${root_ssh_port}" && -f "${root_ssh_identity_path}" ]]; then
+  guest_bootc_status_cmd=(
+    ssh
+    -o BatchMode=yes
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o CheckHostIP=no
+    -o LogLevel=ERROR
+    -o SetEnv=LC_ALL=
+    -i "${root_ssh_identity_path}"
+    -p "${root_ssh_port}"
+    root@127.0.0.1
+    "/bin/sh -lc 'bootc status --json'"
+  )
+  selinux_context_cmd=(
+    ssh
+    -o BatchMode=yes
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o CheckHostIP=no
+    -o LogLevel=ERROR
+    -o SetEnv=LC_ALL=
+    -i "${root_ssh_identity_path}"
+    -p "${root_ssh_port}"
+    root@127.0.0.1
+    "/bin/sh -lc 'printf \"%s\n\" \"# process labels\"; ps -eZ | grep -E \"nimbus|bootupd|systemd-userdbd|systemd-homed|sshd\" || true; printf \"%s\n\" \"# file labels\"; ls -ldZ /run/nimbus /run/nimbus/nimbus.sock /usr/local/bin/nimbus /var/lib/nimbus /run/systemd/userdb /etc/group /run/mount 2>&1 || true; printf \"%s\n\" \"# selinux modules\"; semodule --list-modules=full 2>&1 | grep -E \"nimbus|bootupd|container\" || true; printf \"%s\n\" \"# relevant booleans\"; getsebool container_manage_cgroup virt_sandbox_use_all_caps 2>&1 || true'"
+  )
+  selinux_avc_cmd=(
+    ssh
+    -o BatchMode=yes
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o CheckHostIP=no
+    -o LogLevel=ERROR
+    -o SetEnv=LC_ALL=
+    -i "${root_ssh_identity_path}"
+    -p "${root_ssh_port}"
+    root@127.0.0.1
+    "/bin/sh -lc 'if command -v ausearch >/dev/null 2>&1; then ausearch -m AVC -ts boot || true; else journalctl -b --no-pager | grep -Ei \"type=AVC|avc:.*denied\" || true; fi'"
+  )
+else
+  guest_bootc_status_cmd=(
+    /bin/sh
+    -lc
+    "printf '%s\n' 'privileged bootc status capture unavailable: missing root SSH identity or port' >&2; exit 65"
+  )
+  selinux_context_cmd=(
+    /bin/sh
+    -lc
+    "printf '%s\n' 'privileged SELinux context capture unavailable: missing root SSH identity or port' >&2; exit 65"
+  )
+  selinux_avc_cmd=(
+    /bin/sh
+    -lc
+    "printf '%s\n' 'privileged SELinux AVC capture unavailable: missing root SSH identity or port' >&2; exit 65"
+  )
+fi
+
+capture_command \
+  "capture.guest_bootc_status" \
+  "${output_dir}/guest-bootc-status-command.txt" \
+  "${output_dir}/guest-bootc-status.txt" \
+  "${guest_bootc_status_cmd[@]}" || true
+
+capture_command \
+  "capture.guest_selinux_context" \
+  "${output_dir}/guest-selinux-context-command.txt" \
+  "${output_dir}/guest-selinux-context.txt" \
+  "${selinux_context_cmd[@]}" || true
+
+capture_command \
+  "capture.guest_selinux_avcs" \
+  "${output_dir}/guest-selinux-avcs-command.txt" \
+  "${output_dir}/guest-selinux-avcs.txt" \
+  "${selinux_avc_cmd[@]}" || true
+
+if [[ -n "${selinux_avc_checker}" ]]; then
+  capture_command \
+    "check.guest_selinux_avcs" \
+    "${output_dir}/guest-selinux-avc-check-command.txt" \
+    "${output_dir}/guest-selinux-avc-check.txt" \
+    "${selinux_avc_checker}" \
+    --audit-log "${output_dir}/guest-selinux-avcs.txt" || true
+fi
 
 tail_file_if_present \
   "artifact.machine_log_tail" \
