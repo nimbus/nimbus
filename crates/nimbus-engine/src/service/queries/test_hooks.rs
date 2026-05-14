@@ -233,6 +233,14 @@ impl Service {
     }
 
     #[cfg(test)]
+    pub(crate) fn shutdown_trigger_candidates_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| runtime.shutdown_trigger_candidates())
+    }
+
+    #[cfg(test)]
     pub(crate) fn mutation_journal_pause_handle_for_testing(
         &self,
         tenant_id: &TenantId,

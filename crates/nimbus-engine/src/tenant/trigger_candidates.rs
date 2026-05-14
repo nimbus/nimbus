@@ -231,9 +231,12 @@ impl TriggerCandidateWorker {
         );
     }
 
-    fn shutdown(&self, queue: &Arc<TriggerCandidateQueueState>) {
+    fn request_shutdown(&self, queue: &Arc<TriggerCandidateQueueState>) {
         self.shutdown.store(true, Ordering::Release);
         queue.notify_all();
+    }
+
+    fn join(&self) {
         if let Some(worker) = self
             .worker
             .lock()
@@ -276,7 +279,10 @@ impl TriggerCandidateFeed {
     }
 
     pub(super) fn shutdown(&self) {
-        self.worker.shutdown(&self.queue);
+        self.worker.request_shutdown(&self.queue);
+        #[cfg(test)]
+        self.pause.release_for_shutdown();
+        self.worker.join();
     }
 
     #[cfg(test)]
@@ -376,6 +382,17 @@ impl TriggerCandidatePauseHandle {
 
 #[cfg(test)]
 impl TriggerCandidatePauseState {
+    fn release_for_shutdown(&self) {
+        let mut control = self
+            .control
+            .lock()
+            .expect("trigger candidate pause lock should not be poisoned");
+        if control.armed && !control.released {
+            control.released = true;
+            self.condvar.notify_all();
+        }
+    }
+
     fn wait_if_armed(&self) {
         let mut control = self
             .control
