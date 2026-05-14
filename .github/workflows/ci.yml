@@ -461,6 +461,12 @@ jobs:
           bash -n scripts/verify-nimbus-machine-guest-proof-helper.sh
           bash -n scripts/verify-nimbus-machine-service-proof-helper.sh
           bash -n scripts/verify-nimbus-homebrew-cask-proof-helper.sh
+          bash -n scripts/verify-machine-os-release-default-gate.sh
+          bash -n scripts/verify-machine-os-release-default-gate-helper.sh
+          bash -n scripts/verify-bootc-default-promotion-gate.sh
+          bash -n scripts/verify-bootc-default-promotion-gate-helper.sh
+          bash -n scripts/verify-machine-os-release-ref-contract.sh
+          bash -n scripts/verify-machine-os-release-ref-contract-helper.sh
           bash -n scripts/install.sh
           bash -n scripts/verify-install.sh
           bash -n scripts/verify-install-helper.sh
@@ -476,6 +482,15 @@ jobs:
 
       - name: Verify Homebrew cask proof helper
         run: bash scripts/verify-nimbus-homebrew-cask-proof-helper.sh
+
+      - name: Verify machine-os release default gate helper
+        run: bash scripts/verify-machine-os-release-default-gate-helper.sh
+
+      - name: Verify bootc default promotion gate helper
+        run: bash scripts/verify-bootc-default-promotion-gate-helper.sh
+
+      - name: Verify machine-os release ref contract helper
+        run: bash scripts/verify-machine-os-release-ref-contract-helper.sh
 
       - name: Verify install script helper
         run: bash scripts/verify-install-helper.sh
