@@ -1,3 +1,7 @@
+use super::bootc::{
+    machine_api_bootc_rollback, machine_api_bootc_status, machine_api_bootc_switch,
+    machine_api_bootc_upgrade,
+};
 use super::capabilities::machine_api_capability_response;
 use super::logs::read_log_chunk;
 use super::process::{read_pid_file_if_exists, snapshot_process_rows};
@@ -14,6 +18,22 @@ pub(super) fn machine_api_router(state: MachineApiState) -> Router {
         .route(
             "/v1/machine-api/capabilities",
             get(machine_api_capabilities),
+        )
+        .route(
+            "/v1/machine-api/os/bootc/status",
+            get(machine_api_bootc_status),
+        )
+        .route(
+            "/v1/machine-api/os/bootc/switch",
+            post(machine_api_bootc_switch),
+        )
+        .route(
+            "/v1/machine-api/os/bootc/upgrade",
+            post(machine_api_bootc_upgrade),
+        )
+        .route(
+            "/v1/machine-api/os/bootc/rollback",
+            post(machine_api_bootc_rollback),
         )
         .route(
             "/v1/machine-api/service-sandboxes/image-start",

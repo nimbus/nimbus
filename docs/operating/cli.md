@@ -125,6 +125,10 @@ nimbus machine os upgrade [--dry-run] [--restart]
 ```
 
 ```bash
+nimbus machine os rollback [--restart]
+```
+
+```bash
 nimbus start [--host 127.0.0.1] [--port 8080] [--app-dir ./app] [--skip-codegen] [--compose-file PATH]...
 ```
 
@@ -162,6 +166,43 @@ Current command taxonomy:
   shipped Compose-backed service lifecycle namespace
 - `nimbus machine ...`
   shipped macOS machine lifecycle namespace
+
+## Bootc Default Promotion And Rollback
+
+The current macOS default remains the pinned Podman-compatible machine image
+until a Nimbus-owned bootc release candidate passes the composed promotion
+gate. A direct bootc artifact is default-promotable only when all of these are
+true:
+
+1. A paired `nimbus/nimbus` release and `nimbus-machine-os` release exist for
+   the same tag.
+2. The machine-os release assets include the AppleHV OCI layout, checksums,
+   SBOM, digest evidence, bootc build summary, and artifact attestations.
+3. A real macOS release-candidate VM has been booted from that artifact and
+   captured with `scripts/collect-nimbus-machine-guest-proof.sh`, including
+   package context, SELinux context, and AVC evidence.
+4. The captured proof uses the host-side AVC checker from
+   `/Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/check-selinux-avcs.sh`.
+5. The final composed gate passes:
+
+```bash
+bash scripts/verify-bootc-default-promotion-gate.sh \
+  --release-dir <downloaded-machine-os-release-assets> \
+  --guest-proof-dir <macos-proof-dir> \
+  --expected-tag vX.Y.Z
+```
+
+Only after that gate passes should the checked-in macOS default image digest
+move from the Podman-compatible artifact to the Nimbus-owned bootc artifact.
+
+Rollback has two supported shapes. For a healthy bootc-native machine, use
+`nimbus machine os rollback --restart` so the guest stages the previous bootc
+deployment and reboots through the normal readiness path. If the guest machine
+API cannot answer, or if the fleet default itself must move back to a prior
+artifact, use `nimbus machine os apply <previous-digest> --restart` or an
+explicit repair/recreate flow. The current Podman-compatible path stays
+available until the bootc default has passed the promotion gate and the later
+legacy-removal phase deliberately removes it.
 
 ## Core Flags
 
@@ -651,8 +692,9 @@ The current landed machine surface is the checked-in macOS machine contract:
 | `nimbus machine cp [--quiet] SRC_PATH DEST_PATH` | recursively copy files or directories between the host and a running machine using Podman-style `NAME:/path` guest endpoints and the machine's configured SSH contract |
 | `nimbus machine ssh [NAME] [COMMAND...]` | run a command through the configured guest SSH user and identity once the machine is running; as with Podman, if the first argument names an existing machine it is treated as `NAME`, otherwise it is passed through as the guest command on `default` |
 | `nimbus machine rm [NAME]` | remove the persisted config, state, and short runtime-root layout for the named machine when it is not running |
-| `nimbus machine os apply <oci-ref-or-digest>` | record an explicit immutable OCI machine-image rollout, invalidate boot artifacts so the next boot recreates from that image, and print a concise action summary with restart/start guidance when relevant |
-| `nimbus machine os upgrade` | move back to the host-supported machine-image stream for this `nimbus` version; `--dry-run` now reports the current/target image pair as a concise action summary instead of a structured status dump |
+| `nimbus machine os apply <oci-ref-or-digest>` | apply an explicit immutable OCI machine-image rollout; current host-managed machines recreate boot artifacts from the recorded image, while bootc-native machines ask the guest machine API to stage `bootc switch` and then require a restart into the staged deployment |
+| `nimbus machine os upgrade` | move back to the host-supported machine-image stream for this `nimbus` version; on bootc-native machines this stages `bootc upgrade` through the guest machine API, and `--dry-run` reports the current/target image pair as a concise action summary instead of a structured status dump |
+| `nimbus machine os rollback` | for bootc-native machines, ask the guest machine API to stage `bootc rollback`; restart the machine to boot the previous deployment |
 
 Current scope:
 
@@ -683,10 +725,12 @@ Current scope:
   override was recorded, so the default `machine start` path does not require
   a separate SSH-key setup step
 - makes `nimbus machine start` the primary convergence path on macOS: cache
-  missing machine-image and guest-Linux-`nimbus` artifacts, rebuild boot
-  artifacts when the recorded base image drifts from the desired digest,
-  hash-sync `/usr/local/bin/nimbus` inside the guest, and only then report
-  success after the forwarded machine API is reachable
+  missing machine-image artifacts, rebuild boot artifacts when the recorded
+  base image drifts from the desired digest, hash-sync
+  `/usr/local/bin/nimbus` only for the current Podman/FCOS host-managed
+  fallback, and report success only after the forwarded machine API is
+  reachable. Bootc-native machines instead boot with the matching Linux
+  `nimbus` binary already baked into the image.
 - treats mutating machine commands as action-oriented UX surfaces: `init`,
   `start`, `stop`, `set`, and `rm` now print concise human summaries, while
   `machine status` and `machine inspect` remain the structured diagnostic
@@ -714,8 +758,11 @@ Current scope:
   existence and actual API reachability separately, so host helpers, machine
   readiness, and guest control readiness do not get collapsed into one status
   bit
-- keeps `nimbus machine os apply` and `nimbus machine os upgrade` as explicit,
-  host-managed machine-image rollout surfaces instead of ad hoc guest mutation
+- keeps `nimbus machine os apply`, `nimbus machine os upgrade`, and
+  `nimbus machine os rollback` as explicit machine-image lifecycle surfaces:
+  current host-managed machines use controlled disk recreation, while
+  bootc-native machines use the guest machine API to stage `bootc`
+  switch/upgrade/rollback and keep disk replacement as a repair/recreate path
 - treats `nimbus machine rm` as a full config/state-root removal, including the
   per-machine image and guest-binary caches under the state root, so a clean
   recreate path intentionally repulls or rehydrates artifacts on the next boot

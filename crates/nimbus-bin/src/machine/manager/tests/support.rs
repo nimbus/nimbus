@@ -12,6 +12,7 @@ pub(super) fn sample_config(image: &Path) -> MachineConfigRecord {
             image_source: MachineImageSource::LocalDisk {
                 path: image.to_path_buf(),
             },
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: "core".to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,
@@ -83,6 +84,8 @@ pub(super) fn serve_fake_oci_registry(layer_body: Vec<u8>) -> String {
     let repository = "example/nimbus-machine-os";
     let tag = "test";
     let layer_digest = format!("sha256:{:x}", Sha256::digest(&layer_body));
+    let ignored_layer_body = b"ignored-raw-disk-artifact-bytes".to_vec();
+    let ignored_layer_digest = format!("sha256:{:x}", Sha256::digest(&ignored_layer_body));
     let current_arch = current_machine_oci_architectures()[0];
     let child_manifest = serde_json::json!({
         "schemaVersion": 2,
@@ -114,8 +117,8 @@ pub(super) fn serve_fake_oci_registry(layer_body: Vec<u8>) -> String {
         },
         "layers": [{
             "mediaType": "application/vnd.nimbus.machine.disk.layer.v1.tar+gzip",
-            "size": layer_body.len(),
-            "digest": layer_digest,
+            "size": ignored_layer_body.len(),
+            "digest": ignored_layer_digest,
             "annotations": {
                 "org.opencontainers.image.title": "ignored.raw.gz"
             }
@@ -187,6 +190,9 @@ pub(super) fn serve_fake_oci_registry(layer_body: Vec<u8>) -> String {
                 }
                 _ if path == format!("/v2/{repository}/manifests/{child_manifest_digest}") => {
                     (200, OCI_IMAGE_MEDIA_TYPE, child_manifest_bytes.clone())
+                }
+                _ if path == format!("/v2/{repository}/blobs/{ignored_layer_digest}") => {
+                    (200, "application/octet-stream", ignored_layer_body.clone())
                 }
                 _ if path == format!("/v2/{repository}/blobs/{layer_digest}") => {
                     (200, "application/octet-stream", layer_body.clone())

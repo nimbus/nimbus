@@ -143,6 +143,7 @@ fn machine_status_table_output_is_default_human_summary() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::parse(&default_machine_image())
                 .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,
@@ -202,6 +203,7 @@ fn machine_status_table_output_can_omit_headings() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::parse(&default_machine_image())
                 .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,
@@ -256,6 +258,7 @@ fn machine_status_json_output_serializes_full_status_view() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::parse(&default_machine_image())
                 .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,
@@ -581,6 +584,7 @@ fn machine_list_prioritizes_active_and_default_machines() {
                 guest: MachineGuestConfig {
                     image_source: MachineImageSource::parse(&default_machine_image())
                         .expect("default image should parse"),
+                    provisioning: MachineGuestProvisioning::Ignition,
                     ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
                     ssh_identity_path: None,
                     ignition_file_path: None,
@@ -672,6 +676,7 @@ fn machine_inspect_json_output_serializes_full_config_and_state() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::parse(&default_machine_image())
                 .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: Some(PathBuf::from("/tmp/team-a")),
             ignition_file_path: None,
@@ -723,6 +728,7 @@ fn machine_inspect_yaml_output_serializes_full_config_and_state() {
         guest: MachineGuestConfig {
             image_source: MachineImageSource::parse(&default_machine_image())
                 .expect("default image should parse"),
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,

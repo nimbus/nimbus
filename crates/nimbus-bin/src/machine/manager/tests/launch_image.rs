@@ -123,6 +123,56 @@ fn launch_plan_requires_bootable_local_disk_image() {
 }
 
 #[test]
+fn launch_plan_bootc_machine_config_attaches_bundle_without_ignition() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let image_path = temp_dir.path().join("disk.raw");
+    let ssh_identity_path = temp_dir.path().join("machine-key");
+    let ssh_public_key_path = temp_dir.path().join("machine-key.pub");
+    fs::write(&image_path, []).expect("image should write");
+    fs::write(&ssh_identity_path, "fake key").expect("identity should write");
+    fs::write(
+        &ssh_public_key_path,
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey jack@example",
+    )
+    .expect("public key should write");
+
+    let mut config = sample_config(&image_path);
+    config.guest.provisioning = MachineGuestProvisioning::BootcMachineConfig;
+    config.guest.ssh_user = DEFAULT_BOOTC_MACHINE_SSH_USER.to_owned();
+    config.guest.ssh_identity_path = Some(ssh_identity_path);
+    let paths = config.roots.paths("default");
+    let state = MachineStateRecord::initialized();
+
+    let plan = MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
+
+    assert_eq!(
+        plan.machine_config_bundle_dir,
+        Some(paths.guest_config_bundle_dir.clone())
+    );
+    assert_eq!(plan.ignition_file_path, None);
+    assert!(paths.guest_config_bundle_dir.join("machine.json").is_file());
+    assert!(plan.krunkit_command.args.iter().any(|arg| {
+        arg == &format!(
+            "virtio-vsock,port=1025,socketURL={},listen",
+            paths.ready_socket_path.display()
+        )
+    }));
+    assert!(!plan.krunkit_command.args.iter().any(|arg| {
+        arg == &format!(
+            "virtio-vsock,port=1024,socketURL={},listen",
+            paths.ignition_socket_path.display()
+        )
+    }));
+    assert!(plan.krunkit_command.args.iter().any(|arg| {
+        arg == &format!(
+            "virtio-fs,sharedDir={},mountTag=nimbus-machine-config",
+            paths.guest_config_bundle_dir.display()
+        )
+    }));
+}
+
+#[test]
 fn launch_plan_adds_gvproxy_machine_api_forwarding_when_ssh_identity_exists() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
@@ -236,6 +286,7 @@ fn registry_image_reference_reuses_materialized_disk_when_present() {
                     env!("CARGO_PKG_VERSION")
                 ),
             },
+            provisioning: MachineGuestProvisioning::Ignition,
             ssh_user: "core".to_owned(),
             ssh_identity_path: None,
             ignition_file_path: None,

@@ -28,7 +28,22 @@ pub(super) fn machine_api_capability_response(
         &image_start_blockers,
         missing_binary_blockers(&binary_statuses, MACHINE_API_BUILD_START_OPERATION),
     );
+    let bootc_status_blockers =
+        missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_STATUS_OPERATION);
+    let bootc_switch_blockers =
+        missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_SWITCH_OPERATION);
+    let bootc_upgrade_blockers =
+        missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_UPGRADE_OPERATION);
+    let bootc_rollback_blockers =
+        missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_ROLLBACK_OPERATION);
     let operation_statuses = vec![
+        machine_api_operation_status(MACHINE_API_BOOTC_STATUS_OPERATION, bootc_status_blockers),
+        machine_api_operation_status(MACHINE_API_BOOTC_SWITCH_OPERATION, bootc_switch_blockers),
+        machine_api_operation_status(MACHINE_API_BOOTC_UPGRADE_OPERATION, bootc_upgrade_blockers),
+        machine_api_operation_status(
+            MACHINE_API_BOOTC_ROLLBACK_OPERATION,
+            bootc_rollback_blockers,
+        ),
         machine_api_operation_status(
             MACHINE_API_LIST_OPERATION,
             shared_operation_blockers(state_operations_available, &shared_blockers),

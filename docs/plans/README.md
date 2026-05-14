@@ -20,6 +20,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
+- `docs/plans/bootc-machine-default-plan.md`
+  - canonical execution plan for keeping the pinned Podman machine image as
+    the current macOS default while proving a direct Fedora bootc-derived
+    Nimbus machine image, promoting it only after macOS parity and bootc
+    lifecycle evidence, then removing legacy FCOS/Podman-image reliance.
+
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -45,6 +51,10 @@ archived plans only when you need historical execution detail.
   - current Node compatibility support matrix and evidence pointers
 - `docs/adapters/convex/compatibility.md`
   - current Convex adapter compatibility contract
+- `docs/plans/archive/machine-os-adoption-plan.md`
+  - superseded evidence plan for MOS0-MOS2 and the abandoned MOS3A
+    FCOS-derived candidate. Do not resume MOS3A from this plan; use
+    `docs/plans/bootc-machine-default-plan.md` for current machine OS work.
 
 ## Pending plans
 

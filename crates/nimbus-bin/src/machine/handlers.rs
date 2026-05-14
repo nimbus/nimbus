@@ -8,11 +8,11 @@ use crate::cli_ux;
 use super::api;
 use super::client::MachineApiClient;
 use super::command::{
-    MachineCommand, MachineCpCommand, MachineInfoCommand, MachineInitCommand,
-    MachineInspectCommand, MachineListCommand, MachineOsApplyCommand, MachineOsCommand,
-    MachineOsSubcommand, MachineOsUpgradeCommand, MachineRmCommand, MachineSetCommand,
-    MachineSshCommand, MachineStartCommand, MachineStatusCommand, MachineStopCommand,
-    MachineSubcommand,
+    MachineCommand, MachineCpCommand, MachineGuestConfigCommand, MachineGuestConfigSubcommand,
+    MachineInfoCommand, MachineInitCommand, MachineInspectCommand, MachineListCommand,
+    MachineOsApplyCommand, MachineOsCommand, MachineOsRollbackCommand, MachineOsSubcommand,
+    MachineOsUpgradeCommand, MachineRmCommand, MachineSetCommand, MachineSshCommand,
+    MachineStartCommand, MachineStatusCommand, MachineStopCommand, MachineSubcommand,
 };
 use super::files::{
     load_initialized_machine, load_machine_config_if_exists, load_machine_state_if_exists,
@@ -23,9 +23,13 @@ use super::manager::{
     build_scp_command, build_ssh_command, refresh_machine_state, release_machine_ssh_port,
     start_machine, stop_machine,
 };
+use super::protocol::{
+    MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
+    MachineApiBootcUpgradeRequest,
+};
 use super::record::{
-    MachineConfigRecord, MachineImageSource, MachineLifecycle, MachinePaths, MachineProvider,
-    MachineRootLayout, MachineStateRecord, resolve_runtime_root,
+    MachineConfigRecord, MachineGuestProvisioning, MachineImageSource, MachineLifecycle,
+    MachinePaths, MachineProvider, MachineRootLayout, MachineStateRecord, resolve_runtime_root,
 };
 use super::render::{
     MachineCommandResult, MachineOsCommandResult, build_machine_info_view,
@@ -50,8 +54,10 @@ pub(super) fn resolve_roots_for_command(
     command: &MachineCommand,
 ) -> Result<MachineRootLayout, Error> {
     match &command.command {
-        MachineSubcommand::Api(_) => MachineRootLayout::resolve()
-            .or_else(|_| Ok(MachineRootLayout::guest_api_default(resolve_runtime_root()))),
+        MachineSubcommand::Api(_) | MachineSubcommand::GuestConfig(_) => {
+            MachineRootLayout::resolve()
+                .or_else(|_| Ok(MachineRootLayout::guest_api_default(resolve_runtime_root())))
+        }
         _ => MachineRootLayout::resolve(),
     }
 }
@@ -163,6 +169,7 @@ pub(super) async fn run_machine_command_with_layout(
             with_machine_lock(roots, &machine_name, || run_machine_rm(remove, roots))
         }
         MachineSubcommand::Os(os) => with_default_machine_lock(roots, || run_machine_os(os, roots)),
+        MachineSubcommand::GuestConfig(guest_config) => run_machine_guest_config(guest_config),
         MachineSubcommand::Api(api) => api::run_machine_api_command(api, roots).await,
     }
 }
@@ -241,18 +248,35 @@ fn initialize_machine_record(
         image,
         ssh_identity,
         ignition_file,
+        bootc_native,
         efi_store,
         volumes,
         now: _,
         name: _,
     } = command;
+    let provisioning = if bootc_native {
+        super::record::MachineGuestProvisioning::BootcMachineConfig
+    } else {
+        super::record::MachineGuestProvisioning::Ignition
+    };
+    if bootc_native && image == default_machine_image_for_provider(MachineProvider::Krunkit) {
+        return Err(Error::InvalidInput(format!(
+            "bootc-native machine initialization requires an explicit --image until a Nimbus-owned bootc artifact is promoted as the default; current default is {}",
+            default_machine_image_for_provider(MachineProvider::Krunkit)
+        )));
+    }
     let config = MachineConfigRecord {
         version: super::CURRENT_MACHINE_CONFIG_VERSION,
         name: machine_name,
         provider: MachineProvider::Krunkit,
         guest: super::record::MachineGuestConfig {
             image_source: MachineImageSource::parse(&image)?,
-            ssh_user: super::DEFAULT_MACHINE_SSH_USER.to_owned(),
+            provisioning,
+            ssh_user: if bootc_native {
+                super::DEFAULT_BOOTC_MACHINE_SSH_USER.to_owned()
+            } else {
+                super::DEFAULT_MACHINE_SSH_USER.to_owned()
+            },
             ssh_identity_path: ssh_identity,
             ignition_file_path: ignition_file,
             efi_variable_store_path: efi_store,
@@ -507,6 +531,15 @@ fn run_machine_os(command: MachineOsCommand, roots: &MachineRootLayout) -> Resul
     match command.command {
         MachineOsSubcommand::Apply(apply) => run_machine_os_apply(apply, roots),
         MachineOsSubcommand::Upgrade(upgrade) => run_machine_os_upgrade(upgrade, roots),
+        MachineOsSubcommand::Rollback(rollback) => run_machine_os_rollback(rollback, roots),
+    }
+}
+
+fn run_machine_guest_config(command: MachineGuestConfigCommand) -> Result<(), Error> {
+    match command.command {
+        MachineGuestConfigSubcommand::Apply(apply) => {
+            super::guest_config::apply_machine_guest_config(apply)
+        }
     }
 }
 
@@ -516,6 +549,27 @@ fn run_machine_os_apply(
 ) -> Result<(), Error> {
     let (paths, mut config, mut state) = load_initialized_machine(roots, DEFAULT_MACHINE_NAME)?;
     let target_source = parse_machine_os_apply_source(&command.image)?;
+    if uses_bootc_native_os_lifecycle(&config) {
+        let outcome = apply_bootc_machine_os_change(
+            &paths,
+            &mut config,
+            &mut state,
+            target_source,
+            command.restart,
+        )?;
+        let result = if outcome.changed {
+            MachineOsCommandResult::Applied
+        } else {
+            MachineOsCommandResult::AlreadyCurrent
+        };
+        emit_machine_stdout(&render_machine_os_apply_view(
+            result,
+            &paths,
+            &outcome,
+            command.restart,
+        )?)?;
+        return Ok(());
+    }
     let outcome = apply_machine_os_change(
         &paths,
         &mut config,
@@ -543,6 +597,9 @@ fn run_machine_os_upgrade(
     roots: &MachineRootLayout,
 ) -> Result<(), Error> {
     let (paths, mut config, mut state) = load_initialized_machine(roots, DEFAULT_MACHINE_NAME)?;
+    if uses_bootc_native_os_lifecycle(&config) {
+        return run_bootc_machine_os_upgrade(command, &paths, &mut config, &mut state);
+    }
     let plan = plan_machine_os_upgrade(&config)?;
     if command.dry_run || !plan.update_available {
         let result = if plan.update_available {
@@ -581,6 +638,43 @@ fn run_machine_os_upgrade(
     Ok(())
 }
 
+fn run_machine_os_rollback(
+    command: MachineOsRollbackCommand,
+    roots: &MachineRootLayout,
+) -> Result<(), Error> {
+    let (paths, mut config, mut state) = load_initialized_machine(roots, DEFAULT_MACHINE_NAME)?;
+    if !uses_bootc_native_os_lifecycle(&config) {
+        return Err(Error::InvalidInput(
+            "machine os rollback is only supported for bootc-native machines".to_owned(),
+        ));
+    }
+    let client = require_running_bootc_machine_api_client(&paths, &state)?;
+    let before = client.bootc_status()?;
+    let rollback_image = before.rollback_image.clone().ok_or_else(|| {
+        Error::Conflict("bootc status does not report a rollback deployment".to_owned())
+    })?;
+    let operation = client.bootc_rollback(MachineApiBootcRollbackRequest {})?;
+    if command.restart {
+        restart_bootc_machine(&paths, &mut config, &mut state)?;
+    }
+    let summary = if command.restart {
+        format!(
+            "Machine \"{}\" machine OS rollback queued to {} and restarted successfully\n",
+            paths.name, rollback_image
+        )
+    } else {
+        format!(
+            "Machine \"{}\" machine OS rollback queued to {}\n{}",
+            paths.name,
+            rollback_image,
+            cli_ux::format_hint("restart the machine to boot the rollback deployment")
+        )
+    };
+    emit_machine_stdout(&summary)?;
+    drop(operation);
+    Ok(())
+}
+
 fn emit_machine_stdout(rendered: &str) -> Result<(), Error> {
     cli_ux::write_stdout(rendered)
         .map_err(|error| Error::Internal(format!("failed to write machine output: {error}")))
@@ -611,6 +705,212 @@ struct MachineOsUpgradeStream {
     target_image: String,
     target_version: String,
     follows_host_release: bool,
+}
+
+fn uses_bootc_native_os_lifecycle(config: &MachineConfigRecord) -> bool {
+    matches!(
+        config.guest.provisioning,
+        MachineGuestProvisioning::BootcMachineConfig
+    )
+}
+
+fn apply_bootc_machine_os_change(
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+    target_source: MachineImageSource,
+    restart: bool,
+) -> Result<MachineOsApplyOutcome, Error> {
+    let target_reference = bootc_target_reference_from_source(&target_source)?;
+    let client = require_running_bootc_machine_api_client(paths, state)?;
+    let before = client.bootc_status()?;
+    let previous_image = describe_bootc_status_image(&before);
+    if bootc_status_matches_target(&before, &target_reference) {
+        return Ok(MachineOsApplyOutcome {
+            previous_image,
+            current_image: target_reference,
+            changed: false,
+            restarted: false,
+            lifecycle: state.lifecycle,
+        });
+    }
+
+    let (transport, image) = bootc_switch_target(&target_reference);
+    let _operation = client.bootc_switch(MachineApiBootcSwitchRequest {
+        image,
+        transport: Some(transport),
+    })?;
+
+    let restarted = if restart {
+        restart_bootc_machine(paths, config, state)?;
+        true
+    } else {
+        false
+    };
+
+    Ok(MachineOsApplyOutcome {
+        previous_image,
+        current_image: target_reference,
+        changed: true,
+        restarted,
+        lifecycle: state.lifecycle,
+    })
+}
+
+fn run_bootc_machine_os_upgrade(
+    command: MachineOsUpgradeCommand,
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+) -> Result<(), Error> {
+    let client = require_running_bootc_machine_api_client(paths, state)?;
+    let before = client.bootc_status()?;
+    let stream = default_bootc_machine_os_upgrade_stream();
+    let current_image = describe_bootc_status_image(&before);
+    let current_version = before
+        .booted_digest
+        .clone()
+        .unwrap_or_else(|| machine_image_reference_version_label(&current_image));
+    let update_available = !bootc_status_matches_target(&before, &stream.target_image);
+    let plan = MachineOsUpgradePlan {
+        current_image,
+        current_version,
+        target_image: stream.target_image.clone(),
+        target_version: stream.target_version.clone(),
+        update_available,
+    };
+
+    if command.dry_run || !plan.update_available {
+        let result = if plan.update_available {
+            MachineOsCommandResult::UpgradeCheck
+        } else {
+            MachineOsCommandResult::AlreadyCurrent
+        };
+        emit_machine_stdout(&render_machine_os_upgrade_view(
+            result,
+            paths,
+            &plan,
+            command.dry_run,
+            false,
+            false,
+        )?)?;
+        return Ok(());
+    }
+
+    let current_repository = before
+        .booted_image
+        .as_deref()
+        .map(|image| machine_image_reference_repository(&format!("docker://{image}")))
+        .unwrap_or_default();
+    if current_repository == stream.repository {
+        let _operation = client.bootc_upgrade(MachineApiBootcUpgradeRequest {
+            check: false,
+            tag: None,
+        })?;
+    } else {
+        let (transport, image) = bootc_switch_target(&stream.target_image);
+        let _operation = client.bootc_switch(MachineApiBootcSwitchRequest {
+            image,
+            transport: Some(transport),
+        })?;
+    }
+    let restarted = if command.restart {
+        restart_bootc_machine(paths, config, state)?;
+        true
+    } else {
+        false
+    };
+    emit_machine_stdout(&render_machine_os_upgrade_view(
+        MachineOsCommandResult::Upgraded,
+        paths,
+        &plan,
+        false,
+        command.restart,
+        restarted,
+    )?)?;
+    Ok(())
+}
+
+fn default_bootc_machine_os_upgrade_stream() -> MachineOsUpgradeStream {
+    MachineOsUpgradeStream {
+        repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
+        additional_supported_repositories: &[],
+        target_image: format!(
+            "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
+            super::current_machine_release_tag()
+        ),
+        target_version: super::current_machine_release_tag(),
+        follows_host_release: true,
+    }
+}
+
+fn require_running_bootc_machine_api_client(
+    paths: &MachinePaths,
+    state: &MachineStateRecord,
+) -> Result<MachineApiClient, Error> {
+    if !matches!(state.lifecycle, MachineLifecycle::Running) {
+        return Err(Error::InvalidInput(format!(
+            "machine '{}' is {} and bootc-native machine OS changes require the guest machine API; run `nimbus machine start` first",
+            paths.name,
+            state.lifecycle.as_str()
+        )));
+    }
+    let client = MachineApiClient::new(paths.api_socket_path.clone());
+    client.health().map_err(|error| {
+        Error::InvalidInput(format!(
+            "machine '{}' guest machine API is not reachable at {}: {error}",
+            paths.name,
+            paths.api_socket_path.display()
+        ))
+    })?;
+    Ok(client)
+}
+
+fn restart_bootc_machine(
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+) -> Result<(), Error> {
+    stop_machine(paths, config, state)?;
+    start_machine(paths, config, state)
+}
+
+fn bootc_target_reference_from_source(source: &MachineImageSource) -> Result<String, Error> {
+    match source {
+        MachineImageSource::OciReference { reference } => Ok(reference.clone()),
+        MachineImageSource::HttpUrl { url } => Err(Error::InvalidInput(format!(
+            "bootc-native machine os apply requires an OCI image reference, not HTTP URL '{}'",
+            url
+        ))),
+        MachineImageSource::LocalDisk { path } => Err(Error::InvalidInput(format!(
+            "bootc-native machine os apply requires an OCI image reference, not local disk '{}'",
+            path.display()
+        ))),
+    }
+}
+
+fn bootc_switch_target(reference: &str) -> (String, String) {
+    let stripped = reference.trim_start_matches("docker://");
+    ("registry".to_owned(), stripped.to_owned())
+}
+
+fn bootc_status_matches_target(status: &MachineApiBootcStatusResponse, target: &str) -> bool {
+    let normalized_target = target.trim_start_matches("docker://");
+    if let Some((_, digest)) = normalized_target.rsplit_once('@') {
+        return status.booted_digest.as_deref() == Some(digest)
+            || status.staged_digest.as_deref() == Some(digest);
+    }
+    status.booted_image.as_deref() == Some(normalized_target)
+        || status.staged_image.as_deref() == Some(normalized_target)
+}
+
+fn describe_bootc_status_image(status: &MachineApiBootcStatusResponse) -> String {
+    match (&status.booted_image, &status.booted_digest) {
+        (Some(image), Some(digest)) => format!("docker://{image}@{digest}"),
+        (Some(image), None) => format!("docker://{image}"),
+        (None, Some(digest)) => digest.clone(),
+        (None, None) => "unknown bootc image".to_owned(),
+    }
 }
 
 fn apply_machine_os_change(

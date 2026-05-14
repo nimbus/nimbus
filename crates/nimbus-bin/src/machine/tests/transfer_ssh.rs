@@ -34,6 +34,7 @@ fn machine_ssh_prefers_existing_machine_name_before_guest_command() {
             guest: MachineGuestConfig {
                 image_source: MachineImageSource::parse(&default_machine_image())
                     .expect("default image should parse"),
+                provisioning: MachineGuestProvisioning::Ignition,
                 ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
                 ssh_identity_path: None,
                 ignition_file_path: None,

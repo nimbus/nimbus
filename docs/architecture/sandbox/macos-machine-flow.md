@@ -8,12 +8,15 @@ Current source-backed reference for how Nimbus:
 - splits control-plane responsibility between the macOS host and the Linux
   guest
 
-The release ownership and host-consumption paths below are the current
-checked-in `nimbus-machine-os` flow. The settled current macOS contract is
-narrower: use Podman's published machine image by pinned immutable reference or
-digest for the shipped macOS bring-up path, and layer Nimbus guest bootstrap
-on top. A Nimbus-owned image remains later follow-on work rather than the
-current shipped contract.
+The release ownership and host-consumption paths below cover both the current
+shipped macOS contract and the direct bootc candidate being proved in
+[bootc-machine-default-plan.md](/Users/jack/src/github.com/nimbus/nimbus/docs/plans/bootc-machine-default-plan.md).
+The settled current macOS contract is still narrower: use Podman's published
+machine image by pinned immutable reference or digest for the shipped macOS
+bring-up path, and layer Nimbus guest bootstrap on top. The Nimbus-owned
+direct Fedora bootc image is now the active replacement candidate, but it does
+not become the default until release digest, SELinux, parity, and lifecycle
+evidence are complete.
 
 Reviewed against:
 
@@ -28,6 +31,7 @@ Reviewed against:
 - [crates/nimbus-bin/src/compose/mod.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/compose/mod.rs)
 - `/Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/package-oci.sh`
 - `/Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/publish.sh`
+- `/Users/jack/src/github.com/nimbus/nimbus-machine-os/scripts/check-selinux-avcs.sh`
 
 ## Overview
 
@@ -38,8 +42,8 @@ The current macOS architecture is a hybrid control plane:
 - the Linux guest owns a narrow machine API and standard-container execution
   lane for service workloads
 - the current bring-up image comes from Podman's published machine-image
-  stream on Quay, while `nimbus/nimbus-machine-os` remains the later
-  image-ownership track
+  stream on Quay, while `nimbus/nimbus-machine-os` is the active bootc-native
+  image-ownership candidate
 - the host `nimbus` release owns the desired Podman image reference/digest and
   the matching Linux guest `nimbus` asset for the local host architecture
 
@@ -48,25 +52,43 @@ machine (`nimbus machine init` or `nimbus machine start` on a clean host) is
 currently:
 
 ```text
-docker://quay.io/podman/machine-os@sha256:972a9fb73e96c903320b3bef32cd212eb0c386f9b6a19737878a063d4703c6ff
+docker://quay.io/podman/machine-os@sha256:57e19d2a4e3ae698a0f127ec7495067ac4c4df5177625034e1e700aba94ee8c5
 ```
 
 Current contract note:
 
 - Podman's published image is the current bring-up contract for macOS
-- the host `nimbus` release owns the desired image digest and the
-  matching Linux guest `nimbus` binary asset
-- `nimbus machine start` is the primary convergence path: cache missing
-  artifacts, boot or rebuild from the desired image, sync the guest binary by
-  hash, and validate the forwarded machine API before reporting success
-- the default guest-binary path is the matching GitHub release asset cached
-  under Nimbus's machine cache; `NIMBUS_MACHINE_GUEST_BINARY` is an explicit
-  developer/operator override only
+- the current pinned digest is the live `quay.io/podman/machine-os:5.8`
+  index resolved on 2026-05-13; it includes `linux/aarch64` and
+  `linux/x86_64` disk artifacts annotated with `disktype=applehv`
+- the host `nimbus` release owns the desired Podman image digest and the
+  matching Linux guest `nimbus` binary asset for the current host-managed
+  fallback
+- `nimbus machine start` is the primary convergence path for that current
+  Podman/FCOS contract: cache missing artifacts, boot or rebuild from the
+  desired image, sync the guest binary by hash, and validate the forwarded
+  machine API before reporting success
+- the default Podman/FCOS guest-binary path is the matching GitHub release
+  asset cached under Nimbus's machine cache; `NIMBUS_MACHINE_GUEST_BINARY` is
+  an explicit developer/operator override only
+- the bootc candidate changes that ownership boundary: the versioned Linux
+  `nimbus` binary is baked into the Nimbus-owned bootc image at
+  `/usr/local/bin/nimbus`, so normal bootc startup does not scp or hash-sync a
+  replacement binary into the guest after boot
 - this Podman alignment is at the published-image and provider-behavior layer,
   not at the host-state layer; Nimbus does not reuse Podman's machine records,
   VM disks, sockets, or local image store
-- Nimbus-owned image publishing remains later follow-on work instead of the
-  current shipped macOS contract
+- Nimbus-owned image publishing remains outside the shipped macOS default
+  until the bootc candidate is promoted by immutable digest
+- the bootc candidate image carries a narrow SELinux policy for the
+  host-forwarded machine API: `nimbus.service` runs as
+  `container_runtime_t`, `/run/nimbus/nimbus.sock` is relabeled
+  `container_var_run_t`, and `scripts/check-selinux-avcs.sh` must pass on a
+  real guest audit capture before promotion
+- Fedora-base `bootupd`/`lsblk` userdb AVCs are tracked separately from the
+  Nimbus machine API policy; the default cannot flip until the real guest
+  audit capture is clean, Fedora provides a concrete policy disposition, or a
+  narrow Nimbus compatibility overlay is explicitly approved and proved
 
 ## Flow 1: Current Checked-In Host Release To Guest Image Release
 
@@ -84,7 +106,8 @@ flowchart TD
     J --> K["prove parity against Podman machine image when needed"]
     K --> L["wrap raw disk as OCI layout<br/>annotations include disktype=applehv"]
     L --> M["publish to GHCR<br/>ghcr.io/nimbus/nimbus-machine-os:vX.Y.Z"]
-    M --> N["create nimbus-machine-os GitHub Release"]
+    M --> N["record digest reference<br/>machine-image-reference.txt"]
+    N --> O["create nimbus-machine-os GitHub Release<br/>SBOM, checksums, attestations"]
 ```
 
 ### What Each Repo Owns
@@ -92,8 +115,8 @@ flowchart TD
 - `nimbus/nimbus`
   owns host CLI/server/runtime binaries and the host GitHub Release
 - `nimbus/nimbus-machine-os`
-  owns the guest VM image build, GHCR publish, and machine-image GitHub
-  Release
+  owns the guest VM image build, GHCR publish, machine-image GitHub Release,
+  SBOM, checksum, digest-reference, and SELinux AVC gate artifacts
 
 ### Why The Flow Is Two-Phase
 
@@ -122,6 +145,9 @@ flowchart LR
     D --> M["publish.sh"]
     M --> N["skopeo copy"]
     N --> O["docker://ghcr.io/nimbus/nimbus-machine-os:vX.Y.Z"]
+    M --> P["published-digests.txt"]
+    M --> Q["machine-image-reference.txt"]
+    M --> R["nimbus-machine-os.sbom.cdx.json"]
 ```
 
 Current decision:
@@ -129,11 +155,23 @@ Current decision:
 - Podman's published machine image is the current macOS bring-up contract
 - Nimbus guest bootstrap is layered on top of that image for the current
   closeout path
-- the checked-in `nimbus-machine-os` packaging flow above is therefore future
-  image-ownership work, not the current shipped macOS contract
+- the checked-in `nimbus-machine-os` packaging flow above is therefore the
+  active image-ownership candidate, not the current shipped macOS default
 - any separate `fedora-bootc` image pipeline work in
-  `nimbus/nimbus-machine-os` remains a future supply-side direction, not
-  the current shipped macOS contract
+  `nimbus/nimbus-machine-os` must produce a digest-pinned, SELinux-gated,
+  Podman-compatible `disktype=applehv` artifact before promotion
+
+Machine OS lifecycle split:
+
+- current Podman-image machines remain host-managed: `machine os apply` and
+  `machine os upgrade` record the desired image and rebuild or recreate boot
+  artifacts under host control
+- bootc-native machines are guest-managed after first boot: `machine os apply`,
+  `machine os upgrade`, and `machine os rollback` call the forwarded guest
+  machine API, which stages `bootc switch`, `bootc upgrade`, or
+  `bootc rollback`; the next restart boots the staged deployment
+- host-side disk replacement stays available only as repair/recreate behavior
+  when the guest API cannot answer
 
 Current implementation note:
 
@@ -191,10 +229,14 @@ flowchart TD
     L --> U["launch uses local raw disk path"]
     R --> V["boot or rebuild machine from desired image"]
     U --> V
-    V --> W["sync guest /usr/local/bin/nimbus by hash"]
-    W --> X["repair nimbus.socket activation state"]
-    X --> Y["validate forwarded machine API readiness"]
-    Y --> Z["krunkit-backed machine is ready"]
+    V --> W{"host-managed Podman/FCOS image?"}
+    W -->|yes| X["sync guest /usr/local/bin/nimbus by hash"]
+    W -->|bootc| Y["use baked /usr/local/bin/nimbus from image"]
+    X --> Z["repair nimbus.socket activation state"]
+    Y --> AA["validate bootc machine-config evidence"]
+    Z --> AB["validate forwarded machine API readiness"]
+    AA --> AB
+    AB --> AC["krunkit-backed machine is ready"]
 ```
 
 ### Where The Image Comes From
@@ -462,12 +504,17 @@ The repo also owns two checked-in operator drill helpers for the same contract:
 
 ## Current Reliability Notes
 
-- Host convergence stages the guest binary under
+- Current Podman/FCOS host convergence stages the guest binary under
   `/usr/local/bin/nimbus`, backed by FCOS's writable `/var/usrlocal`, then
   repairs `nimbus.socket` activation before it trusts the forwarded machine
-  API. The active macOS contract does not rely on Ignition to fetch or version
+  API. The active macOS fallback does not rely on Ignition to fetch or version
   that binary, and it does not expect macOS users to build a Linux guest
-  binary locally; the normal path is the matching cached release asset.
+  binary locally; the normal fallback path is the matching cached release
+  asset.
+- Bootc-native convergence does not stage a replacement guest binary. The
+  matching Linux `nimbus` binary and systemd units are baked into the
+  Nimbus-owned bootc image, and host readiness validates the bootc
+  machine-config evidence plus the forwarded machine API.
 - The supported Homebrew Apple Silicon packaging path keeps `krunkit` as an
   explicit formula dependency and now prefers a bundled `libexec/gvproxy`
   beside the packaged `nimbus` binary, matching Podman's "bundle helper,
@@ -513,22 +560,26 @@ The repo also owns two checked-in operator drill helpers for the same contract:
 
 If you want the shortest accurate explanation:
 
-1. A `nimbus` host release owns two desired macOS artifacts: a pinned Podman
-   machine-image reference or digest and a matching Linux guest `nimbus`
-   binary asset for the local host architecture.
+1. A `nimbus` host release owns the desired macOS guest contract: today that
+   is a pinned Podman machine-image reference plus a matching Linux guest
+   `nimbus` binary asset; after bootc promotion it is a pinned Nimbus-owned
+   bootc image digest that already embeds the matching Linux `nimbus` binary.
 2. `nimbus machine init` records the machine contract; the checked-in default
    currently uses Podman's machine image stream on Quay. `nimbus machine
    start` now also performs that same initialization step automatically when
    no machine exists yet, and `nimbus machine init --now` remains the explicit
    Podman-style combined shortcut.
-3. `nimbus machine start` checks the local caches, pulls any missing image or
-   guest-binary artifact, and materializes the bootable raw disk.
+3. `nimbus machine start` checks the local caches, pulls any missing image
+   artifact, pulls the guest-binary artifact only for the Podman/FCOS
+   fallback, and materializes the bootable raw disk.
 4. If the machine's recorded base image already matches the desired digest, the
    host reuses the machine; if it does not match, the host performs a
    controlled rebuild or recreate from the desired image.
-5. After boot, the host hash-checks and syncs
-   `/usr/local/bin/nimbus` inside the guest. On FCOS that is backed by the
-   writable `/var/usrlocal/bin/nimbus` path with executable labeling.
+5. For the host-managed Podman/FCOS fallback, after boot the host hash-checks
+   and syncs `/usr/local/bin/nimbus` inside the guest. On FCOS that is backed
+   by the writable `/var/usrlocal/bin/nimbus` path with executable labeling.
+   For bootc-native machines, the host treats `/usr/local/bin/nimbus` as image
+   content and validates readiness instead of scp-ing a new binary into place.
 6. If the host-managed macOS contract does not already have an explicit SSH
    identity recorded, `nimbus machine start` auto-generates a machine-owned
    keypair under the Nimbus machine data root before it boots the guest, so
@@ -545,3 +596,22 @@ If you want the shortest accurate explanation:
 9. The host Nimbus server talks to the guest machine API through a forwarded
    Unix socket, and the guest starts standard Linux containers for declared
    services.
+
+The direct bootc path changes the release target, not the evidence bar. A
+Nimbus-owned bootc image cannot become the macOS default until a published
+release artifact and a real macOS guest proof pass
+`scripts/verify-bootc-default-promotion-gate.sh`. That composed gate requires
+the release bundle, AppleHV OCI metadata, SBOM/checksum/digest evidence, guest
+machine API readiness, bootc lifecycle capabilities, runtime service proof,
+virtiofs evidence, SELinux enforcing mode, Nimbus socket/domain labels, and a
+clean AVC check. Known Fedora-base `bootupd_t` AVCs remain blocked from default
+promotion unless a fresh release-candidate proof is clean, Fedora provides a
+concrete policy disposition, or Nimbus deliberately carries a narrow,
+separately removable compatibility overlay after security review.
+
+For rollback, a healthy bootc-native machine should use the guest-mediated
+`nimbus machine os rollback --restart` path. When the guest API cannot answer,
+or when the released fleet default itself must move back, operators should use
+`nimbus machine os apply <previous-digest> --restart` or an explicit
+repair/recreate path. The Podman-compatible default remains the stable fallback
+until the bootc default passes that promotion gate.

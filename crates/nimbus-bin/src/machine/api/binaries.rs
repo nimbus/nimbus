@@ -15,6 +15,15 @@ const DEFAULT_GUEST_HELPER_BINARY_DIRS: &[&str] = &[
 
 pub(super) const STANDARD_CONTAINER_BINARY_REQUIREMENTS: &[MachineApiBinaryRequirement] = &[
     MachineApiBinaryRequirement {
+        name: "bootc",
+        required_for_operations: &[
+            MACHINE_API_BOOTC_STATUS_OPERATION,
+            MACHINE_API_BOOTC_SWITCH_OPERATION,
+            MACHINE_API_BOOTC_UPGRADE_OPERATION,
+            MACHINE_API_BOOTC_ROLLBACK_OPERATION,
+        ],
+    },
+    MachineApiBinaryRequirement {
         name: "conmon",
         required_for_operations: &[
             MACHINE_API_IMAGE_START_OPERATION,
@@ -95,7 +104,7 @@ pub(super) fn resolve_binary_statuses(
         .collect()
 }
 
-fn resolve_binary(
+pub(super) fn resolve_binary(
     name: &str,
     path_env: Option<&OsStr>,
     helper_binary_dirs: &[PathBuf],

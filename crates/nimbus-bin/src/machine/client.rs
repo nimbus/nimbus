@@ -11,6 +11,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::protocol::{
+    MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
+    MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest, MachineApiBootcUpgradeRequest,
     MachineApiCapabilityResponse, MachineApiErrorResponse, MachineApiHealthResponse,
     MachineApiServiceProcessSnapshot, MachineApiServiceProcessSnapshotResponse,
     MachineApiServiceSandboxBuildStartRequest, MachineApiServiceSandboxImageStartRequest,
@@ -27,6 +29,10 @@ const SOCKET_MUTATION_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const SOCKET_IO_TIMEOUT_TEST: Duration = Duration::from_secs(30);
 const HEALTHZ_PATH: &str = "/healthz";
 const CAPABILITIES_PATH: &str = "/v1/machine-api/capabilities";
+const BOOTC_STATUS_PATH: &str = "/v1/machine-api/os/bootc/status";
+const BOOTC_SWITCH_PATH: &str = "/v1/machine-api/os/bootc/switch";
+const BOOTC_UPGRADE_PATH: &str = "/v1/machine-api/os/bootc/upgrade";
+const BOOTC_ROLLBACK_PATH: &str = "/v1/machine-api/os/bootc/rollback";
 const IMAGE_START_PATH: &str = "/v1/machine-api/service-sandboxes/image-start";
 const BUILD_START_PATH: &str = "/v1/machine-api/service-sandboxes/build-start";
 const LIST_PATH: &str = "/v1/machine-api/service-sandboxes";
@@ -76,6 +82,31 @@ impl MachineApiClient {
         let body = parse_http_json_body(&response, &self.socket_path, CAPABILITIES_PATH)?;
         serde_json::from_slice(body)
             .map_err(|error| describe_capability_decode_error(&self.socket_path, body, error))
+    }
+
+    pub(crate) fn bootc_status(&self) -> Result<MachineApiBootcStatusResponse, Error> {
+        self.get_json(BOOTC_STATUS_PATH)
+    }
+
+    pub(crate) fn bootc_switch(
+        &self,
+        request: MachineApiBootcSwitchRequest,
+    ) -> Result<MachineApiBootcOperationResponse, Error> {
+        self.post_json(BOOTC_SWITCH_PATH, &request)
+    }
+
+    pub(crate) fn bootc_upgrade(
+        &self,
+        request: MachineApiBootcUpgradeRequest,
+    ) -> Result<MachineApiBootcOperationResponse, Error> {
+        self.post_json(BOOTC_UPGRADE_PATH, &request)
+    }
+
+    pub(crate) fn bootc_rollback(
+        &self,
+        request: MachineApiBootcRollbackRequest,
+    ) -> Result<MachineApiBootcOperationResponse, Error> {
+        self.post_json(BOOTC_ROLLBACK_PATH, &request)
     }
 
     pub(crate) fn start_service_sandbox_from_image(
@@ -489,7 +520,14 @@ mod tests {
         );
         assert_eq!(
             capabilities.supported_operations,
-            vec!["healthz".to_owned(), "capabilities".to_owned()]
+            vec![
+                "healthz".to_owned(),
+                "capabilities".to_owned(),
+                "os.bootc.status".to_owned(),
+                "os.bootc.switch".to_owned(),
+                "os.bootc.upgrade".to_owned(),
+                "os.bootc.rollback".to_owned(),
+            ]
         );
         assert_eq!(
             capabilities
@@ -497,7 +535,7 @@ mod tests {
                 .iter()
                 .map(|status| status.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["conmon", "crun", "netavark", "aardvark-dns"]
+            vec!["bootc", "conmon", "crun", "netavark", "aardvark-dns"]
         );
         assert!(
             capabilities
@@ -887,6 +925,7 @@ mod tests {
 
     fn write_fake_runtime_binaries(dir: &std::path::Path) {
         for binary in [
+            "bootc",
             "buildah",
             "conmon",
             "crun",

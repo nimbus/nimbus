@@ -95,6 +95,7 @@ impl MachineRootLayout {
             config_path: config_dir.join("config.json"),
             generated_ignition_path: config_dir.join("generated.ign"),
             state_path: state_dir.join("status.json"),
+            guest_config_bundle_dir: state_dir.join("machine-config"),
             image_cache_dir: self.cache_root.join("images"),
             guest_binary_cache_dir: self.cache_root.join("guest-nimbus"),
             materialized_image_path: data_dir.join("images").join(format!("{name}.raw")),
@@ -127,10 +128,18 @@ pub(super) struct MachineConfigRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct MachineGuestConfig {
     pub(super) image_source: MachineImageSource,
+    pub(super) provisioning: MachineGuestProvisioning,
     pub(super) ssh_user: String,
     pub(super) ssh_identity_path: Option<PathBuf>,
     pub(super) ignition_file_path: Option<PathBuf>,
     pub(super) efi_variable_store_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum MachineGuestProvisioning {
+    Ignition,
+    BootcMachineConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -261,6 +270,7 @@ pub(super) enum MachineImageFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MachineBootstrapMode {
     Ignition,
+    BootcMachineConfig,
     ShellScript,
 }
 
@@ -390,6 +400,7 @@ pub(super) struct MachinePaths {
     pub(super) config_path: PathBuf,
     pub(super) generated_ignition_path: PathBuf,
     pub(super) state_path: PathBuf,
+    pub(super) guest_config_bundle_dir: PathBuf,
     pub(super) image_cache_dir: PathBuf,
     pub(super) guest_binary_cache_dir: PathBuf,
     pub(super) materialized_image_path: PathBuf,

@@ -179,6 +179,10 @@ fn capability_response_reports_machine_port_forwarder_blocker_when_unreachable()
         vec![
             "healthz".to_owned(),
             "capabilities".to_owned(),
+            MACHINE_API_BOOTC_STATUS_OPERATION.to_owned(),
+            MACHINE_API_BOOTC_SWITCH_OPERATION.to_owned(),
+            MACHINE_API_BOOTC_UPGRADE_OPERATION.to_owned(),
+            MACHINE_API_BOOTC_ROLLBACK_OPERATION.to_owned(),
             "service-sandboxes.list".to_owned(),
             "service-sandboxes.inspect".to_owned(),
             "service-sandboxes.inspect-current".to_owned(),

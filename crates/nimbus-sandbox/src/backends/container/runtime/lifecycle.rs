@@ -2,10 +2,11 @@ use super::support::*;
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::os::unix::fs::PermissionsExt;
 use std::thread;
 
 use tempfile::TempDir;
+
+use crate::backends::oci::command::CommandSpec;
 
 #[test]
 fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
@@ -16,15 +17,7 @@ fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
         .plan_start_with_id(&sample_spec(), &sandbox_id(), None, None)
         .expect("plan should lower")
         .manifest;
-    let state_stub = temp_dir.path().join("crun-state");
-    std::fs::write(&state_stub, "#!/bin/sh\nexit 1\n").expect("state stub should write");
-    let mut permissions = std::fs::metadata(&state_stub)
-        .expect("state stub metadata should resolve")
-        .permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&state_stub, permissions)
-        .expect("state stub permissions should update");
-    manifest.conmon_launch.state_command.program = state_stub;
+    manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args(["-c", "exit 1"]);
     std::fs::write(&manifest.conmon_layout.pidfile, "999999\n").expect("pidfile should write");
 
     assert_eq!(

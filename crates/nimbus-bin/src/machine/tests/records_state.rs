@@ -98,6 +98,7 @@ fn machine_init_writes_config_and_status_files() {
                 image: default_machine_image().to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
+                bootc_native: false,
                 efi_store: None,
                 volumes: vec![MachineVolume {
                     source: PathBuf::from("/Users"),
@@ -127,6 +128,10 @@ fn machine_init_writes_config_and_status_files() {
         MachineImageSource::OciReference {
             reference: default_machine_image().to_owned(),
         }
+    );
+    assert_eq!(
+        config.guest.provisioning,
+        MachineGuestProvisioning::Ignition
     );
     assert_eq!(config.guest.ssh_user, DEFAULT_MACHINE_SSH_USER);
     assert_eq!(config.guest.ssh_identity_path, None);
@@ -160,6 +165,7 @@ fn machine_init_writes_named_machine_records() {
                 image: default_machine_image().to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
+                bootc_native: false,
                 efi_store: None,
                 volumes: Vec::new(),
                 now: false,
@@ -219,6 +225,7 @@ fn machine_remove_releases_reserved_machine_port() {
                 image: default_machine_image().to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
+                bootc_native: false,
                 efi_store: None,
                 volumes: Vec::new(),
                 now: false,
@@ -281,6 +288,7 @@ fn machine_remove_only_deletes_requested_machine() {
                     image: default_machine_image().to_owned(),
                     ssh_identity: None,
                     ignition_file: None,
+                    bootc_native: false,
                     efi_store: None,
                     volumes: Vec::new(),
                     now: false,
@@ -326,6 +334,7 @@ fn machine_set_updates_stopped_machine_config() {
                 image: default_machine_image().to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
+                bootc_native: false,
                 efi_store: None,
                 volumes: Vec::new(),
                 now: false,
@@ -376,6 +385,7 @@ fn machine_set_requires_at_least_one_resource_flag() {
                 image: default_machine_image().to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
+                bootc_native: false,
                 efi_store: None,
                 volumes: Vec::new(),
                 now: false,
@@ -422,6 +432,7 @@ fn machine_set_rejects_running_machine() {
             guest: MachineGuestConfig {
                 image_source: MachineImageSource::parse(&default_machine_image())
                     .expect("default image should parse"),
+                provisioning: MachineGuestProvisioning::Ignition,
                 ssh_user: DEFAULT_MACHINE_SSH_USER.to_owned(),
                 ssh_identity_path: None,
                 ignition_file_path: None,
@@ -671,6 +682,7 @@ fn machine_remove_deletes_config_state_and_runtime_roots() {
                 image: default_machine_image().to_owned(),
                 ssh_identity: None,
                 ignition_file: None,
+                bootc_native: false,
                 efi_store: None,
                 volumes: Vec::new(),
                 now: false,

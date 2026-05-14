@@ -24,9 +24,11 @@ use nimbus_sandbox::backends::container::{
 use serde::Deserialize;
 
 use super::protocol::{
-    MACHINE_API_ROLE, MachineApiBinaryStatus, MachineApiCapabilityResponse,
-    MachineApiErrorResponse, MachineApiHealthResponse, MachineApiOperationStatus,
-    MachineApiServiceExecutionMode, MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
+    MACHINE_API_ROLE, MachineApiBinaryStatus, MachineApiBootcOperationResponse,
+    MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
+    MachineApiBootcUpgradeRequest, MachineApiCapabilityResponse, MachineApiErrorResponse,
+    MachineApiHealthResponse, MachineApiOperationStatus, MachineApiServiceExecutionMode,
+    MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
     MachineApiServiceProcessSnapshotResponse, MachineApiServiceSandboxBuildStartRequest,
     MachineApiServiceSandboxDetails, MachineApiServiceSandboxImageStartRequest,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
@@ -37,6 +39,7 @@ use super::protocol::{
 use super::{MachineApiCommand, MachineRootLayout};
 
 mod binaries;
+mod bootc;
 mod capabilities;
 mod listener;
 mod logs;
@@ -64,6 +67,10 @@ const MACHINE_API_INSPECT_CURRENT_OPERATION: &str = "service-sandboxes.inspect-c
 const MACHINE_API_LOGS_OPERATION: &str = "service-sandboxes.logs";
 const MACHINE_API_PS_OPERATION: &str = "service-sandboxes.ps";
 const MACHINE_API_STOP_OPERATION: &str = "service-sandboxes.stop";
+const MACHINE_API_BOOTC_STATUS_OPERATION: &str = "os.bootc.status";
+const MACHINE_API_BOOTC_SWITCH_OPERATION: &str = "os.bootc.switch";
+const MACHINE_API_BOOTC_UPGRADE_OPERATION: &str = "os.bootc.upgrade";
+const MACHINE_API_BOOTC_ROLLBACK_OPERATION: &str = "os.bootc.rollback";
 const MACHINE_PORT_FORWARDER_TIMEOUT: Duration = Duration::from_millis(200);
 
 #[derive(Clone)]

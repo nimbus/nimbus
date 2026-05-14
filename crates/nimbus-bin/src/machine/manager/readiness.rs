@@ -13,7 +13,10 @@ use axum::routing::get;
 use nimbus::Error;
 
 use super::super::client::MachineApiClient;
-use super::super::{MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineProvider};
+use super::super::{
+    MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineProvider,
+    machine_bootstrap_mode,
+};
 use super::launch::MachineLaunchPlan;
 use super::ssh::run_silent_ssh_probe;
 use super::{GVPROXY_SOCKET_WAIT_TIMEOUT, POLL_INTERVAL, StartupSignalMonitor};
@@ -85,7 +88,7 @@ pub(super) fn start_bootstrap_server(
     config: &MachineConfigRecord,
     launch_plan: &MachineLaunchPlan,
 ) -> Result<Option<thread::JoinHandle<()>>, Error> {
-    if config.provider.bootstrap_mode() != MachineBootstrapMode::Ignition {
+    if machine_bootstrap_mode(config) != MachineBootstrapMode::Ignition {
         return Ok(None);
     }
     match launch_plan.ignition_file_path.as_ref() {
@@ -139,14 +142,16 @@ pub(super) fn wait_for_machine_ready(
     gvproxy_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
-    match config.provider.bootstrap_mode() {
-        MachineBootstrapMode::Ignition => wait_for_ready(
-            ready_listener,
-            resolve_ready_wait_timeout(),
-            required_child(krunkit_child, "krunkit")?,
-            required_child(gvproxy_child, "gvproxy")?,
-            startup_signals,
-        ),
+    match machine_bootstrap_mode(config) {
+        MachineBootstrapMode::Ignition | MachineBootstrapMode::BootcMachineConfig => {
+            wait_for_ready(
+                ready_listener,
+                resolve_ready_wait_timeout(),
+                required_child(krunkit_child, "krunkit")?,
+                required_child(gvproxy_child, "gvproxy")?,
+                startup_signals,
+            )
+        }
         MachineBootstrapMode::ShellScript => Ok(()),
     }
 }

@@ -48,6 +48,9 @@ pub(super) enum MachineSubcommand {
     Rm(MachineRmCommand),
     /// Manage machine OS images.
     Os(MachineOsCommand),
+    /// Internal guest machine configuration commands.
+    #[command(hide = true)]
+    GuestConfig(MachineGuestConfigCommand),
     /// Internal guest machine API daemon for macOS machine support.
     #[command(hide = true)]
     Api(MachineApiCommand),
@@ -70,6 +73,8 @@ pub(super) enum MachineOsSubcommand {
     Apply(MachineOsApplyCommand),
     /// Switch to the supported machine OS image for this nimbus release.
     Upgrade(MachineOsUpgradeCommand),
+    /// Queue the previous bootc deployment for the next boot.
+    Rollback(MachineOsRollbackCommand),
 }
 
 #[derive(Debug, Args)]
@@ -97,6 +102,14 @@ pub(super) struct MachineOsUpgradeCommand {
     pub(super) dry_run: bool,
 
     /// Restart the machine immediately if an upgrade is applied.
+    #[arg(long)]
+    pub(super) restart: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(help_template = cli_ux::COMMAND_HELP_TEMPLATE)]
+pub(super) struct MachineOsRollbackCommand {
+    /// Restart the machine immediately after queuing rollback.
     #[arg(long)]
     pub(super) restart: bool,
 }
@@ -140,6 +153,10 @@ pub(super) struct MachineInitCommand {
     /// Path to Ignition config file.
     #[arg(long = "ignition-path", value_name = "PATH")]
     pub(super) ignition_file: Option<PathBuf>,
+
+    /// Use bootc-native machine-config provisioning instead of Ignition.
+    #[arg(long, hide = true, conflicts_with = "ignition_file")]
+    pub(super) bootc_native: bool,
 
     /// Path to EFI variable store.
     #[arg(long = "firmware", value_name = "PATH")]
@@ -199,6 +216,10 @@ pub(super) struct MachineStartCommand {
     #[arg(long = "ignition-path", value_name = "PATH")]
     pub(super) ignition_file: Option<PathBuf>,
 
+    /// Use bootc-native machine-config provisioning if start creates the machine.
+    #[arg(long, hide = true, conflicts_with = "ignition_file")]
+    pub(super) bootc_native: bool,
+
     /// Path to EFI variable store if start creates the machine.
     #[arg(long = "firmware", value_name = "PATH")]
     pub(super) efi_store: Option<PathBuf>,
@@ -237,6 +258,7 @@ impl MachineStartCommand {
             || self.image.is_some()
             || self.ssh_identity.is_some()
             || self.ignition_file.is_some()
+            || self.bootc_native
             || self.efi_store.is_some()
             || !self.volumes.is_empty()
     }
@@ -257,6 +279,7 @@ impl MachineStartCommand {
             image: self.image.unwrap_or_else(default_machine_image),
             ssh_identity: self.ssh_identity,
             ignition_file: self.ignition_file,
+            bootc_native: self.bootc_native,
             efi_store: self.efi_store,
             volumes: self.volumes,
             now: false,
@@ -475,6 +498,34 @@ impl MachineRmCommand {
     pub(super) fn name(&self) -> &str {
         self.name.as_deref().unwrap_or(DEFAULT_MACHINE_NAME)
     }
+}
+
+#[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_GROUP_HELP_TEMPLATE,
+    subcommand_help_heading = "Available Commands"
+)]
+pub(super) struct MachineGuestConfigCommand {
+    #[command(subcommand)]
+    pub(super) command: MachineGuestConfigSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum MachineGuestConfigSubcommand {
+    /// Apply the host-provided bootc-native machine config bundle.
+    Apply(MachineGuestConfigApplyCommand),
+}
+
+#[derive(Debug, Args)]
+#[command(help_template = cli_ux::COMMAND_HELP_TEMPLATE)]
+pub(super) struct MachineGuestConfigApplyCommand {
+    /// Directory containing machine.json, authorized_keys, and volumes.json.
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "/run/nimbus-machine-config"
+    )]
+    pub(super) config_dir: PathBuf,
 }
 
 #[derive(Debug, Args)]
