@@ -112,6 +112,19 @@ grep -F "MACHINE_OS_REPOSITORY: nimbus/machine-os" "${workflow_path}" >/dev/null
   die "release workflow must set MACHINE_OS_REPOSITORY: nimbus/machine-os"
 grep -F "MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os" "${workflow_path}" >/dev/null || \
   die "release workflow must set MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os"
+grep -F "MACHINE_OS_RELEASE_APP_CLIENT_ID" "${workflow_path}" >/dev/null || \
+  die "release workflow must use MACHINE_OS_RELEASE_APP_CLIENT_ID for GitHub App token creation"
+if grep -F "MACHINE_OS_RELEASE_APP_ID" "${workflow_path}" >/dev/null; then
+  die "release workflow must not use deprecated MACHINE_OS_RELEASE_APP_ID; use MACHINE_OS_RELEASE_APP_CLIENT_ID"
+fi
+if grep -F "HOMEBREW_TAP_APP_ID" "${workflow_path}" >/dev/null; then
+  die "release workflow must not use deprecated HOMEBREW_TAP_APP_ID; use HOMEBREW_TAP_CLIENT_ID"
+fi
+if grep -F "app-id:" "${workflow_path}" >/dev/null; then
+  die "release workflow must not use deprecated actions/create-github-app-token app-id input; use client-id"
+fi
+grep -F "actions/create-github-app-token@v3.2.0" "${workflow_path}" >/dev/null || \
+  die "release workflow must pin actions/create-github-app-token@v3.2.0 so client-id metadata is stable for actionlint and runners"
 grep -F "MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:" "${workflow_path}" >/dev/null || \
   die "release workflow must set MACHINE_OS_FEDORA_BOOTC_IMAGE to a digest-pinned Fedora bootc image"
 fedora_bootc_refs="$(
@@ -132,6 +145,7 @@ release_section="$(job_section release)"
 
 require_in_section build-machine-os "${build_machine_os_section}" "needs: [build-linux-arm64]"
 require_in_section build-machine-os "${build_machine_os_section}" "contents: read"
+require_in_section build-machine-os "${build_machine_os_section}" 'client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}'
 require_in_section build-machine-os "${build_machine_os_section}" 'repository: ${{ env.MACHINE_OS_REPOSITORY }}'
 require_in_section build-machine-os "${build_machine_os_section}" 'ref: ${{ env.MACHINE_OS_SOURCE_REF }}'
 require_in_section build-machine-os "${build_machine_os_section}" "path: machine-os"
@@ -156,6 +170,7 @@ reject_in_section build-machine-os "${build_machine_os_section}" "gh release"
 reject_in_section build-machine-os "${build_machine_os_section}" "actions/attest"
 
 require_in_section publish-machine-os "${publish_machine_os_section}" "needs: [build-linux-arm64, build, build-machine-os]"
+require_in_section publish-machine-os "${publish_machine_os_section}" 'client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" "permission-actions: write"
 require_in_section publish-machine-os "${publish_machine_os_section}" "permission-contents: read"
 require_in_section publish-machine-os "${publish_machine_os_section}" "repos/\${MACHINE_OS_REPOSITORY}/actions/workflows/publish.yml/dispatches"

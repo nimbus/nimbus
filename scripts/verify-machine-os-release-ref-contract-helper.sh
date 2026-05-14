@@ -69,6 +69,18 @@ fi
 grep -F "MACHINE_OS_REPOSITORY: nimbus/machine-os" \
   "${tmp_dir}/bad-repository.out" >/dev/null
 
+bad_app_id="${tmp_dir}/bad-app-id.yml"
+sed 's|client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}|app-id: ${{ vars.MACHINE_OS_RELEASE_APP_ID }}|' \
+  "${repo_root}/.github/workflows/release.yml" >"${bad_app_id}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_app_id}" \
+  >"${tmp_dir}/bad-app-id.out" 2>&1; then
+  echo "expected release ref contract to reject deprecated GitHub App app-id usage" >&2
+  exit 1
+fi
+grep -F "must not use deprecated MACHINE_OS_RELEASE_APP_ID" \
+  "${tmp_dir}/bad-app-id.out" >/dev/null
+
 bad_fedora_drift="${tmp_dir}/bad-fedora-drift.yml"
 sed 's|sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"|sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" quay.io/fedora/fedora-bootc@sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94|' \
   "${repo_root}/.github/workflows/release.yml" >"${bad_fedora_drift}"
@@ -199,4 +211,4 @@ fi
 grep -F "release must contain: needs: [build-linux-arm64, build, publish-machine-os]" \
   "${tmp_dir}/bad-release-needs.out" >/dev/null
 
-printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy repository names, divergent Fedora bootc refs, loose run discovery, and build/publish DAG regressions\n'
+printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy repository names, deprecated GitHub App app-id usage, divergent Fedora bootc refs, loose run discovery, and build/publish DAG regressions\n'
