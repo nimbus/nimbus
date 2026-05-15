@@ -249,7 +249,11 @@ export class NimbusClient {
       unsubscribed: false,
     };
     this.queueSubscription(entry as SubscriptionEntry<unknown>);
-    this.scheduleReconnect();
+    if (this.socket && this.state.isWebSocketConnected) {
+      this.flushPendingSubscriptions();
+    } else {
+      this.scheduleReconnect();
+    }
 
     const unsubscribe = (() => {
       if (entry.unsubscribed) {
@@ -513,6 +517,7 @@ export class NimbusClient {
   private queueSubscription(entry: SubscriptionEntry<unknown>) {
     const requestId = `convex-${++this.requestCounter}`;
     entry.pendingRequestId = requestId;
+    entry.pendingSent = false;
     entry.subscriptionId = undefined;
     this.pendingSubscriptions.set(requestId, entry);
   }
@@ -523,17 +528,22 @@ export class NimbusClient {
     }
 
     for (const [requestId, entry] of this.pendingSubscriptions) {
-      if (entry.unsubscribed || entry.pendingRequestId !== requestId) {
+      if (
+        entry.unsubscribed ||
+        entry.pendingRequestId !== requestId ||
+        entry.pendingSent
+      ) {
         continue;
       }
       this.socket.send(
-          JSON.stringify(
+        JSON.stringify(
           buildSubscribeMessage(entry.query, requestId, entry.args, {
             pageSize: entry.livePageSize,
             cursor: entry.liveCursor,
           }),
         ),
       );
+      entry.pendingSent = true;
     }
   }
 

@@ -27,6 +27,7 @@ export type SubscriptionEntry<T> = {
   currentValue?: T;
   subscriptionId?: number;
   pendingRequestId?: string;
+  pendingSent?: boolean;
   unsubscribed: boolean;
 };
 
