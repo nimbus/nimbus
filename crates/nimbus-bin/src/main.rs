@@ -15,6 +15,7 @@ mod start;
 #[cfg(test)]
 mod test_support;
 mod token;
+mod ui;
 
 use crate::codegen::{CodegenCommand, run_codegen_command};
 use crate::compose::{ComposeCommand, run_compose_command};
@@ -25,6 +26,7 @@ use crate::init::{InitCommand, run_init_command};
 use crate::machine::{MachineCommand, run_machine_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
 use crate::token::{TokenCommand, run_token_command};
+use crate::ui::{UiCommand, run_ui_command};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -55,6 +57,8 @@ enum Command {
     /// Local admin token management commands.
     #[command(subcommand)]
     Token(TokenCommand),
+    /// Open the Nimbus operator console in a browser.
+    Ui(UiCommand),
     /// Manage local developer machines.
     Machine(MachineCommand),
     /// Compose-backed local service lifecycle commands.
@@ -76,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Codegen(command) => run_codegen_command(command).await?,
         Command::Init(command) => run_init_command(command).await?,
         Command::Token(command) => run_token_command(command).await?,
+        Command::Ui(command) => run_ui_command(command).await?,
         Command::Machine(command) => {
             run_machine_command(command).await?;
         }
