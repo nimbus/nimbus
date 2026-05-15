@@ -373,7 +373,7 @@ the security baseline is exercised before DS2 wires the real server.
 
 **Implementation:**
 
-- `package.json` pins: `electron@^41`, `electron-builder@^26.8`,
+- `package.json` pins: `electron@^42`, `electron-builder@^26.8`,
   `@playwright/test@^1.60`, `biome@^2.4`, `typescript@^6`,
   `vitest@^4`.
 - `src/main/index.ts` creates a `BrowserWindow` with the Phase 2
