@@ -1,0 +1,26 @@
+{
+  "name": "nimbus-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "convex codegen --app .",
+    "dev": "vite",
+    "build": "npm run codegen && tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "npm run codegen && tsc -p tsconfig.json --noEmit",
+    "typecheck": "npm run test"
+  },
+  "dependencies": {
+    "convex": "*",
+    "nimbus": "*",
+    "react": "19.2.5",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "typescript": "6.0.3",
+    "vite": "8.0.13"
+  }
+}

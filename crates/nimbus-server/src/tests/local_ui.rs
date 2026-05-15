@@ -234,6 +234,127 @@ async fn valid_token_post_creates_session_cookie_and_cookie_auth_unlocks_ui_and_
 }
 
 #[tokio::test]
+async fn ui_shell_serves_index_html_for_deep_routes_with_session_cookie() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let session_response = server
+        .client()
+        .post(server.http_url("/ui/auth/session"))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(format!("token={}", token.token))
+        .send()
+        .await
+        .expect("session bootstrap request should send");
+    assert_eq!(session_response.status(), StatusCode::OK);
+    let cookie = extract_cookie(&session_response);
+
+    let root = server
+        .client()
+        .get(server.http_url("/ui/"))
+        .header(header::COOKIE, &cookie)
+        .send()
+        .await
+        .expect("ui root request should send");
+    assert_eq!(root.status(), StatusCode::OK);
+    let root_html = root.text().await.expect("ui root body should read");
+
+    let deep = server
+        .client()
+        .get(server.http_url("/ui/machines/m_abc/services"))
+        .header(header::COOKIE, &cookie)
+        .send()
+        .await
+        .expect("ui deep route request should send");
+    assert_eq!(deep.status(), StatusCode::OK);
+    let deep_html = deep.text().await.expect("ui deep body should read");
+    assert_eq!(
+        root_html, deep_html,
+        "spa fallback should return index.html"
+    );
+}
+
+#[tokio::test]
+async fn ui_root_response_carries_expected_csp() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let session_response = server
+        .client()
+        .post(server.http_url("/ui/auth/session"))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(format!("token={}", token.token))
+        .send()
+        .await
+        .expect("session bootstrap request should send");
+    assert_eq!(session_response.status(), StatusCode::OK);
+    let cookie = extract_cookie(&session_response);
+
+    let response = server
+        .client()
+        .get(server.http_url("/ui/"))
+        .header(header::COOKIE, &cookie)
+        .send()
+        .await
+        .expect("ui root request should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    let csp = response
+        .headers()
+        .get(header::CONTENT_SECURITY_POLICY)
+        .and_then(|value| value.to_str().ok())
+        .expect("csp header should be present on /ui/");
+    assert!(csp.contains("default-src 'self'"));
+    assert!(csp.contains("script-src 'self'"));
+    assert!(!csp.contains("'unsafe-eval'"));
+    assert!(!csp.contains("'unsafe-inline'") || !csp.contains("script-src 'self' 'unsafe-inline'"));
+}
+
+#[tokio::test]
+async fn ui_asset_shaped_request_for_missing_file_returns_not_found() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let session_response = server
+        .client()
+        .post(server.http_url("/ui/auth/session"))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(format!("token={}", token.token))
+        .send()
+        .await
+        .expect("session bootstrap request should send");
+    assert_eq!(session_response.status(), StatusCode::OK);
+
+    let missing = server
+        .client()
+        .get(server.http_url("/ui/__nonexistent.js"))
+        .send()
+        .await
+        .expect("missing asset request should send");
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn invalid_token_post_fails_and_rotated_cookie_is_revoked() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
@@ -268,7 +389,7 @@ async fn invalid_token_post_fails_and_rotated_cookie_is_revoked() {
 
     let rotate = server
         .client()
-        .post(server.http_url("/api/admin/token/rotate"))
+        .post(server.http_url("/api/system/token/rotate"))
         .bearer_auth(&token.token)
         .send()
         .await
