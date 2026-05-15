@@ -72,8 +72,8 @@ This is a maintainability and correctness roadmap, not a feature roadmap.
   `docs/plans/windows-machine-support-plan.md`,
   `docs/plans/wasmtime-backend-plan.md`,
   `docs/plans/wasi-agent-capabilities-plan.md`,
-  `docs/plans/nimbus-rename-plan.md`,
-  and `docs/plans/nimbus-rename-satellite-repos-plan.md`.
+  `docs/plans/archive/nimbus-rename-plan.md`,
+  and `docs/plans/archive/nimbus-rename-satellite-repos-plan.md`.
 - Use the archived machine CLI plans only for historical user-surface context
   and proof bundles:
   `docs/plans/archive/machine-cli-follow-on-plan.md`,

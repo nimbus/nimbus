@@ -1,7 +1,7 @@
 # Rename Satellite Repos: nimbus-machine-os, nimbus-crun, homebrew-tap
 
 Prerequisite execution plan for renaming the satellite repositories before the
-main repo rename in `docs/plans/nimbus-rename-plan.md`. Covers the three repos
+main repo rename in `docs/plans/archive/nimbus-rename-plan.md`. Covers the three repos
 that contain internal "nimbus" or "nimbus" references requiring updates.
 
 The forked dependency repos (`nimbus/deno`, `nimbus/rusty_v8`) preserve
@@ -11,12 +11,13 @@ tag re-publish under the new org so the main repo's `[patch.crates-io]` and
 
 ## Status
 
-`pending` -- not yet started.
+`archived` -- superseded before execution; retained only for historical
+planning context.
 
 ## Relationship to Main Rename Plan
 
 This plan is a **prerequisite release gate** for
-`docs/plans/nimbus-rename-plan.md`: the satellite repositories do not need to
+`docs/plans/archive/nimbus-rename-plan.md`: the satellite repositories do not need to
 finish before the GitHub transfer itself, but they must finish before the main
 repo's renamed release pipeline is allowed to run end-to-end. The main repo's
 release workflow calls into `nimbus-machine-os` workflows and pushes to
@@ -42,7 +43,7 @@ This plan changes more than file names. Each satellite repo has its own
 GitHub Actions settings, release permissions, packages, rulesets, secrets,
 variables, and integrations. Before the main repo cuts a renamed release,
 verify these settings in the `nimbus` org. Use the human/admin prerequisite
-packet in `docs/plans/nimbus-rename-plan.md` as the canonical handoff checklist
+packet in `docs/plans/archive/nimbus-rename-plan.md` as the canonical handoff checklist
 for credentials, secrets, service-console access, and manual confirmations.
 
 - **All satellite repos**: default branch, branch protection/rulesets, tag

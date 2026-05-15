@@ -11,8 +11,8 @@ tree at `~/src/github.com/nimbus/nimbus`.
 You are auditing a project rename plan for completeness and correctness. The
 project "nimbus" (owned by the `nimbus` GitHub org) is being renamed to
 "nimbus" (under a new `nimbus` GitHub org). The plan lives at
-`docs/plans/nimbus-rename-plan.md` with a prerequisite satellite plan at
-`docs/plans/nimbus-rename-satellite-repos-plan.md`.
+`docs/plans/archive/nimbus-rename-plan.md` with a prerequisite satellite plan
+at `docs/plans/archive/nimbus-rename-satellite-repos-plan.md`.
 
 **Your job:** Find anything the plan gets wrong or misses. Do NOT rewrite the
 plan. Output a structured audit report with three sections: **Errors**

@@ -14,7 +14,7 @@ pipeline boundaries now that the direct bootc architecture is the real path.
 
 ## Status
 
-- **Status:** `done`
+- **Status:** `archived/done`
 - **Primary owner:** this plan
 - **Implementation repository:** `nimbus/machine-os`
 - **Cross-repo release owner:** `nimbus/nimbus` release workflow plus

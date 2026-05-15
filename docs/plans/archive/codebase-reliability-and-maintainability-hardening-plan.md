@@ -112,8 +112,8 @@ investigation, deterministic hardship, and crisp Rust ownership boundaries.
   `docs/plans/windows-machine-support-plan.md`,
   `docs/plans/wasmtime-backend-plan.md`,
   `docs/plans/wasi-agent-capabilities-plan.md`,
-  `docs/plans/nimbus-rename-plan.md`,
-  and `docs/plans/nimbus-rename-satellite-repos-plan.md`.
+  `docs/plans/archive/nimbus-rename-plan.md`,
+  and `docs/plans/archive/nimbus-rename-satellite-repos-plan.md`.
 - If work turns into product behavior changes, protocol changes, benchmark
   methodology changes, platform-specific machine behavior, install or
   distribution work, or provider-product semantics, stop and move to the

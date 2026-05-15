@@ -92,8 +92,8 @@ already clear.
   `docs/plans/windows-machine-support-plan.md`,
   `docs/plans/wasmtime-backend-plan.md`,
   `docs/plans/wasi-agent-capabilities-plan.md`,
-  `docs/plans/nimbus-rename-plan.md`,
-  and `docs/plans/nimbus-rename-satellite-repos-plan.md`.
+  `docs/plans/archive/nimbus-rename-plan.md`,
+  and `docs/plans/archive/nimbus-rename-satellite-repos-plan.md`.
 - If work turns into feature behavior changes, protocol changes, benchmark
   methodology changes, install or distribution work, provider-product
   semantics, or platform-specific machine behavior, stop and move to the

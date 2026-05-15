@@ -20,12 +20,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
-- `docs/plans/machine-os-repository-stewardship-plan.md`
-  - canonical execution plan for cleaning up `nimbus/machine-os` now that it
-    is a first-party direct Fedora bootc appliance repository rather than a
-    Podman-machine-os-shaped FCOS fork: project structure, branch hygiene,
-    release pipeline ownership, provenance docs, local build ergonomics, and
-    cross-repo verifier updates.
 
 ## Current Reference Baselines
 
@@ -63,21 +57,6 @@ archived plans only when you need historical execution detail.
   - superseded evidence plan for MOS0-MOS2 and the abandoned MOS3A
     FCOS-derived candidate. Do not resume MOS3A from this plan; use
     `docs/plans/bootc-machine-default-plan.md` for current machine OS work.
-
-## Pending plans
-
-- `docs/plans/nimbus-rename-satellite-repos-plan.md`
-  - prerequisite plan for renaming internals of satellite repositories
-    (`machine-os`, `nimbus-crun`) and creating a new `nimbus/homebrew-tap`
-    before the main repo rename: guest image paths, systemd units, OCI media
-    types, OCI annotations, build scripts, workflow inputs, Homebrew cask, and
-    cross-repo interface coordination
-- `docs/plans/nimbus-rename-plan.md`
-  - canonical execution plan for renaming the project from "nimbus" to "nimbus"
-    and relocating all repositories from the `nimbus` GitHub organization
-    to `nimbus`: GitHub repo transfers, Rust crate renames, JS package renames,
-    CI/CD workflow updates, script renames, Makefile updates, config/doc bulk
-    replacement, and verification; depends on the satellite repos plan above
 
 ## Deferred plans with defined scope
 

@@ -6,11 +6,12 @@ relocating all repositories from the `nimbus` GitHub organization to
 
 ## Status
 
-`pending` -- not yet started.
+`archived` -- superseded before execution; retained only for historical
+planning context.
 
 ## Prerequisite Release Gate
 
-- `docs/plans/nimbus-rename-satellite-repos-plan.md` -- rename internals of
+- `docs/plans/archive/nimbus-rename-satellite-repos-plan.md` -- rename internals of
   `nimbus-machine-os`, `nimbus-crun`, `homebrew-tap`, and re-publish the
   Deno/`rusty_v8` fork locker tags under `nimbus/*` (Repo 4) so both sides
   of cross-repo interfaces and the `[patch.crates-io]` URL surface agree on
@@ -387,7 +388,7 @@ Plus the cross-repo reusable workflow:
 (After rename. Currently `nimbus/nimbus-machine-os/...`.)
 
 Also audit satellite-repo action allowlists from
-`docs/plans/nimbus-rename-satellite-repos-plan.md`; the machine-os, crun,
+`docs/plans/archive/nimbus-rename-satellite-repos-plan.md`; the machine-os, crun,
 Deno, and `rusty_v8` repositories use additional third-party actions that are
 not present in this main repo.
 
@@ -1476,7 +1477,7 @@ Phases must be executed in this order due to dependencies:
    but must complete before any release workflow runs end-to-end on the
    renamed repo.
 3. **Satellite release gate** -- after the transfer, complete
-   `docs/plans/nimbus-rename-satellite-repos-plan.md` before any renamed
+   `docs/plans/archive/nimbus-rename-satellite-repos-plan.md` before any renamed
    end-to-end release verification. The main repo code rename can proceed in
    parallel with satellite edits as long as cross-repo interfaces are kept in
    lockstep before release.
@@ -1736,7 +1737,7 @@ validated by static text grep.
 Internal renames for `nimbus-machine-os`, `nimbus-crun`, `homebrew-tap`, and
 the locker-tag re-publish for `nimbus/deno` + `nimbus/rusty_v8` (Repo 4) are
 covered by the prerequisite plan:
-`docs/plans/nimbus-rename-satellite-repos-plan.md`.
+`docs/plans/archive/nimbus-rename-satellite-repos-plan.md`.
 
 The forked dependency repos (`nimbus/deno`, `nimbus/rusty_v8`) preserve
 upstream names and need no internal symbol renames; only the origin URL and
