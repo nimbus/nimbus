@@ -11,8 +11,11 @@ pub(crate) async fn ws(
     let tenant_id = TenantId::new(tenant_id)?;
     let negotiated_protocol = crate::ws::negotiate(&headers)?;
     let service = state.service.clone();
-    let tenant_check = tenant_id.clone();
-    service.ensure_tenant_exists_async(tenant_check).await?;
+    if !crate::system_tenant::is_system_tenant_id(&tenant_id) {
+        service
+            .ensure_tenant_exists_async(tenant_id.clone())
+            .await?;
+    }
     let (registry, auth) = registry_and_auth(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexWebSocket,
