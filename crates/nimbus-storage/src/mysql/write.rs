@@ -348,6 +348,42 @@ impl MySqlWriteTransaction {
     where
         Check: Fn() -> Result<()> + Send + 'static,
     {
+        let check_cancel = Arc::new(Mutex::new(check_cancel));
+        let mut attempt = 0;
+        loop {
+            // Retry only the begin/tenant-lock path; the write closure has not run yet.
+            let check_cancel_for_attempt = check_cancel.clone();
+            let transaction = Self::begin_once(
+                store.clone(),
+                Box::new(move || {
+                    check_cancel_for_attempt
+                        .lock()
+                        .map_err(|_| {
+                            Error::Internal("mysql write cancellation lock poisoned".to_string())
+                        })
+                        .and_then(|check_cancel| check_cancel())
+                }),
+            );
+            match transaction {
+                Ok(transaction) => return Ok(transaction),
+                Err(error)
+                    if is_retryable_mysql_begin_error(&error)
+                        && attempt + 1 < MYSQL_WRITE_BEGIN_RETRY_ATTEMPTS =>
+                {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        5 * u64::try_from(attempt).unwrap_or(1),
+                    ));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn begin_once(
+        store: MySqlTenantStore,
+        check_cancel: Box<dyn Fn() -> Result<()> + Send>,
+    ) -> Result<Self> {
         let provider = store.provider.clone();
         let database_name = store.database_name.clone();
         let conn = store.block_on({
@@ -363,7 +399,7 @@ impl MySqlWriteTransaction {
             commit_writes: Vec::new(),
             trigger_write_origin: None,
             schema_cache_changed: false,
-            check_cancel: Box::new(check_cancel),
+            check_cancel,
         };
         if let Err(error) = (|| -> Result<()> {
             transaction.check_cancel()?;
@@ -1200,4 +1236,11 @@ impl MySqlWriteTransaction {
         }
         self.commit_writes.push(write);
     }
+}
+
+fn is_retryable_mysql_begin_error(error: &Error) -> bool {
+    matches!(
+        error.storage_kind(),
+        Some(StorageErrorKind::Busy | StorageErrorKind::Transient)
+    )
 }

@@ -1053,7 +1053,9 @@ async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
             .get_table_schema_async(tenant_id.clone(), tasks_table())
             .await
             .expect("persisted schema should reload through the service path");
+        reopened_service.quiesce().await;
         drop_service_sync(reopened_service).await;
+        wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
     }
 
     assert_eq!(
@@ -1075,6 +1077,7 @@ async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
             .expect("schema should delete");
         service.quiesce().await;
         drop_service_sync(service).await;
+        wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
     }
 
     assert!(
