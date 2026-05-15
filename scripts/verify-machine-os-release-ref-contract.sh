@@ -158,8 +158,12 @@ require_in_section build-machine-os "${build_machine_os_section}" "docker://\${{
 require_in_section build-machine-os "${build_machine_os_section}" "https://github.com/\${{ env.MACHINE_OS_REPOSITORY }}"
 require_in_section build-machine-os "${build_machine_os_section}" 'sudo podman pull "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"'
 require_in_section build-machine-os "${build_machine_os_section}" 'sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"'
+require_in_section build-machine-os "${build_machine_os_section}" "machine-os/image/Containerfile"
+require_in_section build-machine-os "${build_machine_os_section}" "machine-os/image/build-common.sh"
+require_in_section build-machine-os "${build_machine_os_section}" "machine-os/image/build.sh"
 require_in_section build-machine-os "${build_machine_os_section}" "build-output"
 require_in_section build-machine-os "${build_machine_os_section}" "layout"
+reject_in_section build-machine-os "${build_machine_os_section}" "machine-os/images/"
 reject_in_section build-machine-os "${build_machine_os_section}" "packages: write"
 reject_in_section build-machine-os "${build_machine_os_section}" "id-token: write"
 reject_in_section build-machine-os "${build_machine_os_section}" "attestations: write"

@@ -353,7 +353,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/image-cache
-          key: machine-os-base-image-arm64-${{ hashFiles('machine-os/images/Containerfile', 'machine-os/images/build-common.sh', 'machine-os/images/build.sh') }}
+          key: machine-os-base-image-arm64-${{ hashFiles('machine-os/image/Containerfile', 'machine-os/image/build-common.sh', 'machine-os/image/build.sh') }}
           restore-keys: |
             machine-os-base-image-arm64-
 
