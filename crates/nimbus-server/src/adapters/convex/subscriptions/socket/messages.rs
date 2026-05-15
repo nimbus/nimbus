@@ -116,6 +116,7 @@ async fn handle_plain_subscription(
         request_id.clone(),
         ConvexSubscriptionTransform::Identity,
     );
+    let query_key = plain_subscription_query_key(&query);
     let request_id_for_worker = request_id.clone();
     let service = ctx.state.service.clone();
     let tenant_id = ctx.tenant_id.clone();
@@ -137,6 +138,7 @@ async fn handle_plain_subscription(
                 &request_id,
                 ConvexSubscriptionTransform::Identity,
             );
+            record_active_subscription_status(ctx, subscription_id, query_key).await;
         }
         Err(error) => {
             clear_pending_transform(ctx.transforms, &request_id);
@@ -168,6 +170,7 @@ async fn reset_active_subscriptions_for_auth_change(
         ctx.outbound_tx,
         false,
         ctx.transforms,
+        ctx.subscription_statuses,
     )
     .await;
     let _ = ctx
@@ -192,6 +195,7 @@ async fn handle_unsubscribe(
             ctx.outbound_tx,
             true,
             ctx.transforms,
+            ctx.subscription_statuses,
         )
         .await;
     } else {

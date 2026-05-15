@@ -15,6 +15,26 @@ fn deploy_router(service: Arc<Service>, registry: Option<ConvexRegistry>) -> axu
     config.build()
 }
 
+fn deploy_router_with_system_registry(
+    service: Arc<Service>,
+    registry: Option<ConvexRegistry>,
+) -> axum::Router {
+    let mut config = crate::router::RouterBuildConfig::core(service)
+        .with_deploy_admin_token(DEPLOY_TOKEN)
+        .with_system_convex_registry(
+            ConvexRegistry::from_embedded_system_bundle()
+                .expect("embedded system Convex registry should load"),
+        );
+    if let Some(registry) = registry {
+        config = config
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
+            .with_convex(registry);
+    }
+    config.build()
+}
+
 fn query_function(name: &str, table: &str) -> serde_json::Value {
     json!({
         "name": name,
@@ -217,7 +237,7 @@ async fn deploy_dry_run_validates_and_diffs_without_activation() {
 #[tokio::test]
 async fn deploy_activation_swaps_new_requests_to_new_generation() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(deploy_router(
+    let server = ServerFixture::start(deploy_router_with_system_registry(
         fixture.service(),
         Some(convex_registry(json!([query_function(
             "messages:list",
@@ -262,6 +282,69 @@ async fn deploy_activation_swaps_new_requests_to_new_generation() {
             .await
             .status(),
         StatusCode::OK
+    );
+
+    let bundles = api
+        .convex_named_query(
+            "_nimbus",
+            "bundles:list",
+            json!({ "status": null, "limit": null }),
+        )
+        .await;
+    assert_eq!(bundles.status(), StatusCode::OK);
+    let bundles = bundles
+        .json::<serde_json::Value>()
+        .await
+        .expect("system bundles query should parse");
+    let bundles = bundles.as_array().expect("bundles should be an array");
+    assert_eq!(bundles.len(), 1);
+    assert_eq!(bundles[0]["status"], json!("active"));
+    assert_eq!(bundles[0]["sourceRef"], json!("deploy:generation:2"));
+
+    let functions = api
+        .convex_named_query(
+            "_nimbus",
+            "functions:list",
+            json!({ "bundleId": null, "kind": null, "limit": null }),
+        )
+        .await;
+    assert_eq!(functions.status(), StatusCode::OK);
+    let functions = functions
+        .json::<serde_json::Value>()
+        .await
+        .expect("system functions query should parse");
+    let functions = functions.as_array().expect("functions should be an array");
+    assert_eq!(functions.len(), 1);
+    assert_eq!(functions[0]["path"], json!("notes:list"));
+    assert_eq!(functions[0]["kind"], json!("query"));
+
+    let runs = api
+        .convex_named_query(
+            "_nimbus",
+            "runs:recent",
+            json!({
+                "bundleId": null,
+                "functionPath": "notes:list",
+                "status": null,
+                "limit": null
+            }),
+        )
+        .await;
+    assert_eq!(runs.status(), StatusCode::OK);
+    let runs = runs
+        .json::<serde_json::Value>()
+        .await
+        .expect("system runs query should parse");
+    let runs = runs.as_array().expect("runs should be an array");
+    assert!(
+        runs.iter().any(|run| {
+            run["functionPath"] == json!("notes:list")
+                && run["kind"] == json!("query")
+                && run["status"] == json!("ok")
+                && run["durationMs"].as_f64().is_some()
+                && run["startedAt"].as_f64().is_some()
+        }),
+        "system runs should include the successful notes:list query: {runs:?}"
     );
 }
 

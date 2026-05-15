@@ -47,6 +47,13 @@ impl ServingSnapshot {
             .map(|documents| documents.values().cloned().collect())
     }
 
+    pub(crate) fn table_document_count(&self, table: &TableName) -> Option<usize> {
+        self.inner
+            .tables
+            .get(table)
+            .map(|documents| documents.len())
+    }
+
     pub(crate) fn document(&self, table: &TableName, document_id: &DocumentId) -> Option<Document> {
         self.inner
             .tables

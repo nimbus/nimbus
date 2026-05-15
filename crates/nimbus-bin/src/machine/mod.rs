@@ -31,6 +31,7 @@ mod command;
 mod files;
 mod guest_config;
 mod handlers;
+mod local_server;
 #[cfg(unix)]
 mod manager;
 #[cfg(not(unix))]
@@ -39,6 +40,7 @@ mod manager;
 mod protocol;
 mod record;
 mod render;
+mod server_control;
 
 #[cfg(test)]
 pub(crate) use self::api::{
@@ -53,6 +55,7 @@ pub(crate) use self::handlers::{
     run_machine_command,
 };
 pub(crate) use self::protocol::MachineApiServiceSandboxDetails;
+pub(crate) use self::server_control::host_machine_lifecycle_manager;
 
 use self::command::MachineApiCommand;
 use self::files::write_json_file;
@@ -181,13 +184,11 @@ fn describe_machine_image_source(source: &MachineImageSource) -> String {
 
 const DEFAULT_MACHINE_SSH_USER: &str = "core";
 const DEFAULT_BOOTC_MACHINE_SSH_USER: &str = "nimbus";
-const DEFAULT_MACHINE_RUNTIME_ROOT: &str = "/tmp/nimbus";
-const MACHINE_RUNTIME_ROOT_ENV: &str = "NIMBUS_MACHINE_RUNTIME_ROOT";
 const DEFAULT_MACHINE_CPUS: u8 = 2;
 const DEFAULT_MACHINE_MEMORY_MIB: u32 = 2048;
 const DEFAULT_MACHINE_DISK_GIB: u32 = 20;
-const CURRENT_MACHINE_CONFIG_VERSION: u32 = 3;
-const CURRENT_MACHINE_STATE_VERSION: u32 = 1;
+const CURRENT_MACHINE_CONFIG_VERSION: u32 = nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION;
+const CURRENT_MACHINE_STATE_VERSION: u32 = nimbus_machine::CURRENT_MACHINE_STATE_VERSION;
 
 fn default_machine_volumes() -> Vec<MachineVolume> {
     if cfg!(target_os = "macos") {

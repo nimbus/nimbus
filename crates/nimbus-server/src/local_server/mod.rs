@@ -18,8 +18,8 @@ pub use discovery::{
     read_live_server_discovery,
 };
 pub(crate) use middleware::{
-    LocalServerAccessPolicy, origin_allowlist_middleware, route_family_gate_middleware,
-    server_access_extract_middleware,
+    LocalServerAccessPolicy, authorize_standard_server_access, origin_allowlist_middleware,
+    route_family_gate_middleware, server_access_extract_middleware,
 };
 pub use paths::{LocalServerPaths, LocalServerPlatform};
 pub(crate) use policy::LocalServerRouteFamily;

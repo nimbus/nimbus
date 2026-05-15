@@ -25,6 +25,7 @@ Reviewed against:
 - [crates/nimbus-bin/src/machine/api.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/api.rs)
 - [crates/nimbus-bin/src/machine/client.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/client.rs)
 - [crates/nimbus-bin/src/machine/backend.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/backend.rs)
+- [crates/nimbus-machine/src/lib.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-machine/src/lib.rs)
 - [crates/nimbus-bin/src/start/mod.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/start/mod.rs)
 - [crates/nimbus-bin/src/compose/mod.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/compose/mod.rs)
 - `/Users/jack/src/github.com/nimbus/machine-os/scripts/package-oci.sh`
@@ -270,6 +271,8 @@ The manager reuses `default.raw` if it already exists.
 
 Current implementation note:
 
+- `crates/nimbus-machine` owns the stable machine record/provider/path model
+  that both CLI and future server-owned lifecycle endpoints consume
 - the checked-in machine manager now uses that split directly:
   - config under `XDG_CONFIG_HOME`
   - lifecycle state and locks under `XDG_STATE_HOME`

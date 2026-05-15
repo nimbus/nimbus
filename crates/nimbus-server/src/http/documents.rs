@@ -6,7 +6,7 @@ pub(crate) async fn insert_document(
     Path(tenant_id): Path<String>,
     Json(request): Json<InsertDocumentRequest>,
 ) -> Result<(StatusCode, Json<DocumentResponse>), AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let table = TableName::new(request.table)?;
     let service = state.service.clone();
     let request_cancellation = RequestCancellationGuard::new();
@@ -20,8 +20,8 @@ pub(crate) async fn insert_document(
     };
     let document_id = service
         .insert_document_async_with(
-            tenant_id,
-            table,
+            tenant_id.clone(),
+            table.clone(),
             None,
             request.fields,
             nimbus_engine::AsyncMutationContext::anonymous(cancel_wait, move || {
@@ -49,7 +49,7 @@ pub(crate) async fn update_document(
     Json(request): Json<UpdateDocumentRequest>,
 ) -> Result<Json<DocumentResponse>, AppError> {
     let document_id = parse_document_id(&document_id)?;
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
     let request_cancellation = RequestCancellationGuard::new();
@@ -63,8 +63,8 @@ pub(crate) async fn update_document(
     };
     let document_id = service
         .update_document_async_with(
-            tenant_id,
-            table,
+            tenant_id.clone(),
+            table.clone(),
             document_id,
             request.patch,
             nimbus_engine::AsyncMutationContext::anonymous(cancel_wait, move || {
@@ -87,7 +87,7 @@ pub(crate) async fn delete_document(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, table, document_id)): Path<(String, String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
     let service = state.service.clone();
@@ -102,8 +102,8 @@ pub(crate) async fn delete_document(
     };
     service
         .delete_document_async_with(
-            tenant_id,
-            table,
+            tenant_id.clone(),
+            table.clone(),
             document_id,
             nimbus_engine::AsyncMutationContext::anonymous(cancel_wait, move || {
                 if cancellation_check.is_cancelled() {
@@ -122,7 +122,7 @@ pub(crate) async fn list_documents(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, table)): Path<(String, String)>,
 ) -> Result<Json<DataResponse>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
     let request_cancellation = RequestCancellationGuard::new();
@@ -150,7 +150,7 @@ pub(crate) async fn get_document(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, table, document_id)): Path<(String, String, String)>,
 ) -> Result<Json<DocumentDataResponse>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
     let service = state.service.clone();

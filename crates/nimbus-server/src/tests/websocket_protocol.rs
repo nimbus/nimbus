@@ -2,8 +2,56 @@ use super::*;
 
 use axum::http::{HeaderValue, header};
 use futures::{SinkExt, StreamExt};
+use nimbus_core::{Query, TableName};
+use nimbus_engine::SubscriptionUpdate;
+use tokio::sync::mpsc as tokio_mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Error as TungsteniteError;
+
+fn direct_query_function(name: &str, table: &str) -> serde_json::Value {
+    json!({
+        "name": name,
+        "kind": "query",
+        "plan": {
+            "table": table,
+            "filters": [],
+            "order": null,
+            "limit": null
+        }
+    })
+}
+
+async fn next_subscription_documents(
+    updates: &mut tokio_mpsc::Receiver<SubscriptionUpdate>,
+    description: &str,
+) -> Vec<serde_json::Value> {
+    match timeout(Duration::from_secs(5), updates.recv()).await {
+        Ok(Some(SubscriptionUpdate::Result { snapshot, .. })) => snapshot.to_json_documents(),
+        Ok(Some(SubscriptionUpdate::Error { message, .. })) => {
+            panic!("{description} failed with subscription error: {message}")
+        }
+        Ok(None) => panic!("{description} failed because subscription channel closed"),
+        Err(_) => panic!("timed out waiting for {description}"),
+    }
+}
+
+async fn wait_for_subscription_documents(
+    updates: &mut tokio_mpsc::Receiver<SubscriptionUpdate>,
+    description: &str,
+    predicate: impl Fn(&[serde_json::Value]) -> bool,
+) -> Vec<serde_json::Value> {
+    let deadline = Duration::from_secs(5);
+    timeout(deadline, async {
+        loop {
+            let documents = next_subscription_documents(updates, description).await;
+            if predicate(&documents) {
+                return documents;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {description}"))
+}
 
 #[tokio::test]
 async fn websocket_protocol_rejects_no_overlap_with_structured_http_error() {
@@ -123,6 +171,163 @@ async fn websocket_protocol_v2_echoes_subprotocol_and_sends_hello_immediately() 
     };
     assert_eq!(initial["type"], json!("subscription_result"));
     assert_eq!(initial["request_id"], json!("protocol-v2"));
+}
+
+#[tokio::test]
+async fn convex_websocket_subscription_projects_live_system_subscription_state() {
+    let user_registry =
+        convex_registry(json!([direct_query_function("messages:list", "messages")]));
+    let system_registry = convex_registry(json!([direct_query_function(
+        "subscriptions:list",
+        "subscriptions"
+    )]));
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    crate::system_tenant::prepare_system_tenant_async(&service, None)
+        .await
+        .expect("system tenant should prepare");
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(service.clone())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &user_registry,
+            ))
+            .with_convex(user_registry)
+            .with_system_convex_registry(system_registry)
+            .build(),
+    )
+    .await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        api.insert_document("demo", "messages", json!({ "body": "hello" }))
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+
+    let (system_tx, mut system_rx) =
+        tokio_mpsc::channel(nimbus_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
+    let system_subscription = service
+        .subscribe_async(
+            crate::system_tenant::system_tenant_id().expect("system id should parse"),
+            Query {
+                table: TableName::new("subscriptions").expect("table should parse"),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            "system-subscriptions-watch".to_string(),
+            system_tx,
+        )
+        .await
+        .expect("system tenant subscriptions table should be subscribable");
+    let initial =
+        next_subscription_documents(&mut system_rx, "initial _nimbus subscriptions snapshot").await;
+    assert!(
+        initial.is_empty(),
+        "system subscription table should start empty: {initial:?}"
+    );
+
+    let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
+        .await
+        .expect("convex websocket should connect");
+    socket
+        .subscribe_named("messages-watch", "messages:list", json!({}))
+        .await;
+    let bootstrap = socket.next_json().await;
+    assert_eq!(bootstrap["type"], json!("subscription_result"));
+    assert_eq!(bootstrap["request_id"], json!("messages-watch"));
+    let subscription_id = bootstrap["subscription_id"]
+        .as_u64()
+        .expect("bootstrap should include subscription id");
+
+    let persisted = wait_for_value(
+        "persisted Convex websocket subscription projection",
+        Duration::from_secs(5),
+        Duration::from_millis(25),
+        || {
+            let service = service.clone();
+            async move {
+                service
+                    .list_documents_async(
+                        crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                        TableName::new("subscriptions").expect("table should parse"),
+                    )
+                    .await
+            }
+        },
+        |result| {
+            result.as_ref().is_ok_and(|documents| {
+                documents.iter().any(|document| {
+                    document.fields.get("tenantId") == Some(&json!("demo"))
+                        && document.fields.get("adapter") == Some(&json!("convex"))
+                })
+            })
+        },
+    )
+    .await
+    .expect("subscription document should persist");
+    assert_eq!(
+        persisted.len(),
+        1,
+        "expected one persisted active subscription"
+    );
+
+    let active = wait_for_subscription_documents(
+        &mut system_rx,
+        "active Convex websocket subscription projection",
+        |documents| {
+            documents.iter().any(|document| {
+                document["tenantId"] == json!("demo")
+                    && document["adapter"] == json!("convex")
+                    && document["clientCount"] == json!(1)
+                    && document["queryKey"]
+                        .as_str()
+                        .is_some_and(|key| key.contains("messages:list"))
+            })
+        },
+    )
+    .await;
+    assert_eq!(
+        active.len(),
+        1,
+        "expected one active subscription: {active:?}"
+    );
+
+    let queried = api
+        .convex_named_query("_nimbus", "subscriptions:list", json!({}))
+        .await;
+    assert_eq!(queried.status(), StatusCode::OK);
+    let queried_body = queried
+        .json::<serde_json::Value>()
+        .await
+        .expect("system subscriptions query should parse");
+    assert!(
+        queried_body.as_array().is_some_and(|documents| {
+            documents
+                .iter()
+                .any(|document| document["tenantId"] == json!("demo"))
+        }),
+        "system Convex query should expose active subscription state: {queried_body}"
+    );
+
+    socket.unsubscribe(subscription_id).await;
+    let cleared = wait_for_subscription_documents(
+        &mut system_rx,
+        "Convex websocket subscription cleanup projection",
+        |documents| documents.is_empty(),
+    )
+    .await;
+    assert!(
+        cleared.is_empty(),
+        "unsubscribe should remove the system subscription document: {cleared:?}"
+    );
+
+    drop(system_subscription);
 }
 
 #[tokio::test]

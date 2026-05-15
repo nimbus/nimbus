@@ -49,8 +49,9 @@ use tonic::transport::Channel;
 
 use crate::{
     ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, RouterBuildConfig, build_router,
-    build_router_with_convex, build_router_with_firebase, build_router_with_license,
+    LicenseSourceInfo, LicenseSourceKind, LicenseState, RouterBuildConfig, ServeOptions,
+    build_router, build_router_with_convex, build_router_with_firebase, build_router_with_license,
+    serve_with_options,
 };
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::field_transform::{
@@ -108,6 +109,129 @@ use crate::adapters::firebase::grpc::generated::google::firestore::v1::{
     Value as GrpcValue, Write as GrpcWrite, WriteRequest as GrpcWriteRequest,
     GetDocumentRequest as GrpcGetDocumentRequest, UpdateDocumentRequest as GrpcUpdateDocumentRequest,
 };
+
+#[tokio::test]
+async fn serve_with_options_loads_embedded_system_convex_registry_by_default() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener.local_addr().expect("listener should have addr");
+    let server = tokio::spawn(serve_with_options(
+        listener,
+        fixture.service(),
+        ServeOptions::default(),
+    ));
+    tokio::task::yield_now().await;
+    if server.is_finished() {
+        let result = server.await;
+        panic!("server exited before embedded system query: {result:?}");
+    }
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/convex/_nimbus/query");
+
+    let response = wait_for_value(
+        "embedded system Convex registry should answer _nimbus queries",
+        Duration::from_secs(5),
+        Duration::from_millis(25),
+        || {
+            let client = client.clone();
+            let url = url.clone();
+            async move {
+                client
+                    .post(url)
+                    .json(&json!({
+                        "name": "routes:list",
+                        "args": {
+                            "adapter": null,
+                            "limit": null,
+                        },
+                    }))
+                    .send()
+                    .await
+            }
+        },
+        |result| result.is_ok(),
+    )
+    .await
+    .expect("system query should send");
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .expect("system query body should read");
+    assert_eq!(status, StatusCode::OK, "system query body: {body}");
+
+    let routes =
+        serde_json::from_str::<serde_json::Value>(&body).expect("system query body should parse");
+    assert!(
+        routes.as_array().is_some_and(|routes| routes
+            .iter()
+            .any(|route| route["path"] == "/health" && route["adapter"] == "native")),
+        "embedded system bundle should return seeded route inventory: {routes}"
+    );
+
+    let response = client
+        .post(&url)
+        .json(&json!({
+            "name": "system:status",
+            "args": {},
+        }))
+        .send()
+        .await
+        .expect("system status query should send");
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .expect("system status query body should read");
+    assert_eq!(status, StatusCode::OK, "system status query body: {body}");
+    let system_status =
+        serde_json::from_str::<serde_json::Value>(&body).expect("status body should parse");
+    assert_eq!(system_status["name"], json!("server"));
+    assert_eq!(system_status["health"], json!("ok"));
+    assert_eq!(system_status["version"], json!(env!("CARGO_PKG_VERSION")));
+    assert!(
+        system_status["startedAt"].is_number(),
+        "embedded system bundle should return server start time: {system_status}"
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let listen_addr = "127.0.0.1:45678".parse().expect("listen addr should parse");
+    RouterBuildConfig::core(fixture.service())
+        .with_system_convex_registry(convex_registry(json!([])))
+        .with_firebase(FirebaseConfig::new())
+        .with_listen_addr(listen_addr)
+        .prepare_system_tenant()
+        .await
+        .expect("router config should prepare system tenant");
+
+    let listeners = fixture
+        .service()
+        .list_documents_async(
+            crate::system_tenant::system_tenant_id().expect("system id should parse"),
+            TableName::new("listeners").expect("table should parse"),
+        )
+        .await
+        .expect("listeners should list");
+    let has_listener = |adapter: &str, protocol: &str| {
+        listeners.iter().any(|listener| {
+            listener.fields.get("adapter") == Some(&json!(adapter))
+                && listener.fields.get("protocol") == Some(&json!(protocol))
+                && listener.fields.get("state") == Some(&json!("listening"))
+                && listener.fields.get("address") == Some(&json!(listen_addr.to_string()))
+        })
+    };
+    assert!(has_listener("native", "http"));
+    assert!(has_listener("convex", "websocket"));
+    assert!(has_listener("firebase", "http+websocket"));
+}
 
 fn header_csv_values(response: &reqwest::Response, header_name: &str) -> BTreeSet<String> {
     response
@@ -1055,6 +1179,8 @@ mod local_audit;
 mod local_server_security;
 #[path = "tests/local_ui.rs"]
 mod local_ui;
+#[path = "tests/machine_lifecycle.rs"]
+mod machine_lifecycle;
 #[path = "tests/mongodb_wire.rs"]
 mod mongodb_wire;
 #[path = "tests/registry_and_license/mod.rs"]

@@ -64,7 +64,7 @@ pub(crate) async fn tenant_engine_diagnostics(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<TenantEngineDiagnosticsResponse>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let diagnostics = state
         .service
         .clone()
@@ -81,7 +81,7 @@ pub(crate) async fn tenant_consistency_report(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<nimbus_engine::ConsistencyVerificationReport>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let report = state
         .service
         .clone()

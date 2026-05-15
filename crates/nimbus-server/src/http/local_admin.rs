@@ -12,6 +12,12 @@ pub(crate) struct RotateLocalAdminTokenResponse {
     generation: u64,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ShutdownSystemResponse {
+    accepted: bool,
+}
+
 pub(crate) async fn rotate_local_admin_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -53,6 +59,38 @@ pub(crate) async fn rotate_local_admin_token(
     Ok(Json(RotateLocalAdminTokenResponse {
         generation: rotation.token.generation,
     }))
+}
+
+pub(crate) async fn shutdown_system(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<ShutdownSystemResponse>, AppError> {
+    if let Err(error) = crate::system_tenant::record_system_event_async(
+        &state.service,
+        "system",
+        "info",
+        "lifecycle",
+        "server shutdown requested",
+        serde_json::json!({
+            "listenAddress": state.listen_addr.map(|address| address.to_string()),
+        }),
+        None,
+    )
+    .await
+    {
+        tracing::warn!(%error, "failed to record system shutdown event");
+    }
+    state.record_local_server_audit(LocalServerAuditEvent {
+        route_family: LocalServerRouteFamily::NativeApi,
+        tenant_id: None,
+        auth_scope: "server_access",
+        auth_method: Some("local_admin_bearer_or_session"),
+        success: true,
+        origin: origin_from_headers(&headers),
+        reason: "server.shutdown_requested".to_string(),
+    });
+    state.request_server_shutdown()?;
+    Ok(Json(ShutdownSystemResponse { accepted: true }))
 }
 
 fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, AppError> {

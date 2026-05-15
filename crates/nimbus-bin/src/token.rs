@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use clap::{Args, Subcommand};
 use nimbus_server::{
@@ -8,6 +7,8 @@ use nimbus_server::{
     read_live_server_discovery, rotate_local_admin_token_offline,
 };
 use serde::Deserialize;
+
+use crate::local_server_client::normalize_loopback_connect_address;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum TokenCommand {
@@ -112,7 +113,7 @@ async fn rotate_local_admin_token_live(
     let current = load_local_admin_token(paths)?;
     let connect_address = normalize_loopback_connect_address(&discovery.address)?;
     let response = client
-        .post(format!("http://{connect_address}/api/admin/token/rotate"))
+        .post(format!("http://{connect_address}/api/system/token/rotate"))
         .bearer_auth(&current.token)
         .send()
         .await?;
@@ -130,25 +131,6 @@ async fn rotate_local_admin_token_live(
         generation: body.generation,
         address: connect_address,
     })
-}
-
-fn normalize_loopback_connect_address(address: &str) -> io::Result<String> {
-    let parsed: SocketAddr = address.parse().map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("server discovery address {address:?} is invalid: {error}"),
-        )
-    })?;
-    let normalized = match parsed.ip() {
-        IpAddr::V4(ip) if ip.is_unspecified() => {
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), parsed.port())
-        }
-        IpAddr::V6(ip) if ip.is_unspecified() => {
-            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), parsed.port())
-        }
-        _ => parsed,
-    };
-    Ok(normalized.to_string())
 }
 
 #[cfg(test)]

@@ -1,5 +1,35 @@
 use super::*;
 use std::path::Component;
+use std::sync::Arc;
+
+const SYSTEM_AUTH_CONFIG_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/auth.config.json"
+));
+const SYSTEM_BUNDLE_MJS: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/bundle.mjs"
+));
+const SYSTEM_BUNDLE_SHA256: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/bundle.sha256"
+));
+const SYSTEM_FUNCTIONS_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/functions.json"
+));
+const SYSTEM_HTTP_ROUTES_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/http_routes.json"
+));
+const SYSTEM_NODE_EXTERNAL_PACKAGES_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/node_external_packages.json"
+));
+const SYSTEM_SCHEMA_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/schema.json"
+));
 
 impl ConvexRegistry {
     pub fn empty() -> Self {
@@ -12,6 +42,57 @@ impl ConvexRegistry {
             convex_dir.join("functions.json"),
             Some(convex_dir.join("http_routes.json")),
         )
+    }
+
+    pub fn from_embedded_system_bundle() -> Result<Self, Error> {
+        let artifact_guard = Arc::new(
+            tempfile::Builder::new()
+                .prefix("nimbus-system-convex-")
+                .tempdir()
+                .map_err(|error| {
+                    Error::Internal(format!(
+                        "failed to create embedded _nimbus bundle directory: {error}"
+                    ))
+                })?,
+        );
+        let convex_dir = artifact_guard.path().join(".nimbus").join("convex");
+        std::fs::create_dir_all(&convex_dir).map_err(|error| {
+            Error::Internal(format!(
+                "failed to create embedded _nimbus Convex directory {}: {error}",
+                convex_dir.display()
+            ))
+        })?;
+        write_embedded_system_file(
+            &convex_dir,
+            "auth.config.json",
+            SYSTEM_AUTH_CONFIG_JSON.as_bytes(),
+        )?;
+        write_embedded_system_file(&convex_dir, "bundle.mjs", SYSTEM_BUNDLE_MJS)?;
+        write_embedded_system_file(
+            &convex_dir,
+            "bundle.sha256",
+            SYSTEM_BUNDLE_SHA256.as_bytes(),
+        )?;
+        write_embedded_system_file(
+            &convex_dir,
+            "functions.json",
+            SYSTEM_FUNCTIONS_JSON.as_bytes(),
+        )?;
+        write_embedded_system_file(
+            &convex_dir,
+            "http_routes.json",
+            SYSTEM_HTTP_ROUTES_JSON.as_bytes(),
+        )?;
+        write_embedded_system_file(
+            &convex_dir,
+            "node_external_packages.json",
+            SYSTEM_NODE_EXTERNAL_PACKAGES_JSON.as_bytes(),
+        )?;
+        write_embedded_system_file(&convex_dir, "schema.json", SYSTEM_SCHEMA_JSON.as_bytes())?;
+
+        let mut registry = Self::from_app_dir(artifact_guard.path())?;
+        registry.artifact_guard = Some(artifact_guard);
+        Ok(registry)
     }
 
     pub fn from_manifest_path(path: impl AsRef<Path>) -> Result<Self, Error> {
@@ -83,6 +164,7 @@ impl ConvexRegistry {
             http_routes,
             schema,
             runtime_bundle,
+            artifact_guard: None,
             auth_verifier,
             runtime_policy,
             runtime_executor,
@@ -113,6 +195,20 @@ impl ConvexRegistry {
         self.node24_runtime_executor = node24_executor;
         self
     }
+}
+
+fn write_embedded_system_file(
+    convex_dir: &Path,
+    file_name: &str,
+    contents: &[u8],
+) -> Result<(), Error> {
+    let path = convex_dir.join(file_name);
+    std::fs::write(&path, contents).map_err(|error| {
+        Error::Internal(format!(
+            "failed to write embedded _nimbus Convex artifact {}: {error}",
+            path.display()
+        ))
+    })
 }
 
 fn read_http_route_manifest(path: &Path) -> Result<Vec<ConvexHttpRouteDefinition>, Error> {

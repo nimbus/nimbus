@@ -33,8 +33,9 @@ pub use persistence_config::{
 pub use replica::EmbeddedReplica;
 pub use scheduler::run_scheduler;
 pub use service::{
-    AsyncMutationContext, EncryptionStatus, InitializedKeyProvider, MutationActor,
-    MutationExecutionUnit, Service, SubscriptionBootstrapCancellation,
+    AsyncMutationContext, CommittedMutationEvent, CommittedMutationObserver, EncryptionStatus,
+    InitializedKeyProvider, MutationActor, MutationExecutionUnit, Service,
+    SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
 };
 pub use subscriptions::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionRegistration,

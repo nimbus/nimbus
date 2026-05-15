@@ -8,6 +8,7 @@ mod dev;
 mod dirs;
 mod encryption;
 mod init;
+mod local_server_client;
 mod machine;
 mod node;
 mod start;

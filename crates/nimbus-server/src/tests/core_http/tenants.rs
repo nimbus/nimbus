@@ -55,6 +55,41 @@ async fn list_tenants_returns_all_known_tenants() {
 }
 
 #[tokio::test]
+async fn local_admin_tenant_api_rejects_and_hides_reserved_system_tenants() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    crate::system_tenant::ensure_system_tenant_async(&service)
+        .await
+        .expect("system tenant should initialize");
+    let server = ServerFixture::start(build_router(service)).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("_demo").await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        api.delete_tenant("_nimbus").await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        api.insert_document("_nimbus", "machines", json!({ "name": "demo" }))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let response = api.list_tenants().await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("tenant list response should parse");
+    assert_eq!(body["tenants"], json!([]));
+}
+
+#[tokio::test]
 async fn delete_tenant_returns_no_content_and_removes_it_from_listing() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(build_router(fixture.service())).await;

@@ -10,8 +10,8 @@ use super::policy::{
     LOCAL_ADMIN_HEADER_NAME, LocalServerRouteFamily, is_loopback_origin, parse_origin,
 };
 use super::{
-    LOCAL_SESSION_COOKIE_NAME, LocalServerAuditEvent, SessionValidationResult, origin_from_headers,
-    tenant_id_from_request,
+    LOCAL_SESSION_COOKIE_NAME, LocalServerAuditEvent, LocalServerSecurityState,
+    SessionValidationResult, origin_from_headers, tenant_id_from_request,
 };
 use crate::state::{AppError, AppState};
 
@@ -223,6 +223,30 @@ pub(crate) async fn route_family_gate_middleware(
                     reason: policy.unauthorized_message().to_string(),
                 });
             AppError::unauthorized(policy.unauthorized_message()).into_response()
+        }
+    }
+}
+
+pub(crate) fn authorize_standard_server_access(
+    headers: &HeaderMap,
+    local_server_security: Option<&LocalServerSecurityState>,
+) -> Result<Option<&'static str>, AppError> {
+    if local_server_security.is_none() {
+        return Ok(None);
+    }
+    let extracted = extract_server_access(
+        headers,
+        LocalServerCredentialMode::AuthorizationOrAdminHeader,
+        local_server_security,
+    )?;
+    match extracted.status {
+        ExtractedServerAccessStatus::Authorized => Ok(extracted.auth_method),
+        ExtractedServerAccessStatus::Revoked => Err(AppError::unauthorized("auth.token_revoked")),
+        ExtractedServerAccessStatus::Expired => Err(AppError::unauthorized("auth.session_expired")),
+        ExtractedServerAccessStatus::Invalid | ExtractedServerAccessStatus::Missing => {
+            Err(AppError::unauthorized(
+                "local admin access requires Authorization: Bearer <token> or X-Nimbus-Admin-Token",
+            ))
         }
     }
 }

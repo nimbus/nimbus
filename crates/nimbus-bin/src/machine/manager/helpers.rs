@@ -7,26 +7,19 @@ use super::{
     KRUNKIT_ENV, MachineHelperBinaryPaths, PODMAN_DARWIN_HELPER_DIRECTORIES,
 };
 
-impl MachineHelperBinaryPaths {
-    pub(super) fn resolve() -> Result<Self, Error> {
-        let bundled_gvproxy = bundled_helper_candidates(DEFAULT_GVPROXY_BINARY);
-        let known_krunkit = known_helper_candidates(DEFAULT_KRUNKIT_BINARY);
-        let known_gvproxy = known_helper_candidates(DEFAULT_GVPROXY_BINARY);
-        Ok(Self {
-            krunkit: resolve_helper_binary(
-                KRUNKIT_ENV,
-                DEFAULT_KRUNKIT_BINARY,
-                &[],
-                &known_krunkit,
-            )?,
-            gvproxy: resolve_helper_binary(
-                GVPROXY_ENV,
-                DEFAULT_GVPROXY_BINARY,
-                &bundled_gvproxy,
-                &known_gvproxy,
-            )?,
-        })
-    }
+pub(super) fn resolve_machine_helper_binaries() -> Result<MachineHelperBinaryPaths, Error> {
+    let bundled_gvproxy = bundled_helper_candidates(DEFAULT_GVPROXY_BINARY);
+    let known_krunkit = known_helper_candidates(DEFAULT_KRUNKIT_BINARY);
+    let known_gvproxy = known_helper_candidates(DEFAULT_GVPROXY_BINARY);
+    Ok(MachineHelperBinaryPaths {
+        krunkit: resolve_helper_binary(KRUNKIT_ENV, DEFAULT_KRUNKIT_BINARY, &[], &known_krunkit)?,
+        gvproxy: resolve_helper_binary(
+            GVPROXY_ENV,
+            DEFAULT_GVPROXY_BINARY,
+            &bundled_gvproxy,
+            &known_gvproxy,
+        )?,
+    })
 }
 
 pub(super) fn resolve_helper_binary(

@@ -5,7 +5,7 @@ pub(crate) async fn create_tenant(
     State(state): State<Arc<AppState>>,
     Json(request): Json<CreateTenantRequest>,
 ) -> Result<(StatusCode, Json<TenantResponse>), AppError> {
-    let tenant_id = TenantId::new(request.id)?;
+    let tenant_id = parse_user_tenant_id(request.id)?;
     let service = state.service.clone();
     service.create_tenant_async(tenant_id.clone()).await?;
     if let Some(registry) = state.current_deployment().convex_registry() {
@@ -26,6 +26,7 @@ pub(crate) async fn list_tenants(
     Ok(Json(TenantListResponse {
         tenants: tenants
             .into_iter()
+            .filter(|tenant| !crate::system_tenant::is_reserved_tenant_id(tenant))
             .map(|tenant| tenant.to_string())
             .collect(),
     }))
@@ -36,7 +37,7 @@ pub(crate) async fn delete_tenant(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let service = state.service.clone();
     state
         .runtime_service_registry()

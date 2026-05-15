@@ -19,6 +19,7 @@ bson.workspace = true
 crc32c.workspace = true
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-machine = { path = "../nimbus-machine" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine" }
 futures.workspace = true

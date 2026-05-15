@@ -8,6 +8,7 @@ how the system is built.
 
 - [Getting started](getting-started.md) -- install, pick your adapter, start building
 - [Current capabilities](current-capabilities.md) -- what works today
+- [Design system](../DESIGN.md) -- UI product language, information architecture, and component rules
 
 ## Adapters
 

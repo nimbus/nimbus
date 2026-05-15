@@ -80,7 +80,7 @@ This is a maintainability and correctness roadmap, not a feature roadmap.
   `docs/plans/encryption-at-rest-plan.md`,
   `docs/plans/websocket-protocol-plan.md`,
   `docs/plans/localhost-server-security-plan.md`,
-  `docs/plans/system-tenant-api-plan.md`,
+  `docs/plans/archive/system-tenant-api-plan.md`,
   `docs/plans/desktop-ui-plan.md`,
   `docs/plans/install-script-plan.md`,
   `docs/plans/distribution-plan.md`,

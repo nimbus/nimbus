@@ -39,6 +39,7 @@ impl Service {
                     "authorization policy changed; resubscribe",
                 );
         }
+        self.notify_table_schema_change_observers(tenant_id, &table);
         Ok(())
     }
 
@@ -84,6 +85,7 @@ impl Service {
                     "authorization policy changed; resubscribe",
                 );
         }
+        self.notify_table_schema_change_observers(&tenant_id, &table);
         Ok(())
     }
 
@@ -151,6 +153,7 @@ impl Service {
                     "authorization policy changed; resubscribe",
                 );
         }
+        self.notify_table_schema_change_observers(tenant_id, table);
         Ok(())
     }
 
@@ -190,6 +193,7 @@ impl Service {
                     "authorization policy changed; resubscribe",
                 );
         }
+        self.notify_table_schema_change_observers(&tenant_id, &table);
         Ok(())
     }
     pub(super) async fn refresh_loaded_schema_from_store_async(
@@ -200,17 +204,24 @@ impl Service {
             .store()
             .load_schema_async(runtime.read_storage())
             .await?;
-        apply_loaded_schema_snapshot(runtime, next_schema)
+        for table in apply_loaded_schema_snapshot(runtime, next_schema)? {
+            self.notify_table_schema_change_observers(runtime.tenant_id(), &table);
+        }
+        Ok(())
     }
 }
 
-fn apply_loaded_schema_snapshot(runtime: &Arc<TenantRuntime>, next_schema: Schema) -> Result<()> {
+fn apply_loaded_schema_snapshot(
+    runtime: &Arc<TenantRuntime>,
+    next_schema: Schema,
+) -> Result<Vec<TableName>> {
     let previous_schema = runtime.schema();
     if previous_schema.as_ref() == &next_schema {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let mut changed_policy_tables = Vec::new();
+    let mut changed_schema_tables = Vec::new();
     let table_names = previous_schema
         .tables
         .keys()
@@ -220,6 +231,9 @@ fn apply_loaded_schema_snapshot(runtime: &Arc<TenantRuntime>, next_schema: Schem
     for table in table_names {
         let previous_revision = effective_policy_revision(previous_schema.get_table(&table))?;
         let next_revision = effective_policy_revision(next_schema.get_table(&table))?;
+        if previous_schema.get_table(&table) != next_schema.get_table(&table) {
+            changed_schema_tables.push(table.clone());
+        }
         if previous_revision != next_revision {
             changed_policy_tables.push((table, next_revision));
         }
@@ -240,7 +254,7 @@ fn apply_loaded_schema_snapshot(runtime: &Arc<TenantRuntime>, next_schema: Schem
         }
     }
 
-    Ok(())
+    Ok(changed_schema_tables)
 }
 
 fn effective_policy_revision(table_schema: Option<&TableSchema>) -> Result<String> {

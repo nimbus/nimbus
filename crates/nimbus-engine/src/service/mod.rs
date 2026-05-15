@@ -1,5 +1,6 @@
 mod background_executor;
 mod bootstrap;
+mod committed_mutations;
 mod diagnostics;
 mod encryption;
 mod execution_units;
@@ -36,6 +37,8 @@ use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExe
 use background_executor::BackgroundExecutor;
 use transactions::TransactionSessionRegistry;
 
+pub use committed_mutations::{CommittedMutationEvent, CommittedMutationObserver};
+pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver};
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
 pub use mutations::{AsyncMutationContext, MutationActor};
@@ -65,6 +68,8 @@ pub struct Service {
     provider_hint_listener_ready: AtomicBool,
     trigger_invocation_executor: RwLock<Option<SharedTriggerInvocationExecutor>>,
     trigger_registrations: RwLock<Vec<TriggerRegistration>>,
+    committed_mutation_observers: RwLock<committed_mutations::CommittedMutationObserverRegistry>,
+    table_schema_change_observers: RwLock<committed_mutations::TableSchemaChangeObserverRegistry>,
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
@@ -179,6 +184,8 @@ impl Service {
             provider_hint_listener_ready: AtomicBool::new(false),
             trigger_invocation_executor: RwLock::new(None),
             trigger_registrations: RwLock::new(Vec::new()),
+            committed_mutation_observers: RwLock::new(HashMap::new()),
+            table_schema_change_observers: RwLock::new(HashMap::new()),
             engine_executor: parts.engine_executor,
             storage_executor: parts.storage_executor,
             encryption_status: parts.encryption_status,

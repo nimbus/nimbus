@@ -92,7 +92,16 @@ pub(crate) async fn deploy_app(
         if let Some(registry) = next_cloud_functions_registry {
             state.install_cloud_functions_runtime_hooks(registry)?;
         }
-        state.current_deployment().generation
+        let generation = state.current_deployment().generation;
+        if let Some(registry) = state.current_deployment().convex_registry() {
+            crate::system_tenant::record_convex_deployment_state_async(
+                &state.service,
+                &registry.deploy_summary(),
+                &format!("deploy:generation:{generation}"),
+            )
+            .await?;
+        }
+        generation
     };
 
     Ok(Json(DeployResponse {

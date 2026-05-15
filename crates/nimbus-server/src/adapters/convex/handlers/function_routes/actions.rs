@@ -18,7 +18,11 @@ pub(crate) async fn action(
         "convex action route requires Convex support state",
     )
     .await?;
-    let value = match request {
+    let trace = match &request {
+        ConvexActionRequest::Named(request) => RunTrace::new(request.name.clone(), "action"),
+        ConvexActionRequest::Raw { .. } => RunTrace::new("<raw-action>", "action"),
+    };
+    let result = match request {
         ConvexActionRequest::Named(request) if registry.runtime_bundle().is_some() => {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
@@ -42,7 +46,7 @@ pub(crate) async fn action(
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-action")),
             )
-            .await?
+            .await
         }
         ConvexActionRequest::Named(request) => {
             let action = registry.resolve_action(&request.name, &request.args)?;
@@ -54,7 +58,7 @@ pub(crate) async fn action(
                 auth.as_ref(),
                 None,
             )
-            .await?
+            .await
         }
         ConvexActionRequest::Raw { action } => {
             execute_convex_action_async(
@@ -65,8 +69,14 @@ pub(crate) async fn action(
                 auth.as_ref(),
                 None,
             )
-            .await?
+            .await
         }
     };
+    let status = if result.is_ok() { "ok" } else { "error" };
+    let error = result.as_ref().err().map(ToString::to_string);
+    trace
+        .record(&service, &tenant_id, status, error.as_deref())
+        .await;
+    let value = result?;
     Ok(Json(value))
 }

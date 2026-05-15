@@ -34,6 +34,19 @@ fn local_server_security(
     )
 }
 
+fn query_function(name: &str, table: &str) -> serde_json::Value {
+    json!({
+        "name": name,
+        "kind": "query",
+        "plan": {
+            "table": table,
+            "filters": [],
+            "order": null,
+            "limit": null
+        }
+    })
+}
+
 #[tokio::test]
 async fn bad_origin_returns_forbidden_before_local_admin_auth() {
     let temp = tempdir().expect("tempdir should build");
@@ -91,6 +104,23 @@ async fn native_api_and_debug_routes_require_local_admin_auth() {
         .await
         .expect("authorized create request should send");
     assert_eq!(create_allowed.status(), StatusCode::CREATED);
+
+    let machine_start_denied = server
+        .client()
+        .post(server.http_url("/api/machines/default/start"))
+        .send()
+        .await
+        .expect("machine start request should send");
+    assert_eq!(machine_start_denied.status(), StatusCode::UNAUTHORIZED);
+
+    let machine_start_authorized = server
+        .client()
+        .post(server.http_url("/api/machines/default/start"))
+        .bearer_auth(&token.token)
+        .send()
+        .await
+        .expect("authorized machine start request should send");
+    assert_eq!(machine_start_authorized.status(), StatusCode::NOT_FOUND);
 
     let debug_denied = server
         .client()
@@ -379,6 +409,111 @@ async fn convex_routes_keep_application_auth_and_reject_local_admin_bearers() {
         .await
         .expect("local admin bearer query should send");
     assert_eq!(local_admin_as_app_auth.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn system_tenant_convex_routes_use_system_registry_not_application_registry() {
+    let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
+    let application_registry = convex_registry(json!([query_function("notes:list", "notes")]));
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    crate::system_tenant::prepare_system_tenant_async(&service, None)
+        .await
+        .expect("system tenant should prepare");
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(service)
+            .with_system_convex_registry(system_registry)
+            .with_convex(application_registry)
+            .build(),
+    )
+    .await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        api.insert_document(
+            "demo",
+            "notes",
+            json!({ "title": "Application tenant note" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    let system_routes = api
+        .convex_named_query("_nimbus", "routes:list", json!({}))
+        .await;
+    assert_eq!(system_routes.status(), StatusCode::OK);
+    let routes = system_routes
+        .json::<serde_json::Value>()
+        .await
+        .expect("system route query body should parse");
+    assert!(
+        routes.as_array().is_some_and(|routes| routes
+            .iter()
+            .any(|route| route["path"] == "/health" && route["adapter"] == "native")),
+        "system Convex registry should read the seeded _nimbus route inventory: {routes}"
+    );
+
+    let application_notes = api
+        .convex_named_query("demo", "notes:list", json!({}))
+        .await;
+    assert_eq!(application_notes.status(), StatusCode::OK);
+    let notes = application_notes
+        .json::<serde_json::Value>()
+        .await
+        .expect("application query body should parse");
+    assert_eq!(notes[0]["title"], "Application tenant note");
+}
+
+#[tokio::test]
+async fn system_tenant_convex_routes_require_local_admin_auth_when_configured() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, token) = local_server_security(temp.path());
+    let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    crate::system_tenant::prepare_system_tenant_async(&service, None)
+        .await
+        .expect("system tenant should prepare");
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(service)
+            .with_system_convex_registry(system_registry)
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let missing_auth = server
+        .client()
+        .post(server.http_url("/convex/_nimbus/query"))
+        .json(&json!({ "name": "routes:list", "args": {} }))
+        .send()
+        .await
+        .expect("missing auth system query should send");
+    assert_eq!(missing_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let authorized = server
+        .client()
+        .post(server.http_url("/convex/_nimbus/query"))
+        .bearer_auth(&token.token)
+        .json(&json!({ "name": "routes:list", "args": {} }))
+        .send()
+        .await
+        .expect("authorized system query should send");
+    assert_eq!(authorized.status(), StatusCode::OK);
+    let routes = authorized
+        .json::<serde_json::Value>()
+        .await
+        .expect("authorized system route body should parse");
+    assert!(
+        routes.as_array().is_some_and(|routes| !routes.is_empty()),
+        "authorized system query should return seeded route inventory: {routes}"
+    );
 }
 
 #[tokio::test]

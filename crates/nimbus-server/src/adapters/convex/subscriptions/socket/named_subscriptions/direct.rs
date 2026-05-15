@@ -14,6 +14,7 @@ pub(super) async fn handle_direct_named_subscription(
         page_size,
         cursor,
     } = request;
+    let query_key = named_subscription_query_key(&name, &args, page_size, cursor.as_deref());
 
     let (base_query, transform) = {
         let query = match ctx.convex_registry.resolve_subscription_query(&name, &args) {
@@ -56,6 +57,7 @@ pub(super) async fn handle_direct_named_subscription(
                 ActiveSubscription::from_registration(registration),
             );
             activate_transform(ctx.transforms, subscription_id, &request_id, transform);
+            record_active_subscription_status(ctx, subscription_id, query_key).await;
         }
         Err(error) => {
             clear_pending_transform(ctx.transforms, &request_id);

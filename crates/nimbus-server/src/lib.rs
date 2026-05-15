@@ -7,6 +7,7 @@ mod execution;
 mod http;
 mod license;
 mod local_server;
+mod machine_lifecycle;
 mod owned_tasks;
 mod protocol;
 mod provider_family;
@@ -16,6 +17,7 @@ mod sandbox;
 mod service_manager;
 mod service_registry;
 mod state;
+mod system_tenant;
 mod ws;
 
 use std::sync::Arc;
@@ -42,6 +44,10 @@ pub use local_server::{
     ServerDiscoveryRecord, load_local_admin_token, load_or_create_local_admin_token,
     read_live_server_discovery, rotate_local_admin_token_offline,
 };
+pub use machine_lifecycle::{
+    MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
+    MachineLifecycleSnapshot, MachineUpdateRequest,
+};
 use router::{RouterBuildConfig, convex_application_auth_verifier};
 pub use router::{
     build_router, build_router_with_convex, build_router_with_convex_and_license,
@@ -61,12 +67,14 @@ pub use service_manager::SandboxServiceManager;
 /// Optional server runtime surfaces layered on top of the core service.
 pub struct ServeOptions {
     convex_registry: Option<ConvexRegistry>,
+    system_convex_registry: Option<ConvexRegistry>,
     cloud_functions_registry: Option<CloudFunctionsRegistry>,
     firebase_config: Option<FirebaseConfig>,
     mongodb_config: Option<MongoDbConfig>,
     license_state: LicenseState,
     sandbox_catalog: Option<Arc<dyn SandboxCatalog>>,
     sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
+    machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     deploy_admin_token: Option<String>,
     local_server_security: Option<Arc<LocalServerSecurityState>>,
 }
@@ -75,12 +83,14 @@ impl Default for ServeOptions {
     fn default() -> Self {
         Self {
             convex_registry: None,
+            system_convex_registry: None,
             cloud_functions_registry: None,
             firebase_config: None,
             mongodb_config: None,
             license_state: LicenseState::community(),
             sandbox_catalog: None,
             sandbox_service_manager: None,
+            machine_lifecycle_manager: None,
             deploy_admin_token: None,
             local_server_security: None,
         }
@@ -90,6 +100,11 @@ impl Default for ServeOptions {
 impl ServeOptions {
     pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
         self.convex_registry = Some(convex_registry);
+        self
+    }
+
+    pub fn with_system_convex_registry(mut self, system_convex_registry: ConvexRegistry) -> Self {
+        self.system_convex_registry = Some(system_convex_registry);
         self
     }
 
@@ -131,6 +146,14 @@ impl ServeOptions {
         self
     }
 
+    pub fn with_machine_lifecycle_manager(
+        mut self,
+        machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
+    ) -> Self {
+        self.machine_lifecycle_manager = Some(machine_lifecycle_manager);
+        self
+    }
+
     pub fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
         self.deploy_admin_token = Some(token.into());
         self
@@ -150,7 +173,23 @@ async fn serve_with_router_config(
     config: RouterBuildConfig,
 ) -> std::io::Result<()> {
     let listen_addr = listener.local_addr()?;
-    axum::serve(listener, config.with_listen_addr(listen_addr).build()).await
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let config = config
+        .with_listen_addr(listen_addr)
+        .with_server_shutdown(shutdown_tx);
+    config
+        .prepare_system_tenant()
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    axum::serve(listener, config.build())
+        .with_graceful_shutdown(async move {
+            while !*shutdown_rx.borrow() {
+                if shutdown_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        })
+        .await
 }
 
 /// Runs the Nimbus HTTP/WebSocket server on an existing listener.
@@ -158,7 +197,7 @@ pub async fn serve(
     listener: tokio::net::TcpListener,
     service: Arc<Service>,
 ) -> std::io::Result<()> {
-    serve_with_router_config(listener, RouterBuildConfig::core(service)).await
+    serve_with_options(listener, service, ServeOptions::default()).await
 }
 
 /// Runs the Nimbus HTTP/WebSocket server on an existing listener with an explicit license state.
@@ -167,9 +206,10 @@ pub async fn serve_with_license(
     service: Arc<Service>,
     license_state: LicenseState,
 ) -> std::io::Result<()> {
-    serve_with_router_config(
+    serve_with_options(
         listener,
-        RouterBuildConfig::core(service).with_license(license_state),
+        service,
+        ServeOptions::default().with_license(license_state),
     )
     .await
 }
@@ -182,13 +222,31 @@ pub async fn serve_with_license_and_sandbox_catalog(
     license_state: LicenseState,
     sandbox_catalog: Arc<dyn SandboxCatalog>,
 ) -> std::io::Result<()> {
-    serve_with_router_config(
+    serve_with_options(
         listener,
-        RouterBuildConfig::core(service)
+        service,
+        ServeOptions::default()
             .with_license(license_state)
             .with_sandbox_catalog(sandbox_catalog),
     )
     .await
+}
+
+fn load_default_system_convex_registry() -> std::io::Result<ConvexRegistry> {
+    ConvexRegistry::from_embedded_system_bundle()
+        .map_err(|error| std::io::Error::other(error.to_string()))
+}
+
+fn apply_optional_system_convex_registry(
+    config: RouterBuildConfig,
+    system_convex_registry: Option<ConvexRegistry>,
+) -> std::io::Result<RouterBuildConfig> {
+    Ok(
+        config.with_system_convex_registry(match system_convex_registry {
+            Some(registry) => registry,
+            None => load_default_system_convex_registry()?,
+        }),
+    )
 }
 
 /// Runs the Nimbus HTTP/WebSocket server on an existing listener with an
@@ -198,8 +256,10 @@ pub async fn serve_with_options(
     service: Arc<Service>,
     options: ServeOptions,
 ) -> std::io::Result<()> {
-    let mut config =
-        RouterBuildConfig::core(Arc::clone(&service)).with_license(options.license_state);
+    let mut config = apply_optional_system_convex_registry(
+        RouterBuildConfig::core(Arc::clone(&service)).with_license(options.license_state),
+        options.system_convex_registry,
+    )?;
     if let Some(convex_registry) = options.convex_registry {
         config = config
             .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
@@ -222,9 +282,24 @@ pub async fn serve_with_options(
     } else if let Some(sandbox_catalog) = options.sandbox_catalog {
         config = config.with_sandbox_catalog(sandbox_catalog);
     }
+    if let Some(machine_lifecycle_manager) = options.machine_lifecycle_manager {
+        config = config.with_machine_lifecycle_manager(machine_lifecycle_manager);
+    }
 
     if let Some(mongodb_config) = options.mongodb_config {
         let mongodb_listener = tokio::net::TcpListener::bind(mongodb_config.bind_addr).await?;
+        let mongodb_addr = mongodb_listener.local_addr()?;
+        crate::system_tenant::record_listener_state_async(
+            &service,
+            "mongodb",
+            "tcp",
+            &mongodb_addr.to_string(),
+            "listening",
+            Some(env!("CARGO_PKG_VERSION")),
+            None,
+        )
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
         let mongodb_service = Arc::clone(&service);
         let mongodb_auth = mongodb_config.auth;
         let mongodb_handle = tokio::spawn(async move {
@@ -249,11 +324,10 @@ pub async fn serve_with_convex(
     service: Arc<Service>,
     convex_registry: ConvexRegistry,
 ) -> std::io::Result<()> {
-    serve_with_router_config(
+    serve_with_options(
         listener,
-        RouterBuildConfig::core(service)
-            .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-            .with_convex(convex_registry),
+        service,
+        ServeOptions::default().with_convex_registry(convex_registry),
     )
     .await
 }
@@ -264,9 +338,10 @@ pub async fn serve_with_firebase(
     service: Arc<Service>,
     firebase_config: FirebaseConfig,
 ) -> std::io::Result<()> {
-    serve_with_router_config(
+    serve_with_options(
         listener,
-        RouterBuildConfig::core(service).with_firebase(firebase_config),
+        service,
+        ServeOptions::default().with_firebase_config(firebase_config),
     )
     .await
 }
@@ -278,11 +353,11 @@ pub async fn serve_with_convex_and_license(
     convex_registry: ConvexRegistry,
     license_state: LicenseState,
 ) -> std::io::Result<()> {
-    serve_with_router_config(
+    serve_with_options(
         listener,
-        RouterBuildConfig::core(service)
-            .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-            .with_convex(convex_registry)
+        service,
+        ServeOptions::default()
+            .with_convex_registry(convex_registry)
             .with_license(license_state),
     )
     .await
@@ -298,11 +373,11 @@ pub async fn serve_with_convex_and_license_and_sandbox_service_manager(
     license_state: LicenseState,
     sandbox_service_manager: Arc<SandboxServiceManager>,
 ) -> std::io::Result<()> {
-    serve_with_router_config(
+    serve_with_options(
         listener,
-        RouterBuildConfig::core(service)
-            .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-            .with_convex(convex_registry)
+        service,
+        ServeOptions::default()
+            .with_convex_registry(convex_registry)
             .with_license(license_state)
             .with_sandbox_service_manager(sandbox_service_manager),
     )

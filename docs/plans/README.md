@@ -3,17 +3,13 @@
 This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
-- `docs/plans/system-tenant-api-plan.md`
-  - canonical execution plan for the `_nimbus` system tenant and management
-    API: machine/service state persistence as documents, HTTP lifecycle
-    endpoints, Convex function bundle with typed query surface, read/write
-    path split; prerequisite for the desktop UI plan
 - `docs/plans/desktop-ui-plan.md`
   - canonical execution plan for a Docker Desktop / Podman Desktop-style
     graphical interface: embedded React SPA at `/ui/*` via `rust-embed`,
     dashboard/machines/services/functions/data/logs/runs/settings tabs,
-    dark mode, a11y, optional Electron shell (Phase 2); depends on the system
-    tenant API plan and current architecture references below
+    dark mode, a11y, optional Electron shell (Phase 2); consumes the completed
+    `_nimbus` system-tenant surface from the archived system tenant plan and
+    current architecture references below
 - `docs/plans/install-script-plan.md`
   - canonical execution plan for the nimbus install script (Channel 1):
     `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
@@ -33,6 +29,11 @@ archived plans only when you need historical execution detail.
     macOS parity, bootc lifecycle, default promotion to
     `ghcr.io/nimbus/machine-os:v0.1.30@sha256:f565...`, and legacy
     Podman/FCOS demotion to explicit diagnostic/repair overrides
+- `docs/plans/archive/system-tenant-api-plan.md`
+  - completed execution record for ST1-ST4: `_nimbus` system tenant bootstrap,
+    server-owned machine/service/network projections, local-admin lifecycle
+    endpoints, packaged `_nimbus` Convex query bundle, read/write split, and
+    verification evidence for the desktop UI prerequisite gate
 - `docs/architecture/sandbox/microvm-service-baseline.md`
   - concise current baseline for the landed krun-backed microVM runtime,
     service activation, Compose-backed `nimbus compose ...` surface, and the

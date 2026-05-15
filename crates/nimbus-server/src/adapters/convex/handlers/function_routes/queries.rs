@@ -18,7 +18,11 @@ pub(crate) async fn query(
         "convex query route requires Convex support state",
     )
     .await?;
-    let data = match request {
+    let trace = match &request {
+        ConvexQueryRequest::Named(request) => RunTrace::new(request.name.clone(), "query"),
+        ConvexQueryRequest::Raw { .. } => RunTrace::new("<raw-query>", "query"),
+    };
+    let result = match request {
         ConvexQueryRequest::Named(request) if registry.runtime_bundle().is_some() => {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
@@ -42,7 +46,7 @@ pub(crate) async fn query(
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-query")),
             )
-            .await?
+            .await
         }
         ConvexQueryRequest::Named(request) => {
             let query = registry.resolve_query(&request.name, &request.args)?;
@@ -54,7 +58,7 @@ pub(crate) async fn query(
                 auth.as_ref(),
                 Some(request_cancellation.token()),
             )
-            .await?
+            .await
         }
         ConvexQueryRequest::Raw { query } => {
             let request_cancellation = RequestCancellationGuard::new();
@@ -65,9 +69,15 @@ pub(crate) async fn query(
                 auth.as_ref(),
                 Some(request_cancellation.token()),
             )
-            .await?
+            .await
         }
     };
+    let status = if result.is_ok() { "ok" } else { "error" };
+    let error = result.as_ref().err().map(ToString::to_string);
+    trace
+        .record(&service, &tenant_id, status, error.as_deref())
+        .await;
+    let data = result?;
     Ok(Json(data))
 }
 
@@ -88,7 +98,13 @@ pub(crate) async fn paginated_query(
         "convex paginated query route requires Convex support state",
     )
     .await?;
-    let page = match request {
+    let trace = match &request {
+        ConvexPaginatedQueryRequest::Named(request) => {
+            RunTrace::new(request.name.clone(), "paginated_query")
+        }
+        ConvexPaginatedQueryRequest::Raw { .. } => RunTrace::new("<raw-paginated-query>", "query"),
+    };
+    let result = match request {
         ConvexPaginatedQueryRequest::Named(request) if registry.runtime_bundle().is_some() => {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
@@ -115,7 +131,7 @@ pub(crate) async fn paginated_query(
             .await?;
             serde_json::from_value(value).map_err(|error| {
                 AppError::from(nimbus_core::Error::Serialization(error.to_string()))
-            })?
+            })
         }
         ConvexPaginatedQueryRequest::Named(request) => {
             let query = registry.resolve_paginated_query(
@@ -135,7 +151,8 @@ pub(crate) async fn paginated_query(
                     cancellation.cancelled(),
                     move || check_host_cancellation(&cancellation_check),
                 )
-                .await?
+                .await
+                .map_err(AppError::from)
         }
         ConvexPaginatedQueryRequest::Raw { query } => {
             let request_cancellation = RequestCancellationGuard::new();
@@ -149,8 +166,15 @@ pub(crate) async fn paginated_query(
                     cancellation.cancelled(),
                     move || check_host_cancellation(&cancellation_check),
                 )
-                .await?
+                .await
+                .map_err(AppError::from)
         }
     };
+    let status = if result.is_ok() { "ok" } else { "error" };
+    let error = result.as_ref().err().map(ToString::to_string);
+    trace
+        .record(&service, &tenant_id, status, error.as_deref())
+        .await;
+    let page = result?;
     Ok(Json(page))
 }

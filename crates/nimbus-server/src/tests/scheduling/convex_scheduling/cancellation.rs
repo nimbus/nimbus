@@ -18,7 +18,16 @@ async fn convex_cancel_scheduled_job_removes_pending_named_mutation() {
         }
     ]));
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_convex(registry)
+            .with_system_convex_registry(
+                ConvexRegistry::from_embedded_system_bundle()
+                    .expect("embedded system Convex registry should load"),
+            )
+            .build(),
+    )
+    .await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -45,6 +54,26 @@ async fn convex_cancel_scheduled_job_removes_pending_named_mutation() {
         .expect("convex job id should be present")
         .to_string();
 
+    let system_jobs = api
+        .convex_named_query(
+            "_nimbus",
+            "scheduled_jobs:list",
+            json!({ "tenantId": "demo", "status": null, "limit": null }),
+        )
+        .await;
+    assert_eq!(system_jobs.status(), StatusCode::OK);
+    let system_jobs = system_jobs
+        .json::<serde_json::Value>()
+        .await
+        .expect("system scheduled jobs query should parse");
+    assert_eq!(
+        system_jobs
+            .as_array()
+            .expect("system jobs should be an array")
+            .len(),
+        1
+    );
+
     assert_eq!(
         api.convex_cancel_scheduled_job("demo", &job_id)
             .await
@@ -58,6 +87,20 @@ async fn convex_cancel_scheduled_job_removes_pending_named_mutation() {
         .await
         .expect("jobs should parse");
     assert_eq!(jobs["jobs"], json!([]));
+
+    let system_jobs = api
+        .convex_named_query(
+            "_nimbus",
+            "scheduled_jobs:list",
+            json!({ "tenantId": "demo", "status": null, "limit": null }),
+        )
+        .await;
+    assert_eq!(system_jobs.status(), StatusCode::OK);
+    let system_jobs = system_jobs
+        .json::<serde_json::Value>()
+        .await
+        .expect("system scheduled jobs query should parse");
+    assert_eq!(system_jobs, json!([]));
 }
 
 #[tokio::test]

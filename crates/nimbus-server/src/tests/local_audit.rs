@@ -172,7 +172,7 @@ async fn session_creation_and_rotation_are_audited_without_secret_material() {
 
     let rotate = server
         .client()
-        .post(server.http_url("/api/admin/token/rotate"))
+        .post(server.http_url("/api/system/token/rotate"))
         .bearer_auth(&token.token)
         .send()
         .await
