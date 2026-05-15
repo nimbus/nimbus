@@ -1,10 +1,9 @@
-import { useQuery, useNimbusConnectionState, useNimbus } from "nimbus/react";
-import { useCallback, useState } from "react";
-import { toast } from "sonner";
+import { useNimbus, useNimbusConnectionState, useQuery } from "nimbus/react";
 
 import { api } from "../../convex/_generated/api";
+import { CopyChip } from "../components/copy-chip";
 import { Kbd } from "../components/kbd";
-import { StateDot, type ConnState } from "../components/state-dot";
+import { type ConnState, StateDot } from "../components/state-dot";
 import { metaGlyph } from "../lib/platform";
 
 type SystemStatus = {
@@ -87,41 +86,10 @@ export function StatusBar() {
 }
 
 function Divider() {
-  return <span aria-hidden className="text-muted/40">·</span>;
-}
-
-function CopyChip({
-  label,
-  value,
-  testid,
-}: {
-  label: string;
-  value: string;
-  testid: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  const handle = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      toast(`Copied ${label}`, { description: value });
-      setTimeout(() => setCopied(false), 1200);
-    } catch (error) {
-      toast.error(`Failed to copy ${label}`);
-    }
-  }, [label, value]);
   return (
-    <button
-      type="button"
-      onClick={handle}
-      title={value}
-      aria-label={`Copy ${label}: ${value}`}
-      className="inline-flex max-w-[28ch] truncate rounded px-1 hover:bg-surface-2 hover:text-default"
-      data-testid={testid}
-      data-copied={copied || undefined}
-    >
-      {value}
-    </button>
+    <span aria-hidden className="text-muted/40">
+      ·
+    </span>
   );
 }
 

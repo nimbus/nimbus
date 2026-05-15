@@ -189,7 +189,7 @@ export function stripTrailingSlash(url: string) {
 export function websocketUrlFromBase(baseUrl: string) {
   const url = new URL(stripTrailingSlash(baseUrl));
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = `${url.pathname}/ws`;
+  url.pathname = `${stripTrailingSlash(url.pathname)}/ws`;
   url.search = "";
   url.hash = "";
   return url.toString();
