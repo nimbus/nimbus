@@ -13,7 +13,10 @@ export function PlaceholderPage({
       data-testid={`page-${title.toLowerCase().replace(/\s+/g, "-")}`}
     >
       <header>
-        <h1 className="text-xl text-default" style={{ fontSize: "var(--text-xl)" }}>
+        <h1
+          className="text-xl text-default"
+          style={{ fontSize: "var(--text-xl)" }}
+        >
           {title}
         </h1>
         <p className="text-sm text-muted">{summary}</p>

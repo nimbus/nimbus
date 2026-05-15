@@ -55,7 +55,8 @@ function NetworkPage() {
     return routes.filter((r) => {
       if (adapterFilter && r.adapter !== adapterFilter) return false;
       if (!needle) return true;
-      const hay = `${r.method ?? ""} ${r.path ?? ""} ${r.handler ?? ""} ${r.adapter ?? ""}`.toLowerCase();
+      const hay =
+        `${r.method ?? ""} ${r.path ?? ""} ${r.handler ?? ""} ${r.adapter ?? ""}`.toLowerCase();
       return hay.includes(needle);
     });
   }, [routes, filter, adapterFilter]);
@@ -78,7 +79,10 @@ function NetworkPage() {
             the live registry — adapters appear as they register.
           </p>
         </div>
-        <div className="font-mono text-xs text-muted" data-testid="network-total">
+        <div
+          className="font-mono text-xs text-muted"
+          data-testid="network-total"
+        >
           {routes === undefined
             ? "loading…"
             : `${filtered?.length ?? 0} of ${routes.length} routes`}
@@ -103,7 +107,11 @@ function NetworkPage() {
             className="w-72 rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted/70"
           />
         </label>
-        <div className="flex items-center gap-1" role="tablist" aria-label="Filter by adapter">
+        <div
+          className="flex items-center gap-1"
+          role="tablist"
+          aria-label="Filter by adapter"
+        >
           <FilterChip
             label="all"
             active={adapterFilter === null}
@@ -129,7 +137,9 @@ function NetworkPage() {
           <RoutesTable routes={filtered} />
         ) : (
           <div className="flex h-32 flex-col items-center justify-center gap-1 text-center">
-            <span className="font-mono text-sm text-default">No matching routes</span>
+            <span className="font-mono text-sm text-default">
+              No matching routes
+            </span>
             <span className="max-w-md text-xs text-muted">
               {routes.length === 0
                 ? "Adapters register HTTP routes here as they start."
@@ -173,7 +183,10 @@ function FilterChip({
 function RoutesTable({ routes }: { routes: RouteDoc[] }) {
   return (
     <div className="overflow-auto">
-      <table className="w-full border-collapse text-sm" data-testid="network-routes-table">
+      <table
+        className="w-full border-collapse text-sm"
+        data-testid="network-routes-table"
+      >
         <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Method</Th>
@@ -205,7 +218,9 @@ function RoutesTable({ routes }: { routes: RouteDoc[] }) {
                   </span>
                 </Td>
                 <Td>
-                  <span className="font-mono text-default">{route.path ?? "—"}</span>
+                  <span className="font-mono text-default">
+                    {route.path ?? "—"}
+                  </span>
                 </Td>
                 <Td>
                   <span className="font-mono text-xs text-default">
@@ -264,5 +279,7 @@ function Td({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <td className={cn("px-3 py-2 align-middle", className)}>{children}</td>;
+  return (
+    <td className={cn("px-3 py-2 align-middle", className)}>{children}</td>
+  );
 }

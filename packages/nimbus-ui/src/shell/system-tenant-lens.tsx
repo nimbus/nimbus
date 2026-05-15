@@ -1,12 +1,12 @@
-import { useQuery } from "nimbus/react";
-import { useEffect, useRef } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { X } from "lucide-react";
+import { useQuery } from "nimbus/react";
+import { useEffect, useRef } from "react";
 
 import { api } from "../../convex/_generated/api";
-import { useUiStore } from "../store/ui-store";
 import { Kbd } from "../components/kbd";
 import { metaGlyph } from "../lib/platform";
+import { useUiStore } from "../store/ui-store";
 
 export function SystemTenantLens() {
   const open = useUiStore((s) => s.lensOpen);
@@ -26,12 +26,11 @@ export function SystemTenantLens() {
   const view = resolveLensView(pathname);
 
   return (
-    <aside
+    <section
       ref={(node) => {
         panelRef.current = node;
       }}
       tabIndex={-1}
-      role="region"
       aria-label="System tenant lens"
       data-testid="system-tenant-lens"
       className="fixed inset-y-0 right-0 z-40 flex w-[min(560px,50vw)] flex-col border-l shadow-2xl bg-surface border-app animate-in slide-in-from-right-4 duration-150"
@@ -62,7 +61,7 @@ export function SystemTenantLens() {
         <span>toggle</span>
         <span className="ml-auto">read-only</span>
       </footer>
-    </aside>
+    </section>
   );
 }
 
@@ -76,11 +75,16 @@ type LensView =
   | { kind: "functions"; label: string };
 
 function resolveLensView(pathname: string): LensView {
-  if (pathname.startsWith("/machines")) return { kind: "machines", label: "machines" };
-  if (pathname.startsWith("/network")) return { kind: "listeners", label: "listeners" };
-  if (pathname.startsWith("/storage")) return { kind: "tables", label: "tables" };
-  if (pathname.startsWith("/compute")) return { kind: "functions", label: "functions" };
-  if (pathname.startsWith("/observability")) return { kind: "runs", label: "runs" };
+  if (pathname.startsWith("/machines"))
+    return { kind: "machines", label: "machines" };
+  if (pathname.startsWith("/network"))
+    return { kind: "listeners", label: "listeners" };
+  if (pathname.startsWith("/storage"))
+    return { kind: "tables", label: "tables" };
+  if (pathname.startsWith("/compute"))
+    return { kind: "functions", label: "functions" };
+  if (pathname.startsWith("/observability"))
+    return { kind: "runs", label: "runs" };
   return { kind: "system", label: "system.status" };
 }
 

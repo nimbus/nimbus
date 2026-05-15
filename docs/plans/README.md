@@ -18,7 +18,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     verification helper, and the libkrun gap on Debian/Ubuntu.
 - `docs/plans/desktop-shell-plan.md`
   - canonical execution plan for Phase 2 of the operator console: a
-    signed, notarized, auto-updating Electron 41.x desktop shell in a
+    signed, notarized, auto-updating Electron 42.x desktop shell in a
     separate `nimbus/desktop` repo that wraps the embedded `/ui/*` SPA
     (DU1-DU10 completed under `desktop-ui-plan.md`). Covers DS0-DS10:
     external credentials, repo scaffold, server discovery/lifecycle,

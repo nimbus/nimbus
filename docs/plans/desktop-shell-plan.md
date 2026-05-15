@@ -43,7 +43,9 @@ lifecycle, auto-update, deep links, and IPC for those concerns only.
 ## Status
 
 - **Status:** `pending` — Phase 1 closeout audit committed
-  `2026-05-15`; this plan opens DS0 when the activation gate fires.
+  `2026-05-15`; DS0A planning/provisioning prep opens after DU11 hardening,
+  and DS0 closes only after the Phase 1 stability gate and credential
+  provisioning checks both pass.
 - **Primary owner:** this plan.
 - **Activation gate:** see Prerequisites.
 - **Related plans:**
@@ -72,7 +74,7 @@ lifecycle, auto-update, deep links, and IPC for those concerns only.
   browser already hits.
 - The Rust server already publishes its address through
   `ServerDiscoveryRecord` (`crates/nimbus-server/src/local_server/discovery.rs`).
-- Three external decisions have not been made and are pre-DS0 blockers:
+- Three external decisions have not been made and are DS0 blockers:
   - Apple Developer ID Application certificate procurement and Apple
     notarization credential storage (DS0).
   - Windows code signing path: Azure Trusted Signing vs. EV HSM
@@ -255,7 +257,7 @@ Separate repo: `nimbus/desktop`.
 
 ```
 nimbus/desktop/
-├── package.json                  # electron 41.x, electron-builder 26.x
+├── package.json                  # electron 42.x, electron-builder 26.x
 ├── tsconfig.json                 # TS 6, strict
 ├── biome.json                    # mirrors nimbus-ui biome config
 ├── electron-builder.yml          # canonical packaging config
@@ -312,7 +314,18 @@ fires on the AppImage build.
 ### DS0 — External decisions and credentials
 
 **Goal:** unblock the rest of the plan by resolving three external
-decisions and procuring credentials.
+decisions and making credential provisioning explicit without ever writing
+secret values into source control.
+
+DS0 is intentionally split into two sub-gates:
+
+- **DS0A — repo and decision docs:** create/provision `nimbus/desktop` and
+  commit the three decision documents with secret names, owners, rotation
+  procedure, and unresolved manual procurement items. No secret value is
+  created or uploaded during DS0A.
+- **DS0B — credential presence:** after the user has procured the Apple,
+  Windows, and update-channel credentials, verify the required GitHub secret
+  names exist for `nimbus/desktop`. DS0 is not `done` until DS0B passes.
 
 **Decisions:**
 
@@ -334,20 +347,20 @@ decisions and procuring credentials.
 **Setup:**
 
 - Provision the `nimbus/desktop` repo on the `nimbus` org.
-- Add `DESKTOP_*` secrets to the GitHub org-level secret store: Apple
-  notarization credentials, Windows signing credentials, optional
-  Chromatic token if visual-regression carries forward into the
-  packaged shell.
+- Document the `DESKTOP_*` secret names that DS0B expects: Apple
+  notarization credentials, Windows signing credentials, update-channel
+  publishing token, and optional Chromatic token if visual regression
+  carries forward into the packaged shell.
 
 **Verification:**
 
-- Three decision documents committed to `nimbus/desktop/docs/decisions/`
+- DS0A: three decision documents committed to `nimbus/desktop/docs/decisions/`
   (one per decision). Each names the chosen path, the rejected paths
   with reasons, and the contact responsible for credential rotation.
-- `gh repo view nimbus/desktop` succeeds with `--web` opening the new
+- DS0A: `gh repo view nimbus/desktop` succeeds with `--web` opening the new
   repo.
-- `gh secret list --repo nimbus/desktop` lists the three secret names
-  (values not visible — confirming presence is enough).
+- DS0B: `gh secret list --repo nimbus/desktop` lists the required secret
+  names (values not visible — confirming presence is enough).
 
 **Status:** `pending`
 
@@ -736,4 +749,4 @@ per-DS-item mapping:
 
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
-| 2026-05-15 | Plan authored | — | Forked from `desktop-ui-plan.md` Phase 2 section. DS0-DS10 sequenced for enterprise rigor (external decisions → scaffold → discovery → security → chrome → updates → packaging → E2E → signing → release CI → docs). Activation gate inherits from Phase 1's "stable" definition (closed DU log + one operator-week dogfood + deferral-matrix review + green `make ci`). Reads `desktop-ui-plan.md`'s Phase 1 deferral matrix as input; only the rotate-token + shutdown Playwright fixtures and the 100+ events/sec live-tail perf lane must convert into a DU11 hardening pass before DS0 opens. |
+| 2026-05-15 | Plan authored | — | Forked from `desktop-ui-plan.md` Phase 2 section. DS0-DS10 sequenced for enterprise rigor (external decisions → scaffold → discovery → security → chrome → updates → packaging → E2E → signing → release CI → docs). Activation gate inherits from Phase 1's "stable" definition (closed DU log + one operator-week dogfood + deferral-matrix review + green `make ci`). Reads `desktop-ui-plan.md`'s Phase 1 deferral matrix as input; rotate-token + shutdown Playwright fixtures and the 100+ events/sec live-tail perf lane must convert into DU11 hardening before DS0A starts, and DS0 itself stays pending until credential-presence verification passes. |

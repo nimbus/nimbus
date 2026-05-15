@@ -1,8 +1,7 @@
-import { useQuery } from "nimbus/react";
 import { Link, useRouterState } from "@tanstack/react-router";
-
-import { NAV_ENTRIES, type NavEntry } from "./nav-entries";
+import { useQuery } from "nimbus/react";
 import { cn } from "../lib/cn";
+import { NAV_ENTRIES, type NavEntry } from "./nav-entries";
 
 export function Sidebar() {
   return (
@@ -16,7 +15,7 @@ export function Sidebar() {
         </div>
         <div className="font-mono text-sm text-default">operator console</div>
       </div>
-      <ul className="flex flex-col gap-px" role="list">
+      <ul className="flex flex-col gap-px">
         {NAV_ENTRIES.map((entry) => (
           <SidebarEntry key={entry.id} entry={entry} />
         ))}
@@ -45,17 +44,13 @@ function SidebarEntry({ entry }: { entry: NavEntry }) {
             ? "bg-surface-2 text-default"
             : "text-muted hover:bg-surface-2 hover:text-default",
         )}
-        style={
-          active ? { borderLeftColor: "var(--color-accent)" } : undefined
-        }
+        style={active ? { borderLeftColor: "var(--color-accent)" } : undefined}
         aria-current={active ? "page" : undefined}
         data-testid={`nav-${entry.id}`}
       >
         <Icon size={14} aria-hidden className="shrink-0" />
         <span className="flex-1">{entry.label}</span>
-        {entry.countQuery ? (
-          <NavCount entry={entry} />
-        ) : null}
+        {entry.countQuery ? <NavCount entry={entry} /> : null}
       </Link>
     </li>
   );
@@ -71,13 +66,16 @@ function NavCount({ entry }: { entry: NavEntry }) {
   const count = Array.isArray(result) ? result.length : undefined;
   if (count === undefined) {
     return (
-      <span
-        className="tabular text-xs text-muted"
-        aria-label="loading"
-        data-testid={`nav-${entry.id}-count-loading`}
-      >
-        ·
-      </span>
+      <>
+        <span
+          className="tabular text-xs text-muted"
+          aria-hidden="true"
+          data-testid={`nav-${entry.id}-count-loading`}
+        >
+          ·
+        </span>
+        <span className="sr-only">loading</span>
+      </>
     );
   }
   return (

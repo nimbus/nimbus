@@ -1,6 +1,5 @@
-import { Command } from "cmdk";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { Command } from "cmdk";
 import {
   Activity,
   Command as CommandIcon,
@@ -15,12 +14,12 @@ import {
   Server,
   Settings,
 } from "lucide-react";
-
-import { NAV_ENTRIES } from "./nav-entries";
-import { useUiStore } from "../store/ui-store";
+import { useEffect, useState } from "react";
 import { Kbd } from "../components/kbd";
 import { cn } from "../lib/cn";
 import { metaGlyph } from "../lib/platform";
+import { useUiStore } from "../store/ui-store";
+import { NAV_ENTRIES } from "./nav-entries";
 
 type Mode = "navigate" | "run" | "filter";
 
@@ -51,7 +50,6 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("navigate");
   const [search, setSearch] = useState("");
-  const overlayRef = useRef<HTMLDivElement | null>(null);
   const [recent, setRecent] = useState<string[]>(loadRecent);
 
   useEffect(() => {
@@ -96,19 +94,18 @@ export function CommandPalette() {
 
   if (!open) return null;
   return (
-    <div
-      ref={overlayRef}
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 backdrop-blur-[1px] pt-[12vh] animate-in fade-in-0"
-      onClick={(event) => {
-        if (event.target === overlayRef.current) setOpen(false);
-      }}
-    >
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 backdrop-blur-[1px] pt-[12vh] animate-in fade-in-0">
+      <button
+        type="button"
+        aria-label="Close command palette"
+        className="absolute inset-0 cursor-default"
+        onClick={() => setOpen(false)}
+      />
       <Command
         loop
         role="dialog"
         aria-label="Command palette"
-        className="w-[min(640px,90vw)] overflow-hidden rounded-lg border bg-surface shadow-2xl border-strong animate-in zoom-in-95 fade-in-0"
+        className="relative w-[min(640px,90vw)] overflow-hidden rounded-lg border bg-surface shadow-2xl border-strong animate-in zoom-in-95 fade-in-0"
         data-testid="command-palette"
       >
         <div className="flex items-center gap-2 border-b border-app px-3 py-2">
@@ -148,7 +145,7 @@ export function CommandPalette() {
                     key={`recent-${id}`}
                     icon={Icon}
                     label={entry.label}
-                    hint={metaGlyph + " ⏎"}
+                    hint={`${metaGlyph} ⏎`}
                     onSelect={() => {
                       rememberAndClose(id, () => {
                         setOpen(false);
@@ -188,7 +185,9 @@ export function CommandPalette() {
               {runActions.map((action) => (
                 <PaletteItem
                   key={action.id}
-                  icon={action.id === "refresh-current-view" ? RotateCw : PlayCircle}
+                  icon={
+                    action.id === "refresh-current-view" ? RotateCw : PlayCircle
+                  }
                   label={action.label}
                   hint={action.hint}
                   onSelect={() => rememberAndClose(action.id, action.perform)}
@@ -250,11 +249,8 @@ function ModeToggle({
     { id: "filter", label: "Filter" },
   ];
   return (
-    <div
-      role="group"
-      aria-label="Palette mode"
-      className="inline-flex overflow-hidden rounded-md border text-xs border-app"
-    >
+    <fieldset className="inline-flex overflow-hidden rounded-md border text-xs border-app">
+      <legend className="sr-only">Palette mode</legend>
       {modes.map((m) => (
         <button
           key={m.id}
@@ -272,7 +268,7 @@ function ModeToggle({
           {m.label}
         </button>
       ))}
-    </div>
+    </fieldset>
   );
 }
 
@@ -294,7 +290,9 @@ function PaletteItem({
     >
       <Icon size={14} className="shrink-0" />
       <span className="flex-1 text-default">{label}</span>
-      {hint ? <span className="text-xs font-mono text-muted">{hint}</span> : null}
+      {hint ? (
+        <span className="text-xs font-mono text-muted">{hint}</span>
+      ) : null}
     </Command.Item>
   );
 }
@@ -305,7 +303,9 @@ function loadRecent(): string[] {
     const raw = window.localStorage.getItem(RECENT_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((v) => typeof v === "string")
+      : [];
   } catch {
     return [];
   }

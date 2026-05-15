@@ -1,11 +1,11 @@
+import { createRouter, RouterProvider } from "@tanstack/react-router";
+import { NimbusProvider } from "nimbus/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { RouterProvider, createRouter } from "@tanstack/react-router";
-import { NimbusProvider } from "nimbus/react";
 
 import "./styles/globals.css";
-import { routeTree } from "./route-tree.gen";
 import { getNimbusClient } from "./lib/nimbus-client";
+import { routeTree } from "./route-tree.gen";
 
 const router = createRouter({
   routeTree,
