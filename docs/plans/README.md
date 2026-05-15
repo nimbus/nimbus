@@ -16,6 +16,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
+- `docs/plans/desktop-shell-plan.md`
+  - canonical execution plan for Phase 2 of the operator console: a
+    signed, notarized, auto-updating Electron 41.x desktop shell in a
+    separate `nimbus/desktop` repo that wraps the embedded `/ui/*` SPA
+    (DU1-DU10 completed under `desktop-ui-plan.md`). Covers DS0-DS10:
+    external credentials, repo scaffold, server discovery/lifecycle,
+    Electron Fuses + IPC security baseline, native chrome (tray/menu/
+    window), auto-update, per-platform packaging, packaged E2E, code
+    signing, release CI, and operator/security docs. Activates after
+    Phase 1 stability gate fires and the DU11 hardening pass lands.
 
 ## Current Reference Baselines
 
