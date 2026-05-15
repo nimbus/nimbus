@@ -16,6 +16,7 @@ import { Route as NetworkRouteImport } from './routes/network'
 import { Route as MachinesRouteImport } from './routes/machines'
 import { Route as ComputeRouteImport } from './routes/compute'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ComputeRunnerRouteImport } from './routes/compute_.runner'
 
 const StorageRoute = StorageRouteImport.update({
   id: '/storage',
@@ -52,6 +53,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ComputeRunnerRoute = ComputeRunnerRouteImport.update({
+  id: '/compute_/runner',
+  path: '/compute/runner',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -61,6 +67,7 @@ export interface FileRoutesByFullPath {
   '/observability': typeof ObservabilityRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
+  '/compute/runner': typeof ComputeRunnerRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -70,6 +77,7 @@ export interface FileRoutesByTo {
   '/observability': typeof ObservabilityRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
+  '/compute/runner': typeof ComputeRunnerRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -80,6 +88,7 @@ export interface FileRoutesById {
   '/observability': typeof ObservabilityRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
+  '/compute_/runner': typeof ComputeRunnerRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -91,6 +100,7 @@ export interface FileRouteTypes {
     | '/observability'
     | '/settings'
     | '/storage'
+    | '/compute/runner'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -100,6 +110,7 @@ export interface FileRouteTypes {
     | '/observability'
     | '/settings'
     | '/storage'
+    | '/compute/runner'
   id:
     | '__root__'
     | '/'
@@ -109,6 +120,7 @@ export interface FileRouteTypes {
     | '/observability'
     | '/settings'
     | '/storage'
+    | '/compute_/runner'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -119,6 +131,7 @@ export interface RootRouteChildren {
   ObservabilityRoute: typeof ObservabilityRoute
   SettingsRoute: typeof SettingsRoute
   StorageRoute: typeof StorageRoute
+  ComputeRunnerRoute: typeof ComputeRunnerRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -172,6 +185,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/compute_/runner': {
+      id: '/compute_/runner'
+      path: '/compute/runner'
+      fullPath: '/compute/runner'
+      preLoaderRoute: typeof ComputeRunnerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -183,6 +203,7 @@ const rootRouteChildren: RootRouteChildren = {
   ObservabilityRoute: ObservabilityRoute,
   SettingsRoute: SettingsRoute,
   StorageRoute: StorageRoute,
+  ComputeRunnerRoute: ComputeRunnerRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

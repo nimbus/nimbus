@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { useMemo, useState } from "react";
 
@@ -132,7 +132,16 @@ function ComputePage() {
             system tenant.
           </p>
         </div>
-        <BundleHint bundles={bundles} />
+        <div className="flex items-center gap-3">
+          <BundleHint bundles={bundles} />
+          <Link
+            to="/compute/runner"
+            data-testid="compute-open-runner"
+            className="rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          >
+            runner →
+          </Link>
+        </div>
       </header>
 
       <nav
@@ -298,6 +307,7 @@ function FunctionsTable({
             <Th>Bundle</Th>
             <Th>Last status</Th>
             <Th>Last run</Th>
+            <Th>Action</Th>
           </tr>
         </thead>
         <tbody>
@@ -343,6 +353,20 @@ function FunctionsTable({
                     <RelativeTime epochMs={fn.lastRunAt} />
                   ) : (
                     <span className="tabular text-muted">never</span>
+                  )}
+                </Td>
+                <Td>
+                  {fn.path ? (
+                    <Link
+                      to="/compute/runner"
+                      search={{ fn: fn.path }}
+                      data-testid={`compute-function-run-${fn.path}`}
+                      className="rounded border border-app px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+                    >
+                      run
+                    </Link>
+                  ) : (
+                    <span className="tabular text-muted">—</span>
                   )}
                 </Td>
               </tr>
