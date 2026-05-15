@@ -26,6 +26,7 @@ nimbus = { path = "../nimbus", features = ["aws-kms"] }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+open = "5.3"
 rand.workspace = true
 reqwest.workspace = true
 semver.workspace = true

@@ -83,6 +83,11 @@ pub(crate) const TOKEN_ROTATE_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus token rotate";
 
+pub(crate) const UI_HELP_EXAMPLES: &str = "\
+Examples:
+  nimbus ui
+  nimbus ui --ensure";
+
 pub(crate) const MACHINE_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus machine init --now
