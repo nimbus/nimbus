@@ -36,6 +36,9 @@ __pycache__
 .claude/settings.local.json
 .nimbus
 **/.nimbus
+
+# playwright-cli snapshots/screenshots/traces (per-session artifacts)
+.playwright-cli/
 .env.local
 **/.env.local
 demos/convex/vendor/browser.bundle.js
