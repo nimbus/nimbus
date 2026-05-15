@@ -7,13 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.31] - 2026-05-14
 
-### Changed
+### Documentation
 
-- Ship the Nimbus-owned bootc machine OS as the macOS default, pinned to the
-  proven `ghcr.io/nimbus/machine-os:v0.1.30` digest.
-- Demote the legacy Podman/FCOS machine image path to explicit
-  diagnostic/repair overrides.
-- Mark the bootc machine default execution plan complete.
+- Update CHANGELOG.md for v0.1.30 by @github-actions[bot]
 
 
 
