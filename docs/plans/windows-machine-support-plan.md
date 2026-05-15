@@ -112,6 +112,11 @@ Reviewed against:
   That does not change WSL2's provider-specific tarball and shell-bootstrap
   contract; future Windows artifacts should stay provider-specific rather than
   forcing all machine providers into one disk-image shape.
+- `nimbus/machine-os` now has a preparatory provider-artifact contract for
+  Windows: the supported macOS artifact remains AppleHV raw disk, while WSL2
+  is reserved as a rootfs Tar artifact selected with `disktype=wsl`; Hyper-V
+  remains a deferred VHDX-style artifact lane. This is metadata and packaging
+  preparation only, not a supported Windows release output.
 - The machine module stubs all lifecycle operations with explicit errors on
   non-Unix hosts. The sandbox backends gate on Linux at runtime.
 - The distribution plan lists Windows as `Future` with `WSL2` as the execution
@@ -1042,6 +1047,8 @@ Repo outputs:
   (0x08000000) creation flags on every invocation
 - Tar rootfs image artifact from nimbus-machine-os (WSL-specific format,
   separate from the macOS Raw artifact)
+  - preparatory packaging metadata exists in `nimbus/machine-os`, but `WIN2`
+    still owns the first real Windows consumption proof
 - WSL distro lifecycle:
   - `wsl --import nimbus-{name} {path} {tarball} --version 2`
   - `wsl -d nimbus-{name}` (start)
@@ -1320,3 +1327,12 @@ Acceptance criteria:
   bootstrap, while the macOS FCOS-first raw-image decision and any separate
   `fedora-bootc` experiments stay outside the Windows provider contract.
   Verification: docs-only plan update.
+- 2026-05-15: Added machine-os prep for future provider artifact families
+  without promoting Windows support. `nimbus/machine-os` now documents
+  provider artifacts, keeps `image/` as the production bootc appliance recipe,
+  adds generic artifact packaging metadata, and verifies that AppleHV raw,
+  WSL rootfs Tar, and deferred Hyper-V VHDX contracts stay distinct. Durable
+  rule: this does not make Windows supported; `WIN2` must still prove WSL2
+  `wsl --import`, shell bootstrap, nested systemd, SSH, named-pipe forwarding,
+  WSL networking, service lifecycle, and cleanup before a WSL artifact becomes
+  a published supported release output.

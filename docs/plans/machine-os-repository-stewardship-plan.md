@@ -234,7 +234,15 @@ maintenance stream.
 ### Provider Artifact Follow-Up
 
 The repository is structurally ready to add Windows artifacts without undoing
-the cleanup:
+the cleanup. The first prep slice is now complete in `nimbus/machine-os`:
+
+- `scripts/package-oci.sh` accepts a generic `--artifact` input while keeping
+  `--raw-disk` as the current macOS-compatible alias.
+- `scripts/verify-provider-artifact-contracts.sh` proves that AppleHV raw,
+  WSL rootfs Tar, and deferred Hyper-V VHDX artifacts get distinct
+  provider selectors and media types.
+- `docs/provider-artifacts.md` records that WSL2 and Hyper-V artifacts are
+  prepared contracts only, not supported release outputs.
 
 - keep `image/` as the single current production recipe while the guest content
   is shared;
