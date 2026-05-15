@@ -42,7 +42,7 @@ export function CopyChip({
         "inline-flex max-w-[28ch] truncate rounded px-1 font-mono text-xs",
         "hover:bg-surface-2 hover:text-default focus-visible:bg-surface-2",
         hideUntilHover &&
-          "opacity-40 transition-opacity duration-150 hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-100",
+          "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-100",
         className,
       )}
     >
