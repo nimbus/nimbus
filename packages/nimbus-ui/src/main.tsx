@@ -1,7 +1,23 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { RouterProvider, createRouter } from "@tanstack/react-router";
+import { NimbusProvider } from "nimbus/react";
 
-import { App } from "./app";
+import "./styles/globals.css";
+import { routeTree } from "./route-tree.gen";
+import { getNimbusClient } from "./lib/nimbus-client";
+
+const router = createRouter({
+  routeTree,
+  basepath: window.location.pathname.startsWith("/ui") ? "/ui" : undefined,
+  defaultPreload: "intent",
+});
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}
 
 const container = document.getElementById("root");
 if (!container) {
@@ -10,6 +26,8 @@ if (!container) {
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <NimbusProvider client={getNimbusClient()}>
+      <RouterProvider router={router} />
+    </NimbusProvider>
   </StrictMode>,
 );
