@@ -16,7 +16,9 @@ import { Route as NetworkRouteImport } from './routes/network'
 import { Route as MachinesRouteImport } from './routes/machines'
 import { Route as ComputeRouteImport } from './routes/compute'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as StorageTenantRouteImport } from './routes/storage_.$tenant'
 import { Route as ComputeRunnerRouteImport } from './routes/compute_.runner'
+import { Route as StorageTenantTableRouteImport } from './routes/storage_.$tenant_.$table'
 
 const StorageRoute = StorageRouteImport.update({
   id: '/storage',
@@ -53,9 +55,19 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StorageTenantRoute = StorageTenantRouteImport.update({
+  id: '/storage_/$tenant',
+  path: '/storage/$tenant',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ComputeRunnerRoute = ComputeRunnerRouteImport.update({
   id: '/compute_/runner',
   path: '/compute/runner',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StorageTenantTableRoute = StorageTenantTableRouteImport.update({
+  id: '/storage_/$tenant_/$table',
+  path: '/storage/$tenant/$table',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -68,6 +80,8 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/compute/runner': typeof ComputeRunnerRoute
+  '/storage/$tenant': typeof StorageTenantRoute
+  '/storage/$tenant/$table': typeof StorageTenantTableRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -78,6 +92,8 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/compute/runner': typeof ComputeRunnerRoute
+  '/storage/$tenant': typeof StorageTenantRoute
+  '/storage/$tenant/$table': typeof StorageTenantTableRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -89,6 +105,8 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/compute_/runner': typeof ComputeRunnerRoute
+  '/storage_/$tenant': typeof StorageTenantRoute
+  '/storage_/$tenant_/$table': typeof StorageTenantTableRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -101,6 +119,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/storage'
     | '/compute/runner'
+    | '/storage/$tenant'
+    | '/storage/$tenant/$table'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -111,6 +131,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/storage'
     | '/compute/runner'
+    | '/storage/$tenant'
+    | '/storage/$tenant/$table'
   id:
     | '__root__'
     | '/'
@@ -121,6 +143,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/storage'
     | '/compute_/runner'
+    | '/storage_/$tenant'
+    | '/storage_/$tenant_/$table'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -132,6 +156,8 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   StorageRoute: typeof StorageRoute
   ComputeRunnerRoute: typeof ComputeRunnerRoute
+  StorageTenantRoute: typeof StorageTenantRoute
+  StorageTenantTableRoute: typeof StorageTenantTableRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -185,11 +211,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/storage_/$tenant': {
+      id: '/storage_/$tenant'
+      path: '/storage/$tenant'
+      fullPath: '/storage/$tenant'
+      preLoaderRoute: typeof StorageTenantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/compute_/runner': {
       id: '/compute_/runner'
       path: '/compute/runner'
       fullPath: '/compute/runner'
       preLoaderRoute: typeof ComputeRunnerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/storage_/$tenant_/$table': {
+      id: '/storage_/$tenant_/$table'
+      path: '/storage/$tenant/$table'
+      fullPath: '/storage/$tenant/$table'
+      preLoaderRoute: typeof StorageTenantTableRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -204,6 +244,8 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   StorageRoute: StorageRoute,
   ComputeRunnerRoute: ComputeRunnerRoute,
+  StorageTenantRoute: StorageTenantRoute,
+  StorageTenantTableRoute: StorageTenantTableRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
