@@ -6,7 +6,7 @@ pub(crate) async fn query_documents(
     Path(tenant_id): Path<String>,
     Json(query): Json<Query>,
 ) -> Result<Json<DataResponse>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let service = state.service.clone();
     let guard = RequestCancellationGuard::new();
     let cancellation = guard.token();
@@ -34,7 +34,7 @@ pub(crate) async fn query_documents_paginated(
     Path(tenant_id): Path<String>,
     Json(query): Json<PaginatedQuery>,
 ) -> Result<Json<Page>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let service = state.service.clone();
     let guard = RequestCancellationGuard::new();
     let cancellation = guard.token();
@@ -62,7 +62,7 @@ pub(crate) async fn read_journal(
     Path(tenant_id): Path<String>,
     QueryParams(request): QueryParams<JournalStreamRequest>,
 ) -> Result<Json<JournalStreamResponse>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let after = SequenceNumber(request.after.unwrap_or(0));
     let limit = request
         .limit
@@ -87,7 +87,7 @@ pub(crate) async fn bootstrap_journal(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<JournalBootstrapResponse>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
+    let tenant_id = parse_user_tenant_id(tenant_id)?;
     let bootstrap = state
         .service
         .clone()

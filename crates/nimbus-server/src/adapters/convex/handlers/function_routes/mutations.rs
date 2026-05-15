@@ -18,7 +18,11 @@ pub(crate) async fn mutation(
         "convex mutation route requires Convex support state",
     )
     .await?;
-    let value = match request {
+    let trace = match &request {
+        ConvexMutationRequest::Named(request) => RunTrace::new(request.name.clone(), "mutation"),
+        ConvexMutationRequest::Raw { .. } => RunTrace::new("<raw-mutation>", "mutation"),
+    };
+    let result = match request {
         ConvexMutationRequest::Named(request) if registry.runtime_bundle().is_some() => {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
@@ -42,7 +46,7 @@ pub(crate) async fn mutation(
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-mutation")),
             )
-            .await?
+            .await
         }
         ConvexMutationRequest::Named(request) => {
             let request_cancellation = RequestCancellationGuard::new();
@@ -55,7 +59,7 @@ pub(crate) async fn mutation(
                 auth.as_ref(),
                 Some(request_cancellation.token()),
             )
-            .await?
+            .await
         }
         ConvexMutationRequest::Raw { mutation } => {
             let request_cancellation = RequestCancellationGuard::new();
@@ -67,8 +71,14 @@ pub(crate) async fn mutation(
                 auth.as_ref(),
                 Some(request_cancellation.token()),
             )
-            .await?
+            .await
         }
     };
+    let status = if result.is_ok() { "ok" } else { "error" };
+    let error = result.as_ref().err().map(ToString::to_string);
+    trace
+        .record(&service, &tenant_id, status, error.as_deref())
+        .await;
+    let value = result?;
     Ok(Json(value))
 }

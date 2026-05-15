@@ -1,0 +1,17 @@
+[package]
+name = "nimbus-machine"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nimbus-core = { path = "../nimbus-core" }
+serde.workspace = true

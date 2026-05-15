@@ -1,5 +1,6 @@
 use super::*;
 use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
+use crate::local_server::authorize_standard_server_access;
 
 pub(super) async fn registry_and_auth(
     state: &Arc<AppState>,
@@ -8,6 +9,39 @@ pub(super) async fn registry_and_auth(
     headers: &HeaderMap,
     expectation: &'static str,
 ) -> Result<(Arc<ConvexRegistry>, Option<InvocationAuth>), AppError> {
+    if crate::system_tenant::is_system_tenant_id(tenant_id) {
+        let registry = state
+            .system_convex_registry()
+            .ok_or_else(|| AppError::not_found(expectation))?;
+        let auth_method =
+            match authorize_standard_server_access(headers, state.local_server_security.as_deref())
+            {
+                Ok(auth_method) => auth_method,
+                Err(error) => {
+                    state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
+                        route_family,
+                        tenant_id: Some(tenant_id.to_string()),
+                        auth_scope: "server_access",
+                        auth_method: None,
+                        success: false,
+                        origin: crate::local_server::origin_from_headers(headers),
+                        reason: error.to_string(),
+                    });
+                    return Err(error);
+                }
+            };
+        state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
+            route_family,
+            tenant_id: Some(tenant_id.to_string()),
+            auth_scope: "server_access",
+            auth_method,
+            success: true,
+            origin: crate::local_server::origin_from_headers(headers),
+            reason: "authorized".to_string(),
+        });
+        return Ok((registry, None));
+    }
+
     let deployment = state.current_deployment();
     let registry = deployment
         .convex_registry()

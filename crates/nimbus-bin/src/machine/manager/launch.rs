@@ -12,11 +12,12 @@ use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineStateRecord, MachineVolume,
     describe_machine_image_source, machine_bootstrap_mode,
 };
+use super::helpers::resolve_machine_helper_binaries;
 use super::image::resolve_bootable_image_path;
 use super::ports::allocate_machine_ssh_port;
 use super::{
-    DEFAULT_MACHINE_MAC_ADDRESS, MACHINE_API_FORWARD_USER, MachineHelperBinaryPaths,
-    MachineRuntimeState, READY_VSOCK_PORT, mount_tag,
+    DEFAULT_MACHINE_MAC_ADDRESS, MACHINE_API_FORWARD_USER, MachineRuntimeState, READY_VSOCK_PORT,
+    mount_tag,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,7 +70,7 @@ impl MachineLaunchPlan {
         config: &MachineConfigRecord,
         state: &MachineStateRecord,
     ) -> Result<Self, Error> {
-        let helper_binaries = MachineHelperBinaryPaths::resolve()?;
+        let helper_binaries = resolve_machine_helper_binaries()?;
         let image_path =
             resolve_bootable_image_path(paths, &config.guest.image_source, config.provider)?;
         let bootstrap_mode = machine_bootstrap_mode(config);

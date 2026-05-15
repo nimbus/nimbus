@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nimbus::Error;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use signal_hook_registry::{SigId, register as register_signal, unregister as unregister_signal};
 
@@ -29,6 +29,7 @@ use self::readiness::{
 };
 use self::stop::{cleanup_runtime_artifacts, handle_start_machine_error, remove_file_if_exists};
 
+pub(super) use super::record::{MachineHelperBinaryPaths, MachineRuntimeState};
 use super::{
     MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
     MachineStateRecord, write_json_file,
@@ -83,18 +84,6 @@ const PODMAN_DARWIN_HELPER_DIRECTORIES: &[&str] = &[
     "/usr/lib/podman",
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct MachineRuntimeState {
-    pub(super) helper_binaries: MachineHelperBinaryPaths,
-    pub(super) image_path: PathBuf,
-    pub(super) efi_variable_store_path: PathBuf,
-    #[serde(default)]
-    pub(super) machine_image_source: String,
-    pub(super) ssh_port: u16,
-    pub(super) rest_uri: String,
-    pub(super) ready_vsock_port: u32,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum GuestNimbusBinarySourceKind {
@@ -121,12 +110,6 @@ pub(super) struct DesiredGuestNimbusBinaryStatus {
 pub(super) struct ObservedGuestNimbusBinaryStatus {
     pub(super) version: Option<String>,
     pub(super) hash: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct MachineHelperBinaryPaths {
-    pub(super) krunkit: PathBuf,
-    pub(super) gvproxy: PathBuf,
 }
 
 struct StartupSignalMonitor {

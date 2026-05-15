@@ -5,6 +5,7 @@ use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
 use nimbus_engine::Service;
 use nimbus_runtime::{HostCallCancellation, InvocationAuth};
+use tokio::sync::watch;
 use tracing::warn;
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
@@ -14,30 +15,40 @@ use crate::application_auth::ApplicationAuthVerifier;
 use crate::error_envelope::StructuredHttpError;
 use crate::license::LicenseState;
 use crate::local_server::{LocalServerAuditEvent, LocalServerSecurityState};
+use crate::machine_lifecycle::MachineLifecycleManager;
+use crate::service_manager::SandboxServiceManager;
 use crate::service_registry::RuntimeServiceRegistry;
 
 pub(crate) struct AppStateConfig {
     pub(crate) service: Arc<Service>,
     pub(crate) convex_registry: Option<ConvexRegistry>,
+    pub(crate) system_convex_registry: Option<ConvexRegistry>,
     pub(crate) application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
     pub(crate) cloud_functions_registry: Option<CloudFunctionsRegistry>,
     pub(crate) firebase_config: Option<FirebaseConfig>,
     pub(crate) license_state: LicenseState,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    pub(crate) sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
+    pub(crate) machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     pub(crate) deploy_admin_token: Option<String>,
     pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
     pub(crate) listen_addr: Option<SocketAddr>,
+    pub(crate) server_shutdown: Option<watch::Sender<bool>>,
 }
 
 /// Shared application state.
 pub(crate) struct AppState {
     pub(crate) service: Arc<Service>,
     pub(crate) active_deployment: Arc<ActiveDeployment>,
+    system_convex_registry: Option<Arc<ConvexRegistry>>,
     pub(crate) license_state: Arc<LicenseState>,
     pub(crate) runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
+    machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     pub(crate) deploy_admin_token: Option<String>,
     pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
     pub(crate) listen_addr: Option<SocketAddr>,
+    server_shutdown: Option<watch::Sender<bool>>,
 }
 
 impl AppState {
@@ -45,16 +56,21 @@ impl AppState {
         let AppStateConfig {
             service,
             convex_registry,
+            system_convex_registry,
             application_auth_verifier,
             cloud_functions_registry,
             firebase_config,
             license_state,
             runtime_service_registry,
+            sandbox_service_manager,
+            machine_lifecycle_manager,
             deploy_admin_token,
             local_server_security,
             listen_addr,
+            server_shutdown,
         } = config;
         let convex_registry = convex_registry.map(Arc::new);
+        let system_convex_registry = system_convex_registry.map(Arc::new);
         let initial_generation =
             u64::from(convex_registry.is_some() || cloud_functions_registry.is_some());
         let active_deployment = DeploymentState {
@@ -67,11 +83,15 @@ impl AppState {
         Self {
             service,
             active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
+            system_convex_registry,
             license_state: Arc::new(license_state),
             runtime_service_registry,
+            sandbox_service_manager,
+            machine_lifecycle_manager,
             deploy_admin_token,
             local_server_security,
             listen_addr,
+            server_shutdown,
         }
     }
 
@@ -81,6 +101,28 @@ impl AppState {
 
     pub(crate) fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
         self.runtime_service_registry.clone()
+    }
+
+    pub(crate) fn sandbox_service_manager(&self) -> Option<Arc<SandboxServiceManager>> {
+        self.sandbox_service_manager.clone()
+    }
+
+    pub(crate) fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
+        self.machine_lifecycle_manager.clone()
+    }
+
+    pub(crate) fn system_convex_registry(&self) -> Option<Arc<ConvexRegistry>> {
+        self.system_convex_registry.clone()
+    }
+
+    pub(crate) fn request_server_shutdown(&self) -> std::result::Result<(), AppError> {
+        let sender = self.server_shutdown.as_ref().ok_or_else(|| {
+            AppError::from(Error::Internal(
+                "server shutdown is unavailable for this router".to_owned(),
+            ))
+        })?;
+        sender.send_replace(true);
+        Ok(())
     }
 
     pub(crate) fn install_cloud_functions_runtime_hooks(
@@ -269,6 +311,7 @@ mod tests {
         let state = AppState::from_config(AppStateConfig {
             service,
             convex_registry: Some(ConvexRegistry::empty()),
+            system_convex_registry: None,
             application_auth_verifier: None,
             cloud_functions_registry: None,
             firebase_config: None,
@@ -278,9 +321,12 @@ mod tests {
                     crate::sandbox::EmptySandboxCatalog,
                 )),
             ),
+            sandbox_service_manager: None,
+            machine_lifecycle_manager: None,
             deploy_admin_token: None,
             local_server_security: None,
             listen_addr: None,
+            server_shutdown: None,
         });
 
         assert!(

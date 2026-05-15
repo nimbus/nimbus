@@ -130,7 +130,8 @@ impl Service {
             );
             self.dispatch_or_enqueue_subscription_work(runtime.clone(), work);
         }
-        self.dispatch_or_enqueue_trigger_candidates(runtime, vec![commit.clone()]);
+        self.dispatch_or_enqueue_trigger_candidates(runtime.clone(), vec![commit.clone()]);
+        self.notify_committed_mutation_observers(runtime.as_ref(), commit);
     }
 
     pub(in crate::service) fn process_applied_commit_batch(
@@ -182,7 +183,10 @@ impl Service {
         }
 
         if emit_trigger_candidates {
-            self.dispatch_or_enqueue_trigger_candidates(runtime, applied.to_vec());
+            self.dispatch_or_enqueue_trigger_candidates(runtime.clone(), applied.to_vec());
+        }
+        for commit in applied {
+            self.notify_committed_mutation_observers(runtime.as_ref(), commit);
         }
     }
 }

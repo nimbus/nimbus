@@ -3,7 +3,15 @@ use super::*;
 #[tokio::test]
 async fn schedule_endpoint_returns_job_id_and_lists_pending_job() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_system_convex_registry(
+                ConvexRegistry::from_embedded_system_bundle()
+                    .expect("embedded system Convex registry should load"),
+            )
+            .build(),
+    )
+    .await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -43,6 +51,30 @@ async fn schedule_endpoint_returns_job_id_and_lists_pending_job() {
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0]["mutation"]["type"], json!("insert"));
     assert_eq!(jobs[0]["mutation"]["table"], json!("tasks"));
+
+    let system_jobs = api
+        .convex_named_query(
+            "_nimbus",
+            "scheduled_jobs:list",
+            json!({ "tenantId": "demo", "status": null, "limit": null }),
+        )
+        .await;
+    assert_eq!(system_jobs.status(), StatusCode::OK);
+    let system_jobs = system_jobs
+        .json::<serde_json::Value>()
+        .await
+        .expect("system scheduled jobs query should parse");
+    let system_jobs = system_jobs
+        .as_array()
+        .expect("system scheduled jobs should be an array");
+    assert_eq!(system_jobs.len(), 1);
+    assert_eq!(system_jobs[0]["tenantId"], json!("demo"));
+    assert_eq!(
+        system_jobs[0]["functionPath"],
+        json!("documents.tasks.insert")
+    );
+    assert_eq!(system_jobs[0]["status"], json!("pending"));
+    assert_eq!(system_jobs[0]["args"]["type"], json!("insert"));
 }
 
 #[tokio::test]
@@ -70,7 +102,15 @@ async fn schedule_endpoint_returns_not_found_for_unknown_tenant() {
 #[tokio::test]
 async fn cancel_scheduled_job_endpoint_removes_pending_job() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_system_convex_registry(
+                ConvexRegistry::from_embedded_system_bundle()
+                    .expect("embedded system Convex registry should load"),
+            )
+            .build(),
+    )
+    .await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -111,4 +151,18 @@ async fn cancel_scheduled_job_endpoint_removes_pending_job() {
         .await
         .expect("jobs should parse");
     assert_eq!(jobs["jobs"], json!([]));
+
+    let system_jobs = api
+        .convex_named_query(
+            "_nimbus",
+            "scheduled_jobs:list",
+            json!({ "tenantId": "demo", "status": null, "limit": null }),
+        )
+        .await;
+    assert_eq!(system_jobs.status(), StatusCode::OK);
+    let system_jobs = system_jobs
+        .json::<serde_json::Value>()
+        .await
+        .expect("system scheduled jobs query should parse");
+    assert_eq!(system_jobs, json!([]));
 }

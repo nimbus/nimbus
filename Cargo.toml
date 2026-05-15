@@ -2,6 +2,7 @@
 members = [
     "crates/nimbus",
     "crates/nimbus-bin",
+    "crates/nimbus-machine",
     "crates/nimbus-runtime",
     "crates/nimbus-sandbox",
     "crates/nimbus-core",

@@ -7,7 +7,7 @@ fn helper_resolution_honors_environment_overrides() {
     let gvproxy_path = temp_dir.path().join("gvproxy");
     let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
     let resolved =
-        MachineHelperBinaryPaths::resolve().expect("helper binaries should resolve via env");
+        resolve_machine_helper_binaries().expect("helper binaries should resolve via env");
 
     assert_eq!(resolved.krunkit, krunkit_path);
     assert_eq!(resolved.gvproxy, gvproxy_path);

@@ -57,6 +57,7 @@ pub(crate) async fn run_start_command(
     let compose_selection = resolve_optional_compose_selection(&command)?;
     let sandbox_service_manager =
         load_sandbox_service_manager(compose_selection.as_ref(), &compose_control_data_dir)?;
+    let machine_lifecycle_manager = crate::machine::host_machine_lifecycle_manager()?;
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
     let local_server_security = Arc::new(LocalServerSecurityState::new(
@@ -107,6 +108,7 @@ pub(crate) async fn run_start_command(
     if let Some(manager) = sandbox_service_manager {
         serve_options = serve_options.with_sandbox_service_manager(manager);
     }
+    serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
     if let Some(token) = command.deploy_admin_token {
         serve_options = serve_options.with_deploy_admin_token(token);
     }

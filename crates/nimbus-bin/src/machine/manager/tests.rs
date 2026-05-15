@@ -16,7 +16,7 @@ use tempfile::TempDir;
 use super::guest::{ensure_guest_nimbus_socket_shell_script, guest_nimbus_archive_name};
 use super::helpers::{
     bundled_helper_candidates_for_executable, known_helper_candidates, resolve_helper_binary,
-    write_helper_stub,
+    resolve_machine_helper_binaries, write_helper_stub,
 };
 use super::image::{
     attestation_repositories_for_reference, build_digest_reference,

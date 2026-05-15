@@ -108,6 +108,7 @@ fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> {
                 port_binding.protocol,
                 port_binding.host_socket_addr(),
             )
+            .with_guest_port(port_binding.guest_port)
         })
         .collect()
 }

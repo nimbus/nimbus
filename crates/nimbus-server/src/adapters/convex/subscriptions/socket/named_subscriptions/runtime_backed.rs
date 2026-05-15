@@ -23,6 +23,7 @@ pub(super) async fn handle_runtime_named_subscription(
         page_size,
         cursor,
     } = request;
+    let query_key = named_subscription_query_key(&name, &args, page_size, cursor.as_deref());
 
     let setup = {
         let service = ctx.state.service.clone();
@@ -71,7 +72,8 @@ pub(super) async fn handle_runtime_named_subscription(
             return;
         }
     };
-    let _ = publish_runtime_subscription_setup(
+    let primary_subscription_id = handle.primary_subscription_id;
+    if publish_runtime_subscription_setup(
         RuntimeSubscriptionPublishContext {
             outbound_tx: ctx.outbound_tx,
             subscription_tx: ctx.subscription_tx,
@@ -83,7 +85,10 @@ pub(super) async fn handle_runtime_named_subscription(
         setup.transform,
         handle,
     )
-    .await;
+    .await
+    {
+        record_active_subscription_status(ctx, primary_subscription_id, query_key).await;
+    }
 }
 
 async fn publish_runtime_subscription_setup(

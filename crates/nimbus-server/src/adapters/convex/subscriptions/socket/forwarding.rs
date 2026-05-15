@@ -8,6 +8,7 @@ pub(super) async fn unsubscribe_active_subscriptions(
     outbound_tx: &mpsc::Sender<ServerMessage>,
     emit_errors: bool,
     transforms: &RwLock<ConvexSubscriptionTransforms>,
+    subscription_statuses: &SubscriptionStatuses,
 ) {
     for (convex_subscription_id, active_subscription) in active_subscriptions {
         remove_subscription_transform(transforms, convex_subscription_id);
@@ -24,6 +25,7 @@ pub(super) async fn unsubscribe_active_subscriptions(
                     .await;
             }
         }
+        delete_subscription_status(service, subscription_statuses, convex_subscription_id).await;
         active_subscription.shutdown_and_drain().await;
     }
 }
@@ -37,6 +39,7 @@ pub(super) async fn run_subscription_forwarder(
     registry: Arc<ConvexRegistry>,
     runtime_service_registry: Arc<dyn crate::service_registry::RuntimeServiceRegistry>,
     tenant_id: TenantId,
+    subscription_statuses: SubscriptionStatuses,
     runtime_cancellation: HostCallCancellation,
 ) {
     let mut subscription_rx = subscription_rx;
@@ -48,6 +51,12 @@ pub(super) async fn run_subscription_forwarder(
                 snapshot,
                 commit_hint,
             } => {
+                record_subscription_delivery_status(
+                    &service,
+                    &subscription_statuses,
+                    subscription_id,
+                )
+                .await;
                 let request_id_for_transform = request_id.clone();
                 match apply_subscription_transform(
                     RuntimeTransformContext::new(
@@ -83,13 +92,24 @@ pub(super) async fn run_subscription_forwarder(
                 }
             }
             SubscriptionUpdate::Error {
+                subscription_id,
                 request_id,
                 message,
-                ..
-            } => match request_id {
-                Some(request_id) => ServerMessage::request_error(request_id, "op.failed", message),
-                None => ServerMessage::session_error("session.subscription_error", message),
-            },
+            } => {
+                record_subscription_error_status(
+                    &service,
+                    &subscription_statuses,
+                    subscription_id,
+                    &message,
+                )
+                .await;
+                match request_id {
+                    Some(request_id) => {
+                        ServerMessage::request_error(request_id, "op.failed", message)
+                    }
+                    None => ServerMessage::session_error("session.subscription_error", message),
+                }
+            }
         };
         if outbound_tx.send(message).await.is_err() {
             break;

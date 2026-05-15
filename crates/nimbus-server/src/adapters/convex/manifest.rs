@@ -194,9 +194,11 @@ pub(super) enum ConvexSchemaValidator {
         value: Value,
     },
     Array {
+        #[serde(rename = "element")]
         _element: Box<ConvexSchemaValidator>,
     },
     Object {
+        #[serde(rename = "fields")]
         _fields: HashMap<String, ConvexSchemaValidator>,
     },
     Optional {
@@ -261,16 +263,9 @@ impl ConvexSchemaTableDefinition {
 
 impl ConvexSchemaIndexDefinition {
     fn into_index_definition(self) -> Result<IndexDefinition, Error> {
-        let [field] = self.fields.as_slice() else {
-            return Err(Error::InvalidInput(format!(
-                "convex schema index '{}' requires exactly one field in the current Nimbus schema bridge",
-                self.name
-            )));
-        };
-
         Ok(IndexDefinition {
             name: self.name,
-            fields: vec![field.clone()],
+            fields: self.fields,
         })
     }
 }
@@ -300,5 +295,52 @@ impl ConvexSchemaValidator {
             }
             Self::Union { .. } => (FieldType::Any, true),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convex_schema_manifest_preserves_composite_indexes() {
+        let manifest = serde_json::from_value::<ConvexSchemaManifest>(serde_json::json!({
+            "tables": {
+                "messages": {
+                    "fields": {
+                        "tenantId": { "kind": "string" },
+                        "channelId": { "kind": "string" },
+                        "body": { "kind": "string" }
+                    },
+                    "indexes": [
+                        {
+                            "name": "by_tenantId_and_channelId",
+                            "fields": ["tenantId", "channelId"]
+                        }
+                    ]
+                }
+            }
+        }))
+        .expect("manifest should deserialize");
+
+        let schema = manifest
+            .into_schema()
+            .expect("schema should convert")
+            .expect("schema should exist");
+        let table = schema
+            .tables
+            .get(&TableName::new("messages").expect("table name should parse"))
+            .expect("messages schema should exist");
+
+        assert_eq!(
+            table.indexes,
+            vec![IndexDefinition {
+                name: "by_tenantId_and_channelId".to_string(),
+                fields: vec!["tenantId".to_string(), "channelId".to_string()],
+            }]
+        );
+        table
+            .validate_indexes()
+            .expect("composite index should validate");
     }
 }

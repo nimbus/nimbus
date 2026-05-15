@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use nimbus_core::{Error, TenantId};
+use nimbus_engine::Service;
 use nimbus_runtime::{HostCallCancellation, InvocationServiceBinding, InvocationServices};
 use nimbus_sandbox::{SandboxBackend, SandboxError, SandboxHandle, SandboxStatus};
 use tokio::sync::Notify;
@@ -44,6 +45,7 @@ pub struct SandboxServiceManager {
     activation_timeout: Duration,
     activation_poll_interval: Duration,
     state: Mutex<SandboxServiceManagerState>,
+    system_state_service: Mutex<Option<Arc<Service>>>,
     activation_notify: Notify,
 }
 
@@ -58,8 +60,16 @@ impl SandboxServiceManager {
             activation_timeout: DEFAULT_ACTIVATION_TIMEOUT,
             activation_poll_interval: DEFAULT_ACTIVATION_POLL_INTERVAL,
             state: Mutex::new(SandboxServiceManagerState::default()),
+            system_state_service: Mutex::new(None),
             activation_notify: Notify::new(),
         }
+    }
+
+    pub(crate) fn attach_system_state_service(&self, service: Arc<Service>) {
+        *self
+            .system_state_service
+            .lock()
+            .expect("system state service lock should not be poisoned") = Some(service);
     }
 
     pub fn with_activation_timeout(mut self, activation_timeout: Duration) -> Self {
@@ -122,27 +132,35 @@ impl SandboxServiceManager {
             .inspect(&handle.id)
             .await
             .map_err(|error| sandbox_backend_error(key, "inspect", &error))?;
-        let mut state = self
-            .state
-            .lock()
-            .expect("manager lock should not be poisoned");
-        match inspected {
-            Some(handle) => {
-                if matches!(
-                    handle.status,
-                    SandboxStatus::Stopped | SandboxStatus::Failed
-                ) {
-                    state.handles.remove(key);
-                } else {
-                    state.handles.insert(key.clone(), handle.clone());
+        let refreshed = {
+            let mut state = self
+                .state
+                .lock()
+                .expect("manager lock should not be poisoned");
+            match inspected {
+                Some(handle) => {
+                    if matches!(
+                        handle.status,
+                        SandboxStatus::Stopped | SandboxStatus::Failed
+                    ) {
+                        state.handles.remove(key);
+                    } else {
+                        state.handles.insert(key.clone(), handle.clone());
+                    }
+                    Some(handle)
                 }
-                Ok(Some(handle))
+                None => {
+                    state.handles.remove(key);
+                    None
+                }
             }
-            None => {
-                state.handles.remove(key);
-                Ok(None)
-            }
+        };
+
+        if let Some(handle) = refreshed.as_ref() {
+            self.record_service_handle(key, handle).await?;
         }
+
+        Ok(refreshed)
     }
 
     async fn claim_activation(&self, key: &TenantServiceKey) -> ActivationClaim {
@@ -216,14 +234,15 @@ impl SandboxServiceManager {
             .expect("manager lock should not be poisoned")
             .handles
             .insert(key.clone(), handle.clone());
+        self.record_service_handle(key, &handle).await?;
         Ok(handle)
     }
 
-    async fn wait_for_binding_async(
+    async fn wait_for_ready_handle_async(
         &self,
         key: &TenantServiceKey,
         cancellation: &HostCallCancellation,
-    ) -> Result<Option<InvocationServiceBinding>, Error> {
+    ) -> Result<Option<SandboxHandle>, Error> {
         let deadline = Instant::now() + self.activation_timeout;
         loop {
             if cancellation.is_cancelled() {
@@ -232,14 +251,16 @@ impl SandboxServiceManager {
             let Some(handle) = self.refresh_handle_async(key).await? else {
                 return Ok(None);
             };
-            if let Some(binding) = service_binding_from_handle(&handle) {
-                return Ok(Some(binding));
+            if handle.status == SandboxStatus::Ready
+                || service_binding_from_handle(&handle).is_some()
+            {
+                return Ok(Some(handle));
             }
             if matches!(
                 handle.status,
                 SandboxStatus::Stopped | SandboxStatus::Failed
             ) {
-                return Ok(None);
+                return Ok(Some(handle));
             }
             if Instant::now() >= deadline {
                 return Err(Error::ResourceExhausted(format!(
@@ -254,6 +275,96 @@ impl SandboxServiceManager {
         }
     }
 
+    pub(crate) async fn start_service_async(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+        cancellation: HostCallCancellation,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        let key = TenantServiceKey::new(tenant_id, service_name);
+        if let Some(handle) = self.refresh_handle_async(&key).await?
+            && !matches!(
+                handle.status,
+                SandboxStatus::Stopped | SandboxStatus::Failed
+            )
+        {
+            return self.wait_for_ready_handle_async(&key, &cancellation).await;
+        }
+
+        match self.claim_activation(&key).await {
+            ActivationClaim::AlreadyActive => {
+                self.wait_for_ready_handle_async(&key, &cancellation).await
+            }
+            ActivationClaim::Claimed => {
+                let Some(launch) = self
+                    .service_catalog
+                    .sandbox_service_for_tenant(tenant_id, service_name)
+                else {
+                    self.release_activation(&key);
+                    return Ok(None);
+                };
+                let start_result = self.start_launch_async(&key, launch).await;
+                self.release_activation(&key);
+                start_result?;
+                self.wait_for_ready_handle_async(&key, &cancellation).await
+            }
+        }
+    }
+
+    pub(crate) async fn stop_service_async(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        let key = TenantServiceKey::new(tenant_id, service_name);
+        let previous_handle = self.current_handle(&key);
+        let refreshed_handle = self.refresh_handle_async(&key).await?;
+        let handle_existed_in_backend = refreshed_handle.is_some();
+        let Some(handle) = refreshed_handle.or(previous_handle) else {
+            return Ok(None);
+        };
+
+        if handle_existed_in_backend
+            && !matches!(
+                handle.status,
+                SandboxStatus::Stopped | SandboxStatus::Stopping
+            )
+        {
+            self.sandbox_backend
+                .stop(&handle.id)
+                .await
+                .map_err(|error| sandbox_backend_error(&key, "stop", &error))?;
+        }
+
+        let mut stopped_handle = handle;
+        stopped_handle.status = SandboxStatus::Stopped;
+        stopped_handle.published_endpoints.clear();
+
+        {
+            let mut state = self
+                .state
+                .lock()
+                .expect("manager lock should not be poisoned");
+            state.handles.remove(&key);
+            state.activations_in_progress.remove(&key);
+        }
+        self.activation_notify.notify_waiters();
+        self.record_service_handle(&key, &stopped_handle).await?;
+
+        Ok(Some(stopped_handle))
+    }
+
+    pub(crate) async fn restart_service_async(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+        cancellation: HostCallCancellation,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        self.stop_service_async(tenant_id, service_name).await?;
+        self.start_service_async(tenant_id, service_name, cancellation)
+            .await
+    }
+
     fn tenant_handles(&self, tenant_id: &TenantId) -> Vec<(TenantServiceKey, SandboxHandle)> {
         self.state
             .lock()
@@ -263,6 +374,22 @@ impl SandboxServiceManager {
             .filter(|(key, _)| &key.tenant_id == tenant_id)
             .map(|(key, handle)| (key.clone(), handle.clone()))
             .collect()
+    }
+
+    async fn record_service_handle(
+        &self,
+        key: &TenantServiceKey,
+        handle: &SandboxHandle,
+    ) -> Result<(), Error> {
+        let service = self
+            .system_state_service
+            .lock()
+            .expect("system state service lock should not be poisoned")
+            .clone();
+        let Some(service) = service else {
+            return Ok(());
+        };
+        crate::system_tenant::record_service_handle_async(&service, &key.tenant_id, handle).await
     }
 }
 
@@ -327,26 +454,13 @@ impl RuntimeServiceRegistry for SandboxServiceManager {
             if let Some(binding) = self.resolve_service_binding(tenant_id, service_name)? {
                 return Ok(Some(binding));
             }
-
-            let key = TenantServiceKey::new(tenant_id, service_name);
-            match self.claim_activation(&key).await {
-                ActivationClaim::AlreadyActive => {
-                    self.wait_for_binding_async(&key, &cancellation).await
-                }
-                ActivationClaim::Claimed => {
-                    let Some(launch) = self
-                        .service_catalog
-                        .sandbox_service_for_tenant(tenant_id, service_name)
-                    else {
-                        self.release_activation(&key);
-                        return Ok(None);
-                    };
-                    let start_result = self.start_launch_async(&key, launch).await;
-                    self.release_activation(&key);
-                    start_result?;
-                    self.wait_for_binding_async(&key, &cancellation).await
-                }
-            }
+            let Some(handle) = self
+                .start_service_async(tenant_id, service_name, cancellation)
+                .await?
+            else {
+                return Ok(None);
+            };
+            Ok(service_binding_from_handle(&handle))
         })
     }
 
@@ -388,11 +502,14 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use axum::http::StatusCode;
     use nimbus_sandbox::{
         PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxBuildLaunchSpec,
         SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
         SandboxProcessSpec, SandboxSpec,
     };
+    use nimbus_testing::ServerFixture;
+    use serde_json::json;
 
     use super::*;
 
@@ -433,11 +550,14 @@ mod tests {
 
         fn sandbox_handle(&self, service_name: &str, status: SandboxStatus) -> SandboxHandle {
             let endpoints = if status == SandboxStatus::Ready {
-                vec![PublishedEndpoint::new(
-                    "postgres",
-                    PublishedEndpointProtocol::Tcp,
-                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
-                )]
+                vec![
+                    PublishedEndpoint::new(
+                        "postgres",
+                        PublishedEndpointProtocol::Tcp,
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
+                    )
+                    .with_guest_port(5432),
+                ]
             } else {
                 Vec::new()
             };
@@ -569,6 +689,266 @@ mod tests {
                 .expect("db binding should be in snapshot")
                 .port,
             15432
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_service_binding_async_records_system_tenant_service_state() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+        crate::system_tenant::prepare_system_tenant_async(&service, None)
+            .await
+            .expect("system tenant should prepare");
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db"),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend,
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        manager.attach_system_state_service(service.clone());
+
+        manager
+            .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
+            .await
+            .expect("service activation should succeed")
+            .expect("db binding should exist");
+
+        let documents = service
+            .list_documents_async(
+                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_core::TableName::new("services").expect("table should parse"),
+            )
+            .await
+            .expect("service state documents should list");
+        assert_eq!(documents.len(), 1);
+        let fields = &documents[0].fields;
+        assert_eq!(fields.get("name"), Some(&serde_json::json!("db")));
+        assert_eq!(fields.get("kind"), Some(&serde_json::json!("sandbox")));
+        assert_eq!(fields.get("state"), Some(&serde_json::json!("ready")));
+        assert_eq!(
+            fields
+                .get("health")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|health| health.get("backend")),
+            Some(&serde_json::json!("krun"))
+        );
+        assert_eq!(
+            fields
+                .get("endpoints")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|endpoints| endpoints.first())
+                .and_then(|endpoint| endpoint.get("port")),
+            Some(&serde_json::json!(15432))
+        );
+
+        let ports = service
+            .list_documents_async(
+                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_core::TableName::new("ports").expect("table should parse"),
+            )
+            .await
+            .expect("service ports should list");
+        assert_eq!(ports.len(), 1);
+        assert_eq!(
+            ports[0].fields.get("serviceId"),
+            Some(&json!("service:tenant:db"))
+        );
+        assert_eq!(ports[0].fields.get("hostPort"), Some(&json!(15432)));
+        assert_eq!(ports[0].fields.get("guestPort"), Some(&json!(5432)));
+        assert_eq!(ports[0].fields.get("state"), Some(&json!("ready")));
+    }
+
+    #[tokio::test]
+    async fn local_admin_service_lifecycle_routes_start_stop_and_project_system_state() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = Arc::new(
+            SandboxServiceManager::new(
+                Arc::new(StubSandboxServiceCatalog {
+                    launches: BTreeMap::from([(
+                        "db".to_owned(),
+                        SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                            sparse_image_spec("db"),
+                            "postgres:16",
+                        )),
+                    )]),
+                }),
+                backend.clone(),
+            )
+            .with_activation_poll_interval(Duration::from_millis(1))
+            .with_activation_timeout(Duration::from_secs(1)),
+        );
+        let server = ServerFixture::start(
+            crate::router::RouterBuildConfig::core(service.clone())
+                .with_sandbox_service_manager(manager)
+                .without_deploy_admin_token()
+                .build(),
+        )
+        .await;
+
+        let start = server
+            .client()
+            .post(server.http_url("/api/tenants/tenant/services/db/start"))
+            .send()
+            .await
+            .expect("service start request should send");
+        assert_eq!(start.status(), StatusCode::OK);
+        let start_body = start
+            .json::<serde_json::Value>()
+            .await
+            .expect("service start response should parse");
+        assert_eq!(start_body["tenantId"], json!("tenant"));
+        assert_eq!(start_body["name"], json!("db"));
+        assert_eq!(start_body["state"], json!("ready"));
+        assert_eq!(start_body["backend"], json!("krun"));
+        assert_eq!(start_body["endpoints"][0]["port"], json!(15432));
+        assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+
+        let system_services = service
+            .list_documents_async(
+                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_core::TableName::new("services").expect("table should parse"),
+            )
+            .await
+            .expect("system services should list after start");
+        assert_eq!(system_services.len(), 1);
+        assert_eq!(
+            system_services[0].fields.get("tenantId"),
+            Some(&json!("tenant"))
+        );
+        assert_eq!(
+            system_services[0].fields.get("state"),
+            Some(&json!("ready"))
+        );
+
+        let system_ports = service
+            .list_documents_async(
+                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_core::TableName::new("ports").expect("table should parse"),
+            )
+            .await
+            .expect("system ports should list after start");
+        assert_eq!(system_ports.len(), 1);
+        assert_eq!(system_ports[0].fields.get("hostPort"), Some(&json!(15432)));
+        assert_eq!(system_ports[0].fields.get("guestPort"), Some(&json!(5432)));
+        assert_eq!(system_ports[0].fields.get("state"), Some(&json!("ready")));
+
+        let stop = server
+            .client()
+            .post(server.http_url("/api/tenants/tenant/services/db/stop"))
+            .send()
+            .await
+            .expect("service stop request should send");
+        assert_eq!(stop.status(), StatusCode::OK);
+        let stop_body = stop
+            .json::<serde_json::Value>()
+            .await
+            .expect("service stop response should parse");
+        assert_eq!(stop_body["state"], json!("stopped"));
+        assert_eq!(stop_body["endpoints"], json!([]));
+        assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 1);
+
+        let system_services = service
+            .list_documents_async(
+                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_core::TableName::new("services").expect("table should parse"),
+            )
+            .await
+            .expect("system services should list after stop");
+        assert_eq!(system_services.len(), 1);
+        assert_eq!(
+            system_services[0].fields.get("state"),
+            Some(&json!("stopped"))
+        );
+        assert_eq!(system_services[0].fields.get("endpoints"), Some(&json!([])));
+
+        let system_ports = service
+            .list_documents_async(
+                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_core::TableName::new("ports").expect("table should parse"),
+            )
+            .await
+            .expect("system ports should list after stop");
+        assert!(
+            system_ports.is_empty(),
+            "stopping the service should remove stale service port documents: {system_ports:?}"
+        );
+
+        let events = service
+            .list_documents_async(
+                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_core::TableName::new("events").expect("table should parse"),
+            )
+            .await
+            .expect("system events should list after service lifecycle actions");
+        assert_eq!(events.len(), 2);
+        let mut actual_events = events
+            .iter()
+            .map(|event| {
+                assert_eq!(event.fields.get("source"), Some(&json!("service")));
+                assert_eq!(event.fields.get("level"), Some(&json!("info")));
+                assert!(
+                    event
+                        .fields
+                        .get("createdAt")
+                        .and_then(serde_json::Value::as_u64)
+                        .is_some(),
+                    "service lifecycle event should include createdAt: {event:?}"
+                );
+                (
+                    event.fields["category"]
+                        .as_str()
+                        .expect("category should be a string")
+                        .to_owned(),
+                    event.fields["data"]["tenantId"]
+                        .as_str()
+                        .expect("tenantId should be a string")
+                        .to_owned(),
+                    event.fields["data"]["serviceName"]
+                        .as_str()
+                        .expect("serviceName should be a string")
+                        .to_owned(),
+                    event.fields["data"]["action"]
+                        .as_str()
+                        .expect("action should be a string")
+                        .to_owned(),
+                    event.fields["data"]["state"]
+                        .as_str()
+                        .expect("state should be a string")
+                        .to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        actual_events.sort();
+        assert_eq!(
+            actual_events,
+            vec![
+                (
+                    "service.lifecycle".to_owned(),
+                    "tenant".to_owned(),
+                    "db".to_owned(),
+                    "start".to_owned(),
+                    "ready".to_owned(),
+                ),
+                (
+                    "service.lifecycle".to_owned(),
+                    "tenant".to_owned(),
+                    "db".to_owned(),
+                    "stop".to_owned(),
+                    "stopped".to_owned(),
+                ),
+            ]
         );
     }
 

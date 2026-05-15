@@ -5,10 +5,11 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use nimbus::Error;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 #[cfg(test)]
 use sha2::{Digest, Sha256};
 
+pub(super) use super::record::{MachineHelperBinaryPaths, MachineRuntimeState};
 use super::{
     MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
     MachineStateRecord, write_json_file,
@@ -16,18 +17,6 @@ use super::{
 
 pub(super) const MACHINE_API_FORWARD_TRANSPORT: &str = "gvproxy-ssh-forwarded-unix-socket";
 pub(super) const MACHINE_API_FORWARD_USER: &str = "root";
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct MachineRuntimeState {
-    pub(super) helper_binaries: MachineHelperBinaryPaths,
-    pub(super) image_path: PathBuf,
-    pub(super) efi_variable_store_path: PathBuf,
-    #[serde(default)]
-    pub(super) machine_image_source: String,
-    pub(super) ssh_port: u16,
-    pub(super) rest_uri: String,
-    pub(super) ready_vsock_port: u32,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -55,12 +44,6 @@ pub(super) struct DesiredGuestNimbusBinaryStatus {
 pub(super) struct ObservedGuestNimbusBinaryStatus {
     pub(super) version: Option<String>,
     pub(super) hash: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct MachineHelperBinaryPaths {
-    pub(super) krunkit: PathBuf,
-    pub(super) gvproxy: PathBuf,
 }
 
 pub(super) fn start_machine(

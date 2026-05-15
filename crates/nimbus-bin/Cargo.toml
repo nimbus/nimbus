@@ -23,6 +23,7 @@ fs2.workspace = true
 indicatif.workspace = true
 libc.workspace = true
 nimbus = { path = "../nimbus", features = ["aws-kms"] }
+nimbus-machine = { path = "../nimbus-machine" }
 nimbus-server = { path = "../nimbus-server" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 rand.workspace = true

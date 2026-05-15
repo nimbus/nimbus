@@ -50,6 +50,51 @@ impl Service {
             .await
     }
 
+    /// Counts documents in a logical table without recording a user query metric.
+    ///
+    /// System metadata projections use this path to summarize table state while
+    /// keeping tenant query-planning diagnostics scoped to application reads.
+    pub async fn count_table_documents_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        table: TableName,
+    ) -> Result<usize> {
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let required_sequence = runtime.durable_head();
+        runtime
+            .wait_for_applied_sequence_cancellable(required_sequence, pending())
+            .await?;
+        let _operation = runtime.enter_operation(&tenant_id)?;
+        let snapshot = if let Some(snapshot) =
+            runtime.materialized_serving_snapshot_for_table(&table, required_sequence)
+        {
+            snapshot
+        } else {
+            let runtime_for_task = runtime.clone();
+            let table_for_task = table.clone();
+            runtime
+                .read_storage
+                .execute_cancellable(
+                    pending(),
+                    || Ok(()),
+                    move |store, check_cancel| {
+                        runtime_for_task.load_materialized_serving_snapshot_cancellable(
+                            &store,
+                            &table_for_task,
+                            required_sequence,
+                            check_cancel,
+                        )
+                    },
+                )
+                .await?
+        };
+        snapshot.table_document_count(&table).ok_or_else(|| {
+            Error::Internal(format!(
+                "materialized serving snapshot missing table {table} during table count"
+            ))
+        })
+    }
+
     /// Lists documents in a logical table asynchronously for the provided principal.
     pub async fn list_documents_async_with_principal(
         self: &Arc<Self>,

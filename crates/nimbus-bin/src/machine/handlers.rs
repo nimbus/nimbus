@@ -19,6 +19,7 @@ use super::files::{
     remove_dir_if_empty, remove_dir_if_exists, remove_machine_runtime_artifacts,
     with_default_machine_lock, with_machine_lock, write_json_file,
 };
+use super::local_server::try_run_lifecycle_command_via_live_server;
 use super::manager::{
     build_scp_command, build_ssh_command, refresh_machine_state, release_machine_ssh_port,
     start_machine, stop_machine,
@@ -129,6 +130,10 @@ pub(super) async fn run_machine_command_with_layout(
     command: MachineCommand,
     roots: &MachineRootLayout,
 ) -> Result<(), Error> {
+    if try_run_lifecycle_command_via_live_server(&command.command, roots).await? {
+        return Ok(());
+    }
+
     match command.command {
         MachineSubcommand::Init(init) => {
             let machine_name = init.name().to_owned();
@@ -212,7 +217,7 @@ fn resolve_machine_cp_target_name(command: &MachineCpCommand) -> Result<String, 
 
 fn run_machine_init(command: MachineInitCommand, roots: &MachineRootLayout) -> Result<(), Error> {
     let now = command.now;
-    let (paths, mut config, mut state) = initialize_machine_record(command, roots)?;
+    let (paths, mut config, mut state) = create_machine_with_layout_locked(command, roots)?;
 
     let result = if now {
         paths.ensure_runtime_directories()?;
@@ -224,6 +229,24 @@ fn run_machine_init(command: MachineInitCommand, roots: &MachineRootLayout) -> R
 
     emit_machine_stdout(&render_machine_action_view(result, &paths)?)?;
     Ok(())
+}
+
+pub(super) fn create_machine_with_layout(
+    command: MachineInitCommand,
+    roots: &MachineRootLayout,
+) -> Result<(MachineConfigRecord, MachineStateRecord), Error> {
+    let machine_name = command.name().to_owned();
+    with_machine_lock(roots, &machine_name, || {
+        let (_paths, config, state) = create_machine_with_layout_locked(command, roots)?;
+        Ok((config, state))
+    })
+}
+
+fn create_machine_with_layout_locked(
+    command: MachineInitCommand,
+    roots: &MachineRootLayout,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
+    initialize_machine_record(command, roots)
 }
 
 fn initialize_machine_record(
@@ -302,6 +325,49 @@ fn initialize_machine_record(
 
 fn run_machine_start(command: MachineStartCommand, roots: &MachineRootLayout) -> Result<(), Error> {
     let output_mode = command.output_mode();
+    let (paths, _config, _state, created) =
+        start_machine_with_layout_and_command_locked(command, roots, Some(output_mode))?;
+    let result = if created {
+        MachineCommandResult::InitializedAndStarted
+    } else {
+        MachineCommandResult::Started
+    };
+    emit_machine_stdout(&render_machine_action_view(result, &paths)?)?;
+    Ok(())
+}
+
+pub(crate) fn start_machine_with_layout(
+    machine_name: &str,
+    roots: &MachineRootLayout,
+) -> Result<(MachineConfigRecord, MachineStateRecord), Error> {
+    let command = MachineStartCommand {
+        name: Some(machine_name.to_owned()),
+        quiet: true,
+        no_info: true,
+        ..MachineStartCommand::default()
+    };
+    let output_mode = command.output_mode();
+    let (_paths, config, state, _created) =
+        start_machine_with_layout_and_command(command, roots, Some(output_mode))?;
+    Ok((config, state))
+}
+
+fn start_machine_with_layout_and_command(
+    command: MachineStartCommand,
+    roots: &MachineRootLayout,
+    output_mode: Option<cli_ux::OutputMode>,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord, bool), Error> {
+    let machine_name = command.name().to_owned();
+    with_machine_lock(roots, &machine_name, || {
+        start_machine_with_layout_and_command_locked(command, roots, output_mode)
+    })
+}
+
+fn start_machine_with_layout_and_command_locked(
+    command: MachineStartCommand,
+    roots: &MachineRootLayout,
+    output_mode: Option<cli_ux::OutputMode>,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord, bool), Error> {
     let machine_name = command.name().to_owned();
     let paths = roots.paths(&machine_name);
     let (paths, mut config, mut state, created) = if paths.config_path.exists() {
@@ -322,26 +388,54 @@ fn run_machine_start(command: MachineStartCommand, roots: &MachineRootLayout) ->
         (paths, config, state, true)
     };
     paths.ensure_runtime_directories()?;
-    let _output_mode_guard = cli_ux::push_output_mode(output_mode);
+    let _output_mode_guard = output_mode.map(cli_ux::push_output_mode);
     start_machine(&paths, &mut config, &mut state)?;
-    let result = if created {
-        MachineCommandResult::InitializedAndStarted
-    } else {
-        MachineCommandResult::Started
-    };
-    emit_machine_stdout(&render_machine_action_view(result, &paths)?)?;
-    Ok(())
+    Ok((paths, config, state, created))
 }
 
 fn run_machine_stop(command: MachineStopCommand, roots: &MachineRootLayout) -> Result<(), Error> {
     let machine_name = command.name().to_owned();
-    let (paths, config, mut state) = load_initialized_machine(roots, &machine_name)?;
-    stop_machine(&paths, &config, &mut state)?;
+    let (paths, _config, _state) = stop_machine_with_layout_locked(&machine_name, roots)?;
     emit_machine_stdout(&render_machine_action_view(
         MachineCommandResult::Stopped,
         &paths,
     )?)?;
     Ok(())
+}
+
+pub(crate) fn stop_machine_with_layout(
+    machine_name: &str,
+    roots: &MachineRootLayout,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
+    with_machine_lock(roots, machine_name, || {
+        stop_machine_with_layout_locked(machine_name, roots)
+    })
+}
+
+fn stop_machine_with_layout_locked(
+    machine_name: &str,
+    roots: &MachineRootLayout,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
+    let (paths, config, mut state) = load_initialized_machine(roots, machine_name)?;
+    stop_machine(&paths, &config, &mut state)?;
+    Ok((paths, config, state))
+}
+
+pub(crate) fn restart_machine_with_layout(
+    machine_name: &str,
+    roots: &MachineRootLayout,
+) -> Result<(MachineConfigRecord, MachineStateRecord), Error> {
+    with_machine_lock(roots, machine_name, || {
+        let (paths, mut config, mut state) = stop_machine_with_layout_locked(machine_name, roots)?;
+        paths.ensure_runtime_directories()?;
+        let _output_mode_guard = cli_ux::push_output_mode(cli_ux::OutputMode {
+            suppress_phase: true,
+            suppress_info: true,
+            suppress_progress: true,
+        });
+        start_machine(&paths, &mut config, &mut state)?;
+        Ok((config, state))
+    })
 }
 
 fn run_machine_status(
@@ -453,6 +547,29 @@ fn run_machine_ssh(command: MachineSshCommand, roots: &MachineRootLayout) -> Res
 }
 
 fn run_machine_set(command: MachineSetCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let (paths, _config, _state) = update_machine_with_layout_locked(command, roots)?;
+    emit_machine_stdout(&render_machine_action_view(
+        MachineCommandResult::Updated,
+        &paths,
+    )?)?;
+    Ok(())
+}
+
+pub(super) fn update_machine_with_layout(
+    command: MachineSetCommand,
+    roots: &MachineRootLayout,
+) -> Result<(MachineConfigRecord, MachineStateRecord), Error> {
+    let machine_name = command.name().to_owned();
+    with_machine_lock(roots, &machine_name, || {
+        let (_paths, config, state) = update_machine_with_layout_locked(command, roots)?;
+        Ok((config, state))
+    })
+}
+
+fn update_machine_with_layout_locked(
+    command: MachineSetCommand,
+    roots: &MachineRootLayout,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
     if !command.has_changes() {
         return Err(Error::InvalidInput(
             "machine set requires at least one of `--cpus`, `--memory`, or `--disk-size`"
@@ -484,48 +601,57 @@ fn run_machine_set(command: MachineSetCommand, roots: &MachineRootLayout) -> Res
         config.resources.disk_gib = disk_gib;
     }
     write_json_file(&paths.config_path, &config)?;
+    Ok((paths, config, state))
+}
 
+fn run_machine_rm(command: MachineRmCommand, roots: &MachineRootLayout) -> Result<(), Error> {
+    let machine_name = command.name().to_owned();
+    let (paths, _config, _state) = delete_machine_with_layout_locked(&machine_name, roots)?;
     emit_machine_stdout(&render_machine_action_view(
-        MachineCommandResult::Updated,
+        MachineCommandResult::Removed,
         &paths,
     )?)?;
     Ok(())
 }
 
-fn run_machine_rm(command: MachineRmCommand, roots: &MachineRootLayout) -> Result<(), Error> {
-    let machine_name = command.name().to_owned();
-    let paths = roots.paths(&machine_name);
-    let state = load_machine_state_if_exists(&paths.state_path)?;
+pub(super) fn delete_machine_with_layout(
+    machine_name: &str,
+    roots: &MachineRootLayout,
+) -> Result<(MachineConfigRecord, MachineStateRecord), Error> {
+    with_machine_lock(roots, machine_name, || {
+        let (_paths, config, state) = delete_machine_with_layout_locked(machine_name, roots)?;
+        Ok((config, state))
+    })
+}
 
-    if let Some(state) = state.as_ref()
-        && matches!(
-            state.lifecycle,
-            MachineLifecycle::Starting | MachineLifecycle::Running
-        )
-    {
+fn delete_machine_with_layout_locked(
+    machine_name: &str,
+    roots: &MachineRootLayout,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
+    let (paths, config, state) = load_initialized_machine(roots, machine_name)?;
+
+    if matches!(
+        state.lifecycle,
+        MachineLifecycle::Starting | MachineLifecycle::Running
+    ) {
         return Err(Error::Conflict(format!(
             "machine '{}' is {} and cannot be removed safely.\n{}",
             machine_name,
             state.lifecycle.as_str(),
             cli_ux::format_hint(&format!(
                 "run `{}` first, then remove the machine once it is stopped",
-                machine_command_with_optional_name("stop", &machine_name)
+                machine_command_with_optional_name("stop", machine_name)
             ))
         )));
     }
 
-    release_machine_ssh_port(roots, &machine_name)?;
+    release_machine_ssh_port(roots, machine_name)?;
     remove_dir_if_exists(&paths.config_dir)?;
     remove_dir_if_exists(&paths.state_dir)?;
     remove_dir_if_exists(&paths.data_dir)?;
     remove_machine_runtime_artifacts(&paths)?;
     remove_dir_if_empty(&paths.runtime_dir)?;
-
-    emit_machine_stdout(&render_machine_action_view(
-        MachineCommandResult::Removed,
-        &paths,
-    )?)?;
-    Ok(())
+    Ok((paths, config, state))
 }
 
 fn run_machine_os(command: MachineOsCommand, roots: &MachineRootLayout) -> Result<(), Error> {
@@ -685,7 +811,7 @@ fn run_machine_os_rollback(
     Err(unsupported_bootc_machine_os_error())
 }
 
-fn emit_machine_stdout(rendered: &str) -> Result<(), Error> {
+pub(super) fn emit_machine_stdout(rendered: &str) -> Result<(), Error> {
     cli_ux::write_stdout(rendered)
         .map_err(|error| Error::Internal(format!("failed to write machine output: {error}")))
 }
