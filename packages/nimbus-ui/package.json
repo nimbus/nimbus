@@ -7,10 +7,15 @@
     "dev": "vite",
     "build": "npm run codegen && tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
-    "test": "npm run codegen && tsc -p tsconfig.json --noEmit",
-    "typecheck": "npm run test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "typecheck": "npm run codegen && tsc -p tsconfig.json --noEmit",
     "lint": "biome check src",
-    "format": "biome format --write src"
+    "format": "biome format --write src",
+    "storybook": "storybook dev -p 6006",
+    "storybook:build": "storybook build"
   },
   "dependencies": {
     "@base-ui/react": "1.4.1",
@@ -31,13 +36,28 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
+    "@playwright/test": "^1.60.0",
+    "@storybook/addon-a11y": "^9.1.20",
+    "@storybook/react-vite": "^9.1.20",
     "@tailwindcss/vite": "4.3.0",
     "@tanstack/router-plugin": "1.167.35",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
+    "@vitest/coverage-v8": "^4.1.6",
+    "axe-core": "^4.11.4",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "happy-dom": "^20.9.0",
+    "jsdom": "^29.1.1",
+    "msw": "^2.14.6",
+    "storybook": "^9.1.20",
     "tailwindcss": "4.3.0",
     "typescript": "6.0.3",
-    "vite": "8.0.13"
+    "vite": "8.0.13",
+    "vitest": "^4.1.6"
   }
 }
