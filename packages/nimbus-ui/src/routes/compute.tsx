@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { useMemo, useState } from "react";
 
@@ -193,14 +193,20 @@ function ComputePage() {
 function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   if (bundles === undefined) {
     return (
-      <span className="font-mono text-[11px] text-muted" data-testid="compute-bundles-loading">
+      <span
+        className="font-mono text-[11px] text-muted"
+        data-testid="compute-bundles-loading"
+      >
         bundles: loading…
       </span>
     );
   }
   const active = bundles.filter((b) => b.status === "active").length;
   return (
-    <span className="font-mono text-[11px] text-muted" data-testid="compute-bundles">
+    <span
+      className="font-mono text-[11px] text-muted"
+      data-testid="compute-bundles"
+    >
       {bundles.length} bundle{bundles.length === 1 ? "" : "s"}
       {active > 0 ? ` · ${active} active` : ""}
     </span>
@@ -219,7 +225,10 @@ function ServicesTable({ services }: { services: ServiceDoc[] | undefined }) {
   }
   return (
     <div className="overflow-auto">
-      <table className="w-full border-collapse text-sm" data-testid="compute-services-table">
+      <table
+        className="w-full border-collapse text-sm"
+        data-testid="compute-services-table"
+      >
         <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Name</Th>
@@ -284,7 +293,9 @@ function FunctionsTable({
 }) {
   const bundleLookup = useMemo(() => {
     const map = new Map<string, BundleDoc>();
-    bundles?.forEach((b) => map.set(b._id, b));
+    bundles?.forEach((b) => {
+      map.set(b._id, b);
+    });
     return map;
   }, [bundles]);
   if (functions === undefined) return <Loading label="Loading functions…" />;
@@ -298,7 +309,10 @@ function FunctionsTable({
   }
   return (
     <div className="overflow-auto">
-      <table className="w-full border-collapse text-sm" data-testid="compute-functions-table">
+      <table
+        className="w-full border-collapse text-sm"
+        data-testid="compute-functions-table"
+      >
         <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Path</Th>
@@ -312,7 +326,9 @@ function FunctionsTable({
         </thead>
         <tbody>
           {functions.map((fn) => {
-            const bundle = fn.bundleId ? bundleLookup.get(fn.bundleId) : undefined;
+            const bundle = fn.bundleId
+              ? bundleLookup.get(fn.bundleId)
+              : undefined;
             return (
               <tr
                 key={fn._id}
@@ -320,7 +336,9 @@ function FunctionsTable({
                 data-testid={`compute-function-${fn.path ?? fn._id}`}
               >
                 <Td>
-                  <span className="font-mono text-default">{fn.path ?? "—"}</span>
+                  <span className="font-mono text-default">
+                    {fn.path ?? "—"}
+                  </span>
                 </Td>
                 <Td>
                   <span className="font-mono text-xs uppercase tracking-wide text-muted">
@@ -466,7 +484,10 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
   }
   return (
     <div className="overflow-auto">
-      <table className="w-full border-collapse text-sm" data-testid="compute-cron-table">
+      <table
+        className="w-full border-collapse text-sm"
+        data-testid="compute-cron-table"
+      >
         <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Name</Th>
@@ -550,7 +571,9 @@ function Td({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <td className={cn("px-3 py-2 align-middle", className)}>{children}</td>;
+  return (
+    <td className={cn("px-3 py-2 align-middle", className)}>{children}</td>
+  );
 }
 
 function Loading({ label }: { label: string }) {

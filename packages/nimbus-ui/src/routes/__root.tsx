@@ -1,13 +1,12 @@
-import { Outlet, createRootRoute } from "@tanstack/react-router";
+import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { Toaster } from "sonner";
-
+import { CommandPalette } from "../shell/command-palette";
+import { DisconnectedOverlay } from "../shell/disconnected-overlay";
+import { AppErrorBoundary } from "../shell/error-boundary";
+import { KeyboardContract } from "../shell/keyboard-contract";
 import { Sidebar } from "../shell/sidebar";
 import { StatusBar } from "../shell/status-bar";
-import { CommandPalette } from "../shell/command-palette";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
-import { KeyboardContract } from "../shell/keyboard-contract";
-import { AppErrorBoundary } from "../shell/error-boundary";
-import { DisconnectedOverlay } from "../shell/disconnected-overlay";
 import { ThemeController } from "../shell/theme-controller";
 
 export const Route = createRootRoute({

@@ -1,7 +1,6 @@
-import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import {
-  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
@@ -13,7 +12,6 @@ import {
 
 import { api } from "../../convex/_generated/api";
 import { CopyChip } from "../components/copy-chip";
-import { Kbd } from "../components/kbd";
 import { StateChip } from "../components/state-chip";
 import { RelativeTime } from "../components/time";
 import { cn } from "../lib/cn";
@@ -100,7 +98,11 @@ function ObservabilityPage() {
       data-testid="page-observability"
     >
       <Header tab={tab} />
-      {tab === "logs" ? <LogsTab search={search} /> : <RunsTab search={search} />}
+      {tab === "logs" ? (
+        <LogsTab search={search} />
+      ) : (
+        <RunsTab search={search} />
+      )}
     </section>
   );
 }
@@ -109,10 +111,7 @@ function Header({ tab }: { tab: ObservabilityTab }) {
   return (
     <header className="flex flex-col gap-3">
       <div>
-        <h1
-          className="text-default"
-          style={{ fontSize: "var(--text-xl)" }}
-        >
+        <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
           Observability
         </h1>
         <p className="text-sm text-muted">
@@ -363,7 +362,10 @@ function FilterSelect({
   testid: string;
 }) {
   return (
-    <label htmlFor={id} className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted">
+    <label
+      htmlFor={id}
+      className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted"
+    >
       <span>{label}</span>
       <select
         id={id}
@@ -398,7 +400,10 @@ function FilterInput({
   testid: string;
 }) {
   return (
-    <label htmlFor={id} className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted">
+    <label
+      htmlFor={id}
+      className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted"
+    >
       <span>{label}</span>
       <input
         id={id}
@@ -456,14 +461,21 @@ function LogStream({
   paused: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const scrollAnchorRef = useRef<{ top: number; height: number } | null>(null);
-  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const scrollAnchorRef = useRef<{
+    top: number;
+    height: number;
+    version: string;
+  } | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
     correlationId: string;
   } | null>(null);
-  const navigate = useNavigate();
+  const eventVersion = useMemo(() => {
+    const first = events[0]?._id ?? "";
+    const last = events.at(-1)?._id ?? "";
+    return `${events.length}:${first}:${last}`;
+  }, [events]);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -474,17 +486,22 @@ function LogStream({
     }
     const anchor = scrollAnchorRef.current;
     if (!anchor) return;
+    if (anchor.version === eventVersion) return;
     const delta = el.scrollHeight - anchor.height;
     if (delta > 0) {
       el.scrollTop = anchor.top + delta;
     }
-  }, [events, follow, paused]);
+  }, [eventVersion, follow, paused]);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    scrollAnchorRef.current = { top: el.scrollTop, height: el.scrollHeight };
-  }, [events]);
+    scrollAnchorRef.current = {
+      top: el.scrollTop,
+      height: el.scrollHeight,
+      version: eventVersion,
+    };
+  }, [eventVersion]);
 
   useEffect(() => {
     if (!menu) return;
@@ -508,21 +525,8 @@ function LogStream({
     );
   }
 
-  const handleRowKey = (
-    e: ReactKeyboardEvent<HTMLDivElement>,
-    correlationId: string | null | undefined,
-  ) => {
-    if (e.key === "Enter" && correlationId) {
-      e.preventDefault();
-      void navigate({
-        to: "/observability/runs/$runId",
-        params: { runId: correlationId },
-      });
-    }
-  };
-
   const handleContextMenu = (
-    e: ReactMouseEvent<HTMLDivElement>,
+    e: ReactMouseEvent<HTMLElement>,
     correlationId: string | null | undefined,
   ) => {
     if (!correlationId) return;
@@ -539,25 +543,20 @@ function LogStream({
       <ul className="divide-y divide-app">
         {events.map((event) => {
           const correlationId = event.correlationId ?? undefined;
-          const focused = focusedId === event._id;
           return (
             <li key={event._id}>
-              <div
-                role="article"
-                tabIndex={0}
-                onFocus={() => setFocusedId(event._id)}
-                onBlur={() => setFocusedId(null)}
-                onKeyDown={(e) => handleRowKey(e, correlationId)}
+              <article
                 onContextMenu={(e) => handleContextMenu(e, correlationId)}
                 aria-label={`Log entry${correlationId ? `, correlation ${shortId(correlationId, 8)}` : ""}: ${event.message ?? ""}`}
                 data-testid={`observability-log-row-${event._id}`}
                 className={cn(
                   "grid grid-cols-[auto_auto_auto_1fr_auto] items-baseline gap-2 px-3 py-1.5 text-xs",
-                  focused ? "bg-surface-2" : "hover:bg-surface-2",
-                  "focus-visible:bg-surface-2 focus-visible:outline-none",
+                  "hover:bg-surface-2",
                 )}
               >
-                <RelativeTime epochMs={event.createdAt ?? event._creationTime ?? 0} />
+                <RelativeTime
+                  epochMs={event.createdAt ?? event._creationTime ?? 0}
+                />
                 <StateChip state={event.level ?? "info"} />
                 <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
                   {event.source ?? "—"}
@@ -574,13 +573,13 @@ function LogStream({
                 ) : (
                   <span className="tabular text-muted">—</span>
                 )}
-              </div>
+              </article>
             </li>
           );
         })}
       </ul>
       {menu ? (
-        <ul
+        <div
           role="menu"
           aria-label="Log entry actions"
           style={{ top: menu.y, left: menu.x }}
@@ -591,20 +590,20 @@ function LogStream({
             if (e.key === "Escape") setMenu(null);
           }}
         >
-          <li role="none">
-            <Link
-              to="/observability/runs/$runId"
-              params={{ runId: menu.correlationId }}
-              role="menuitem"
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-default hover:bg-surface-2"
-              data-testid="observability-log-open-run"
-              onClick={() => setMenu(null)}
-            >
-              Open run
-              <span className="ml-auto text-muted">{shortId(menu.correlationId, 8)}</span>
-            </Link>
-          </li>
-        </ul>
+          <Link
+            to="/observability/runs/$runId"
+            params={{ runId: menu.correlationId }}
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-default hover:bg-surface-2"
+            data-testid="observability-log-open-run"
+            onClick={() => setMenu(null)}
+          >
+            Open run
+            <span className="ml-auto text-muted">
+              {shortId(menu.correlationId, 8)}
+            </span>
+          </Link>
+        </div>
       ) : null}
     </div>
   );
@@ -655,7 +654,10 @@ function RunsTab({ search }: { search: ObservabilitySearch }) {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden" data-testid="observability-runs">
+    <div
+      className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+      data-testid="observability-runs"
+    >
       <AdapterHonesty />
       <div
         className="grid grid-cols-[auto_auto_1fr] items-center gap-2"
@@ -704,7 +706,9 @@ function AdapterHonesty() {
       className="rounded-md border border-app bg-surface-2 px-3 py-2 font-mono text-xs text-muted"
       data-testid="observability-adapter-honesty"
     >
-      <span className="text-default">Convex / Nimbus runtime invocation history.</span>{" "}
+      <span className="text-default">
+        Convex / Nimbus runtime invocation history.
+      </span>{" "}
       Native HTTP, scheduler, MongoDB, Firebase, and Cloud Functions traffic is
       surfaced under Logs — see the{" "}
       <Link

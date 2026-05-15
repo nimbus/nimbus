@@ -1,13 +1,12 @@
-import { createElement } from "react";
-
 import {
-  NimbusProvider,
   type ConnectionState,
+  NimbusProvider,
   type NimbusReactClient,
   useNimbusConnectionState,
   useQueries,
   useQuery,
 } from "nimbus/react";
+import { createElement } from "react";
 
 import { api } from "../convex/_generated/api";
 

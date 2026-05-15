@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { useMemo } from "react";
 
@@ -114,7 +114,11 @@ function RunDetailBody({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
       <Summary run={run} runId={runId} />
-      <TraceWaterfall startedAt={startedAt} duration={duration} events={events} />
+      <TraceWaterfall
+        startedAt={startedAt}
+        duration={duration}
+        events={events}
+      />
       <CorrelatedEvents events={events} loading={eventsLoading} runId={runId} />
       {run.error ? <ErrorPanel error={run.error} /> : null}
     </div>
@@ -218,12 +222,13 @@ function TraceWaterfall({
   events: EventDoc[];
 }) {
   const spans = useMemo(() => {
-    if (typeof startedAt !== "number") return [] as Array<{
-      id: string;
-      label: string;
-      offsetMs: number;
-      level?: string;
-    }>;
+    if (typeof startedAt !== "number")
+      return [] as Array<{
+        id: string;
+        label: string;
+        offsetMs: number;
+        level?: string;
+      }>;
     return events
       .filter((e) => typeof e.createdAt === "number")
       .map((e) => ({
@@ -234,7 +239,8 @@ function TraceWaterfall({
       }));
   }, [events, startedAt]);
 
-  const total = duration ?? (spans.length > 0 ? spans[spans.length - 1].offsetMs + 1 : 0);
+  const total =
+    duration ?? (spans.length > 0 ? spans[spans.length - 1].offsetMs + 1 : 0);
 
   if (typeof startedAt !== "number") {
     return (
@@ -283,7 +289,11 @@ function TraceWaterfall({
               offsetMs={span.offsetMs}
               widthMs={Math.max(2, total * 0.02)}
               total={total}
-              tone={(span.level ?? "info").toLowerCase() === "error" ? "error" : "muted"}
+              tone={
+                (span.level ?? "info").toLowerCase() === "error"
+                  ? "error"
+                  : "muted"
+              }
               testid={`run-detail-trace-span-${span.id}`}
             />
           ))
@@ -310,7 +320,10 @@ function WaterfallBar({
 }) {
   const safeTotal = total > 0 ? total : 1;
   const leftPct = Math.min(100, Math.max(0, (offsetMs / safeTotal) * 100));
-  const widthPct = Math.min(100 - leftPct, Math.max(0.5, (widthMs / safeTotal) * 100));
+  const widthPct = Math.min(
+    100 - leftPct,
+    Math.max(0.5, (widthMs / safeTotal) * 100),
+  );
   const tones: Record<typeof tone, string> = {
     ok: "bg-[color-mix(in_oklch,var(--color-success)_70%,transparent)]",
     muted: "bg-[color-mix(in_oklch,var(--color-text-muted)_50%,transparent)]",
@@ -365,11 +378,17 @@ function CorrelatedEvents({
         </Link>
       </div>
       {loading ? (
-        <div className="px-4 py-6 font-mono text-xs text-muted" data-testid="run-detail-events-loading">
+        <div
+          className="px-4 py-6 font-mono text-xs text-muted"
+          data-testid="run-detail-events-loading"
+        >
           Loading events…
         </div>
       ) : events.length === 0 ? (
-        <div className="px-4 py-6 font-mono text-xs text-muted" data-testid="run-detail-events-empty">
+        <div
+          className="px-4 py-6 font-mono text-xs text-muted"
+          data-testid="run-detail-events-empty"
+        >
           No events recorded for this run.
         </div>
       ) : (
@@ -380,7 +399,9 @@ function CorrelatedEvents({
               className="grid grid-cols-[auto_auto_auto_1fr] items-baseline gap-2 px-4 py-1.5 text-xs"
               data-testid={`run-detail-event-${event._id}`}
             >
-              <RelativeTime epochMs={event.createdAt ?? event._creationTime ?? 0} />
+              <RelativeTime
+                epochMs={event.createdAt ?? event._creationTime ?? 0}
+              />
               <StateChip state={event.level ?? "info"} />
               <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
                 {event.source ?? "—"}
@@ -400,10 +421,7 @@ function CorrelatedEvents({
 function ErrorPanel({ error }: { error: unknown }) {
   let body: string;
   try {
-    body =
-      typeof error === "string"
-        ? error
-        : JSON.stringify(error, null, 2);
+    body = typeof error === "string" ? error : JSON.stringify(error, null, 2);
   } catch {
     body = String(error);
   }

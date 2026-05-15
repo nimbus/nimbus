@@ -17,9 +17,7 @@ export function DisconnectedOverlay() {
       className="pointer-events-none fixed left-1/2 top-3 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border bg-surface px-3 py-1 text-xs font-mono shadow border-app text-default"
     >
       <StateDot state="reconnecting" />
-      <span>
-        Reconnecting · stale data shown, mutations disabled
-      </span>
+      <span>Reconnecting · stale data shown, mutations disabled</span>
     </div>
   );
 }
