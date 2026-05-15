@@ -1,9 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
     <title>Nimbus UI</title>
+    <script>
+      // Resolve theme synchronously to avoid FOUC. Mirrors logic in ui-store.ts.
+      (function () {
+        try {
+          var stored = window.localStorage.getItem("nimbus-ui:theme");
+          var theme =
+            stored === "light" || stored === "dark"
+              ? stored
+              : window.matchMedia("(prefers-color-scheme: light)").matches
+                ? "light"
+                : "dark";
+          document.documentElement.dataset.theme = theme;
+        } catch (_) {
+          /* localStorage unavailable */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

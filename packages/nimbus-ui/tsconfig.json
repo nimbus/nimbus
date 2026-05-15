@@ -1,4 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["convex/**/*.ts", "src/**/*.ts", "src/**/*.tsx"]
+  "include": [
+    "convex/**/*.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/route-tree.gen.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
 }
