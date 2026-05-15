@@ -19,7 +19,7 @@ depends on that Podman/FCOS image stream.
 Reviewed against:
 
 - `.github/workflows/release.yml`
-- `/Users/jack/src/github.com/nimbus/machine-os/.github/workflows/build.yml`
+- `/Users/jack/src/github.com/nimbus/machine-os/.github/workflows/ci.yml`
 - [crates/nimbus-bin/src/machine/mod.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/mod.rs)
 - [crates/nimbus-bin/src/machine/manager.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/manager.rs)
 - [crates/nimbus-bin/src/machine/api.rs](/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-bin/src/machine/api.rs)

@@ -20,6 +20,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
+- `docs/plans/machine-os-repository-stewardship-plan.md`
+  - canonical execution plan for cleaning up `nimbus/machine-os` now that it
+    is a first-party direct Fedora bootc appliance repository rather than a
+    Podman-machine-os-shaped FCOS fork: project structure, branch hygiene,
+    release pipeline ownership, provenance docs, local build ergonomics, and
+    cross-repo verifier updates.
 
 ## Current Reference Baselines
 

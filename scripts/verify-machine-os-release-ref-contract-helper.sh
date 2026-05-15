@@ -93,6 +93,18 @@ fi
 grep -F "release workflow must use one Fedora bootc image reference" \
   "${tmp_dir}/bad-fedora-drift.out" >/dev/null
 
+bad_recipe_path="${tmp_dir}/bad-recipe-path.yml"
+sed 's|machine-os/image/|machine-os/images/|g' \
+  "${repo_root}/.github/workflows/release.yml" >"${bad_recipe_path}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_recipe_path}" \
+  >"${tmp_dir}/bad-recipe-path.out" 2>&1; then
+  echo "expected release ref contract to reject legacy machine-os recipe paths" >&2
+  exit 1
+fi
+grep -F "build-machine-os must contain: machine-os/image/Containerfile" \
+  "${tmp_dir}/bad-recipe-path.out" >/dev/null
+
 bad_build_publish="${tmp_dir}/bad-build-publish.yml"
 awk '
   $0 == "  publish-machine-os:" && inserted == 0 {
@@ -211,4 +223,4 @@ fi
 grep -F "release must contain: needs: [build-linux-arm64, build, publish-machine-os]" \
   "${tmp_dir}/bad-release-needs.out" >/dev/null
 
-printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy repository names, deprecated GitHub App app-id usage, divergent Fedora bootc refs, loose run discovery, and build/publish DAG regressions\n'
+printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy repository names, deprecated GitHub App app-id usage, divergent Fedora bootc refs, legacy recipe paths, loose run discovery, and build/publish DAG regressions\n'
