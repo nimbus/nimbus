@@ -52,6 +52,25 @@ different:
   GHCR, GitHub Releases, and attestations are attached to the repository that
   owns the machine image.
 
+Windows support does **not** make the current macOS artifact reusable as-is.
+The reviewed Windows plan (`docs/plans/windows-machine-support-plan.md`) and
+Podman source agree on provider-specific artifact shapes:
+
+- macOS AppleHV/LibKrun consumes a raw disk selected from OCI with
+  `disktype=applehv`.
+- Windows WSL2 consumes a Tar rootfs imported with `wsl --import` and then
+  configured with shell bootstrap, not Ignition and not a raw AppleHV disk.
+- Future Windows Hyper-V would consume a VHDX-style artifact and remains
+  deferred behind WSL2.
+
+That means future Windows support should add provider-specific artifact
+families, not pretend one disk image works everywhere. It does **not** require
+renaming `image/` back to `images/`: `image/` is the current production bootc
+appliance recipe, while provider artifacts are release outputs selected by
+provider metadata. Only introduce additional recipe directories if WSL2 or
+Hyper-V truly need different guest content, not merely a different output
+format.
+
 The current `nimbus/machine-os` branch state also still carries migration
 clutter:
 
@@ -86,6 +105,10 @@ The cleaned-up repo should make the right path obvious:
 - **Podman-compatible artifact, not Podman-shaped repo:** retain the
   `disktype=applehv` disk artifact semantics that Nimbus needs, while dropping
   inherited structure that only exists for Podman's FCOS build system.
+- **Provider-explicit artifacts:** macOS AppleHV raw, future Windows WSL2 Tar,
+  and future Hyper-V VHDX are different artifact contracts. The repo should
+  document and verify each contract instead of implying that the current raw
+  disk is universal.
 - **Attribution without confusion:** preserve license and attribution for any
   inherited code or ideas, but make the README, package metadata, and GitHub
   source labels unambiguously point at `nimbus/machine-os`.
@@ -133,6 +156,9 @@ The exact filenames can remain slightly different when that preserves working
 release contracts, but the ownership boundaries should hold:
 
 - `image/` owns the bootc recipe and guest image content.
+- Provider-specific outputs should be expressed as artifact packaging/release
+  targets from that recipe where possible: `applehv` raw now, `wsl` Tar later,
+  and `hyperv` VHDX only if the deferred Hyper-V provider is promoted.
 - `scripts/build.sh` is the stable local and CI entrypoint for producing a raw
   disk build output.
 - `scripts/package-oci.sh` is the stable entrypoint for transforming that raw
@@ -204,6 +230,20 @@ maintenance stream.
 | MOR5: Security And Provenance | `done` | Security/provenance docs are explicit; latest `v0.1.31` release evidence was audited for required assets, base/builder digests, embedded Nimbus hash, source revision, SBOM/checksum/digest assets, and GitHub attestation behavior. |
 | MOR6: Local Ergonomics | `done` | Local build docs cover Linux builder requirements, macOS-friendly checks, and common failures; public build/package/publish/SELinux/script help entrypoints were verified. |
 | MOR7: Closeout | `done` | Focused verification passed in both repos, branch cleanup is complete, and plan status is reconciled. |
+
+### Provider Artifact Follow-Up
+
+The repository is structurally ready to add Windows artifacts without undoing
+the cleanup:
+
+- keep `image/` as the single current production recipe while the guest content
+  is shared;
+- extend packaging and release metadata when a Windows WSL2 provider is ready
+  to consume a Tar rootfs;
+- keep Hyper-V VHDX as a separate future artifact lane, not part of the first
+  Windows support target;
+- update the cross-repo release verifier only when the Windows artifact is
+  promoted to a supported release output.
 
 ## Execution Detail
 
