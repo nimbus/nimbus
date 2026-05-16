@@ -336,6 +336,24 @@ discovery rule:
 - `--app-dir` is separate: it selects the app/codegen context and does not
   redefine Compose discovery
 
+## UI Command
+
+`nimbus ui` opens the operator console served by a running Nimbus
+instance.
+
+```
+nimbus ui                # discover a running server and open its /ui/ in a browser
+nimbus ui --ensure       # spawn a server first if none is running, then open
+nimbus ui --print-url    # discover and print the URL without opening anything
+```
+
+For a desktop-app experience (signed, notarized, auto-updating),
+install [nimbus-desktop](https://github.com/nimbus/desktop) — a
+standalone Electron shell that wraps the operator console with
+native window chrome, tray, and update flow. It uses the same
+`server.json` discovery seam as `nimbus ui`, so it picks up any
+running `nimbus` automatically.
+
 ## Dev Command
 
 `nimbus dev` is the local development happy path. In the current watch-loop

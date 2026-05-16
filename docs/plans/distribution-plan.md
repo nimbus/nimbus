@@ -42,6 +42,15 @@ Source of truth:
 |--------|--------|------|----------|
 | `nimbus` | `nimbus/nimbus` | ~60MB | Cargo (Rust + V8) |
 | `nimbus-crun` | upstream crun + build-time patch | ~2MB | autotools (C) |
+| `nimbus-desktop` | [`nimbus/desktop`](https://github.com/nimbus/desktop) | ~150-200MB | electron-builder (Electron 42) |
+
+`nimbus-desktop` is an independently-released Electron shell wrapping
+the operator console UI served at `/ui/` by `nimbus`. Its release
+cadence, signing credentials, and packaging matrix are isolated from
+the core server. See
+[`docs/plans/desktop-shell-plan.md`](./desktop-shell-plan.md) for the
+build, sign, and notarize pipeline, and the `nimbus/desktop`
+repository for installers.
 
 ### System dependencies — Linux (not shipped, installed from OS repos)
 
