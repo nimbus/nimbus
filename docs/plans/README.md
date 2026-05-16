@@ -3,6 +3,13 @@
 This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
+
+- `docs/plans/desktop-mission.md`
+  - autonomous-mode control plane that binds Phase 1 + Phase 2 desktop
+    work into a single mission. Read first on session entry for the
+    durable authorizations, resume procedure, and stop condition.
+    Drives both `desktop-ui-plan.md` and `desktop-shell-plan.md` to
+    `done` + archived.
 - `docs/plans/desktop-ui-plan.md`
   - canonical execution plan for a Docker Desktop / Podman Desktop-style
     graphical interface: embedded React SPA at `/ui/*` via `rust-embed`,
