@@ -9,6 +9,10 @@ use serde::Serialize;
 #[cfg(test)]
 use sha2::{Digest, Sha256};
 
+// `MachineHelperBinaryPaths` is consumed by the unix manager
+// submodules; on the non-unix stub it is only available via this
+// re-export for parity with `manager.rs` and stays unused.
+#[allow(unused_imports)]
 pub(super) use super::record::{MachineHelperBinaryPaths, MachineRuntimeState};
 use super::{
     MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
