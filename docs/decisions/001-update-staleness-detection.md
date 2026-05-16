@@ -1,4 +1,4 @@
-# 001 — Update staleness detection: server pings, both UIs render
+# 001 — Update lifecycle: server pings, both UIs render, both UIs offer to launch the upgrade
 
 - **Status:** proposed
 - **Date:** 2026-05-16
@@ -32,20 +32,33 @@ solved by `electron-updater` on its own cadence
 and is out of scope here. This decision only covers staleness of the
 **nimbus binary**.
 
-The question is: **who detects when the nimbus binary is behind, and
-how does that signal reach both UIs?**
+There are actually two coupled questions:
 
-Three viable shapes:
+1. **Who detects when the nimbus binary is behind, and how does that
+   signal reach both UIs?**
+2. **When the operator wants to act on the signal, who runs the
+   upgrade, and how does the UI mediate that handoff?**
+
+Five viable shapes across that 2D space:
 
 - **(α) Each client pings GitHub independently.** The desktop shell
   polls `api.github.com/repos/nimbus/nimbus/releases/latest`,
   compares to `nimbus --version`, shows a toast. Browser users get
   nothing.
-- **(β) The nimbus server pings GitHub; both UIs render the result.**
-  Nimbus runs a stale-while-revalidate background check, exposes the
-  result on a `/api/system/version-info` endpoint, and the SPA
-  renders a banner that both browser and desktop users see.
-- **(γ) Server pings AND applies upgrades.** Add a
+- **(β-) Server detection, banner only.** Nimbus runs a
+  stale-while-revalidate background check, exposes the result on a
+  `/api/system/version-info` endpoint, and the SPA renders a banner
+  that shows a `brew upgrade …` hint. The operator copies the command
+  into their own terminal — the UI never launches anything.
+- **(β+) Server detection, UI orchestrates the launch.** Same
+  detection contract as (β-), but the SPA also renders a clickable
+  **Update** CTA. In the desktop, the CTA opens Terminal.app pre-typed
+  with the install-method-specific command (`osascript` on macOS,
+  equivalent on Linux/Windows). In a browser, the CTA opens a modal
+  with a copy-to-clipboard chip and the same command. The
+  package manager remains the source of truth — the UI just removes
+  the typing friction. **This is the Podman Desktop pattern.**
+- **(γ) Server detects AND applies upgrades itself.** Add a
   `nimbus self-upgrade` command that rewrites the binary in place.
   The SPA gets a "Restart with v0.x.y" button.
 
@@ -53,21 +66,38 @@ Three viable shapes:
 
 ## Decision
 
-Adopt **(β): server-side detection with stale-while-revalidate
+Adopt **(β+): server-side detection with stale-while-revalidate
 caching, surfaced via `/api/system/version-info` to whichever UI is
-rendering the SPA.**
+rendering the SPA, plus a UI-launched upgrade flow that orchestrates
+the operator's package manager command without ever rewriting the
+binary in place.**
 
 The desktop shell continues to use `electron-updater` for shell
 self-updates (orthogonal cadence). It does **not** independently
 poll GitHub for nimbus-binary releases — that signal arrives through
 the same `/api/system/version-info` channel any browser user sees.
 
-We do **not** ship `nimbus self-upgrade`. Upgrades are applied by
-whatever installed the binary in the first place: Homebrew, apt, dnf,
-the install script, or `cargo install --path`. The endpoint exposes
-an `upgradeHint` string for the most likely path (e.g.
-`brew upgrade --cask nimbus/tap/nimbus` when we can detect a brew
-prefix install) but the human runs it.
+We do **not** ship `nimbus self-upgrade` (alternative γ — rejected
+below). Upgrades are applied by whatever installed the binary in the
+first place: Homebrew, apt, dnf, the install script, or
+`cargo install --path`. The server constructs an `upgrade` plan
+keyed on `current_exe()` introspection; the UI surfaces it as an
+**Update** CTA that, when clicked:
+
+- **In the desktop shell**, opens the user's terminal pre-typed with
+  the install-method-specific command (`brew upgrade --cask
+  nimbus/tap/nimbus`, `sudo apt upgrade nimbus`, etc.) via an
+  IPC bridge into the main process. The renderer never executes
+  shell; the main process maps a method tag (`'brew'`, `'apt'`,
+  `'dnf'`, `'install-script'`) to a hardcoded command from a
+  whitelist.
+- **In a browser**, opens a modal with the command in a code block
+  and a copy-to-clipboard chip. The operator pastes into their own
+  terminal.
+
+Same banner, additive desktop affordance. Symmetric outcome (the
+operator's package manager does the work) with asymmetric ergonomics
+(desktop saves one paste).
 
 ### Endpoint contract (sketch — refined in UL1)
 
@@ -80,8 +110,15 @@ GET /api/system/version-info
   "available": true,
   "url": "https://github.com/nimbus/nimbus/releases/tag/v0.1.41",
   "publishedAt": "2026-05-14T18:22:00Z",
-  "upgradeHint": "brew upgrade --cask nimbus/tap/nimbus",
-  "checkStatus": "fresh" | "stale" | "never" | "disabled" | "error"
+  "host": "host.example.com",
+  "checkStatus": "fresh" | "stale" | "never" | "disabled" | "error",
+  "upgrade": {
+    "method": "brew" | "apt" | "dnf" | "install-script" | "source" | "unknown",
+    "command": "brew upgrade --cask nimbus/tap/nimbus",
+    "needsSudo": false,
+    "interactive": true,
+    "fallbackUrl": "https://github.com/nimbus/nimbus#install"
+  }
 }
 ```
 
@@ -89,10 +126,28 @@ GET /api/system/version-info
 - `latest` is the cached GitHub Releases tag (without leading `v`),
   or `null` when no check has succeeded yet.
 - `available` is `current < latest` by semver.
+- `host` is the server's reported hostname — surfaces correctly in
+  remote-nimbus topologies so the banner can read "Update Nimbus on
+  `host.example.com`" rather than "Update Nimbus" (which would
+  ambiguously refer to the operator's local machine).
 - `checkStatus` distinguishes a fresh result (<24h), a stale result
   (≥24h, refresh inflight), a first-ever-load with no cached value,
   the user-opted-out state, and a recent fetch error. Lets the UI
   pick the right banner copy.
+- `upgrade.method` is the detected install method, derived from
+  `std::env::current_exe()` introspection (Homebrew prefix, system
+  package paths, build-from-source markers). Determines which
+  whitelisted command the desktop main process will run.
+- `upgrade.command` is the canonical command for the detected
+  install method, constructed locally by the server from a hardcoded
+  template — never echoed from network input. Shown to the operator
+  in the modal and pre-typed into the launched terminal.
+- `upgrade.interactive` is `true` when the command needs a TTY (most
+  package managers, especially with sudo prompts) — the UI uses this
+  to decide whether to launch a terminal vs. a silent background
+  command. Initial implementation: always `true`.
+- `upgrade.fallbackUrl` is shown when `method` is `"unknown"` or
+  `"source"` and we don't have a clean one-line command.
 
 ### Refresh semantics
 
@@ -113,6 +168,63 @@ GET /api/system/version-info
   log at INFO, record `checkStatus: "error"` with the last good cached
   value, retry the next time a request comes in after the TTL.
 
+### Update-launch flow (the Podman Desktop pattern, adapted)
+
+The UI mediates the upgrade through the operator's package manager;
+the server never executes installer commands, and the renderer never
+constructs shell strings.
+
+```
+                ┌─────────────────────────────────────┐
+                │   /ui/* SPA — StalenessBanner       │
+                │   shows "Update Nimbus on <host>"   │
+                │   primary CTA: [Update]             │
+                └──────────────────┬──────────────────┘
+                                   │ click
+                ┌──────────────────▼──────────────────┐
+                │   UpgradeModal                       │
+                │   shows detected install method     │
+                │   shows upgrade.command in <code>   │
+                │                                     │
+                │   if window.nimbus?.openUpgrade…    │
+                │     primary: [Open in Terminal]     │
+                │   else                              │
+                │     primary: [Copy command]         │
+                │   tertiary: [Cancel]                │
+                └──────────────────┬──────────────────┘
+                                   │ click "Open in Terminal"
+                ┌──────────────────▼──────────────────┐
+                │   nimbus-desktop main process       │
+                │   maps method tag → whitelisted cmd │
+                │   spawns Terminal.app via osascript │
+                │   (macOS); falls back to copy chip  │
+                │   on Linux/Windows for v1           │
+                └──────────────────┬──────────────────┘
+                                   │
+                ┌──────────────────▼──────────────────┐
+                │   user's terminal                   │
+                │   command is pre-typed              │
+                │   user reviews → presses Return     │
+                │   brew/apt/dnf does the actual work │
+                └─────────────────────────────────────┘
+```
+
+**Security model (mirrors Podman Desktop's
+`provider.registerUpdate({ update: () => … })`):**
+
+- The renderer sends only a method tag (`'brew'`, `'apt'`, etc.) over
+  IPC. It never sends a shell string.
+- The desktop main process maps the tag to a hardcoded command
+  template from a closed-set whitelist. An unknown tag is rejected.
+- The server's `upgrade.command` is constructed locally from
+  `current_exe()` introspection — never echoed from GitHub's response
+  payload. A poisoned upstream cannot inject a malicious command.
+- The terminal is launched, not executed silently. The user sees
+  exactly what is about to run and can cancel by closing the window
+  or pressing Ctrl-C before pressing Return.
+- No sudo is escalated by the desktop itself — when the command
+  needs root (apt/dnf), the terminal's own sudo prompt drives it.
+
 ### Privacy posture
 
 - Disabled by `NIMBUS_DISABLE_UPDATE_CHECK=1` env var. When set, the
@@ -130,6 +242,66 @@ GET /api/system/version-info
   flows inward), but air-gapped operators still need a clean off
   switch. `NIMBUS_DISABLE_UPDATE_CHECK=1` is that switch and must be
   honored without prompting.
+
+---
+
+## Real-world analogs
+
+Surveyed locally against `~/src/github.com/podman-desktop/podman-desktop`
+and the wider Electron-operator-console landscape.
+
+| App | Detection | Application | Why that shape | Maps to nimbus how |
+|---|---|---|---|---|
+| **Docker Desktop** | desktop checks for desktop updates | desktop self-applies; engine version locked to desktop | engine + CLI are private impl details of the GUI's VM | wrong shape — we want a standalone CLI |
+| **Podman Desktop** | desktop checks for desktop *and* podman engine | "Update" CTA on provider tile → `open <bundled-pkg> -W` launches macOS Installer.app with admin prompt | podman is a standalone product; desktop is one of many ways to drive it | **canonical analog** — same shape (Electron shell + standalone CLI); we adopt the CTA pattern, adapted to terminal-launch since we don't yet ship .pkg installers |
+| **Tailscale** | app checks GitHub for app+daemon | app self-applies, restarts daemon | daemon is small + tightly coupled to GUI's API | wrong shape — our CLI is not a GUI's private daemon |
+| **GitHub Desktop** | app checks for app+git | app self-applies | embedded git is a private impl detail | wrong shape |
+| **gh CLI** | gh itself checks api.github.com, caches, prints banner on stale | brew/apt/manual — user runs the upgrade | tool owns its own staleness story | **detection analog** — server-side check + banner is exactly what we want on the nimbus binary, and exactly what (β-)/(β+) implement |
+
+The **Podman Desktop** code path is canonical for this class of app
+(operator console wrapping a separately-installed CLI). Key files in
+`extensions/podman/packages/extension/src/`:
+
+- `installer/podman-install.ts` — `checkForUpdate(installed)`,
+  `performUpdate(provider, installed)`. Confirmation dialog
+  (`extensionApi.window.showInformationMessage('Do you want to update
+  to Y?')`) gates the actual install call.
+- `installer/mac-os-installer.ts` — `update(): Promise<boolean>`
+  delegates to `install()`, which resolves the bundled `.pkg` from
+  the assets folder and runs `processAPI.exec('open', [pkgToInstall,
+  '-W'])` to launch macOS Installer.app. Success is detected by
+  checking `fs.existsSync('/opt/podman/bin/podman')`.
+- `extension.ts:1014` — `registerUpdatesIfAny()` binds the
+  `update: () => Promise<void>` callback into the provider tile via
+  `provider.registerUpdate({ version, update, preflightChecks })`.
+  The renderer (Svelte) reads provider state and renders the CTA
+  without ever knowing the install method.
+
+**What we steal (β+):**
+
+- The CTA pattern: a clickable **Update** button on the staleness
+  surface, not just a copy-paste hint.
+- Confirmation gating: the click opens a modal that names the target
+  version and shows what is about to run; nothing happens until the
+  operator confirms.
+- Whitelisted action mapping: the renderer passes a method tag, not
+  a command string; the main process maps to a hardcoded command.
+
+**What we deliberately don't steal (yet):**
+
+- **Bundling installer artifacts inside the desktop app.** Podman
+  Desktop ships `podman-installer-macos-${arch}-v${ver}.pkg` inside
+  its own .app. We don't currently produce nimbus `.pkg`/`.msi`/
+  `.deb`/`.rpm` artifacts; we hand off to brew/apt/dnf instead. If
+  the user audience grows beyond brew users, building our own pkg
+  artifacts and bundling them in `nimbus-desktop` is the obvious
+  next step. Tracked as a deferred follow-on, not in this decision.
+- **Silent `process.exec` of the package manager from the main
+  process.** Podman gets away with this on macOS because the .pkg
+  installer drives its own GUI (admin prompt, progress bar). For us,
+  `brew upgrade` is a CLI tool with no GUI — running it silently from
+  the main process would hide errors and confuse the user. Launching
+  a terminal preserves visibility.
 
 ---
 
@@ -161,11 +333,21 @@ GET /api/system/version-info
   seconds later when the async refresh completes). The SPA must
   poll or re-render after navigation rather than only on initial
   mount. Acceptable.
-- **Operator must run the upgrade themselves.** No "click here to
-  upgrade" button. The banner shows the recommended command but the
-  human types it. This is intentional (see "Rejected alternatives →
-  (γ)") and matches Homebrew / apt / dnf conventions where the
-  package manager is the source of truth, not the running daemon.
+- **Operator must complete the upgrade themselves.** The Update CTA
+  opens a terminal with the command pre-typed; the user still presses
+  Return. This is intentional — it preserves visibility into the
+  package manager's output, lets the user cancel before anything is
+  installed, and keeps brew/apt/dnf as the source of truth for what
+  is installed. We do not silently `process.exec` the package manager
+  on the user's behalf (see "Rejected alternatives → (γ)" for why
+  self-application is the wrong shape).
+- **Linux/Windows terminal-launch is best-effort.** macOS has a
+  stable terminal-launch story via `osascript`. On Linux there is
+  no single canonical terminal binary (gnome-terminal, konsole,
+  xterm, alacritty, kitty, …); the desktop falls back to "Copy
+  command" + a one-line instruction on those platforms in v1. On
+  Windows, Windows Terminal (`wt`) is the v1 target where present;
+  fall back to copy on older systems.
 - **GitHub Releases dependency.** If GitHub is down or the
   repository changes name, the check fails — degrades to "no banner
   shown" rather than blocking startup. Acceptable; matches
@@ -191,6 +373,11 @@ GET /api/system/version-info
 
 ### (γ) Server detects AND applies the upgrade
 
+This is the alternative we still reject in favor of (β+). The
+distinction is crucial: (β+) lets the UI **launch** the operator's
+package manager command; (γ) would have the server **be** the
+package manager. Two different things.
+
 - **Self-rewriting binaries are a substantial security surface.**
   Signature verification, atomic swap, rollback on failure,
   partial-write recovery — all need to be correct. Significant
@@ -199,14 +386,20 @@ GET /api/system/version-info
   the binary becomes 0.1.41, but Homebrew's manifest still shows
   0.1.31 installed. Now `brew upgrade` does nothing surprising
   because brew thinks it has the current version. Confusing state
-  for the operator.
+  for the operator. (β+) sidesteps this entirely — brew runs the
+  upgrade, brew's manifest stays in sync.
 - **Doesn't generalize cleanly across install methods.** A user who
   installed via `cargo install` doesn't want `nimbus self-upgrade`
   to pull a release binary; a user who installed via apt wants
   `apt upgrade`; a user who built from source wants `git pull`. The
-  endpoint's `upgradeHint` field surfaces the right command for
+  endpoint's `upgrade.command` field surfaces the right command for
   each; a one-size-fits-all self-upgrade would be wrong for at
   least two of those four cases.
+- **Hides what's happening from the operator.** (β+) shows the
+  command before running it; the user can read, edit, cancel.
+  A self-upgrade button is opaque — the operator has to trust that
+  the server did the right thing, with no visibility into the
+  fetch/verify/swap path.
 
 ### (δ) Push notifications via a Nimbus-operated update service
 

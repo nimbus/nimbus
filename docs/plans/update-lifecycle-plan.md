@@ -19,20 +19,34 @@ Two operator-facing surfaces today — a browser pointed at
 render the SPA served by a running `nimbus` instance. Neither surface has
 any way to tell the operator that the binary running underneath them is
 out of date, that a newer release is on GitHub, or what command would
-install it. Two adjacent problems compound this:
+install it, *and* neither surface offers a one-click path to actually
+run that command. Three adjacent problems compound this:
 
-1. The desktop shell, on first launch with no `nimbus` on PATH, throws
+1. There is no staleness signal, full stop — the operator has no way
+   to know there's a newer nimbus.
+2. Even if a banner showed the upgrade command, the operator still has
+   to context-switch to a terminal and paste it. Every analog of our
+   shape (Podman Desktop is the canonical one) has solved this by
+   offering an in-app **Update** CTA that orchestrates the package
+   manager.
+3. The desktop shell, on first launch with no `nimbus` on PATH, throws
    `NimbusBinaryNotFoundError` rather than guiding the user to install
    it.
-2. There is no canonical place to land operator-facing docs that explain
-   *how* nimbus updates — across brew, apt, dnf, install script, and
-   build-from-source — relative to how the desktop shell self-updates.
+4. There is no canonical place to land operator-facing docs that
+   explain *how* nimbus updates — across brew, apt, dnf, install
+   script, and build-from-source — relative to how the desktop shell
+   self-updates.
 
-This plan owns landing the staleness signal (UL1 + UL2), the missing-CLI
-first-run experience (UL3), and the operator-facing documentation that
-ties them together (UL4). It does **not** own self-upgrade tooling or
-package-manager-detecting upgrade helpers — those are explicitly
-rejected in the decision doc and parked as deferred follow-ons.
+This plan owns landing the staleness signal (UL1), the SPA banner +
+upgrade modal (UL2), the desktop shell's IPC bridge for terminal-
+launch + setup card for the missing-CLI case (UL3), and the
+operator-facing documentation that ties them together (UL4).
+
+It does **not** own `nimbus self-upgrade` (binary rewrites itself) —
+that's explicitly rejected in the decision doc → (γ). It *does* own
+the Podman Desktop pattern: server-side detection + UI-launched
+package manager command. The distinction is in decision 001's
+"Real-world analogs" section.
 
 ---
 
@@ -50,26 +64,41 @@ rejected in the decision doc and parked as deferred follow-ons.
                 │   nimbus binary          │
                 │   ├─ background refresh  │  ← UL1
                 │   ├─ on-disk cache       │
+                │   ├─ install-method      │
+                │   │  detection           │
                 │   └─ /api/system/        │
                 │      version-info        │
+                │      (with `upgrade` obj)│
                 └────────────┬────────────┘
                              │
-                ┌────────────▼────────────┐
-                │   /ui/* SPA              │  ← UL2
-                │   StalenessBanner        │
-                │   (rendered the same way │
-                │   in browser + desktop)  │
-                └─────────────────────────┘
+                ┌────────────▼────────────┐                     ┌──────────────────────┐
+                │   /ui/* SPA              │  ← UL2              │ nimbus-desktop main  │  ← UL3
+                │   StalenessBanner +      │   click [Update]    │ IPC: nimbus.openUp-  │
+                │   UpgradeModal           │ ──────────────────▶ │ gradeTerminal(tag)   │
+                │   (same in browser +     │                     │ method tag →         │
+                │   desktop; desktop adds  │                     │ whitelisted command  │
+                │   "Open in Terminal")    │                     │ → osascript spawn    │
+                └─────────────────────────┘                     └──────────┬───────────┘
+                                                                           │
+                                                                ┌──────────▼───────────┐
+                                                                │ user's Terminal.app  │
+                                                                │ command pre-typed —  │
+                                                                │ user reviews,        │
+                                                                │ presses Return,      │
+                                                                │ brew/apt/dnf runs    │
+                                                                └──────────────────────┘
 
   Orthogonal: nimbus-desktop shell uses electron-updater for itself
   (already wired). Never polls api.github.com for the nimbus binary.
+  Browser-only operators see the same banner + modal but the modal's
+  primary action is "Copy command" instead of "Open in Terminal".
 ```
 
 Three update axes, three independent owners:
 
 | Axis | Detected by | Surfaced as | Applied by |
 |---|---|---|---|
-| **nimbus binary** stale | UL1 background task in nimbus | UL2 SPA banner (browser + desktop) | operator runs `brew/apt/dnf upgrade …` |
+| **nimbus binary** stale | UL1 background task in nimbus | UL2 SPA banner + upgrade modal (browser + desktop) | operator's package manager (`brew/apt/dnf upgrade …`), launched in a terminal by UL3's IPC bridge on desktop or copy-paste in browser |
 | **/ui/* SPA** stale | n/a (ships in lockstep with the binary) | n/a | upgrades when the binary upgrades |
 | **desktop shell** stale | `electron-updater` polling release manifest | shell's own non-modal toast | `electron-updater` swaps `.app` on next quit |
 
@@ -103,16 +132,43 @@ blocking startup.
      "available": true,
      "url": "https://github.com/nimbus/nimbus/releases/tag/v0.1.41",
      "publishedAt": "2026-05-14T18:22:00Z",
-     "upgradeHint": "brew upgrade --cask nimbus/tap/nimbus",
-     "checkStatus": "fresh"
+     "host": "host.example.com",
+     "checkStatus": "fresh",
+     "upgrade": {
+       "method": "brew",
+       "command": "brew upgrade --cask nimbus/tap/nimbus",
+       "needsSudo": false,
+       "interactive": true,
+       "fallbackUrl": "https://github.com/nimbus/nimbus#install"
+     }
    }
    ```
-3. `upgradeHint` resolution: detect install method by inspecting
-   `std::env::current_exe()`. If the path is under a Homebrew prefix
-   (`/opt/homebrew/`, `/usr/local/`, `/home/linuxbrew/`), emit the brew
-   command. If under `/usr/bin/` or `/usr/local/bin/` and the host has
-   `dpkg`/`rpm` markers, emit the apt/dnf command. Otherwise emit
-   `"See https://github.com/nimbus/nimbus#install"`.
+3. **Install-method detection** (replaces the old flat `upgradeHint`).
+   The server resolves `std::env::current_exe()` and matches its
+   canonicalized path against a hardcoded set of markers:
+   - Homebrew prefix (`/opt/homebrew/`, `/usr/local/Homebrew/`,
+     `/home/linuxbrew/`) → `method: "brew"`,
+     `command: "brew upgrade --cask nimbus/tap/nimbus"`,
+     `needsSudo: false`.
+   - `/usr/bin/` or `/usr/local/bin/` plus a `dpkg`-managed marker
+     (`dpkg -S` returns the path) → `method: "apt"`,
+     `command: "sudo apt update && sudo apt upgrade nimbus"`,
+     `needsSudo: true`.
+   - `/usr/bin/` plus an `rpm`-managed marker → `method: "dnf"`,
+     `command: "sudo dnf upgrade nimbus"`, `needsSudo: true`.
+   - `~/.local/bin/nimbus` or `~/.nimbus/bin/nimbus` (the install
+     script's default targets) → `method: "install-script"`,
+     `command: "curl -fsSL https://nimbus.dev/install.sh | sh"`,
+     `needsSudo: false`.
+   - `target/{debug,release}/nimbus` or a `cargo install` path
+     under `~/.cargo/bin/` → `method: "source"`, `command: null`,
+     `fallbackUrl: "https://github.com/nimbus/nimbus#build-from-source"`.
+   - Anything else → `method: "unknown"`, `command: null`,
+     `fallbackUrl: "https://github.com/nimbus/nimbus#install"`.
+
+   The command strings are constructed locally from these
+   hardcoded templates — never echoed from GitHub's response — so a
+   poisoned upstream cannot inject a malicious upgrade command.
 4. Opt-out: respect `NIMBUS_DISABLE_UPDATE_CHECK=1` — the background
    task is never spawned, on-disk cache is never read or written, and
    the endpoint returns `checkStatus: "disabled"` with `latest: null`.
@@ -156,9 +212,16 @@ blocking startup.
   stale-while-revalidate refresh, opt-out path, error path with
   cached-value preservation, semver comparison, no-cache-on-disk first
   run.
+- `cargo test -p nimbus-server install_method::` covers each of the
+  six method-detection branches (brew, apt, dnf, install-script,
+  source, unknown) by feeding synthetic `current_exe` paths, and
+  asserts the `command` template comes from the hardcoded set rather
+  than any input fixture.
 - Integration test using `wiremock` (already a workspace dep): boot
   a `nimbus-server` against a wiremock GitHub Releases mock, hit
-  `/api/system/version-info`, assert each `checkStatus` branch.
+  `/api/system/version-info`, assert each `checkStatus` branch and
+  the structured `upgrade` object is well-formed for the detected
+  install method.
 - `make ci` clean.
 - Manual smoke against the live network: `nimbus start` → first GET to
   `/api/system/version-info` returns `checkStatus: "never"`,
@@ -182,20 +245,49 @@ same copy and the same dismissal behavior, in browser and desktop.
      on the server side is cheap).
    - Renders nothing for `checkStatus: "disabled"`, `"never"`, or
      `available: false`.
-   - Renders a top banner for `available: true` with copy that names
-     the version, links to the release URL, and shows the
-     `upgradeHint` in a `<code>` block with a copy-to-clipboard chip.
+   - Renders a top banner for `available: true` with copy "Update
+     Nimbus on `<host>` from `<current>` to `<latest>`" (host comes
+     from the response so remote-nimbus topologies read correctly),
+     a link to the release URL, and a primary **Update** CTA that
+     opens the upgrade modal.
    - Dismissible per-session via `localStorage["nimbus-ui:staleness-
      dismissed-version"]` keyed to the *latest* version — dismissing
      0.1.41 still surfaces 0.1.42 when it lands.
    - Re-renders without a full page reload when the underlying value
      changes (poll completes, version flips).
-2. Banner mounted in the global shell (`packages/nimbus-ui/src/
-   routes/__root.tsx` or equivalent — confirm name during
+2. New component `packages/nimbus-ui/src/components/upgrade-modal.tsx`
+   (the Podman Desktop pattern, adapted):
+   - Triggered by the banner's Update CTA.
+   - Title: "Update Nimbus to v`<latest>`".
+   - Body: a one-paragraph explanation, the detected install method
+     (e.g., "We detected Homebrew."), and `upgrade.command` rendered
+     in a `<code>` block.
+   - Detects desktop context via the preload-injected
+     `window.nimbus?.openUpgradeTerminal` capability (UL3):
+     - **Desktop**: primary action "Open in Terminal" → calls
+       `window.nimbus.openUpgradeTerminal(upgrade.method)`. The
+       renderer only passes the method tag; never the command string.
+     - **Browser (or desktop without terminal support, e.g., older
+       Linux)**: primary action "Copy command" → writes
+       `upgrade.command` to the clipboard and surfaces a transient
+       toast "Copied — paste into your terminal".
+   - Secondary action "Cancel" closes the modal without dismissing
+     the banner.
+   - Disclosure "Why doesn't Nimbus just update itself?" expands a
+     short explanation citing decision 001 → (γ) — the package
+     manager stays the source of truth, the user sees the command
+     before it runs.
+   - Renders the `upgrade.fallbackUrl` link as the primary action
+     when `method` is `"source"` or `"unknown"` (no clean command).
+3. Banner + modal mounted in the global shell (`packages/nimbus-ui/
+   src/routes/__root.tsx` or equivalent — confirm name during
    implementation since DU3 may have renamed).
-3. Storybook story (`staleness-banner.stories.tsx`) covering all
-   five `checkStatus` branches × two themes = ten visual states for
-   the curated Chromatic matrix.
+4. Storybook stories (`staleness-banner.stories.tsx`,
+   `upgrade-modal.stories.tsx`) covering: five `checkStatus` branches
+   × two themes for the banner (ten states); six `upgrade.method`
+   branches × two themes × two contexts (desktop/browser) for the
+   modal (twenty-four states) on the curated Chromatic matrix —
+   trim ruthlessly if review fatigue sets in.
 
 **Contract bullets:**
 
@@ -203,18 +295,34 @@ same copy and the same dismissal behavior, in browser and desktop.
   active banner at a time, dismissed per-latest-version.
 - **A11y:** banner is `role="status"` with `aria-live="polite"` so
   screen readers announce it on first render but not on poll refreshes
-  that don't change the visible content.
+  that don't change the visible content. The modal is `role="dialog"`
+  with `aria-modal="true"`, focus-trapped, Esc-to-close.
 - **Theme-aware:** uses semantic state tokens from DU5's OKLCH
   palette (`--color-info` for the available-update banner). Passes
   axe-core AA in both themes per the DU5 verification standard.
-- **No exit telemetry.** Dismissing the banner only writes
-  localStorage; nothing flows to the server.
+- **No exit telemetry.** Dismissing the banner or clicking the
+  Update CTA only writes localStorage and (for desktop) sends an IPC
+  message to the local desktop main process. Nothing flows to the
+  server.
+- **Method tag, not command string.** The renderer's only outbound
+  command surface is `window.nimbus.openUpgradeTerminal(method)` with
+  `method` being one of six known strings. The renderer never
+  constructs or forwards shell input. This mirrors the security
+  model in `extensions/podman/packages/extension/src/extension.ts:1014`
+  (provider.registerUpdate({ update: () => … })) — the renderer
+  invokes a typed callback, not an arbitrary shell command.
 
 **Files touched:**
 
 - `packages/nimbus-ui/src/components/staleness-banner.tsx` (new)
 - `packages/nimbus-ui/src/components/staleness-banner.stories.tsx`
   (new)
+- `packages/nimbus-ui/src/components/upgrade-modal.tsx` (new)
+- `packages/nimbus-ui/src/components/upgrade-modal.stories.tsx` (new)
+- `packages/nimbus-ui/src/lib/desktop-bridge.ts` (new — typed
+  wrapper over `window.nimbus` that returns `null` when the
+  preload bridge isn't present, so all callsites are typed against
+  the same surface)
 - `packages/nimbus-ui/src/routes/__root.tsx` (mount point)
 - `packages/nimbus-ui/src/api/system.ts` (typed fetch wrapper for
   `/api/system/version-info`, new)
@@ -222,79 +330,170 @@ same copy and the same dismissal behavior, in browser and desktop.
 **Completion gate:**
 
 - Vitest unit tests cover the dismissal-keying logic, the
-  five-branch render matrix, and the `latest`-version-flips-re-shows
-  case.
-- Storybook + Chromatic: ten stories pass visual regression.
+  five-branch banner render matrix, the six-branch
+  `upgrade.method` modal matrix, and the `latest`-version-flips-
+  re-shows case.
+- Vitest unit test confirms that with a mocked
+  `window.nimbus.openUpgradeTerminal`, clicking "Open in Terminal"
+  invokes it with exactly the method tag from the response (and no
+  other arguments). With the bridge absent, the same click instead
+  writes `upgrade.command` to the clipboard via `navigator.clipboard`.
+- Storybook + Chromatic: banner + modal stories pass visual
+  regression.
 - axe-core run against the embedded build: 0 violations in dark and
-  light themes with the banner visible (matches the DU5/DU6/DU6.5/DU7
-  bar).
+  light themes with the banner visible AND with the modal open
+  (matches the DU5/DU6/DU6.5/DU7 bar).
 - Manual end-to-end against a freshly-cut nimbus that exposes UL1: open
-  `/ui/` in Chromium → banner appears with `upgradeHint`; dismiss →
-  reload → banner stays dismissed; hand-edit `update-check.json` to
-  bump `latest` → banner re-appears.
+  `/ui/` in Chromium → banner appears; click Update → modal opens;
+  click "Copy command" → clipboard contains the brew upgrade command;
+  dismiss banner → reload → banner stays dismissed; hand-edit
+  `update-check.json` to bump `latest` → banner re-appears.
 
-### UL3 — Desktop shell: first-run "CLI not found" experience
+### UL3 — Desktop shell: setup card + upgrade-terminal bridge
 
-**Goal:** a user who installs `nimbus-desktop` without the `nimbus` CLI
-sees a setup card guiding them to install it — never a raw
-`NimbusBinaryNotFoundError`.
+**Goal:** the desktop shell adds two install-method-aware surfaces:
+
+1. A first-run setup card when no `nimbus` CLI is on PATH (replaces
+   the raw `NimbusBinaryNotFoundError` death-screen).
+2. An IPC bridge `nimbus.openUpgradeTerminal(method)` that lets the
+   SPA's UL2 Update CTA launch the user's terminal with the
+   install-method-specific command pre-typed.
+
+Both are forms of the same pattern: the desktop renders a button,
+the renderer passes a method tag, the main process maps that tag
+to a whitelisted command and shells out via `osascript` (macOS) or
+the platform-appropriate equivalent. This mirrors the architecture
+in `extensions/podman/packages/extension/src/installer/mac-os-
+installer.ts` where the `install()` / `update()` methods construct
+their own paths from local state and call `processAPI.exec('open',
+[pkgToInstall, '-W'])` — the renderer never passes a shell string.
 
 **Owner:** `nimbus/desktop` (separate repo, separate release cadence).
 
 **Deliverables:**
 
-1. New `src/renderer/setup/CliNotFoundCard.tsx` (or equivalent — the
-   desktop shell is plain Electron + a static renderer page, not a
-   React app; verify during implementation against the current shell
-   structure).
-2. Wire the existing `resolveNimbusExecutable` failure path
-   (`src/main/server.ts:200` throwing `NimbusBinaryNotFoundError`) to
-   instead post a `cli-not-found` IPC message to the renderer, which
-   swaps the window contents to the setup card.
-3. The card surfaces:
-   - **macOS**: button "Install with Homebrew" → opens Terminal with
-     `brew install nimbus/tap/nimbus` pre-typed via `osascript`.
-   - **Linux**: links to `https://github.com/nimbus/nimbus#install`.
-   - **Windows**: links to the direct-download .zip and the install
-     docs.
-   - Common: a "Retry" button that re-runs `resolveNimbusExecutable`
-     and proceeds to the normal flow once a binary is found.
-4. After the user installs, the Retry path picks up the new binary on
-   PATH without requiring a full app restart.
+1. **Preload bridge** `src/preload/index.ts` exposes a typed
+   `window.nimbus`:
+   ```ts
+   window.nimbus = {
+     openUpgradeTerminal(method: UpgradeMethod): Promise<{ launched: boolean; fallback?: 'copy' }>;
+     openInstallTerminal(method: InstallMethod): Promise<{ launched: boolean; fallback?: 'copy' }>;
+     retryResolveCli(): Promise<{ ok: boolean }>;
+   };
+   ```
+   `UpgradeMethod` and `InstallMethod` are closed unions matching
+   the server's `upgrade.method` set. An unknown tag is rejected at
+   the IPC boundary; the renderer cannot smuggle commands through.
+2. **Main process handler** `src/main/ipc/upgrade.ts` (new) maps
+   method tags to a hardcoded command table and a launcher:
+   ```ts
+   const UPGRADE_COMMANDS: Record<UpgradeMethod, string | null> = {
+     brew: 'brew upgrade --cask nimbus/tap/nimbus',
+     apt: 'sudo apt update && sudo apt upgrade nimbus',
+     dnf: 'sudo dnf upgrade nimbus',
+     'install-script': 'curl -fsSL https://nimbus.dev/install.sh | sh',
+     source: null,
+     unknown: null,
+   };
+   ```
+   Launcher behavior:
+   - **macOS**: `osascript -e 'tell app "Terminal" to do script "<cmd>"'`
+     opens Terminal.app with the command pre-typed (not auto-
+     executed; the user presses Return). Returns
+     `{ launched: true }`.
+   - **Linux**: try Windows Terminal-equivalent detection in order
+     (`gnome-terminal`, `konsole`, `xterm`, env `TERMINAL`). If
+     found, spawn with the command. If not, return
+     `{ launched: false, fallback: 'copy' }` so the SPA falls back
+     to the clipboard path. v1 acceptable to ship copy-only on
+     Linux.
+   - **Windows**: spawn `wt.exe` (Windows Terminal) with the
+     command pre-typed if present, else `{ launched: false,
+     fallback: 'copy' }`. v1 acceptable to ship copy-only on
+     Windows.
+   - For `method: "source"` or `"unknown"` where the command is
+     `null`, return `{ launched: false, fallback: 'copy' }`
+     immediately — the SPA shows the `fallbackUrl` link instead.
+3. **Setup card** `src/renderer/setup/CliNotFoundCard.tsx`
+   (or equivalent — verify the actual shell layout during
+   implementation; DS3 may have shipped a different renderer
+   structure):
+   - Triggered when `resolveNimbusExecutable` at `src/main/server.ts:
+     200` throws `NimbusBinaryNotFoundError`. Instead of bubbling
+     the error to a death-screen, the main process posts
+     `cli-not-found` to the renderer, which swaps the window
+     contents to the setup card.
+   - The card surfaces:
+     - **macOS**: button "Install with Homebrew" →
+       `window.nimbus.openInstallTerminal('brew')` (uses the same
+       IPC bridge as the upgrade flow, distinct method).
+     - **Linux**: link to `https://github.com/nimbus/nimbus#install`.
+     - **Windows**: link to the direct-download .zip and install docs.
+     - Common: a "Retry" button calling
+       `window.nimbus.retryResolveCli()`.
+4. After the user installs, the Retry path picks up the new binary
+   on PATH without requiring a full app restart.
 
 **Contract bullets:**
 
-- **No bundled installer.** The card never downloads the nimbus
-  binary itself. It hands off to a package manager (where one exists)
-  or the install docs. This preserves the decision in the desktop
-  README — "shell does not bundle nimbus."
-- **No automatic install.** The user clicks; the shell never executes
-  package-manager commands on the user's behalf without an explicit
-  click.
+- **No bundled installer.** The shell never downloads or executes
+  the nimbus binary itself. It hands off to a package manager (where
+  one exists) or the install docs. Preserves the decision in the
+  desktop README — "shell does not bundle nimbus."
+- **Method tag whitelist.** The IPC boundary accepts only known
+  method tags. The main process constructs the command string from
+  a local hardcoded table; the renderer never sees or forwards a
+  shell string.
+- **No automatic install.** The terminal is *launched* with the
+  command pre-typed, not executed silently. The user reviews and
+  presses Return.
+- **No sudo escalation in the desktop process.** Commands that need
+  root (`apt`, `dnf`) run inside the user's terminal where the
+  standard sudo prompt handles auth. The desktop process never has
+  elevated privileges.
 - **Retry, don't restart.** The shell remains usable across the
-  install — a successful retry must not require quitting and
-  relaunching.
+  install/upgrade — a successful retry must not require quitting
+  and relaunching.
 
 **Files touched (in nimbus/desktop):**
 
-- `src/main/server.ts` (signal cli-not-found instead of throwing into
-  the void)
-- `src/main/ipc.ts` (new IPC channel `cli-not-found` / `cli-retry`)
-- `src/renderer/setup/CliNotFoundCard.tsx` (new — verify file
-  layout)
+- `src/main/server.ts` (signal cli-not-found instead of throwing
+  into the void; trip the `retryResolveCli` re-run path)
+- `src/main/ipc/upgrade.ts` (new — IPC handler + platform
+  terminal launcher)
+- `src/main/ipc/upgrade.spec.ts` (new, vitest — tag whitelist,
+  per-platform launcher behavior)
+- `src/preload/index.ts` (extend with typed `window.nimbus`
+  surface — exposedInMainWorld declarations follow the
+  podman-desktop preload pattern)
+- `src/renderer/setup/CliNotFoundCard.tsx` (new)
 - `src/renderer/setup/CliNotFoundCard.spec.ts` (new, vitest)
-- `tests/e2e/cli-not-found.spec.ts` (new, packaged-shell Playwright)
+- `tests/e2e/cli-not-found.spec.ts` (new, packaged-shell
+  Playwright)
+- `tests/e2e/upgrade-terminal.spec.ts` (new — launch a fake
+  Terminal binary on PATH via `TERMINAL=…` env override, assert
+  the bridge spawns it with the expected command)
 
 **Completion gate:**
 
-- Vitest unit tests cover the IPC handshake, retry semantics, and
-  per-platform button targets.
-- Packaged-shell Playwright E2E: launch with `PATH=/empty`, assert
-  setup card renders; add a fake nimbus to PATH; click Retry; assert
-  the card disappears and the normal `/ui/` window opens.
-- Manual on macOS + Linux: install only the desktop cask, launch,
-  observe setup card; install the CLI cask, click Retry, observe
-  normal flow.
+- Vitest unit tests cover the IPC tag whitelist (six known
+  methods + reject path for unknown), the platform launcher
+  matrix, retry semantics, and the install-vs-upgrade method
+  separation.
+- Packaged-shell Playwright E2E:
+  - `cli-not-found.spec.ts`: launch with `PATH=/empty`, assert
+    setup card renders; add a fake nimbus to PATH; click Retry;
+    assert the card disappears and the normal `/ui/` window opens.
+  - `upgrade-terminal.spec.ts`: launch with a stub terminal on
+    PATH, render a banner with `method: "brew"`, click Update →
+    Open in Terminal, assert the stub terminal received exactly
+    `brew upgrade --cask nimbus/tap/nimbus`.
+- Manual on macOS: install desktop cask only, launch, observe
+  setup card; install CLI via Homebrew button (which opens Terminal,
+  Return, brew runs), click Retry, observe normal `/ui/`; then
+  artificially mark binary as stale (hand-edit `update-check.json`),
+  reload `/ui/`, observe banner; click Update → Open in Terminal,
+  observe Terminal opens with brew upgrade command pre-typed.
 
 ### UL4 — Operator-facing docs
 
@@ -313,6 +512,12 @@ banner means, what to do when offline.
    - "What the staleness banner means" section explaining the four
      visible states (fresh / stale-but-cached / first-load-empty /
      check-failed) and the `NIMBUS_DISABLE_UPDATE_CHECK=1` opt-out.
+   - "What the Update button does" section explaining the (β+)
+     pattern: in the desktop, the click opens a terminal with the
+     command pre-typed; in the browser, the click copies the
+     command to the clipboard. The user always confirms before the
+     command runs. Cite decision 001's "Real-world analogs" for the
+     why.
    - "Air-gapped operation" subsection making the off-switch explicit.
 2. README cross-link: add a one-line pointer to `docs/operating/
    updates.md` in the Install section of `README.md` (right under the
@@ -373,15 +578,35 @@ tests; the cross-cutting gates are:
 
 ## Out of scope
 
-- **`nimbus self-upgrade`.** Rejected in
-  [decision 001](../decisions/001-update-staleness-detection.md) →
-  rejected alternative (γ). Self-rewriting binaries fight the package
-  manager and add security surface for marginal UX gain.
-- **Package-manager-detecting `nimbus upgrade` wrapper.** Worth
-  considering as a follow-on once we've shipped enough versions to
-  feel the manual `brew upgrade` friction. Not in this plan — leave
-  it as a deferred design note in `docs/plans/research/` if the need
-  surfaces.
+- **`nimbus self-upgrade` (server rewrites its own binary).**
+  Rejected in [decision 001](../decisions/001-update-staleness-
+  detection.md) → rejected alternative (γ). Self-rewriting binaries
+  fight the package manager and add security surface for marginal
+  UX gain. **Note the distinction from in-scope (β+)**: (β+) lets
+  the *UI* launch the operator's *package manager*; (γ) would have
+  the *server* *be* the package manager. We adopt the first, reject
+  the second.
+- **Silent `process.exec` of brew/apt/dnf from the desktop main
+  process.** Podman Desktop's macOS installer runs the bundled .pkg
+  silently via `open <pkg> -W` because the .pkg has its own GUI with
+  admin prompts. brew/apt/dnf are CLI tools with no GUI — silent
+  exec from the main process would hide stdout/stderr and confuse
+  failures. We launch a terminal so the user sees what the package
+  manager is doing.
+- **Bundling installer artifacts inside `nimbus-desktop`.** Podman
+  Desktop bundles `podman-installer-macos-*.pkg` (one of the
+  pkg-arch-version assets) inside its .app. We don't currently
+  produce nimbus `.pkg`/`.msi`/`.deb`/`.rpm` installer artifacts;
+  we hand off to brew/apt/dnf. Once distribution lands its own pkg
+  installer track (see `docs/plans/distribution-plan.md`), bundling
+  is the obvious next step — until then, terminal-launch is the
+  pragmatic v1.
+- **Auto-execute (no terminal) for brew on macOS.** A future
+  refinement could run `brew upgrade` headlessly from the main
+  process and stream stdout into an in-app progress modal (matching
+  Podman Desktop's `ProgressLocation.TASK_WIDGET` UX). Deferred —
+  terminal-launch lets us ship v1 without owning a streaming-shell
+  surface.
 - **Desktop polling GitHub directly.** Rejected in
   [decision 001](../decisions/001-update-staleness-detection.md) →
   rejected alternative (α). The desktop's update signal arrives via
@@ -426,3 +651,4 @@ writing the plan:
 | Date | Item | Status | Notes |
 | --- | --- | --- | --- |
 | 2026-05-16 | Plan authored | — | Decision doc 001 already landed; this plan is its parent execution sequencing. UL1/UL2/UL4 owned by `nimbus/nimbus`, UL3 owned by `nimbus/desktop`. |
+| 2026-05-16 | Revised with (β+) UI-launched upgrade pattern | — | Surveyed Podman Desktop locally (`~/src/github.com/podman-desktop/podman-desktop/extensions/podman/packages/extension/src/installer/{podman-install.ts,mac-os-installer.ts}` + `extension.ts:1014` `registerUpdatesIfAny`). Adopted the renderer-passes-method-tag / main-process-maps-to-whitelisted-command security model. UL1 endpoint shape grew a structured `upgrade` object; UL2 gained `upgrade-modal.tsx` with desktop "Open in Terminal" / browser "Copy command" branches; UL3 expanded scope to include `window.nimbus.openUpgradeTerminal` IPC bridge alongside the original CLI-not-found setup card. |
