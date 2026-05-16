@@ -22,6 +22,7 @@ Common commands:
   and `NIMBUS_E2E_BASE_URL` explicitly so tests do not depend on the
   operator's real local profile.
 
-The active implementation plan is
-`docs/plans/desktop-ui-plan.md`; the native Electron shell follow-up lives in
-`docs/plans/desktop-shell-plan.md`.
+The implementation plans are archived as
+`docs/plans/archive/desktop-ui-plan.md` (Phase 1 — embedded operator console)
+and `docs/plans/archive/desktop-shell-plan.md` (Phase 2 — native Electron
+shell at `nimbus/desktop`).

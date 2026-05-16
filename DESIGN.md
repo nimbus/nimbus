@@ -733,7 +733,7 @@ Tone:
   toasts, `shiki` for syntax highlighting, JetBrains Mono for monospace
   (via `@fontsource/jetbrains-mono`), Lucide for icons, TanStack Router,
   Zustand, Vitest, React Testing Library, and Playwright as described in
-  `docs/plans/desktop-ui-plan.md`.
+  `docs/plans/archive/desktop-ui-plan.md`.
 
 ## Accessibility And Quality Gates
 
@@ -752,7 +752,7 @@ Every UI feature must satisfy:
 ## References Used
 
 - `docs/current-capabilities.md`
-- `docs/plans/desktop-ui-plan.md`
+- `docs/plans/archive/desktop-ui-plan.md`
 - `docs/plans/archive/system-tenant-api-plan.md`
 - `docs/adapters/convex/compatibility.md`
 - `docs/adapters/firebase/compatibility.md`
