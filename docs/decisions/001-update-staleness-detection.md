@@ -52,12 +52,13 @@ Five viable shapes across that 2D space:
   into their own terminal — the UI never launches anything.
 - **(β+) Server detection, UI orchestrates the launch.** Same
   detection contract as (β-), but the SPA also renders a clickable
-  **Update** CTA. In the desktop, the CTA opens Terminal.app pre-typed
-  with the install-method-specific command (`osascript` on macOS,
-  equivalent on Linux/Windows). In a browser, the CTA opens a modal
-  with a copy-to-clipboard chip and the same command. The
-  package manager remains the source of truth — the UI just removes
-  the typing friction. **This is the Podman Desktop pattern.**
+  **Update** CTA. In the desktop, the CTA opens Terminal.app and the
+  install-method-specific command auto-runs (`osascript do script`
+  on macOS, equivalent on Linux/Windows). In a browser, the CTA
+  opens an anchored popover with a copy-to-clipboard chip and the
+  same command. The package manager remains the source of truth —
+  the UI just removes the typing friction. **This is the Podman
+  Desktop pattern.**
 - **(γ) Server detects AND applies upgrades itself.** Add a
   `nimbus self-upgrade` command that rewrites the binary in place.
   The SPA gets a "Restart with v0.x.y" button.
@@ -91,9 +92,10 @@ keyed on `current_exe()` introspection; the UI surfaces it as an
   shell; the main process maps a method tag (`'brew'`, `'apt'`,
   `'dnf'`, `'install-script'`) to a hardcoded command from a
   whitelist.
-- **In a browser**, opens a modal with the command in a code block
-  and a copy-to-clipboard chip. The operator pastes into their own
-  terminal.
+- **In a browser** (or against a remote nimbus from a desktop
+  shell), opens an anchored popover with the command in a code
+  block and a copy-to-clipboard chip. The operator pastes into a
+  terminal on the right host.
 
 Same banner, additive desktop affordance. Symmetric outcome (the
 operator's package manager does the work) with asymmetric ergonomics
@@ -141,7 +143,7 @@ GET /api/system/version-info
 - `upgrade.command` is the canonical command for the detected
   install method, constructed locally by the server from a hardcoded
   template — never echoed from network input. Shown to the operator
-  in the modal and pre-typed into the launched terminal.
+  in the popover and auto-executed in the launched terminal.
 - `upgrade.interactive` is `true` when the command needs a TTY (most
   package managers, especially with sudo prompts) — the UI uses this
   to decide whether to launch a terminal vs. a silent background
@@ -172,42 +174,50 @@ GET /api/system/version-info
 
 The UI mediates the upgrade through the operator's package manager;
 the server never executes installer commands, and the renderer never
-constructs shell strings.
+constructs shell strings. The flow is a five-state machine in the
+SPA — same density as Podman Desktop's
+`extensionApi.window.showInformationMessage` + `withProgress`
+sequence — not a chain of clicks.
 
 ```
-                ┌─────────────────────────────────────┐
-                │   /ui/* SPA — StalenessBanner       │
-                │   shows "Update Nimbus on <host>"   │
-                │   primary CTA: [Update]             │
-                └──────────────────┬──────────────────┘
-                                   │ click
-                ┌──────────────────▼──────────────────┐
-                │   UpgradeModal                       │
-                │   shows detected install method     │
-                │   shows upgrade.command in <code>   │
-                │                                     │
-                │   if window.nimbus?.openUpgrade…    │
-                │     primary: [Open in Terminal]     │
-                │   else                              │
-                │     primary: [Copy command]         │
-                │   tertiary: [Cancel]                │
-                └──────────────────┬──────────────────┘
-                                   │ click "Open in Terminal"
-                ┌──────────────────▼──────────────────┐
-                │   nimbus-desktop main process       │
-                │   maps method tag → whitelisted cmd │
-                │   spawns Terminal.app via osascript │
-                │   (macOS); falls back to copy chip  │
-                │   on Linux/Windows for v1           │
-                └──────────────────┬──────────────────┘
-                                   │
-                ┌──────────────────▼──────────────────┐
-                │   user's terminal                   │
-                │   command is pre-typed              │
-                │   user reviews → presses Return     │
-                │   brew/apt/dnf does the actual work │
-                └─────────────────────────────────────┘
+        available ──[Update]──▶ confirming ──[Cancel]──▶ available
+                                    │
+                                    ▼ [Open Terminal] (desktop+local)
+                                launching ──ack──▶ upgrading ──current bump──▶ upgraded
+                                    │                  │                          │
+                                    │ [Copy command]   │ [Cancel] or 10m timeout  │ 30s
+                                    │ (browser/remote) ▼                          ▼
+                                    └─────────▶ upgrading                      hidden
 ```
+
+- `available`: top banner reads "Update Nimbus on `<host>` from
+  `<current>` to `<latest>`" with [Update] [Dismiss].
+- `confirming`: small popover anchored to [Update]. Body is just
+  `upgrade.command` in a `<code>` block. Buttons: [Open Terminal]
+  (desktop+local) or [Copy command] (browser or remote-host), and
+  [Cancel]. No body paragraph. No disclosure. Same density as
+  Podman's `showInformationMessage('Do you want to update from X
+  to Y?', 'Yes', 'No')`.
+- `launching` (≤1s): banner reads "Opening Terminal…" while waiting
+  for the IPC ack. Brief — usually invisible to the user.
+- `upgrading`: banner reads "Upgrading to `<latest>` on `<host>`…"
+  with spinner and [Cancel] link. Poll cadence accelerates to 2s
+  for ≤10 minutes (gives immediate in-app feedback, matches Podman's
+  `ProgressLocation.TASK_WIDGET` semantics).
+- `upgraded`: banner reads "✓ Updated to `<latest>`" for 30 seconds,
+  then auto-dismisses.
+
+Two additional surfaces:
+
+- **OS notification toast** (desktop only): the main process fires
+  one Electron `Notification` per `latest` on first detection,
+  deduped via `~/.config/nimbus-desktop/notified-versions.json`.
+  Clicking the toast brings the existing window forward.
+- **Remote-host gate**: when the server's `host` does not match
+  `window.location.host` (and is not a localhost predicate), the
+  [Open Terminal] button is *not rendered* even with `window.nimbus`
+  present. Terminal-launch on the operator's local laptop would
+  upgrade nimbus on the wrong machine.
 
 **Security model (mirrors Podman Desktop's
 `provider.registerUpdate({ update: () => … })`):**
@@ -281,9 +291,11 @@ The **Podman Desktop** code path is canonical for this class of app
 
 - The CTA pattern: a clickable **Update** button on the staleness
   surface, not just a copy-paste hint.
-- Confirmation gating: the click opens a modal that names the target
-  version and shows what is about to run; nothing happens until the
-  operator confirms.
+- Confirmation gating: the click opens an anchored popover that
+  shows the command about to run; nothing happens until the operator
+  confirms. Same density as Podman's
+  `showInformationMessage('Do you want to update to Y?', 'Yes', 'No')`
+  — one row of content, two buttons, no body paragraph.
 - Whitelisted action mapping: the renderer passes a method tag, not
   a command string; the main process maps to a hardcoded command.
 
