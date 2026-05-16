@@ -529,9 +529,22 @@ fn resolve_cache_root() -> Result<PathBuf, Error> {
 }
 
 fn resolve_home_dir() -> Result<PathBuf, Error> {
-    env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
-        Error::InvalidInput("HOME is not set; cannot resolve machine directories".to_owned())
-    })
+    if let Some(home) = env::var_os("HOME") {
+        return Ok(PathBuf::from(home));
+    }
+    if cfg!(windows) {
+        if let Some(profile) = env::var_os("USERPROFILE") {
+            return Ok(PathBuf::from(profile));
+        }
+        if let (Some(drive), Some(path)) = (env::var_os("HOMEDRIVE"), env::var_os("HOMEPATH")) {
+            if !drive.is_empty() && !path.is_empty() {
+                return Ok(PathBuf::from(drive).join(path));
+            }
+        }
+    }
+    Err(Error::InvalidInput(
+        "HOME is not set; cannot resolve machine directories".to_owned(),
+    ))
 }
 
 pub fn resolve_runtime_root() -> PathBuf {
