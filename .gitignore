@@ -40,6 +40,9 @@ __pycache__
 
 # playwright-cli snapshots/screenshots/traces (per-session artifacts)
 .playwright-cli/
+# Playwright runner artifacts (when run from repo root)
+test-results/
+playwright-report/
 .env.local
 **/.env.local
 demos/convex/vendor/browser.bundle.js

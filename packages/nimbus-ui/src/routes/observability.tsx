@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import { api } from "../../convex/_generated/api";
@@ -33,6 +34,42 @@ type ObservabilitySearch = {
 
 const LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
 const RUN_STATUSES = ["ok", "error", "running", "queued"] as const;
+
+interface NimbusPerfEventStore {
+  snapshot: () => EventDoc[];
+  subscribe: (listener: () => void) => () => void;
+}
+
+declare global {
+  interface Window {
+    __nimbusEvents?: NimbusPerfEventStore;
+  }
+}
+
+const emptyEvents: EventDoc[] = [];
+
+function getPerfStore(): NimbusPerfEventStore | undefined {
+  return typeof window === "undefined" ? undefined : window.__nimbusEvents;
+}
+
+function usePerfEventStream(): EventDoc[] | undefined {
+  const subscribe = useCallback((listener: () => void) => {
+    const store = getPerfStore();
+    if (!store) return () => {};
+    return store.subscribe(listener);
+  }, []);
+  const getSnapshot = useCallback(() => {
+    const store = getPerfStore();
+    return store ? store.snapshot() : emptyEvents;
+  }, []);
+  const getServerSnapshot = useCallback(() => emptyEvents, []);
+  const snapshot = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot,
+  );
+  return getPerfStore() ? snapshot : undefined;
+}
 
 function parseTab(value: unknown): ObservabilityTab | undefined {
   return value === "logs" || value === "runs" ? value : undefined;
@@ -160,13 +197,15 @@ function TabLink({
 
 function LogsTab({ search }: { search: ObservabilitySearch }) {
   const navigate = useNavigate({ from: "/observability" });
-  const events = useQuery(api.events.recent, {
+  const live = useQuery(api.events.recent, {
     source: search.source ?? null,
     level: search.level ?? null,
     category: search.category ?? null,
     correlationId: search.correlationId ?? null,
     limit: 200,
   }) as EventDoc[] | undefined;
+  const perf = usePerfEventStream();
+  const events = perf ?? live;
 
   const follow = search.follow ?? false;
   const pauseOnError = search.pauseOnError ?? false;
