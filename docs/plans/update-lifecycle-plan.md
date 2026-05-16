@@ -73,42 +73,47 @@ package manager command. The distinction is in decision 001's
                              │
                 ┌────────────▼────────────┐                     ┌──────────────────────┐
                 │   /ui/* SPA              │  ← UL2              │ nimbus-desktop main  │  ← UL3
-                │   StalenessBanner        │   click [Update]    │ ┌──────────────────┐ │
-                │   ├ available            │ ──────────────────▶ │ │ IPC: openUpgrade │ │
-                │   ├ confirming (popover) │   click [Open Term] │ │ Terminal(tag)    │ │
-                │   ├ launching            │ ──────────────────▶ │ │ tag → command    │ │
-                │   ├ upgrading (spinner,  │ ◀────── { launched }─│ │ → osascript spawn│ │
-                │   │  polls 2s × ≤10m)   │                     │ └──────────────────┘ │
-                │   ├ upgraded (✓ 30s)    │                     │ ┌──────────────────┐ │
-                │   └ hidden               │                     │ │ Notification     │ │
-                │                          │  ◀── OS toast ──────│ │ on first stale   │ │
-                │   Browser variant: skip  │                     │ │ (dedupe by       │ │
-                │   [Open Term], use [Copy]│                     │ │  notified-versi- │ │
-                │   Remote-host gate:      │                     │ │  ons.json)       │ │
-                │   force [Copy] even on   │                     │ └──────────────────┘ │
-                │   desktop                │                     └──────────┬───────────┘
-                └─────────────────────────┘                                │
-                                                                ┌──────────▼───────────┐
-                                                                │ user's Terminal.app  │
-                                                                │ `do script` AUTO-RUNS│
-                                                                │ user watches brew/apt│
-                                                                │ closes window when   │
-                                                                │ done                 │
-                                                                └──────────────────────┘
+                │   status-bar version     │   click slot        │ ┌──────────────────┐ │
+                │   slot (always visible)  │ ──────────────────▶ │ │ IPC: runUpgrade  │ │
+                │   ├ normal (vX.Y.Z)     │   click [Update]    │ │ (tag)            │ │
+                │   ├ available           │ ──────────────────▶ │ │ tag → argv       │ │
+                │   │  ("update to X →")  │   ProgressEvent     │ │ → child_process. │ │
+                │   ├ confirming (popover) │ ◀──── stream ───── │ │   spawn(argv,    │ │
+                │   ├ upgrading            │      stdout/stderr │ │   shell:false)   │ │
+                │   │  (polls 2s × ≤10m)  │                     │ │ → on exit 0:     │ │
+                │   └ upgraded (✓ 30s)    │ ◀── restarted ──── │ │   SIGTERM + re-  │ │
+                │                          │                     │ │   spawn nimbus   │ │
+                │   + sonner toast on     │                     │ │   child (DS3)    │ │
+                │   first detection       │                     │ └──────────────────┘ │
+                │   + Settings → Server   │                     │ ┌──────────────────┐ │
+                │   "Updates" row         │                     │ │ Notification     │ │
+                │                          │ ◀── OS toast ──────│ │ on first stale   │ │
+                │   Browser/remote/non-    │                     │ │ (dedupe by       │ │
+                │   brew: popover shows    │                     │ │ notified-versi-  │ │
+                │   [Copy command] only.   │                     │ │ ons.json)        │ │
+                │   Remote-host gate via   │                     │ └──────────────────┘ │
+                │   localhost predicate.   │                     └──────────────────────┘
+                └─────────────────────────┘
+
+  No Terminal window ever opens. Background `brew` mirrors Podman's
+  `open -W <pkg>` "no terminal visible" UX — the in-app progress
+  region is the GUI surface. Methods that need sudo TTY (apt, dnf,
+  install-script) and every other platform/topology fall back to
+  copy-only, where the user pastes into their own terminal.
 
   Orthogonal: nimbus-desktop shell uses electron-updater for itself
   (already wired). Never polls api.github.com for the nimbus binary.
-  Browser-only and remote-host operators see the same banner + popover
-  but the popover's primary action is [Copy command] instead of
-  [Open Terminal] — terminal-launch on the operator's local machine
-  in a remote-nimbus topology would target the wrong host.
+  Browser-only and remote-host operators see the same status-bar
+  slot + popover but the popover's only action is [Copy command] —
+  background brew on the operator's local machine in a remote-
+  nimbus topology would target the wrong host.
 ```
 
 Three update axes, three independent owners:
 
 | Axis | Detected by | Surfaced as | Applied by |
 |---|---|---|---|
-| **nimbus binary** stale | UL1 background task in nimbus | UL2 SPA banner + upgrade popover (browser + desktop) | operator's package manager (`brew/apt/dnf upgrade …`), launched in a terminal by UL3's IPC bridge on desktop or copy-paste in browser |
+| **nimbus binary** stale | UL1 background task in nimbus | UL2 SPA status-bar slot + sonner toast + upgrade popover (browser + desktop) | operator's package manager: `brew upgrade` run headless via UL3's `runUpgrade` IPC on desktop+macOS, or copy-paste from the popover on every other path |
 | **/ui/* SPA** stale | n/a (ships in lockstep with the binary) | n/a | upgrades when the binary upgrades |
 | **desktop shell** stale | `electron-updater` polling release manifest | shell's own non-modal toast | `electron-updater` swaps `.app` on next quit |
 
@@ -240,236 +245,289 @@ blocking startup.
   `checkStatus: "disabled"` immediately and `~/.config/nimbus/
   update-check.json` is never created.
 
-### UL2 — SPA staleness banner in `packages/nimbus-ui/`
+### UL2 — Staleness surfaces in `packages/nimbus-ui/`
 
-**Goal:** the operator sees one consistent staleness signal, with the
-same copy and the same dismissal behavior, in browser and desktop.
+**Goal:** the operator sees one persistent staleness signal in the
+status bar (always visible, every route), one transient toast on
+first detection, and one anchored popover for confirmation. **No top
+banner.** Reuse existing shell primitives — `shell/status-bar.tsx`,
+the sonner Toaster already mounted in `routes/__root.tsx`,
+`components/copy-chip.tsx`, `components/state-dot.tsx` — instead of
+introducing a new top-of-window surface that DESIGN.md does not
+specify.
+
+**Why this shape (vs. a top banner):** DESIGN.md §"Bottom Status Bar"
+already reserves a "Server version + build hash (monospace, click
+opens release notes)" slot. That slot is the canonical persistent
+location for version state. Adding a top banner duplicates the
+surface and violates the §"Aesthetic Stance: Industrial Precision"
+rule against decorative chrome. Podman Desktop's persistent reminder
+is the `"Update to {version}"` button on the provider card
+(`packages/renderer/.../ProviderUpdateButton.svelte:59`) — a tile
+the operator must navigate to. The status bar version slot is
+*more* conspicuous because it survives every route change.
 
 **Deliverables:**
 
-1. New component `packages/nimbus-ui/src/components/staleness-banner.tsx`:
-   - Reads `/api/system/version-info` via the existing convex/nimbus
-     fetch client (one-shot, not subscription — the endpoint is
-     intentionally simple HTTP, not WS).
-   - Polls every 5 minutes while open (a stale-while-revalidate read
-     on the server side is cheap).
-   - Renders nothing for `checkStatus: "disabled"`, `"never"`, or
-     `available: false`.
-   - Renders a top banner for `available: true` with copy "Update
-     Nimbus on `<host>` from `<current>` to `<latest>`" (host comes
-     from the response so remote-nimbus topologies read correctly),
-     a link to the release URL, and a primary **Update** CTA that
-     opens the upgrade popover.
-   - Dismissible per-session via `localStorage["nimbus-ui:staleness-
-     dismissed-version"]` keyed to the *latest* version — dismissing
-     0.1.41 still surfaces 0.1.42 when it lands.
-   - Re-renders without a full page reload when the underlying value
-     changes (poll completes, version flips).
-2. New component `packages/nimbus-ui/src/components/upgrade-popover.tsx`
-   — small popover **anchored to the banner's [Update] button**, not
-   a full-screen modal. Matches the tightness of Podman Desktop's
-   `extensionApi.window.showInformationMessage('Do you want to
-   update to Y?', 'Yes', 'No')` (one line + two buttons; no
-   explanatory body):
-   - Triggered by the banner's [Update] CTA.
-   - Header: "Run in Terminal?" (desktop) or "Copy command?"
-     (browser / remote-host).
-   - One row: `upgrade.command` in a monospace `<code>` block.
-     **No body paragraph. No disclosure expander. No install-method
-     subtitle.** The command is self-explanatory.
-   - Two buttons: primary action + [Cancel]. Primary action depends
-     on context (see below).
-   - Esc dismisses the popover. Click-outside dismisses the popover.
-     Dismissing the popover does **not** dismiss the banner — banner
-     stays in `available` state.
-3. **Banner state machine.** The banner is a finite state machine
-   driven by `/api/system/version-info` polling + IPC signals from
-   UL3. States, transitions, and visible copy:
+1. **Status-bar version slot enhancement** in
+   `packages/nimbus-ui/src/shell/status-bar.tsx`. Today the version
+   slot renders as a single `CopyChip` (lines 57-61). Replace it
+   with a stateful slot driven by `/api/system/version-info`:
 
-   | State | Visible copy | Visible actions | Enters when |
+   | Banner state | Slot rendering |
+   |---|---|
+   | `hidden` (up-to-date / opt-out / check failed) | `CopyChip` exactly as today: `v0.1.40+abcd123` |
+   | `available` | `[StateDot --accent]` + `v0.1.40 · update to 0.1.41 →`, the whole row is a button that opens the upgrade popover anchored to itself |
+   | `upgrading` | `[StateDot --starting half-filled]` + `Updating to 0.1.41…` (no click target while in this state) |
+   | `upgraded` (≤30 s after success) | `[StateDot --success]` + `v0.1.41+def0123` (the new build) |
+
+   The slot keeps the same dimensions in every state so the rest of
+   the status bar does not shift. The `StateDot` glyph mapping is
+   per DESIGN.md §Badges (line 372): `--accent` solid for actionable
+   state, `--starting` half-filled for in-progress, `--success` solid
+   for healthy.
+2. **First-detection sonner toast.** When the poll transitions from
+   `available: false` → `available: true` (or sees `available: true`
+   for the first time after a page load with no prior dismissal
+   record), emit one `toast()` via the existing
+   `sonner` Toaster (already mounted at
+   `routes/__root.tsx:35-46`). Toast content:
+
+   ```
+   Nimbus 0.1.41 available
+   Update from 0.1.40.
+   [Update]  [Dismiss]
+   ```
+
+   Clicking `[Update]` opens the upgrade popover anchored to the
+   status-bar version slot (not anchored to the toast — the toast
+   dismisses immediately on click). Clicking `[Dismiss]`
+   writes `localStorage["nimbus-ui:staleness-dismissed-version"] =
+   "0.1.41"` and dismisses the toast. The status bar slot keeps
+   showing the `available` row regardless of toast dismissal —
+   the toast is the *announcement*; the status bar is the
+   persistent reminder.
+
+   Subsequent polls do not re-emit the toast for the same `latest`.
+   When `latest` flips to a new value (0.1.42), a fresh toast fires
+   even if 0.1.41 was dismissed.
+3. **Upgrade popover** in
+   `packages/nimbus-ui/src/components/upgrade-popover.tsx` — a shadcn
+   Popover (the project already uses Base UI / shadcn primitives per
+   DESIGN.md §"Implementation Rules") anchored to the status-bar
+   version slot. Contents, in Podman density:
+
+   ```
+   ┌─────────────────────────────────────────┐
+   │ Update Nimbus to 0.1.41?                │
+   │                                          │
+   │   brew upgrade nimbus/tap/nimbus  [📋]  │  ← CopyChip
+   │                                          │
+   │                  [ Cancel ]  [ Update ]  │
+   └─────────────────────────────────────────┘
+   ```
+
+   - Header line: `Update Nimbus to 0.1.41?` (matches Podman's
+     `Do you want to update to {newVersion}?` density, retitled per
+     DESIGN.md §"Copy And Terminology" tone — action verb).
+   - Body row: `upgrade.command` rendered with the existing
+     `CopyChip` component. **No body paragraph. No disclosure. No
+     install-method subtitle.** The command is self-explanatory.
+   - Primary button label depends on context:
+     - **Desktop + local-host**: `Update` (runs the upgrade in the
+       background via UL3's IPC bridge; no terminal opens).
+     - **Browser, or remote-host, or desktop without
+       `window.nimbus`**: `Copy command` (writes the command to the
+       clipboard and shows an inline "Copied" microtoast).
+   - Secondary button: `Cancel`. Esc and click-outside also dismiss.
+4. **Banner state machine** (drives the status-bar slot and the
+   popover). Owned by `packages/nimbus-ui/src/hooks/use-staleness.ts`:
+
+   | State | Status-bar slot | Popover | Enters when |
    |---|---|---|---|
-   | `hidden` | — | — | `available: false` OR dismissed-for-this-`latest` OR `checkStatus ∈ {disabled, never}` |
-   | `available` | "Nimbus 0.1.41 available on `host.example.com`" | [Update] [Dismiss] | `available: true` and not dismissed |
-   | `confirming` | (banner unchanged, popover open) | [Open Terminal] / [Copy command] / [Cancel] | user clicked [Update] |
-   | `launching` | "Opening Terminal…" (brief, ≤1s) | — | desktop popover [Open Terminal] clicked, awaiting IPC ack |
-   | `upgrading` | "Upgrading to 0.1.41 on `host.example.com`…" (spinner) | [Cancel] | IPC ack received OR (browser) [Copy command] clicked |
-   | `upgraded` | "✓ Updated to 0.1.41" | [Dismiss] (auto-dismisses in 30s) | poll detects `current >= previously-known-latest` |
+   | `hidden` | normal version chip | closed | `available: false` OR `checkStatus ∈ {disabled, never, failed}` |
+   | `available` | "update to X →" row | closed; user can click slot to open | `available: true` |
+   | `confirming` | "update to X →" row | open, anchored to slot | user clicked slot OR clicked toast `[Update]` |
+   | `upgrading` | "Updating to X…" row | closed | popover `[Update]` clicked (desktop) OR `[Copy command]` clicked (browser) |
+   | `upgraded` | new version + success dot (30 s) | closed | poll detects `current >= upgrade-target latest` |
 
-   - Transition `available → confirming`: open popover.
-   - Transition `confirming → launching`: desktop only; click [Open
-     Terminal] sends IPC `openUpgradeTerminal(method)` and the
-     banner enters `launching`. On `{ launched: true }` ack from
-     UL3, transition to `upgrading`. On `{ launched: false,
-     fallback: 'copy' }`, treat as if [Copy command] was pressed.
-   - Transition `confirming → upgrading`: browser variant; click
-     [Copy command] writes to clipboard, shows a transient inline
-     toast "Copied — paste into a terminal on `host.example.com`",
-     enters `upgrading`.
-   - Transition `upgrading → upgraded`: poll loop accelerates to
-     2s after entering `upgrading`, capped at 10 minutes. On
-     `current >= latest`, transition to `upgraded`. Save the
-     incoming `latest` value at `upgrading` entry so we don't get
-     fooled by a transient pre-poll cache.
-   - Transition `upgrading → available` (timeout): if 10 minutes
-     elapse with no version flip, fall back to `available` with
-     subtext "Did the upgrade fail? You can try again." User may
-     have closed Terminal without running the command, or the
-     upgrade may have failed.
-   - Transition `upgrading → available` (cancel): click [Cancel];
-     same as timeout but without the failure subtext.
-   - Transition `upgraded → hidden`: 30s elapsed.
-4. **Remote-host gating.** Before showing the popover, compare
-   `upgrade.host` (from the server response) with
-   `window.location.host`. If they differ — e.g., browser at
-   `https://nimbus.work.example.com` reading
-   `upgrade.host: "work.example.com"` — **force the browser
-   variant of the popover regardless of `window.nimbus`
-   presence**, and replace "Run in Terminal?" with "Copy command
-   to run on `host.example.com`?". The terminal-launch button
-   would otherwise run brew on the *operator's laptop* instead of
-   the remote server — wrong machine, wrong outcome. The clipboard
-   path is correct because the operator copies it and SSHes into
-   the right host.
+   - `available → confirming`: open popover.
+   - `confirming → upgrading` (desktop+local):
+     `window.nimbus.runUpgrade(method)` returns an `AsyncIterable`
+     of progress events; the hook subscribes and stays in
+     `upgrading` until either the iterable closes (success →
+     `upgraded`) or yields `{ kind: 'error', ... }` (revert to
+     `available` with a sonner error toast).
+   - `confirming → upgrading` (browser/remote): write to clipboard
+     via `navigator.clipboard.writeText(upgrade.command)`, emit a
+     transient sonner toast `Copied — run on host.example.com`,
+     enter `upgrading`. The hook then polls every 2 s waiting for
+     `current >= latest`; if 10 minutes elapse, revert to
+     `available` with sonner `Upgrade not detected. Try again?`.
+   - `upgrading → upgraded`: poll loop accelerates to 2 s after
+     `upgrading` entry, capped at 10 minutes. On `current >=
+     upgrade-target-latest`, enter `upgraded` and emit a sonner
+     success toast `Nimbus 0.1.41 running`.
+   - `upgraded → hidden`: 30 s elapsed.
 
-   Local-host predicates: `upgrade.host` is `null`, `"localhost"`,
-   `"127.0.0.1"`, `"::1"`, or matches `window.location.host`
-   exactly.
-5. **Fallback for `source` / `unknown` method.** When `upgrade.command`
-   is `null`, the popover collapses to a one-liner "See the install
-   docs" with a link to `upgrade.fallbackUrl` (opens in a new tab).
-   No terminal-launch button, no copy button.
-6. Banner + popover mounted in the global shell (`packages/nimbus-ui/
-   src/routes/__root.tsx` or equivalent — confirm name during
-   implementation since DU3 may have renamed).
-7. Storybook stories (`staleness-banner.stories.tsx`,
-   `upgrade-popover.stories.tsx`) covering: banner states
-   (`available`, `upgrading`, `upgraded`) × two themes (six
-   states); popover variants (desktop-local, browser-local,
-   remote-host, source-method) × two themes (eight states) —
-   ~14 visual states total; small enough to inspect end-to-end.
+   The cap-and-target value is sampled at `upgrading` entry so a
+   transient pre-poll cache hit cannot fool the transition.
+5. **Remote-host gating.** When `upgrade.host` (server-reported)
+   does not match `window.location.host` and is not a localhost
+   predicate (`null`, `localhost`, `127.0.0.1`, `::1`), the popover
+   *unconditionally* renders the `Copy command` branch — even with
+   `window.nimbus` present. Calling `runUpgrade` on the operator's
+   laptop would target the wrong machine. The popover header in
+   this case reads `Copy command to run on host.example.com?`.
+6. **Settings → Server section row.** Add one `Definition` row to
+   the existing `ServerInfoSection` in
+   `packages/nimbus-ui/src/routes/settings.tsx:317`:
+
+   | Updates | "Up to date" *(--success state-chip)* OR "0.1.41 available — [Update]" *(button opens popover anchored here)* |
+
+   This is the second persistent surface. Status bar is always
+   visible (every route); Settings page surfaces the same state in
+   context with version, uptime, listen address, encryption etc.
+7. **Fallback for `source` / `unknown` method.** When
+   `upgrade.command` is `null`, the popover collapses to a single
+   line `See the install docs` linking to `upgrade.fallbackUrl`.
+   No primary action button.
+8. **Mount points.** Status-bar enhancement is in-place. Sonner
+   toast and popover are both mounted under the existing
+   `routes/__root.tsx` shell — no new top-level layout changes.
+9. **Storybook stories** covering the status-bar slot in each of
+   the four states (`hidden`/`available`/`upgrading`/`upgraded`)
+   × two themes, and popover variants (desktop-local,
+   browser-local, remote-host, source-method) × two themes. ~16
+   visual states total; small enough to inspect end-to-end.
 
 **Contract bullets:**
 
-- **Single banner.** No version-specific dismissal layering — one
-  active banner at a time, dismissed per-latest-version.
-- **Popover, not modal.** The confirmation step is anchored to the
-  [Update] button, not a full-screen overlay. Click-outside and
-  Esc dismiss without affecting banner state. Matches GitHub
-  Desktop's "Pull origin" popover and Podman Desktop's
-  `showInformationMessage` dialog density — two buttons, minimal
-  content.
-- **A11y:** banner is `role="status"` with `aria-live="polite"` so
-  screen readers announce it on first render but not on poll
-  refreshes that don't change the visible content. Popover is
-  `role="dialog"` with `aria-modal="false"` (non-blocking),
-  focus-trapped while open, Esc-to-close. State transitions update
-  `aria-live` regions so screen readers track `available →
-  upgrading → upgraded`.
-- **Theme-aware:** uses semantic state tokens from DU5's OKLCH
-  palette (`--color-info` for `available`, `--color-warning` for
-  `upgrading`, `--color-success` for `upgraded`). Passes axe-core
-  AA in both themes per the DU5 verification standard.
-- **No exit telemetry.** Dismissing the banner, clicking the
-  Update CTA, or canceling the popover writes only to localStorage
-  and (for desktop) sends an IPC message to the local main process.
-  Nothing flows to the server.
-- **Method tag, not command string.** The renderer's only outbound
-  command surface is `window.nimbus.openUpgradeTerminal(method)`
-  with `method` being one of six known strings. The renderer never
-  constructs or forwards shell input. Mirrors the security model in
+- **Reuse before invent.** Status-bar slot, sonner Toaster,
+  CopyChip, StateDot, Settings → Server section, shadcn Popover.
+  Two genuinely new files only: `use-staleness.ts` and
+  `upgrade-popover.tsx`. No new top-level layout, no new banner
+  component, no new toast queue.
+- **Status bar is the persistent reminder.** Sonner is one-shot
+  (per `latest`); the status bar version slot persists every
+  route, every reload. Matches DESIGN.md §"Bottom Status Bar"
+  exactly. Inspired by Podman's `ProviderUpdateButton.svelte:59`
+  pattern of a persistent button on a relevant card.
+- **Popover, not modal.** Anchored to the status-bar version
+  slot. Click-outside and Esc dismiss without affecting state.
+  Matches Podman's `showInformationMessage(...)` density —
+  one row of content, two buttons.
+- **A11y:** status-bar slot is `role="status"` with
+  `aria-live="polite"`. Popover is shadcn-default `role="dialog"`
+  with `aria-modal="false"`, focus-trapped while open, Esc-to-
+  close. State transitions update `aria-live` regions so screen
+  readers track `available → upgrading → upgraded`. Passes
+  axe-core AA in both themes per the DU5/DU6 standard.
+- **Theme-aware:** status-bar state-dot uses DESIGN.md tokens —
+  `--accent` for `available`, `--starting` for `upgrading`,
+  `--success` for `upgraded`.
+- **No exit telemetry.** Dismissing the toast or canceling the
+  popover writes only to localStorage and (for desktop) sends
+  an IPC message to the local main process. Nothing flows to the
+  server.
+- **Method tag, not command string.** The renderer's only
+  outbound command surface is `window.nimbus.runUpgrade(method)`
+  with `method` being one of six known strings. The renderer
+  never constructs or forwards shell input. Same security model
+  as Podman's `provider.registerUpdate({ update: () => … })` at
   `extensions/podman/packages/extension/src/extension.ts:1014`
-  (`provider.registerUpdate({ update: () => … })`) — the renderer
-  invokes a typed callback, not an arbitrary shell command.
+  — typed callback, not arbitrary shell.
 - **Remote-host gating.** When the server's reported `host` does
   not match `window.location.host` (and isn't a localhost
-  predicate), the terminal-launch button is *not rendered* even
-  if `window.nimbus` is present. The clipboard path is the only
-  option for remote-nimbus topologies — terminal-launch on the
-  operator's local machine would target the wrong host.
+  predicate), the popover always renders the `Copy command`
+  branch. `runUpgrade` would otherwise run brew on the operator's
+  laptop instead of the remote server.
 - **Accelerated polling while upgrading.** Default poll is 5
   minutes (cheap, server caches anyway). On `upgrading` entry,
-  poll cadence accelerates to 2s for up to 10 minutes, then falls
-  back to `available` if no version flip is observed. Matches
-  Podman Desktop's `extensionApi.window.withProgress(...)` pattern
-  of giving the user immediate in-app feedback rather than
-  silently going stale.
+  cadence accelerates to 2 s for up to 10 minutes. Mirrors
+  Podman's `extensionApi.window.withProgress(...)` immediacy.
 
 **Files touched:**
 
-- `packages/nimbus-ui/src/components/staleness-banner.tsx` (new —
-  banner shell that renders per-state copy)
-- `packages/nimbus-ui/src/components/staleness-banner.stories.tsx`
-  (new — one story per banner state)
+- `packages/nimbus-ui/src/shell/status-bar.tsx` (modify in place —
+  the version slot becomes stateful via the `useStaleness` hook;
+  every other slot unchanged)
 - `packages/nimbus-ui/src/components/upgrade-popover.tsx` (new —
-  small popover anchored to the banner button)
+  shadcn Popover wrapper; ~80 lines)
 - `packages/nimbus-ui/src/components/upgrade-popover.stories.tsx`
-  (new — desktop / browser / remote-host / source-method variants)
-- `packages/nimbus-ui/src/hooks/use-upgrade-machine.ts` (new —
-  state machine: state, transitions, accelerated polling. Plain
-  React hook; no external state library.)
+  (new — desktop / browser / remote-host / source-method × theme)
+- `packages/nimbus-ui/src/hooks/use-staleness.ts` (new — fetch
+  `/api/system/version-info`, run the 5-state machine, expose
+  current state + transitions. Plain React hook; no external
+  state library; ~150 lines.)
 - `packages/nimbus-ui/src/lib/desktop-bridge.ts` (new — typed
-  wrapper over `window.nimbus` that returns a null bridge when the
-  preload isn't present, plus `isLocalHost(serverHost)` predicate
-  for remote-host gating)
-- `packages/nimbus-ui/src/routes/__root.tsx` (mount point)
-- `packages/nimbus-ui/src/api/system.ts` (typed fetch wrapper for
-  `/api/system/version-info`, new)
+  wrapper over `window.nimbus`; returns a null bridge when the
+  preload isn't present; exports `isLocalHost(serverHost)`
+  predicate)
+- `packages/nimbus-ui/src/api/system.ts` (new — typed fetch
+  wrapper for `/api/system/version-info`)
+- `packages/nimbus-ui/src/routes/settings.tsx` (modify in place —
+  add the `Updates` `Definition` row to `ServerInfoSection`)
+- `packages/nimbus-ui/src/stories/status-bar.stories.tsx` (new
+  or extend if a status-bar story already exists — cover the
+  four version-slot states × theme)
 
 **Completion gate:**
 
 - Vitest unit tests cover:
-  - Dismissal-keying logic and `latest`-version-flips-re-shows.
-  - The full banner state machine: each transition from the table
-    above is asserted (available→confirming, confirming→launching,
-    launching→upgrading, upgrading→upgraded, upgrading→available
-    on timeout and on cancel, upgraded→hidden after 30s). Use
-    `vi.useFakeTimers()` for the polling and timeout assertions.
+  - The state machine: each transition asserted using
+    `vi.useFakeTimers()` for poll + timeout assertions.
+  - Dismissal-keying logic (sonner dismiss writes localStorage;
+    `latest` flip re-emits).
   - The six-branch `upgrade.method` popover render matrix.
   - Remote-host gating: stub `window.location.host` and the
-    response's `upgrade.host`; assert that with a mismatched host,
-    the terminal-launch button is *absent* even with a present
-    `window.nimbus` mock.
-- Vitest unit test confirms that with a mocked
-  `window.nimbus.openUpgradeTerminal`, clicking [Open Terminal]
-  invokes it with exactly the method tag from the response (and
-  no other arguments). With the bridge absent, the same click
-  instead writes `upgrade.command` to the clipboard via
-  `navigator.clipboard`.
-- Storybook + Chromatic: stories cover banner states (`available`,
-  `upgrading`, `upgraded`) × two themes; popover variants
-  (desktop-local, browser-local, remote-host, source-method) ×
-  two themes. ~16 visual states total — small enough to inspect.
+    response's `upgrade.host`; assert the popover renders
+    `Copy command` (not `Update`) even with `window.nimbus` mocked.
+  - With `window.nimbus.runUpgrade` mocked, clicking `Update`
+    invokes it with exactly the method tag — no command string
+    crosses the boundary.
+- Storybook + Chromatic: ~16 visual states (status-bar slot ×
+  4 × 2 themes + popover × 4 × 2 themes). Small enough to
+  inspect end-to-end.
 - axe-core run against the embedded build: 0 violations in dark
-  and light themes with the banner visible AND with the popover
-  open (matches the DU5/DU6/DU6.5/DU7 bar).
+  and light themes with the status-bar in `available` state AND
+  with the popover open (matches the DU5/DU6 bar).
 - Manual end-to-end against a freshly-cut nimbus that exposes UL1:
-  open `/ui/` in Chromium → banner appears in `available` state;
-  click [Update] → popover opens; click [Copy command] → clipboard
-  contains the brew upgrade command, banner enters `upgrading`;
-  manually bump nimbus version, reload server → banner transitions
-  to `upgraded` within 2 seconds; wait 30s → banner disappears.
-- Manual remote-host test: point browser at a non-localhost
-  nimbus, confirm the popover's primary action is [Copy command]
-  (not [Open Terminal]) even in the desktop shell.
+  open `/ui/` in Chromium → status-bar slot shows current
+  version; trigger staleness (hand-edit `update-check.json`
+  via UL1's cache file) → status-bar slot transitions to "update
+  to 0.1.41 →" and a sonner toast appears; click slot → popover
+  opens anchored beneath; click `Copy command` → clipboard
+  contains `brew upgrade nimbus/tap/nimbus`, status-bar slot
+  enters `Updating to 0.1.41…`; manually upgrade and reload
+  server → status-bar slot transitions to `v0.1.41` with brief
+  green dot, then back to normal.
+- Manual remote-host test: point a desktop shell at a non-
+  localhost nimbus, confirm the popover's primary action is
+  `Copy command` (never `Update`).
 
-### UL3 — Desktop shell: setup card + upgrade-terminal bridge
+### UL3 — Desktop shell: setup card + background upgrade runner
 
 **Goal:** the desktop shell adds two install-method-aware surfaces:
 
 1. A first-run setup card when no `nimbus` CLI is on PATH (replaces
    the raw `NimbusBinaryNotFoundError` death-screen).
-2. An IPC bridge `nimbus.openUpgradeTerminal(method)` that lets the
-   SPA's UL2 Update CTA launch the user's terminal with the
-   install-method-specific command pre-typed.
+2. An IPC bridge `nimbus.runUpgrade(method)` that lets the SPA's
+   UL2 Update CTA spawn the package manager **in the background**
+   (no Terminal window opens), stream progress events to the
+   renderer, and restart the nimbus child process when the binary
+   on disk changes so version state stays in sync naturally.
 
 Both are forms of the same pattern: the desktop renders a button,
 the renderer passes a method tag, the main process maps that tag
-to a whitelisted command and shells out via `osascript` (macOS) or
-the platform-appropriate equivalent. This mirrors the architecture
-in `extensions/podman/packages/extension/src/installer/mac-os-
-installer.ts` where the `install()` / `update()` methods construct
-their own paths from local state and call `processAPI.exec('open',
-[pkgToInstall, '-W'])` — the renderer never passes a shell string.
+to a whitelisted argv via `child_process.spawn`, streams stdout/
+stderr lines to the renderer as `ProgressEvent`s, and — for
+upgrades — gracefully restarts the nimbus child when the runner
+exits successfully. This matches Podman Desktop's "no Terminal
+visible" semantics (`open -W <pkg>` blocks on the installer GUI;
+`extensionApi.window.withProgress({ location: ProgressLocation
+.TASK_WIDGET, ... })` renders in-app progress) without coupling
+to a `.pkg` artifact we don't ship.
 
 **Owner:** `nimbus/desktop` (separate repo, separate release cadence).
 
@@ -478,187 +536,267 @@ their own paths from local state and call `processAPI.exec('open',
 1. **Preload bridge** `src/preload/index.ts` exposes a typed
    `window.nimbus`:
    ```ts
+   type ProgressEvent =
+     | { kind: 'started'; method: UpgradeMethod | InstallMethod; argv: readonly string[] }
+     | { kind: 'stdout'; line: string }
+     | { kind: 'stderr'; line: string }
+     | { kind: 'exit'; code: number; signal: NodeJS.Signals | null }
+     | { kind: 'restarted'; newVersion: string }
+     | { kind: 'error'; message: string; fallback: 'copy' };
+
    window.nimbus = {
-     hasTerminalLaunch(): boolean;
-     openUpgradeTerminal(method: UpgradeMethod): Promise<{ launched: boolean; fallback?: 'copy' }>;
-     openInstallTerminal(method: InstallMethod): Promise<{ launched: boolean; fallback?: 'copy' }>;
+     canRunUpgrade(method: UpgradeMethod): boolean;
+     canRunInstall(method: InstallMethod): boolean;
+     runUpgrade(method: UpgradeMethod): AsyncIterable<ProgressEvent>;
+     runInstall(method: InstallMethod): AsyncIterable<ProgressEvent>;
      retryResolveCli(): Promise<{ ok: boolean }>;
      onStaleness(handler: (info: VersionInfo) => void): () => void;
    };
    ```
    `UpgradeMethod` and `InstallMethod` are closed unions matching
    the server's `upgrade.method` set. An unknown tag is rejected
-   at the IPC boundary; the renderer cannot smuggle commands
-   through. `hasTerminalLaunch()` is a synchronous capability
-   probe: returns `true` only on platforms where the main process
-   has confirmed a terminal launcher is available (currently
-   macOS-with-Terminal, see (2) below). The SPA reads this once at
-   mount to decide whether to render [Open Terminal] vs [Copy
-   command]. `onStaleness` is the desktop-side fan-out for the OS
-   notification toast (see (5) below).
-2. **Main process handler** `src/main/ipc/upgrade.ts` (new) maps
-   method tags to a hardcoded command table and a launcher:
+   at the IPC boundary; the renderer cannot smuggle commands or
+   argv arrays through. `canRunUpgrade`/`canRunInstall` are
+   synchronous capability probes: return `true` only when the
+   main process has verified the binary for that method exists on
+   PATH **and** the method does not require an interactive sudo
+   TTY (so `brew` returns `true`; `apt`/`dnf` return `false` on
+   their respective hosts; see (2) below). The SPA reads these
+   once at mount to decide whether to render [Update] vs [Copy
+   command]. `runUpgrade`/`runInstall` return an async-iterable
+   stream of progress events, implemented over `ipcRenderer.on`
+   with a per-call subscription token so concurrent calls (rare
+   but possible across windows) stay isolated. `onStaleness` is
+   the desktop-side fan-out for the OS notification toast
+   (see (3) below).
+
+2. **Main process runner** `src/main/upgrade/runner.ts` (new) maps
+   method tags to a hardcoded argv table and spawns via
+   `child_process.spawn` with `stdio: ['ignore', 'pipe', 'pipe']`
+   (no shell, no TTY, no Terminal window):
    ```ts
-   const UPGRADE_COMMANDS: Record<UpgradeMethod, string | null> = {
-     brew: 'brew upgrade --cask nimbus/tap/nimbus',
-     apt: 'sudo apt update && sudo apt upgrade nimbus',
-     dnf: 'sudo dnf upgrade nimbus',
-     'install-script': 'curl -fsSL https://nimbus.dev/install.sh | sh',
+   const UPGRADE_ARGV: Record<UpgradeMethod, readonly string[] | null> = {
+     brew: ['brew', 'upgrade', '--cask', 'nimbus/tap/nimbus'],
+     apt: null,           // requires sudo TTY — copy-only in v1
+     dnf: null,           // requires sudo TTY — copy-only in v1
+     'install-script': null, // sudo+pipe-to-sh — copy-only in v1
      source: null,
      unknown: null,
    };
    ```
-   Launcher behavior (canonical Podman Desktop semantics: launch,
-   the command runs, the user watches):
-   - **macOS**: `osascript -e 'tell app "Terminal" to do script
-     "<cmd>"'`. Note: AppleScript's `do script` **auto-executes**
-     the command in a new Terminal window — it does not pre-type.
-     User watches brew/apt/dnf run, sees output, closes the window
-     when done. Returns `{ launched: true }` after osascript
-     completes (osascript returns synchronously after Terminal
-     accepts the script; the actual upgrade runs asynchronously
-     in Terminal).
-   - **Linux**: try detection in order (`$TERMINAL` env var,
-     `gnome-terminal`, `konsole`, `xterm`, `alacritty`, `kitty`).
-     If found, spawn with the command. If not, return
-     `{ launched: false, fallback: 'copy' }` so the SPA falls
-     back to the clipboard path. **v1 ships copy-only on Linux**
-     — terminal-launch on Linux is best-effort and not
-     completion-gating.
-   - **Windows**: spawn `wt.exe` (Windows Terminal) with the
-     command if present, else `{ launched: false, fallback:
-     'copy' }`. **v1 ships copy-only on Windows.**
-   - For `method: "source"` or `"unknown"` where the command is
-     `null`, return `{ launched: false, fallback: 'copy' }`
-     immediately — the SPA shows the `fallbackUrl` link instead
-     of either action.
-   - `hasTerminalLaunch()` returns `true` only on macOS (v1) or
-     Linux with a detected terminal at preload time. Computed
-     once at startup so the SPA's render decision is stable.
+   Runner behavior — canonical Podman Desktop semantics
+   (`withProgress` + in-app progress widget; no Terminal):
+   - **macOS + brew (v1 in-scope)**: `spawn('brew', [...])`
+     inheriting the user's `HOME` and a sanitized `PATH` that
+     includes `/opt/homebrew/bin` and `/usr/local/bin`. stdout
+     and stderr are piped, split on `\n`, and emitted as
+     `{ kind: 'stdout', line }` / `{ kind: 'stderr', line }`
+     events. On `exit code === 0`, the runner triggers the
+     **post-upgrade restart sequence** in (4) below and emits
+     `{ kind: 'restarted', newVersion }` once the new child
+     reports its version. On non-zero exit, emits
+     `{ kind: 'exit', code, signal }` and the SPA transitions
+     `upgrading → available` with the original Update CTA still
+     in place.
+   - **apt / dnf / install-script (all platforms, v1)**: the
+     runner refuses to spawn — `canRunUpgrade('apt')` returns
+     `false` — and the SPA falls back to the `Copy command`
+     branch. Reason: these require interactive `sudo`, which has
+     no TTY when spawned headless; running them silently would
+     either fail or (worse) succeed under a passwordless sudo
+     misconfiguration. Out-of-scope until we own a secure
+     elevation surface.
+   - **Windows (v1)**: copy-only across all methods. Defer the
+     winget / scoop runner until distribution lands those.
+   - For `method: "source"` or `"unknown"`, the runner refuses
+     to spawn and the SPA shows the `fallbackUrl` link instead.
+
 3. **Notification toast on first detection.** The desktop main
    process polls `/api/system/version-info` on its own (in
    addition to the renderer's polling) and, on the *first*
    observed `available: true` transition for a given `latest`
-   version, fires an Electron `Notification` toast: "Nimbus
-   0.1.41 available — open the console to update." Click on the
-   toast brings the existing window forward. Subsequent polls do
-   not re-fire the toast for the same `latest`; the toast cache
-   key is `latest`, persisted in `~/.config/nimbus-desktop/
-   notified-versions.json` so a restart doesn't re-notify for
-   a version the user has already seen.
-4. **Setup card** `src/renderer/setup/CliNotFoundCard.tsx`
-   (or equivalent — verify the actual shell layout during
-   implementation; DS3 may have shipped a different renderer
-   structure):
-   - Triggered when `resolveNimbusExecutable` at `src/main/server.ts:
-     200` throws `NimbusBinaryNotFoundError`. Instead of bubbling
-     the error to a death-screen, the main process posts
-     `cli-not-found` to the renderer, which swaps the window
-     contents to the setup card.
+   version, fires an Electron `Notification`: "Nimbus 0.1.41
+   available — open the console to update." Click brings the
+   existing window forward. Subsequent polls do not re-fire for
+   the same `latest`; the cache key is `latest`, persisted in
+   `~/.config/nimbus-desktop/notified-versions.json` so a
+   restart doesn't re-notify for a version the user has already
+   seen. This is the desktop-only second persistent reminder
+   surface (alongside the SPA's status-bar slot and Settings
+   row from UL2).
+
+4. **Post-upgrade restart sequence** `src/main/server.ts` (modify
+   in place — DS3 already owns nimbus child-process lifecycle
+   here via `resolveNimbusExecutable` at line ~200 and the
+   spawn path). On `runUpgrade` exit code 0:
+   1. Resolve the binary again from PATH (`brew upgrade` may have
+      replaced `/opt/homebrew/bin/nimbus` in place — same path,
+      new inode).
+   2. SIGTERM the current nimbus child. Wait up to 5s for clean
+      exit; SIGKILL on timeout.
+   3. Spawn the new binary. Wait for the existing readiness probe
+      (HTTP `GET /api/system/version-info`) to succeed.
+   4. Read `current` from the readiness response and emit
+      `{ kind: 'restarted', newVersion: current }` to the
+      renderer over the active `runUpgrade` subscription.
+   5. The existing `DisconnectedOverlay` in `packages/nimbus-ui/
+      src/shell/disconnected-overlay.tsx` already covers the
+      brief WebSocket gap during step (2)–(3); no new UI is
+      required for the gap itself.
+   The SPA's `useStaleness` hook, on receiving `restarted`,
+   transitions state machine to `upgraded`, displays the new
+   version with a 30-second `--success` dot in the status-bar
+   slot, and resets the polling cadence to 5min. **This is the
+   "robust sync solution naturally based on architecture"
+   answer for question (5):** the desktop already owns the
+   nimbus process per DS3, so version sync is a property of the
+   restart, not a separate signal — the new process can only
+   ever report the new version.
+
+5. **Setup card** `src/renderer/setup/CliNotFoundCard.tsx`
+   (new — verify the actual shell layout against DS3 during
+   implementation):
+   - Triggered when `resolveNimbusExecutable` at `src/main/server
+     .ts:200` throws `NimbusBinaryNotFoundError`. The main
+     process posts `cli-not-found` to the renderer, which swaps
+     the window contents to the setup card.
    - The card surfaces:
      - **macOS**: button "Install with Homebrew" →
-       `window.nimbus.openInstallTerminal('brew')` (uses the same
-       IPC bridge as the upgrade flow, distinct method).
-     - **Linux**: link to `https://github.com/nimbus/nimbus#install`.
-     - **Windows**: link to the direct-download .zip and install docs.
+       `window.nimbus.runInstall('brew')`. Progress events
+       stream into an in-card progress region (last 8 lines of
+       stdout, monospace, JetBrains Mono per DESIGN.md). On
+       `exit code === 0`, automatically calls
+       `retryResolveCli()` and transitions to the normal `/ui/`
+       window.
+     - **Linux**: link to `https://github.com/nimbus/nimbus#install`
+       (sudo+TTY requirement — copy-only).
+     - **Windows**: link to direct-download docs.
      - Common: a "Retry" button calling
-       `window.nimbus.retryResolveCli()`.
-5. After the user installs, the Retry path picks up the new binary
-   on PATH without requiring a full app restart.
+       `window.nimbus.retryResolveCli()` for users who installed
+       out-of-band (e.g., curl install-script in their own
+       terminal).
+   - Visual treatment: DESIGN.md §"Empty And Error States"
+     (line 535-557) — `Card` primitive, single primary action,
+     short imperative copy, no marketing language.
 
 **Contract bullets:**
 
-- **No bundled installer.** The shell never downloads or executes
-  the nimbus binary itself. It hands off to a package manager (where
-  one exists) or the install docs. Preserves the decision in the
-  desktop README — "shell does not bundle nimbus."
-- **Method tag whitelist.** The IPC boundary accepts only known
-  method tags. The main process constructs the command string from
-  a local hardcoded table; the renderer never sees or forwards a
-  shell string.
-- **Auto-run in terminal, watch don't type.** macOS `osascript do
-  script` runs the command immediately in a new Terminal window.
-  The user does not press Return to start; they watch brew/apt/dnf
-  run and close the window when done. This matches Podman Desktop's
-  `open <pkg> -W` semantics where the user observes the install,
-  not types it.
-- **No silent shell exec from main process.** The desktop never
-  runs brew/apt/dnf out of view. The user always sees the install
-  happen (in Terminal for v1; potentially in an in-app streaming
-  progress widget in a future v2 if we want to mirror Podman's
-  `ProgressLocation.TASK_WIDGET`).
+- **No Terminal window opens — ever.** v1 background-brew runs
+  under `child_process.spawn` with no shell and no TTY. Mirrors
+  Podman Desktop's `open -W <pkg>` semantics (the installer
+  appears as native chrome, not a terminal). The renderer
+  surfaces stdout in-app via the progress region.
+- **Background runner is bounded by method capability.** brew on
+  macOS runs in-process; everything else (apt, dnf, install-
+  script, all of Windows) falls back to copy-only. The decision
+  is the capability probe `canRunUpgrade(method)`; the SPA
+  branches on the probe, not the platform.
+- **No bundled installer.** The shell never downloads or
+  executes the nimbus binary itself. It invokes a package
+  manager (where one exists) or hands off to install docs.
+- **Method tag whitelist + argv table.** The IPC boundary
+  accepts only known method tags. The main process constructs
+  the **argv array** (not a shell string) from a local
+  hardcoded table; no `cmd.exe`/`sh -c` is ever invoked. The
+  renderer never sees or forwards a shell string.
 - **No sudo escalation in the desktop process.** Commands that
-  need root (`apt`, `dnf`) run inside the user's terminal where
-  the standard sudo prompt handles auth. The desktop process
-  never has elevated privileges.
-- **Single notification toast per `latest`.** First detection of a
-  given `latest` fires one toast, ever. Persisted in
-  `notified-versions.json`. Re-detection (window-reload, restart,
-  reconnect) does not re-notify until a new `latest` arrives.
-- **Retry, don't restart.** The shell remains usable across the
-  install/upgrade — a successful retry must not require quitting
-  and relaunching.
+  need root (`apt`, `dnf`, the install script) are out of scope
+  for the runner in v1 — they go through the copy-only path
+  where the user pastes into their own terminal and sudo
+  prompts there. The desktop process never has elevated
+  privileges and never invokes `sudo` directly.
+- **Desktop owns version sync.** Because the desktop spawned
+  the nimbus child (DS3), it is the only component that can
+  authoritatively restart it. The renderer never restarts
+  nimbus; it observes the `restarted` progress event. This
+  eliminates the class of bug where the UI thinks an update
+  is pending after the binary on disk already moved.
+- **Single notification toast per `latest`.** First detection of
+  a given `latest` fires one OS notification, ever. Persisted
+  in `notified-versions.json`. Re-detection (window-reload,
+  restart, reconnect) does not re-notify until a new `latest`
+  arrives.
+- **Retry, don't restart.** The shell remains usable across
+  install/upgrade — a successful retry must not require
+  quitting and relaunching the desktop app.
 
 **Files touched (in nimbus/desktop):**
 
-- `src/main/server.ts` (signal cli-not-found instead of throwing
-  into the void; trip the `retryResolveCli` re-run path)
-- `src/main/ipc/upgrade.ts` (new — IPC handler + platform
-  terminal launcher with `hasTerminalLaunch` capability probe)
-- `src/main/ipc/upgrade.spec.ts` (new, vitest — tag whitelist,
-  per-platform launcher behavior, capability-probe matrix)
+- `src/main/server.ts` (modify in place — signal `cli-not-found`
+  instead of throwing into the void; add the post-upgrade
+  restart sequence hooked into the runner's exit callback)
+- `src/main/upgrade/runner.ts` (new — `child_process.spawn`
+  runner, method→argv table, capability probes, line-split
+  stdout/stderr → ProgressEvent stream)
+- `src/main/upgrade/runner.spec.ts` (new, vitest — tag
+  whitelist, argv-not-shell-string assertion, capability
+  matrix, line-split behavior on partial reads)
 - `src/main/notifications/staleness.ts` (new — main-process
   polling against `/api/system/version-info`, OS Notification
   fan-out, dedupe via `notified-versions.json`)
 - `src/main/notifications/staleness.spec.ts` (new, vitest)
 - `src/preload/index.ts` (extend with typed `window.nimbus`
   surface — `exposedInMainWorld` declarations follow the
-  podman-desktop preload pattern at
+  podman-desktop pattern at
   `packages/preload/exposedInMainWorld.d.ts`)
 - `src/renderer/setup/CliNotFoundCard.tsx` (new)
 - `src/renderer/setup/CliNotFoundCard.spec.ts` (new, vitest)
 - `tests/e2e/cli-not-found.spec.ts` (new, packaged-shell
-  Playwright)
-- `tests/e2e/upgrade-terminal.spec.ts` (new — launch a fake
-  Terminal binary on PATH via `TERMINAL=…` env override, assert
-  the bridge spawns it with the expected command)
-- `tests/e2e/staleness-notification.spec.ts` (new — assert the
-  toast fires once on first detection, never again for the same
-  `latest`, even across a window reload)
+  Playwright — full install flow against a fake `brew` on PATH)
+- `tests/e2e/upgrade-runner.spec.ts` (new — assert
+  `runUpgrade('brew')` spawns the right argv with no shell;
+  assert ProgressEvent stream order; assert restart-on-exit-0
+  re-resolves the binary and emits `restarted`)
+- `tests/e2e/staleness-notification.spec.ts` (new — assert one
+  notification per `latest`, never re-fires across reloads)
 
 **Completion gate:**
 
 - Vitest unit tests cover the IPC tag whitelist (six known
-  methods + reject path for unknown), the platform launcher
-  matrix, the `hasTerminalLaunch` capability probe per platform,
-  retry semantics, the install-vs-upgrade method separation, and
-  the notification dedupe via `notified-versions.json`.
+  methods + reject path for unknown), the capability-probe
+  matrix per (method, platform), the spawn argv (assert
+  `shell: false` and no `cmd.exe`/`sh`), line-split on partial
+  reads, restart-on-exit-0 sequence (SIGTERM → readiness probe
+  → `restarted` event), retry semantics, the install-vs-upgrade
+  method separation, and notification dedupe via
+  `notified-versions.json`.
 - Packaged-shell Playwright E2E:
   - `cli-not-found.spec.ts`: launch with `PATH=/empty`, assert
-    setup card renders; add a fake nimbus to PATH; click Retry;
-    assert the card disappears and the normal `/ui/` window
-    opens.
-  - `upgrade-terminal.spec.ts`: launch with a stub terminal on
-    PATH, render a banner with `method: "brew"`, click [Update]
-    → [Open Terminal], assert the stub terminal received exactly
-    `brew upgrade --cask nimbus/tap/nimbus` *and* that the
-    renderer transitions to `upgrading` state.
+    setup card renders; install a fake `brew` that drops a
+    fake `nimbus` into a temp PATH dir; click Install with
+    Homebrew; assert the progress region streams brew's fake
+    output; assert auto-retry succeeds and the normal `/ui/`
+    window opens.
+  - `upgrade-runner.spec.ts`: launch against a fake nimbus that
+    reports `available: true` and `method: "brew"`; click
+    [Update] → [Update] in popover; assert the spawn argv is
+    exactly `['brew', 'upgrade', '--cask', 'nimbus/tap/nimbus']`
+    with `shell: false`; assert the renderer transitions to
+    `upgrading` immediately; have the fake brew exit 0 and
+    swap the fake nimbus binary; assert the desktop SIGTERMs
+    the old child, the readiness probe succeeds against the
+    new child, and `{ kind: 'restarted', newVersion: '0.1.41'
+    }` reaches the renderer; assert the status-bar slot enters
+    `upgraded` with the new version and auto-dismisses after
+    30s.
   - `staleness-notification.spec.ts`: simulate version-info
     flipping to `available: true`, assert one OS notification
     fires; reload window; assert no second notification; flip
     `latest` to a new version, assert a second notification
     fires.
 - Manual on macOS: install desktop cask only, launch, observe
-  setup card; install CLI via Homebrew button (which opens
-  Terminal, brew runs auto-executed), click Retry, observe
-  normal `/ui/`; then artificially mark binary as stale
-  (hand-edit `update-check.json`), reload `/ui/`, observe
-  banner in `available` state and an OS notification toast;
-  click [Update] → popover opens anchored to button; click
-  [Open Terminal] → banner immediately enters `upgrading` state
-  with spinner; in Terminal, brew auto-runs and completes; banner
-  transitions to `upgraded` ✓ within 2 seconds; banner auto-
-  dismisses after 30 seconds.
+  setup card; install CLI via Homebrew button (brew runs in
+  background, progress streams into the card, no Terminal
+  opens); when brew exits, observe automatic transition to
+  normal `/ui/`; then artificially mark binary as stale (hand-
+  edit `update-check.json`), wait one poll cycle, observe an
+  OS notification fires and the status-bar version slot enters
+  `available` ("update to 0.1.41 →"); click slot → popover
+  opens anchored beneath; click [Update] → slot enters
+  `upgrading` (no Terminal opens); when brew exits the desktop
+  restarts the nimbus child, the SPA's WebSocket reconnects via
+  the existing `DisconnectedOverlay`, and the slot transitions
+  to the new version with a 30-second green dot.
 
 ### UL4 — Operator-facing docs
 
@@ -678,11 +816,13 @@ banner means, what to do when offline.
      visible states (fresh / stale-but-cached / first-load-empty /
      check-failed) and the `NIMBUS_DISABLE_UPDATE_CHECK=1` opt-out.
    - "What the Update button does" section explaining the (β+)
-     pattern: in the desktop, the click opens a terminal with the
-     command pre-typed; in the browser, the click copies the
-     command to the clipboard. The user always confirms before the
-     command runs. Cite decision 001's "Real-world analogs" for the
-     why.
+     pattern: in the desktop on macOS+brew, the click runs `brew
+     upgrade` in the background (no Terminal opens) with progress
+     streamed into the status-bar slot and a popover; on every
+     other platform/method combination, the click copies the
+     command to the clipboard so the operator pastes into their
+     own terminal. The user always confirms before the command
+     runs. Cite decision 001's "Real-world analogs" for the why.
    - "Air-gapped operation" subsection making the off-switch explicit.
 2. README cross-link: add a one-line pointer to `docs/operating/
    updates.md` in the Install section of `README.md` (right under the
@@ -751,27 +891,30 @@ tests; the cross-cutting gates are:
   the *UI* launch the operator's *package manager*; (γ) would have
   the *server* *be* the package manager. We adopt the first, reject
   the second.
-- **Silent `process.exec` of brew/apt/dnf from the desktop main
-  process.** Podman Desktop's macOS installer runs the bundled .pkg
-  silently via `open <pkg> -W` because the .pkg has its own GUI with
-  admin prompts. brew/apt/dnf are CLI tools with no GUI — silent
-  exec from the main process would hide stdout/stderr and confuse
-  failures. We launch a terminal so the user sees what the package
-  manager is doing.
+- **Silent `process.exec` of `apt`/`dnf`/install-script from the
+  desktop main process.** These require interactive sudo, which
+  has no TTY when spawned headless from Electron. Silent exec
+  would either fail outright or — under a passwordless sudo
+  misconfig — succeed in a way the operator didn't authorize.
+  v1 routes these methods through the copy-only path where the
+  user pastes into their own terminal and sudo prompts there.
+  **Note:** background `brew` on macOS *is* in scope per UL3 —
+  brew does not require sudo and emits structured stdout we can
+  stream into the in-app progress region.
 - **Bundling installer artifacts inside `nimbus-desktop`.** Podman
   Desktop bundles `podman-installer-macos-*.pkg` (one of the
-  pkg-arch-version assets) inside its .app. We don't currently
-  produce nimbus `.pkg`/`.msi`/`.deb`/`.rpm` installer artifacts;
-  we hand off to brew/apt/dnf. Once distribution lands its own pkg
-  installer track (see `docs/plans/distribution-plan.md`), bundling
-  is the obvious next step — until then, terminal-launch is the
-  pragmatic v1.
-- **Auto-execute (no terminal) for brew on macOS.** A future
-  refinement could run `brew upgrade` headlessly from the main
-  process and stream stdout into an in-app progress modal (matching
-  Podman Desktop's `ProgressLocation.TASK_WIDGET` UX). Deferred —
-  terminal-launch lets us ship v1 without owning a streaming-shell
-  surface.
+  pkg-arch-version assets) inside its .app and invokes it via
+  `open -W <pkg>`. We don't currently produce nimbus
+  `.pkg`/`.msi`/`.deb`/`.rpm` installer artifacts; we hand off to
+  brew/apt/dnf. Once distribution lands its own pkg installer
+  track (see `docs/plans/distribution-plan.md`), bundling is the
+  obvious next step — until then, background-brew + copy-only is
+  the pragmatic v1.
+- **Sudo elevation surface in the desktop process.** A future
+  refinement could front a polkit / Authorization Services prompt
+  for `apt`/`dnf` and run them headlessly. Out of scope for v1 —
+  the security review surface is non-trivial and the copy-only
+  fallback already works on every platform.
 - **Desktop polling GitHub directly.** Rejected in
   [decision 001](../decisions/001-update-staleness-detection.md) →
   rejected alternative (α). The desktop's update signal arrives via
@@ -818,3 +961,4 @@ writing the plan:
 | 2026-05-16 | Plan authored | — | Decision doc 001 already landed; this plan is its parent execution sequencing. UL1/UL2/UL4 owned by `nimbus/nimbus`, UL3 owned by `nimbus/desktop`. |
 | 2026-05-16 | Revised with (β+) UI-launched upgrade pattern | — | Surveyed Podman Desktop locally (`~/src/github.com/podman-desktop/podman-desktop/extensions/podman/packages/extension/src/installer/{podman-install.ts,mac-os-installer.ts}` + `extension.ts:1014` `registerUpdatesIfAny`). Adopted the renderer-passes-method-tag / main-process-maps-to-whitelisted-command security model. UL1 endpoint shape grew a structured `upgrade` object; UL2 gained `upgrade-modal.tsx` with desktop "Open in Terminal" / browser "Copy command" branches; UL3 expanded scope to include `window.nimbus.openUpgradeTerminal` IPC bridge alongside the original CLI-not-found setup card. |
 | 2026-05-16 | UX tightened to canonical Podman density | — | Honest comparison against Podman Desktop's actual surface revealed six gaps. Fixes: replaced `upgrade-modal.tsx` with `upgrade-popover.tsx` (anchored, two buttons, no body paragraph — same density as `showInformationMessage('Do you want to update to Y?', 'Yes', 'No')`); corrected `osascript do script` semantics (auto-runs, not pre-types); added a 6-state banner state machine (`hidden`/`available`/`confirming`/`launching`/`upgrading`/`upgraded`) with accelerated 2s polling during `upgrading` matching `withProgress` immediacy; added explicit success state with auto-dismiss; added remote-host gating (mismatched `upgrade.host` forces the [Copy command] branch — terminal-launch on the operator's local laptop would target the wrong machine); added Electron `Notification` toast on first stale detection with `notified-versions.json` dedupe. New surface files: `use-upgrade-machine.ts`, `desktop-bridge.ts`, `notifications/staleness.ts`. Existing files unchanged in shape; only the renderer-side UX gained density. |
+| 2026-05-16 | UX restructured around DESIGN.md primitives + background brew | — | Five-question deep review found the prior revision still drifted from canonical patterns. Corrections: (1) `osascript do script` does open a visible Terminal window — Podman's `open -W <pkg>` does not; rewrote UL3 to spawn `brew` via `child_process.spawn` with `shell: false` (no Terminal opens, mirroring Podman's "in-app progress" UX without coupling to a `.pkg`). (2) DESIGN.md has no top-banner surface; eliminated the invented `staleness-banner.tsx` and routed the persistent reminder through the existing **status-bar version slot** (`shell/status-bar.tsx`, modify-in-place) — every route shows it, no new chrome. (3) Component reuse audit: sonner `Toaster` is already mounted at `routes/__root.tsx:35-46`; Popover/CopyChip/StateDot already exist; the rewrite now extends 2 files in place and adds 6 new files (down from 9 new). (4) Persistent reminder ladder is now three-tier per canonical patterns: announcement (sonner toast, dismissible) → ambient (status-bar slot, always visible) → contextual (Settings → Server "Updates" row); Podman's `ProviderUpdateButton.svelte:59` confirms the ambient-persistent surface as the canonical anchor. (5) Version sync post-upgrade is a property of DS3's existing nimbus-child-process ownership: on `brew` exit 0, desktop SIGTERMs the child and respawns it; the existing `DisconnectedOverlay` covers the WebSocket gap; the new child can only ever report the new version — no separate sync signal needed. State machine reduced from 6 to 5 states (dropped `launching` — no Terminal phase exists anymore). Background-brew moved from "out of scope" to in-scope for macOS+brew; `apt`/`dnf`/install-script remain copy-only in v1 (sudo TTY requirement). |

@@ -52,13 +52,21 @@ Five viable shapes across that 2D space:
   into their own terminal — the UI never launches anything.
 - **(β+) Server detection, UI orchestrates the launch.** Same
   detection contract as (β-), but the SPA also renders a clickable
-  **Update** CTA. In the desktop, the CTA opens Terminal.app and the
-  install-method-specific command auto-runs (`osascript do script`
-  on macOS, equivalent on Linux/Windows). In a browser, the CTA
-  opens an anchored popover with a copy-to-clipboard chip and the
-  same command. The package manager remains the source of truth —
-  the UI just removes the typing friction. **This is the Podman
-  Desktop pattern.**
+  **Update** CTA. In the desktop on macOS+brew, the CTA spawns
+  `brew upgrade` in the **background** via `child_process.spawn`
+  (no Terminal window opens) with stdout streamed into an in-app
+  progress region; on `exit 0` the desktop SIGTERMs the nimbus
+  child and respawns it so version state syncs naturally. For
+  every other platform/method (apt, dnf, install-script, all of
+  Windows, browser, remote nimbus), the CTA opens an anchored
+  popover with a copy-to-clipboard chip and the operator runs
+  the command in their own terminal. The package manager remains
+  the source of truth — the UI just removes the typing friction
+  on the one platform/method where it's safe to do so. **This is
+  the Podman Desktop pattern**, adapted: Podman runs
+  `open -W <bundled.pkg>` (no terminal — the installer has its
+  own GUI); we run brew headless (no terminal — the progress
+  region is the GUI).
 - **(γ) Server detects AND applies upgrades itself.** Add a
   `nimbus self-upgrade` command that rewrites the binary in place.
   The SPA gets a "Restart with v0.x.y" button.
@@ -85,21 +93,26 @@ first place: Homebrew, apt, dnf, the install script, or
 keyed on `current_exe()` introspection; the UI surfaces it as an
 **Update** CTA that, when clicked:
 
-- **In the desktop shell**, opens the user's terminal pre-typed with
-  the install-method-specific command (`brew upgrade --cask
-  nimbus/tap/nimbus`, `sudo apt upgrade nimbus`, etc.) via an
-  IPC bridge into the main process. The renderer never executes
-  shell; the main process maps a method tag (`'brew'`, `'apt'`,
-  `'dnf'`, `'install-script'`) to a hardcoded command from a
-  whitelist.
-- **In a browser** (or against a remote nimbus from a desktop
-  shell), opens an anchored popover with the command in a code
-  block and a copy-to-clipboard chip. The operator pastes into a
-  terminal on the right host.
+- **In the desktop shell on macOS with `method: "brew"`**, spawns
+  `brew upgrade --cask nimbus/tap/nimbus` in the background via
+  `child_process.spawn` (no shell, no Terminal window). Progress
+  streams into an in-app region (last few lines of stdout). On
+  `exit 0`, the desktop — which already owns the nimbus child
+  process per DS3 — SIGTERMs the old child and respawns the
+  new binary; the existing `DisconnectedOverlay` covers the
+  WebSocket gap. The renderer never executes shell; the main
+  process maps a method tag (`'brew'`) to a hardcoded **argv
+  array** from a whitelist.
+- **In a browser, against a remote nimbus, or with a method that
+  requires sudo TTY (`apt`, `dnf`, `install-script`) or has no
+  canonical command (`source`, `unknown`)**, opens an anchored
+  popover with the command in a code block and a copy-to-clipboard
+  chip. The operator pastes into a terminal on the right host.
 
-Same banner, additive desktop affordance. Symmetric outcome (the
-operator's package manager does the work) with asymmetric ergonomics
-(desktop saves one paste).
+Same status-bar slot, additive desktop affordance for the one
+platform/method where headless execution is safe. Symmetric
+outcome (the operator's package manager does the work) with
+asymmetric ergonomics (desktop+brew saves the paste).
 
 ### Endpoint contract (sketch — refined in UL1)
 
@@ -143,11 +156,17 @@ GET /api/system/version-info
 - `upgrade.command` is the canonical command for the detected
   install method, constructed locally by the server from a hardcoded
   template — never echoed from network input. Shown to the operator
-  in the popover and auto-executed in the launched terminal.
-- `upgrade.interactive` is `true` when the command needs a TTY (most
-  package managers, especially with sudo prompts) — the UI uses this
-  to decide whether to launch a terminal vs. a silent background
-  command. Initial implementation: always `true`.
+  in the popover and (for `brew` on macOS desktop) auto-executed
+  by the desktop's background runner using a separate argv
+  whitelist keyed on the same `method` tag.
+- `upgrade.interactive` is `true` when the command needs a TTY
+  (sudo prompts on `apt`/`dnf`/install-script). The desktop
+  shell uses this to decide whether to enable the background
+  [Update] action (interactive=false on a localhost+brew host)
+  versus falling back to the copy-only popover branch. Initial
+  values: `brew` → `false`; `apt`/`dnf`/install-script → `true`;
+  `source`/`unknown` → `true` (irrelevant — falls back to
+  `fallbackUrl`).
 - `upgrade.fallbackUrl` is shown when `method` is `"unknown"` or
   `"source"` and we don't have a clean one-line command.
 
@@ -174,66 +193,110 @@ GET /api/system/version-info
 
 The UI mediates the upgrade through the operator's package manager;
 the server never executes installer commands, and the renderer never
-constructs shell strings. The flow is a five-state machine in the
-SPA — same density as Podman Desktop's
+constructs shell strings. The flow is a **five-state machine** in
+the SPA — same density as Podman Desktop's
 `extensionApi.window.showInformationMessage` + `withProgress`
 sequence — not a chain of clicks.
 
 ```
-        available ──[Update]──▶ confirming ──[Cancel]──▶ available
-                                    │
-                                    ▼ [Open Terminal] (desktop+local)
-                                launching ──ack──▶ upgrading ──current bump──▶ upgraded
-                                    │                  │                          │
-                                    │ [Copy command]   │ [Cancel] or 10m timeout  │ 30s
-                                    │ (browser/remote) ▼                          ▼
-                                    └─────────▶ upgrading                      hidden
+                                    [Update]
+        available ───────────────────────▶ confirming ──[Cancel]──▶ available
+            ▲                                   │
+            │                                   ▼ [Update] (desktop+macOS+brew, localhost)
+            │                              upgrading ─── runUpgrade exit 0 ──▶ upgraded
+            │                                   │            + child restart      │
+            │                                   │                                 │ 30s
+            │ [Copy command]                    │ exit ≠ 0                        ▼
+            │ (any other path)                  ▼                              available
+            └─────────────────────────────── available                          (new version
+                                              (CTA still there)                  shown)
 ```
 
-- `available`: top banner reads "Update Nimbus on `<host>` from
-  `<current>` to `<latest>`" with [Update] [Dismiss].
-- `confirming`: small popover anchored to [Update]. Body is just
-  `upgrade.command` in a `<code>` block. Buttons: [Open Terminal]
-  (desktop+local) or [Copy command] (browser or remote-host), and
-  [Cancel]. No body paragraph. No disclosure. Same density as
-  Podman's `showInformationMessage('Do you want to update from X
-  to Y?', 'Yes', 'No')`.
-- `launching` (≤1s): banner reads "Opening Terminal…" while waiting
-  for the IPC ack. Brief — usually invisible to the user.
-- `upgrading`: banner reads "Upgrading to `<latest>` on `<host>`…"
-  with spinner and [Cancel] link. Poll cadence accelerates to 2s
-  for ≤10 minutes (gives immediate in-app feedback, matches Podman's
-  `ProgressLocation.TASK_WIDGET` semantics).
-- `upgraded`: banner reads "✓ Updated to `<latest>`" for 30 seconds,
-  then auto-dismisses.
+- `available`: status-bar version slot reads `"update to <latest> →"`
+  with `--accent` dot (clickable; aria-label: "Update Nimbus to
+  <latest>"). On first detection, a sonner toast also fires with
+  `[Update]` and `[Dismiss]` actions.
+- `confirming`: shadcn `Popover` anchored to the status-bar slot.
+  Body is just `upgrade.command` in a `CopyChip`. Buttons: `[Update]`
+  (desktop + macOS + `method: "brew"` + localhost predicate) or
+  `[Copy command]` (every other path), and `[Cancel]`. No body
+  paragraph. Same density as Podman's
+  `showInformationMessage('Do you want to update from X to Y?',
+  'Yes', 'No')`.
+- `upgrading`: status-bar slot reads `"Updating to <latest>…"` with
+  `--starting` half-filled dot. For the desktop+brew path, the
+  popover stays open showing the last 8 lines of `brew` stdout
+  streamed in via `runUpgrade`'s ProgressEvent stream. Poll
+  cadence accelerates to 2s for ≤10 minutes (matches Podman's
+  `ProgressLocation.TASK_WIDGET` immediacy). For the copy-only
+  path, `upgrading` is entered the moment the user clicks
+  `[Copy command]` — the SPA doesn't know when the operator
+  finishes running it; the polling loop detects the new
+  `current` and transitions to `upgraded` naturally.
+- `upgraded`: status-bar slot reads `"<new-version>"` with a
+  30-second `--success` dot, then returns to the normal CopyChip
+  rendering.
 
 Two additional surfaces:
 
 - **OS notification toast** (desktop only): the main process fires
   one Electron `Notification` per `latest` on first detection,
   deduped via `~/.config/nimbus-desktop/notified-versions.json`.
-  Clicking the toast brings the existing window forward.
+  Clicking the toast brings the existing window forward. This is
+  the second persistent reminder surface alongside the status-bar
+  slot — even if the operator dismisses the sonner in-app toast,
+  the OS notification preserves the announcement until they
+  return to the console.
 - **Remote-host gate**: when the server's `host` does not match
-  `window.location.host` (and is not a localhost predicate), the
-  [Open Terminal] button is *not rendered* even with `window.nimbus`
-  present. Terminal-launch on the operator's local laptop would
-  upgrade nimbus on the wrong machine.
+  `window.location.host` (and is not a localhost predicate —
+  `null`, `localhost`, `127.0.0.1`, `::1`), the `[Update]`
+  button is *not rendered* even with `window.nimbus` present;
+  the popover shows `[Copy command]` only. Background-brew on
+  the operator's local laptop would upgrade nimbus on the wrong
+  machine.
 
 **Security model (mirrors Podman Desktop's
 `provider.registerUpdate({ update: () => … })`):**
 
-- The renderer sends only a method tag (`'brew'`, `'apt'`, etc.) over
-  IPC. It never sends a shell string.
-- The desktop main process maps the tag to a hardcoded command
-  template from a closed-set whitelist. An unknown tag is rejected.
+- The renderer sends only a method tag (`'brew'`) over IPC. It
+  never sends a shell string and never sends an argv array.
+- The desktop main process maps the tag to a hardcoded **argv
+  array** from a closed-set whitelist and spawns with
+  `shell: false`. An unknown tag is rejected at the IPC
+  boundary; no `sh -c` or `cmd.exe` is ever invoked.
 - The server's `upgrade.command` is constructed locally from
-  `current_exe()` introspection — never echoed from GitHub's response
-  payload. A poisoned upstream cannot inject a malicious command.
-- The terminal is launched, not executed silently. The user sees
-  exactly what is about to run and can cancel by closing the window
-  or pressing Ctrl-C before pressing Return.
-- No sudo is escalated by the desktop itself — when the command
-  needs root (apt/dnf), the terminal's own sudo prompt drives it.
+  `current_exe()` introspection — never echoed from GitHub's
+  response payload. A poisoned upstream cannot inject a malicious
+  command, and the desktop's argv table is independent of the
+  server response anyway.
+- The user sees exactly what is about to run via the popover
+  showing `upgrade.command` *before* the click, and the
+  streaming progress region *during* the run. Cancellable in v1
+  by closing the popover (SIGTERMs the runner via the desktop's
+  cleanup hook).
+- No sudo is escalated by the desktop itself — only `brew`
+  (which doesn't need sudo) runs in-process. Methods that
+  need root (`apt`/`dnf`/install-script) fall back to copy-only
+  where the user's own terminal handles the sudo prompt.
+
+**Post-upgrade version sync:**
+
+Because the desktop process spawned the nimbus child (DS3), it
+owns the lifecycle. On `runUpgrade('brew')` exit code 0:
+
+1. Re-resolve the binary from PATH.
+2. SIGTERM the current nimbus child; wait ≤5s; SIGKILL on timeout.
+3. Spawn the new binary; await readiness probe.
+4. Emit `{ kind: 'restarted', newVersion }` to the renderer.
+
+The renderer's `useStaleness` hook receives `restarted` and
+transitions to `upgraded`. The new process can only ever report
+the new version — there is no separate version-sync signal
+because the desktop is the only component that could have
+caused the binary change in the first place. This is the
+"robust sync solution naturally based on architecture"
+property of (β+): version state and process state are the
+same state.
 
 ### Privacy posture
 
@@ -263,7 +326,7 @@ and the wider Electron-operator-console landscape.
 | App | Detection | Application | Why that shape | Maps to nimbus how |
 |---|---|---|---|---|
 | **Docker Desktop** | desktop checks for desktop updates | desktop self-applies; engine version locked to desktop | engine + CLI are private impl details of the GUI's VM | wrong shape — we want a standalone CLI |
-| **Podman Desktop** | desktop checks for desktop *and* podman engine | "Update" CTA on provider tile → `open <bundled-pkg> -W` launches macOS Installer.app with admin prompt | podman is a standalone product; desktop is one of many ways to drive it | **canonical analog** — same shape (Electron shell + standalone CLI); we adopt the CTA pattern, adapted to terminal-launch since we don't yet ship .pkg installers |
+| **Podman Desktop** | desktop checks for desktop *and* podman engine | persistent `Update to <ver>` button on provider tile (`ProviderUpdateButton.svelte:59`) → `open -W <bundled-pkg>` spawns macOS Installer.app (no terminal, admin prompt is the installer's own GUI) → `withProgress({ location: TASK_WIDGET })` for non-installer tasks | podman is a standalone product; desktop is one of many ways to drive it | **canonical analog** — same shape (Electron shell + standalone CLI). We adopt: the persistent CTA, no-terminal-visible UX (achieved via `child_process.spawn` of brew since we don't bundle `.pkg`), and the renderer-passes-tag / main-maps-to-argv security model |
 | **Tailscale** | app checks GitHub for app+daemon | app self-applies, restarts daemon | daemon is small + tightly coupled to GUI's API | wrong shape — our CLI is not a GUI's private daemon |
 | **GitHub Desktop** | app checks for app+git | app self-applies | embedded git is a private impl detail | wrong shape |
 | **gh CLI** | gh itself checks api.github.com, caches, prints banner on stale | brew/apt/manual — user runs the upgrade | tool owns its own staleness story | **detection analog** — server-side check + banner is exactly what we want on the nimbus binary, and exactly what (β-)/(β+) implement |
@@ -289,15 +352,28 @@ The **Podman Desktop** code path is canonical for this class of app
 
 **What we steal (β+):**
 
-- The CTA pattern: a clickable **Update** button on the staleness
-  surface, not just a copy-paste hint.
-- Confirmation gating: the click opens an anchored popover that
-  shows the command about to run; nothing happens until the operator
-  confirms. Same density as Podman's
+- **The persistent CTA pattern.** Podman's `Update to <version>`
+  label on the provider tile is the ambient-persistent reminder
+  surface; we replicate it via the status-bar version slot, which
+  renders on every route. Plus the Settings → Server "Updates"
+  row as a second persistent surface.
+- **Confirmation gating.** The CTA click opens an anchored popover
+  that shows the command about to run; nothing happens until the
+  operator confirms. Same density as Podman's
   `showInformationMessage('Do you want to update to Y?', 'Yes', 'No')`
   — one row of content, two buttons, no body paragraph.
-- Whitelisted action mapping: the renderer passes a method tag, not
-  a command string; the main process maps to a hardcoded command.
+- **No terminal visible.** Podman achieves this via `.pkg` +
+  Installer.app GUI; we achieve it via `child_process.spawn` of
+  brew with stdout streamed into an in-app progress region. Same
+  user observable: "click, watch progress in-app, done."
+- **Whitelisted action mapping.** The renderer passes a method
+  tag; the main process maps to a hardcoded argv array
+  (not a shell string). `shell: false` on the spawn.
+- **Background runner + post-exit lifecycle hook.** Podman's
+  installer runs without blocking the UI; on success it
+  refreshes the provider state. Ours runs brew without blocking
+  the UI; on `exit 0` it restarts the nimbus child so version
+  state syncs naturally.
 
 **What we deliberately don't steal (yet):**
 
@@ -308,12 +384,12 @@ The **Podman Desktop** code path is canonical for this class of app
   the user audience grows beyond brew users, building our own pkg
   artifacts and bundling them in `nimbus-desktop` is the obvious
   next step. Tracked as a deferred follow-on, not in this decision.
-- **Silent `process.exec` of the package manager from the main
-  process.** Podman gets away with this on macOS because the .pkg
-  installer drives its own GUI (admin prompt, progress bar). For us,
-  `brew upgrade` is a CLI tool with no GUI — running it silently from
-  the main process would hide errors and confuse the user. Launching
-  a terminal preserves visibility.
+- **Headless run of `apt`/`dnf`/install-script from the main
+  process.** Unlike brew, these require interactive sudo, which
+  has no TTY when spawned from Electron. v1 routes them through
+  the copy-only popover branch where the user's own terminal
+  drives the sudo prompt. Headless versions await a polkit /
+  Authorization Services integration that we don't yet own.
 
 ---
 
@@ -345,21 +421,30 @@ The **Podman Desktop** code path is canonical for this class of app
   seconds later when the async refresh completes). The SPA must
   poll or re-render after navigation rather than only on initial
   mount. Acceptable.
-- **Operator must complete the upgrade themselves.** The Update CTA
-  opens a terminal with the command pre-typed; the user still presses
-  Return. This is intentional — it preserves visibility into the
-  package manager's output, lets the user cancel before anything is
-  installed, and keeps brew/apt/dnf as the source of truth for what
-  is installed. We do not silently `process.exec` the package manager
-  on the user's behalf (see "Rejected alternatives → (γ)" for why
-  self-application is the wrong shape).
-- **Linux/Windows terminal-launch is best-effort.** macOS has a
-  stable terminal-launch story via `osascript`. On Linux there is
-  no single canonical terminal binary (gnome-terminal, konsole,
-  xterm, alacritty, kitty, …); the desktop falls back to "Copy
-  command" + a one-line instruction on those platforms in v1. On
-  Windows, Windows Terminal (`wt`) is the v1 target where present;
-  fall back to copy on older systems.
+- **One-platform parity.** Only desktop + macOS + `method: "brew"`
+  + localhost gets the one-click background runner; every other
+  combination falls back to copy-only. That's a deliberate
+  asymmetry — brew is the only method that runs sudoless,
+  produces structured stdout we can stream, and lets us SIGTERM
+  + respawn the nimbus child cleanly. Expanding the matrix waits
+  on (a) a `.pkg`/`.msi`/`.deb`/`.rpm` artifact track from the
+  distribution plan, or (b) a polkit/Authorization Services
+  surface for sudoless apt/dnf. Both deferred.
+- **Brew runs without operator gating mid-flight.** Once the
+  user clicks `[Update]` in the popover, the background brew
+  invocation starts immediately. Cancellation is via the
+  popover's close button (SIGTERMs the runner). This matches
+  Podman's `open -W <pkg>` semantics (Installer.app starts on
+  the click; the user cancels via the installer GUI), but
+  differs from a copy-paste flow where the user retains the
+  pause-before-Return moment. Acceptable: the popover shows the
+  exact command before the click, and the progress region shows
+  brew's output during the run.
+- **No `nimbus self-upgrade`.** We do not silently `process.exec`
+  brew/apt/dnf out of view from a CLI flag; nor does the server
+  rewrite its own binary (see "Rejected alternatives → (γ)").
+  Upgrades are user-initiated from a UI surface, with the
+  package manager as the source of truth.
 - **GitHub Releases dependency.** If GitHub is down or the
   repository changes name, the check fails — degrades to "no banner
   shown" rather than blocking startup. Acceptable; matches
