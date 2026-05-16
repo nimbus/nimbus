@@ -75,6 +75,22 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
 
+      # nimbus-server's loading.rs `include_str!`s files under
+      # packages/nimbus-ui/.nimbus/convex/ which are gitignored build
+      # artifacts produced by `convex codegen`. Without this step the
+      # workspace fails to compile in CI.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Generate nimbus-ui convex codegen artifacts
+        run: npm run codegen -w packages/nimbus-ui
+
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -192,6 +208,20 @@ jobs:
         with:
           tool: nextest
           fallback: none
+
+      # See rust-clippy's codegen step — nimbus-server include_str!s the
+      # convex codegen output, so generate it before any cargo invocation.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Generate nimbus-ui convex codegen artifacts
+        run: npm run codegen -w packages/nimbus-ui
 
       - name: Run workspace test lane
         # Verification-harness corpus tests are ignored by default and run in
@@ -374,6 +404,22 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
 
+      # The server harness surface compiles nimbus-server, which include_str!s
+      # the convex codegen output from packages/nimbus-ui/.nimbus/convex/.
+      # The other surfaces don't strictly need it but generating it
+      # unconditionally is cheap and keeps the matrix uniform.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Generate nimbus-ui convex codegen artifacts
+        run: npm run codegen -w packages/nimbus-ui
+
       - name: Run required verification harness corpus
         run: bash scripts/verification-harness.sh required ${{ matrix.surface }}
 
@@ -419,6 +465,18 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Generate nimbus-ui convex codegen artifacts
+        run: npm run codegen -w packages/nimbus-ui
 
       - name: Run nightly verification harness corpus
         run: bash scripts/verification-harness.sh nightly ${{ matrix.surface }}
@@ -566,6 +624,19 @@ jobs:
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
+
+      # Coverage instruments the full workspace including nimbus-server.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Generate nimbus-ui convex codegen artifacts
+        run: npm run codegen -w packages/nimbus-ui
 
       - name: Start libsql provider fixture
         run: |
