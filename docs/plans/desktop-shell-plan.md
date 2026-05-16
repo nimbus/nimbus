@@ -359,10 +359,29 @@ DS0 is intentionally split into two sub-gates:
   with reasons, and the contact responsible for credential rotation.
 - DS0A: `gh repo view nimbus/desktop` succeeds with `--web` opening the new
   repo.
-- DS0B: `gh secret list --repo nimbus/desktop` lists the required secret
-  names (values not visible — confirming presence is enough).
+- DS0B: `gh secret list --repo nimbus/desktop` lists the **required**
+  secret names (values not visible — confirming presence is enough).
+  Required for the first release is the Apple set (decision 001 — 7
+  names). The Windows set (decision 002 — 6 names) is **deferred** and
+  reported by `scripts/verify-secrets.sh` as informational; it does not
+  gate DS0B. The GitHub release token (decision 003 — 1 name) is
+  required-optional: workflows default to the auto-provisioned
+  `GITHUB_TOKEN` and only need a dedicated `DESKTOP_GH_RELEASE_TOKEN`
+  if audit policy requires a fine-grained PAT.
 
-**Status:** DS0A `done`; DS0B `pending`; DS0 `pending` until DS0B passes.
+**Platform staging:** first release ships macOS + Linux. Windows is
+deferred to a follow-up release once Azure Trusted Signing onboarding
+completes (1–3 week organizational lead time with Microsoft). The
+Windows secret-name registry and decision document stay in place during
+the deferral so flipping Windows from deferred to active is a one-line
+move in `nimbus/desktop:scripts/verify-secrets.sh` plus a status flip in
+`docs/decisions/002-windows-code-signing.md`. DS6 (packaging), DS8
+(signing), and DS9 (release CI) bring up the macOS lane first; their
+Windows lanes activate when 002 flips to "accepted — active".
+
+**Status:** DS0A `done`; DS0B `pending` (gated on Apple credentials);
+DS0 `pending` until DS0B passes. Windows secret-name presence is
+tracked separately and does not gate DS0 for the first release.
 
 ### DS1 — Scaffold and shell layout (no server lifecycle yet)
 
