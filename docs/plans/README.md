@@ -10,6 +10,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
+- `docs/plans/update-lifecycle-plan.md`
+  - canonical execution plan for the operator-facing update lifecycle:
+    server-side `/api/system/version-info` with stale-while-revalidate
+    (UL1), SPA staleness banner rendered the same way in browser and
+    desktop (UL2), `nimbus-desktop` first-run "CLI not found" setup
+    card (UL3), and operator-facing `docs/operating/updates.md` (UL4).
+    Anchored on `docs/decisions/001-update-staleness-detection.md`.
 
 ## Current Reference Baselines
 
