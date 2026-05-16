@@ -296,6 +296,27 @@ This installs the Rust binary only. For Convex or Cloud Functions authoring,
 also install Node.js 22 with `npm`. Runtime-only `nimbus start` workflows do
 not need the Node toolchain after artifacts have been generated.
 
+### Desktop console (optional)
+
+Nimbus ships a native desktop shell — a signed, notarized Electron app that
+wraps the operator console UI served at `/ui/`. The shell is independent of
+the CLI release cadence; you can run the CLI headless and connect to `/ui/`
+in any browser, or use the desktop for an OS-integrated window with tray and
+auto-updates.
+
+```bash
+# macOS (Homebrew Cask)
+brew install --cask nimbus/tap/nimbus-desktop
+```
+
+Linux installers (`.deb`, `.rpm`, `.AppImage`) and direct downloads live on
+the [nimbus-desktop releases page](https://github.com/nimbus/desktop/releases).
+Full install + troubleshooting reference:
+[`nimbus/desktop`](https://github.com/nimbus/desktop#install).
+
+The shell does not bundle `nimbus`; install the CLI above first. On launch
+it discovers a running instance via `server.json` or spawns one on demand.
+
 ## Community
 
 - **[Issues](https://github.com/nimbus/nimbus/issues)** — bugs and concrete problems
