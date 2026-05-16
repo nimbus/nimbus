@@ -1,23 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-
-const TOKEN_PATH =
-  process.env.NIMBUS_E2E_TOKEN_PATH ??
-  join(homedir(), "Library/Application Support/nimbus/auth/token");
-
-function readToken(): string {
-  const raw = readFileSync(TOKEN_PATH, "utf8").trim();
-  if (raw.startsWith("{")) {
-    const parsed = JSON.parse(raw) as { token?: string };
-    if (!parsed.token) {
-      throw new Error(`token file ${TOKEN_PATH} has no .token field`);
-    }
-    return parsed.token;
-  }
-  return raw;
-}
+import { expect, test } from "./fixtures/nimbus-server";
 
 test.describe("auth -> overview", () => {
   test("auth page renders the local admin token form", async ({ page }) => {
@@ -28,10 +9,10 @@ test.describe("auth -> overview", () => {
 
   test("POST /ui/auth/session with a valid token returns 200 ok:true", async ({
     request,
-    baseURL,
+    nimbusServer,
   }) => {
-    const token = readToken();
-    const res = await request.post(`${baseURL}/ui/auth/session`, {
+    const token = nimbusServer.readToken();
+    const res = await request.post(`${nimbusServer.baseURL}/ui/auth/session`, {
       data: { token },
       headers: {
         "Content-Type": "application/json",
@@ -44,9 +25,9 @@ test.describe("auth -> overview", () => {
 
   test("static UI shell serves a CSP-compliant /ui/ index", async ({
     request,
-    baseURL,
+    nimbusServer,
   }) => {
-    const res = await request.get(`${baseURL}/ui/`);
+    const res = await request.get(`${nimbusServer.baseURL}/ui/`);
     expect(res.status()).toBe(200);
     const csp = res.headers()["content-security-policy"] ?? "";
     expect(csp).toContain("script-src 'self'");
@@ -54,9 +35,9 @@ test.describe("auth -> overview", () => {
 
   test("unauthenticated /ui/ falls back to the sign-in form, not the SPA shell", async ({
     request,
-    baseURL,
+    nimbusServer,
   }) => {
-    const res = await request.get(`${baseURL}/ui/`);
+    const res = await request.get(`${nimbusServer.baseURL}/ui/`);
     expect(res.status()).toBe(200);
     const body = await res.text();
     expect(body).toContain("Nimbus Sign In");
