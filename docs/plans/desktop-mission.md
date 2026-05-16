@@ -194,29 +194,34 @@ These rules apply throughout the mission:
 
 ## Entry-point prompt
 
-Paste this exact message to enter the mission. It is compaction-safe:
-each invocation reads the current state of the mission file and plans
-and continues from whatever is pending.
+The operator enters the mission with the built-in `/goal` slash
+command. Paste this exact message:
 
 ```text
-/loop continue the desktop autonomous mission — read
-docs/plans/desktop-mission.md, both desktop plans, and current git
-state on main. Find the next pending roadmap item (lowest-numbered
-DS, or the Phase 1 archive gate if Phase 1 is otherwise ready).
-Execute it under the Verification Contract. Add an execution-log
-row with concrete evidence. Flip Status to done. Commit + push.
-Repeat until the stop condition in desktop-mission.md is met. If
-blocked on external feedback, state what is blocked and continue
+/goal Drive the desktop mission to its in-tree stop condition. Read
+docs/plans/desktop-mission.md, docs/plans/desktop-ui-plan.md, and
+docs/plans/desktop-shell-plan.md in full. Identify the next pending
+roadmap item (lowest-numbered DS with Status: pending, or the Phase 1
+archive gate if Phase 1 is otherwise ready). Execute it under its
+plan's Verification Contract end-to-end. Add an execution-log row
+with concrete evidence matching the depth of the existing DU6.5 /
+DU7 / DU8 / DU9 / DU11 / DS0A rows. Flip Status to done. Commit a
+focused baseline and push to main on the relevant repo
+(nimbus/nimbus, nimbus/desktop, or both). Repeat. The goal is
+complete only when the stop condition in desktop-mission.md is
+fully met: both plans plus this mission file moved to
+docs/plans/archive/, docs/plans/README.md updated, final closure
+commit pushed to origin/main. Authorizations recorded in the mission
+file apply throughout. If blocked on external feedback (Apple
+notarization, gh workflow run), state what is blocked and continue
 with anything not gated by that block.
 ```
 
-The `/loop` prefix puts the agent in dynamic-mode self-pacing
-(`/loop` rule 3). The agent runs the next item, then issues a
-`ScheduleWakeup` with a long fallback so the loop survives until
-either (a) the stop condition is met, or (b) the operator interrupts.
-
-If the operator prefers a single one-shot run (no auto-resume), paste
-the same text without the `/loop ` prefix.
+The `/goal` built-in keeps the agent working until the condition is
+met. This goal's condition is the mission's stop condition — no
+partial credit. After compaction, the same paste re-enters cleanly
+because the persistent state (this mission file + the two plans +
+git HEAD on `main`) is complete on its own.
 
 ## Mission audit trail
 
