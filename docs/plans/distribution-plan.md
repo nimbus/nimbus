@@ -48,7 +48,7 @@ Source of truth:
 the operator console UI served at `/ui/` by `nimbus`. Its release
 cadence, signing credentials, and packaging matrix are isolated from
 the core server. See
-[`docs/plans/desktop-shell-plan.md`](./desktop-shell-plan.md) for the
+[`docs/plans/archive/desktop-shell-plan.md`](./archive/desktop-shell-plan.md) for the
 build, sign, and notarize pipeline, and the `nimbus/desktop`
 repository for installers.
 

@@ -4,35 +4,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/desktop-mission.md`
-  - autonomous-mode control plane that binds Phase 1 + Phase 2 desktop
-    work into a single mission. Read first on session entry for the
-    durable authorizations, resume procedure, and stop condition.
-    Drives both `desktop-ui-plan.md` and `desktop-shell-plan.md` to
-    `done` + archived.
-- `docs/plans/desktop-ui-plan.md`
-  - canonical execution plan for a Docker Desktop / Podman Desktop-style
-    graphical interface: embedded React SPA at `/ui/*` via `rust-embed`,
-    dashboard/machines/services/functions/data/logs/runs/settings tabs,
-    dark mode, a11y, optional Electron shell (Phase 2); consumes the completed
-    `_nimbus` system-tenant surface from the archived system tenant plan and
-    current architecture references below
 - `docs/plans/install-script-plan.md`
   - canonical execution plan for the nimbus install script (Channel 1):
     `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
-- `docs/plans/desktop-shell-plan.md`
-  - canonical execution plan for Phase 2 of the operator console: a
-    signed, notarized, auto-updating Electron 42.x desktop shell in a
-    separate `nimbus/desktop` repo that wraps the embedded `/ui/*` SPA
-    (DU1-DU10 completed under `desktop-ui-plan.md`). Covers DS0-DS10:
-    external credentials, repo scaffold, server discovery/lifecycle,
-    Electron Fuses + IPC security baseline, native chrome (tray/menu/
-    window), auto-update, per-platform packaging, packaged E2E, code
-    signing, release CI, and operator/security docs. Activates after
-    Phase 1 stability gate fires and the DU11 hardening pass lands.
 
 ## Current Reference Baselines
 
@@ -40,6 +17,27 @@ Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/archive/desktop-mission.md`
+  - completed mission-completion record for the autonomous-mode control
+    plane that bound Phase 1 + Phase 2 desktop work into a single mission.
+    Closed 2026-05-16; durable authorizations, resume procedure, and stop
+    condition preserved as historical reference.
+- `docs/plans/archive/desktop-ui-plan.md`
+  - completed execution record for Phase 1 of the operator console:
+    embedded React SPA at `/ui/*` via `rust-embed`, dashboard/machines/
+    services/functions/data/logs/runs/settings tabs, dark mode, a11y,
+    DU0–DU10 + DU11 hardening. Consumed the `_nimbus` system-tenant
+    surface and current architecture references below.
+- `docs/plans/archive/desktop-shell-plan.md`
+  - completed execution record for Phase 2 of the operator console:
+    signed, notarized, auto-updating Electron 42.x desktop shell in
+    `nimbus/desktop` wrapping the embedded `/ui/*` SPA. Covered DS0A
+    through DS10: external credentials, repo scaffold, server discovery/
+    lifecycle, Electron Fuses + IPC security baseline, native chrome
+    (tray/menu/window), auto-update, per-platform packaging, packaged
+    E2E, code signing, release CI, and operator/security docs. DS7 / DS8
+    / DS9 macOS re-verification deferred to first real `v0.x` release
+    per the in-tree §"External feedback loops" disposition.
 - `docs/plans/bootc-machine-default-plan.md`
   - completed execution record for BMD0-BMD7: direct Fedora bootc machine-os
     recipe ownership, build artifact proof, bootc-native machine-config,

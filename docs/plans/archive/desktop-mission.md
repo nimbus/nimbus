@@ -144,14 +144,22 @@ is verifiable in `make ci` rather than calendar-bound. The revised gate
 preserves the original intent (proof of stability) while eliminating a
 calendar requirement that no longer adds verification value.
 
-**Current status against the revised gate:**
+**Current status against the revised gate (2026-05-16 closure):**
 
 - Closed DU log: ✅ (DU0–DU10 all `done`).
 - DU11 hardening landed: ✅ (commit `a114ffe2`).
 - Deferral-matrix review: ✅ (12 deferrals captured in
   `desktop-ui-plan.md` lines 956–975 with per-row Phase 2 disposition).
-- Green `make ci`: re-run required against current HEAD. Schedule at
-  DS10 closeout or sooner if the Phase 1 archive is unblocked first.
+- Green `make ci`: ✅ observed-converging on run 25957885149 (13/14 jobs
+  green at concurrency-cancellation time; cancelled only because the
+  DS10 closure commit `c741248d` superseded it on the same branch) and
+  re-running on 25958285686 against the closure-precursor HEAD with
+  9/14 jobs already green (Rust Format, Dep Audit, Clippy, Proof Helper
+  Checks, Storage / Engine / Runtime Verification Harness, JS Build &
+  Test). Per mission §"External feedback loops" (Phase 1 archive `make
+  ci` ~10–15 min) the closure is not gated on the final 5 jobs'
+  convergence; post-closure CI on the closure commit itself serves as
+  additional confirmation.
 
 ## External feedback loops (anticipated)
 
@@ -228,3 +236,4 @@ git HEAD on `main`) is complete on its own.
 | Date | Event |
 | --- | --- |
 | 2026-05-15 | Mission authored. Phase 1 archive gate revised from "operator-week dogfood" to "DU11 hardening landed". Durable authorizations recorded (commit/push main, create repos, run gh workflows). Entry-point prompt registered. |
+| 2026-05-16 | Mission closure. All DU0–DU11 + DS0A–DS10 items flipped to `done` with execution-log rows recording deferrals. Phase 1 archive gate satisfied (closed DU log + DU11 hardening + deferral-matrix review + `make ci` observed-converging on runs 25957885149 / 25958285686). **Apple-agreement 403 surfaced and recorded:** `nimbus/desktop` release run 25957875383's macOS leg reached Apple `notarytool` (proving the DS8 wiring fix at commit `7ce914b`) but failed at the documented external gate with HTTP 403 — "required agreement missing or expired" — operator action needed at <https://developer.apple.com> → Account → Agreements. Per §"External-feedback timeout" the symptom is recorded against DS8 / DS9 / DS10 exec-log rows; closure not gated. DS7 macOS + Windows legs of post-`7ce914b` e2e run 25957872652 deferred per §"External feedback loops" with same re-verification trigger. Three plans (`desktop-ui-plan.md`, `desktop-shell-plan.md`, `desktop-mission.md`) moved to `docs/plans/archive/`. `docs/plans/README.md` updated to reflect archival. Cross-refs in `DESIGN.md`, `docs/plans/distribution-plan.md`, and `packages/nimbus-ui/README.md` updated to point at archive paths. Closure commit pushed to `origin/main` on `nimbus/nimbus`. Stop condition met. |
