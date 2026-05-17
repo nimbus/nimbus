@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "../../convex/_generated/api";
-import { Breadcrumb } from "../components/breadcrumb";
+import { ConfirmDialog } from "../components/confirm-dialog";
 import { CopyChip } from "../components/copy-chip";
 import { cn } from "../lib/cn";
 
@@ -41,6 +41,7 @@ function StoragePage() {
   const [creating, setCreating] = useState(false);
   const [newTenant, setNewTenant] = useState("");
   const [deletingTenant, setDeletingTenant] = useState<string | null>(null);
+  const [confirmTenant, setConfirmTenant] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
   const reloadTenants = useCallback(async () => {
@@ -132,15 +133,12 @@ function StoragePage() {
     [newTenant],
   );
 
-  const handleDelete = useCallback(
+  const confirmTenantRow = rows.find((r) => r.tenantId === confirmTenant);
+
+  const runDelete = useCallback(
     async (id: string) => {
-      const tableCount = rows.find((r) => r.tenantId === id)?.tableCount ?? 0;
-      const warning =
-        tableCount > 0
-          ? `Delete tenant "${id}"? This removes ${tableCount} table${tableCount === 1 ? "" : "s"} and all documents.`
-          : `Delete tenant "${id}"?`;
-      if (!window.confirm(warning)) return;
       setDeletingTenant(id);
+      setConfirmTenant(null);
       try {
         const response = await fetch(`/api/tenants/${encodeURIComponent(id)}`, {
           method: "DELETE",
@@ -164,7 +162,7 @@ function StoragePage() {
         setDeletingTenant(null);
       }
     },
-    [rows],
+    [],
   );
 
   return (
@@ -173,10 +171,6 @@ function StoragePage() {
       data-testid="page-storage"
     >
       <header className="flex flex-col gap-2">
-        <Breadcrumb
-          segments={[{ label: "storage", active: true }]}
-          testid="storage-breadcrumb"
-        />
         <div className="flex items-baseline justify-between">
           <div>
             <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
@@ -289,7 +283,7 @@ function StoragePage() {
                     <Td align="right">
                       <button
                         type="button"
-                        onClick={() => void handleDelete(row.tenantId)}
+                        onClick={() => setConfirmTenant(row.tenantId)}
                         disabled={deletingTenant === row.tenantId}
                         className={cn(
                           "rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
@@ -311,6 +305,35 @@ function StoragePage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmTenant !== null}
+        title={
+          confirmTenant ? `Delete tenant "${confirmTenant}"?` : "Delete tenant?"
+        }
+        description={
+          confirmTenantRow && confirmTenantRow.tableCount > 0 ? (
+            <p>
+              This removes{" "}
+              <span className="font-mono text-default tabular">
+                {confirmTenantRow.tableCount}
+              </span>{" "}
+              table{confirmTenantRow.tableCount === 1 ? "" : "s"} and all
+              documents. This action cannot be undone.
+            </p>
+          ) : (
+            <p>The tenant has no tables. This action cannot be undone.</p>
+          )
+        }
+        confirmLabel="Delete"
+        danger
+        busy={deletingTenant !== null}
+        onCancel={() => setConfirmTenant(null)}
+        onConfirm={() => {
+          if (confirmTenant) void runDelete(confirmTenant);
+        }}
+        testid="storage-delete-tenant-dialog"
+      />
     </section>
   );
 }
