@@ -3,25 +3,27 @@ import { useQuery } from "nimbus/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { api } from "../../convex/_generated/api";
-import { Breadcrumb } from "../components/breadcrumb";
-import { ConfirmDialog } from "../components/confirm-dialog";
-import { CopyChip } from "../components/copy-chip";
-import { cn } from "../lib/cn";
-import { shortId } from "../lib/format";
+import { api } from "../../../convex/_generated/api";
+import { Breadcrumb } from "../../components/breadcrumb";
+import { ConfirmDialog } from "../../components/confirm-dialog";
+import { CopyChip } from "../../components/copy-chip";
+import { cn } from "../../lib/cn";
+import { shortId } from "../../lib/format";
 
-export const Route = createFileRoute("/storage_/$tenant_/$table")({
+export const Route = createFileRoute("/app/storage_/$table")({
   validateSearch: (search: Record<string, unknown>): TableSearch => ({
     panel:
       search.panel === "schema" || search.panel === "indexes"
         ? search.panel
         : undefined,
+    as: typeof search.as === "string" ? search.as : undefined,
   }),
   component: TableDocumentsPage,
 });
 
 type TableSearch = {
   panel?: "schema" | "indexes";
+  as?: string;
 };
 
 type TableDoc = {
@@ -64,14 +66,15 @@ type PageResponse = {
 const PAGE_SIZE = 25;
 
 function TableDocumentsPage() {
-  const { tenant, table } = Route.useParams();
+  const { table } = Route.useParams();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const tenant = search.as ?? "";
 
-  const tableMeta = useQuery(api.tables.byName, {
-    tenantId: tenant,
-    name: table,
-  }) as TableDoc | null | undefined;
+  const tableMeta = useQuery(
+    api.tables.byName,
+    tenant ? { tenantId: tenant, name: table } : "skip",
+  ) as TableDoc | null | undefined;
 
   const [page, setPage] = useState<PageResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -280,10 +283,13 @@ function TableDocumentsPage() {
   const togglePanel = useCallback(
     (panel: "schema" | "indexes" | undefined) => {
       void navigate({
-        search: { panel: search.panel === panel ? undefined : panel },
+        search: {
+          panel: search.panel === panel ? undefined : panel,
+          as: search.as,
+        },
       });
     },
-    [navigate, search.panel],
+    [navigate, search.panel, search.as],
   );
 
   return (
@@ -294,13 +300,17 @@ function TableDocumentsPage() {
       <header className="flex flex-col gap-2">
         <Breadcrumb
           segments={[
-            { label: "storage", href: "/storage" },
-            {
-              label: tenant,
-              href: "/storage/$tenant",
-              copyValue: tenant,
-              copyLabel: "tenant id",
-            },
+            { label: "storage", href: "/app/storage" },
+            ...(tenant
+              ? [
+                  {
+                    label: tenant,
+                    href: "/app/storage",
+                    copyValue: tenant,
+                    copyLabel: "tenant id",
+                  },
+                ]
+              : []),
             {
               label: table,
               copyValue: table,

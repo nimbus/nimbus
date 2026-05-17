@@ -2,17 +2,17 @@ import { createFileRoute, Link, useSearch } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { api } from "../../convex/_generated/api";
-import { CopyChip } from "../components/copy-chip";
-import { cn } from "../lib/cn";
-import { shortId } from "../lib/format";
+import { api } from "../../../convex/_generated/api";
+import { CopyChip } from "../../components/copy-chip";
+import { cn } from "../../lib/cn";
+import { shortId } from "../../lib/format";
 
 type RunnerSearch = {
   fn?: string;
   tenant?: string;
 };
 
-export const Route = createFileRoute("/compute_/runner")({
+export const Route = createFileRoute("/app/compute_/runner")({
   validateSearch: (search: Record<string, unknown>): RunnerSearch => ({
     fn: typeof search.fn === "string" ? search.fn : undefined,
     tenant: typeof search.tenant === "string" ? search.tenant : undefined,
@@ -50,7 +50,7 @@ type RunResult =
     };
 
 function RunnerPage() {
-  const search = useSearch({ from: "/compute_/runner" });
+  const search = useSearch({ from: "/app/compute_/runner" });
   const navigate = Route.useNavigate();
 
   const functions = useQuery(api.functions.list, {
@@ -196,7 +196,7 @@ function RunnerPage() {
           </p>
         </div>
         <Link
-          to="/compute"
+          to="/app/compute"
           className="font-mono text-[11px] uppercase tracking-wide text-muted hover:text-default"
           data-testid="runner-back-to-compute"
         >

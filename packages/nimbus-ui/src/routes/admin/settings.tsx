@@ -3,16 +3,16 @@ import { useQuery } from "nimbus/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { api } from "../../convex/_generated/api";
-import { AppearanceSection } from "../components/appearance-section";
-import { CopyChip } from "../components/copy-chip";
-import { StateChip } from "../components/state-chip";
-import { RelativeTime, Uptime } from "../components/time";
-import { UpgradePopover } from "../components/upgrade-popover";
-import { useStalenessContext } from "../hooks/use-staleness";
-import { formatRelativeTime, shortId } from "../lib/format";
+import { api } from "../../../convex/_generated/api";
+import { AppearanceSection } from "../../components/appearance-section";
+import { CopyChip } from "../../components/copy-chip";
+import { StateChip } from "../../components/state-chip";
+import { RelativeTime, Uptime } from "../../components/time";
+import { UpgradePopover } from "../../components/upgrade-popover";
+import { useStalenessContext } from "../../hooks/use-staleness";
+import { formatRelativeTime, shortId } from "../../lib/format";
 
-export const Route = createFileRoute("/settings")({
+export const Route = createFileRoute("/admin/settings")({
   component: SettingsPage,
 });
 

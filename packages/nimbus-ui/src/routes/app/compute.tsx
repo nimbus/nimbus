@@ -2,14 +2,14 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { useMemo, useState } from "react";
 
-import { api } from "../../convex/_generated/api";
-import { CopyChip } from "../components/copy-chip";
-import { StateChip } from "../components/state-chip";
-import { RelativeTime } from "../components/time";
-import { cn } from "../lib/cn";
-import { formatDuration, shortId } from "../lib/format";
+import { api } from "../../../convex/_generated/api";
+import { CopyChip } from "../../components/copy-chip";
+import { StateChip } from "../../components/state-chip";
+import { RelativeTime } from "../../components/time";
+import { cn } from "../../lib/cn";
+import { formatDuration, shortId } from "../../lib/format";
 
-export const Route = createFileRoute("/compute")({
+export const Route = createFileRoute("/app/compute")({
   component: ComputePage,
 });
 
@@ -135,7 +135,7 @@ function ComputePage() {
         <div className="flex items-center gap-3">
           <BundleHint bundles={bundles} />
           <Link
-            to="/compute/runner"
+            to="/app/compute/runner"
             data-testid="compute-open-runner"
             className="rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
           >
@@ -376,7 +376,7 @@ function FunctionsTable({
                 <Td>
                   {fn.path ? (
                     <Link
-                      to="/compute/runner"
+                      to="/app/compute/runner"
                       search={{ fn: fn.path }}
                       data-testid={`compute-function-run-${fn.path}`}
                       className="rounded border border-app px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"

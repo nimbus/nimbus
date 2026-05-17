@@ -434,8 +434,8 @@ the Execution Log.
 | Phase | Description | Status |
 | --- | --- | --- |
 | O0 | Lock four decisions: restructure vs additive, two-view IA, view-switcher pattern, tenant-selector behavior per view | `done` |
-| O1 | IA migration: DESIGN.md + nav-entries (per view) + placeholder routes under `app/` and `admin/` | `in_progress` |
-| OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `todo` |
+| O1 | IA migration: DESIGN.md + nav-entries (per view) + placeholder routes under `app/` and `admin/` | `done` |
+| OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `in_progress` |
 | O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `todo` |
 | O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `todo` |
 | O4 | Sub-drawer consumers: 13 routes across both views | `todo` |
@@ -497,7 +497,7 @@ Eliminates risk of half-restructuring or half-migrating IA.
 
 ### O1 — IA migration (DESIGN.md + nav-entries + placeholder routes)
 
-**Status:** `in_progress`
+**Status:** `done`
 
 **Goal:** Land the IA change as a coherent baseline. `DESIGN.md`, the
 `NAV_ENTRIES` arrays (per view), and the route directory layout all
@@ -567,7 +567,7 @@ agree.
 
 ### OV — View shell (TopNav with view switcher, URL split, restore contract)
 
-**Status:** `todo`
+**Status:** `in_progress`
 
 **Goal:** Make the two views navigable. Lay down the URL split (`/app/*`
 vs `/admin/*`), the view switcher control, and the last-route-per-view
@@ -1112,19 +1112,58 @@ verification run, anything surprising._
     benefits from a tenant filter on the operator side.
   No code changes in this phase, per O0 acceptance criteria. O0 closes;
   O1 begins.
+- **2026-05-17 (e)** — **O1 complete.** IA migration landed as a single
+  baseline:
+  - `DESIGN.md` rewritten: IA section now lists Developer (7) and
+    Operator (7) sidebar tables; Core Screens split into Developer
+    (Overview, Compute, Schedules, Storage, Files, Observability,
+    Settings) and Operator (System, Tenants, Machines, Network,
+    Services, Observability, Settings) subsections; Layout System
+    rewritten with the three-pane ASCII diagram and per-pane
+    specifications.
+  - `packages/nimbus-ui/src/shell/nav-entries.ts` split into
+    `DEVELOPER_NAV_ENTRIES` (7) and `OPERATOR_NAV_ENTRIES` (7); each
+    entry carries a `view` discriminator; helpers
+    `navEntriesForView(view)` and `viewFromPathname(pathname)` exported.
+  - Routes migrated into `routes/app/` (overview, compute, compute
+    runner, run detail, storage, table detail, observability, schedules,
+    files, settings placeholders) and `routes/admin/` (system overview,
+    tenants, machines, network, services, observability, settings
+    placeholders). Storage no longer encodes tenant in the URL — moved
+    to a `?as=<tenant>` search param as a transient surface until O6
+    wires the active-tenant store.
+  - `routes/index.tsx` redirects `/` → `/app`.
+  - `shell/sidebar.tsx` reads the active view from pathname and renders
+    `navEntriesForView(view)`; wordmark flips between
+    `developer console` / `operator console`.
+  - `shell/command-palette.tsx` indexes both views in separate groups
+    and keys recent picks by `${view}:${id}` to keep duplicate ids
+    (`overview` / `system`, `observability`, `settings`) disambiguated.
+  - `shell/nav-entries.spec.ts` added: 8 assertions covering shape
+    stability, view discriminator, id uniqueness per view, URL
+    prefixing, countQuery↔countArgs pairing, helpers, and
+    `viewFromPathname` semantics.
+  - Verification: `npm run codegen` clean; `npm run typecheck` clean
+    (16 typecheck targets); `npm run test` 112/112 (16 spec files);
+    `npm run build` clean (24 chunks emitted). Biome's pre-existing
+    a11y errors in `appearance-section.tsx` are unrelated and left
+    untouched. O1 closes; **OV** opens.
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, including the two-view IA section.
-2. Open Phase O0 by reading `packages/nimbus-ui/src/routes/__root.tsx`,
+1. Re-read this plan top-to-bottom, especially the OV phase detail.
+2. Re-read the current shell to know what already exists:
+   `packages/nimbus-ui/src/routes/__root.tsx`,
    `packages/nimbus-ui/src/shell/sidebar.tsx`,
-   `packages/nimbus-ui/src/shell/system-tenant-lens.tsx`,
-   `packages/nimbus-ui/src/shell/nav-entries.ts`, and `DESIGN.md` lines
-   78–250.
-3. Record the **four O0 decisions** (restructure-vs-additive, two-view
-   IA confirmation, view switcher pattern, tenant selector behavior per
-   view) in the Execution Log.
-4. Mark O0 `done` and O1 `in_progress` in the Phase Status Ledger.
-5. Begin O1 — `DESIGN.md` IA section edit first, then `nav-entries.ts`
-   split into per-view exports, then route migration into `app/` +
-   `admin/` directories with placeholder content.
+   `packages/nimbus-ui/src/shell/command-palette.tsx`,
+   `packages/nimbus-ui/src/shell/nav-entries.ts`.
+3. Build the TopNav at `packages/nimbus-ui/src/shell/top-nav.tsx` per
+   the OV phase specification (logo+wordmark left, ViewSwitcher middle,
+   tenant-selector stub right).
+4. Mount TopNav at the top of `__root.tsx`'s ShellLayout — above the
+   existing `<Sidebar />` + `<main>` row — so the existing flow keeps
+   working while the structural slot lands.
+5. Land the ViewSwitcher: pathname-driven, navigates via
+   `nimbus-ui:last-route:<view>` localStorage, falls back to `/app` or
+   `/admin`. Add `view-switcher.spec.tsx` covering the two click paths
+   and pathname-driven `aria-pressed` state.

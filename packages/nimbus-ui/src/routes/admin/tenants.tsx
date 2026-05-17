@@ -3,13 +3,13 @@ import { useQuery } from "nimbus/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { api } from "../../convex/_generated/api";
-import { ConfirmDialog } from "../components/confirm-dialog";
-import { CopyChip } from "../components/copy-chip";
-import { cn } from "../lib/cn";
+import { api } from "../../../convex/_generated/api";
+import { ConfirmDialog } from "../../components/confirm-dialog";
+import { CopyChip } from "../../components/copy-chip";
+import { cn } from "../../lib/cn";
 
-export const Route = createFileRoute("/storage")({
-  component: StoragePage,
+export const Route = createFileRoute("/admin/tenants")({
+  component: TenantsPage,
 });
 
 type TableDoc = {
@@ -30,7 +30,7 @@ type TenantListResponse = {
   tenants?: Array<string | { id?: string; tenantId?: string; name?: string }>;
 };
 
-function StoragePage() {
+function TenantsPage() {
   const tables = useQuery(api.tables.list, {
     tenantId: null,
     limit: 200,
@@ -135,35 +135,32 @@ function StoragePage() {
 
   const confirmTenantRow = rows.find((r) => r.tenantId === confirmTenant);
 
-  const runDelete = useCallback(
-    async (id: string) => {
-      setDeletingTenant(id);
-      setConfirmTenant(null);
-      try {
-        const response = await fetch(`/api/tenants/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          credentials: "include",
-        });
-        if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as {
-            error?: { message?: string };
-          } | null;
-          throw new Error(
-            body?.error?.message ?? `Delete failed: ${response.status}`,
-          );
-        }
-        toast.success(`Deleted tenant ${id}`);
-        setRefreshTick((t) => t + 1);
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Failed to delete tenant",
+  const runDelete = useCallback(async (id: string) => {
+    setDeletingTenant(id);
+    setConfirmTenant(null);
+    try {
+      const response = await fetch(`/api/tenants/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(
+          body?.error?.message ?? `Delete failed: ${response.status}`,
         );
-      } finally {
-        setDeletingTenant(null);
       }
-    },
-    [],
-  );
+      toast.success(`Deleted tenant ${id}`);
+      setRefreshTick((t) => t + 1);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to delete tenant",
+      );
+    } finally {
+      setDeletingTenant(null);
+    }
+  }, []);
 
   return (
     <section
@@ -256,8 +253,8 @@ function StoragePage() {
                   >
                     <Td>
                       <Link
-                        to="/storage/$tenant"
-                        params={{ tenant: row.tenantId }}
+                        to="/app/storage"
+                        search={{ as: row.tenantId }}
                         className="font-mono text-default hover:underline"
                         data-testid={`storage-tenant-link-${row.tenantId}`}
                       >

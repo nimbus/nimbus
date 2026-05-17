@@ -11,12 +11,12 @@ import {
   useSyncExternalStore,
 } from "react";
 
-import { api } from "../../convex/_generated/api";
-import { CopyChip } from "../components/copy-chip";
-import { StateChip } from "../components/state-chip";
-import { RelativeTime } from "../components/time";
-import { cn } from "../lib/cn";
-import { formatDuration, shortId } from "../lib/format";
+import { api } from "../../../convex/_generated/api";
+import { CopyChip } from "../../components/copy-chip";
+import { StateChip } from "../../components/state-chip";
+import { RelativeTime } from "../../components/time";
+import { cn } from "../../lib/cn";
+import { formatDuration, shortId } from "../../lib/format";
 
 type ObservabilityTab = "logs" | "runs";
 
@@ -87,7 +87,7 @@ function parseBool(value: unknown): boolean | undefined {
   return undefined;
 }
 
-export const Route = createFileRoute("/observability")({
+export const Route = createFileRoute("/app/observability")({
   validateSearch: (search: Record<string, unknown>): ObservabilitySearch => ({
     tab: parseTab(search.tab),
     level: parseString(search.level),
@@ -179,7 +179,7 @@ function TabLink({
 }) {
   return (
     <Link
-      to="/observability"
+      to="/app/observability"
       search={(prev) => ({ ...prev, tab: id })}
       data-testid={`observability-tab-${id}`}
       aria-current={active ? "page" : undefined}
@@ -196,7 +196,7 @@ function TabLink({
 }
 
 function LogsTab({ search }: { search: ObservabilitySearch }) {
-  const navigate = useNavigate({ from: "/observability" });
+  const navigate = useNavigate({ from: "/app/observability" });
   const live = useQuery(api.events.recent, {
     source: search.source ?? null,
     level: search.level ?? null,
@@ -213,7 +213,7 @@ function LogsTab({ search }: { search: ObservabilitySearch }) {
   const setSearch = useCallback(
     (patch: Partial<ObservabilitySearch>) => {
       void navigate({
-        to: "/observability",
+        to: "/app/observability",
         search: (prev) => ({ ...prev, ...patch }),
         replace: true,
       });
@@ -224,7 +224,7 @@ function LogsTab({ search }: { search: ObservabilitySearch }) {
   const setSearchAction = useCallback(
     (patch: Partial<ObservabilitySearch>) => {
       void navigate({
-        to: "/observability",
+        to: "/app/observability",
         search: (prev) => ({ ...prev, ...patch }),
       });
     },
@@ -630,7 +630,7 @@ function LogStream({
           }}
         >
           <Link
-            to="/observability/runs/$runId"
+            to="/app/compute/runs/$runId"
             params={{ runId: menu.correlationId }}
             role="menuitem"
             className="flex w-full items-center gap-2 px-3 py-1.5 text-default hover:bg-surface-2"
@@ -658,7 +658,7 @@ function CorrelationBadge({
   return (
     <span className="inline-flex items-center gap-1">
       <Link
-        to="/observability/runs/$runId"
+        to="/app/compute/runs/$runId"
         params={{ runId: correlationId }}
         className="inline-flex items-center gap-1 rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default focus-visible:bg-surface-2 focus-visible:text-default"
         data-testid={`observability-log-jump-${eventId}`}
@@ -673,7 +673,7 @@ function CorrelationBadge({
 }
 
 function RunsTab({ search }: { search: ObservabilitySearch }) {
-  const navigate = useNavigate({ from: "/observability" });
+  const navigate = useNavigate({ from: "/app/observability" });
   const runs = useQuery(api.runs.recent, {
     bundleId: null,
     functionPath: search.functionPath ?? null,
@@ -684,7 +684,7 @@ function RunsTab({ search }: { search: ObservabilitySearch }) {
   const setSearch = useCallback(
     (patch: Partial<ObservabilitySearch>) => {
       void navigate({
-        to: "/observability",
+        to: "/app/observability",
         search: (prev) => ({ ...prev, ...patch }),
         replace: true,
       });
@@ -751,7 +751,7 @@ function AdapterHonesty() {
       Native HTTP, scheduler, MongoDB, Firebase, and Cloud Functions traffic is
       surfaced under Logs — see the{" "}
       <Link
-        to="/observability"
+        to="/app/observability"
         search={(prev) => ({ ...prev, tab: "logs" })}
         className="underline hover:text-default focus-visible:text-default"
         data-testid="observability-adapter-honesty-events-link"
@@ -809,7 +809,7 @@ function RunsTable({ runs }: { runs: RunDoc[] | undefined }) {
             >
               <Td>
                 <Link
-                  to="/observability/runs/$runId"
+                  to="/app/compute/runs/$runId"
                   params={{ runId: run._id }}
                   className="font-mono text-default hover:underline"
                   data-testid={`observability-run-link-${run._id}`}

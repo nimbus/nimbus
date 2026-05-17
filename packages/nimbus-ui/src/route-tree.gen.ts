@@ -9,214 +9,263 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as StorageRouteImport } from './routes/storage'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as ObservabilityRouteImport } from './routes/observability'
-import { Route as NetworkRouteImport } from './routes/network'
-import { Route as MachinesRouteImport } from './routes/machines'
-import { Route as ComputeRouteImport } from './routes/compute'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as StorageTenantRouteImport } from './routes/storage_.$tenant'
-import { Route as ComputeRunnerRouteImport } from './routes/compute_.runner'
-import { Route as StorageTenantTableRouteImport } from './routes/storage_.$tenant_.$table'
-import { Route as ObservabilityRunsRunIdRouteImport } from './routes/observability_.runs_.$runId'
+import { Route as AppIndexRouteImport } from './routes/app/index'
+import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as AppStorageRouteImport } from './routes/app/storage'
+import { Route as AppSettingsRouteImport } from './routes/app/settings'
+import { Route as AppSchedulesRouteImport } from './routes/app/schedules'
+import { Route as AppObservabilityRouteImport } from './routes/app/observability'
+import { Route as AppFilesRouteImport } from './routes/app/files'
+import { Route as AppComputeRouteImport } from './routes/app/compute'
+import { Route as AdminTenantsRouteImport } from './routes/admin/tenants'
+import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
+import { Route as AdminServicesRouteImport } from './routes/admin/services'
+import { Route as AdminObservabilityRouteImport } from './routes/admin/observability'
+import { Route as AdminNetworkRouteImport } from './routes/admin/network'
+import { Route as AdminMachinesRouteImport } from './routes/admin/machines'
+import { Route as AppStorageTableRouteImport } from './routes/app/storage_.$table'
+import { Route as AppComputeRunnerRouteImport } from './routes/app/compute_.runner'
+import { Route as AppComputeRunsRunIdRouteImport } from './routes/app/compute_.runs_.$runId'
 
-const StorageRoute = StorageRouteImport.update({
-  id: '/storage',
-  path: '/storage',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ObservabilityRoute = ObservabilityRouteImport.update({
-  id: '/observability',
-  path: '/observability',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const NetworkRoute = NetworkRouteImport.update({
-  id: '/network',
-  path: '/network',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MachinesRoute = MachinesRouteImport.update({
-  id: '/machines',
-  path: '/machines',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ComputeRoute = ComputeRouteImport.update({
-  id: '/compute',
-  path: '/compute',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const StorageTenantRoute = StorageTenantRouteImport.update({
-  id: '/storage_/$tenant',
-  path: '/storage/$tenant',
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/app/',
+  path: '/app/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ComputeRunnerRoute = ComputeRunnerRouteImport.update({
-  id: '/compute_/runner',
-  path: '/compute/runner',
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const StorageTenantTableRoute = StorageTenantTableRouteImport.update({
-  id: '/storage_/$tenant_/$table',
-  path: '/storage/$tenant/$table',
+const AppStorageRoute = AppStorageRouteImport.update({
+  id: '/app/storage',
+  path: '/app/storage',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ObservabilityRunsRunIdRoute = ObservabilityRunsRunIdRouteImport.update({
-  id: '/observability_/runs_/$runId',
-  path: '/observability/runs/$runId',
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/app/settings',
+  path: '/app/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppSchedulesRoute = AppSchedulesRouteImport.update({
+  id: '/app/schedules',
+  path: '/app/schedules',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppObservabilityRoute = AppObservabilityRouteImport.update({
+  id: '/app/observability',
+  path: '/app/observability',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppFilesRoute = AppFilesRouteImport.update({
+  id: '/app/files',
+  path: '/app/files',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppComputeRoute = AppComputeRouteImport.update({
+  id: '/app/compute',
+  path: '/app/compute',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminTenantsRoute = AdminTenantsRouteImport.update({
+  id: '/admin/tenants',
+  path: '/admin/tenants',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminSettingsRoute = AdminSettingsRouteImport.update({
+  id: '/admin/settings',
+  path: '/admin/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminServicesRoute = AdminServicesRouteImport.update({
+  id: '/admin/services',
+  path: '/admin/services',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminObservabilityRoute = AdminObservabilityRouteImport.update({
+  id: '/admin/observability',
+  path: '/admin/observability',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminNetworkRoute = AdminNetworkRouteImport.update({
+  id: '/admin/network',
+  path: '/admin/network',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminMachinesRoute = AdminMachinesRouteImport.update({
+  id: '/admin/machines',
+  path: '/admin/machines',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppStorageTableRoute = AppStorageTableRouteImport.update({
+  id: '/app/storage_/$table',
+  path: '/app/storage/$table',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppComputeRunnerRoute = AppComputeRunnerRouteImport.update({
+  id: '/app/compute_/runner',
+  path: '/app/compute/runner',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppComputeRunsRunIdRoute = AppComputeRunsRunIdRouteImport.update({
+  id: '/app/compute_/runs_/$runId',
+  path: '/app/compute/runs/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/compute': typeof ComputeRoute
-  '/machines': typeof MachinesRoute
-  '/network': typeof NetworkRoute
-  '/observability': typeof ObservabilityRoute
-  '/settings': typeof SettingsRoute
-  '/storage': typeof StorageRoute
-  '/compute/runner': typeof ComputeRunnerRoute
-  '/storage/$tenant': typeof StorageTenantRoute
-  '/observability/runs/$runId': typeof ObservabilityRunsRunIdRoute
-  '/storage/$tenant/$table': typeof StorageTenantTableRoute
+  '/admin/machines': typeof AdminMachinesRoute
+  '/admin/network': typeof AdminNetworkRoute
+  '/admin/observability': typeof AdminObservabilityRoute
+  '/admin/services': typeof AdminServicesRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/admin/tenants': typeof AdminTenantsRoute
+  '/app/compute': typeof AppComputeRoute
+  '/app/files': typeof AppFilesRoute
+  '/app/observability': typeof AppObservabilityRoute
+  '/app/schedules': typeof AppSchedulesRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/storage': typeof AppStorageRoute
+  '/admin/': typeof AdminIndexRoute
+  '/app/': typeof AppIndexRoute
+  '/app/compute/runner': typeof AppComputeRunnerRoute
+  '/app/storage/$table': typeof AppStorageTableRoute
+  '/app/compute/runs/$runId': typeof AppComputeRunsRunIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/compute': typeof ComputeRoute
-  '/machines': typeof MachinesRoute
-  '/network': typeof NetworkRoute
-  '/observability': typeof ObservabilityRoute
-  '/settings': typeof SettingsRoute
-  '/storage': typeof StorageRoute
-  '/compute/runner': typeof ComputeRunnerRoute
-  '/storage/$tenant': typeof StorageTenantRoute
-  '/observability/runs/$runId': typeof ObservabilityRunsRunIdRoute
-  '/storage/$tenant/$table': typeof StorageTenantTableRoute
+  '/admin/machines': typeof AdminMachinesRoute
+  '/admin/network': typeof AdminNetworkRoute
+  '/admin/observability': typeof AdminObservabilityRoute
+  '/admin/services': typeof AdminServicesRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/admin/tenants': typeof AdminTenantsRoute
+  '/app/compute': typeof AppComputeRoute
+  '/app/files': typeof AppFilesRoute
+  '/app/observability': typeof AppObservabilityRoute
+  '/app/schedules': typeof AppSchedulesRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/storage': typeof AppStorageRoute
+  '/admin': typeof AdminIndexRoute
+  '/app': typeof AppIndexRoute
+  '/app/compute/runner': typeof AppComputeRunnerRoute
+  '/app/storage/$table': typeof AppStorageTableRoute
+  '/app/compute/runs/$runId': typeof AppComputeRunsRunIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/compute': typeof ComputeRoute
-  '/machines': typeof MachinesRoute
-  '/network': typeof NetworkRoute
-  '/observability': typeof ObservabilityRoute
-  '/settings': typeof SettingsRoute
-  '/storage': typeof StorageRoute
-  '/compute_/runner': typeof ComputeRunnerRoute
-  '/storage_/$tenant': typeof StorageTenantRoute
-  '/observability_/runs_/$runId': typeof ObservabilityRunsRunIdRoute
-  '/storage_/$tenant_/$table': typeof StorageTenantTableRoute
+  '/admin/machines': typeof AdminMachinesRoute
+  '/admin/network': typeof AdminNetworkRoute
+  '/admin/observability': typeof AdminObservabilityRoute
+  '/admin/services': typeof AdminServicesRoute
+  '/admin/settings': typeof AdminSettingsRoute
+  '/admin/tenants': typeof AdminTenantsRoute
+  '/app/compute': typeof AppComputeRoute
+  '/app/files': typeof AppFilesRoute
+  '/app/observability': typeof AppObservabilityRoute
+  '/app/schedules': typeof AppSchedulesRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/storage': typeof AppStorageRoute
+  '/admin/': typeof AdminIndexRoute
+  '/app/': typeof AppIndexRoute
+  '/app/compute_/runner': typeof AppComputeRunnerRoute
+  '/app/storage_/$table': typeof AppStorageTableRoute
+  '/app/compute_/runs_/$runId': typeof AppComputeRunsRunIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/compute'
-    | '/machines'
-    | '/network'
-    | '/observability'
-    | '/settings'
-    | '/storage'
-    | '/compute/runner'
-    | '/storage/$tenant'
-    | '/observability/runs/$runId'
-    | '/storage/$tenant/$table'
+    | '/admin/machines'
+    | '/admin/network'
+    | '/admin/observability'
+    | '/admin/services'
+    | '/admin/settings'
+    | '/admin/tenants'
+    | '/app/compute'
+    | '/app/files'
+    | '/app/observability'
+    | '/app/schedules'
+    | '/app/settings'
+    | '/app/storage'
+    | '/admin/'
+    | '/app/'
+    | '/app/compute/runner'
+    | '/app/storage/$table'
+    | '/app/compute/runs/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/compute'
-    | '/machines'
-    | '/network'
-    | '/observability'
-    | '/settings'
-    | '/storage'
-    | '/compute/runner'
-    | '/storage/$tenant'
-    | '/observability/runs/$runId'
-    | '/storage/$tenant/$table'
+    | '/admin/machines'
+    | '/admin/network'
+    | '/admin/observability'
+    | '/admin/services'
+    | '/admin/settings'
+    | '/admin/tenants'
+    | '/app/compute'
+    | '/app/files'
+    | '/app/observability'
+    | '/app/schedules'
+    | '/app/settings'
+    | '/app/storage'
+    | '/admin'
+    | '/app'
+    | '/app/compute/runner'
+    | '/app/storage/$table'
+    | '/app/compute/runs/$runId'
   id:
     | '__root__'
     | '/'
-    | '/compute'
-    | '/machines'
-    | '/network'
-    | '/observability'
-    | '/settings'
-    | '/storage'
-    | '/compute_/runner'
-    | '/storage_/$tenant'
-    | '/observability_/runs_/$runId'
-    | '/storage_/$tenant_/$table'
+    | '/admin/machines'
+    | '/admin/network'
+    | '/admin/observability'
+    | '/admin/services'
+    | '/admin/settings'
+    | '/admin/tenants'
+    | '/app/compute'
+    | '/app/files'
+    | '/app/observability'
+    | '/app/schedules'
+    | '/app/settings'
+    | '/app/storage'
+    | '/admin/'
+    | '/app/'
+    | '/app/compute_/runner'
+    | '/app/storage_/$table'
+    | '/app/compute_/runs_/$runId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ComputeRoute: typeof ComputeRoute
-  MachinesRoute: typeof MachinesRoute
-  NetworkRoute: typeof NetworkRoute
-  ObservabilityRoute: typeof ObservabilityRoute
-  SettingsRoute: typeof SettingsRoute
-  StorageRoute: typeof StorageRoute
-  ComputeRunnerRoute: typeof ComputeRunnerRoute
-  StorageTenantRoute: typeof StorageTenantRoute
-  ObservabilityRunsRunIdRoute: typeof ObservabilityRunsRunIdRoute
-  StorageTenantTableRoute: typeof StorageTenantTableRoute
+  AdminMachinesRoute: typeof AdminMachinesRoute
+  AdminNetworkRoute: typeof AdminNetworkRoute
+  AdminObservabilityRoute: typeof AdminObservabilityRoute
+  AdminServicesRoute: typeof AdminServicesRoute
+  AdminSettingsRoute: typeof AdminSettingsRoute
+  AdminTenantsRoute: typeof AdminTenantsRoute
+  AppComputeRoute: typeof AppComputeRoute
+  AppFilesRoute: typeof AppFilesRoute
+  AppObservabilityRoute: typeof AppObservabilityRoute
+  AppSchedulesRoute: typeof AppSchedulesRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppStorageRoute: typeof AppStorageRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+  AppIndexRoute: typeof AppIndexRoute
+  AppComputeRunnerRoute: typeof AppComputeRunnerRoute
+  AppStorageTableRoute: typeof AppStorageTableRoute
+  AppComputeRunsRunIdRoute: typeof AppComputeRunsRunIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/storage': {
-      id: '/storage'
-      path: '/storage'
-      fullPath: '/storage'
-      preLoaderRoute: typeof StorageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/observability': {
-      id: '/observability'
-      path: '/observability'
-      fullPath: '/observability'
-      preLoaderRoute: typeof ObservabilityRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/network': {
-      id: '/network'
-      path: '/network'
-      fullPath: '/network'
-      preLoaderRoute: typeof NetworkRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/machines': {
-      id: '/machines'
-      path: '/machines'
-      fullPath: '/machines'
-      preLoaderRoute: typeof MachinesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/compute': {
-      id: '/compute'
-      path: '/compute'
-      fullPath: '/compute'
-      preLoaderRoute: typeof ComputeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -224,32 +273,123 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/storage_/$tenant': {
-      id: '/storage_/$tenant'
-      path: '/storage/$tenant'
-      fullPath: '/storage/$tenant'
-      preLoaderRoute: typeof StorageTenantRouteImport
+    '/app/': {
+      id: '/app/'
+      path: '/app'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/compute_/runner': {
-      id: '/compute_/runner'
-      path: '/compute/runner'
-      fullPath: '/compute/runner'
-      preLoaderRoute: typeof ComputeRunnerRouteImport
+    '/admin/': {
+      id: '/admin/'
+      path: '/admin'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/storage_/$tenant_/$table': {
-      id: '/storage_/$tenant_/$table'
-      path: '/storage/$tenant/$table'
-      fullPath: '/storage/$tenant/$table'
-      preLoaderRoute: typeof StorageTenantTableRouteImport
+    '/app/storage': {
+      id: '/app/storage'
+      path: '/app/storage'
+      fullPath: '/app/storage'
+      preLoaderRoute: typeof AppStorageRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/observability_/runs_/$runId': {
-      id: '/observability_/runs_/$runId'
-      path: '/observability/runs/$runId'
-      fullPath: '/observability/runs/$runId'
-      preLoaderRoute: typeof ObservabilityRunsRunIdRouteImport
+    '/app/settings': {
+      id: '/app/settings'
+      path: '/app/settings'
+      fullPath: '/app/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/schedules': {
+      id: '/app/schedules'
+      path: '/app/schedules'
+      fullPath: '/app/schedules'
+      preLoaderRoute: typeof AppSchedulesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/observability': {
+      id: '/app/observability'
+      path: '/app/observability'
+      fullPath: '/app/observability'
+      preLoaderRoute: typeof AppObservabilityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/files': {
+      id: '/app/files'
+      path: '/app/files'
+      fullPath: '/app/files'
+      preLoaderRoute: typeof AppFilesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/compute': {
+      id: '/app/compute'
+      path: '/app/compute'
+      fullPath: '/app/compute'
+      preLoaderRoute: typeof AppComputeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/tenants': {
+      id: '/admin/tenants'
+      path: '/admin/tenants'
+      fullPath: '/admin/tenants'
+      preLoaderRoute: typeof AdminTenantsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/settings': {
+      id: '/admin/settings'
+      path: '/admin/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/services': {
+      id: '/admin/services'
+      path: '/admin/services'
+      fullPath: '/admin/services'
+      preLoaderRoute: typeof AdminServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/observability': {
+      id: '/admin/observability'
+      path: '/admin/observability'
+      fullPath: '/admin/observability'
+      preLoaderRoute: typeof AdminObservabilityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/network': {
+      id: '/admin/network'
+      path: '/admin/network'
+      fullPath: '/admin/network'
+      preLoaderRoute: typeof AdminNetworkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/machines': {
+      id: '/admin/machines'
+      path: '/admin/machines'
+      fullPath: '/admin/machines'
+      preLoaderRoute: typeof AdminMachinesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/storage_/$table': {
+      id: '/app/storage_/$table'
+      path: '/app/storage/$table'
+      fullPath: '/app/storage/$table'
+      preLoaderRoute: typeof AppStorageTableRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/compute_/runner': {
+      id: '/app/compute_/runner'
+      path: '/app/compute/runner'
+      fullPath: '/app/compute/runner'
+      preLoaderRoute: typeof AppComputeRunnerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/compute_/runs_/$runId': {
+      id: '/app/compute_/runs_/$runId'
+      path: '/app/compute/runs/$runId'
+      fullPath: '/app/compute/runs/$runId'
+      preLoaderRoute: typeof AppComputeRunsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -257,16 +397,23 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ComputeRoute: ComputeRoute,
-  MachinesRoute: MachinesRoute,
-  NetworkRoute: NetworkRoute,
-  ObservabilityRoute: ObservabilityRoute,
-  SettingsRoute: SettingsRoute,
-  StorageRoute: StorageRoute,
-  ComputeRunnerRoute: ComputeRunnerRoute,
-  StorageTenantRoute: StorageTenantRoute,
-  ObservabilityRunsRunIdRoute: ObservabilityRunsRunIdRoute,
-  StorageTenantTableRoute: StorageTenantTableRoute,
+  AdminMachinesRoute: AdminMachinesRoute,
+  AdminNetworkRoute: AdminNetworkRoute,
+  AdminObservabilityRoute: AdminObservabilityRoute,
+  AdminServicesRoute: AdminServicesRoute,
+  AdminSettingsRoute: AdminSettingsRoute,
+  AdminTenantsRoute: AdminTenantsRoute,
+  AppComputeRoute: AppComputeRoute,
+  AppFilesRoute: AppFilesRoute,
+  AppObservabilityRoute: AppObservabilityRoute,
+  AppSchedulesRoute: AppSchedulesRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppStorageRoute: AppStorageRoute,
+  AdminIndexRoute: AdminIndexRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppComputeRunnerRoute: AppComputeRunnerRoute,
+  AppStorageTableRoute: AppStorageTableRoute,
+  AppComputeRunsRunIdRoute: AppComputeRunsRunIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

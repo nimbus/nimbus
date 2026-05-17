@@ -2,11 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { useMemo, useState } from "react";
 
-import { api } from "../../convex/_generated/api";
-import { RelativeTime } from "../components/time";
-import { cn } from "../lib/cn";
+import { api } from "../../../convex/_generated/api";
+import { RelativeTime } from "../../components/time";
+import { cn } from "../../lib/cn";
 
-export const Route = createFileRoute("/network")({
+export const Route = createFileRoute("/admin/network")({
   component: NetworkPage,
 });
 
