@@ -439,8 +439,8 @@ the Execution Log.
 | O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `done` |
 | O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `done` |
 | O4 | Sub-drawer consumers: 13 routes across both views | `done` |
-| O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `in_progress` |
-| O6 | Active-tenant store + per-route refetch on tenant change | `todo` |
+| O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `done` |
+| O6 | Active-tenant store + per-route refetch on tenant change | `in_progress` |
 | O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `todo` |
 | O8 | Plan close: README registration, archive hand-off | `todo` |
 
@@ -779,7 +779,7 @@ the sub-section list is fixed; dynamic where it's a resource list.
 
 ### O5 — Tenant selector wiring
 
-**Status:** `todo`
+**Status:** `done`
 
 **Goal:** Wire the tenant selector. Visible in Developer view (always
 active), hidden in Operator view except on `admin/observability` (where
@@ -1289,6 +1289,65 @@ verification run, anything surprising._
     contract is part of O3's acceptance and is covered by the first
     spec case. Browser-screenshot matrix for the populated surface
     comes in O4 as routes start opting in. O3 closes; **O4** opens.
+- **2026-05-17 (j)** — **O5 complete.** Tenant selector landed in
+  TopNav with per-view visibility logic:
+  - **`packages/nimbus-ui/src/shell/tenant-selector.tsx` (new):**
+    `<TenantSelector mode={...} />` accepts a discriminated mode —
+    `{ kind: "developer" }` or
+    `{ kind: "operator-filter"; currentFilter: string | null }`. The
+    component fetches `/api/tenants` on mount (same REST endpoint
+    `admin/tenants.tsx` already consumes), supports
+    ArrowUp/ArrowDown/Home/End/Enter/Space/Escape keyboard navigation,
+    closes on outside click, and writes selection either to the
+    `activeTenant` store (developer mode) or to the URL as
+    `?tenant=<id>` (operator-filter mode). Zero-tenant Developer
+    fallback renders a compact `Plus`-iconed "Create tenant" button
+    that links to `/admin/tenants`.
+  - **`packages/nimbus-ui/src/store/ui-store.ts`:** adds
+    `activeTenant: string | null` (default `null`, hydrated from
+    `nimbus-ui:active-tenant`) plus `setActiveTenant` and exported
+    `readActiveTenant()` / `persistActiveTenant()` helpers matching
+    the established pattern. **Component decision:** the store
+    landed in O5 rather than O6 because the selector needs a writer
+    today; the consumer-route refetch wiring that O6 owns is purely
+    additive.
+  - **`packages/nimbus-ui/src/shell/top-nav.tsx`:** TopNav now reads
+    both pathname AND search from `useRouterState`, computes a
+    `selectorModeForRoute` and renders the selector only when the
+    mode resolves: always in Developer view, only on
+    `/admin/observability` in Operator view (read `tenant` search
+    param to feed `currentFilter`), and nowhere else in Operator.
+    `top-nav-tenant-slot` now carries `data-mode={developer |
+    operator-filter | hidden}` so the visibility contract is
+    introspectable from tests and from the live DOM.
+  - **`packages/nimbus-ui/src/routes/admin/observability.tsx`:**
+    `validateSearch` extended to accept `tenant?: string` alongside
+    the existing `tab?: string`, since the operator-filter selector
+    writes `?tenant=<id>` on selection.
+  - **Tests:** 11 new cases across two specs. `top-nav.spec.tsx`
+    grew from 3 → 6 cases (visibility for `/app/compute`,
+    `/admin/machines`, `/admin/observability`) using a hoisted
+    `searchRef` and a stubbed `fetch` returning `{ tenants: [] }`.
+    `tenant-selector.spec.tsx` (new, 8 cases): trigger-label
+    reflects active tenant, Create-tenant fallback on zero-tenant
+    Developer, click selects + persists to store, operator-filter
+    "All tenants" + navigate with `?tenant=`, ArrowDown + Enter
+    selects, Escape closes without changing state, /api/tenants 404
+    surfaces an error message, currentFilter renders on trigger.
+  - **Browser proof (1440x900) at
+    `docs/plans/proof/desktop-ui-shell-overhaul/`:**
+    `o5-developer-selector-closed.png` ("TENANT Select tenant"
+    trigger on `/app/compute`), `o5-developer-selector-open.png`
+    (menu opened, listbox visible, empty because dev server has no
+    backend → /api/tenants 404),
+    `o5-operator-machines-hidden.png` (selector absent on
+    `/admin/machines`), `o5-operator-observability-filter.png`
+    ("FILTER All tenants" on `/admin/observability`). No console
+    errors observed apart from the expected `/api/tenants` 404 in
+    the unbacked dev environment.
+  - Verification: `npm run typecheck` clean; `npm run test` 149/149
+    (21 spec files, +11 new); `npm run build` clean.
+    O5 closes; **O6** opens.
 - **2026-05-17 (i)** — **O4 complete.** All 12 sub-drawer consumers
   wired across both views (the remaining route — `/app` overview —
   intentionally contributes no sub-drawer per the route table).
@@ -1336,22 +1395,25 @@ verification run, anything surprising._
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, especially the **O5 phase detail**
-   (Tenant selector wiring — visible in Developer view, optional
-   filter on Operator → Observability).
-2. Verify `packages/nimbus-ui/convex/_generated/api.d.ts` for an
-   existing `tenants.list` query — `/admin/tenants` already lists
-   server tenants, so the contract likely exists. If absent, add a
-   system-tenant `tenants.list({ limit })` returning
-   `{ id; name; backend? }[]` and read
-   `docs/adapters/convex/ai-guidelines.md` before touching Convex.
-3. Implement `<TenantSelector />` in `packages/nimbus-ui/src/shell/`
-   with dropdown + keyboard navigation; mount it inside `<TopNav />`
-   in the existing tenant-selector slot.
-4. Per-view visibility: always render in `/app/*`; hide in `/admin/*`
-   except `/admin/observability` where it renders with "All tenants"
-   prepended and writes `?tenant=<id>` to the URL.
-5. Zero-tenant fallback in Developer view: compact "Create tenant"
-   button linking into the Operator → Tenants create flow.
-6. Run `npm run typecheck`, `npm run test`, `npm run build`, then
-   commit + push the O5 baseline to `main` per durable authorization.
+1. Re-read this plan top-to-bottom, especially the **O6 phase detail**
+   (Active-tenant store + per-route refetch on tenant change).
+2. The store extension landed in O5 — `activeTenant: string | null`
+   plus `setActiveTenant`, hydrated from `nimbus-ui:active-tenant`.
+   O6's remaining work is to **read** `activeTenant` from the
+   Developer routes and pass it into the relevant Convex queries:
+   - `app/compute.tsx` — filter `api.functions.list` (and
+     scheduled / cron / services if appropriate) by active tenant.
+   - `app/storage.tsx` — replace the `?as=<tenant>` URL pattern with
+     store-driven tenant, and update `app/storage_.$table.tsx` to
+     read tenant from the store.
+   - `app/schedules.tsx` — filter scheduled/cron lists.
+   - `app/observability.tsx` — filter logs / events / errors.
+   - `app/settings.tsx` — load tenant-owned config.
+3. Operator-side: `admin/observability.tsx` already accepts
+   `tenant?: string` via `validateSearch`; wire the query to honour
+   it (cross-tenant default when absent).
+4. URL portability for Developer routes: `?as=<tenant>` on any
+   `/app/*` URL sets `activeTenant` on mount, then strips itself
+   from the URL.
+5. Run `npm run typecheck`, `npm run test`, `npm run build`, then
+   commit + push the O6 baseline to `main` per durable authorization.

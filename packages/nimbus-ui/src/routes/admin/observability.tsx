@@ -5,8 +5,18 @@ import {
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
 
+type AdminObservabilitySearch = {
+  tab?: string;
+  tenant?: string;
+};
+
 export const Route = createFileRoute("/admin/observability")({
   component: AdminObservabilityPage,
+  validateSearch: (search: Record<string, unknown>): AdminObservabilitySearch =>
+    ({
+      tab: typeof search.tab === "string" ? search.tab : undefined,
+      tenant: typeof search.tenant === "string" ? search.tenant : undefined,
+    }) as AdminObservabilitySearch,
 });
 
 const ADMIN_OBSERVABILITY_SUB_DRAWER: SubDrawerSpec = {

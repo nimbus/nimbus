@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { pathnameRef } = vi.hoisted(() => ({
+const { pathnameRef, searchRef } = vi.hoisted(() => ({
   pathnameRef: { current: "/app" },
+  searchRef: { current: {} as Record<string, unknown> },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -10,22 +11,31 @@ vi.mock("@tanstack/react-router", () => ({
   useRouterState: ({
     select,
   }: {
-    select: (s: { location: { pathname: string } }) => unknown;
-  }) => select({ location: { pathname: pathnameRef.current } }),
+    select: (s: {
+      location: { pathname: string; search: Record<string, unknown> };
+    }) => unknown;
+  }) =>
+    select({
+      location: { pathname: pathnameRef.current, search: searchRef.current },
+    }),
 }));
 
 import { TopNav } from "./top-nav";
 
-function setPathname(path: string) {
+function setLocation(path: string, search: Record<string, unknown> = {}) {
   pathnameRef.current = path;
+  searchRef.current = search;
 }
 
 beforeEach(() => {
-  setPathname("/app");
-});
-
-afterEach(() => {
-  // pathname reset in beforeEach
+  setLocation("/app");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ tenants: [] }),
+    }),
+  );
 });
 
 describe("TopNav", () => {
@@ -41,7 +51,7 @@ describe("TopNav", () => {
   });
 
   it("shows the developer wordmark on /app routes", () => {
-    setPathname("/app/compute");
+    setLocation("/app/compute");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-wordmark")).toHaveTextContent(
       "developer console",
@@ -53,7 +63,7 @@ describe("TopNav", () => {
   });
 
   it("shows the operator wordmark on /admin routes", () => {
-    setPathname("/admin/machines");
+    setLocation("/admin/machines");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-wordmark")).toHaveTextContent(
       "operator console",
@@ -61,6 +71,37 @@ describe("TopNav", () => {
     expect(screen.getByTestId("top-nav")).toHaveAttribute(
       "data-view",
       "operator",
+    );
+  });
+
+  it("renders the tenant selector in developer mode on /app routes", () => {
+    setLocation("/app/compute");
+    render(<TopNav />);
+    expect(screen.getByTestId("top-nav-tenant-slot")).toHaveAttribute(
+      "data-mode",
+      "developer",
+    );
+  });
+
+  it("hides the tenant selector on /admin/machines", () => {
+    setLocation("/admin/machines");
+    render(<TopNav />);
+    expect(screen.getByTestId("top-nav-tenant-slot")).toHaveAttribute(
+      "data-mode",
+      "hidden",
+    );
+    expect(screen.queryByTestId("tenant-selector")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("tenant-selector-create"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the tenant selector in operator-filter mode on /admin/observability", () => {
+    setLocation("/admin/observability");
+    render(<TopNav />);
+    expect(screen.getByTestId("top-nav-tenant-slot")).toHaveAttribute(
+      "data-mode",
+      "operator-filter",
     );
   });
 });
