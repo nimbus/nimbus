@@ -1,0 +1,88 @@
+=== I2 fresh Ubuntu 24.04 install proof ===
+image: docker.io/library/ubuntu@sha256:7607b6f97024ef850f1bd6e91a89273beb5973d04432c5b87f15f813d64b9c05
+arch: linux/arm64
+host: macOS Darwin 24.6.0 (Apple Silicon) via podman 5.8.2 + libkrun machine
+date: 2026-05-17T08:13:45Z
+command: podman run --rm -v ./scripts/install.sh:/install.sh:ro ubuntu:24.04 \
+  bash -c 'apt-get update + install curl ca-certificates; sh /install.sh --skip-deps; nimbus --version; /usr/libexec/nimbus/crun --version'
+
+--- begin container output ---
+[host] PRETTY_NAME="Ubuntu 24.04.4 LTS"
+[host] arch=aarch64 kernel=6.19.7-200.fc43.aarch64
+[bootstrap] installing curl + ca-certificates ...
+[bootstrap] curl version: curl 8.5.0 (aarch64-unknown-linux-gnu) libcurl/8.5.0 OpenSSL/3.0.13 zlib/1.3 brotli/1.1.0 zstd/1.5.5 libidn2/2.3.7 libpsl/0.21.2 (+libidn2/2.3.7) libssh/0.10.6/openssl/zlib nghttp2/1.59.0 librtmp/2.3 OpenLDAP/2.6.10
+
+[install] running: sh /install.sh --skip-deps
+
+=== Nimbus Install Plan ===
+
+Platform:      linux (arm64)
+Distribution:  ubuntu 24.04
+Package mgr:   apt
+
+Versions:
+  nimbus:      latest
+  nimbus-crun: latest
+
+Install paths:
+  nimbus:      /usr/local/bin/nimbus
+  nimbus-crun: /usr/libexec/nimbus/crun
+
+Supply-chain verification:
+  checksum:     enforced
+  attestation:  best-effort (install gh or set NIMBUS_REQUIRE_ATTESTATIONS=1 to fail closed)
+
+[warn] /dev/kvm not found — KVM is required for microVM isolation
+[warn] If running in a VM, enable nested virtualization
+[info] Skipping system dependency installation (--skip-deps)
+[info] Resolving latest nimbus version...
+[info] Latest nimbus version: v0.1.31
+[info] Resolving latest nimbus-crun version...
+[info] Latest nimbus-crun version: v1.27-nimbus.2
+[info] Downloading checksums for nimbus v0.1.31...
+[info] Downloading nimbus v0.1.31...
+[info] Verifying checksum...
+[info] Extracting and installing...
+[warn] gh CLI not found — skipping GitHub attestation verification for nimbus_linux_arm64.tar.gz
+[info] Installed nimbus to /usr/local/bin/nimbus
+[info] Downloading checksums for nimbus-crun v1.27-nimbus.2...
+[info] Downloading nimbus-crun v1.27-nimbus.2...
+[info] Verifying checksum...
+[info] Installing nimbus-crun...
+[warn] gh CLI not found — skipping GitHub attestation verification for nimbus-crun-linux-arm64
+[info] Installed nimbus-crun to /usr/libexec/nimbus/crun
+[info] Running inline installation verification...
+nimbus                 present path=/usr/local/bin/nimbus
+nimbus-crun            present path=/usr/libexec/nimbus/crun (missing +LIBKRUN flag)
+conmon                 missing
+buildah                missing
+catatonit              missing
+passt                  missing
+newuidmap              missing
+fuse-overlayfs         missing
+libkrun.so             missing
+libkrunfw.so           missing
+
+result                 unsupported (5 failures, 4 warnings)
+
+=== Getting Started ===
+
+Nimbus is installed! To start the server:
+
+  nimbus serve
+
+For more information:
+  nimbus --help
+  https://github.com/nimbus/nimbus#readme
+[warn] Inline verification reported issues — see output above
+
+
+[install] exit code: 0
+
+[verify] nimbus --version:
+nimbus 0.1.31
+
+[verify] /usr/libexec/nimbus/crun --version:
+/usr/libexec/nimbus/crun: error while loading shared libraries: libyajl.so.2: cannot open shared object file: No such file or directory
+--- end container output ---
+exit=0
