@@ -7,6 +7,8 @@ import { api } from "../../convex/_generated/api";
 import { CopyChip } from "../components/copy-chip";
 import { StateChip } from "../components/state-chip";
 import { RelativeTime, Uptime } from "../components/time";
+import { UpgradePopover } from "../components/upgrade-popover";
+import { useStalenessContext } from "../hooks/use-staleness";
 import { formatRelativeTime, shortId } from "../lib/format";
 
 export const Route = createFileRoute("/settings")({
@@ -419,8 +421,74 @@ function ServerInfoSection({
             <span className="font-mono text-xs text-muted">off</span>
           )}
         </Definition>
+        <Definition label="Updates">
+          <UpdatesValue />
+        </Definition>
       </DefinitionList>
     </SectionCard>
+  );
+}
+
+function UpdatesValue() {
+  const staleness = useStalenessContext();
+  const { snapshot, openPopover, closePopover, startUpgrade, copyCommand } =
+    staleness;
+  const { state, info } = snapshot;
+
+  if (!info) {
+    return <span className="text-muted">loading…</span>;
+  }
+
+  if (state === "upgrading") {
+    return (
+      <span
+        data-testid="settings-updates-upgrading"
+        className="font-mono text-xs text-default"
+      >
+        Updating to {info.latest}…
+      </span>
+    );
+  }
+
+  if (state === "upgraded") {
+    return (
+      <StateChip state="ok" className="data-[state=ok]:text-success" showDot />
+    );
+  }
+
+  if (state === "hidden" || !info.available || !info.latest) {
+    return <StateChip state="ok" showDot />;
+  }
+
+  const open = state === "confirming";
+  return (
+    <span
+      data-testid="settings-updates-available"
+      className="inline-flex items-center gap-2"
+    >
+      <UpgradePopover
+        open={open}
+        onOpenChange={(next) => {
+          if (next) openPopover();
+          else closePopover();
+        }}
+        info={info}
+        isLocal={staleness.isLocal}
+        hasDesktopBridge={staleness.hasDesktopBridge}
+        onUpdate={startUpgrade}
+        onCopyCommand={copyCommand}
+        trigger={
+          <span className="inline-flex items-center gap-1.5 font-mono text-xs text-default">
+            <span
+              aria-hidden
+              className="inline-block size-2 rounded-full"
+              style={{ background: "var(--color-accent)" }}
+            />
+            {info.latest} available — Update
+          </span>
+        }
+      />
+    </span>
   );
 }
 
