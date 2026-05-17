@@ -21,8 +21,8 @@ target platforms and package channels.
     execution record with exact closeout evidence for Channel 4
   - `docs/plans/archive/vmm-infrastructure-plan.md` — historical VMM
     foundation execution record with Linux/macOS validation evidence
-  - `docs/plans/install-script-plan.md` — execution plan for Channel 1
-    install script (`curl | sh`)
+  - `docs/plans/archive/install-script-plan.md` — completed execution
+    record for Channel 1 install script (`curl | sh`); closed 2026-05-17
   - `docs/plans/archive/distribution-execution-log-early.md` — archived
     pre-completion investigation and intermediate documentation entries
 

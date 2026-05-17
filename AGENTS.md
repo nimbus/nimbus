@@ -69,8 +69,9 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - Localhost/server security:
   `docs/plans/archive/localhost-server-security-plan.md`
 - Install script work:
-  `docs/plans/install-script-plan.md` as the active owner and
-  `docs/plans/distribution-plan.md` as parent context
+  `docs/plans/archive/install-script-plan.md` as the completed baseline and
+  `docs/plans/distribution-plan.md` as parent context; promote a new active
+  plan before another install-script wave
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,

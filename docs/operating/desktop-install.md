@@ -54,10 +54,11 @@ Expected: `valid on disk`, `satisfies its Designated Requirement`,
 ## Linux
 
 Three formats are produced per release. Pick whichever matches your
-distribution; the install script in
-[`nimbus/install`](https://github.com/nimbus/install) (still active per
-`docs/plans/install-script-plan.md`) will eventually pick the right one
-automatically.
+distribution; the published `curl | sh` installer
+(`https://github.com/nimbus/nimbus/releases/latest/download/install.sh`,
+delivered by `scripts/install.sh` and recorded as the completed Channel 1
+baseline in `docs/plans/archive/install-script-plan.md`) picks the right
+one automatically.
 
 ### Debian / Ubuntu (`.deb`)
 

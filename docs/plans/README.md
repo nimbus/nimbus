@@ -13,12 +13,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
-- `docs/plans/install-script-plan.md`
-  - canonical execution plan for the nimbus install script (Channel 1):
-    `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
-    macOS (Apple Silicon). Covers platform detection, dependency
-    installation, binary download, checksum verification, post-install
-    verification helper, and the libkrun gap on Debian/Ubuntu.
 
 ## Current Reference Baselines
 
@@ -26,6 +20,17 @@ Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/archive/install-script-plan.md`
+  - completed execution record for the nimbus install script (Channel 1):
+    POSIX `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
+    macOS (Apple Silicon). Covered I1-I5: platform detection, dependency
+    installation, GitHub Releases binary download with SHA256 verification,
+    macOS Homebrew cask install/upgrade with bundled `libexec/gvproxy`,
+    uninstall, and the canonical hosted URL
+    `https://github.com/nimbus/nimbus/releases/latest/download/install.sh`.
+    Fresh-host proofs landed for Ubuntu 24.04, Debian 13, Fedora 42, and
+    Apple Silicon macOS at `.install-script-proofs/`. Closed 2026-05-17;
+    future install-script work must promote a new active plan.
 - `docs/plans/archive/desktop-mission.md`
   - completed mission-completion record for the autonomous-mode control
     plane that bound Phase 1 + Phase 2 desktop work into a single mission.
@@ -165,6 +170,10 @@ the work is explicitly a historical review.
   asked to review historical work.
 - If no active plan owns the work, promote or author a new active plan instead
   of reviving a completed archived one.
+- For install-script follow-on work, start with the completed baseline at
+  `docs/plans/archive/install-script-plan.md` and the active parent context
+  in `docs/plans/distribution-plan.md`. Promote a new active plan before
+  another install-script wave unless one already owns the slice.
 - For Convex or Nimbus CLI/codegen workflow work (`packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `nimbus start --app-dir`
   contract), start with `docs/adapters/convex/ai-guidelines.md`,
