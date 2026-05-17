@@ -440,8 +440,8 @@ the Execution Log.
 | O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `done` |
 | O4 | Sub-drawer consumers: 13 routes across both views | `done` |
 | O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `done` |
-| O6 | Active-tenant store + per-route refetch on tenant change | `in_progress` |
-| O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `todo` |
+| O6 | Active-tenant store + per-route refetch on tenant change | `done` |
+| O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `in_progress` |
 | O8 | Plan close: README registration, archive hand-off | `todo` |
 
 Exactly one phase is `in_progress` at a time. Update this ledger and the
@@ -822,7 +822,7 @@ it's an optional cross-tenant filter).
 
 ### O6 — Active-tenant store + per-route refetch
 
-**Status:** `todo`
+**Status:** `done`
 
 **Goal:** Wire `activeTenant` into the store and into the routes that
 need to refetch when tenant changes.
@@ -1348,6 +1348,68 @@ verification run, anything surprising._
   - Verification: `npm run typecheck` clean; `npm run test` 149/149
     (21 spec files, +11 new); `npm run build` clean.
     O5 closes; **O6** opens.
+- **2026-05-17 (k)** — **O6 complete.** Developer routes consume
+  `activeTenant` from the store; `?as=<tenant>` becomes a bootstrap-only
+  query that the root layout consumes, persists, then strips from the
+  URL. Operator-side `/admin/observability` keeps its `?tenant=`
+  filter independent of the developer store.
+  - **`packages/nimbus-ui/src/shell/use-tenant-bootstrap.ts` (new):**
+    `useTenantBootstrap()` hook reads `{ pathname, search }` from
+    `useRouterState`. On any `/app/*` mount that carries `?as=<id>`, it
+    writes the value into `setActiveTenant` and replaces the URL with
+    the same path minus `as` via `navigate({ to: pathname, search:
+    rest, replace: true })`. Extracted out of `__root.tsx` so it can
+    be unit-tested directly. The root route's `validateSearch` was
+    extended to declare `as?: string`, ensuring TanStack Router
+    preserves the param at the location level for the hook to consume
+    regardless of which child route is active.
+  - **`packages/nimbus-ui/src/routes/__root.tsx`:** imports + calls
+    `useTenantBootstrap()` inside `ShellLayout` (after
+    `useLastRouteTracker()`) and adds `RootSearch = { as?: string }`
+    via `validateSearch`.
+  - **`packages/nimbus-ui/src/routes/app/compute.tsx`:** reads
+    `activeTenant = useUiStore((s) => s.activeTenant)` and passes it
+    as `tenantId: activeTenant` to `api.services.list`,
+    `api.scheduled_jobs.list`, and `api.cron_jobs.list`. The
+    `api.functions.list`, `api.bundles.list`, `api.events.recent`,
+    and `api.runs.recent` queries have no `tenantId` argument and stay
+    as-is.
+  - **`packages/nimbus-ui/src/routes/app/storage.tsx`:** drops the
+    `?as=` route-level `validateSearch`; reads
+    `useUiStore((s) => s.activeTenant)` for `tenant`. Sub-drawer
+    `<Link>` and table-row `<Link>` lose their `search={{ as: tenant }}`
+    props since tenant now lives in the store, not the URL.
+  - **`packages/nimbus-ui/src/routes/app/storage_.$table.tsx`:**
+    `validateSearch` drops `as?: string`; `tenant = useUiStore((s) =>
+    s.activeTenant) ?? ""` replaces `search.as ?? ""`. `togglePanel`
+    no longer threads `as` through the navigate call.
+  - **Tests:** 7 new cases across two specs. `ui-store.spec.ts` grew
+    by 3: defaults activeTenant to null when nothing persisted,
+    hydrates from `nimbus-ui:active-tenant`, setActiveTenant writes
+    through and clears on null. `use-tenant-bootstrap.spec.tsx` (new,
+    4 cases): no-op on `/admin/*` routes, no-op on `/app` without
+    `?as=`, writes into store + strips from URL when present, ignores
+    empty-string `?as=`.
+  - **Browser proof (1440×900) at
+    `docs/plans/proof/desktop-ui-shell-overhaul/`:**
+    `o6-bootstrap-stripped.png` (navigating to
+    `/ui/app/compute?as=acme` lands at `/ui/app/compute` with the
+    store holding `acme`), `o6-storage-store-tenant.png`
+    (`/ui/app/storage` breadcrumb `storage > acme`, no `?as=` in URL),
+    `o6-storage-switched-beta.png` (after writing
+    `nimbus-ui:active-tenant=beta` to localStorage + reload, the page
+    title and breadcrumb pivot to `beta` with the top-nav trigger
+    matching), `o6-operator-filter-tenant.png`
+    (`/ui/admin/observability?tenant=acme` shows the operator-filter
+    trigger reading `Filter acme` while the store still holds `beta`,
+    proving the two scopes stay independent),
+    `o6-compute-store-tenant.png` (`/ui/app/compute` after bootstrap
+    + switch, trigger reads `Tenant beta`). The expected
+    `/api/tenants` 404 still surfaces in the unbacked dev server but
+    does not block the store-driven flow.
+  - Verification: `npm run typecheck` clean; `npm run test` 156/156
+    (22 spec files, +7 new); `npm run build` clean.
+    O6 closes; **O7** opens.
 - **2026-05-17 (i)** — **O4 complete.** All 12 sub-drawer consumers
   wired across both views (the remaining route — `/app` overview —
   intentionally contributes no sub-drawer per the route table).
@@ -1395,25 +1457,32 @@ verification run, anything surprising._
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, especially the **O6 phase detail**
-   (Active-tenant store + per-route refetch on tenant change).
-2. The store extension landed in O5 — `activeTenant: string | null`
-   plus `setActiveTenant`, hydrated from `nimbus-ui:active-tenant`.
-   O6's remaining work is to **read** `activeTenant` from the
-   Developer routes and pass it into the relevant Convex queries:
-   - `app/compute.tsx` — filter `api.functions.list` (and
-     scheduled / cron / services if appropriate) by active tenant.
-   - `app/storage.tsx` — replace the `?as=<tenant>` URL pattern with
-     store-driven tenant, and update `app/storage_.$table.tsx` to
-     read tenant from the store.
-   - `app/schedules.tsx` — filter scheduled/cron lists.
-   - `app/observability.tsx` — filter logs / events / errors.
-   - `app/settings.tsx` — load tenant-owned config.
-3. Operator-side: `admin/observability.tsx` already accepts
-   `tenant?: string` via `validateSearch`; wire the query to honour
-   it (cross-tenant default when absent).
-4. URL portability for Developer routes: `?as=<tenant>` on any
-   `/app/*` URL sets `activeTenant` on mount, then strips itself
-   from the URL.
-5. Run `npm run typecheck`, `npm run test`, `npm run build`, then
-   commit + push the O6 baseline to `main` per durable authorization.
+1. Re-read this plan top-to-bottom, especially the **O7 phase detail**
+   (Live verification matrix across View × Mode × Palette ×
+   Drawer-state × Tenant).
+2. O6 closed at commit-time with the bootstrap hook
+   (`shell/use-tenant-bootstrap.ts`) consuming `?as=<tenant>` once and
+   stripping it, the developer routes reading `activeTenant` from the
+   store, and `/admin/observability` keeping its independent
+   `?tenant=` filter. The bootstrap-driven flow is browser-verified
+   under `docs/plans/proof/desktop-ui-shell-overhaul/o6-*.png`. O7
+   should layer the broader visual matrix on top — not redo O6.
+3. Boot the dev server: `cd packages/nimbus-ui && npm run dev` and
+   drive Chrome DevTools MCP at 1440×900.
+4. For each of the 7 Developer + 7 Operator routes:
+   - capture screenshots across the six Mode × Palette combos
+     (`{light, dark} × {blue, mono, warm}`);
+   - toggle the primary drawer collapsed/expanded and confirm the
+     sub-drawer reanchors;
+   - toggle the view switcher and confirm the wordmark + drawer
+     entries update and last-route restore works;
+   - in Developer view, switch tenant (use store + reload, or
+     `?as=<id>` deep-link) and confirm the page rebinds; in Operator
+     → Observability apply `?tenant=<id>` and verify the filter chip.
+5. Save screenshots under `docs/plans/proof/desktop-ui-shell-overhaul/`
+   with the `o7-` prefix and record the matrix coverage list in the
+   Execution Log entry.
+6. Run `npm run typecheck`, `npm run test`, `npm run build`. If any
+   incidental Rust touched, run `cargo fmt --all --check` and `make
+   clippy` too.
+7. Commit + push the O7 baseline to `main` per durable authorization.

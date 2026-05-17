@@ -9,6 +9,7 @@ import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/app/storage_/$table")({
   validateSearch: (search: Record<string, unknown>): TableSearch => ({
@@ -16,14 +17,12 @@ export const Route = createFileRoute("/app/storage_/$table")({
       search.panel === "schema" || search.panel === "indexes"
         ? search.panel
         : undefined,
-    as: typeof search.as === "string" ? search.as : undefined,
   }),
   component: TableDocumentsPage,
 });
 
 type TableSearch = {
   panel?: "schema" | "indexes";
-  as?: string;
 };
 
 type TableDoc = {
@@ -69,7 +68,7 @@ function TableDocumentsPage() {
   const { table } = Route.useParams();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const tenant = search.as ?? "";
+  const tenant = useUiStore((s) => s.activeTenant) ?? "";
 
   const tableMeta = useQuery(
     api.tables.byName,
@@ -285,11 +284,10 @@ function TableDocumentsPage() {
       void navigate({
         search: {
           panel: search.panel === panel ? undefined : panel,
-          as: search.as,
         },
       });
     },
-    [navigate, search.panel, search.as],
+    [navigate, search.panel],
   );
 
   return (
