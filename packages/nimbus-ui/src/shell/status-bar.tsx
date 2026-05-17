@@ -4,6 +4,8 @@ import { api } from "../../convex/_generated/api";
 import { CopyChip } from "../components/copy-chip";
 import { Kbd } from "../components/kbd";
 import { type ConnState, StateDot } from "../components/state-dot";
+import { UpgradePopover } from "../components/upgrade-popover";
+import { useStalenessContext } from "../hooks/use-staleness";
 import { metaGlyph } from "../lib/platform";
 
 type SystemStatus = {
@@ -34,6 +36,9 @@ export function StatusBar() {
   const buildHash = status?.buildHash ?? "";
   const tenant = status?.activeTenant ?? "_nimbus";
 
+  const staleness = useStalenessContext();
+  const baseValue = `${version}${buildHash ? `+${buildHash.slice(0, 7)}` : ""}`;
+
   return (
     <footer
       role="contentinfo"
@@ -54,10 +59,10 @@ export function StatusBar() {
         testid="status-server-url"
       />
       <Divider />
-      <CopyChip
-        label="version"
-        value={`${version}${buildHash ? `+${buildHash.slice(0, 7)}` : ""}`}
-        testid="status-version"
+      <VersionSlot
+        baseValue={baseValue}
+        currentVersion={version}
+        staleness={staleness}
       />
       <Divider />
       <CopyChip label="tenant" value={tenant} testid="status-tenant" />
@@ -82,6 +87,105 @@ export function StatusBar() {
         </span>
       </span>
     </footer>
+  );
+}
+
+function VersionSlot({
+  baseValue,
+  currentVersion,
+  staleness,
+}: {
+  baseValue: string;
+  currentVersion: string;
+  staleness: ReturnType<typeof useStalenessContext>;
+}) {
+  const { snapshot, openPopover, closePopover, startUpgrade, copyCommand } =
+    staleness;
+  const { state, info, targetLatest } = snapshot;
+
+  if (state === "hidden" || !info) {
+    return (
+      <CopyChip label="version" value={baseValue} testid="status-version" />
+    );
+  }
+
+  if (state === "upgrading") {
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        data-testid="status-version-upgrading"
+        className="inline-flex items-center gap-1.5"
+      >
+        <UpgradeDot tone="starting" />
+        <span className="text-default">
+          Updating to {targetLatest ?? info.latest}…
+        </span>
+      </span>
+    );
+  }
+
+  if (state === "upgraded") {
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        data-testid="status-version-upgraded"
+        className="inline-flex items-center gap-1.5"
+      >
+        <UpgradeDot tone="success" />
+        <span className="text-default">{baseValue}</span>
+      </span>
+    );
+  }
+
+  // available or confirming — both render the actionable row; popover state
+  // determines whether the popup is mounted next to it.
+  const open = state === "confirming";
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      data-testid="status-version-available"
+      className="inline-flex items-center"
+    >
+      <UpgradePopover
+        open={open}
+        onOpenChange={(next) => {
+          if (next) openPopover();
+          else closePopover();
+        }}
+        info={info}
+        isLocal={staleness.isLocal}
+        hasDesktopBridge={staleness.hasDesktopBridge}
+        onUpdate={startUpgrade}
+        onCopyCommand={copyCommand}
+        trigger={
+          <>
+            <UpgradeDot tone="accent" />
+            <span className="text-default">v{currentVersion}</span>
+            <span className="text-muted">·</span>
+            <span className="text-default">update to {info.latest} →</span>
+          </>
+        }
+      />
+    </span>
+  );
+}
+
+function UpgradeDot({ tone }: { tone: "accent" | "starting" | "success" }) {
+  const color =
+    tone === "accent"
+      ? "var(--color-accent)"
+      : tone === "starting"
+        ? "var(--color-starting)"
+        : "var(--color-success)";
+  return (
+    <span
+      aria-hidden
+      className={`inline-block size-2 rounded-full ${tone === "starting" ? "animate-pulse" : ""}`}
+      style={{ background: color }}
+    />
   );
 }
 

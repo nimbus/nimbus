@@ -1,5 +1,6 @@
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { Toaster } from "sonner";
+import { StalenessProvider } from "../hooks/use-staleness";
 import { CommandPalette } from "../shell/command-palette";
 import { DisconnectedOverlay } from "../shell/disconnected-overlay";
 import { AppErrorBoundary } from "../shell/error-boundary";
@@ -18,32 +19,34 @@ function ShellLayout() {
     <AppErrorBoundary>
       <ThemeController />
       <KeyboardContract />
-      <div className="flex h-screen flex-col bg-app text-default">
-        <div className="flex min-h-0 flex-1">
-          <Sidebar />
-          <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-            <DisconnectedOverlay />
-            <div className="flex-1 overflow-auto">
-              <Outlet />
-            </div>
-          </main>
+      <StalenessProvider>
+        <div className="flex h-screen flex-col bg-app text-default">
+          <div className="flex min-h-0 flex-1">
+            <Sidebar />
+            <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+              <DisconnectedOverlay />
+              <div className="flex-1 overflow-auto">
+                <Outlet />
+              </div>
+            </main>
+          </div>
+          <StatusBar />
         </div>
-        <StatusBar />
-      </div>
-      <CommandPalette />
-      <SystemTenantLens />
-      <Toaster
-        position="bottom-right"
-        toastOptions={{
-          style: {
-            background: "var(--color-surface)",
-            color: "var(--color-text)",
-            border: "1px solid var(--color-border)",
-            fontFamily: "var(--font-mono)",
-            fontSize: "12px",
-          },
-        }}
-      />
+        <CommandPalette />
+        <SystemTenantLens />
+        <Toaster
+          position="bottom-right"
+          toastOptions={{
+            style: {
+              background: "var(--color-surface)",
+              color: "var(--color-text)",
+              border: "1px solid var(--color-border)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "12px",
+            },
+          }}
+        />
+      </StalenessProvider>
     </AppErrorBoundary>
   );
 }
