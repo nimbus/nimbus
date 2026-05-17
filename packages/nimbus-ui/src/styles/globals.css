@@ -5,8 +5,16 @@
 @import "@fontsource/jetbrains-mono/500.css";
 @import "@fontsource/jetbrains-mono/600.css";
 
-/* OKLCH palette per DESIGN.md. Light mode keeps cool 240° hue cast on
-   neutrals. Dark mode is the default theme. */
+/* Nimbus palette system.
+   Mode (light/dark/system) toggles the neutral foundation.
+   Palette (blue/mono/warm) swaps brand + accent + link identity.
+   Each palette maps to a brand-canonical swatch from the Nimbus Color Palette:
+     blue  → Cool Blue (light) / Night Blue (dark)         — product default
+     mono  → Monochrome (light) / Reverse Mono (dark)      — minimal/enterprise
+     warm  → Warm (light) / Golden Hour (dark)             — friendly/marketing
+   Semantic state colors (success/warning/danger/starting/draining/queued/stale)
+   stay constant across palettes so "Running = green" everywhere.
+*/
 @theme {
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial,
@@ -20,43 +28,52 @@
   --text-md: 14px;
   --text-lg: 16px;
   --text-xl: 22px;
-
-  /* Light theme baseline. Dark overrides live in [data-theme="dark"]. */
-  --color-bg: oklch(98% 0.005 240);
-  --color-surface: oklch(100% 0 0);
-  --color-surface-2: oklch(96% 0.008 240);
-  --color-border: oklch(89% 0.010 240);
-  --color-border-strong: oklch(80% 0.012 240);
-  --color-text: oklch(20% 0.015 240);
-  --color-muted: oklch(50% 0.012 240);
-  --color-accent: oklch(56% 0.12 180);
-  --color-link: oklch(50% 0.18 250);
-  --color-success: oklch(52% 0.14 145);
-  --color-warning: oklch(65% 0.16 75);
-  --color-starting: oklch(70% 0.17 50);
-  --color-draining: oklch(55% 0.13 280);
-  --color-queued: oklch(60% 0.020 240);
-  --color-danger: oklch(58% 0.20 25);
-  --color-stale: oklch(50% 0.012 240);
-  --color-violet: oklch(55% 0.18 295);
 }
 
 @layer base {
+  /* Defaults: Blue palette, Light mode (Cool Blue per brand usage guidelines) */
   :root {
     color-scheme: light;
+
+    --color-bg: oklch(98% 0.005 248);
+    --color-surface: oklch(100% 0 0);
+    --color-surface-2: oklch(96% 0.008 248);
+    --color-border: oklch(91% 0.013 252);
+    --color-border-strong: oklch(82% 0.020 250);
+    --color-text: oklch(20% 0.035 263);
+    --color-muted: oklch(48% 0.028 255);
+
+    --color-brand: oklch(62% 0.20 258);     /* #3B82F6 — Cool Blue primary */
+    --color-accent: oklch(70% 0.13 207);    /* #06B6D4 — brand teal (cyan-500) */
+    --color-link: oklch(54% 0.22 264);      /* #2563EB — Cool Blue primary-dark */
+
+    /* Semantic state — stable across palettes for consistent affordances. */
+    --color-success: oklch(52% 0.14 145);
+    --color-warning: oklch(65% 0.16 75);
+    --color-starting: oklch(70% 0.17 50);
+    --color-draining: oklch(55% 0.13 280);
+    --color-queued: oklch(60% 0.020 240);
+    --color-danger: oklch(58% 0.20 25);
+    --color-stale: oklch(50% 0.012 240);
+    --color-violet: oklch(55% 0.18 295);
   }
 
+  /* Blue palette, Dark mode (Night Blue per brand usage guidelines) */
   [data-theme="dark"] {
     color-scheme: dark;
-    --color-bg: oklch(15% 0.015 240);
-    --color-surface: oklch(19% 0.015 240);
-    --color-surface-2: oklch(23% 0.018 240);
-    --color-border: oklch(30% 0.020 240);
-    --color-border-strong: oklch(38% 0.022 240);
-    --color-text: oklch(94% 0.010 240);
-    --color-muted: oklch(66% 0.012 240);
-    --color-accent: oklch(75% 0.14 180);
-    --color-link: oklch(72% 0.16 250);
+
+    --color-bg: oklch(13% 0.026 263);
+    --color-surface: oklch(19% 0.030 258);
+    --color-surface-2: oklch(24% 0.030 258);
+    --color-border: oklch(32% 0.030 258);
+    --color-border-strong: oklch(40% 0.030 258);
+    --color-text: oklch(91% 0.014 252);
+    --color-muted: oklch(67% 0.026 248);
+
+    --color-brand: oklch(72% 0.17 248);     /* #60A5FA — Night Blue primary */
+    --color-accent: oklch(85% 0.10 197);    /* #67E8F9 — brand teal gradient hi */
+    --color-link: oklch(82% 0.11 247);      /* #93C5FD */
+
     --color-success: oklch(72% 0.16 145);
     --color-warning: oklch(78% 0.17 75);
     --color-starting: oklch(80% 0.18 50);
@@ -65,6 +82,66 @@
     --color-danger: oklch(70% 0.20 25);
     --color-stale: oklch(60% 0.012 240);
     --color-violet: oklch(75% 0.16 295);
+  }
+
+  /* Mono palette, Light mode (Monochrome) */
+  [data-palette="mono"] {
+    --color-bg: oklch(98% 0.003 257);
+    --color-surface: oklch(100% 0 0);
+    --color-surface-2: oklch(96% 0.005 257);
+    --color-border: oklch(91% 0.008 257);
+    --color-border-strong: oklch(82% 0.010 257);
+    --color-text: oklch(20% 0.014 263);
+    --color-muted: oklch(44% 0.012 258);
+
+    --color-brand: oklch(20% 0.014 263);    /* #111827 — ink as brand */
+    --color-accent: oklch(44% 0.012 258);   /* #4B5563 — mid gray */
+    --color-link: oklch(27% 0.014 261);     /* #1F2937 */
+  }
+
+  /* Mono palette, Dark mode (Reverse Mono) */
+  [data-palette="mono"][data-theme="dark"] {
+    --color-bg: oklch(17% 0.018 263);
+    --color-surface: oklch(22% 0.018 261);
+    --color-surface-2: oklch(28% 0.014 258);
+    --color-border: oklch(36% 0.013 258);
+    --color-border-strong: oklch(44% 0.012 258);
+    --color-text: oklch(100% 0 0);
+    --color-muted: oklch(70% 0.013 256);
+
+    --color-brand: oklch(100% 0 0);         /* #FFFFFF — white as brand */
+    --color-accent: oklch(87% 0.012 257);   /* #D1D5DB */
+    --color-link: oklch(91% 0.008 257);     /* #E5E7EB */
+  }
+
+  /* Warm palette, Light mode (Warm) */
+  [data-palette="warm"] {
+    --color-bg: oklch(98% 0.012 82);
+    --color-surface: oklch(100% 0 0);
+    --color-surface-2: oklch(96% 0.025 82);
+    --color-border: oklch(90% 0.025 82);
+    --color-border-strong: oklch(82% 0.040 78);
+    --color-text: oklch(20% 0.020 60);
+    --color-muted: oklch(53% 0.013 75);
+
+    --color-brand: oklch(73% 0.17 65);      /* #F59E0B — amber-500 */
+    --color-accent: oklch(80% 0.14 70);     /* #FFB84D */
+    --color-link: oklch(62% 0.17 55);       /* #D97706 — amber-600 */
+  }
+
+  /* Warm palette, Dark mode (Golden Hour on warm-dark surfaces) */
+  [data-palette="warm"][data-theme="dark"] {
+    --color-bg: oklch(17% 0.020 50);
+    --color-surface: oklch(22% 0.025 55);
+    --color-surface-2: oklch(28% 0.030 60);
+    --color-border: oklch(38% 0.022 55);
+    --color-border-strong: oklch(48% 0.022 55);
+    --color-text: oklch(96% 0.020 82);
+    --color-muted: oklch(75% 0.040 75);
+
+    --color-brand: oklch(82% 0.16 80);      /* #FBBF24 — amber-400 */
+    --color-accent: oklch(80% 0.14 65);     /* #FDBA74 — orange-300 */
+    --color-link: oklch(73% 0.17 65);       /* #F59E0B */
   }
 
   html,
@@ -132,8 +209,20 @@
   .border-strong {
     border-color: var(--color-border-strong);
   }
+  .text-brand {
+    color: var(--color-brand);
+  }
+  .bg-brand {
+    background: var(--color-brand);
+  }
+  .border-brand {
+    border-color: var(--color-brand);
+  }
   .text-accent {
     color: var(--color-accent);
+  }
+  .bg-accent {
+    background: var(--color-accent);
   }
   .text-link {
     color: var(--color-link);

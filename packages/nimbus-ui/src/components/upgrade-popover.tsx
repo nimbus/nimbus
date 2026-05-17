@@ -83,8 +83,8 @@ export function UpgradePopover({
                     }}
                     className="rounded px-2 py-1 text-xs text-default"
                     style={{
-                      background: "var(--color-accent)",
-                      color: "var(--color-on-accent, white)",
+                      background: "var(--color-brand)",
+                      color: "var(--color-on-brand, white)",
                     }}
                   >
                     Update
@@ -98,8 +98,8 @@ export function UpgradePopover({
                     }}
                     className="rounded px-2 py-1 text-xs text-default"
                     style={{
-                      background: "var(--color-accent)",
-                      color: "var(--color-on-accent, white)",
+                      background: "var(--color-brand)",
+                      color: "var(--color-on-brand, white)",
                     }}
                   >
                     Copy command

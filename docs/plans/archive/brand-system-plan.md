@@ -18,6 +18,21 @@ truth for what is done, what is in flight, and what remains.
 - **Repos affected:** `nimbus/nimbus`, `nimbus/desktop`
 - **Started:** 2026-05-16
 
+> **Reconciliation note (2026-05-17):** Two errors in the original plan were
+> corrected in `DESIGN.md` and the operator console:
+> 1. The "Two-Tier Bridge" gradient endpoint was transcribed as
+>    `#67E8F9 → #68B6DA`. The brand-canonical "Interactive Elements" teal
+>    gradient is `#67E8F9 → #06B6D4` (Tailwind cyan-300 → cyan-500).
+> 2. The product palette has been expanded from "one owned accent (teal)"
+>    to three identity tokens: `--brand` (primary identity, palette-tinted),
+>    `--accent` (teal, interactive feedback), `--link` (hyperlinks). The
+>    console now supports three palette pairs — `blue` (Cool Blue / Night
+>    Blue, default), `mono` (Monochrome / Reverse Mono), `warm` (Warm /
+>    Golden Hour) — selected from Settings → Appearance.
+>
+> See `DESIGN.md` § "Operator Console Palette" and § "Two-Tier Bridge"
+> for the canonical values.
+
 ## Mission
 
 Apply the new 9-variant brand palette spec to both repos. Produce a
@@ -51,8 +66,10 @@ Used on:
 - Every in-app UI surface
 
 ### Bridge
-The brand "Teal" variant `#67E8F9 → #68B6DA` (gradient form) maps to the
-product palette teal accent (`oklch(...)` solid form). Ink `#0F172A` is
+The brand "Interactive Elements" teal gradient `#67E8F9 → #06B6D4`
+(Tailwind cyan-300 → cyan-500) maps to the product `--accent` token
+(`oklch(70% 0.13 207)` / `oklch(85% 0.10 197)`, solid form). Brand Cool
+Blue `#3B82F6` maps to the product `--brand` token. Ink `#0F172A` is
 shared across tiers for primary text. No other colors cross tiers.
 
 ## Control Plan Rules
@@ -225,7 +242,8 @@ NEVER use brand-palette colors inside the operator console. Inside the
 console, see "Product Palette" above.
 
 ### Two-Tier Bridge
-- Brand "Teal" `#67E8F9 → #68B6DA` (gradient) = Product "teal accent"
+- Brand "Teal" `#67E8F9 → #06B6D4` (gradient) = Product `--accent` (solid)
+- Brand "Cool Blue" `#3B82F6` = Product `--brand` (solid)
   (`oklch(...)` solid). They are the same conceptual color in different
   forms.
 - Ink `#0F172A` is shared across tiers for primary text.
