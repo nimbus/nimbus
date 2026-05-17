@@ -10,14 +10,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
-- `docs/plans/update-lifecycle-plan.md`
-  - canonical execution plan for the operator-facing update lifecycle:
-    server-side `/api/system/version-info` with stale-while-revalidate
-    (UL1), SPA staleness banner rendered the same way in browser and
-    desktop (UL2), `nimbus-desktop` first-run "CLI not found" setup
-    card (UL3), and operator-facing `docs/operating/updates.md` (UL4).
-    Anchored on `docs/decisions/001-update-staleness-detection.md`.
-
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -35,6 +27,15 @@ archived plans only when you need historical execution detail.
     services/functions/data/logs/runs/settings tabs, dark mode, a11y,
     DU0–DU10 + DU11 hardening. Consumed the `_nimbus` system-tenant
     surface and current architecture references below.
+- `docs/plans/archive/update-lifecycle-plan.md`
+  - completed execution record for the operator-facing update lifecycle:
+    server-side `/api/system/version-info` with stale-while-revalidate
+    (UL1), SPA staleness UX in `packages/nimbus-ui/` (UL2),
+    `nimbus-desktop` first-run "CLI not found" setup card + background
+    `brew upgrade` runner + OS staleness notification (UL3), and
+    operator-facing `docs/operating/updates.md` (UL4). Closed 2026-05-16.
+    Current operator reference is `docs/operating/updates.md`; decision
+    anchor is `docs/decisions/001-update-staleness-detection.md`.
 - `docs/plans/archive/desktop-shell-plan.md`
   - completed execution record for Phase 2 of the operator console:
     signed, notarized, auto-updating Electron 42.x desktop shell in

@@ -2,9 +2,7 @@ use super::*;
 
 use crate::protocol::VersionUpgradeAction;
 
-pub(crate) async fn version_info(
-    State(state): State<Arc<AppState>>,
-) -> Json<VersionInfoResponse> {
+pub(crate) async fn version_info(State(state): State<Arc<AppState>>) -> Json<VersionInfoResponse> {
     let snapshot = state.version_check.snapshot().await;
     let available = snapshot
         .latest

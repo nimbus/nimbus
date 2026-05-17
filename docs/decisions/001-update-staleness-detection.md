@@ -1,9 +1,9 @@
 # 001 — Update lifecycle: server pings, both UIs render, both UIs offer to launch the upgrade
 
-- **Status:** proposed
+- **Status:** accepted (plan closed 2026-05-16)
 - **Date:** 2026-05-16
 - **Decision owner:** `nimbus/nimbus` maintainers
-- **Parent plan:** `docs/plans/update-lifecycle-plan.md`
+- **Parent plan:** `docs/plans/archive/update-lifecycle-plan.md`
 
 ---
 
