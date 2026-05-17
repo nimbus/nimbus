@@ -157,14 +157,10 @@ pub(super) fn load_convex_registry(
     let Some(resolved_app_dir) = resolved_app_dir else {
         return Ok(None);
     };
-    let should_load = match resolved_app_dir {
-        ResolvedStartAppDir::Explicit(_) => true,
-        ResolvedStartAppDir::AutoDetected(path) => app_dir_has_convex_surface(path),
-    };
-    if !should_load {
+    let path = resolved_app_dir.path();
+    if !app_dir_has_convex_surface(path) {
         return Ok(None);
     }
-    let path = resolved_app_dir.path();
     ensure_required_functions_manifest(path, command.skip_codegen)?;
     ConvexRegistry::from_app_dir(path)
         .map(|registry| Some(registry.with_runtime_limits(runtime_limits.clone())))
@@ -178,14 +174,10 @@ pub(super) fn load_cloud_functions_registry(
     let Some(resolved_app_dir) = resolved_app_dir else {
         return Ok(None);
     };
-    let should_load = match resolved_app_dir {
-        ResolvedStartAppDir::Explicit(_) => true,
-        ResolvedStartAppDir::AutoDetected(path) => app_dir_has_cloud_functions_surface(path),
-    };
-    if !should_load {
+    let path = resolved_app_dir.path();
+    if !app_dir_has_cloud_functions_surface(path) {
         return Ok(None);
     }
-    let path = resolved_app_dir.path();
     ensure_required_cloud_functions_manifest(path, command.skip_codegen)?;
     CloudFunctionsRegistry::from_app_dir(path)
         .map(|registry| Some(registry.with_runtime_limits(runtime_limits.clone())))
@@ -311,6 +303,15 @@ pub(super) fn resolve_start_app_dir(
     if let Some(explicit_app_dir) = command.app_dir.as_deref() {
         let resolved = resolve_deploy_app_dir(Some(explicit_app_dir), &cwd)
             .map_err(|error| Error::InvalidInput(error.to_string()))?;
+        if !app_dir_has_convex_surface(&resolved) && !app_dir_has_cloud_functions_surface(&resolved)
+        {
+            return Err(Error::InvalidInput(format!(
+                "No Convex or Cloud Functions surface found in {}.\n\n\
+                 Create a `convex/` or `nimbus/` source directory, a `firebase.json`, \
+                 or a Functions Framework `package.json` and place your app functions there.",
+                resolved.display()
+            )));
+        }
         return Ok(Some(ResolvedStartAppDir::Explicit(resolved)));
     }
 
