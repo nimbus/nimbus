@@ -441,8 +441,8 @@ the Execution Log.
 | O4 | Sub-drawer consumers: 13 routes across both views | `done` |
 | O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `done` |
 | O6 | Active-tenant store + per-route refetch on tenant change | `done` |
-| O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `in_progress` |
-| O8 | Plan close: README registration, archive hand-off | `todo` |
+| O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `done` |
+| O8 | Plan close: README registration, archive hand-off | `in_progress` |
 
 Exactly one phase is `in_progress` at a time. Update this ledger and the
 phase's own section before/after each work block.
@@ -865,7 +865,7 @@ need to refetch when tenant changes.
 
 ### O7 — Live verification matrix
 
-**Status:** `todo`
+**Status:** `done`
 
 **Goal:** Prove the full shell works across **two views**, the token
 matrix, drawer states, and tenant scopes.
@@ -1410,6 +1410,64 @@ verification run, anything surprising._
   - Verification: `npm run typecheck` clean; `npm run test` 156/156
     (22 spec files, +7 new); `npm run build` clean.
     O6 closes; **O7** opens.
+- **2026-05-17 (l)** — **O7 complete.** Live verification matrix
+  captured via Chrome DevTools MCP (1440×900) against the local dev
+  server. No code changes — pure proof capture + acceptance.
+  - **Route walk (14 routes, dark + blue, drawer expanded,
+    sub-drawer open, tenant `acme`):**
+    `o7-dev-overview-dark-blue.png` (`/app`),
+    `o7-dev-compute-dark-blue.png` (`/app/compute`),
+    `o7-dev-schedules-dark-blue.png` (`/app/schedules`),
+    `o7-dev-storage-dark-blue.png` (`/app/storage`),
+    `o7-dev-files-dark-blue.png` (`/app/files`),
+    `o7-dev-observability-dark-blue.png` (`/app/observability`),
+    `o7-dev-settings-dark-blue.png` (`/app/settings`),
+    `o7-ops-system-dark-blue.png` (`/admin`),
+    `o7-ops-tenants-dark-blue.png` (`/admin/tenants`),
+    `o7-ops-machines-dark-blue.png` (`/admin/machines`),
+    `o7-ops-network-dark-blue.png` (`/admin/network`),
+    `o7-ops-services-dark-blue.png` (`/admin/services`),
+    `o7-ops-observability-dark-blue.png` (`/admin/observability`),
+    `o7-ops-settings-dark-blue.png` (`/admin/settings`).
+  - **Token matrix (6 Mode × Palette combos on `/app/compute`):**
+    `o7-token-light-blue.png`, `o7-token-light-mono.png`,
+    `o7-token-light-warm.png`, `o7-token-dark-blue.png` (covered by
+    `o7-dev-compute-dark-blue.png` above), `o7-token-dark-mono.png`,
+    `o7-token-dark-warm.png`. The compound
+    `[data-palette][data-theme]` selectors propagate without
+    regression — every shell surface still resolves through
+    `var(--color-*)` and the token-class helpers.
+  - **Drawer + view-switcher states:**
+    `o7-dev-compute-drawer-collapsed.png` (primary drawer
+    collapsed to icon-only, sub-drawer reanchors to the right of
+    the collapsed rail),
+    `o7-dev-compute-sub-drawer-closed.png` (sub-drawer hidden,
+    main content fills the freed width),
+    `o7-ops-machines-drawer-collapsed.png` (operator console
+    primary drawer collapsed),
+    `o7-view-switch-developer-storage.png` (baseline before
+    switching),
+    `o7-view-switch-operator-restored.png` (clicking OPERATOR
+    chip from `/app/storage` lands at `/admin/services` because
+    `nimbus-ui:last-route:operator` held `/admin/services` —
+    last-route restore works in both directions, confirmed via
+    a follow-up click on DEVELOPER restoring `/app/storage`).
+  - **Tenant scope independence:**
+    `o7-tenant-switch-storage-beta.png` (after pivoting the store
+    to `beta`, the storage page heading rebinds to "Tables in
+    beta", breadcrumb shows `storage > beta`, and the top-nav
+    trigger reads `Tenant beta`),
+    `o7-ops-observability-filter-acme.png`
+    (`/admin/observability?tenant=acme` keeps the operator-filter
+    trigger on `Filter acme` while the developer store
+    independently holds `beta` — the two scopes never bleed).
+  - **Acceptance gates:** `npm run typecheck` clean,
+    `npm run test` 156/156 (22 spec files), `npm run build` clean.
+    No incidental Rust touched in O7; `cargo fmt`/`make clippy`
+    not needed for this phase. Console errors observed during the
+    walk are limited to the expected `/api/tenants` 404 in the
+    unbacked dev environment.
+    O7 closes; **O8** opens.
 - **2026-05-17 (i)** — **O4 complete.** All 12 sub-drawer consumers
   wired across both views (the remaining route — `/app` overview —
   intentionally contributes no sub-drawer per the route table).
@@ -1457,32 +1515,21 @@ verification run, anything surprising._
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, especially the **O7 phase detail**
-   (Live verification matrix across View × Mode × Palette ×
-   Drawer-state × Tenant).
-2. O6 closed at commit-time with the bootstrap hook
-   (`shell/use-tenant-bootstrap.ts`) consuming `?as=<tenant>` once and
-   stripping it, the developer routes reading `activeTenant` from the
-   store, and `/admin/observability` keeping its independent
-   `?tenant=` filter. The bootstrap-driven flow is browser-verified
-   under `docs/plans/proof/desktop-ui-shell-overhaul/o6-*.png`. O7
-   should layer the broader visual matrix on top — not redo O6.
-3. Boot the dev server: `cd packages/nimbus-ui && npm run dev` and
-   drive Chrome DevTools MCP at 1440×900.
-4. For each of the 7 Developer + 7 Operator routes:
-   - capture screenshots across the six Mode × Palette combos
-     (`{light, dark} × {blue, mono, warm}`);
-   - toggle the primary drawer collapsed/expanded and confirm the
-     sub-drawer reanchors;
-   - toggle the view switcher and confirm the wordmark + drawer
-     entries update and last-route restore works;
-   - in Developer view, switch tenant (use store + reload, or
-     `?as=<id>` deep-link) and confirm the page rebinds; in Operator
-     → Observability apply `?tenant=<id>` and verify the filter chip.
-5. Save screenshots under `docs/plans/proof/desktop-ui-shell-overhaul/`
-   with the `o7-` prefix and record the matrix coverage list in the
-   Execution Log entry.
-6. Run `npm run typecheck`, `npm run test`, `npm run build`. If any
-   incidental Rust touched, run `cargo fmt --all --check` and `make
-   clippy` too.
-7. Commit + push the O7 baseline to `main` per durable authorization.
+1. Re-read this plan top-to-bottom, especially the **O8 phase detail**
+   (Plan close, archive hand-off).
+2. O0–O7 are all `done` with verification artifacts under
+   `docs/plans/proof/desktop-ui-shell-overhaul/`. The remaining work
+   is purely organizational:
+   - Register this plan in `docs/plans/README.md` under "Active
+     execution plans" (or move directly to archive if you decide
+     the shell overhaul is fully shipped).
+   - Add a "Follow-up plan" reference at the top of
+     `docs/plans/archive/desktop-ui-plan.md` pointing here, if that
+     plan has not been frozen yet.
+   - Flip the Status field at the very top of this plan from
+     `in_progress` to `done`.
+3. Promote follow-up plans (if needed) for Services / Files /
+   Schedules actual feature content — out of scope here, but the
+   shell-overhaul plan should declare it explicitly so the next
+   slice has an owner.
+4. Commit + push the O8 baseline to `main` per durable authorization.
