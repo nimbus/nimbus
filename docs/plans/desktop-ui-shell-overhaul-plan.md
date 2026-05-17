@@ -437,8 +437,8 @@ the Execution Log.
 | O1 | IA migration: DESIGN.md + nav-entries (per view) + placeholder routes under `app/` and `admin/` | `done` |
 | OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `done` |
 | O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `done` |
-| O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `in_progress` |
-| O4 | Sub-drawer consumers: 13 routes across both views | `todo` |
+| O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `done` |
+| O4 | Sub-drawer consumers: 13 routes across both views | `in_progress` |
 | O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `todo` |
 | O6 | Active-tenant store + per-route refetch on tenant change | `todo` |
 | O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `todo` |
@@ -678,7 +678,7 @@ across reloads. Keyboard accessible. Token-respecting. Renders the
 
 ### O3 — Sub-drawer surface (dual-mode contributor API)
 
-**Status:** `in_progress`
+**Status:** `done`
 
 **Goal:** Introduce a persistent right-of-primary column. Supports two
 contributor modes: **static menu** (fixed list of links, like Convex
@@ -730,7 +730,7 @@ query, like Convex `DataSidebar`). Coexists with collapsed primary drawer.
 
 ### O4 — Sub-drawer consumers
 
-**Status:** `todo`
+**Status:** `in_progress`
 
 **Goal:** Wire sub-drawer contributors across both views. Static where
 the sub-section list is fixed; dynamic where it's a resource list.
@@ -1238,29 +1238,83 @@ verification run, anything surprising._
   - Verification: `npm run typecheck` clean; `npm run test` 131/131
     (19 spec files); `npm run build` clean; biome check clean on all
     changed files. O2 closes; **O3** opens.
+- **2026-05-17 (h)** — **O3 complete.** Sub-drawer surface landed with
+  the dual-mode contributor API:
+  - `packages/nimbus-ui/src/store/ui-store.ts` adds
+    `subDrawerOpen: boolean` (default `true`, hydrated from
+    `nimbus-ui:sub-drawer-open`), `setSubDrawerOpen(open)`,
+    `toggleSubDrawer()`, plus exported `readSubDrawerOpen()` and
+    `persistSubDrawerOpen(open)` helpers matching the existing
+    drawer-state shape.
+  - `packages/nimbus-ui/src/shell/sub-drawer.tsx` (new) defines the
+    `SubDrawerSpec` discriminated union (`{kind: "static"; title;
+    items}` | `{kind: "dynamic"; title; search?; children}`), a
+    `SubDrawerContext` + `SubDrawerProvider`, a
+    `useContributeSubDrawer(spec)` hook (route components opt in by
+    calling this with a spec; cleanup clears on unmount), and the
+    `SubDrawer` component itself. Fixed `w-64` with
+    `border-r border-app bg-surface`; header has the section title in
+    the mono uppercase eyebrow and a close button
+    (`data-testid="sub-drawer-close"`) that flips `subDrawerOpen` to
+    `false` and persists. Optional search slot renders only when a
+    dynamic spec includes `search`. Static specs render a tokenized
+    link list with active-state highlight (`bg-surface-2 text-default`
+    + `border-l-2 border-brand`) using `aria-current="page"` and
+    `data-testid="sub-drawer-item-<id>"`. Component **decision**:
+    chose a React Context + hook over TanStack Router context — equal
+    expressiveness for the v1 API surface, zero new router-internal
+    coupling, simpler unit testing (no router needed), and keeps the
+    contributor API symmetrical with `useUiStore` patterns elsewhere.
+  - `packages/nimbus-ui/src/routes/__root.tsx` wraps the existing
+    `StalenessProvider` subtree in `<SubDrawerProvider>` and mounts
+    `<SubDrawer />` between `<PrimaryDrawer />` and `<main>` inside
+    the column flex row. The SubDrawer coexists with the collapsed
+    primary drawer: both are `shrink-0` siblings inside the same
+    row container.
+  - `packages/nimbus-ui/src/shell/sub-drawer.spec.tsx` (new) — 6
+    cases: no contributor → no DOM; static contributor with
+    active-state highlight; dynamic contributor with `data-testid`
+    body + optional search input rendered with placeholder; close
+    button hides the drawer and persists `nimbus-ui:sub-drawer-open
+    = "false"`; freshly-imported module with `subDrawerOpen=false`
+    hydrates to a hidden drawer; contributor unmount clears the spec
+    so the drawer disappears. `beforeEach` resets the zustand store's
+    `subDrawerOpen` to `true` to keep cases isolated.
+  - Verification: `npm run codegen` clean; `npm run typecheck` clean;
+    `npm run test` 137/137 (20 spec files, +6 new); `npm run build`
+    clean; biome check clean on all changed files (4 pre-existing
+    errors in `appearance-section.tsx` remain — unrelated to O3).
+  - Visual proof deferred to O4: with no route contributor opted in
+    yet, the surface correctly renders nothing — the empty-state
+    contract is part of O3's acceptance and is covered by the first
+    spec case. Browser-screenshot matrix for the populated surface
+    comes in O4 as routes start opting in. O3 closes; **O4** opens.
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, especially the O3 phase detail
-   (Sub-drawer surface and dual-mode contributor API).
-2. Re-read what O2 landed:
-   `packages/nimbus-ui/src/shell/primary-drawer.tsx`,
-   `packages/nimbus-ui/src/routes/__root.tsx`,
-   `packages/nimbus-ui/src/store/ui-store.ts`.
-3. Extend `ui-store.ts` with `subDrawerOpen: boolean` (default
-   `true`) and `setSubDrawerOpen(open)` persisted under
-   `nimbus-ui:sub-drawer-open`.
-4. Create `packages/nimbus-ui/src/shell/sub-drawer.tsx`: fixed `w-64`
-   when open, unmounts when closed, `border-r border-app bg-surface`,
-   header row with section title + close button
-   (`data-testid="sub-drawer-close"`), optional search slot, and
-   contributor body.
-5. Pick the contributor API path and document it inline at the top of
-   `sub-drawer.tsx`. The plan recommends a route-driven slot
-   (TanStack Router context) — each route exports an optional
-   `subDrawer: () => SubDrawerSpec` that the layout resolves.
-6. Mount the SubDrawer in `__root.tsx` between `<PrimaryDrawer />`
-   and `<main>`; coexist with collapsed primary drawer.
-7. Add `shell/sub-drawer.spec.tsx` covering: opens by default; close
-   button hides it and persists; search input rendered when
-   contributor supplies one; route-without-spec yields no sub-drawer.
+1. Re-read this plan top-to-bottom, especially the **O4 phase detail**
+   (Sub-drawer consumers — 13 routes across both views).
+2. Re-read what O3 landed:
+   `packages/nimbus-ui/src/shell/sub-drawer.tsx`,
+   `packages/nimbus-ui/src/shell/sub-drawer.spec.tsx`,
+   `packages/nimbus-ui/src/routes/__root.tsx` (wraps the tree in
+   `<SubDrawerProvider>` and mounts `<SubDrawer />`),
+   `packages/nimbus-ui/src/store/ui-store.ts` (adds `subDrawerOpen`).
+3. Wire one consumer at a time using the route table at lines 740–755.
+   For each, call `useContributeSubDrawer(spec)` from the route
+   component with either a memoized static spec or a dynamic spec.
+   Static routes (`/app/schedules`, `/app/observability`,
+   `/app/settings`, `/admin/network`, `/admin/observability`,
+   `/admin/settings`) list fixed sub-sections — wire those first
+   since they have no live-data dependency.
+4. Dynamic routes (`/app/compute`, `/app/storage`, `/app/files`,
+   `/admin/tenants`, `/admin/machines`, `/admin/services`) consume
+   `useQuery` from `nimbus/react`; render items with
+   `data-testid="sub-drawer-item-<view>-<id>"`; navigate via the
+   existing dynamic-segment routes; empty/loading uses the
+   `NavCount`-style `·` placeholder.
+5. Capture browser proof (1440×900) once at least one static and one
+   dynamic consumer are wired; save under
+   `docs/plans/proof/desktop-ui-shell-overhaul/o4-*.png`.
+6. Run `npm run typecheck`, `npm run test`, `npm run build`, then
+   commit + push the O4 baseline to `main` per durable authorization.
