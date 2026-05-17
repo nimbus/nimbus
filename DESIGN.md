@@ -362,9 +362,9 @@ is identical across all variants.
 - **Sunset Red**, **Soft Purple**, **Slate** — reserved for future
   marketing variants and seasonal/event use; not currently wired in.
 
-The canonical execution plan for brand rollout, including the variant
+The completed execution record for brand rollout, including the variant
 regenerator (`docs/brand/gen-variants.sh`) and per-surface wiring, lives
-in `docs/plans/brand-system-plan.md`.
+in `docs/plans/archive/brand-system-plan.md`.
 
 ### Typography
 
