@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const THEME_STORAGE_KEY = "nimbus-ui:theme";
+const PALETTE_STORAGE_KEY = "nimbus-ui:palette";
 
 beforeEach(() => {
   vi.resetModules();
@@ -63,6 +64,30 @@ describe("ui-store", () => {
     await new Promise((r) => queueMicrotask(() => r(undefined)));
     expect(focusSpy).toHaveBeenCalled();
     button.remove();
+  });
+
+  it("defaults to blue palette when nothing is persisted", async () => {
+    const { useUiStore } = await import("./ui-store");
+    expect(useUiStore.getState().palette).toBe("blue");
+  });
+
+  it("hydrates palette from the persisted key", async () => {
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, "warm");
+    const { useUiStore } = await import("./ui-store");
+    expect(useUiStore.getState().palette).toBe("warm");
+  });
+
+  it("falls back to blue when the persisted palette is malformed", async () => {
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, "rainbow");
+    const { useUiStore } = await import("./ui-store");
+    expect(useUiStore.getState().palette).toBe("blue");
+  });
+
+  it("setPalette writes through and updates state", async () => {
+    const { useUiStore } = await import("./ui-store");
+    useUiStore.getState().setPalette("mono");
+    expect(useUiStore.getState().palette).toBe("mono");
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe("mono");
   });
 
   it("setLensOpen mirrors palette behavior on its own opener slot", async () => {

@@ -65,7 +65,7 @@ function SidebarEntry({ entry }: { entry: NavEntry }) {
             ? "bg-surface-2 text-default"
             : "text-muted hover:bg-surface-2 hover:text-default",
         )}
-        style={active ? { borderLeftColor: "var(--color-accent)" } : undefined}
+        style={active ? { borderLeftColor: "var(--color-brand)" } : undefined}
         aria-current={active ? "page" : undefined}
         data-testid={`nav-${entry.id}`}
       >

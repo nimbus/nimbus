@@ -261,41 +261,76 @@ native chrome surface in `nimbus/desktop`. For the logo, marketing surfaces,
 favicon, app icon, and the desktop setup card, see **Brand Palette** below —
 the two tiers are intentionally distinct.
 
-Use a dark-first neutral base with one owned accent (teal). Colors are
-defined in OKLCH so light and dark perceptual lightness stay parity-matched.
+The product palette has two orthogonal axes:
+
+- **Mode** — `light` / `dark` / `system`. Controls neutrals + reading direction.
+- **Palette** — `blue` (default) / `mono` / `warm`. Controls brand + accent +
+  link identity. Each palette pairs a light variant with a dark variant from
+  the Nimbus Color Palette (see Brand Palette below).
+
+Both are user-controlled from Settings → Appearance and persist to
+`localStorage` (`nimbus-ui:theme`, `nimbus-ui:palette`). The shell sets
+`data-theme` and `data-palette` on `<html>` so the cascade resolves the
+right token set per request.
+
+Palette pairs (light → dark):
+
+| Palette | Light variant     | Dark variant     | Use                              |
+| ---     | ---               | ---              | ---                              |
+| `blue`  | Cool Blue         | Night Blue       | Product default                  |
+| `mono`  | Monochrome        | Reverse Mono     | Minimal / enterprise / print     |
+| `warm`  | Warm              | Golden Hour      | Friendly / marketing-leaning     |
+
+Colors are defined in OKLCH so light and dark perceptual lightness stay
+parity-matched. Semantic state tokens (`--success`, `--warning`, `--danger`,
+`--starting`, `--draining`, `--queued`, `--stale`, `--violet`) are stable
+across all palettes — "Running = green" holds in every theme.
+
+Tokens that swap per palette (Blue shown as the default):
+
+| Token | Blue light (OKLCH) | Blue dark (OKLCH) | Use |
+| --- | --- | --- | --- |
+| `--bg` | `oklch(98% 0.005 248)` | `oklch(13% 0.026 263)` | App background |
+| `--surface` | `oklch(100% 0 0)` | `oklch(19% 0.030 258)` | Panels, tables, popovers |
+| `--surface-2` | `oklch(96% 0.008 248)` | `oklch(24% 0.030 258)` | Secondary panels, selected rows |
+| `--border` | `oklch(91% 0.013 252)` | `oklch(32% 0.030 258)` | Hairline borders and dividers |
+| `--border-strong` | `oklch(82% 0.020 250)` | `oklch(40% 0.030 258)` | Emphasis borders |
+| `--text` | `oklch(20% 0.035 263)` | `oklch(91% 0.014 252)` | Primary text |
+| `--muted` | `oklch(48% 0.028 255)` | `oklch(67% 0.026 248)` | Secondary text |
+| `--brand` | `oklch(62% 0.20 258)` (`#3B82F6`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
+| `--accent` | `oklch(70% 0.13 207)` (`#06B6D4`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Interactive feedback: focus ring, selection, `Running` state |
+| `--link` | `oklch(54% 0.22 264)` (`#2563EB`) | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
+
+Semantic tokens (stable across all palettes):
 
 | Token | Light (OKLCH) | Dark (OKLCH) | Use |
 | --- | --- | --- | --- |
-| `--bg` | `oklch(98% 0.005 240)` | `oklch(15% 0.015 240)` | App background (slight cool cast) |
-| `--surface` | `oklch(100% 0 0)` | `oklch(19% 0.015 240)` | Panels, tables, popovers |
-| `--surface-2` | `oklch(96% 0.008 240)` | `oklch(23% 0.018 240)` | Secondary panels, selected rows |
-| `--border` | `oklch(89% 0.010 240)` | `oklch(30% 0.020 240)` | Hairline borders and dividers |
-| `--border-strong` | `oklch(80% 0.012 240)` | `oklch(38% 0.022 240)` | Emphasis borders (focused row, drag handle) |
-| `--text` | `oklch(20% 0.015 240)` | `oklch(94% 0.010 240)` | Primary text |
-| `--muted` | `oklch(50% 0.012 240)` | `oklch(66% 0.012 240)` | Secondary text |
-| `--accent` | `oklch(56% 0.12 180)` | `oklch(75% 0.14 180)` | Primary action, active nav, `Running` state |
-| `--link` | `oklch(50% 0.18 250)` | `oklch(72% 0.16 250)` | Hyperlinks only — not a secondary accent |
 | `--success` | `oklch(52% 0.14 145)` | `oklch(72% 0.16 145)` | `Ready`, `Healthy` |
 | `--warning` | `oklch(65% 0.16 75)` | `oklch(78% 0.17 75)` | `Reconnecting`, `Degraded` |
-| `--starting` | `oklch(70% 0.17 50)` | `oklch(80% 0.18 50)` | `Starting`, `Provisioning` (amber, distinct from warning) |
+| `--starting` | `oklch(70% 0.17 50)` | `oklch(80% 0.18 50)` | `Starting`, `Provisioning` |
 | `--draining` | `oklch(55% 0.13 280)` | `oklch(72% 0.14 280)` | `Draining`, `Stopping` |
-| `--queued` | `oklch(60% 0.020 240)` | `oklch(70% 0.020 240)` | `Queued`, `Pending` (cool gray) |
+| `--queued` | `oklch(60% 0.020 240)` | `oklch(70% 0.020 240)` | `Queued`, `Pending` |
 | `--danger` | `oklch(58% 0.20 25)` | `oklch(70% 0.20 25)` | `Failed`, destructive |
-| `--stale` | `oklch(50% 0.012 240)` | `oklch(60% 0.012 240)` | Disconnected/stale data marker (renders with strikethrough) |
+| `--stale` | `oklch(50% 0.012 240)` | `oklch(60% 0.012 240)` | Disconnected/stale (strikethrough) |
 | `--violet` | `oklch(55% 0.18 295)` | `oklch(75% 0.16 295)` | Functions/runs only |
 
 Rules:
 
-- One accent (teal). `--link` is *not* a second accent — reserve it strictly
-  for `<a>` elements. Do not paint buttons or active nav with `--link`.
-- Cool neutrals: every neutral has a 240° hue cast. Do not use pure gray.
-- Use accent color to clarify state or section identity, not as decoration.
-- Status colors must always have text or icon labels. Color alone is never
-  the only signal.
-- Surfaces never use the accent as a fill. Accent appears as a 1-2px left
-  bar, an inline dot, a focus ring, or a small icon.
-- Tailwind v4 `@theme` directive should expose these as CSS variables;
-  derive component utilities (`bg-surface`, `text-muted`, etc.) from them.
+- **Three identity tokens, three different jobs.** `--brand` carries
+  primary identity (active nav, primary CTA, dominant brand fill).
+  `--accent` is interactive feedback (focus, selection, `Running`).
+  `--link` is hyperlinks. Never paint buttons with `--link`. Never paint
+  active nav with `--accent` — that's `--brand`'s job.
+- **State colors are universal.** Status state colors do not vary by
+  palette. A red `Failed` chip looks the same in Mono as in Blue.
+- **Status colors must always have text or icon labels.** Color alone is
+  never the only signal.
+- **Surfaces never use accent or brand as a fill.** Identity colors appear
+  as a 1–2px left bar, an inline dot, a focus ring, a small icon, or a
+  small CTA — never as a section background.
+- Tailwind v4 `@theme` directive should expose the non-palette tokens as
+  CSS variables; palette-scoped tokens live in `@layer base` under
+  `[data-palette=…]` selectors.
 
 ### Brand Palette
 
@@ -317,13 +352,16 @@ surface, pick the equivalent product-tier token instead.
 
 #### Two-Tier Bridge
 
-Two values cross tiers, by design:
+Three values cross tiers, by design:
 
-- **Teal.** Brand `#67E8F9 → #68B6DA` (gradient form, brand tier) and
-  product `--accent` `oklch(56% 0.12 180)` / `oklch(75% 0.14 180)` (solid
-  form, product tier) are the same conceptual color in different
-  presentations. The brand-tier gradient is reserved for the logo and
-  marketing; the product-tier solid is reserved for in-app accent.
+- **Brand.** Brand `#3B82F6` (Cool Blue primary, solid form, brand tier)
+  drives `--brand` `oklch(62% 0.20 258)` / `oklch(72% 0.17 248)` in the
+  product tier — same hex, used as primary identity inside the app.
+- **Teal accent.** Brand "Interactive Elements" gradient
+  `#67E8F9 → #06B6D4` (Tailwind cyan-300 → cyan-500) drives `--accent`
+  `oklch(70% 0.13 207)` / `oklch(85% 0.10 197)` in solid form. The brand
+  gradient is reserved for logos and marketing; the solid form is the
+  in-app accent.
 - **Ink.** Hex `#0F172A` is shared across tiers as primary text on light
   surfaces.
 

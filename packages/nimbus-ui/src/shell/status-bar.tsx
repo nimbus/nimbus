@@ -176,7 +176,7 @@ function VersionSlot({
 function UpgradeDot({ tone }: { tone: "accent" | "starting" | "success" }) {
   const color =
     tone === "accent"
-      ? "var(--color-accent)"
+      ? "var(--color-brand)"
       : tone === "starting"
         ? "var(--color-starting)"
         : "var(--color-success)";

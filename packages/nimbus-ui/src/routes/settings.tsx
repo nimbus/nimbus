@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "../../convex/_generated/api";
+import { AppearanceSection } from "../components/appearance-section";
 import { CopyChip } from "../components/copy-chip";
 import { StateChip } from "../components/state-chip";
 import { RelativeTime, Uptime } from "../components/time";
@@ -220,6 +221,8 @@ function SettingsPage() {
           </p>
         </div>
       </header>
+
+      <AppearanceSection />
 
       <TenantHeaderStrip status={status} license={license} />
 
@@ -482,7 +485,7 @@ function UpdatesValue() {
             <span
               aria-hidden
               className="inline-block size-2 rounded-full"
-              style={{ background: "var(--color-accent)" }}
+              style={{ background: "var(--color-brand)" }}
             />
             {info.latest} available — Update
           </span>
