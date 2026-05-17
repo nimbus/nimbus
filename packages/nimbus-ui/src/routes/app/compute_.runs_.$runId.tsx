@@ -2,15 +2,15 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { useMemo } from "react";
 
-import { api } from "../../convex/_generated/api";
-import { Breadcrumb } from "../components/breadcrumb";
-import { CopyChip } from "../components/copy-chip";
-import { StateChip } from "../components/state-chip";
-import { RelativeTime } from "../components/time";
-import { cn } from "../lib/cn";
-import { formatAbsoluteTime, formatDuration, shortId } from "../lib/format";
+import { api } from "../../../convex/_generated/api";
+import { Breadcrumb } from "../../components/breadcrumb";
+import { CopyChip } from "../../components/copy-chip";
+import { StateChip } from "../../components/state-chip";
+import { RelativeTime } from "../../components/time";
+import { cn } from "../../lib/cn";
+import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
 
-export const Route = createFileRoute("/observability_/runs_/$runId")({
+export const Route = createFileRoute("/app/compute_/runs_/$runId")({
   component: RunDetailPage,
 });
 
@@ -369,7 +369,7 @@ function CorrelatedEvents({
           Correlated events
         </h2>
         <Link
-          to="/observability"
+          to="/app/observability"
           search={{ tab: "logs", correlationId: runId }}
           className="font-mono text-[10px] uppercase tracking-wide text-muted hover:text-default focus-visible:text-default"
           data-testid="run-detail-open-logs"
@@ -486,7 +486,7 @@ function Missing({ runId }: { runId: string }) {
         record.
       </p>
       <Link
-        to="/observability"
+        to="/app/observability"
         search={{ tab: "runs" }}
         className="mt-2 rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
         data-testid="run-detail-back"

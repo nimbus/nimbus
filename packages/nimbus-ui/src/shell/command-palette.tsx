@@ -1,40 +1,31 @@
 import { useNavigate } from "@tanstack/react-router";
 import { Command } from "cmdk";
 import {
-  Activity,
   Command as CommandIcon,
-  Cpu,
-  Database,
   Filter,
-  Gauge,
-  Network,
   PlayCircle,
   RotateCw,
   Search,
-  Server,
-  Settings,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Kbd } from "../components/kbd";
 import { cn } from "../lib/cn";
 import { metaGlyph } from "../lib/platform";
 import { useUiStore } from "../store/ui-store";
-import { NAV_ENTRIES } from "./nav-entries";
+import {
+  DEVELOPER_NAV_ENTRIES,
+  type NavEntry,
+  OPERATOR_NAV_ENTRIES,
+} from "./nav-entries";
 
 type Mode = "navigate" | "run" | "filter";
 
 const RECENT_KEY = "nimbus-ui:palette:recent";
 const RECENT_LIMIT = 5;
 
-const NAV_ICONS = {
-  overview: Gauge,
-  compute: Cpu,
-  storage: Database,
-  network: Network,
-  machines: Server,
-  observability: Activity,
-  settings: Settings,
-} as const;
+function recentKey(entry: NavEntry): string {
+  return `${entry.view}:${entry.id}`;
+}
 
 type RunAction = {
   id: string;
@@ -51,6 +42,11 @@ export function CommandPalette() {
   const [mode, setMode] = useState<Mode>("navigate");
   const [search, setSearch] = useState("");
   const [recent, setRecent] = useState<string[]>(loadRecent);
+
+  const allEntries = useMemo<NavEntry[]>(
+    () => [...DEVELOPER_NAV_ENTRIES, ...OPERATOR_NAV_ENTRIES],
+    [],
+  );
 
   useEffect(() => {
     if (open) {
@@ -136,18 +132,17 @@ export function CommandPalette() {
 
           {recent.length > 0 && search === "" ? (
             <Command.Group heading="Recent">
-              {recent.map((id) => {
-                const entry = NAV_ENTRIES.find((e) => e.id === id);
+              {recent.map((key) => {
+                const entry = allEntries.find((e) => recentKey(e) === key);
                 if (!entry) return null;
-                const Icon = NAV_ICONS[entry.id as keyof typeof NAV_ICONS];
                 return (
                   <PaletteItem
-                    key={`recent-${id}`}
-                    icon={Icon}
-                    label={entry.label}
+                    key={`recent-${key}`}
+                    icon={entry.icon}
+                    label={`${entry.label} · ${entry.view}`}
                     hint={`${metaGlyph} ⏎`}
                     onSelect={() => {
-                      rememberAndClose(id, () => {
+                      rememberAndClose(key, () => {
                         setOpen(false);
                         navigate({ to: entry.to });
                       });
@@ -159,25 +154,40 @@ export function CommandPalette() {
           ) : null}
 
           {mode === "navigate" ? (
-            <Command.Group heading="Navigate">
-              {NAV_ENTRIES.map((entry) => {
-                const Icon = NAV_ICONS[entry.id as keyof typeof NAV_ICONS];
-                return (
+            <>
+              <Command.Group heading="Developer console">
+                {DEVELOPER_NAV_ENTRIES.map((entry) => (
                   <PaletteItem
-                    key={`nav-${entry.id}`}
-                    icon={Icon}
+                    key={`nav-${recentKey(entry)}`}
+                    icon={entry.icon}
                     label={entry.label}
                     hint="⏎ open"
                     onSelect={() =>
-                      rememberAndClose(entry.id, () => {
+                      rememberAndClose(recentKey(entry), () => {
                         setOpen(false);
                         navigate({ to: entry.to });
                       })
                     }
                   />
-                );
-              })}
-            </Command.Group>
+                ))}
+              </Command.Group>
+              <Command.Group heading="Operator console">
+                {OPERATOR_NAV_ENTRIES.map((entry) => (
+                  <PaletteItem
+                    key={`nav-${recentKey(entry)}`}
+                    icon={entry.icon}
+                    label={entry.label}
+                    hint="⏎ open"
+                    onSelect={() =>
+                      rememberAndClose(recentKey(entry), () => {
+                        setOpen(false);
+                        navigate({ to: entry.to });
+                      })
+                    }
+                  />
+                ))}
+              </Command.Group>
+            </>
           ) : null}
 
           {mode === "run" ? (

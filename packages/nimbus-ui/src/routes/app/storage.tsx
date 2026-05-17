@@ -1,14 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 
-import { api } from "../../convex/_generated/api";
-import { Breadcrumb } from "../components/breadcrumb";
-import { CopyChip } from "../components/copy-chip";
-import { RelativeTime } from "../components/time";
-import { cn } from "../lib/cn";
+import { api } from "../../../convex/_generated/api";
+import { Breadcrumb } from "../../components/breadcrumb";
+import { CopyChip } from "../../components/copy-chip";
+import { RelativeTime } from "../../components/time";
+import { cn } from "../../lib/cn";
 
-export const Route = createFileRoute("/storage_/$tenant")({
-  component: TenantTablesPage,
+type StorageSearch = {
+  as?: string;
+};
+
+export const Route = createFileRoute("/app/storage")({
+  component: StoragePage,
+  validateSearch: (search: Record<string, unknown>): StorageSearch => ({
+    as: typeof search.as === "string" ? search.as : undefined,
+  }),
 });
 
 type TableDoc = {
@@ -20,12 +27,12 @@ type TableDoc = {
   lastWriteAt?: number;
 };
 
-function TenantTablesPage() {
-  const { tenant } = Route.useParams();
-  const tables = useQuery(api.tables.list, {
-    tenantId: tenant,
-    limit: 200,
-  }) as TableDoc[] | undefined;
+function StoragePage() {
+  const { as: tenant } = Route.useSearch();
+  const tables = useQuery(
+    api.tables.list,
+    tenant ? { tenantId: tenant, limit: 200 } : "skip",
+  ) as TableDoc[] | undefined;
 
   const sortedTables = (tables ?? [])
     .slice()
@@ -39,20 +46,30 @@ function TenantTablesPage() {
       <header className="flex flex-col gap-2">
         <Breadcrumb
           segments={[
-            { label: "storage", href: "/storage" },
-            {
-              label: tenant,
-              copyValue: tenant,
-              copyLabel: "tenant id",
-              active: true,
-            },
+            { label: "storage", href: "/app/storage" },
+            ...(tenant
+              ? [
+                  {
+                    label: tenant,
+                    copyValue: tenant,
+                    copyLabel: "tenant id",
+                    active: true,
+                  },
+                ]
+              : []),
           ]}
           testid="tenant-breadcrumb"
         />
         <div className="flex items-baseline justify-between">
           <div>
             <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-              Tables in <span className="font-mono">{tenant}</span>
+              {tenant ? (
+                <>
+                  Tables in <span className="font-mono">{tenant}</span>
+                </>
+              ) : (
+                "Storage"
+              )}
             </h1>
             <p className="text-sm text-muted">
               Tables are reactive — they appear here as soon as documents are
@@ -63,7 +80,12 @@ function TenantTablesPage() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
-        {tables === undefined ? (
+        {!tenant ? (
+          <Empty
+            title="Select a tenant"
+            detail="Choose a tenant from the top-nav tenant selector to view its tables."
+          />
+        ) : tables === undefined ? (
           <Loading label="Loading tables…" />
         ) : sortedTables.length === 0 ? (
           <Empty
@@ -95,8 +117,9 @@ function TenantTablesPage() {
                     >
                       <Td>
                         <Link
-                          to="/storage/$tenant/$table"
-                          params={{ tenant, table: name }}
+                          to="/app/storage/$table"
+                          params={{ table: name }}
+                          search={{ as: tenant }}
                           className="font-mono text-default hover:underline"
                           data-testid={`tenant-table-link-${name}`}
                         >

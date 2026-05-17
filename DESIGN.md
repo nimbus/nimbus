@@ -77,39 +77,89 @@ Concretely:
 
 ## Information Architecture
 
-Primary navigation:
+Nimbus serves two distinct personas. They ask categorically different
+questions and benefit from separate top-level information architectures
+rather than one tree gated by per-section scope toggles.
+
+| Persona | Identity | Asks | Cares about |
+| --- | --- | --- | --- |
+| **Developer** | App owner shipping code against a tenant | "Did my function succeed? What's in this table? Did my cron fire? Where's the log for this request?" | one tenant's data, code, schedules, files, traces |
+| **Operator** | DevOps / admin / host running Nimbus for others (or themselves) | "Is the server healthy? Which tenants exist? Are machines up? Are listeners reachable?" | server-wide state, infrastructure, multi-tenant administration |
+
+The console renders these as **two views** with a **view switcher** in the
+top horizontal nav. URL prefix is the source of truth:
+
+- **Developer console** — `/app/*` — always tenant-scoped. Tenant selector
+  always visible, always active.
+- **Operator console** — `/admin/*` — server-wide. Tenant selector hidden
+  by default; rendered as an optional cross-tenant filter on `/admin/
+  observability` only (URL `?tenant=<id>`).
+
+Switching the view persists `nimbus-ui:last-view` and the per-view
+`nimbus-ui:last-route:developer` / `nimbus-ui:last-route:operator` so the
+second toggle restores the previous route in each view. Cold load lands on
+`/app` (Developer default) unless localStorage records a different last
+view.
+
+### Developer console — sidebar IA (`/app/*`)
 
 | Section | Purpose | First required views |
 | --- | --- | --- |
-| Overview | Deployment health and recent activity | Health cards, active machine/service summary, recent runs, recent events |
-| Compute | Server-side execution and lifecycle | Functions, actions, HTTP routes, scheduled jobs, cron jobs, runs, service catalog |
-| Storage | Data browsing and schema/index control | Tenants, tables/collections, document browser, schema, indexes, query builder |
-| Network | Reachability and live transport | HTTP routes, WebSocket subscriptions, published ports, machine API, listener status |
-| Machines | Host/guest lifecycle | Machine list, machine detail, boot image, upgrade state, logs, actions |
-| Observability | Debugging and audit | Logs, events, traces, request IDs, scheduler lag, error groups |
-| Settings | Local server administration and integrations | Version, endpoints, deploys, token/session, environment, shutdown, adapter capability/posture (Convex, MongoDB, Firebase, Cloud Functions, Native) |
+| Overview | This app's health and recent activity | Recent runs, error rate, last deploy, schedule status, latest events |
+| Compute | Request-scoped execution | Functions list, function detail, function runner, runs |
+| Schedules | Periodic and future-dated work | Scheduled jobs (next/last run, cancel/retry), cron jobs |
+| Storage | Schema-aware data | Tables, document browser, schema panel, indexes, query builder |
+| Files | Opaque bytes / blob storage | Buckets, object browser, presigned URLs (placeholder in this baseline) |
+| Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
+| Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding |
 
-Adapter capability matrices live under Settings → Integrations rather than as
-a top-level section: capability posture is configuration, not a primary
-navigation destination. Adapter-specific resource views (a Convex function,
-a MongoDB collection) appear under Compute, Storage, and Network with the
-adapter labeled inline.
+7 sections. Every section is tenant-scoped — the active tenant comes from
+the top-nav selector, not the URL.
 
-Secondary navigation rules:
+### Operator console — sidebar IA (`/admin/*`)
 
-- Keep adapter capability matrices under `Settings → Integrations`. Surface
-  adapter-specific resource views inside Compute, Storage, Network, or
-  Machines with the adapter labeled inline, instead of mirroring them under
-  a separate top-level section.
+| Section | Purpose | First required views |
+| --- | --- | --- |
+| System | Host status | Version, uptime, listeners, build info, pending upgrades, embed integrity, admin audit |
+| Tenants | Tenant lifecycle | List with backend/quota/table-count, create, archive, per-tenant adapter binding |
+| Machines | Host/guest lifecycle | Machine list, detail (boot image, upgrade state, services placed on it), start/stop/restart/SSH/OS apply/remove |
+| Network | Reachability | HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status, origin allowlist |
+| Services | Long-running placement | Compose-declared services, service catalog, lifecycle state, endpoints, restart policy |
+| Observability | Cross-tenant debugging and audit | Logs, events, traces, error groups — default cross-tenant; optional `?tenant=<id>` filter |
+| Settings (server) | Server administration | General, endpoints, deploys, token/session, environment, integrations (adapter capability matrices), shutdown |
+
+7 sections. Server-wide by default. Tenant selector appears only on
+`/admin/observability`.
+
+### Secondary navigation rules
+
+- Within each view, every primary section can opt into a **sub-drawer**
+  to its right with two modes: **static menu** (fixed list of sub-pages,
+  e.g. Settings, Network) or **dynamic list** (resource list fed by a
+  query, e.g. Storage tables, Compute functions, Tenants, Machines).
+- Adapter capability matrices live under **Operator → Settings (server)
+  → Integrations**, not as a top-level section. Adapter-specific resource
+  views (a Convex function, a MongoDB collection) appear under their
+  category surface with the adapter labeled inline.
 - Use resource detail pages for durable objects: tenant, function, run,
   service, machine, table, collection, route, subscription, index.
-- Use drawers for short-lived inspection: JSON value, log entry, run output,
-  request error, pending action result.
+- Use drawers for short-lived inspection: JSON value, log entry, run
+  output, request error, pending action result.
 - Use modals only for confirmation, creation, and credential reveal flows.
+- The **system tenant lens** (⌘\\) is a Developer-side overlay onto
+  `_nimbus`. It is gated to the Developer view; the Operator view inspects
+  the same data through `/admin/tenants/_nimbus` instead.
 
 ## Core Screens
 
-### Overview
+Each screen is owned by exactly one view. The screen entries below are
+grouped by view. The Developer-side `Overview`, `Compute`, `Storage`, and
+`Observability` screens were already specified in earlier revisions and
+remain authoritative for the Developer side.
+
+## Core Screens — Developer console
+
+### Overview (Developer)
 
 The Overview screen is a dense control panel:
 
@@ -122,36 +172,47 @@ The Overview screen is a dense control panel:
 
 No large greeting, hero illustration, or marketing copy.
 
-### Compute
+### Compute (Developer)
 
-Compute owns function execution and service lifecycle:
+Compute owns request-scoped function execution for the active tenant.
+Service lifecycle moved out to the Operator console (`Services`).
 
 - Functions list: path, kind, adapter, bundle, args schema, returns schema,
   last run, failure rate, p95 duration when available.
-- Function runner: schema-aware argument editor, tenant/adapter selector,
-  identity/mock identity controls where supported, query result panel,
-  logs/result correlation, and clear execution mode for queries, mutations,
-  actions, HTTP handlers, and scheduled functions.
-- Runs: status, function/action/route, request ID, tenant, duration, error,
-  logs, trace waterfall.
-- Schedules: scheduled jobs, cron jobs, next run, last run, cancel/retry where
-  supported.
-- Services: Compose-declared services, lifecycle state, health, endpoints,
-  logs, backend family, machine placement.
+- Function runner: schema-aware argument editor, identity/mock identity
+  controls where supported, query result panel, logs/result correlation,
+  and clear execution mode for queries, mutations, actions, HTTP
+  handlers, and scheduled functions.
+- Runs: status, function/action/route, request ID, duration, error,
+  logs, trace waterfall. Filtered to the active tenant.
+
+The Compute sub-drawer is a **dynamic list** of functions (grouped by
+path / kind). Tenant is implicit from the top-nav selector — the runner
+does not show a tenant chooser.
 
 Convex-like function runner behavior is useful, but it must be Nimbus-aware:
-show which adapter invoked the function, which tenant it runs under, and
-whether the call is a query, mutation, action, HTTP route, scheduled job, or
-service operation.
+show which adapter handles the function and which execution mode is in
+play (query / mutation / action / HTTP route / scheduled job).
 
-### Storage
+### Schedules (Developer)
 
-Storage owns user data and database structure:
+Schedules owns periodic and future-dated work for the active tenant.
 
-- Tenant switcher with storage backend and adapter availability.
-- Tenant lifecycle: create tenant, delete tenant with confirmation and
-  resource-count warning, and show per-tenant storage backend plus adapter
-  availability.
+- Scheduled jobs list: function path, next run, last run, status,
+  cancel / retry where supported.
+- Cron jobs list: name, cron expression, next run, last run, history
+  link to a run-level detail page.
+- Schedule detail: queued runs, recent runs, error history, retry policy.
+
+The Schedules sub-drawer is a **static menu** with two items
+(`Scheduled` / `Cron`).
+
+### Storage (Developer)
+
+Storage owns user data and database structure for the active tenant.
+Tenant lifecycle (create, archive) moved to **Operator → Tenants**; this
+view assumes a tenant is selected.
+
 - Table/collection tree with row/document counts and last write time.
 - Document browser with cursor pagination, filters, sorting, column chooser,
   schema awareness, and stable keyboard navigation.
@@ -167,43 +228,190 @@ Storage owns user data and database structure:
 - Query builder that makes index use visible and refuses unbounded scans where
   the backend would be unsafe.
 
+The Storage sub-drawer is a **dynamic list** of tables for the active
+tenant. URL is store-driven (`/app/storage/<table>`), not
+`/app/storage/<tenant>/<table>` — the tenant lives in the top-nav.
+
 The Storage UI should feel familiar to Convex Data, MongoDB Atlas Data
 Explorer, and Firebase Firestore Data, but the implementation should be one
 Nimbus document browser with adapter-specific labels and type renderers.
 
-### Network
+### Files (Developer)
 
-Network makes the active local topology inspectable:
+Files owns opaque-byte / S3-compatible blob storage for the active
+tenant. Ships as a placeholder surface in this baseline; the routes and
+sub-drawer are real, the underlying feature is not implemented yet.
 
-- Local server endpoints: REST, Convex HTTP/WS, native WebSocket, Firebase
-  REST/gRPC-Web/Listen, MongoDB wire listener.
-- Route table: method, path, adapter, handler, auth requirement, last request.
-- WebSocket subscriptions: tenant, query, client count, last delivery, error.
-- Published ports: host port, guest port, service, machine, readiness.
-- Machine API forwarding: socket path, SSH state, gvproxy/krunkit state on
-  macOS, guest API version.
-- Security: origin allowlist, session state, token rotation, denied requests.
+- Buckets / namespaces list with object count and total bytes.
+- Object browser with prefix navigation, last-modified / size columns,
+  upload, download, copy presigned URL.
+- Object detail drawer: metadata, content type, lifecycle policy if any.
 
-Network should not be buried under Settings. Reachability is a first-class
-runtime concern for Nimbus.
+The Files sub-drawer is a **dynamic list** of buckets.
 
-### Machines
+The placeholder state honors the token system and renders an honest
+"Not yet implemented" line — no fake bucket data, no synthesized objects.
 
-Machines owns host/guest platform lifecycle:
+### Observability (Developer)
+
+Observability is the Developer-side debugging surface. Defaults to the
+active tenant; never cross-tenant in this view. (The Operator console
+owns the cross-tenant feed under `/admin/observability`.)
+
+- Logs: structured records with level, timestamp, request ID, function
+  path, tenant, search and filters.
+- Events: ordered domain events (mutation applied, scheduler fired,
+  service restarted) for the active tenant.
+- Traces: per-request waterfall with span timing and inline log lines.
+- Errors: grouped failures with last seen, count, sample traces.
+
+The Observability sub-drawer is a **static menu**
+(`Logs` / `Events` / `Traces` / `Errors`).
+
+### Settings (tenant)
+
+Tenant-owned configuration for the active tenant. Distinct from the
+Operator-side **Settings (server)** — different surface, different
+permissions.
+
+- Environment variables: list, add, edit, delete; secret toggle.
+- Secrets: redacted by default with reveal-on-click + audit.
+- Schema: tenant-scoped schema declaration, validation status, history.
+- Adapter binding: which adapter (Convex / MongoDB / Firebase / Native)
+  this tenant routes through.
+- Integrations enabled on this tenant.
+
+The Settings (tenant) sub-drawer is a **static menu** of sub-pages
+(`Environment`, `Secrets`, `Schema`, `Integrations`, `Adapter binding`).
+
+## Core Screens — Operator console
+
+### System overview (Operator)
+
+The System screen is the Operator landing page. Server-wide, no tenant
+context.
+
+- Host status: version, build info, uptime, embed integrity hash.
+- Listeners: per-adapter listener state (Convex HTTP/WS, MongoDB wire,
+  Firebase REST/Listen, native WebSocket, machine API).
+- Upgrades: pending release / upgrade state, last upgrade, current
+  channel.
+- Tenants snapshot: count by storage backend, busiest tenants, recent
+  creates / archives.
+- Machines snapshot: state counts, last boot, last upgrade.
+- Recent admin actions: token rotation, tenant create, machine restart.
+
+No sub-drawer.
+
+### Tenants (Operator)
+
+Tenants owns the tenant lifecycle (the Developer console can't create
+tenants — that's an admin concern).
+
+- Tenant list: name, backend, table count, quota, last write, current
+  adapter binding.
+- Create tenant: backend selector, adapter binding, optional schema
+  bootstrap.
+- Archive tenant: confirmation with resource-count warning.
+- Per-tenant adapter binding override.
+- Empty state on fresh install: prominent "Create your first tenant"
+  CTA; matches the inline Developer-side fallback.
+
+The Tenants sub-drawer is a **dynamic list** of tenants. Selecting a
+tenant opens its admin detail page.
+
+### Machines (Operator)
+
+Machines owns host/guest platform lifecycle.
 
 - Machine list: name, provider, architecture, OS image reference, digest,
   state, resource allocation, last boot, last upgrade.
 - Machine detail: boot image, desired image, actual image, guest Nimbus
-  version/hash, forwarded API, logs, services, ports, upgrade/rollback state.
+  version/hash, forwarded API, services placed on it, ports, logs,
+  upgrade/rollback state.
 - Actions: start, stop, restart, SSH, OS apply, OS upgrade, remove.
-- macOS copy must be clear that services run inside the Linux guest and host
-  actions converge machine state. Do not imply per-service nested microVMs on
-  macOS.
+- macOS copy must be clear that services run inside the Linux guest and
+  host actions converge machine state. Do not imply per-service nested
+  microVMs on macOS.
 
-### Settings → Integrations (Adapters)
+The Machines sub-drawer is a **dynamic list** of machines.
 
-Adapter integration pages show how each protocol maps onto Nimbus. They live
-under Settings as capability/posture surfaces, not as top-level navigation:
+### Network (Operator)
+
+Network makes the active local topology inspectable.
+
+- Local server endpoints: REST, Convex HTTP/WS, native WebSocket,
+  Firebase REST/gRPC-Web/Listen, MongoDB wire listener.
+- Route table: method, path, adapter, handler, auth requirement, last
+  request.
+- WebSocket subscriptions: tenant, query, client count, last delivery,
+  error.
+- Published ports: host port, guest port, service, machine, readiness.
+- Machine API forwarding: socket path, SSH state, gvproxy/krunkit state
+  on macOS, guest API version.
+- Security: origin allowlist, session state, token rotation, denied
+  requests.
+
+The Network sub-drawer is a **static menu** (`Routes` / `WS` / `Ports`
+/ `Listeners` / `Security`).
+
+### Services (Operator)
+
+Services owns long-running placement (Compose-declared services, service
+catalog, lifecycle state, endpoints, restart policy). Ships as a
+placeholder surface in this baseline.
+
+- Service list: name, kind, lifecycle state, placement (machine), health,
+  endpoints, restart policy.
+- Service detail: backing image, environment, ports, dependencies,
+  lifecycle history.
+- Actions: start, stop, restart, drain, remove.
+
+A service has both a service identity (here) and a machine placement
+(under Operator → Machines). Cross-link both ways; do not duplicate the
+full detail page on the machine side.
+
+The Services sub-drawer is a **dynamic list** of services.
+
+### Observability (Operator)
+
+The Operator-side cross-tenant feed of the same data store. Defaults to
+all tenants. An optional `?tenant=<id>` filter (set via the top-nav
+selector when this route is active) narrows to one tenant without
+leaving the Operator console.
+
+- Logs: cross-tenant log stream with the same filter set as Developer.
+- Events: cross-tenant ordered domain events.
+- Traces: cross-tenant per-request waterfall.
+- Errors: cross-tenant grouped failures.
+
+The Observability sub-drawer is a **static menu** (`Logs` / `Events` /
+`Traces` / `Errors`). The same `<ObservabilityShell>` component backs
+both Developer and Operator routes; only the query input differs.
+
+### Settings (server)
+
+Server administration. Distinct from the Developer-side **Settings
+(tenant)**.
+
+- General: server name, build info.
+- Endpoints: bind addresses, TLS posture, advertised URLs.
+- Deploys: release channel, current release, rollout history.
+- Token / session: admin token rotation, session policy.
+- Environment: process-level env vars.
+- Integrations: adapter capability matrices (Convex / MongoDB / Firebase
+  / Cloud Functions / Native HTTP/WS).
+- Shutdown: graceful shutdown with running-machine warning.
+
+The Settings (server) sub-drawer is a **static menu** of sub-pages
+(`General`, `Endpoints`, `Deploys`, `Token`, `Environment`,
+`Integrations`, `Shutdown`).
+
+### Operator → Settings (server) → Integrations (Adapters)
+
+Adapter integration pages show how each protocol maps onto Nimbus. They
+live under **Operator → Settings (server) → Integrations** as
+capability/posture surfaces, not as top-level navigation:
 
 | Adapter | Required UI surface |
 | --- | --- |
@@ -224,31 +432,120 @@ where the user is about to depend on the feature.
 
 ## Layout System
 
-Use a two-level app shell:
+The console uses a **three-pane shell** beneath a **top horizontal nav**:
 
-- Left sidebar: primary navigation, tenant/deployment switcher, connection
-  state.
-- Top bar: current resource title, search/command button, global status,
-  theme toggle, session/user control.
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│ TopNav: logo · view switcher (Developer ⇄ Operator) · tenant select  │
+├──────────────┬──────────────┬──────────────────────────────────────────┤
+│              │              │                                          │
+│  Primary     │  Sub-drawer  │  Main content                            │
+│  drawer      │  (optional)  │  (route Outlet)                          │
+│  (active     │  static menu │                                          │
+│   view's     │  or dynamic  │                                          │
+│   sidebar    │  list,       │                                          │
+│   IA)        │  per route)  │                                          │
+│              │              │                                          │
+├──────────────┴──────────────┴──────────────────────────────────────────┤
+│ Status bar: connection · embed integrity · build · time                │
+└───────────────────────────────────────────────────────────────────────┘
+```
 
-Main content patterns:
+### Top nav
 
-- Overview: responsive grid of compact status panels and a full-width activity
-  table.
-- Resource list: table on desktop, dense list on mobile, filters above.
-- Resource detail: header summary, tabs, split panes for logs/JSON.
-- Data browser: table plus right-side document drawer.
-- Logs/runs: timeline table plus correlated detail drawer.
+A single horizontal row at the top of the window:
 
-Responsive behavior:
+- **Left:** logo + dynamic wordmark (`Nimbus / developer console` or
+  `Nimbus / operator console` depending on active view).
+- **Middle:** **view switcher** — a segmented pill control with two
+  options (Developer, Operator), keyboard accessible (←/→ to focus, Enter
+  to activate), `aria-pressed` reflects active view.
+- **Right:** **tenant selector** (visibility table below) and global
+  controls (command palette button, theme toggle, session menu).
 
-- Desktop: sidebar fixed, content max width only for forms and settings.
-- Tablet: sidebar collapses to icon rail; detail drawers become sheets.
-- Mobile: bottom navigation may replace sidebar; tables become row cards with
-  explicit labels.
+The view switcher is the source of truth for view, alongside the URL
+prefix (`/app/*` → Developer, `/admin/*` → Operator). Clicking the
+inactive segment navigates to the last-visited route in that view (or
+the view's default landing) and persists `nimbus-ui:last-view`.
 
-Do not put page sections inside decorative cards. Cards are for repeated
-items, small metrics, modals, and genuinely framed tools.
+### Tenant selector behavior
+
+| View | Selector visible? | Default | Notes |
+| --- | --- | --- | --- |
+| Developer | always | last-active tenant (or first tenant alphabetically on fresh install) | when zero tenants exist, the trigger is replaced by a compact "Create tenant" CTA that deep-links to `/admin/tenants?new=1` |
+| Operator | hidden by default | n/a | rendered only on `/admin/observability` where it acts as an optional cross-tenant filter (default "All tenants"); selection encoded as `?tenant=<id>` |
+
+The selector is rendered by the same component in both views; visibility
+and the active-vs-filter mode are driven by view + active route.
+
+### Primary drawer
+
+The left-most column. Renders the active view's sidebar IA (7 items per
+view; see Information Architecture above). Toggles between two widths:
+
+- **Expanded** (`w-56` default): icon + label + count.
+- **Collapsed** (`w-12`): icon only; label appears in a native `title`
+  tooltip.
+
+State persists to `nimbus-ui:primary-drawer-collapsed`. The toggle lives
+at the bottom of the drawer (Convex pattern), is keyboard activatable
+(Enter / Space), and never moves focus on toggle.
+
+### Sub-drawer
+
+A second column between the primary drawer and the main content. Rendered
+when the active route opts into a sub-drawer; absent otherwise (the
+content area reflows naturally). Fixed width `w-64` in this baseline.
+
+Two contributor modes:
+
+- **Static menu** — a fixed list of sub-pages with an active state.
+  Used by Settings (both views), Network, Schedules, Observability.
+  Pattern reference: Convex `SettingsSidebar`.
+- **Dynamic list** — a resource list fed by a query, with optional
+  search input. Used by Storage tables, Compute functions, Tenants,
+  Machines, Services, Files. Pattern reference: Convex `DataSidebar`.
+
+Routes declare their sub-drawer via a route-level `subDrawer` option
+that resolves at the layout level. Routes without a sub-drawer reserve
+no space.
+
+### Main content patterns
+
+- **Overview** (both views): responsive grid of compact status panels +
+  a full-width activity table.
+- **Resource list**: table on desktop, dense list on mobile, filters
+  above.
+- **Resource detail**: header summary, tabs, split panes for logs/JSON.
+- **Data browser** (Storage): table plus right-side document drawer.
+- **Logs / runs** (Observability): timeline table plus correlated
+  detail drawer.
+
+### Status bar
+
+Persistent at the bottom across both views. Shows connection state,
+embed integrity, build version, current time. Shared component.
+
+### Responsive behavior
+
+- **Desktop:** all three columns visible; primary drawer toggles
+  collapse, sub-drawer toggles closed.
+- **Tablet:** primary drawer collapses to icon rail by default;
+  sub-drawer becomes an overlay sheet anchored to the right of the
+  collapsed primary drawer.
+- **Mobile:** primary drawer + sub-drawer collapse into a single
+  hamburger sheet; bottom navigation surfaces the active view's
+  sections; the view switcher moves into the session menu.
+
+### Do-not list
+
+- Do not put page sections inside decorative cards. Cards are for
+  repeated items, small metrics, modals, and genuinely framed tools.
+- Do not duplicate primary navigation in the sub-drawer. The sub-drawer
+  is per-section; cross-section navigation always uses the primary
+  drawer or the command palette.
+- Do not mirror Settings between the two views. The split (tenant vs
+  server) is deliberate and exclusive.
 
 ## Visual Language
 

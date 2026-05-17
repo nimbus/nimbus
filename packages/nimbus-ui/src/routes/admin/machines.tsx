@@ -3,15 +3,15 @@ import { useQuery } from "nimbus/react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { api } from "../../convex/_generated/api";
-import { ConfirmDialog } from "../components/confirm-dialog";
-import { CopyChip } from "../components/copy-chip";
-import { StateChip } from "../components/state-chip";
-import { RelativeTime } from "../components/time";
-import { cn } from "../lib/cn";
-import { shortId } from "../lib/format";
+import { api } from "../../../convex/_generated/api";
+import { ConfirmDialog } from "../../components/confirm-dialog";
+import { CopyChip } from "../../components/copy-chip";
+import { StateChip } from "../../components/state-chip";
+import { RelativeTime } from "../../components/time";
+import { cn } from "../../lib/cn";
+import { shortId } from "../../lib/format";
 
-export const Route = createFileRoute("/machines")({
+export const Route = createFileRoute("/admin/machines")({
   component: MachinesPage,
 });
 
@@ -217,9 +217,7 @@ function MachinesPage() {
         }
         confirmLabel="Delete"
         danger
-        busy={
-          confirmDelete ? pending[confirmDelete._id] === "delete" : false
-        }
+        busy={confirmDelete ? pending[confirmDelete._id] === "delete" : false}
         onCancel={() => setConfirmDelete(null)}
         onConfirm={() => {
           if (!confirmDelete) return;

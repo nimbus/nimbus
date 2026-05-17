@@ -1,25 +1,33 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { cn } from "../lib/cn";
-import { NAV_ENTRIES, type NavEntry } from "./nav-entries";
+import {
+  type NavEntry,
+  navEntriesForView,
+  viewFromPathname,
+} from "./nav-entries";
 
 export function Sidebar() {
+  const routerState = useRouterState();
+  const view = viewFromPathname(routerState.location.pathname);
+  const entries = navEntriesForView(view);
   return (
     <nav
       aria-label="Primary"
       className="flex h-full w-56 shrink-0 flex-col gap-1 border-r border-app bg-surface px-2 py-3"
+      data-view={view}
     >
       <div className="flex items-center gap-2 px-2 pb-3 text-default">
         <LogoMark className="h-6 w-[38px] shrink-0" />
         <div className="flex flex-col leading-tight">
           <span className="text-sm font-medium">Nimbus</span>
           <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted">
-            operator console
+            {view === "operator" ? "operator console" : "developer console"}
           </span>
         </div>
       </div>
       <ul className="flex flex-col gap-px">
-        {NAV_ENTRIES.map((entry) => (
+        {entries.map((entry) => (
           <SidebarEntry key={entry.id} entry={entry} />
         ))}
       </ul>
@@ -50,10 +58,11 @@ function LogoMark({ className }: { className?: string }) {
 
 function SidebarEntry({ entry }: { entry: NavEntry }) {
   const routerState = useRouterState();
+  const pathname = routerState.location.pathname;
   const active =
-    entry.to === "/"
-      ? routerState.location.pathname === "/"
-      : routerState.location.pathname.startsWith(entry.to);
+    entry.to === "/app" || entry.to === "/admin"
+      ? pathname === entry.to || pathname === `${entry.to}/`
+      : pathname.startsWith(entry.to);
   const Icon = entry.icon;
   return (
     <li>
