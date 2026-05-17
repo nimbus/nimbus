@@ -1,0 +1,106 @@
+=== I4 macOS — nimbus machine boot proof ===
+date: 2026-05-17T08:20:24Z
+host: macOS 15.7.2 / arm64 / krunkit 1.1.1 / nimbus 0.1.31
+command: nimbus machine start (auto-creates if needed)
+--- begin output ---
+Error: Conflict("machine 'default' is already running and this provider requires one active machine at a time")
+--- post-boot status ---
+NAME              LIFECYCLE     MANAGER          PROVIDER  CPUS MEMORY(MiB) DISK(GiB) API
+default           running       ready            krunkit      2        2048        20 reachable
+--- machine list ---
+NAME              LIFECYCLE     PROVIDER  CPUS MEMORY(MiB) DISK(GiB)
+default*          running       krunkit      2        2048        20
+--- machine inspect ---
+{
+  "config": {
+    "version": 3,
+    "name": "default",
+    "provider": "krunkit",
+    "guest": {
+      "image_source": {
+        "kind": "oci-reference",
+        "reference": "docker://ghcr.io/nimbus/machine-os:v0.1.30@sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d"
+      },
+      "provisioning": "bootc-machine-config",
+      "ssh_user": "nimbus",
+      "ssh_identity_path": "/Users/jack/.local/share/nimbus/machine/default/machine",
+      "ignition_file_path": null,
+      "efi_variable_store_path": null
+    },
+    "resources": {
+      "cpus": 2,
+      "memory_mib": 2048,
+      "disk_gib": 20
+    },
+    "volumes": [
+      {
+        "source": "/Users",
+        "target": "/Users"
+      },
+      {
+        "source": "/private",
+        "target": "/private"
+      },
+      {
+        "source": "/var/folders",
+        "target": "/var/folders"
+      }
+    ],
+    "roots": {
+      "config_root": "/Users/jack/.config/nimbus/machine",
+      "state_root": "/Users/jack/.local/state/nimbus/machine",
+      "data_root": "/Users/jack/.local/share/nimbus/machine",
+      "cache_root": "/Users/jack/.cache/nimbus/machine",
+      "runtime_root": "/tmp/nimbus"
+    }
+  },
+  "state": {
+    "version": 1,
+    "lifecycle": "running",
+    "manager": "ready",
+    "runtime": {
+      "helper_binaries": {
+        "krunkit": "/opt/homebrew/bin/krunkit",
+        "gvproxy": "/opt/homebrew/opt/podman/libexec/podman/gvproxy"
+      },
+      "image_path": "/Users/jack/.local/share/nimbus/machine/default/images/default.raw",
+      "efi_variable_store_path": "/Users/jack/.local/share/nimbus/machine/default/efi-variable-store",
+      "machine_image_source": "docker://ghcr.io/nimbus/machine-os:v0.1.30@sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d",
+      "ssh_port": 10000,
+      "rest_uri": "unix:///tmp/nimbus/default-krunkit.sock",
+      "ready_vsock_port": 1025
+    },
+    "last_error": null
+--- machine info ---
+version: 0.1.31
+host:
+  arch: aarch64
+  os: macos
+  current_release: v0.1.31
+  default_machine_name: default
+  machine_count: 1
+  running_machine_count: 1
+  image_cache_dir: /Users/jack/.cache/nimbus/machine/images
+  guest_binary_cache_dir: /Users/jack/.cache/nimbus/machine/guest-nimbus
+  roots:
+    config_root: /Users/jack/.config/nimbus/machine
+    state_root: /Users/jack/.local/state/nimbus/machine
+    data_root: /Users/jack/.local/share/nimbus/machine
+    cache_root: /Users/jack/.cache/nimbus/machine
+    runtime_root: /tmp/nimbus
+  default_machine:
+    initialized: true
+    lifecycle: running
+    manager: ready
+    provider: krunkit
+    api_reachable: true
+--- gvproxy alongside (process check) ---
+61412
+61413
+62257
+--- krunkit running ---
+61413
+62257
+65145
+--- date ---
+2026-05-17T08:20:41Z

@@ -1,0 +1,34 @@
+=== I4 Apple Silicon macOS — pre-state + dry-run ===
+host: macOS 15.7.2 (24G325)
+arch: arm64 / kernel 24.6.0
+brew: Homebrew 5.1.11-140-gfb60c87
+date: 2026-05-17T08:19:18Z
+
+--- pre-state: which/version probes ---
+nimbus: NOT INSTALLED
+krunkit: /opt/homebrew/bin/krunkit → krunkit 1.1.1
+gvproxy: NOT INSTALLED
+
+--- pre-state: brew taps/casks ---
+nimbus/tap
+slp/krunkit
+(no nimbus/krunkit casks)
+krunkit
+
+--- dry-run via hosted URL ---
+
+=== Nimbus Install Plan ===
+
+Platform:      darwin (arm64)
+macOS version: 15.7.2
+
+Versions:
+  nimbus:      current Homebrew cask
+
+Install paths:
+  nimbus:      $(brew --prefix)/bin/nimbus (via Homebrew cask)
+  gvproxy:     $(brew --prefix)/Caskroom/nimbus/<version>/libexec/gvproxy
+  krunkit:     $(brew --prefix)/bin/krunkit (via Homebrew formula dependency)
+
+[dry-run] No changes made
+dry-run exit: 0

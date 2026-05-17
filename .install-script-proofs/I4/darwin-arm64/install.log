@@ -1,0 +1,79 @@
+=== I4 Apple Silicon macOS install proof (real) ===
+date: 2026-05-17T08:19:45Z
+command: curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh
+--- begin output ---
+
+=== Nimbus Install Plan ===
+
+Platform:      darwin (arm64)
+macOS version: 15.7.2
+
+Versions:
+  nimbus:      current Homebrew cask
+
+Install paths:
+  nimbus:      $(brew --prefix)/bin/nimbus (via Homebrew cask)
+  gvproxy:     $(brew --prefix)/Caskroom/nimbus/<version>/libexec/gvproxy
+  krunkit:     $(brew --prefix)/bin/krunkit (via Homebrew formula dependency)
+
+[info] Tapping nimbus/tap...
+[info] Installing nimbus cask...
+==> Fetching downloads for: nimbus/tap/nimbus
+✔︎ Cask nimbus (0.1.31)
+==> Caveats
+Documentation: https://github.com/nimbus/nimbus
+
+All dependencies satisfied.
+==> Installing Cask nimbus
+==> Linking Binary 'nimbus' to '/opt/homebrew/bin/nimbus'
+🍺  nimbus was successfully installed!
+[info] Running inline installation verification...
+nimbus                 present path=/opt/homebrew/bin/nimbus
+krunkit                present path=/opt/homebrew/bin/krunkit
+gvproxy                present path=/opt/homebrew/Caskroom/nimbus/0.1.31/libexec/gvproxy
+
+result                 supported (0 failures)
+[info] Inline verification passed
+
+=== Getting Started ===
+
+Nimbus is installed! To initialize and start the machine VM:
+
+  nimbus machine init
+  nimbus serve
+
+For more information:
+  nimbus --help
+  https://github.com/nimbus/nimbus#readme
+
+install exit: 0
+
+--- verify ---
+[verify] nimbus binary:
+/opt/homebrew/bin/nimbus
+nimbus 0.1.31
+[verify] krunkit:
+/opt/homebrew/bin/krunkit
+krunkit 1.1.1
+[verify] gvproxy in caskroom:
+-rwxr-xr-x@ 1 jack  admin  24876130 May 14 19:02 /opt/homebrew/Caskroom/nimbus/0.1.31/libexec/gvproxy
+[verify] cask installed list:
+nimbus
+[verify] cask info:
+==> nimbus (nimbus): 0.1.31
+Self-hosted JavaScript backend runtime powered by V8
+https://github.com/nimbus/nimbus
+Installed (on request)
+/opt/homebrew/Caskroom/nimbus/0.1.31 (139.3MB)
+  Installed on 2026-05-17 at 03:19:57
+From: https://github.com/nimbus/homebrew-tap/blob/HEAD/Casks/nimbus.rb
+==> Dependencies
+Required (1): slp/krunkit/krunkit
+Recursive Runtime (6): all installed ✔
+==> Requirements
+Required: arm64 architecture, macOS >= 14 (or Linux)
+==> Artifacts
+nimbus (Binary)
+==> Caveats
+Documentation: https://github.com/nimbus/nimbus
+
