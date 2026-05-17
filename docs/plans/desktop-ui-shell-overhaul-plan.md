@@ -1,25 +1,34 @@
 # Plan: Desktop UI Shell Overhaul
 
-Canonical active execution plan for upgrading the Nimbus operator console
-chrome from a fixed-width sidebar shell into a three-pane drawer system
-**with a revised top-level information architecture** that recognizes
-distinct mental models for short-lived compute, long-running services,
-scheduled work, schema-aware storage, and opaque blob storage.
+Canonical active execution plan for upgrading the Nimbus console chrome
+from a fixed-width sidebar shell into a **two-view, three-pane drawer
+system** that separates **Developer console** (tenant-scoped: an app
+owner shipping code on Nimbus) from **Operator console** (server-wide: a
+host/admin running Nimbus for others), with a contextual sub-drawer
+inside each view.
 
 This plan owns the work to land:
 
-1. A **revised top-level IA** that promotes **Services**, **Schedules**,
-   and **Files** out of their current homes into top-level peers, and
-   reshapes `NAV_ENTRIES` and `DESIGN.md` accordingly.
-2. A **collapsible left drawer** (full width ↔ icon-only) with a toggle
-   that persists across reloads.
-3. A **contextual sub-drawer** to the right of the left drawer with two
-   modes: **static menu** (Settings sub-pages, Convex `SettingsSidebar`
-   pattern) and **dynamic list** (Tables, Files, Functions, Schedules,
-   Services, Machines — Convex `DataSidebar` pattern).
-4. A **top horizontal nav** that owns the logo and a **tenant selector**
-   with explicit `scoped`/`disabled` state on tenant-irrelevant sections
-   (Machines, server-wide Settings, Network listener status).
+1. A **two-persona top-level IA** built on a **view switcher** in the top
+   nav. Each view owns its own ~7-item sidebar:
+   - **Developer console** (`/app/...`): Overview · Compute · Schedules ·
+     Storage · Files · Observability · Settings (tenant). Always
+     tenant-scoped.
+   - **Operator console** (`/admin/...`): System · Tenants · Machines ·
+     Network · Services · Observability (cross-tenant) · Settings
+     (server). Server-wide; tenant selector hidden by default, used as
+     an optional filter on Observability.
+2. A **collapsible primary drawer** (full width ↔ icon-only) with a
+   toggle that persists across reloads. Drawer content reflects the
+   active view's IA.
+3. A **contextual sub-drawer** to the right of the primary drawer with
+   two modes: **static menu** (Settings, Network sub-pages — Convex
+   `SettingsSidebar` pattern) and **dynamic list** (Tables, Files,
+   Functions, Schedules, Services, Machines — Convex `DataSidebar`
+   pattern).
+4. A **top horizontal nav** that owns the logo, the **view switcher**
+   (Developer ⇄ Operator), and the **tenant selector** (active in
+   Developer view; hidden or optional in Operator view).
 
 Phase 1 of the operator console (DU1–DU11) shipped under
 `docs/plans/archive/desktop-ui-plan.md`. This plan extends that shell with
@@ -41,12 +50,18 @@ audience):
 
 | Product | Pattern Nimbus borrows | Anchor file |
 | --- | --- | --- |
-| **Convex Dashboard** | Top-level peers: Health / Data / Functions / Files / Schedules / Logs + History/Settings. Sub-drawer for Tables (`DataSidebar`), Functions (`DirectorySidebar`), Settings (`SettingsSidebar`). Tenant-equivalent (`NentSwitcher`) in the **top header**, not sidebar. | `npm-packages/dashboard-common/src/layouts/DeploymentDashboardLayout.tsx:57-99`, `.../SettingsSidebar.tsx:10-19`, `.../features/data/components/DataSidebar.tsx`, `.../elements/Sidebar.tsx` |
-| **Podman Desktop** | Containers/Pods/Images/Volumes/Networks/Extensions are root peers; Kubernetes nests an 11-item submenu including Services/Deployments/Jobs/CronJobs. Confirms long-running orchestration deserves its own root scope when present. | `packages/renderer/src/stores/navigation/navigation-registry.ts:65-75` |
-| **Render** | Service *type* (Web Service / Background Worker / Cron Job / Static Site) is the primary nav unit; persistent storage attaches to a service rather than living globally. Confirms Services is a top-level mental model. | Render docs `service-types/` |
-| **Vercel** (Feb 2026 redesign) | Vertical sidebar: Deployments / Functions / Storage / Observability / Logs / Settings / Firewall. Storage is top-level because Blob/KV/Postgres are conceptually separate from "the app". | Vercel changelog "dashboard-navigation-redesign-rollout" |
-| **Firebase Console** | Authentication / Firestore / Storage / Functions as sibling sidebar items. Project selector in top bar adjacent to logo. | Firebase web console |
-| **Docker Desktop** | Containers / Images / Volumes / Builds / Dev Environments / Extensions / Kubernetes as siblings. Volumes top-level peer of containers — analogous to Files being a peer of Storage in Nimbus. | Docker Desktop UI |
+| **Convex Dashboard** | Two-scope shell: **team scope** (project list / billing / members) vs **project scope** (Health / Data / Functions / Files / Schedules / Logs + History/Settings). Switch is URL-prefixed (`/t/<team>` vs `/t/<team>/<project>`). Project picker (`NentSwitcher`) in the **top header**, not sidebar. Inside a project: sub-drawer for Tables (`DataSidebar`), Functions (`DirectorySidebar`), Settings (`SettingsSidebar`). | `npm-packages/dashboard-common/src/layouts/DeploymentDashboardLayout.tsx:57-99`, `.../SettingsSidebar.tsx:10-19`, `.../features/data/components/DataSidebar.tsx`, `.../elements/Sidebar.tsx` |
+| **Firebase Console** | Project picker in top bar adjacent to logo scopes the whole developer view. Authentication / Firestore / Storage / Functions are sibling sidebar items. Project Settings + IAM are gear-icon attachments in the same shell (no separate console mode — role-based gating). | Firebase web console |
+| **Vercel** (Feb 2026 redesign) | Team → Project URL nesting. Inside a project: Deployments / Functions / Storage / Observability / Logs / Settings / Firewall. Account/team-level (billing, members) lives under avatar dropdown. | Vercel changelog "dashboard-navigation-redesign-rollout" |
+| **Render** | Service-centric nav (each service its own card). Account-level (Settings, Billing, Team) under avatar dropdown. Service *type* (Web Service / Background Worker / Cron Job / Static Site) is the primary unit. | Render docs `service-types/` |
+| **Podman Desktop** | Single shell. Containers/Pods/Images/Volumes/Networks/Extensions as root peers; Kubernetes nests an 11-item submenu including Services/Deployments/Jobs/CronJobs. Confirms long-running orchestration deserves its own root scope when present. | `packages/renderer/src/stores/navigation/navigation-registry.ts:65-75` |
+| **Docker Desktop** | Single shell. Containers / Images / Volumes / Builds / Dev Environments / Extensions / Kubernetes as siblings. Volumes top-level peer of containers — analogous to Files being a peer of Storage in Nimbus. | Docker Desktop UI |
+
+Nimbus borrows the **Convex / Firebase / Vercel two-scope pattern**, not
+the Docker/Podman single-shell pattern, because Nimbus serves both an
+infrastructure operator (host) and many app developers (tenants) — those
+personas ask categorically different questions and benefit from separate
+IAs rather than one tree with per-section scope toggles.
 
 ---
 
@@ -111,109 +126,171 @@ memory (`feedback_desktop_plans_autonomous_mode.md`):
    `DESIGN.md` edit in the same checkpoint that updates `NAV_ENTRIES` —
    never let the doc and the code disagree.
 
-## Information Architecture (Revised)
+## Information Architecture (Revised — two views)
 
-### First-principles review
+### First-principles persona review
 
-The current `DESIGN.md` IA (lines 82–96) bundles into Compute everything
-that "runs server-side", but this conflates four genuinely distinct
-operator mental models:
+Nimbus's UI serves two genuinely distinct personas with overlapping but
+non-fungible questions:
 
-| Mental model | Operator question | Lifecycle | Examples |
+| Persona | Identity | Asks | Cares about |
 | --- | --- | --- | --- |
-| Request-scoped execution | "did my call succeed?" | ephemeral (<= seconds) | Convex query/mutation/action, HTTP handler, Cloud Function invocation |
-| Long-running placement | "is my service up and reachable?" | persistent (days/weeks) | Compose-declared service, machine-resident process, Postgres replica |
-| Scheduled work | "did the job fire on time?" | periodic / future-dated | Cron jobs, `scheduler.runAfter` mutations, retry queues |
-| Schema-aware data | "what shape does this table have? where's the index?" | persistent | Convex tables, MongoDB collections, Firestore docs |
-| Opaque bytes | "where is this file? what's its content-hash?" | persistent, content-addressed | S3-compatible blob, attachments, exported snapshots |
-| Reachability | "what's listening? what's denied?" | persistent | HTTP/WS listeners, ports, gvproxy state |
-| Host / guest lifecycle | "is the VM healthy? what image?" | persistent | macOS machines, microVMs, boot images |
+| **Operator** | DevOps / admin / host running Nimbus for others (or themselves) | "Is the server healthy? Which tenants exist? Are machines up? Are listeners reachable? Is the version current?" | server-wide state, infrastructure, multi-tenant administration |
+| **Developer** | App owner shipping code against a tenant | "Did my function succeed? What's in this table? Did my cron fire? Where's the log for this request? Run this mutation now." | one tenant's data, code, schedules, files, traces |
 
-A control plane that fuses these into one bucket forces operators to
-mentally re-classify a resource each time they navigate. The remedy is
-**one top-level per mental model**, which is what Convex, Vercel,
-Firebase, and Render converge on independently.
+The current `DESIGN.md` IA (lines 82–96) bundles these into a single
+tree and tries to encode "this section is server-wide, that section is
+per-tenant" as a per-section scope flag. That breaks down because:
 
-### Revised top-level IA
+1. **Mental gear-change cost**: A developer poking at their tenant
+   shouldn't keep tripping over Machines/Network sections that don't
+   apply. An operator looking at machine health shouldn't have to dodge
+   tenant-scoped Tables/Functions sections that aren't their concern.
+2. **Tenant selector ambiguity**: A single selector that's sometimes
+   active and sometimes disabled (the prior plan's `scoped`/`system`/`unset`
+   state machine) is harder to learn than "tenant selector is always
+   active *in Developer view*, hidden *in Operator view*."
+3. **URL semantics**: Putting `/observability` in the same URL space
+   for both "logs for my tenant" and "logs across the whole server"
+   forces a non-obvious query param to disambiguate, and breaks deep
+   linking from the system tenant lens.
 
-The eight top-level sections (sidebar order, top to bottom):
+Convex, Firebase, and Vercel all resolve this with a **two-scope shell**
+that switches by URL prefix. Nimbus adopts that pattern explicitly.
 
-1. **Overview** — health cards, recent runs, recent events, machine/service summary. Dashboard, no sub-drawer.
-2. **Compute** — request-scoped execution only.
-   - Functions (list, runner, schema-aware args, kind: query/mutation/action/HTTP)
-   - Runs (status, request ID, duration, errors, trace correlation)
-   - Sub-drawer mode: **dynamic list** of functions (by path or by kind), navigates to function detail.
-3. **Schedules** — periodic / future-dated work (**promoted from Compute**).
-   - Scheduled jobs (next run, last run, status, cancel/retry)
-   - Cron jobs (expression, history)
-   - Sub-drawer mode: **static menu** with two tabs (`Scheduled`, `Cron`), or **dynamic list** of jobs.
-4. **Services** — long-running placement (**promoted from Compute**).
-   - Service catalog (Compose-declared services, lifecycle state, health, endpoints)
-   - Service detail (logs, machine placement, restart policy, environment)
-   - Sub-drawer mode: **dynamic list** of services, navigates to service detail.
-5. **Storage** — schema-aware data.
-   - Tables / collections (with per-table row count, last write)
-   - Document browser (cursor pagination, filters, schema-aware editor)
-   - Schema, Indexes, Query builder
-   - Sub-drawer mode: **dynamic list** of tables for the active tenant.
-6. **Files** — opaque blob / S3-compatible storage (**new top-level**, deferred content; placeholder route in this plan).
-   - Buckets / namespaces (when implemented)
-   - File browser (grid, search, preview, presigned URLs)
-   - Sub-drawer mode: **dynamic list** of buckets.
-7. **Network** — reachability.
-   - HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status per adapter, security (origin allowlist, denied requests).
-   - Sub-drawer mode: **static menu** of sub-sections (Routes / WS / Ports / Listeners / Security).
-8. **Machines** — host / guest lifecycle.
-   - Machine list, detail (boot image, upgrade state, logs, services), actions (start/stop/restart/SSH/OS apply/remove).
-   - Sub-drawer mode: **dynamic list** of machines.
-9. **Observability** — debugging and audit.
-   - Logs (filters, request ID join), events (unified feed), traces, scheduler lag, error groups.
-   - Sub-drawer mode: **static menu** (Logs / Events / Traces / Errors) with route-driven filters in the URL.
+### View 1: Developer console (`/app/...`)
 
-Sidebar footer (visually grouped, separated by hairline divider, like
-Convex's `explore` + `configure` groups):
+Sidebar IA, always tenant-scoped (active tenant in top-nav selector):
 
-10. **Settings** — server admin and integrations.
-    - General, Endpoints, Deploys, Token/session, Environment, Integrations (adapter capability matrices: Convex / MongoDB / Firebase / Cloud Functions / Native), Shutdown.
-    - Sub-drawer mode: **static menu** (Convex `SettingsSidebar` pattern).
+1. **Overview** — your app's health: recent runs, error rate, last
+   deploy, schedule status, latest events. Dashboard. No sub-drawer.
+2. **Compute** — request-scoped execution: Functions list, function
+   detail (schema-aware args), Function runner, Runs history.
+   Sub-drawer: **dynamic list** of functions (by path / kind).
+3. **Schedules** — periodic / future-dated work: scheduled jobs (next /
+   last run, cancel / retry), cron jobs (expression, history).
+   Sub-drawer: **static menu** (`Scheduled` / `Cron`).
+4. **Storage** — schema-aware data: tables / collections, document
+   browser (cursor pagination, filters, schema-aware editor), Schema
+   panel, Indexes panel, Query builder.
+   Sub-drawer: **dynamic list** of tables for the active tenant.
+5. **Files** — opaque bytes / S3-compatible blob storage (placeholder
+   content in this plan; surface wiring is real). Buckets / namespaces,
+   object browser, presigned URLs.
+   Sub-drawer: **dynamic list** of buckets.
+6. **Observability** — debugging and audit *for this tenant*: logs
+   (filters, request ID join), events feed, traces, error groups.
+   Sub-drawer: **static menu** (`Logs` / `Events` / `Traces` / `Errors`).
+7. **Settings (tenant)** — tenant-owned configuration: environment
+   variables, secrets, schema, adapter binding for this tenant,
+   integrations enabled on this tenant.
+   Sub-drawer: **static menu** (Convex `SettingsSidebar` pattern).
 
-That is **9 explore + 1 configure = 10 sidebar items**. This exceeds the
-generic "5–7 max" sidebar heuristic, but operator consoles legitimately
-run hotter (Podman has 6 root + 11 Kubernetes nested; Convex has 6
-explore + 2 configure = 8; Docker Desktop has 7+). Operators tolerate
-denser IA when each item maps to a stable mental model. Mitigation: the
-sidebar collapses to icon-only mode (Phase O2), and `⌘K` palette
-remains the primary navigation accelerator (already shipped).
+7 items. Within the 5–7 sidebar heuristic. Every section is
+tenant-scoped — the tenant selector is always visible, always active in
+this view.
 
-### Tenant scope semantics
+### View 2: Operator console (`/admin/...`)
 
-The tenant selector lives in the **top horizontal nav**, adjacent to the
-logo, persistent across every section. Each section declares its tenant
-scope as one of three states:
+Sidebar IA, server-wide (tenant selector hidden by default; appears as
+an optional filter on Observability only):
 
-| Scope state | Selector visual | Sections | Behavior |
+1. **System** — host status: version, uptime, listeners, build info,
+   pending upgrades, embed integrity, log of admin actions. Dashboard.
+   No sub-drawer.
+2. **Tenants** — tenant lifecycle: list (with backend, quota, table
+   count, last write), create, archive, per-tenant adapter binding.
+   Sub-drawer: **dynamic list** of tenants.
+3. **Machines** — host / guest lifecycle: machine list, detail (boot
+   image, upgrade state, services placed on it), actions
+   (start / stop / restart / SSH / OS apply / remove).
+   Sub-drawer: **dynamic list** of machines.
+4. **Network** — reachability: HTTP routes, WebSocket subscriptions,
+   published ports, machine API forwarding, listener status per
+   adapter, security (origin allowlist, denied requests).
+   Sub-drawer: **static menu** (`Routes` / `WS` / `Ports` / `Listeners`
+   / `Security`).
+5. **Services** — long-running placement (Compose-declared services,
+   service catalog, lifecycle state, endpoints, restart policy).
+   Sub-drawer: **dynamic list** of services.
+6. **Observability** — cross-tenant logs, events, traces (no tenant
+   filter applied by default; optional tenant filter via the top-nav
+   selector when this section is active).
+   Sub-drawer: **static menu** (`Logs` / `Events` / `Traces` / `Errors`).
+7. **Settings (server)** — server administration: general, endpoints,
+   deploys, token / session, environment, integrations (adapter
+   capability matrices: Convex / MongoDB / Firebase / Cloud Functions /
+   Native), shutdown.
+   Sub-drawer: **static menu** (Convex `SettingsSidebar` pattern).
+
+7 items. Within the 5–7 sidebar heuristic. Server-wide by default.
+
+### View switcher
+
+Lives in the **top horizontal nav**, immediately to the right of the
+logo. Visual pattern: pill-shaped segmented control (Developer ⇄
+Operator). URL changes when toggled.
+
+| Action | URL behavior | Selector behavior |
+| --- | --- | --- |
+| Click "Operator" while on `/app/storage/demo/users` | navigate to `/admin/system` (default Operator landing); preserve last-visited Operator route in localStorage so a second toggle restores it | tenant selector animates out (visibility transition); previous tenant remembered in localStorage |
+| Click "Developer" while on `/admin/machines/m-1` | navigate to last-visited Developer route, or `/app` if none | tenant selector animates in; restores `activeTenant` from localStorage; if zero tenants exist, shows "Create tenant" CTA in main area |
+
+URL prefix is the source of truth. localStorage (`nimbus-ui:last-view`,
+`nimbus-ui:last-app-route`, `nimbus-ui:last-admin-route`) restores intent
+on cold load. Direct deep links (`/app/storage/...`, `/admin/system/...`)
+bypass the localStorage restore.
+
+### Tenant selector behavior across views
+
+| View | Selector visible? | Default | Disabled cases |
 | --- | --- | --- | --- |
-| `scoped` | active, clickable | Compute, Schedules, Storage, Files, Observability | Selecting a tenant filters list data and re-fetches. URL reflects active tenant. |
-| `system` | shows `_nimbus`, dimmed | Network (listener status), Machines, Services (placement is server-wide), Settings | Selector is visible but disabled with tooltip "Server-wide view"; clicking opens an inert menu showing only `_nimbus`. |
-| `unset` | shows "Select tenant", warning tone | Compute / Schedules / Storage / Files / Observability when zero tenants exist | Inline empty-state in the content area with "Create tenant" CTA. |
+| Developer | always | last-active tenant (or first tenant alphabetically on fresh install) | when zero tenants exist: replaced by inline "Create tenant" CTA in the content area; selector shows "No tenants" |
+| Operator | hidden by default | n/a | shown only on the **Operator → Observability** route, where it acts as an optional cross-tenant filter (default = "All tenants") |
 
-The selector renders the same component across all three states — only
-the disabled flag and label differ. This makes the affordance
-discoverable even on screens where it does not apply (per research
-finding D5: do not hide; disable with tooltip).
+The selector is rendered by the same component in both views; visibility
+and disabled state are controlled by the view + active route.
 
-### Renames in this revision
+### Shared affordances (both views)
 
-- `Compute` no longer includes scheduled jobs, cron jobs, services, or
-  service catalog. These become top-level. `Compute` keeps Functions
-  and Runs.
-- `Storage` no longer includes blob/file storage (it never did
-  technically, but the term "Storage" colloquially covers both — this
-  plan disambiguates: schema-aware data is `Storage`, opaque bytes
-  is `Files`).
-- `Service catalog` (referenced in `DESIGN.md` line 86) moves to
-  `Services` section.
-- `Function runner` stays inside `Compute → Functions` detail page.
+- **Logo** (links to `/app` if last view was Developer, else `/admin`)
+- **View switcher** (segmented Developer ⇄ Operator)
+- **Tenant selector** (visible per the table above)
+- **Command palette ⌘K**: navigates within the active view; reserved
+  cross-view command `view operator` / `view developer` triggers the
+  switch.
+- **System tenant lens ⌘\\**: stays as-is — Developer-side cmd-overlay
+  for raw `_nimbus` JSON inspection. Not a console mode.
+- **Status bar** at the bottom (already shipped) is shared.
+
+### Why this isn't permissioned (yet)
+
+Both views are reachable to any authenticated session in this plan.
+Eventually, the Operator console should require admin role and the
+Developer console should respect per-tenant RBAC. URL split (`/app` vs
+`/admin`) makes a future role gate a single router-level guard. Out of
+scope for this plan; called out in Risks.
+
+### Renames vs. prior single-view IA
+
+- The old top-level `Machines` was server-wide → stays as Operator-only.
+- The old top-level `Network` was server-wide → stays as Operator-only.
+- The old top-level `Services` (promoted in the prior plan revision) →
+  Operator-only.
+- The old top-level `Schedules` (promoted in the prior plan revision) →
+  Developer-only.
+- The old top-level `Files` (promoted in the prior plan revision) →
+  Developer-only.
+- `Compute` keeps Functions + Runs but moves to Developer-only.
+- `Storage` stays Developer-only.
+- `Observability` exists in both views with **different default scope**:
+  Developer = filtered to active tenant; Operator = cross-tenant feed.
+- `Settings` splits into **Settings (tenant)** (Developer) and
+  **Settings (server)** (Operator). The old monolithic Settings is
+  replaced.
+- The current archived plan's "tenant scope" three-state machine
+  (`scoped`/`system`/`unset`) is **superseded**: within each view, scope
+  is uniform. The state machine is removed.
 
 ### Routes (new + renamed)
 
@@ -227,53 +304,79 @@ machines.tsx         observability.tsx
 observability_.runs_.$runId.tsx           settings.tsx
 ```
 
-Target routes after Phase O1:
+Target routes after Phase O1. TanStack's file-based router maps the
+nested `app/`, `admin/` directories under `routes/` to URL prefixes
+`/app/*` and `/admin/*` automatically; route options export per-route
+sub-drawer specs (Phase O3 contract).
 
 ```
-__root.tsx                                    -- shell composition
-index.tsx                                     -- Overview
-compute.tsx                                   -- Compute landing (Functions list)
-compute_.runner.tsx                           -- Function runner (kept)
-compute_.runs.tsx                             -- Runs list (moved out of Observability)
-compute_.runs_.$runId.tsx                     -- Run detail (renamed from observability_.runs_.$runId.tsx)
-schedules.tsx                                 -- NEW top-level
-schedules_.$schedule.tsx                      -- NEW detail
-services.tsx                                  -- NEW top-level (placeholder)
-services_.$service.tsx                        -- NEW detail (placeholder)
-storage.tsx                                   -- Storage landing
-storage_.$tenant.tsx                          -- Tenant detail
-storage_.$tenant_.$table.tsx                  -- Table browser
-files.tsx                                     -- NEW top-level (placeholder)
-files_.$bucket.tsx                            -- NEW (placeholder)
-network.tsx                                   -- Network landing
-machines.tsx                                  -- Machines landing
-machines_.$machine.tsx                        -- NEW detail (placeholder; current is flat list)
-observability.tsx                             -- Logs / events / traces (Runs removed)
-settings.tsx                                  -- Settings landing
-settings_.$page.tsx                           -- NEW dynamic sub-page
+__root.tsx                                                 -- shell composition
+index.tsx                                                  -- root redirect (last view OR /app)
+
+app/__layout.tsx                                           -- Developer shell layout (tenant required)
+app/index.tsx                                              -- Developer Overview
+app/compute.tsx                                            -- Compute landing (Functions list)
+app/compute_.runner.tsx                                    -- Function runner
+app/compute_.runs.tsx                                      -- Runs list
+app/compute_.runs_.$runId.tsx                              -- Run detail
+app/schedules.tsx                                          -- Schedules landing
+app/schedules_.$schedule.tsx                               -- Schedule detail
+app/storage.tsx                                            -- Tenant table list (no $tenant — uses active tenant)
+app/storage_.$table.tsx                                    -- Table browser (was storage_.$tenant_.$table)
+app/files.tsx                                              -- NEW (placeholder)
+app/files_.$bucket.tsx                                     -- NEW (placeholder)
+app/observability.tsx                                      -- Tenant-scoped logs / events / traces
+app/settings.tsx                                           -- Tenant Settings landing
+app/settings_.$page.tsx                                    -- Tenant settings sub-page
+
+admin/__layout.tsx                                         -- Operator shell layout
+admin/index.tsx                                            -- System overview
+admin/tenants.tsx                                          -- Tenant list (was old storage.tsx)
+admin/tenants_.$tenant.tsx                                 -- Tenant admin detail
+admin/machines.tsx                                         -- Machines landing
+admin/machines_.$machine.tsx                               -- Machine detail (NEW)
+admin/network.tsx                                          -- Network landing
+admin/services.tsx                                         -- Services landing (placeholder)
+admin/services_.$service.tsx                               -- Service detail (placeholder)
+admin/observability.tsx                                    -- Cross-tenant logs / events / traces
+admin/settings.tsx                                         -- Server settings landing
+admin/settings_.$page.tsx                                  -- Server settings sub-page
 ```
 
-Placeholder routes render a token-respecting "Not yet implemented" empty
-state with the sub-drawer wired (so the sub-drawer surface is exercised
-end-to-end). The detail content lands in a follow-on plan.
+Notes:
+
+- `app/storage` no longer takes a `$tenant` segment. The active tenant
+  lives in the top-nav selector; the URL stays clean and shareable links
+  encode the tenant separately when needed (e.g. `?as=demo` for
+  copy-paste portability; deep-link parses & sets `activeTenant` on
+  mount).
+- The previous `storage_.$tenant_.$table.tsx` collapses to
+  `app/storage_.$table.tsx` because the tenant is implicit.
+- The old `admin`-style "create / delete tenant" UI from
+  `routes/storage.tsx` moves to `admin/tenants.tsx`. The Developer view
+  no longer surfaces tenant CRUD.
+- The Settings split is real: `app/settings*` owns tenant config;
+  `admin/settings*` owns server config. There is no shared "settings"
+  surface.
+- Placeholder routes render a token-respecting empty state with their
+  sub-drawer wired so the sub-drawer surface gets end-to-end exercise.
 
 ## Authoritative `DESIGN.md` updates (Phase O1)
 
 Phase O1 edits `DESIGN.md` to keep it canonical. Specifically:
 
-- Lines 78–96 (Information Architecture section) rewritten to the table
-  above (9 explore + 1 configure top-levels).
-- Line 86 entry for `Compute` rewritten to drop "scheduled jobs, cron
-  jobs, service catalog".
-- A new `Schedules` row inserted after `Compute`.
-- A new `Services` row inserted before `Storage`.
-- A new `Files` row inserted after `Storage`.
-- Section 5 (Core Screens) extended with `### Services`, `### Files`,
-  `### Schedules` subsections describing first-required views (mirroring
-  the existing `### Compute`, `### Storage` blocks).
+- Lines 78–96 (Information Architecture section) rewritten to introduce
+  the **two-view** model (Developer console / Operator console), with
+  one IA table per view (7 items each) and the view-switcher contract.
+- Section 5 (Core Screens) split into "Developer console" and "Operator
+  console" subsections. Existing `### Compute`, `### Storage` blocks
+  stay under Developer; existing `### Machines`, `### Network` blocks
+  stay under Operator. New subsections under Developer for `Schedules`,
+  `Files`, `Settings (tenant)`. New subsections under Operator for
+  `System overview`, `Tenants`, `Services`, `Settings (server)`.
 - Section 9 (Layout System) rewritten to describe the three-pane shell
-  (top nav + primary drawer + sub-drawer) and the tenant scope semantics
-  table above.
+  (top nav + primary drawer + sub-drawer), the view switcher, and the
+  tenant selector behavior across views.
 
 ## Architectural Decision (proposed, subject to Phase O0 confirmation)
 
@@ -286,19 +389,19 @@ the existing `<Sidebar />`. The target tree in `__root.tsx`:
   <KeyboardContract />
   <StalenessProvider>
     <div className="flex h-screen flex-col bg-app text-default">
-      <TopNav />                                {/* new: logo + tenant selector */}
+      <TopNav />                  {/* logo + view switcher + tenant selector */}
       <div className="flex min-h-0 flex-1">
-        <PrimaryDrawer />                       {/* renamed from Sidebar; collapsible */}
-        <SubDrawer />                           {/* new: static-menu | dynamic-list */}
+        <PrimaryDrawer />          {/* renders the active view's IA */}
+        <SubDrawer />              {/* static-menu | dynamic-list per route */}
         <main>
           <DisconnectedOverlay />
-          <Outlet />
+          <Outlet />               {/* routes nested under app/ or admin/ */}
         </main>
       </div>
       <StatusBar />
     </div>
     <CommandPalette />
-    <SystemTenantLens />   {/* unchanged: Cmd-\ overlay, not a pane */}
+    <SystemTenantLens />           {/* unchanged: ⌘\ overlay, Developer side */}
     <Toaster />
   </StalenessProvider>
 </AppErrorBoundary>
@@ -310,6 +413,9 @@ Rationale:
   collapse a width transition on a single pane rather than a structural
   change. Collapsed: `PrimaryDrawer` reduces from `w-56` to `w-12`
   (icon-only); the rest of the row reflows naturally.
+- `<PrimaryDrawer />` and `<SubDrawer />` both read the **active view**
+  (`/app/*` vs `/admin/*`) from the router; switching view re-renders
+  the drawer contents in place rather than re-mounting the shell.
 - The `<SubDrawer />` slot renders `null` when the active route does not
   contribute a sub-drawer, which avoids reserving dead space.
 - Renaming `Sidebar` → `PrimaryDrawer` is a breaking rename, not a
@@ -325,14 +431,15 @@ the Execution Log.
 
 | Phase | Description | Status |
 | --- | --- | --- |
-| O0 | Confirm restructure vs additive + lock IA decision | `todo` |
-| O1 | IA migration: DESIGN.md + nav-entries + placeholder routes | `todo` |
-| O2 | Collapsible primary drawer (width transition, persistence, a11y) | `todo` |
+| O0 | Lock four decisions: restructure vs additive, two-view IA, view-switcher pattern, tenant-selector behavior per view | `todo` |
+| O1 | IA migration: DESIGN.md + nav-entries (per view) + placeholder routes under `app/` and `admin/` | `todo` |
+| OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `todo` |
+| O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `todo` |
 | O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `todo` |
-| O4 | Sub-drawer consumers: Storage, Compute, Schedules, Services, Files, Machines, Observability, Settings | `todo` |
-| O5 | Top horizontal nav with logo + tenant selector trigger | `todo` |
-| O6 | Tenant scope wiring (`scoped` / `system` / `unset` semantics) | `todo` |
-| O7 | Live verification matrix (Mode × Palette × Drawer-state × Tenant-scope) | `todo` |
+| O4 | Sub-drawer consumers: 13 routes across both views | `todo` |
+| O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `todo` |
+| O6 | Active-tenant store + per-route refetch on tenant change | `todo` |
+| O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `todo` |
 | O8 | Plan close: README registration, archive hand-off | `todo` |
 
 Exactly one phase is `in_progress` at a time. Update this ledger and the
@@ -340,14 +447,16 @@ phase's own section before/after each work block.
 
 ## Phase Order and Dependencies
 
-- O0 → O1: decision frozen before IA edits hit the worktree.
-- O1 → O2: nav entries exist before the drawer that renders them is built.
+- O0 → O1: decisions frozen before IA edits hit the worktree.
+- O1 → OV: routes live under `app/` and `admin/` before the view switcher
+  can navigate between them.
+- OV → O2: the primary drawer's contents depend on knowing which view is
+  active, so OV's URL prefix split lands first.
 - O2 → O3: sub-drawer must coexist with collapsed primary drawer (O2
-  width-transition must be done before sub-drawer anchoring is verified).
+  width-transition before sub-drawer anchoring is verified).
 - O3 → O4: surface exists before its first consumer route ships.
-- O5 may run in parallel with O3/O4 once O1 is closed; it does not depend
-  on the sub-drawer.
-- O6 depends on O5 (selector UI) — wiring step, not visual step.
+- O5 depends on OV + O1 (TopNav exists, tenant route data wiring).
+- O6 depends on O5.
 - O7 depends on O2–O6 landed in the working tree.
 - O8 depends on O7 passing.
 
@@ -367,15 +476,21 @@ Eliminates risk of half-restructuring or half-migrating IA.
    `packages/nimbus-ui/src/shell/system-tenant-lens.tsx`,
    `packages/nimbus-ui/src/shell/nav-entries.ts`, and
    `DESIGN.md` lines 78–250.
-2. Decide restructure (default) vs additive.
-3. Confirm IA: 9 explore + 1 configure top-levels. Note any IA-only
-   objections (e.g. "operators prefer Services nested under Compute") in
-   the Execution Log; the default stands unless evidence is recorded.
-4. Confirm the `scoped` / `system` / `unset` tenant scope semantics.
+2. **Decision 1:** restructure (default) vs additive composition root.
+3. **Decision 2:** confirm **two-view IA** (Developer console at `/app/*`
+   with 7 sections; Operator console at `/admin/*` with 7 sections).
+   Note any objections in the Execution Log; default stands unless
+   evidence recorded.
+4. **Decision 3:** confirm **view switcher pattern** (top-nav segmented
+   control, URL-prefix is source of truth, localStorage restores last
+   view + last route per view).
+5. **Decision 4:** confirm **tenant selector behavior per view**
+   (Developer: always visible & active; Operator: hidden by default,
+   shown as optional filter on Operator → Observability only).
 
 **Acceptance:**
 
-- Three decisions logged with one-line "why" each in the Execution Log.
+- Four decisions logged with one-line "why" each in the Execution Log.
 - No code changes yet.
 
 ### O1 — IA migration (DESIGN.md + nav-entries + placeholder routes)
@@ -383,61 +498,152 @@ Eliminates risk of half-restructuring or half-migrating IA.
 **Status:** `todo`
 
 **Goal:** Land the IA change as a coherent baseline. `DESIGN.md`, the
-`NAV_ENTRIES` array, and the route file set all agree.
+`NAV_ENTRIES` arrays (per view), and the route directory layout all
+agree.
 
 **Work:**
 
 1. Edit `DESIGN.md`:
-   - Rewrite the Information Architecture table (current lines 82–96)
-     to the 9 explore + 1 configure version above.
-   - Add `### Services`, `### Schedules`, `### Files` core-screen
-     subsections.
-   - Rewrite "Layout System" section to describe the three-pane shell +
-     tenant scope semantics.
+   - Rewrite the Information Architecture section (current lines 82–96)
+     to introduce the two-view model with one table per view (7 items
+     each).
+   - Split Section 5 (Core Screens) into Developer / Operator
+     subsections; add new screen entries for `Schedules`, `Files`,
+     `Settings (tenant)` under Developer and `System overview`,
+     `Tenants`, `Services`, `Settings (server)` under Operator.
+   - Rewrite Section 9 (Layout System) to describe the three-pane shell
+     with the view switcher and tenant selector behavior.
 2. Edit `packages/nimbus-ui/src/shell/nav-entries.ts`:
-   - Add entries: `schedules`, `services`, `files`.
-   - Drop "service catalog" / "scheduled jobs" references from the
-     `compute` entry's implied scope.
-   - Add a `tenantScope: "scoped" | "system"` field on each entry.
-   - Group entries via a new `group: "explore" | "configure"` field
-     (Convex pattern).
-3. Scaffold placeholder routes:
-   - `schedules.tsx`, `schedules_.$schedule.tsx`
-   - `services.tsx`, `services_.$service.tsx`
-   - `files.tsx`, `files_.$bucket.tsx`
-   - `machines_.$machine.tsx`
-   - `settings_.$page.tsx`
-   - Move `observability_.runs_.$runId.tsx` →
-     `compute_.runs_.$runId.tsx` and add `compute_.runs.tsx`.
-   Each placeholder renders a token-respecting empty state with title,
+   - Replace the single `NAV_ENTRIES` constant with
+     `DEVELOPER_NAV_ENTRIES` (7 items) and `OPERATOR_NAV_ENTRIES`
+     (7 items) — both with the same entry shape.
+   - Add a `view: "developer" | "operator"` field on each entry for
+     defensive cross-checks.
+   - Export a helper `navEntriesForView(view): NavEntry[]` consumed by
+     PrimaryDrawer.
+3. Scaffold placeholder routes under the new directory layout:
+   - `app/__layout.tsx` (Developer shell), `app/index.tsx`
+     (Developer Overview placeholder for now)
+   - `app/schedules.tsx`, `app/schedules_.$schedule.tsx`
+   - `app/files.tsx`, `app/files_.$bucket.tsx`
+   - `app/settings_.$page.tsx`
+   - `admin/__layout.tsx` (Operator shell), `admin/index.tsx`
+     (System overview placeholder)
+   - `admin/tenants.tsx`, `admin/tenants_.$tenant.tsx`
+   - `admin/machines_.$machine.tsx`
+   - `admin/services.tsx`, `admin/services_.$service.tsx`
+   - `admin/settings_.$page.tsx`
+4. Migrate existing routes (no compatibility shims — pre-launch):
+   - `compute.tsx` → `app/compute.tsx`
+   - `compute_.runner.tsx` → `app/compute_.runner.tsx`
+   - `observability_.runs_.$runId.tsx` →
+     `app/compute_.runs_.$runId.tsx`; add `app/compute_.runs.tsx`
+   - `storage.tsx` content **splits**: tenant CRUD moves to
+     `admin/tenants.tsx`; tenant-tables list (was `storage_.$tenant`)
+     becomes `app/storage.tsx` reading active tenant from store
+   - `storage_.$tenant_.$table.tsx` → `app/storage_.$table.tsx`
+   - `network.tsx` → `admin/network.tsx`
+   - `machines.tsx` → `admin/machines.tsx`
+   - `observability.tsx` content splits: tenant-scoped → `app/observability.tsx`;
+     cross-tenant → `admin/observability.tsx` (initially the same code
+     branched on view; split deeper in O7 if needed)
+   - `settings.tsx` content splits: tenant → `app/settings.tsx`;
+     server → `admin/settings.tsx`
+5. Each placeholder renders a token-respecting empty state with title,
    subtitle, and an honest "Not yet implemented in this phase" note.
-4. Add `nav-entries.spec.ts` covering: entries have stable shape,
-   `tenantScope` matches the scope table above, no duplicate `id`s.
+6. Add `nav-entries.spec.ts` covering: each view's entries have stable
+   shape, no duplicate `id`s, `view` field matches the export name,
+   total = 7 per view.
 
 **Acceptance:**
 
-- `DESIGN.md` table and `NAV_ENTRIES` enumerate the same 10 sections.
+- `DESIGN.md` Developer and Operator IA tables match `DEVELOPER_NAV_ENTRIES`
+  and `OPERATOR_NAV_ENTRIES` respectively (7 + 7 items).
 - `npm run typecheck` clean.
 - `npm run test` clean.
 - All placeholder routes mount without console errors on the dev server.
+
+### OV — View shell (TopNav with view switcher, URL split, restore contract)
+
+**Status:** `todo`
+
+**Goal:** Make the two views navigable. Lay down the URL split (`/app/*`
+vs `/admin/*`), the view switcher control, and the last-route-per-view
+restore behavior.
+
+**Work:**
+
+1. Move all existing routes into `app/` (already done in O1) plus a
+   bare `admin/index.tsx` placeholder.
+2. Create `packages/nimbus-ui/src/shell/top-nav.tsx`:
+   - `h-10`, `border-b border-app bg-surface`.
+   - Left: `<LogoMark />` lifted from `sidebar.tsx`, plus the
+     `Nimbus / operator console` wordmark, mirroring current typography.
+     (Wordmark dynamic: shows `developer console` when view is
+     Developer, `operator console` when view is Operator.)
+   - Middle: `<ViewSwitcher />` — segmented pill with two options,
+     `data-testid="view-switcher-developer"` and
+     `data-testid="view-switcher-operator"`, with `aria-pressed`.
+   - Right: tenant selector slot (visual stub in this phase; wired in
+     O5).
+3. Implement `<ViewSwitcher />`:
+   - Reads active view from the router pathname (`/admin/*` →
+     `"operator"`, else `"developer"`).
+   - Click navigates: store current pathname to
+     `nimbus-ui:last-route:<view>`, then navigate to
+     `nimbus-ui:last-route:<other-view>` if set, else default
+     (`/app` for Developer, `/admin` for Operator).
+   - Keyboard: left/right arrow switches focus, Enter activates.
+4. Update `__root.tsx` to render the shell tree from the Architectural
+   Decision section: `<TopNav />` row at top, then
+   `<PrimaryDrawer />` + `<SubDrawer />` + `<main>`. Keep
+   `<StatusBar />` at the bottom.
+5. Extend `ui-store.ts`:
+   - `lastView: "developer" | "operator"` (persisted as
+     `nimbus-ui:last-view`, default `"developer"`).
+   - Read-only helpers `readLastView()`,
+     `readLastRouteForView(view)` mirroring the existing
+     `readStoredMode`/`readStoredPalette` shape.
+6. Add `view-switcher.spec.tsx`:
+   - Clicking the inactive segment navigates to the other view's
+     default landing on first click; on second toggle, navigates back
+     to the originally-active developer/operator route.
+   - `aria-pressed` reflects the active view.
+   - Keyboard navigation works.
+7. Add `top-nav.spec.tsx`:
+   - Logo renders.
+   - View switcher renders both segments.
+   - Wordmark text reflects active view.
+
+**Acceptance:**
+
+- `/app/*` and `/admin/*` both render the shell without console errors.
+- Switching views animates the wordmark and persists `lastView`.
+- Reloading from `/admin/system` lands on `/admin/system` with Operator
+  view active.
+- Cold load (no localStorage, no path) lands on `/app` (Developer
+  default).
+- All specs pass; typecheck clean.
 
 ### O2 — Collapsible primary drawer
 
 **Status:** `todo`
 
 **Goal:** Replace the fixed-width sidebar with a drawer that toggles
-between full (`w-56`) and icon-only (`w-12`) states. State persists across
-reloads. Keyboard accessible. Token-respecting. Renders the revised
-`NAV_ENTRIES` with `explore`/`configure` group separation.
+between full (`w-56`) and icon-only (`w-12`) states. State persists
+across reloads. Keyboard accessible. Token-respecting. Renders the
+**active view's** `NAV_ENTRIES`.
 
 **Work:**
 
 1. Extend `ui-store.ts` with `primaryDrawerCollapsed: boolean`,
-   `togglePrimaryDrawer()`, and a `persistPrimaryDrawerCollapsed` helper
-   matching the existing `persistMode`/`persistPalette` shape. Storage
-   key: `nimbus-ui:primary-drawer-collapsed`.
-2. Create `packages/nimbus-ui/src/shell/primary-drawer.tsx` (replacing
+   `togglePrimaryDrawer()`, and a `persistPrimaryDrawerCollapsed`
+   helper matching the existing `persistMode`/`persistPalette` shape.
+   Storage key: `nimbus-ui:primary-drawer-collapsed`.
+2. Create `packages/nimbus-ui/src/shell/primary-drawer.tsx` (replaces
    `sidebar.tsx`):
+   - Reads active view from the router pathname; renders
+     `navEntriesForView(activeView)`.
    - Width transitions via Tailwind (`w-56` ↔ `w-12`) with
      `transition-[width] duration-150`.
    - Icon-only mode hides text label and `NavCount`; tooltip on hover
@@ -446,26 +652,27 @@ reloads. Keyboard accessible. Token-respecting. Renders the revised
      `data-testid="primary-drawer-toggle"`, `aria-expanded`,
      `aria-controls`, `aria-label="Collapse navigation"` /
      `"Expand navigation"`.
-   - Logo wordmark **does not** live in the drawer anymore — it moves to
-     `TopNav` in O5. (The drawer becomes pure nav.)
-   - `explore` and `configure` groups separated by a hairline divider.
+   - Logo wordmark **does not** live in the drawer anymore — it moved
+     to `TopNav` in OV. The drawer is pure nav.
    - Focus management: toggling does not move focus off the toggle.
-3. Update `__root.tsx` to render `<PrimaryDrawer />` (restructure path).
-4. Delete `sidebar.tsx`. Update all imports.
-5. Add `packages/nimbus-ui/src/shell/primary-drawer.spec.tsx`:
+3. Delete `sidebar.tsx`. Update all imports.
+4. Add `packages/nimbus-ui/src/shell/primary-drawer.spec.tsx`:
    - Toggle click flips `aria-expanded` and the persisted value.
    - Hydration from persisted `true` mounts collapsed.
    - Keyboard `Enter`/`Space` on toggle works.
-   - All 10 nav entries reachable in both states (test IDs stable).
-   - Group divider renders between explore and configure groups.
+   - All 7 entries reachable in both states for Developer view; 7 for
+     Operator view (test IDs stable across views with view-prefix).
+   - Switching views via `<ViewSwitcher />` updates the rendered entries
+     in place (no remount).
 
 **Acceptance:**
 
 - Toggle click changes width; reload restores it.
-- All 10 nav entries reachable in both states.
+- Both views render their own 7 entries.
 - All vitest specs pass: `cd packages/nimbus-ui && npm run test`.
 - `npm run typecheck` clean.
-- Chrome DevTools MCP screenshot in both states for at least 2 palettes.
+- Chrome DevTools MCP screenshot in both states for at least 2 palettes
+  per view.
 
 ### O3 — Sub-drawer surface (dual-mode contributor API)
 
@@ -523,37 +730,43 @@ query, like Convex `DataSidebar`). Coexists with collapsed primary drawer.
 
 **Status:** `todo`
 
-**Goal:** Wire the eight sub-drawer contributors. Static where the
-sub-section list is fixed; dynamic where it's a resource list.
+**Goal:** Wire sub-drawer contributors across both views. Static where
+the sub-section list is fixed; dynamic where it's a resource list.
 
-**Sections × mode:**
+**Sections × mode (across both views):**
 
-| Route | Mode | Contributor source |
-| --- | --- | --- |
-| `/compute` | dynamic | `api.functions.list` (active tenant scope) |
-| `/schedules` | static | tabs: `Scheduled` / `Cron` |
-| `/services` | dynamic | placeholder list (`Coming soon`); supports the surface |
-| `/storage/$tenant` | dynamic | `api.tables.list` for the tenant |
-| `/files` | dynamic | placeholder list (`Coming soon`) |
-| `/network` | static | sub-pages: Routes / WS / Ports / Listeners / Security |
-| `/machines` | dynamic | `api.machines.list` |
-| `/observability` | static | Logs / Events / Traces / Errors |
-| `/settings` | static | General / Endpoints / Deploys / Token / Environment / Integrations / Shutdown |
-| `/` | — | no sub-drawer |
+| Route | View | Mode | Contributor source |
+| --- | --- | --- | --- |
+| `/app` | dev | — | no sub-drawer (Overview) |
+| `/app/compute` | dev | dynamic | `api.functions.list` (active tenant) |
+| `/app/schedules` | dev | static | `Scheduled` / `Cron` |
+| `/app/storage` | dev | dynamic | `api.tables.list` (active tenant) |
+| `/app/files` | dev | dynamic | placeholder list ("Coming soon") |
+| `/app/observability` | dev | static | `Logs` / `Events` / `Traces` / `Errors` |
+| `/app/settings` | dev | static | tenant sub-pages (Environment, Secrets, Schema, Integrations) |
+| `/admin` | op | — | no sub-drawer (System overview) |
+| `/admin/tenants` | op | dynamic | `api.tenants.list` |
+| `/admin/machines` | op | dynamic | `api.machines.list` |
+| `/admin/network` | op | static | `Routes` / `WS` / `Ports` / `Listeners` / `Security` |
+| `/admin/services` | op | dynamic | placeholder list ("Coming soon") |
+| `/admin/observability` | op | static | `Logs` / `Events` / `Traces` / `Errors` |
+| `/admin/settings` | op | static | server sub-pages (General, Endpoints, Deploys, Token, Environment, Integrations, Shutdown) |
+
+13 sub-drawer routes total.
 
 **Work:**
 
 1. For each route above, add the `subDrawer` route option returning the
    appropriate `SubDrawerSpec`.
 2. Dynamic contributors use `useQuery` from `nimbus/react`, render items
-   with `data-testid="sub-drawer-item-<id>"`, and navigate on click via
-   the existing dynamic-segment routes.
+   with `data-testid="sub-drawer-item-<view>-<id>"`, and navigate on
+   click via the existing dynamic-segment routes.
 3. Active item highlighting respects tokens (`bg-surface-2`,
    `text-default`, plus `border-l-2` with `border-brand`).
 4. Empty / loading states match the existing `NavCount`-style
    placeholder (`·`) and `text-muted` empty-line.
-5. Disabled / placeholder items (Services, Files) render with the
-   `text-muted` tone and a tooltip explaining the placeholder.
+5. Disabled / placeholder items (Files, Operator → Services) render
+   with the `text-muted` tone and a tooltip explaining the placeholder.
 
 **Acceptance:**
 
@@ -562,107 +775,115 @@ sub-section list is fixed; dynamic where it's a resource list.
 - Specs cover: list renders, click navigates, active selection, empty
   state, search filter (where present).
 
-### O5 — Top horizontal nav with logo + tenant selector trigger
+### O5 — Tenant selector wiring
 
 **Status:** `todo`
 
-**Goal:** Mount the top bar. Owns logo + tenant selector trigger.
-Visual-only in this phase — wiring to the system-tenant data path is O6.
-
-**Work:**
-
-1. Create `packages/nimbus-ui/src/shell/top-nav.tsx`:
-   - Fixed height (`h-10`), `border-b border-app bg-surface`.
-   - Left: `<LogoMark />` (lifted from the old `sidebar.tsx`,
-     unchanged shape and viewBox) + the `Nimbus / operator console`
-     wordmark, mirroring current typography.
-   - Right of logo (12px gap): `<TenantSelector />` trigger.
-   - Right edge: empty for now. Do not pre-build placeholder slots.
-2. `<TenantSelector />` (visual stub): renders the current tenant from
-   `api.system.status?.activeTenant ?? "_nimbus"` with a chevron.
-   Disabled in this phase.
-3. Add `top-nav.spec.tsx`: logo renders; tenant trigger present.
-
-**Acceptance:**
-
-- Top nav renders in all 6 Mode × Palette combinations without raw hex.
-- Sidebar no longer duplicates the logo (post-O2).
-
-### O6 — Tenant scope wiring
-
-**Status:** `todo`
-
-**Goal:** Wire the tenant selector to a real data path. Implement the
-`scoped` / `system` / `unset` scope state per section.
+**Goal:** Wire the tenant selector. Visible in Developer view (always
+active), hidden in Operator view except on `admin/observability` (where
+it's an optional cross-tenant filter).
 
 **Work:**
 
 1. Source the list of tenants:
    - Check `packages/nimbus-ui/convex/_generated/api.d.ts` for an
      existing `tenants.list` (or similar) query.
-   - If absent: add `crates/nimbus-bin/.../system_tenant/tenants.ts` (or
-     wherever the system-tenant functions live) exposing
-     `tenants.list({ limit })` returning
-     `{ id: string; name: string; backend?: string }[]`. Use the
-     existing `_nimbus` system-tenant pattern (read
+   - If absent: add a system-tenant `tenants.list({ limit })` query
+     returning `{ id: string; name: string; backend?: string }[]`.
+     Use the existing `_nimbus` system-tenant pattern (read
      `docs/adapters/convex/ai-guidelines.md` first).
-2. Extend `ui-store.ts`:
-   - `activeTenant: string` (default `"_nimbus"`, hydrate from
-     `nimbus-ui:active-tenant` localStorage key).
-   - `setActiveTenant(tenant)` — persists + triggers any consumer
-     refetch.
-3. Implement `<TenantSelector />` properly:
+2. Implement `<TenantSelector />`:
+   - Renders the current `activeTenant` with a chevron.
    - Click → dropdown listing tenants with the current one marked.
    - Each entry shows tenant name + backend pill (where available).
    - Keyboard navigation (↑↓ to move, ⏎ to select, Esc to close).
    - Selecting a tenant calls `setActiveTenant` and closes.
-4. Per-section scope: `nav-entries.ts` already has
-   `tenantScope: "scoped" | "system"`. `<TopNav />` reads the active
-   route's owning section and:
-   - `scoped`: selector active, shows active tenant, click opens menu.
-   - `system`: selector disabled, shows `_nimbus`, tooltip "Server-wide view".
-   - `unset` (no tenants exist *and* the route is `scoped`): selector
-     shows "Select tenant" in a warning tone; route renders inline
-     empty-state.
-5. Routes that consume `activeTenant` (Storage tenant detail, Compute
-   functions list when filtered by tenant) read it from the store and
-   refetch on change. Verify `storage_.$tenant.tsx` already does this —
-   if URL is the source of truth for tenant, reconcile so URL and store
-   stay aligned (URL wins on conflict; store updates URL on selection).
+3. Per-view visibility logic, owned by `<TopNav />`:
+   - **Developer view** (`/app/*`): always render selector, active.
+   - **Operator view** (`/admin/*`):
+     - On `/admin/observability`: render selector with default option
+       "All tenants" prepended; selecting a tenant adds `?tenant=<id>`
+       to the URL (URL is source of truth for the optional filter).
+     - On every other Operator route: do not render the selector.
+4. Zero-tenant fallback (Developer view only):
+   - When `tenants.list` returns `[]`, replace the trigger with a
+     compact "Create tenant" button that opens an inline create dialog
+     (modal pattern from `routes/storage.tsx` move to
+     `admin/tenants.tsx`; this fallback links into it via the Operator
+     view).
 
 **Acceptance:**
 
-- Switching tenant updates the rendered active tenant and re-fetches
-  tenant-scoped data on the current route.
-- On Machines / Network / Settings routes the selector is visibly
-  disabled with the system tooltip.
+- Selector visible on every `/app/*` route, hidden on every
+  `/admin/*` route except `/admin/observability`.
 - Specs pass; typecheck clean.
-- A live Chrome DevTools MCP run shows tenant switch causing route data
+
+### O6 — Active-tenant store + per-route refetch
+
+**Status:** `todo`
+
+**Goal:** Wire `activeTenant` into the store and into the routes that
+need to refetch when tenant changes.
+
+**Work:**
+
+1. Extend `ui-store.ts`:
+   - `activeTenant: string | null` (default `null`, hydrate from
+     `nimbus-ui:active-tenant`).
+   - `setActiveTenant(tenant: string | null)` — persists + triggers
+     consumer refetch.
+2. Developer routes that read `activeTenant`:
+   - `app/compute.tsx` — filters function list by active tenant.
+   - `app/storage.tsx` — replaces the old `$tenant` URL segment with
+     store-driven tenant.
+   - `app/storage_.$table.tsx` — uses store tenant + URL table.
+   - `app/schedules.tsx` — filters by active tenant.
+   - `app/observability.tsx` — filters logs/events by active tenant.
+   - `app/settings.tsx` — loads tenant-owned config.
+3. Operator route that reads optional tenant filter from URL:
+   - `admin/observability.tsx` — `validateSearch` reads
+     `?tenant=<id>`; passes through to query (cross-tenant by default
+     when absent).
+4. On tenant change in Developer view: routes refetch automatically via
+   `useQuery({ tenantId: activeTenant })` reactivity.
+5. URL portability for Developer routes: `?as=<tenant>` query param on
+   any `/app/*` URL sets `activeTenant` on mount, then strips itself
+   from the URL. Enables shareable deep links across tenants.
+
+**Acceptance:**
+
+- Switching tenant in Developer view updates `activeTenant` in store +
+  localStorage, and the visible data on the current route updates
+  without manual reload.
+- Operator → Observability accepts `?tenant=<id>` filter, default
+  shows cross-tenant feed.
+- Specs pass; typecheck clean.
+- Live Chrome DevTools MCP run shows tenant switch causing route data
   to change.
 
 ### O7 — Live verification matrix
 
 **Status:** `todo`
 
-**Goal:** Prove the full shell works across the token matrix, drawer
-states, and tenant scopes.
+**Goal:** Prove the full shell works across **two views**, the token
+matrix, drawer states, and tenant scopes.
 
 **Work:**
 
 1. Boot the dev server: `cd packages/nimbus-ui && npm run dev`.
 2. Use Chrome DevTools MCP (not `@playwright/mcp`):
-   - Visit each of the 10 top-level routes.
-   - For each, capture screenshots in the 6 Mode × Palette combinations.
+   - Visit each of the 7 Developer routes + 7 Operator routes.
+   - For each, capture screenshots in 6 Mode × Palette combinations.
    - Toggle primary drawer collapsed/expanded; confirm sub-drawer
      reanchors.
-   - For sections with `system` scope, confirm the tenant selector shows
-     disabled state.
-   - For sections with `scoped` scope, switch tenant and confirm data
-     refetch.
+   - Toggle view switcher; confirm wordmark + drawer entries update,
+     last-route restore works.
+   - In Developer view, switch tenant; confirm data refetch.
+   - In Operator → Observability, apply tenant filter via URL +
+     verify content.
    - Hard reload after each persisted-state change.
 3. Run `cd packages/nimbus-ui && npm run typecheck && npm run test && npm run build`.
-4. Record screenshot paths and the matrix coverage list in the
-   Execution Log.
+4. Record screenshot paths + matrix coverage list in Execution Log.
 
 **Acceptance:**
 
@@ -671,7 +892,7 @@ states, and tenant scopes.
 - `npm run typecheck` clean.
 - `npm run build` clean.
 - `cargo fmt --all --check`, `make clippy` clean for any incidental
-  Rust touches (O6 may touch a system-tenant query file).
+  Rust touches (O5 may touch a system-tenant query file).
 
 ### O8 — Plan close, archive hand-off
 
@@ -703,14 +924,15 @@ Phase 1 desktop UI plan.
 
 | Phase | Checkpoint commit subject (proposed) |
 | --- | --- |
-| O0 | "DU-shell O0: lock IA + restructure decisions in plan ledger" |
-| O1 | "DU-shell O1: IA migration — DESIGN.md, nav-entries, placeholder routes" |
-| O2 | "DU-shell O2: collapsible primary drawer with persistence" |
+| O0 | "DU-shell O0: lock four decisions (restructure, two-view IA, switcher, tenant)" |
+| O1 | "DU-shell O1: IA migration — DESIGN.md, per-view nav-entries, app/+admin/ routes" |
+| OV | "DU-shell OV: TopNav + view switcher + URL prefix split" |
+| O2 | "DU-shell O2: collapsible primary drawer, view-aware" |
 | O3 | "DU-shell O3: sub-drawer surface + dual-mode contributor API" |
-| O4 | "DU-shell O4: sub-drawer consumers across 9 sections" |
-| O5 | "DU-shell O5: top nav with logo + tenant selector trigger" |
-| O6 | "DU-shell O6: tenant scope wiring (scoped/system/unset)" |
-| O7 | "DU-shell O7: live verification across mode × palette × drawer × scope" |
+| O4 | "DU-shell O4: sub-drawer consumers across 13 routes" |
+| O5 | "DU-shell O5: tenant selector wiring (Developer always, Operator on Obs only)" |
+| O6 | "DU-shell O6: active-tenant store + per-route refetch + portable ?as=" |
+| O7 | "DU-shell O7: live verification across view × mode × palette × drawer × tenant" |
 | O8 | "DU-shell O8: close active plan, archive hand-off" |
 
 Each checkpoint commits a focused baseline from the working tree (per
@@ -723,60 +945,82 @@ Each checkpoint commits a focused baseline from the working tree (per
 - JS build: `cd packages/nimbus-ui && npm run build`
 - Dev server (manual + Chrome DevTools MCP):
   `cd packages/nimbus-ui && npm run dev` (binds `:5173`)
-- Full repo CI: `make ci` (only required if O6 touches Rust)
+- Full repo CI: `make ci` (only required if O5 touches Rust)
 
 ## Risks & Open Questions
 
 (captured from first-principles review on 2026-05-17)
 
-1. **Services ↔ Machines duplication.** A long-running service has a
-   service identity *and* a machine placement. Decision: canonical detail
-   page lives under `Services`; the same service appears under its
-   `Machine` as a placement row that links back to the service detail.
-   Don't deep-link both ways with full detail pages. Confirm in O0.
+1. **Single-developer use case.** A solo developer running Nimbus on
+   their laptop is *both* operator and developer. Constant view-
+   toggling is annoying. Mitigation: on first launch (no
+   `nimbus-ui:last-view` set, zero or one tenant detected), land on
+   Developer and surface a "View Operator console" link in the
+   Developer Settings page header. The view switcher remains the
+   primary affordance; this just lowers the discovery cost on day one.
 
-2. **Runs hybrid (Compute ↔ Observability).** Runs are execution receipts
-   *and* the primary incident-debugging surface. Plan: Runs primary
-   under `Compute → Runs`; Observability surfaces the same data via
-   filtered Logs and Traces (single store, two lenses). Avoid
-   duplicating the list UI — `Observability` filters live logs/traces by
-   `runId` rather than re-implementing a runs list.
+2. **Observability duplication across views.** Logs/events/traces are
+   the same data store, queried two ways: tenant-scoped (Developer) vs
+   cross-tenant (Operator). Risk: maintaining two routes that diverge
+   over time. Plan: the two routes share a `<ObservabilityShell>`
+   component; only the query input (tenant filter vs none) differs.
+   Confirm in O1.
 
-3. **`Files` name overlap.** If Nimbus ever exposes "files inside a
-   guest" (logs, sockets, mounted volumes), the top-level `Files` will
-   collide. Mitigation: keep `Files` for blob/object storage (matches
-   Convex / Firebase / Vercel terminology); name guest-side surfaces
-   `Logs`, `Volumes`, `Mounts` under `Machines`. Revisit if collision
-   becomes confusing.
+3. **System tenant lens ⌘\\ visibility.** The lens is a Developer-side
+   inspection overlay onto `_nimbus`. It does not make sense in the
+   Operator view (you're already looking at server state through the
+   Operator IA). Decision: gate the keyboard binding to active view ==
+   Developer. The Operator console can surface the same data via
+   `admin/tenants/_nimbus` for direct inspection.
 
-4. **Zero-tenant new-install state.** Convex's `NentSwitcher` returns
-   `null` when 0–1 components exist; this is wrong for tenants because
-   the operator needs to create the first one. Plan: render the
-   selector with "Select tenant" label in a warning tone, and the
-   target route renders an inline "Create tenant" empty-state CTA.
+4. **Zero-tenant first-install.** Developer view requires at least one
+   tenant. If none exist, the active route in Developer view renders
+   "Create tenant" CTA inline; the tenant selector chip shows "No
+   tenants" disabled. The actual create flow lives in Operator →
+   Tenants. (Cross-view deep link: clicking the CTA navigates to
+   `/admin/tenants?new=1` and the user comes back to Developer once
+   created.)
 
-5. **10 top-level items exceeds the "5–7 max" sidebar heuristic.**
-   Operator consoles legitimately run hotter (Podman 6+11, Convex 8,
-   Docker Desktop 7+). Mitigations already in plan: collapsible
-   primary drawer (O2), `⌘K` palette as primary nav accelerator
-   (already shipped). Re-evaluate if user testing shows confusion.
+5. **Permissions are deferred.** Both views are reachable to any
+   authenticated session in this plan. Future role-based gating sits
+   at the `/admin/*` route boundary as a single guard. Not in this
+   plan.
 
-6. **`tenants.list` query may not exist yet.** O6 step 1 may need to
-   land a small system-tenant query before the selector can be wired.
-   Honor the `docs/adapters/convex/ai-guidelines.md` rules when adding
-   one. If the surface is significant, lift it to a separate plan
-   instead of inlining here.
+6. **URL portability vs. store-driven tenant.** Developer routes drop
+   the `$tenant` URL segment in favor of store-driven active tenant.
+   This loses copy-paste cross-tenant deep linking. Mitigation: `?as=`
+   query param parses + sets active tenant on mount, then strips
+   itself. Confirm operators / sharing patterns survive in O7.
 
-7. **Sub-drawer resize.** v1 ships fixed `w-64`. Convex uses
-   `react-resizable-panels` with persisted size. Defer to a follow-up;
-   note in the Execution Log if O4 consumers complain about the fixed
-   width (Functions tree may need more, Storage tables list less).
+7. **Services ↔ Machines duplication.** A long-running service has a
+   service identity *and* a machine placement. Decision: canonical
+   detail page lives under Operator → Services; the same service
+   appears under its Machine as a placement row that links back. Don't
+   deep-link both ways with full detail pages.
+
+8. **`Files` name overlap.** If Nimbus ever exposes "files inside a
+   guest" (logs, sockets, mounted volumes), the Developer-side
+   top-level `Files` will collide. Mitigation: keep `Files` for blob /
+   object storage (matches Convex / Firebase / Vercel terminology);
+   name guest-side surfaces `Logs`, `Volumes`, `Mounts` under
+   `Machines`.
+
+9. **`tenants.list` query may not exist.** O5 step 1 may need a small
+   system-tenant query before the selector can be wired. Honor the
+   `docs/adapters/convex/ai-guidelines.md` rules when adding one. If
+   the surface is significant, lift it to a separate plan.
+
+10. **Sub-drawer resize.** v1 ships fixed `w-64`. Convex uses
+    `react-resizable-panels` with persisted size. Defer to a follow-up;
+    note in the Execution Log if O4 consumers complain about the fixed
+    width (Functions tree may need more, Storage tables list less).
 
 ## Non-goals
 
 - No changes to the Electron desktop shell (`nimbus/desktop`).
-- No changes to the existing `SystemTenantLens` (`⌘\\`) overlay — it
-  remains a separate surface.
+- No changes to the existing `SystemTenantLens` (`⌘\\`) overlay shape —
+  it remains a Developer-only inspection surface; only its activation
+  guard updates to gate on active view.
 - No new third-party UI dependencies (no `react-resizable-panels`, no
   `@radix-ui/react-tooltip`). Reuse `lucide-react`, `cmdk`, `sonner`,
   `tailwindcss`, Zustand, TanStack Router already present.
@@ -784,8 +1028,11 @@ Each checkpoint commits a focused baseline from the working tree (per
 - No actual feature content for Services / Files / Schedules — those
   ship as placeholders here. Follow-up plans land the real surfaces.
 - No backwards-compatibility shims for the renamed `Sidebar` →
-  `PrimaryDrawer`, nor for the moved `observability_.runs` →
-  `compute_.runs` route.
+  `PrimaryDrawer`, nor for the route directory split into `app/` and
+  `admin/`. Old URLs (`/storage/demo/users`, `/observability/runs/...`)
+  return 404 — pre-launch, breaking changes preferred.
+- No role-based gating between views (Operator vs Developer). Both
+  views reachable to any authenticated session.
 
 ## Execution Log
 
@@ -801,18 +1048,36 @@ verification run, anything surprising._
   and **dynamic list** modes (Convex `SettingsSidebar` vs `DataSidebar`
   patterns). Reference benchmarks recorded with file paths and line
   numbers for Convex, Podman, Render, Vercel, Firebase, Docker Desktop.
-  Phase O1 added for IA migration; total phases now O0–O8.
+  Phase O1 added for IA migration; total phases now O0–O8. Committed
+  as `b909b0e0`.
+- **2026-05-17 (c)** — Plan rewritten again from first principles to
+  introduce a **two-view shell**: separate **Developer console**
+  (`/app/*`, tenant-scoped, 7 sections) and **Operator console**
+  (`/admin/*`, server-wide, 7 sections), with a top-nav **view
+  switcher** between them. The prior three-state tenant scope
+  (`scoped` / `system` / `unset`) is **superseded**: within each view,
+  scope is uniform, so the state machine is removed. Tenant selector is
+  always-visible in Developer, hidden in Operator except on Operator →
+  Observability where it acts as an optional cross-tenant filter (URL
+  `?tenant=<id>`). Phase **OV** added between O1 and O2 to land the
+  URL prefix split and view switcher. Routes reorganized into `app/`
+  and `admin/` directories with no compatibility shims. Settings splits
+  into tenant-owned (Developer) and server-owned (Operator). Convex /
+  Firebase / Vercel cited as the two-scope pattern source; Docker /
+  Podman cited as the single-shell pattern Nimbus rejects.
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, including the IA section.
+1. Re-read this plan top-to-bottom, including the two-view IA section.
 2. Open Phase O0 by reading `packages/nimbus-ui/src/routes/__root.tsx`,
    `packages/nimbus-ui/src/shell/sidebar.tsx`,
    `packages/nimbus-ui/src/shell/system-tenant-lens.tsx`,
    `packages/nimbus-ui/src/shell/nav-entries.ts`, and `DESIGN.md` lines
    78–250.
-3. Record the three O0 decisions (restructure-vs-additive, IA confirmation,
-   tenant scope semantics) in the Execution Log.
+3. Record the **four O0 decisions** (restructure-vs-additive, two-view
+   IA confirmation, view switcher pattern, tenant selector behavior per
+   view) in the Execution Log.
 4. Mark O0 `done` and O1 `in_progress` in the Phase Status Ledger.
-5. Begin O1 — `DESIGN.md` IA section edit first, then `nav-entries.ts`,
-   then placeholder routes.
+5. Begin O1 — `DESIGN.md` IA section edit first, then `nav-entries.ts`
+   split into per-view exports, then route migration into `app/` +
+   `admin/` directories with placeholder content.
