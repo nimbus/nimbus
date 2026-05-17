@@ -1,0 +1,85 @@
+=== I3 fresh Debian 13 install proof ===
+image: docker.io/library/debian@sha256:7e0ade45154451d0730a9818e9c4c8721ea4022e7c4dc1e42d44e99c5f4f1d04
+arch: linux/arm64
+host: macOS Darwin 24.6.0 (Apple Silicon) via podman 5.8.2 + libkrun machine
+date: 2026-05-17T08:15:40Z
+command: podman run --rm -v scripts/install.sh:/install.sh:ro debian:13 sh /install.sh
+--- begin container output ---
+[host] PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+[host] arch=aarch64 kernel=6.19.7-200.fc43.aarch64
+[install] running: sh /install.sh
+Setting up python3-pycriu (4.1.1-1) ...
+Setting up gpg-wks-client (2.4.7-21+deb13u1+b3) ...
+Setting up libcriu2:arm64 (4.1.1-1) ...
+Processing triggers for libc-bin (2.41-12+deb13u2) ...
+
+[warn] libkrun and libkrunfw are not yet available as Debian/Ubuntu packages.
+
+To build from source:
+  git clone https://github.com/containers/libkrunfw && cd libkrunfw
+  git checkout v5.3.0 && make && sudo make install
+
+  git clone https://github.com/containers/libkrun && cd libkrun
+  git checkout v1.17.4 && make && sudo make install
+
+  echo "/usr/local/lib64" | sudo tee /etc/ld.so.conf.d/libkrun.conf
+  sudo ldconfig
+
+On Fedora, these are available from repos: sudo dnf install libkrun libkrunfw
+
+[info] Resolving latest nimbus version...
+[info] Latest nimbus version: v0.1.31
+[info] Resolving latest nimbus-crun version...
+[info] Latest nimbus-crun version: v1.27-nimbus.2
+[info] Downloading checksums for nimbus v0.1.31...
+[info] Downloading nimbus v0.1.31...
+[info] Verifying checksum...
+[warn] gh CLI not found — skipping GitHub attestation verification for nimbus_linux_arm64.tar.gz
+[info] Extracting and installing...
+[info] Installed nimbus to /usr/local/bin/nimbus
+[info] Downloading checksums for nimbus-crun v1.27-nimbus.2...
+[info] Downloading nimbus-crun v1.27-nimbus.2...
+[info] Verifying checksum...
+[warn] gh CLI not found — skipping GitHub attestation verification for nimbus-crun-linux-arm64
+[info] Installing nimbus-crun...
+[info] Installed nimbus-crun to /usr/libexec/nimbus/crun
+[info] Running inline installation verification...
+nimbus                 present path=/usr/local/bin/nimbus
+nimbus-crun            present path=/usr/libexec/nimbus/crun (missing +LIBKRUN flag)
+conmon                 present path=/usr/bin/conmon
+buildah                present path=/usr/bin/buildah
+catatonit              present path=/usr/bin/catatonit
+passt                  present path=/usr/bin/passt
+newuidmap              present path=/usr/bin/newuidmap
+fuse-overlayfs         present path=/usr/bin/fuse-overlayfs
+libkrun.so             missing
+libkrunfw.so           missing
+
+result                 unsupported (3 failures, 0 warnings)
+[warn] Inline verification reported issues — see output above
+
+=== Getting Started ===
+
+Nimbus is installed! To start the server:
+
+  nimbus serve
+
+For more information:
+  nimbus --help
+  https://github.com/nimbus/nimbus#readme
+
+[install] exit=0
+--- verify ---
+[verify] nimbus --version
+nimbus 0.1.31
+[verify] /usr/libexec/nimbus/crun --version
+crun version 1.27-dirty
+commit: a718a92cc9a94955a5a550b6fdec1378c247ec50
+rundir: /run/crun
+spec: 1.0.0
++SYSTEMD +SELINUX +APPARMOR +CAP +SECCOMP +EBPF +LIBKRUN +YAJL
+[verify] digests:
+ac7edc3b1969f97eeb63b800c6a5bb40e3bf29065ccc4fbf9bca8f289f2f6644  /usr/local/bin/nimbus
+9a0773da0802058d2f3d4854b83ebce85a206a4a00131d0e714595f8d7306f5e  /usr/libexec/nimbus/crun
+--- idempotency: run install.sh again ---
+[info] nimbus v0.1.31 is already installed — skipping

@@ -1,0 +1,122 @@
+=== I3 fresh Fedora 42 install proof ===
+image: docker.io/library/fedora@sha256:e5c4111b7d6ddcf8186b6b2903644c9ddb930a86c183472770907536d4e93dda
+arch: linux/arm64
+host: macOS Darwin 24.6.0 (Apple Silicon) via podman 5.8.2 + libkrun machine
+date: 2026-05-17T08:16:21Z
+command: podman run --rm -v scripts/install.sh:/install.sh:ro fedora:42 sh /install.sh
+--- begin container output ---
+[host] PRETTY_NAME="Fedora Linux 42 (Container Image)"
+[host] arch=aarch64 kernel=6.19.7-200.fc43.aarch64
+[install] running: sh /install.sh
+>>> Finished %post scriptlet: systemd-networkd-0:257.13-1.fc42.aarch64          
+>>> Scriptlet output:                                                           
+>>> Created symlink '/etc/systemd/system/sysinit.target.wants/systemd-network-ge
+>>>                                                                             
+>>> Running sysusers scriptlet: systemd-resolved-0:257.13-1.fc42.aarch64        
+>>> Finished sysusers scriptlet: systemd-resolved-0:257.13-1.fc42.aarch64       
+>>> Scriptlet output:                                                           
+>>> Failed to connect to audit log, ignoring: Invalid argument                  
+>>> Creating group 'systemd-resolve' with GID 193.                              
+>>> Creating user 'systemd-resolve' (systemd Resolver) with UID 193 and GID 193.
+>>>                                                                             
+[168/177] Installing systemd-resolved-0 100% |  33.1 MiB/s | 712.8 KiB |  00m00s
+>>> Running %post scriptlet: systemd-resolved-0:257.13-1.fc42.aarch64           
+>>> Finished %post scriptlet: systemd-resolved-0:257.13-1.fc42.aarch64          
+>>> Scriptlet output:                                                           
+>>> Created symlink '/etc/systemd/system/dbus-org.freedesktop.resolve1.service' 
+>>> Created symlink '/etc/systemd/system/sysinit.target.wants/systemd-resolved.s
+>>>                                                                             
+[169/177] Installing libcamera-ipa-0:0. 100% | 322.7 MiB/s |   2.6 MiB |  00m00s
+[170/177] Installing libxkbcommon-0:1.8 100% | 199.5 MiB/s | 408.7 KiB |  00m00s
+[171/177] Installing libfido2-0:1.15.0- 100% | 273.3 MiB/s | 279.8 KiB |  00m00s
+[172/177] Installing gnupg2-smime-0:2.4 100% |  45.9 MiB/s | 611.2 KiB |  00m00s
+[173/177] Installing mesa-va-drivers-0: 100% |   0.0   B/s | 984.0   B |  00m00s
+[174/177] Installing conmon-2:2.2.1-2.f 100% |  19.2 MiB/s | 216.7 KiB |  00m00s
+[175/177] Installing qrencode-libs-0:4. 100% | 170.6 MiB/s | 174.7 KiB |  00m00s
+[176/177] Installing diffutils-0:3.12-1 100% | 116.0 MiB/s |   1.6 MiB |  00m00s
+[177/177] Installing catatonit-0:0.2.1- 100% |   1.7 MiB/s | 692.1 KiB |  00m00s
+>>> Running %posttrans scriptlet: wireplumber-0:0.5.14-1.fc42.aarch64           
+>>> Finished %posttrans scriptlet: wireplumber-0:0.5.14-1.fc42.aarch64          
+>>> Scriptlet output:                                                           
+>>> Created symlink '/etc/systemd/user/pipewire-session-manager.service' 
+>>> Created symlink '/etc/systemd/user/pipewire.service.wants/wireplumber.servic
+>>>                                                                             
+>>> Running %triggerin scriptlet: systemd-0:257.13-1.fc42.aarch64               
+>>> Finished %triggerin scriptlet: systemd-0:257.13-1.fc42.aarch64              
+>>> Scriptlet output:                                                           
+>>> Failed to connect to audit log, ignoring: Invalid argument                  
+>>>                                                                             
+Complete!
+[info] Resolving latest nimbus version...
+[info] Latest nimbus version: v0.1.31
+[info] Resolving latest nimbus-crun version...
+[info] Latest nimbus-crun version: v1.27-nimbus.2
+[info] Downloading checksums for nimbus v0.1.31...
+[info] Downloading nimbus v0.1.31...
+[info] Verifying checksum...
+[warn] gh CLI not found — skipping GitHub attestation verification for nimbus_linux_arm64.tar.gz
+[info] Extracting and installing...
+[info] Installed nimbus to /usr/local/bin/nimbus
+[info] Downloading checksums for nimbus-crun v1.27-nimbus.2...
+[info] Downloading nimbus-crun v1.27-nimbus.2...
+[info] Verifying checksum...
+[warn] gh CLI not found — skipping GitHub attestation verification for nimbus-crun-linux-arm64
+[info] Installing nimbus-crun...
+[info] Installed nimbus-crun to /usr/libexec/nimbus/crun
+[info] Running inline installation verification...
+nimbus                 present path=/usr/local/bin/nimbus
+nimbus-crun            present path=/usr/libexec/nimbus/crun (missing +LIBKRUN flag)
+conmon                 present path=/usr/sbin/conmon
+buildah                present path=/usr/sbin/buildah
+catatonit              missing
+passt                  present path=/usr/sbin/passt
+newuidmap              present path=/usr/sbin/newuidmap
+fuse-overlayfs         present path=/usr/sbin/fuse-overlayfs
+libkrun.so             present path=/lib64/libkrun.so.1
+libkrunfw.so           present path=/lib64/libkrunfw.so.5
+
+result                 unsupported (1 failures, 1 warnings)
+[warn] Inline verification reported issues — see output above
+
+=== Getting Started ===
+
+Nimbus is installed! To start the server:
+
+  nimbus serve
+
+For more information:
+  nimbus --help
+  https://github.com/nimbus/nimbus#readme
+
+[install] exit=0
+--- verify ---
+[verify] nimbus --version
+nimbus 0.1.31
+[verify] /usr/libexec/nimbus/crun --version
+crun version 1.27-dirty
+commit: a718a92cc9a94955a5a550b6fdec1378c247ec50
+rundir: /run/crun
+spec: 1.0.0
++SYSTEMD +SELINUX +APPARMOR +CAP +SECCOMP +EBPF +LIBKRUN +YAJL
+[verify] digests:
+ac7edc3b1969f97eeb63b800c6a5bb40e3bf29065ccc4fbf9bca8f289f2f6644  /usr/local/bin/nimbus
+9a0773da0802058d2f3d4854b83ebce85a206a4a00131d0e714595f8d7306f5e  /usr/libexec/nimbus/crun
+[verify] libkrun + libkrunfw presence:
+libkrun-1.17.4-1.fc42.aarch64
+libkrunfw-5.3.0-1.fc42.aarch64
+/usr/lib64/libkrun.so.1
+/usr/lib64/libkrun.so.1.17.4
+/usr/lib64/libkrunfw.so.5
+/usr/lib64/libkrunfw.so.5
+/usr/lib64/libkrunfw.so.5.3.0
+/usr/lib64/libkrunfw.so.5.3.0
+--- idempotency: run install.sh again ---
+Package "conmon-2:2.2.1-2.fc42.aarch64" is already installed.
+Package "buildah-2:1.43.1-1.fc42.aarch64" is already installed.
+Package "catatonit-0.2.1-1.fc42.aarch64" is already installed.
+Package "passt-0^20260120.g386b5f5-1.fc42.aarch64" is already installed.
+Package "shadow-utils-2:4.17.4-1.fc42.aarch64" is already installed.
+Package "fuse-overlayfs-1.13-3.fc42.aarch64" is already installed.
+Package "libkrun-1.17.4-1.fc42.aarch64" is already installed.
+Package "libkrunfw-5.3.0-1.fc42.aarch64" is already installed.
+[info] nimbus v0.1.31 is already installed — skipping
