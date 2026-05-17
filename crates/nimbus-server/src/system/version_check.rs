@@ -124,10 +124,7 @@ impl VersionCheck {
             && let Some(loaded) = load_cache(path)
         {
             state.cached = loaded.cached;
-            state.last_checked_at = loaded
-                .last_checked_at
-                .as_deref()
-                .and_then(parse_rfc3339);
+            state.last_checked_at = loaded.last_checked_at.as_deref().and_then(parse_rfc3339);
             if state.cached.is_some() {
                 state.last_status = CheckStatusInternal::Ok;
             }

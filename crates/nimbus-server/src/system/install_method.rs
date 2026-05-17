@@ -197,7 +197,10 @@ mod tests {
     fn brew_prefix_apple_silicon() {
         let action = classify_path("/opt/homebrew/Cellar/nimbus/0.1.31/bin/nimbus");
         assert_eq!(action.method, InstallMethod::Brew);
-        assert_eq!(action.command, Some("brew upgrade --cask nimbus/tap/nimbus"));
+        assert_eq!(
+            action.command,
+            Some("brew upgrade --cask nimbus/tap/nimbus")
+        );
         assert!(!action.needs_sudo);
         assert!(action.interactive);
         assert_eq!(action.fallback_url, FALLBACK_INSTALL);

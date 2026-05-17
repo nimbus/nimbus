@@ -317,6 +317,10 @@ Full install + troubleshooting reference:
 The shell does not bundle `nimbus`; install the CLI above first. On launch
 it discovers a running instance via `server.json` or spawns one on demand.
 
+For how the CLI and desktop shell update themselves, what the staleness
+indicators in the UI mean, and how to disable update checks on air-gapped
+hosts, see [`docs/operating/updates.md`](docs/operating/updates.md).
+
 ## Community
 
 - **[Issues](https://github.com/nimbus/nimbus/issues)** — bugs and concrete problems
