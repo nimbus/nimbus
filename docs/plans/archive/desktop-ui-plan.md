@@ -1,5 +1,14 @@
 # Plan: Desktop UI
 
+> **Successor plan:** the shell IA delivered here was extended into a
+> two-view (Developer `/app/*` / Operator `/admin/*`) shell with primary
+> drawer, contextual sub-drawer, view switcher, tenant selector, and
+> active-tenant store under
+> [`desktop-ui-shell-overhaul-plan.md`](desktop-ui-shell-overhaul-plan.md)
+> (also archived; closed 2026-05-17). For any further shell or IA
+> changes, promote a new active plan rather than resuming either of
+> these archived records.
+
 Canonical execution plan for a Docker Desktop / Podman Desktop-style graphical
 interface for Nimbus. The UI is an embedded React SPA served by
 `nimbus-server` at `/ui/*`, consuming the system tenant query surface and

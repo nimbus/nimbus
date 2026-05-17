@@ -37,7 +37,7 @@ Phase 1 of the operator console (DU1–DU11) shipped under
 the multi-pane navigation, multi-tenant discoverability, and the IA
 correction that Phase 1 intentionally deferred.
 
-The root [`DESIGN.md`](../../DESIGN.md) remains the design-system
+The root [`DESIGN.md`](../../../DESIGN.md) remains the design-system
 authority. The two-axis token system (Mode × Palette, applied via compound
 `[data-palette=X][data-theme=Y]` selectors on `<html>`) defined in
 `packages/nimbus-ui/src/styles/globals.css` is a hard requirement — every
@@ -69,11 +69,12 @@ IAs rather than one tree with per-section scope toggles.
 
 ## Status
 
-- **Status:** `in_progress` — promoted 2026-05-17 with IA revisions
-  recorded 2026-05-17 after deep first-principles review.
+- **Status:** `done` — promoted 2026-05-17, all phases O0–O8 closed
+  2026-05-17 with verification artifacts under
+  `docs/plans/proof/desktop-ui-shell-overhaul/`.
 - **Primary owner:** this plan.
 - **Activation gate:** archived
-  [`desktop-ui-plan.md`](archive/desktop-ui-plan.md) reached
+  [`desktop-ui-plan.md`](desktop-ui-plan.md) reached
   `implementation-complete; archive-pending`, palette/mode + DU7 followup
   fixes (commit `6ba937c2`) shipped on `main`, working tree clean.
 - **Related plans / references:**
@@ -442,7 +443,7 @@ the Execution Log.
 | O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `done` |
 | O6 | Active-tenant store + per-route refetch on tenant change | `done` |
 | O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `done` |
-| O8 | Plan close: README registration, archive hand-off | `in_progress` |
+| O8 | Plan close: README registration, archive hand-off | `done` |
 
 Exactly one phase is `in_progress` at a time. Update this ledger and the
 phase's own section before/after each work block.
@@ -898,7 +899,7 @@ matrix, drawer states, and tenant scopes.
 
 ### O8 — Plan close, archive hand-off
 
-**Status:** `todo`
+**Status:** `done`
 
 **Goal:** Close the loop with `docs/plans/README.md` and the archived
 Phase 1 desktop UI plan.
@@ -1512,24 +1513,45 @@ verification run, anything surprising._
   - Verification: `npm run typecheck` clean; `npm run test` 138/138
     (20 spec files, +1 search-aware active-state case); `npm run
     build` clean. O4 closes; **O5** opens.
+- **2026-05-17 (m)** — **O8 complete.** Plan archived.
+  - Moved `docs/plans/desktop-ui-shell-overhaul-plan.md` to
+    `docs/plans/archive/desktop-ui-shell-overhaul-plan.md`.
+  - Registered the archived plan in `docs/plans/README.md` under
+    "Current Reference Baselines" (alongside the Phase 1
+    `archive/desktop-ui-plan.md` entry).
+  - Added a "Follow-up plan" reference at the top of
+    `docs/plans/archive/desktop-ui-plan.md` pointing at this archived
+    plan, so the Phase 1 record names its successor.
+  - Flipped Status at the top of this plan from `in_progress` to
+    `done`. Phase Status Ledger row O8 set to `done`. O8 phase header
+    set to `done`. Execution Log closed.
+  - **Follow-up scope declared:** placeholder routes shipped here for
+    Services (`/admin/services*`), Files (`/app/files*`), Schedules
+    (`/app/schedules*`) — actual feature content (real lists, real
+    detail surfaces, real wires to backend lifecycle) is out of scope
+    for this plan and must be promoted into new active plans before
+    any of those slices is implemented. The shell-overhaul ledger
+    does not own them.
+  - No new code in O8; verification gates from O7 still hold:
+    `npm run typecheck` clean, `npm run test` 156/156 (22 spec files),
+    `npm run build` clean.
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, especially the **O8 phase detail**
-   (Plan close, archive hand-off).
-2. O0–O7 are all `done` with verification artifacts under
-   `docs/plans/proof/desktop-ui-shell-overhaul/`. The remaining work
-   is purely organizational:
-   - Register this plan in `docs/plans/README.md` under "Active
-     execution plans" (or move directly to archive if you decide
-     the shell overhaul is fully shipped).
-   - Add a "Follow-up plan" reference at the top of
-     `docs/plans/archive/desktop-ui-plan.md` pointing here, if that
-     plan has not been frozen yet.
-   - Flip the Status field at the very top of this plan from
-     `in_progress` to `done`.
-3. Promote follow-up plans (if needed) for Services / Files /
-   Schedules actual feature content — out of scope here, but the
-   shell-overhaul plan should declare it explicitly so the next
-   slice has an owner.
-4. Commit + push the O8 baseline to `main` per durable authorization.
+This plan is `done`. Do not resume — promote a new active plan for the
+next slice instead.
+
+- Shell IA + chrome (two views, primary drawer, sub-drawer, view
+  switcher, tenant selector, active-tenant store) all landed under
+  O0–O7 and verified at `docs/plans/proof/desktop-ui-shell-overhaul/`.
+- Follow-up slices that **need their own plan** before code lands:
+  - **Services** (`/admin/services*`) — replace placeholder with real
+    Compose-backed service list, lifecycle controls, detail surface.
+  - **Files** (`/app/files*`) — replace placeholder with real
+    bucket/object browser once the S3-compatible blob storage API
+    ships.
+  - **Schedules** (`/app/schedules*`) — replace static-menu placeholder
+    with real Scheduled / Cron lists and detail surfaces.
+- For other follow-up work (RBAC between Operator/Developer views,
+  cross-tenant Observability filter expansion, etc.), see Risks &
+  Open Questions in this archived plan and promote an active plan.

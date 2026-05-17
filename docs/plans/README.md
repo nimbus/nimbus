@@ -41,7 +41,23 @@ archived plans only when you need historical execution detail.
     embedded React SPA at `/ui/*` via `rust-embed`, dashboard/machines/
     services/functions/data/logs/runs/settings tabs, dark mode, a11y,
     DU0–DU10 + DU11 hardening. Consumed the `_nimbus` system-tenant
-    surface and current architecture references below.
+    surface and current architecture references below. Successor:
+    `docs/plans/archive/desktop-ui-shell-overhaul-plan.md` (two-view
+    shell, primary drawer, sub-drawer, tenant selector, active-tenant
+    store).
+- `docs/plans/archive/desktop-ui-shell-overhaul-plan.md`
+  - completed execution record for the two-view operator console
+    shell: Developer console at `/app/*` (Overview / Compute /
+    Schedules / Storage / Files / Observability / Settings, tenant-
+    scoped) and Operator console at `/admin/*` (System / Tenants /
+    Machines / Network / Services / Observability / Settings, server-
+    wide), with top-nav view switcher + collapsible primary drawer +
+    contextual sub-drawer (static menu | dynamic list) + tenant
+    selector + active-tenant Zustand store + `?as=` bootstrap. Covered
+    O0–O8. Closed 2026-05-17; verification artifacts under
+    `docs/plans/proof/desktop-ui-shell-overhaul/`. Promote new active
+    plans before implementing real feature content for the placeholder
+    Services / Files / Schedules surfaces.
 - `docs/plans/archive/update-lifecycle-plan.md`
   - completed execution record for the operator-facing update lifecycle:
     server-side `/api/system/version-info` with stale-while-revalidate
