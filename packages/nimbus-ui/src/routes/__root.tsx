@@ -1,26 +1,36 @@
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import {
+  createRootRoute,
+  Outlet,
+  useRouterState,
+} from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { StalenessProvider } from "../hooks/use-staleness";
 import { CommandPalette } from "../shell/command-palette";
 import { DisconnectedOverlay } from "../shell/disconnected-overlay";
 import { AppErrorBoundary } from "../shell/error-boundary";
 import { KeyboardContract } from "../shell/keyboard-contract";
+import { viewFromPathname } from "../shell/nav-entries";
 import { Sidebar } from "../shell/sidebar";
 import { StatusBar } from "../shell/status-bar";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
+import { TopNav } from "../shell/top-nav";
+import { persistLastRouteForView, useUiStore } from "../store/ui-store";
 
 export const Route = createRootRoute({
   component: ShellLayout,
 });
 
 function ShellLayout() {
+  useLastRouteTracker();
   return (
     <AppErrorBoundary>
       <ThemeController />
       <KeyboardContract />
       <StalenessProvider>
         <div className="flex h-screen flex-col bg-app text-default">
+          <TopNav />
           <div className="flex min-h-0 flex-1">
             <Sidebar />
             <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -49,4 +59,14 @@ function ShellLayout() {
       </StalenessProvider>
     </AppErrorBoundary>
   );
+}
+
+function useLastRouteTracker() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const setLastView = useUiStore((s) => s.setLastView);
+  useEffect(() => {
+    const view = viewFromPathname(pathname);
+    persistLastRouteForView(view, pathname);
+    setLastView(view);
+  }, [pathname, setLastView]);
 }
