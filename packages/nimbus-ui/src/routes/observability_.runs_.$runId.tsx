@@ -326,7 +326,7 @@ function WaterfallBar({
   );
   const tones: Record<typeof tone, string> = {
     ok: "bg-[color-mix(in_oklch,var(--color-success)_70%,transparent)]",
-    muted: "bg-[color-mix(in_oklch,var(--color-text-muted)_50%,transparent)]",
+    muted: "bg-[color-mix(in_oklch,var(--color-muted)_50%,transparent)]",
     error: "bg-[color-mix(in_oklch,var(--color-danger)_75%,transparent)]",
   };
   return (

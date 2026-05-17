@@ -1402,6 +1402,16 @@ function DialogShell({
   testid: string;
   children: React.ReactNode;
 }) {
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    previouslyFocusedRef.current =
+      (document.activeElement as HTMLElement | null) ?? null;
+    return () => {
+      previouslyFocusedRef.current?.focus?.();
+    };
+  }, []);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"

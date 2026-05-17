@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "../../convex/_generated/api";
+import { ConfirmDialog } from "../components/confirm-dialog";
 import { CopyChip } from "../components/copy-chip";
 import { StateChip } from "../components/state-chip";
 import { RelativeTime } from "../components/time";
@@ -91,6 +92,7 @@ function MachinesPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [pending, setPending] = useState<Record<string, LifecycleAction>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [confirmDelete, setConfirmDelete] = useState<MachineDoc | null>(null);
 
   const selectedMachine = useMemo(() => {
     if (!machines || !selected) return null;
@@ -153,6 +155,17 @@ function MachinesPage() {
     [],
   );
 
+  const handleAction = useCallback(
+    (machine: MachineDoc, action: LifecycleAction) => {
+      if (action === "delete") {
+        setConfirmDelete(machine);
+        return;
+      }
+      void runAction(machine, action);
+    },
+    [runAction],
+  );
+
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
@@ -178,7 +191,7 @@ function MachinesPage() {
               onSelect={setSelected}
               pending={pending}
               errors={errors}
-              onAction={runAction}
+              onAction={handleAction}
             />
           )}
         </div>
@@ -189,6 +202,33 @@ function MachinesPage() {
           />
         ) : null}
       </div>
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title={
+          confirmDelete
+            ? `Delete machine "${confirmDelete.name}"?`
+            : "Delete machine?"
+        }
+        description={
+          <p>
+            This stops and removes the machine from this deployment. Running
+            workloads are terminated. This action cannot be undone.
+          </p>
+        }
+        confirmLabel="Delete"
+        danger
+        busy={
+          confirmDelete ? pending[confirmDelete._id] === "delete" : false
+        }
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={() => {
+          if (!confirmDelete) return;
+          const target = confirmDelete;
+          setConfirmDelete(null);
+          void runAction(target, "delete");
+        }}
+        testid="machines-delete-dialog"
+      />
     </section>
   );
 }
