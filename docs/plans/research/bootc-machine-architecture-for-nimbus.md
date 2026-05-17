@@ -45,7 +45,7 @@ freshness update is not, by itself, evidence that the Fedora-base `bootupd_t`
 AVC blocker is resolved.
 
 The target document is intentionally bootc-only. Transition sequencing now
-belongs in `docs/plans/bootc-machine-default-plan.md`; prior MOS0-MOS2 and
+belongs in `docs/plans/archive/bootc-machine-default-plan.md`; prior MOS0-MOS2 and
 MOS3A investigation evidence is archived in
 `docs/plans/archive/machine-os-adoption-plan.md`.
 
@@ -796,4 +796,4 @@ Local:
 - `crates/nimbus-bin/src/machine/manager/image.rs`
 - `crates/nimbus-bin/src/machine/bootstrap.rs`
 - `docs/plans/archive/machine-os-adoption-plan.md`
-- `docs/plans/bootc-machine-default-plan.md`
+- `docs/plans/archive/bootc-machine-default-plan.md`

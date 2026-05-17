@@ -4,6 +4,15 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/distribution-plan.md`
+  - canonical plan for distributing nimbus across all channels: install
+    script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
+    (macOS via krunkit/libkrun), binary tarballs, container images, cloud
+    VM images (AWS AMI, GCP). Channel 4 covers the macOS machine VM
+    architecture (krunkit, guest image, control channel, virtiofs, gvproxy).
+    Activation gate met on 2026-04-13 (microVM service baseline `done`);
+    binary release, Homebrew/cask, and Linux package mirror lanes are in
+    flight under this plan.
 - `docs/plans/install-script-plan.md`
   - canonical execution plan for the nimbus install script (Channel 1):
     `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
@@ -46,12 +55,13 @@ archived plans only when you need historical execution detail.
     E2E, code signing, release CI, and operator/security docs. DS7 / DS8
     / DS9 macOS re-verification deferred to first real `v0.x` release
     per the in-tree §"External feedback loops" disposition.
-- `docs/plans/bootc-machine-default-plan.md`
+- `docs/plans/archive/bootc-machine-default-plan.md`
   - completed execution record for BMD0-BMD7: direct Fedora bootc machine-os
     recipe ownership, build artifact proof, bootc-native machine-config,
     macOS parity, bootc lifecycle, default promotion to
     `ghcr.io/nimbus/machine-os:v0.1.30@sha256:f565...`, and legacy
-    Podman/FCOS demotion to explicit diagnostic/repair overrides
+    Podman/FCOS demotion to explicit diagnostic/repair overrides. Closed
+    2026-05-16; promote a new active plan for future machine OS work.
 - `docs/plans/archive/system-tenant-api-plan.md`
   - completed execution record for ST1-ST4: `_nimbus` system tenant bootstrap,
     server-owned machine/service/network projections, local-admin lifecycle
@@ -79,8 +89,11 @@ archived plans only when you need historical execution detail.
   - current Convex adapter compatibility contract
 - `docs/plans/archive/machine-os-adoption-plan.md`
   - superseded evidence plan for MOS0-MOS2 and the abandoned MOS3A
-    FCOS-derived candidate. Do not resume MOS3A from this plan; use
-    `docs/plans/bootc-machine-default-plan.md` for current machine OS work.
+    FCOS-derived candidate. Do not resume MOS3A from this plan; the
+    bootc-native default lives in
+    `docs/plans/archive/bootc-machine-default-plan.md` as completed
+    implementation baseline. Future machine OS work must promote a new
+    active plan.
 
 ## Deferred plans with defined scope
 
@@ -93,12 +106,6 @@ archived plans only when you need historical execution detail.
 
 ## Deferred design and experiment plans
 
-- `docs/plans/distribution-plan.md`
-  - canonical plan for distributing nimbus across all channels: install
-    script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
-    (macOS via krunkit/libkrun), binary tarballs, container images, cloud
-    VM images (AWS AMI, GCP). Channel 4 covers the macOS machine VM
-    architecture (krunkit, guest image, control channel, virtiofs, gvproxy)
 - `docs/plans/layered-admission-control-plan.md`
   - current owner of future layered admission-control and `EO8` promotion work;
     use it before promoting any new admission-control boundary

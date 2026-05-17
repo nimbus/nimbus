@@ -10,7 +10,7 @@ Current source-backed reference for how Nimbus:
 
 The release ownership and host-consumption paths below cover both the current
 shipped macOS contract and the direct bootc evidence captured in
-[bootc-machine-default-plan.md](/Users/jack/src/github.com/nimbus/nimbus/docs/plans/bootc-machine-default-plan.md).
+[bootc-machine-default-plan.md](../../plans/archive/bootc-machine-default-plan.md).
 The settled current macOS contract now uses Nimbus's published bootc image by
 pinned immutable reference. Podman's published machine image remains a
 compatibility/repair diagnostic override; stable macOS bring-up no longer

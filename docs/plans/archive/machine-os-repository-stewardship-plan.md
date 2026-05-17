@@ -6,7 +6,7 @@ repository with a small, readable project structure and a release pipeline that
 is clear enough to earn enterprise trust.
 
 This plan does not change the macOS default image by itself. The bootc default
-was already promoted by `docs/plans/bootc-machine-default-plan.md`. This plan
+was already promoted by `docs/plans/archive/bootc-machine-default-plan.md`. This plan
 cleans up ownership, branch hygiene, structure, docs, verification, and
 pipeline boundaries now that the direct bootc architecture is the real path.
 
@@ -23,7 +23,7 @@ pipeline boundaries now that the direct bootc architecture is the real path.
 
 ## Inputs
 
-- `docs/plans/bootc-machine-default-plan.md`
+- `docs/plans/archive/bootc-machine-default-plan.md`
 - `docs/plans/research/bootc-machine-architecture-for-nimbus.md`
 - `docs/architecture/sandbox/macos-machine-flow.md`
 - `/Users/jack/src/github.com/nimbus/machine-os`
@@ -263,7 +263,7 @@ Tasks:
 - register this plan as active in `docs/plans/README.md`
 - record the confirmed divergence from `containers/podman-machine-os`
 - record current branch cleanup candidates
-- keep `docs/plans/bootc-machine-default-plan.md` as completed implementation
+- keep `docs/plans/archive/bootc-machine-default-plan.md` as completed implementation
   baseline rather than resuming it
 
 Verification:

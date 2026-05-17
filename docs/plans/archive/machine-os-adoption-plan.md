@@ -4,11 +4,11 @@
 > historical evidence for MOS0-MOS2, the current pinned Podman-machine-os
 > macOS default, and the abandoned MOS3A/FCOS-derived investigation. Current
 > machine OS execution is owned by
-> `docs/plans/bootc-machine-default-plan.md`.
+> `docs/plans/archive/bootc-machine-default-plan.md`.
 
 Historical evidence plan for MOS0-MOS2 and the abandoned MOS3A
 FCOS-derived candidate. Current machine OS execution has pivoted to
-`docs/plans/bootc-machine-default-plan.md`.
+`docs/plans/archive/bootc-machine-default-plan.md`.
 
 Do not resume MOS3A from this plan. Use it only for evidence about the
 stabilized Podman fallback, refreshed crun/Fedora baselines, OCI artifact
@@ -19,7 +19,7 @@ contract fixes, and the failed FCOS-derived build investigation.
 ## Status
 
 - **Status:** `superseded`
-- **Primary owner:** `docs/plans/bootc-machine-default-plan.md`
+- **Primary owner:** `docs/plans/archive/bootc-machine-default-plan.md`
 - **Parent plan:** `docs/plans/distribution-plan.md` (Channel 4)
 - **Research baseline:** `docs/plans/research/bootc-adoption-evaluation.md`
   and `docs/plans/research/bootc-machine-architecture-for-nimbus.md`
@@ -29,7 +29,7 @@ contract fixes, and the failed FCOS-derived build investigation.
 ## Control Plan Rules
 
 This plan is no longer the active source of truth for machine OS execution.
-Use `docs/plans/bootc-machine-default-plan.md` for current work. The list
+Use `docs/plans/archive/bootc-machine-default-plan.md` for current work. The list
 below is retained only to explain the evidence sources used while MOS0-MOS2
 and the MOS3A investigation were active.
 
@@ -48,7 +48,7 @@ Source of truth:
 
 Do not flip the macOS default away from the pinned Podman machine image from
 this evidence plan. The active bootc-native replacement and promotion gates now
-live in `docs/plans/bootc-machine-default-plan.md`.
+live in `docs/plans/archive/bootc-machine-default-plan.md`.
 
 ---
 
