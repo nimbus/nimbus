@@ -9,11 +9,14 @@ export function Sidebar() {
       aria-label="Primary"
       className="flex h-full w-56 shrink-0 flex-col gap-1 border-r border-app bg-surface px-2 py-3"
     >
-      <div className="px-2 pb-3">
-        <div className="text-xs font-mono uppercase tracking-[0.18em] text-muted">
-          Nimbus
+      <div className="flex items-center gap-2 px-2 pb-3 text-default">
+        <LogoMark className="h-6 w-[38px] shrink-0" />
+        <div className="flex flex-col leading-tight">
+          <span className="text-sm font-medium">Nimbus</span>
+          <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted">
+            operator console
+          </span>
         </div>
-        <div className="font-mono text-sm text-default">operator console</div>
       </div>
       <ul className="flex flex-col gap-px">
         {NAV_ENTRIES.map((entry) => (
@@ -24,6 +27,24 @@ export function Sidebar() {
         Phase 1 · Embedded SPA
       </div>
     </nav>
+  );
+}
+
+function LogoMark({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 322 201"
+      role="img"
+      aria-label="Nimbus"
+      preserveAspectRatio="xMidYMid meet"
+      className={className}
+    >
+      <g transform="translate(-30,231) scale(0.1,-0.1)" fill="currentColor">
+        <path d="M1447 2194 c-196 -47 -457 -291 -457 -425 0 -16 -8 -19 -45 -19 -155 0 -320 -89 -425 -228 -259 -345 -71 -840 323 -848 l97 -2 40 -51 c194 -245 610 -293 880 -101 27 19 29 19 66 3 140 -62 369 -1 497 133 l43 44 38 -20 c131 -66 304 -39 413 66 35 33 58 45 111 58 189 46 340 179 382 334 23 88 -11 115 -99 77 -133 -55 -228 -22 -326 115 -94 132 -196 196 -331 207 l-62 6 -4 56 c-15 204 -211 367 -431 359 l-79 -2 -34 46 c-116 160 -380 245 -597 192z m296 -81 c119 -35 217 -108 269 -200 23 -41 35 -52 47 -47 259 107 536 -166 435 -430 -5 -14 0 -13 37 4 82 37 196 20 287 -42 40 -27 71 -63 148 -170 65 -90 210 -138 317 -105 54 17 53 19 26 -35 -52 -101 -194 -196 -326 -217 -54 -9 -66 -15 -99 -51 -184 -203 -557 -49 -439 180 46 89 206 72 193 -20 -4 -24 -2 -27 9 -19 43 36 -20 147 -85 150 -164 7 -259 -157 -179 -310 l26 -51 -49 -50 c-107 -110 -292 -152 -427 -98 l-60 24 -29 -24 c-222 -185 -605 -160 -791 53 l-43 48 46 40 c172 151 121 432 -82 463 -144 21 -258 -194 -122 -229 20 -6 20 -5 -2 18 -82 87 70 201 169 127 180 -133 12 -416 -221 -372 -516 97 -360 950 167 917 l83 -5 5 45 c31 278 396 493 690 406z" />
+        <path d="M1574 1556 c-119 -56 -171 -187 -110 -281 34 -52 108 -74 153 -45 16 10 14 10 -9 5 -71 -14 -137 56 -124 130 36 192 336 194 441 4 125 -226 -99 -523 -375 -496 l-55 6 35 -17 c163 -75 410 42 481 229 109 287 -173 588 -437 465z" />
+      </g>
+    </svg>
   );
 }
 
