@@ -17,14 +17,23 @@ import { SubDrawer, SubDrawerProvider } from "../shell/sub-drawer";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
 import { TopNav } from "../shell/top-nav";
+import { useTenantBootstrap } from "../shell/use-tenant-bootstrap";
 import { persistLastRouteForView, useUiStore } from "../store/ui-store";
+
+type RootSearch = {
+  as?: string;
+};
 
 export const Route = createRootRoute({
   component: ShellLayout,
+  validateSearch: (search: Record<string, unknown>): RootSearch => ({
+    as: typeof search.as === "string" ? search.as : undefined,
+  }),
 });
 
 function ShellLayout() {
   useLastRouteTracker();
+  useTenantBootstrap();
   return (
     <AppErrorBoundary>
       <ThemeController />
@@ -74,3 +83,4 @@ function useLastRouteTracker() {
     setLastView(view);
   }, [pathname, setLastView]);
 }
+

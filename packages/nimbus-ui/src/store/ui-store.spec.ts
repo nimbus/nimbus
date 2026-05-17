@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const THEME_STORAGE_KEY = "nimbus-ui:theme";
 const PALETTE_STORAGE_KEY = "nimbus-ui:palette";
+const ACTIVE_TENANT_KEY = "nimbus-ui:active-tenant";
 
 beforeEach(() => {
   vi.resetModules();
@@ -88,6 +89,27 @@ describe("ui-store", () => {
     useUiStore.getState().setPalette("mono");
     expect(useUiStore.getState().palette).toBe("mono");
     expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe("mono");
+  });
+
+  it("defaults activeTenant to null when nothing is persisted", async () => {
+    const { useUiStore } = await import("./ui-store");
+    expect(useUiStore.getState().activeTenant).toBeNull();
+  });
+
+  it("hydrates activeTenant from the persisted key", async () => {
+    window.localStorage.setItem(ACTIVE_TENANT_KEY, "acme");
+    const { useUiStore } = await import("./ui-store");
+    expect(useUiStore.getState().activeTenant).toBe("acme");
+  });
+
+  it("setActiveTenant writes through and clears on null", async () => {
+    const { useUiStore } = await import("./ui-store");
+    useUiStore.getState().setActiveTenant("acme");
+    expect(useUiStore.getState().activeTenant).toBe("acme");
+    expect(window.localStorage.getItem(ACTIVE_TENANT_KEY)).toBe("acme");
+    useUiStore.getState().setActiveTenant(null);
+    expect(useUiStore.getState().activeTenant).toBeNull();
+    expect(window.localStorage.getItem(ACTIVE_TENANT_KEY)).toBeNull();
   });
 
   it("setLensOpen mirrors palette behavior on its own opener slot", async () => {

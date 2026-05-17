@@ -11,16 +11,10 @@ import {
   type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
-
-type StorageSearch = {
-  as?: string;
-};
+import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/app/storage")({
   component: StoragePage,
-  validateSearch: (search: Record<string, unknown>): StorageSearch => ({
-    as: typeof search.as === "string" ? search.as : undefined,
-  }),
 });
 
 type TableDoc = {
@@ -33,7 +27,7 @@ type TableDoc = {
 };
 
 function StoragePage() {
-  const { as: tenant } = Route.useSearch();
+  const tenant = useUiStore((s) => s.activeTenant);
   const tables = useQuery(
     api.tables.list,
     tenant ? { tenantId: tenant, limit: 200 } : "skip",
@@ -77,7 +71,6 @@ function StoragePage() {
                 <Link
                   to="/app/storage/$table"
                   params={{ table: name }}
-                  search={{ as: tenant }}
                   data-testid={`sub-drawer-item-dev-${name}`}
                   className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
                 >
@@ -180,7 +173,6 @@ function StoragePage() {
                         <Link
                           to="/app/storage/$table"
                           params={{ table: name }}
-                          search={{ as: tenant }}
                           className="font-mono text-default hover:underline"
                           data-testid={`tenant-table-link-${name}`}
                         >

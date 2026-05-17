@@ -12,6 +12,7 @@ import {
   type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
+import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/app/compute")({
   component: ComputePage,
@@ -83,9 +84,10 @@ const SECTIONS: Array<{ id: ComputeSection; label: string }> = [
 
 function ComputePage() {
   const [active, setActive] = useState<ComputeSection>("services");
+  const activeTenant = useUiStore((s) => s.activeTenant);
 
   const services = useQuery(api.services.list, {
-    tenantId: null,
+    tenantId: activeTenant,
     machineId: null,
     state: null,
     limit: 200,
@@ -96,12 +98,12 @@ function ComputePage() {
     limit: 200,
   }) as FunctionDoc[] | undefined;
   const scheduled = useQuery(api.scheduled_jobs.list, {
-    tenantId: null,
+    tenantId: activeTenant,
     status: null,
     limit: 200,
   }) as ScheduledJobDoc[] | undefined;
   const cron = useQuery(api.cron_jobs.list, {
-    tenantId: null,
+    tenantId: activeTenant,
     status: null,
     limit: 200,
   }) as CronJobDoc[] | undefined;
