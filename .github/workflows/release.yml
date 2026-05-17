@@ -565,10 +565,15 @@ jobs:
       - name: Verify release archive layout
         run: bash scripts/verify-release-archive-layout.sh --artifacts-dir artifacts
 
+      - name: Stage install script alongside release artifacts
+        run: |
+          cp scripts/install.sh artifacts/install.sh
+          chmod 0755 artifacts/install.sh
+
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum nimbus_* > checksums-sha256.txt
+          sha256sum nimbus_* install.sh > checksums-sha256.txt
           cat checksums-sha256.txt
 
       - name: Generate release notes
@@ -626,6 +631,7 @@ jobs:
           subject-path: |
             artifacts/nimbus_*.tar.gz
             artifacts/nimbus_*.zip
+            artifacts/install.sh
             artifacts/checksums-sha256.txt
 
       - name: Create GitHub Release
