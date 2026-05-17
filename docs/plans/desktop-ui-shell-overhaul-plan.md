@@ -1,5 +1,7 @@
 # Plan: Desktop UI Shell Overhaul
 
+> Note: always ensure the design skill is loaded when working on this plan.
+
 Canonical active execution plan for upgrading the Nimbus console chrome
 from a fixed-width sidebar shell into a **two-view, three-pane drawer
 system** that separates **Developer console** (tenant-scoped: an app
@@ -431,8 +433,8 @@ the Execution Log.
 
 | Phase | Description | Status |
 | --- | --- | --- |
-| O0 | Lock four decisions: restructure vs additive, two-view IA, view-switcher pattern, tenant-selector behavior per view | `todo` |
-| O1 | IA migration: DESIGN.md + nav-entries (per view) + placeholder routes under `app/` and `admin/` | `todo` |
+| O0 | Lock four decisions: restructure vs additive, two-view IA, view-switcher pattern, tenant-selector behavior per view | `done` |
+| O1 | IA migration: DESIGN.md + nav-entries (per view) + placeholder routes under `app/` and `admin/` | `in_progress` |
 | OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `todo` |
 | O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `todo` |
 | O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `todo` |
@@ -464,7 +466,7 @@ phase's own section before/after each work block.
 
 ### O0 — Confirm restructure & lock IA decision
 
-**Status:** `todo`
+**Status:** `done`
 
 **Goal:** Record decisions in the Execution Log before editing.
 Eliminates risk of half-restructuring or half-migrating IA.
@@ -495,7 +497,7 @@ Eliminates risk of half-restructuring or half-migrating IA.
 
 ### O1 — IA migration (DESIGN.md + nav-entries + placeholder routes)
 
-**Status:** `todo`
+**Status:** `in_progress`
 
 **Goal:** Land the IA change as a coherent baseline. `DESIGN.md`, the
 `NAV_ENTRIES` arrays (per view), and the route directory layout all
@@ -1065,6 +1067,51 @@ verification run, anything surprising._
   into tenant-owned (Developer) and server-owned (Operator). Convex /
   Firebase / Vercel cited as the two-scope pattern source; Docker /
   Podman cited as the single-shell pattern Nimbus rejects.
+- **2026-05-17 (d)** — **O0 complete.** Re-read `__root.tsx` (52 lines,
+  current shell renders `<Sidebar />` + `<main>` inside
+  `<StalenessProvider>`), `shell/sidebar.tsx` (110 lines, fixed `w-56`
+  with `LogoMark` + `NAV_ENTRIES.map`), `shell/system-tenant-lens.tsx`
+  (153 lines, ⌘\\ overlay with `resolveLensView(pathname)` URL → lens
+  mapping; hooks called unconditionally to keep order stable),
+  `shell/nav-entries.ts` (83 lines, single `NAV_ENTRIES` array of 7
+  items), and `DESIGN.md` lines 78–250 (Information Architecture +
+  Core Screens + Layout System sections). Four O0 decisions logged:
+  - **Decision 1 — Restructure (default).** Recompose `__root.tsx` into
+    the three-pane tree (`TopNav` / `PrimaryDrawer` / `SubDrawer` /
+    `main`) from the Architectural Decision section. *Why:* a width
+    transition on a single pane is cheaper than additive composition,
+    the breaking rename `Sidebar → PrimaryDrawer` is consistent with
+    pre-launch rules ("No backwards-compatibility shims"), and the
+    SubDrawer needs to be a structural slot from day one so dual-mode
+    contributors plug in cleanly.
+  - **Decision 2 — Two-view IA confirmed.** Developer console at
+    `/app/*` with 7 sections (Overview · Compute · Schedules · Storage
+    · Files · Observability · Settings (tenant)). Operator console at
+    `/admin/*` with 7 sections (System · Tenants · Machines · Network
+    · Services · Observability · Settings (server)). *Why:* Nimbus
+    serves two genuinely distinct personas (host vs app owner) whose
+    questions don't fungibly overlap; Convex / Firebase / Vercel all
+    encode this same split as a URL prefix because per-section scope
+    toggles are harder to learn than per-view uniform scope.
+  - **Decision 3 — View switcher pattern.** Top-nav segmented pill
+    (Developer ⇄ Operator), URL prefix is the source of truth,
+    localStorage (`nimbus-ui:last-view`,
+    `nimbus-ui:last-route:developer`, `nimbus-ui:last-route:operator`)
+    restores last route per view on toggle and on cold load. *Why:*
+    URL primacy preserves deep links and back-button semantics;
+    localStorage restore matches developer-tool expectations (Convex,
+    Vercel) so toggling back lands where the user left.
+  - **Decision 4 — Tenant selector behavior.** Developer: always
+    visible, always active; defaults to last-active tenant; renders
+    inline "Create tenant" CTA on zero-tenant install (cross-view deep
+    link to `/admin/tenants?new=1`). Operator: hidden by default,
+    rendered as an optional cross-tenant filter only on
+    `/admin/observability` (URL `?tenant=<id>`, default "All
+    tenants"). *Why:* per-view uniform scope eliminates the prior
+    three-state machine (`scoped`/`system`/`unset`); only Observability
+    benefits from a tenant filter on the operator side.
+  No code changes in this phase, per O0 acceptance criteria. O0 closes;
+  O1 begins.
 
 ## First Step When You Resume
 
