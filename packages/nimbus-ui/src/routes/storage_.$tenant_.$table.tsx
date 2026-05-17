@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { api } from "../../convex/_generated/api";
 import { Breadcrumb } from "../components/breadcrumb";
+import { ConfirmDialog } from "../components/confirm-dialog";
 import { CopyChip } from "../components/copy-chip";
 import { cn } from "../lib/cn";
 import { shortId } from "../lib/format";
@@ -80,6 +81,8 @@ function TableDocumentsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showInsert, setShowInsert] = useState(false);
   const [editing, setEditing] = useState<DocumentJson | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
+  const [deletingDocs, setDeletingDocs] = useState(false);
 
   const currentCursor = cursorStack[cursorStack.length - 1] ?? null;
 
@@ -226,14 +229,14 @@ function TableDocumentsPage() {
     [tenant, table],
   );
 
-  const handleDelete = useCallback(
+  const handleDelete = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setConfirmDelete(ids);
+  }, []);
+
+  const runDelete = useCallback(
     async (ids: string[]) => {
-      if (ids.length === 0) return;
-      const warning =
-        ids.length === 1
-          ? `Delete document ${ids[0]}?`
-          : `Delete ${ids.length} documents? This action cannot be undone.`;
-      if (!window.confirm(warning)) return;
+      setDeletingDocs(true);
       let failed = 0;
       for (const id of ids) {
         const response = await fetch(
@@ -242,6 +245,8 @@ function TableDocumentsPage() {
         );
         if (!response.ok) failed += 1;
       }
+      setDeletingDocs(false);
+      setConfirmDelete(null);
       if (failed === 0) {
         toast.success(
           `Deleted ${ids.length} document${ids.length === 1 ? "" : "s"}`,
@@ -562,6 +567,40 @@ function TableDocumentsPage() {
           onSubmit={(json) => handleUpdate(String(editing._id ?? ""), json)}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title={
+          confirmDelete && confirmDelete.length === 1
+            ? `Delete document ${shortId(confirmDelete[0])}?`
+            : `Delete ${confirmDelete?.length ?? 0} documents?`
+        }
+        description={
+          <div className="space-y-2">
+            <p>
+              Removes{" "}
+              <span className="font-mono text-default tabular">
+                {confirmDelete?.length ?? 0}
+              </span>{" "}
+              document
+              {confirmDelete && confirmDelete.length === 1 ? "" : "s"} from{" "}
+              <span className="font-mono text-default">{table}</span>. This
+              action cannot be undone.
+            </p>
+            {confirmDelete && confirmDelete.length === 1 ? (
+              <p className="font-mono text-xs text-muted">{confirmDelete[0]}</p>
+            ) : null}
+          </div>
+        }
+        confirmLabel="Delete"
+        danger
+        busy={deletingDocs}
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={() => {
+          if (confirmDelete) void runDelete(confirmDelete);
+        }}
+        testid="documents-delete-dialog"
+      />
     </section>
   );
 }
@@ -795,6 +834,7 @@ function SchemaPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDrop, setConfirmDrop] = useState(false);
 
   const save = useCallback(async () => {
     setError(null);
@@ -832,13 +872,8 @@ function SchemaPanel({
     }
   }, [json, tenant, table, onSaved]);
 
-  const drop = useCallback(async () => {
-    if (
-      !window.confirm(
-        `Drop schema for ${table}? The table will accept any document shape.`,
-      )
-    )
-      return;
+  const runDrop = useCallback(async () => {
+    setConfirmDrop(false);
     setError(null);
     setDeleting(true);
     try {
@@ -893,7 +928,7 @@ function SchemaPanel({
         <div className="flex items-center justify-end gap-2">
           <button
             type="button"
-            onClick={() => void drop()}
+            onClick={() => setConfirmDrop(true)}
             disabled={deleting || !schema}
             className={cn(
               "rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
@@ -919,6 +954,22 @@ function SchemaPanel({
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmDrop}
+        title={`Drop schema for ${table}?`}
+        description={
+          <p>
+            The table will accept any document shape. Existing documents are
+            kept; only enforcement is removed.
+          </p>
+        }
+        confirmLabel="Drop schema"
+        danger
+        busy={deleting}
+        onCancel={() => setConfirmDrop(false)}
+        onConfirm={() => void runDrop()}
+        testid="documents-drop-schema-dialog"
+      />
     </aside>
   );
 }

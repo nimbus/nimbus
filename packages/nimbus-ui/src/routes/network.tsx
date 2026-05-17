@@ -21,9 +21,12 @@ type RouteDoc = {
   lastRequestAt?: number;
 };
 
+// HTTP method tone. `--link` is reserved for <a> elements per DESIGN.md;
+// POST uses the product accent (teal) instead, matching its "create" verb
+// being a primary action.
 const METHOD_TONE: Record<string, string> = {
   GET: "text-success",
-  POST: "text-link",
+  POST: "text-accent",
   PUT: "text-warning",
   PATCH: "text-warning",
   DELETE: "text-danger",

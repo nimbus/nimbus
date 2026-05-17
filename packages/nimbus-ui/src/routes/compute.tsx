@@ -127,8 +127,8 @@ function ComputePage() {
             Compute
           </h1>
           <p className="text-sm text-muted">
-            Services, functions, scheduled and cron jobs. Reads stream from the
-            <code className="px-1 font-mono text-xs text-default">_nimbus</code>
+            Services, functions, scheduled and cron jobs. Reads stream from the{" "}
+            <code className="font-mono text-xs text-default">_nimbus</code>{" "}
             system tenant.
           </p>
         </div>
