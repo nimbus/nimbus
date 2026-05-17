@@ -15,6 +15,7 @@ use crate::protocol::{
     JournalStreamResponse, MaterializedJournalSnapshotResponse, RuntimeDiagnosticsResponse,
     RuntimeLimitsResponse, ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
     TenantEngineDiagnosticsResponse, TenantListResponse, TenantResponse, UpdateDocumentRequest,
+    VersionInfoResponse,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
 
@@ -29,6 +30,7 @@ mod schema;
 mod services;
 mod tenants;
 mod ui;
+mod version_info;
 
 pub(crate) use deploy::deploy_app;
 pub(crate) use documents::{
@@ -53,6 +55,7 @@ pub(crate) use schema::{delete_table_schema, get_schema, get_table_schema, set_t
 pub(crate) use services::{restart_service, start_service, stop_service};
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};
 pub(crate) use ui::{create_ui_session, ui_auth, ui_csp_middleware, ui_path, ui_root};
+pub(crate) use version_info::version_info;
 
 fn parse_document_id(value: &str) -> Result<DocumentId, AppError> {
     value.parse().map_err(|error| {

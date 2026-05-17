@@ -33,6 +33,7 @@ prost-types = "0.13.1"
 reqwest.workspace = true
 ring.workspace = true
 rust-embed = { version = "=8.11.0", features = ["interpolate-folder-path"] }
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -60,3 +61,4 @@ nimbus-testing = { path = "../nimbus-testing" }
 serde_yaml.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true
+wiremock = "0.6"

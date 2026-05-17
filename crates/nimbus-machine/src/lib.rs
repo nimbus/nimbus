@@ -536,10 +536,11 @@ fn resolve_home_dir() -> Result<PathBuf, Error> {
         if let Some(profile) = env::var_os("USERPROFILE") {
             return Ok(PathBuf::from(profile));
         }
-        if let (Some(drive), Some(path)) = (env::var_os("HOMEDRIVE"), env::var_os("HOMEPATH")) {
-            if !drive.is_empty() && !path.is_empty() {
-                return Ok(PathBuf::from(drive).join(path));
-            }
+        if let (Some(drive), Some(path)) = (env::var_os("HOMEDRIVE"), env::var_os("HOMEPATH"))
+            && !drive.is_empty()
+            && !path.is_empty()
+        {
+            return Ok(PathBuf::from(drive).join(path));
         }
     }
     Err(Error::InvalidInput(
