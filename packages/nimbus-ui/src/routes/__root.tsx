@@ -13,6 +13,7 @@ import { KeyboardContract } from "../shell/keyboard-contract";
 import { viewFromPathname } from "../shell/nav-entries";
 import { PrimaryDrawer } from "../shell/primary-drawer";
 import { StatusBar } from "../shell/status-bar";
+import { SubDrawer, SubDrawerProvider } from "../shell/sub-drawer";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
 import { TopNav } from "../shell/top-nav";
@@ -29,21 +30,24 @@ function ShellLayout() {
       <ThemeController />
       <KeyboardContract />
       <StalenessProvider>
-        <div className="flex h-screen flex-col bg-app text-default">
-          <TopNav />
-          <div className="flex min-h-0 flex-1">
-            <PrimaryDrawer />
-            <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-              <DisconnectedOverlay />
-              <div className="flex-1 overflow-auto">
-                <Outlet />
-              </div>
-            </main>
+        <SubDrawerProvider>
+          <div className="flex h-screen flex-col bg-app text-default">
+            <TopNav />
+            <div className="flex min-h-0 flex-1">
+              <PrimaryDrawer />
+              <SubDrawer />
+              <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                <DisconnectedOverlay />
+                <div className="flex-1 overflow-auto">
+                  <Outlet />
+                </div>
+              </main>
+            </div>
+            <StatusBar />
           </div>
-          <StatusBar />
-        </div>
-        <CommandPalette />
-        <SystemTenantLens />
+          <CommandPalette />
+          <SystemTenantLens />
+        </SubDrawerProvider>
         <Toaster
           position="bottom-right"
           toastOptions={{
