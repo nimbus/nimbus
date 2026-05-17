@@ -17,6 +17,7 @@ mod sandbox;
 mod service_manager;
 mod service_registry;
 mod state;
+mod system;
 mod system_tenant;
 mod ws;
 

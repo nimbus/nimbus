@@ -63,6 +63,29 @@ pub(crate) struct HealthResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VersionInfoResponse {
+    pub current: String,
+    pub latest: Option<String>,
+    pub available: bool,
+    pub url: Option<String>,
+    pub published_at: Option<String>,
+    pub host: String,
+    pub check_status: crate::system::CheckStatus,
+    pub upgrade: VersionUpgradeAction,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VersionUpgradeAction {
+    pub method: &'static str,
+    pub command: Option<&'static str>,
+    pub needs_sudo: bool,
+    pub interactive: bool,
+    pub fallback_url: &'static str,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct RuntimeDiagnosticsResponse {
     pub limits: RuntimeLimitsResponse,
     pub reset_capabilities: RuntimeResetCapabilities,

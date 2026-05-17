@@ -26,6 +26,8 @@ use crate::sandbox::{EmptySandboxCatalog, SandboxCatalog};
 use crate::service_manager::SandboxServiceManager;
 use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
 use crate::state::{AppState, AppStateConfig};
+use crate::system::VersionCheck;
+use crate::system::version_check::VersionCheckConfig;
 use crate::{http, ws};
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
@@ -261,6 +263,7 @@ impl RouterBuildConfig {
         let service = self.service.clone();
         crate::system_tenant::install_table_projection_observer(&service);
         let sandbox_service_manager = self.runtime_service_source.sandbox_service_manager();
+        let version_check = build_version_check();
         let state = Arc::new(AppState::from_config(AppStateConfig {
             service: self.service,
             convex_registry: self.convex_registry,
@@ -278,6 +281,7 @@ impl RouterBuildConfig {
             local_server_security: self.local_server_security,
             listen_addr: self.listen_addr,
             server_shutdown: self.server_shutdown,
+            version_check,
         }));
         let deployment = state.current_deployment();
         if let Some(registry) = deployment.cloud_functions_registry() {
@@ -335,6 +339,13 @@ pub(crate) fn convex_application_auth_verifier(
     convex_registry: &ConvexRegistry,
 ) -> Arc<dyn ApplicationAuthVerifier> {
     Arc::new(convex_registry.clone())
+}
+
+fn build_version_check() -> Arc<VersionCheck> {
+    let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+    let config = VersionCheckConfig::from_env(&current);
+    VersionCheck::new(current, config)
 }
 
 /// Builds the Nimbus HTTP/WebSocket router without Convex support.
@@ -552,6 +563,7 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
             post(http::rotate_local_admin_token),
         )
         .route("/api/system/shutdown", post(http::shutdown_system))
+        .route("/api/system/version-info", get(http::version_info))
         .route("/debug/runtime/metrics", get(http::runtime_diagnostics))
         .route(
             "/debug/tenants/{tenant_id}/consistency",

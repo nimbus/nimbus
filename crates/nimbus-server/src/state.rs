@@ -18,6 +18,7 @@ use crate::local_server::{LocalServerAuditEvent, LocalServerSecurityState};
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::service_manager::SandboxServiceManager;
 use crate::service_registry::RuntimeServiceRegistry;
+use crate::system::VersionCheck;
 
 pub(crate) struct AppStateConfig {
     pub(crate) service: Arc<Service>,
@@ -34,6 +35,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
     pub(crate) listen_addr: Option<SocketAddr>,
     pub(crate) server_shutdown: Option<watch::Sender<bool>>,
+    pub(crate) version_check: Arc<VersionCheck>,
 }
 
 /// Shared application state.
@@ -49,6 +51,7 @@ pub(crate) struct AppState {
     pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
     pub(crate) listen_addr: Option<SocketAddr>,
     server_shutdown: Option<watch::Sender<bool>>,
+    pub(crate) version_check: Arc<VersionCheck>,
 }
 
 impl AppState {
@@ -68,6 +71,7 @@ impl AppState {
             local_server_security,
             listen_addr,
             server_shutdown,
+            version_check,
         } = config;
         let convex_registry = convex_registry.map(Arc::new);
         let system_convex_registry = system_convex_registry.map(Arc::new);
@@ -92,6 +96,7 @@ impl AppState {
             local_server_security,
             listen_addr,
             server_shutdown,
+            version_check,
         }
     }
 
@@ -327,6 +332,7 @@ mod tests {
             local_server_security: None,
             listen_addr: None,
             server_shutdown: None,
+            version_check: test_version_check(),
         });
 
         assert!(
@@ -335,6 +341,20 @@ mod tests {
                 .application_auth_verifier()
                 .is_none()
         );
+    }
+
+    fn test_version_check() -> Arc<crate::system::VersionCheck> {
+        let current = semver::Version::new(0, 0, 0);
+        let config = crate::system::version_check::VersionCheckConfig {
+            cache_path: None,
+            releases_url: "http://127.0.0.1:1/".to_owned(),
+            user_agent: "nimbus/test".to_owned(),
+            ttl: std::time::Duration::from_secs(60),
+            disabled: true,
+            host_label: "test".to_owned(),
+            current_exe: None,
+        };
+        crate::system::VersionCheck::new(current, config)
     }
 }
 
