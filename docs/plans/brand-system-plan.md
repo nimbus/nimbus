@@ -12,7 +12,7 @@ truth for what is done, what is in flight, and what remains.
 
 ## Status
 
-- **Status:** `in_progress`
+- **Status:** `done` (2026-05-16)
 - **Primary owner:** this plan
 - **Parent plan:** none (brand identity is a peer plan, not a sub-plan)
 - **Repos affected:** `nimbus/nimbus`, `nimbus/desktop`
@@ -77,8 +77,8 @@ two are reconciled here.
 | L3   | DESIGN.md brand-palette section          | `done`      | new section in `DESIGN.md`                                          |
 | L4   | Favicon assets + HTML wiring             | `done`      | `packages/nimbus-ui/public/favicon.{svg,ico}` + `index.html` link   |
 | L5   | Sidebar logo mark                        | `done`      | `packages/nimbus-ui/src/shell/sidebar.tsx`                          |
-| L6   | Desktop app icon                         | `pending`   | `desktop/buildResources/icon.{icns,ico,png}` + `electron-builder.yml` |
-| L7   | Tray icon refresh                        | `pending`   | `desktop/buildResources/trayTemplate.png`                           |
+| L6   | Desktop app icon                         | `done`      | `desktop/buildResources/icon.{icns,ico,png}` + `electron-builder.yml` |
+| L7   | Tray icon refresh                        | `done`      | `desktop/buildResources/trayTemplate.png`                           |
 | L8   | `cli-not-found.html` token migration     | `done`      | `desktop/buildResources/setup/cli-not-found.html`                   |
 | L9   | `gen-variants.sh` refresh + run          | `done`      | `docs/brand/gen-variants.sh` regenerates L2 from L0                 |
 
@@ -426,6 +426,24 @@ Plus the L2 verification (all variants share canonical path data).
   added to a new `.card-header` lockup with "Nimbus / SETUP" wordmark.
   Verified visually in Chrome with `emulate { colorScheme }` for both
   modes at 900×650.
+
+- **2026-05-16: L6 complete.** Master 1024×1024 PNG built by centering
+  the warm-variant cloud (824px content width, 563px content height
+  preserves L0's 382:261 aspect) on a cream `#FFFAF2` square canvas via
+  `gen-app-icon.py`. macOS `icon.icns` (176 KB) produced by `iconutil`
+  from a 10-entry iconset covering 16/32/64/128/256/512/1024.
+  Windows `icon.ico` (362 KB) is a 6-size bundle (16/32/48/64/128/256)
+  built via `magick`. Linux `icon.png` (30 KB, 512×512). All three
+  written to `desktop/buildResources/`; `electron-builder.yml`
+  references each via `mac.icon` / `win.icon` / `linux.icon`.
+
+- **2026-05-16: L7 complete.** `trayTemplate.png` (16×16) and
+  `trayTemplate@2x.png` (32×32) regenerated from L1 tight mark with
+  `#000000` fill on transparent — strict macOS template-image format.
+  Verified via `magick -channel RGBA -separate`: R/G/B channels all
+  mean=0 across all pixels, alpha channel mean=0.118 ranges 0..1.
+  Visual preview confirms the cloud reads clearly on both light and
+  dark simulated menu bars.
 
 ---
 
