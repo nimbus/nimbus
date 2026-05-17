@@ -19,6 +19,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     macOS (Apple Silicon). Covers platform detection, dependency
     installation, binary download, checksum verification, post-install
     verification helper, and the libkrun gap on Debian/Ubuntu.
+- `docs/plans/brand-system-plan.md`
+  - canonical execution plan for the two-tier brand system rollout across
+    `nimbus/nimbus` and `nimbus/desktop`: 9-variant brand palette (gradients
+    permitted, marketing surfaces) layered cleanly over the operator
+    console's Industrial Precision product tier (single teal accent, OKLCH
+    240° neutrals, no gradients). Owns L0 canonical logo (done), L1 tight
+    mark, L2/L9 variant regeneration, L3 DESIGN.md brand section, L4
+    favicon, L5 sidebar mark, L6 desktop app icon, L7 tray refresh, L8
+    cli-not-found.html token migration.
+
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not

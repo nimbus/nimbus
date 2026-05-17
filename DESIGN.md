@@ -254,7 +254,12 @@ items, small metrics, modals, and genuinely framed tools.
 
 Nimbus should feel crisp, technical, and calm.
 
-### Palette
+### Product Palette
+
+This palette governs the operator console (`packages/nimbus-ui/`) and every
+native chrome surface in `nimbus/desktop`. For the logo, marketing surfaces,
+favicon, app icon, and the desktop setup card, see **Brand Palette** below —
+the two tiers are intentionally distinct.
 
 Use a dark-first neutral base with one owned accent (teal). Colors are
 defined in OKLCH so light and dark perceptual lightness stay parity-matched.
@@ -291,6 +296,75 @@ Rules:
   bar, an inline dot, a focus ring, or a small icon.
 - Tailwind v4 `@theme` directive should expose these as CSS variables;
   derive component utilities (`bg-surface`, `text-muted`, etc.) from them.
+
+### Brand Palette
+
+The brand palette is **distinct from the product palette above**. Use it
+only for:
+
+- The logo mark and its variants (`docs/brand/logo/`, `nimbus-logo.svg`,
+  `nimbus-mark.svg`)
+- README hero images and marketing pages
+- The favicon and desktop app icon
+- The desktop "CLI not found" setup card (`cli-not-found.html`) — this is
+  the user's *first* contact with the app and is intentionally brand-tier
+- Print, social-media images, and external touchpoints
+
+**Never** use brand-palette colors inside the operator console or native
+chrome. The product tier wins inside the app; the brand tier wins outside
+it. If you find yourself reaching for a brand color inside a console
+surface, pick the equivalent product-tier token instead.
+
+#### Two-Tier Bridge
+
+Two values cross tiers, by design:
+
+- **Teal.** Brand `#67E8F9 → #68B6DA` (gradient form, brand tier) and
+  product `--accent` `oklch(56% 0.12 180)` / `oklch(75% 0.14 180)` (solid
+  form, product tier) are the same conceptual color in different
+  presentations. The brand-tier gradient is reserved for the logo and
+  marketing; the product-tier solid is reserved for in-app accent.
+- **Ink.** Hex `#0F172A` is shared across tiers as primary text on light
+  surfaces.
+
+No other color crosses tiers.
+
+#### Variants
+
+| Variant       | Stroke (`--logo-stroke`) | Fill (`--logo-fill`) | Background |
+|---------------|--------------------------|----------------------|------------|
+| `warm`        | `#0F172A`                | `#FFE7B3`            | `#FFFAF2`  |
+| `cool-blue`   | `#3B82F6`                | `#FFFFFF`            | `#F8FAFC`  |
+| `night-blue`  | `#60A5FA`                | `#1E293B`            | `#0B1220`  |
+| `monochrome`  | `#111827`                | `#FFFFFF`            | `#FFFFFF`  |
+| `reverse-mono`| `#FFFFFF`                | `#111827`            | `#111827`  |
+| `sunset-red`  | `#DC2626`                | `#FFFFFF`            | `#FEF2F2`  |
+| `soft-purple` | `#9333EA`                | `#FFFFFF`            | `#FAF5FF`  |
+| `golden-hour` | `#D97706`                | `#FFFFFF`            | `#FFFBEB`  |
+| `slate`       | `#475569`                | `#FFFFFF`            | `#F1F5F9`  |
+
+The canonical logo SVG (`packages/nimbus-ui/public/nimbus-logo.svg`) and
+tight mark (`nimbus-mark.svg`) accept `--logo-stroke` and `--logo-fill` as
+CSS variables. Variant rendering is parameter substitution — the path data
+is identical across all variants.
+
+#### Usage Guidelines
+
+- **Warm** or **Golden Hour** — marketing pages, brand-forward touchpoints,
+  app icon (the most marketing-facing in-product surface). Default for the
+  desktop setup card.
+- **Cool Blue** — product UI light-mode favicon. Matches the operator
+  console's overall light-mode feel.
+- **Night Blue** — product UI dark-mode favicon. Matches the operator
+  console's overall dark-mode feel.
+- **Monochrome** / **Reverse Mono** — minimal, enterprise, print. Tray
+  icon uses monochrome on light menu bars; macOS auto-inverts for dark.
+- **Sunset Red**, **Soft Purple**, **Slate** — reserved for future
+  marketing variants and seasonal/event use; not currently wired in.
+
+The canonical execution plan for brand rollout, including the variant
+regenerator (`docs/brand/gen-variants.sh`) and per-surface wiring, lives
+in `docs/plans/brand-system-plan.md`.
 
 ### Typography
 
