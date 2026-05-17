@@ -435,8 +435,8 @@ the Execution Log.
 | --- | --- | --- |
 | O0 | Lock four decisions: restructure vs additive, two-view IA, view-switcher pattern, tenant-selector behavior per view | `done` |
 | O1 | IA migration: DESIGN.md + nav-entries (per view) + placeholder routes under `app/` and `admin/` | `done` |
-| OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `in_progress` |
-| O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `todo` |
+| OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `done` |
+| O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `in_progress` |
 | O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `todo` |
 | O4 | Sub-drawer consumers: 13 routes across both views | `todo` |
 | O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `todo` |
@@ -567,7 +567,7 @@ agree.
 
 ### OV — View shell (TopNav with view switcher, URL split, restore contract)
 
-**Status:** `in_progress`
+**Status:** `done`
 
 **Goal:** Make the two views navigable. Lay down the URL split (`/app/*`
 vs `/admin/*`), the view switcher control, and the last-route-per-view
@@ -629,7 +629,7 @@ restore behavior.
 
 ### O2 — Collapsible primary drawer
 
-**Status:** `todo`
+**Status:** `in_progress`
 
 **Goal:** Replace the fixed-width sidebar with a drawer that toggles
 between full (`w-56`) and icon-only (`w-12`) states. State persists
@@ -1148,22 +1148,76 @@ verification run, anything surprising._
     `npm run build` clean (24 chunks emitted). Biome's pre-existing
     a11y errors in `appearance-section.tsx` are unrelated and left
     untouched. O1 closes; **OV** opens.
+- **2026-05-17 (f)** — **OV complete.** View shell landed in a single
+  baseline:
+  - `packages/nimbus-ui/src/store/ui-store.ts` extended with
+    `lastView: NavView`, `setLastView`, `readLastView`,
+    `readLastRouteForView(view)`, and `persistLastRouteForView(view,
+    pathname)`. Storage keys: `nimbus-ui:last-view` and
+    `nimbus-ui:last-route:<view>`. The route persister only stores
+    pathnames matching the view's own prefix (`/app` for Developer,
+    `/admin` for Operator) and the reader only returns prefix-valid
+    paths — junk in localStorage falls back to the view's default
+    landing.
+  - `packages/nimbus-ui/src/shell/logo-mark.tsx` (new) extracts the
+    SVG `LogoMark` so it's shared by `TopNav` and (until O2 retires it)
+    `Sidebar`.
+  - `packages/nimbus-ui/src/shell/view-switcher.tsx` (new) renders a
+    two-segment pill (`Developer` / `Operator`) inside a `<fieldset
+    role="group" aria-label="Console view">`. Active segment is
+    pathname-driven via `viewFromPathname`; `aria-pressed` reflects it.
+    Clicking the inactive segment writes the current pathname under
+    `nimbus-ui:last-route:<active-view>`, sets `lastView` to the
+    target, then navigates to the target's restored route if stored
+    (and prefix-valid) or its default (`/app` for Developer, `/admin`
+    for Operator). Arrow keys move focus between segments; `tabIndex`
+    follows `aria-pressed` so the active segment is the tab stop.
+  - `packages/nimbus-ui/src/shell/top-nav.tsx` (new) is a `h-10
+    border-b border-app bg-surface` header: logo + `Nimbus` brand +
+    dynamic `developer console` / `operator console` wordmark on the
+    left; `<ViewSwitcher />` centered; tenant slot stub on the right
+    (`data-testid="top-nav-tenant-slot"`, wired in O5).
+  - `packages/nimbus-ui/src/routes/__root.tsx` mounts `<TopNav />`
+    above the existing `<Sidebar />` + `<main>` row inside the column
+    layout, and a `useLastRouteTracker()` effect subscribes to the
+    router pathname and writes it under
+    `nimbus-ui:last-route:<view>` while keeping `lastView` in sync.
+    The existing Sidebar still renders its own wordmark — the drawer
+    becomes pure nav in O2.
+  - Specs: `shell/view-switcher.spec.tsx` (8 cases — `aria-pressed`
+    for both views, default-target navigation, last-route persistence,
+    restored-route navigation, prefix-mismatch fallback, no-op on
+    active click, arrow-key focus rotation) and
+    `shell/top-nav.spec.tsx` (3 cases — structural rendering, dynamic
+    wordmark + `data-view` per route). Both mock
+    `@tanstack/react-router`'s `useNavigate` and `useRouterState` with
+    a hoisted pathname ref to drive the component without a full
+    router.
+  - Verification: `npm run codegen` clean; `npm run typecheck` clean;
+    `npm run test` 123/123 (18 spec files); `npm run build` clean
+    (deferred chunk set). OV closes; **O2** opens.
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, especially the OV phase detail.
-2. Re-read the current shell to know what already exists:
+1. Re-read this plan top-to-bottom, especially the O2 phase detail.
+2. Re-read what OV landed:
    `packages/nimbus-ui/src/routes/__root.tsx`,
+   `packages/nimbus-ui/src/shell/top-nav.tsx`,
+   `packages/nimbus-ui/src/shell/view-switcher.tsx`,
    `packages/nimbus-ui/src/shell/sidebar.tsx`,
-   `packages/nimbus-ui/src/shell/command-palette.tsx`,
-   `packages/nimbus-ui/src/shell/nav-entries.ts`.
-3. Build the TopNav at `packages/nimbus-ui/src/shell/top-nav.tsx` per
-   the OV phase specification (logo+wordmark left, ViewSwitcher middle,
-   tenant-selector stub right).
-4. Mount TopNav at the top of `__root.tsx`'s ShellLayout — above the
-   existing `<Sidebar />` + `<main>` row — so the existing flow keeps
-   working while the structural slot lands.
-5. Land the ViewSwitcher: pathname-driven, navigates via
-   `nimbus-ui:last-route:<view>` localStorage, falls back to `/app` or
-   `/admin`. Add `view-switcher.spec.tsx` covering the two click paths
-   and pathname-driven `aria-pressed` state.
+   `packages/nimbus-ui/src/store/ui-store.ts`.
+3. Extend `ui-store.ts` with `primaryDrawerCollapsed: boolean`,
+   `togglePrimaryDrawer()`, and `persistPrimaryDrawerCollapsed`
+   matching the existing `persistMode`/`persistPalette` shape (key
+   `nimbus-ui:primary-drawer-collapsed`).
+4. Create `packages/nimbus-ui/src/shell/primary-drawer.tsx` reading
+   the active view, rendering `navEntriesForView(activeView)`, with a
+   `w-56 ↔ w-12` width transition, icon-only collapsed mode (hide
+   label and `NavCount`, `title` tooltips), and a toggle button at
+   the bottom (`data-testid="primary-drawer-toggle"`, `aria-expanded`,
+   `aria-controls`, `aria-label="Collapse navigation" /
+   "Expand navigation"`). The drawer is pure nav — no wordmark, no
+   logo (those live in `TopNav` now).
+5. Delete `shell/sidebar.tsx` and update imports in `__root.tsx`.
+6. Add `shell/primary-drawer.spec.tsx` covering toggle behavior,
+   persistence, focus retention, and view-driven entry selection.
