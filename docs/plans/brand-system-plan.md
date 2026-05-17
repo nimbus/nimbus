@@ -75,11 +75,11 @@ two are reconciled here.
 | L1   | Tight mark variant for icon use          | `done`      | `packages/nimbus-ui/public/nimbus-mark.svg`                         |
 | L2   | 9 brand-palette variants                 | `done`      | `docs/brand/logo/nimbus-*.svg` regenerated from L0 by L9             |
 | L3   | DESIGN.md brand-palette section          | `done`      | new section in `DESIGN.md`                                          |
-| L4   | Favicon assets + HTML wiring             | `pending`   | `packages/nimbus-ui/public/favicon.{svg,ico}` + `index.html` link   |
-| L5   | Sidebar logo mark                        | `pending`   | `packages/nimbus-ui/src/shell/sidebar.tsx`                          |
+| L4   | Favicon assets + HTML wiring             | `done`      | `packages/nimbus-ui/public/favicon.{svg,ico}` + `index.html` link   |
+| L5   | Sidebar logo mark                        | `done`      | `packages/nimbus-ui/src/shell/sidebar.tsx`                          |
 | L6   | Desktop app icon                         | `pending`   | `desktop/buildResources/icon.{icns,ico,png}` + `electron-builder.yml` |
 | L7   | Tray icon refresh                        | `pending`   | `desktop/buildResources/trayTemplate.png`                           |
-| L8   | `cli-not-found.html` token migration     | `pending`   | `desktop/buildResources/setup/cli-not-found.html`                   |
+| L8   | `cli-not-found.html` token migration     | `done`      | `desktop/buildResources/setup/cli-not-found.html`                   |
 | L9   | `gen-variants.sh` refresh + run          | `done`      | `docs/brand/gen-variants.sh` regenerates L2 from L0                 |
 
 Status values: `pending`, `in_progress`, `partial`, `done`, `blocked`.
@@ -400,6 +400,32 @@ Plus the L2 verification (all variants share canonical path data).
   brand spec, not in 9-variant table; pre-launch policy forbids
   compat shims). Visual grid rendered to verify cloud/swirl
   composition matches across variants.
+
+- **2026-05-16: L5 complete.** `packages/nimbus-ui/src/shell/sidebar.tsx`
+  header replaced with inline `<LogoMark>` (L1 tight mark path data,
+  `currentColor` stroke, transparent fill) + "Nimbus" wordmark and
+  "operator console" caption. Mark renders at `h-6 w-[38px]` and
+  inherits `--text` via `currentColor` in both light and dark themes.
+  Verified visually in Chrome at 1280×800 dark mode.
+
+- **2026-05-16: L4 complete.** `favicon.svg` written using L1 tight mark
+  with embedded `<style>` + `@media (prefers-color-scheme: dark)` rules:
+  cool-blue stroke `#3B82F6` on white fill (light tabs), night-blue
+  stroke `#60A5FA` on ink `#1E293B` (dark tabs). `favicon.ico` generated
+  via `magick` from 16/32/48-px rsvg renders (3-icon multi-resolution
+  bundle, verified with `magick identify`). Link tags added to
+  `index.html` at the `/ui/favicon.{svg,ico}` paths to match the Vite
+  base. `curl -I` confirms both serve with the correct
+  `Content-Type`.
+
+- **2026-05-16: L8 complete.** `cli-not-found.html` migrated to brand-tier
+  CSS-variable tokens. Default theme uses the warm variant
+  (`#FFFAF2` bg, `#FFE7B3` logo fill, `#0F172A` ink, `#D97706` amber
+  accent). `prefers-color-scheme: dark` switches to the night-blue
+  variant (`#0B1220` bg, `#1E293B` panel, `#60A5FA` accent). Cloud mark
+  added to a new `.card-header` lockup with "Nimbus / SETUP" wordmark.
+  Verified visually in Chrome with `emulate { colorScheme }` for both
+  modes at 900×650.
 
 ---
 
