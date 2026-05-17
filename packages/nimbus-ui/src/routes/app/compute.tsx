@@ -8,6 +8,10 @@ import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { formatDuration, shortId } from "../../lib/format";
+import {
+  type SubDrawerSpec,
+  useContributeSubDrawer,
+} from "../../shell/sub-drawer";
 
 export const Route = createFileRoute("/app/compute")({
   component: ComputePage,
@@ -112,6 +116,56 @@ function ComputePage() {
     scheduled: scheduled?.length,
     cron: cron?.length,
   };
+
+  const spec = useMemo<SubDrawerSpec>(() => {
+    const list = Array.isArray(functions) ? functions : [];
+    return {
+      kind: "dynamic",
+      title: "Functions",
+      search: { placeholder: "Filter functions" },
+      children:
+        functions === undefined ? (
+          <div className="px-3 py-3 text-xs text-muted">
+            <span aria-hidden>·</span>
+            <span className="sr-only">loading</span>
+          </div>
+        ) : list.length === 0 ? (
+          <div className="px-3 py-6 text-xs text-muted">
+            <p>No functions registered.</p>
+            <p className="mt-2">
+              Deploy a Convex, Nimbus, or Cloud Functions app to populate this
+              list.
+            </p>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-px px-2 py-2">
+            {list.map((fn) => {
+              const path = fn.path ?? fn._id;
+              return (
+                <li key={fn._id}>
+                  <Link
+                    to="/app/compute/runner"
+                    search={fn.path ? { fn: fn.path } : undefined}
+                    data-testid={`sub-drawer-item-dev-${path}`}
+                    className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
+                  >
+                    <span className="flex-1 truncate font-mono text-xs">
+                      {path}
+                    </span>
+                    {fn.lastStatus ? (
+                      <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                        {fn.lastStatus}
+                      </span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        ),
+    };
+  }, [functions]);
+  useContributeSubDrawer(spec);
 
   return (
     <section

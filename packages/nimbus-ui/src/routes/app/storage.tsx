@@ -1,11 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
+import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
+import {
+  type SubDrawerSpec,
+  useContributeSubDrawer,
+} from "../../shell/sub-drawer";
 
 type StorageSearch = {
   as?: string;
@@ -37,6 +42,62 @@ function StoragePage() {
   const sortedTables = (tables ?? [])
     .slice()
     .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+
+  const spec = useMemo<SubDrawerSpec>(() => {
+    return {
+      kind: "dynamic",
+      title: "Tables",
+      search: { placeholder: "Filter tables" },
+      children: !tenant ? (
+        <div className="px-3 py-6 text-xs text-muted">
+          <p>Select a tenant.</p>
+          <p className="mt-2">
+            Choose a tenant from the top-nav selector to list its tables.
+          </p>
+        </div>
+      ) : tables === undefined ? (
+        <div className="px-3 py-3 text-xs text-muted">
+          <span aria-hidden>·</span>
+          <span className="sr-only">loading</span>
+        </div>
+      ) : sortedTables.length === 0 ? (
+        <div className="px-3 py-6 text-xs text-muted">
+          <p>No tables yet.</p>
+          <p className="mt-2">
+            Insert a document or call{" "}
+            <code className="font-mono">ctx.db.insert</code> to materialize one.
+          </p>
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-px px-2 py-2">
+          {sortedTables.map((table) => {
+            const name = table.name ?? table._id;
+            return (
+              <li key={table._id}>
+                <Link
+                  to="/app/storage/$table"
+                  params={{ table: name }}
+                  search={{ as: tenant }}
+                  data-testid={`sub-drawer-item-dev-${name}`}
+                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
+                >
+                  <span className="flex-1 truncate font-mono text-xs">
+                    {name}
+                  </span>
+                  {typeof table.rowCount === "number" ? (
+                    <span className="tabular font-mono text-[10px] text-muted">
+                      {table.rowCount}
+                    </span>
+                  ) : null}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ),
+    };
+  }, [tenant, tables, sortedTables]);
+  useContributeSubDrawer(spec);
 
   return (
     <section

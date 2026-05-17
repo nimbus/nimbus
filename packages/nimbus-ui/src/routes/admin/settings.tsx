@@ -11,6 +11,10 @@ import { RelativeTime, Uptime } from "../../components/time";
 import { UpgradePopover } from "../../components/upgrade-popover";
 import { useStalenessContext } from "../../hooks/use-staleness";
 import { formatRelativeTime, shortId } from "../../lib/format";
+import {
+  type SubDrawerSpec,
+  useContributeSubDrawer,
+} from "../../shell/sub-drawer";
 
 export const Route = createFileRoute("/admin/settings")({
   component: SettingsPage,
@@ -111,7 +115,57 @@ const ADAPTERS = [
   { id: "native", label: "Native" },
 ] as const;
 
+const ADMIN_SETTINGS_SUB_DRAWER: SubDrawerSpec = {
+  kind: "static",
+  title: "Settings",
+  items: [
+    {
+      id: "general",
+      label: "General",
+      to: "/admin/settings",
+      search: { section: "general" },
+    },
+    {
+      id: "endpoints",
+      label: "Endpoints",
+      to: "/admin/settings",
+      search: { section: "endpoints" },
+    },
+    {
+      id: "deploys",
+      label: "Deploys",
+      to: "/admin/settings",
+      search: { section: "deploys" },
+    },
+    {
+      id: "token",
+      label: "Token",
+      to: "/admin/settings",
+      search: { section: "token" },
+    },
+    {
+      id: "environment",
+      label: "Environment",
+      to: "/admin/settings",
+      search: { section: "environment" },
+    },
+    {
+      id: "integrations",
+      label: "Integrations",
+      to: "/admin/settings",
+      search: { section: "integrations" },
+    },
+    {
+      id: "shutdown",
+      label: "Shutdown",
+      to: "/admin/settings",
+      search: { section: "shutdown" },
+    },
+  ],
+};
+
 function SettingsPage() {
+  useContributeSubDrawer(ADMIN_SETTINGS_SUB_DRAWER);
   const status = useQuery(api.system.status, {}) as SystemStatusDoc | undefined;
   const capabilities = useQuery(api.adapter_capabilities.list, {
     adapter: null,

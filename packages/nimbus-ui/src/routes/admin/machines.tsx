@@ -10,6 +10,10 @@ import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import {
+  type SubDrawerSpec,
+  useContributeSubDrawer,
+} from "../../shell/sub-drawer";
 
 export const Route = createFileRoute("/admin/machines")({
   component: MachinesPage,
@@ -88,6 +92,44 @@ function MachinesPage() {
     provider: null,
     limit: 200,
   }) as MachineDoc[] | undefined;
+
+  const subDrawerSpec = useMemo<SubDrawerSpec>(() => {
+    const list = machines ?? [];
+    return {
+      kind: "dynamic",
+      title: "Machines",
+      search: { placeholder: "Filter machines" },
+      children:
+        machines === undefined ? (
+          <div className="px-3 py-3 text-xs text-muted">
+            <span aria-hidden>·</span>
+            <span className="sr-only">loading</span>
+          </div>
+        ) : list.length === 0 ? (
+          <div className="px-3 py-6 text-xs text-muted">
+            <p>No machines yet.</p>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-px px-2 py-2">
+            {list.map((machine) => (
+              <li key={machine._id}>
+                <a
+                  href={`/admin/machines?selected=${machine._id}`}
+                  data-testid={`sub-drawer-item-op-${machine._id}`}
+                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
+                >
+                  <span className="flex-1 truncate">{machine.name}</span>
+                  <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                    {machine.state}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        ),
+    };
+  }, [machines]);
+  useContributeSubDrawer(subDrawerSpec);
 
   const [selected, setSelected] = useState<string | null>(null);
   const [pending, setPending] = useState<Record<string, LifecycleAction>>({});
