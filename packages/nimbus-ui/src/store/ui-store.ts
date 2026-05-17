@@ -37,6 +37,7 @@ type UiState = {
   lastView: NavView;
   primaryDrawerCollapsed: boolean;
   subDrawerOpen: boolean;
+  activeTenant: string | null;
   paletteOpener: HTMLElement | null;
   lensOpener: HTMLElement | null;
   setPaletteOpen: (open: boolean, opener?: HTMLElement | null) => void;
@@ -49,6 +50,7 @@ type UiState = {
   togglePrimaryDrawer: () => void;
   setSubDrawerOpen: (open: boolean) => void;
   toggleSubDrawer: () => void;
+  setActiveTenant: (tenant: string | null) => void;
   cycleThemeMode: () => void;
 };
 
@@ -58,6 +60,7 @@ const LAST_VIEW_STORAGE_KEY = "nimbus-ui:last-view";
 const LAST_ROUTE_STORAGE_PREFIX = "nimbus-ui:last-route:";
 const PRIMARY_DRAWER_COLLAPSED_KEY = "nimbus-ui:primary-drawer-collapsed";
 const SUB_DRAWER_OPEN_KEY = "nimbus-ui:sub-drawer-open";
+const ACTIVE_TENANT_KEY = "nimbus-ui:active-tenant";
 const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
 
 function readSystemTheme(): Theme {
@@ -121,11 +124,27 @@ export function readSubDrawerOpen(): boolean {
   return stored === null ? true : stored === "true";
 }
 
+export function readActiveTenant(): string | null {
+  if (typeof window === "undefined") return null;
+  const stored = window.localStorage.getItem(ACTIVE_TENANT_KEY);
+  return stored && stored.length > 0 ? stored : null;
+}
+
+export function persistActiveTenant(tenant: string | null) {
+  if (typeof window === "undefined") return;
+  if (tenant === null) {
+    window.localStorage.removeItem(ACTIVE_TENANT_KEY);
+  } else {
+    window.localStorage.setItem(ACTIVE_TENANT_KEY, tenant);
+  }
+}
+
 const initialMode = readStoredMode();
 const initialPalette = readStoredPalette();
 const initialLastView = readLastView();
 const initialPrimaryDrawerCollapsed = readPrimaryDrawerCollapsed();
 const initialSubDrawerOpen = readSubDrawerOpen();
+const initialActiveTenant = readActiveTenant();
 
 export const useUiStore = create<UiState>((set, get) => ({
   paletteOpen: false,
@@ -137,6 +156,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   lastView: initialLastView,
   primaryDrawerCollapsed: initialPrimaryDrawerCollapsed,
   subDrawerOpen: initialSubDrawerOpen,
+  activeTenant: initialActiveTenant,
   paletteOpener: null,
   lensOpener: null,
   setPaletteOpen: (open, opener) =>
@@ -195,6 +215,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     const next = !get().subDrawerOpen;
     persistSubDrawerOpen(next);
     set({ subDrawerOpen: next });
+  },
+  setActiveTenant: (tenant) => {
+    persistActiveTenant(tenant);
+    set({ activeTenant: tenant });
   },
   cycleThemeMode: () => {
     const order: ThemeMode[] = ["light", "dark", "system"];

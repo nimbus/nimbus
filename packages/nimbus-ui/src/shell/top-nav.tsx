@@ -1,11 +1,34 @@
 import { useRouterState } from "@tanstack/react-router";
 import { LogoMark } from "./logo-mark";
 import { viewFromPathname } from "./nav-entries";
+import { TenantSelector, type TenantSelectorMode } from "./tenant-selector";
 import { ViewSwitcher } from "./view-switcher";
 
-export function TopNav() {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+function selectorModeForRoute(
+  pathname: string,
+  search: Record<string, unknown> | undefined,
+): TenantSelectorMode | null {
   const view = viewFromPathname(pathname);
+  if (view === "developer") return { kind: "developer" };
+  if (pathname === "/admin/observability") {
+    const tenant = search?.tenant;
+    return {
+      kind: "operator-filter",
+      currentFilter: typeof tenant === "string" ? tenant : null,
+    };
+  }
+  return null;
+}
+
+export function TopNav() {
+  const { pathname, search } = useRouterState({
+    select: (s) => ({
+      pathname: s.location.pathname,
+      search: s.location.search as Record<string, unknown> | undefined,
+    }),
+  });
+  const view = viewFromPathname(pathname);
+  const mode = selectorModeForRoute(pathname, search);
   return (
     <header
       className="flex h-10 shrink-0 items-center gap-4 border-b border-app bg-surface px-3"
@@ -27,16 +50,13 @@ export function TopNav() {
       <div className="flex flex-1 justify-center">
         <ViewSwitcher />
       </div>
-      <fieldset
+      <div
         className="flex min-w-[10rem] justify-end"
         data-testid="top-nav-tenant-slot"
-        aria-label="Tenant selector"
+        data-mode={mode?.kind ?? "hidden"}
       >
-        <legend className="sr-only">Tenant selector</legend>
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
-          Tenant
-        </span>
-      </fieldset>
+        {mode ? <TenantSelector mode={mode} /> : null}
+      </div>
     </header>
   );
 }
