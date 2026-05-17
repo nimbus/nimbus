@@ -11,7 +11,7 @@ import { DisconnectedOverlay } from "../shell/disconnected-overlay";
 import { AppErrorBoundary } from "../shell/error-boundary";
 import { KeyboardContract } from "../shell/keyboard-contract";
 import { viewFromPathname } from "../shell/nav-entries";
-import { Sidebar } from "../shell/sidebar";
+import { PrimaryDrawer } from "../shell/primary-drawer";
 import { StatusBar } from "../shell/status-bar";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
@@ -32,7 +32,7 @@ function ShellLayout() {
         <div className="flex h-screen flex-col bg-app text-default">
           <TopNav />
           <div className="flex min-h-0 flex-1">
-            <Sidebar />
+            <PrimaryDrawer />
             <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
               <DisconnectedOverlay />
               <div className="flex-1 overflow-auto">

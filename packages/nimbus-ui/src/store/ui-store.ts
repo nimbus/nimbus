@@ -35,6 +35,7 @@ type UiState = {
   theme: Theme;
   palette: Palette;
   lastView: NavView;
+  primaryDrawerCollapsed: boolean;
   paletteOpener: HTMLElement | null;
   lensOpener: HTMLElement | null;
   setPaletteOpen: (open: boolean, opener?: HTMLElement | null) => void;
@@ -43,6 +44,8 @@ type UiState = {
   setThemeMode: (mode: ThemeMode) => void;
   setPalette: (palette: Palette) => void;
   setLastView: (view: NavView) => void;
+  setPrimaryDrawerCollapsed: (collapsed: boolean) => void;
+  togglePrimaryDrawer: () => void;
   cycleThemeMode: () => void;
 };
 
@@ -50,6 +53,7 @@ const THEME_STORAGE_KEY = "nimbus-ui:theme";
 const PALETTE_STORAGE_KEY = "nimbus-ui:palette";
 const LAST_VIEW_STORAGE_KEY = "nimbus-ui:last-view";
 const LAST_ROUTE_STORAGE_PREFIX = "nimbus-ui:last-route:";
+const PRIMARY_DRAWER_COLLAPSED_KEY = "nimbus-ui:primary-drawer-collapsed";
 const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
 
 function readSystemTheme(): Theme {
@@ -102,9 +106,15 @@ function resolveTheme(mode: ThemeMode): Theme {
   return mode === "system" ? readSystemTheme() : mode;
 }
 
+export function readPrimaryDrawerCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(PRIMARY_DRAWER_COLLAPSED_KEY) === "true";
+}
+
 const initialMode = readStoredMode();
 const initialPalette = readStoredPalette();
 const initialLastView = readLastView();
+const initialPrimaryDrawerCollapsed = readPrimaryDrawerCollapsed();
 
 export const useUiStore = create<UiState>((set, get) => ({
   paletteOpen: false,
@@ -114,6 +124,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   theme: resolveTheme(initialMode),
   palette: initialPalette,
   lastView: initialLastView,
+  primaryDrawerCollapsed: initialPrimaryDrawerCollapsed,
   paletteOpener: null,
   lensOpener: null,
   setPaletteOpen: (open, opener) =>
@@ -155,6 +166,15 @@ export const useUiStore = create<UiState>((set, get) => ({
     persistLastView(view);
     set({ lastView: view });
   },
+  setPrimaryDrawerCollapsed: (collapsed) => {
+    persistPrimaryDrawerCollapsed(collapsed);
+    set({ primaryDrawerCollapsed: collapsed });
+  },
+  togglePrimaryDrawer: () => {
+    const next = !get().primaryDrawerCollapsed;
+    persistPrimaryDrawerCollapsed(next);
+    set({ primaryDrawerCollapsed: next });
+  },
   cycleThemeMode: () => {
     const order: ThemeMode[] = ["light", "dark", "system"];
     const current = get().themeMode;
@@ -177,6 +197,14 @@ function persistPalette(palette: Palette) {
 function persistLastView(view: NavView) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(LAST_VIEW_STORAGE_KEY, view);
+}
+
+function persistPrimaryDrawerCollapsed(collapsed: boolean) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    PRIMARY_DRAWER_COLLAPSED_KEY,
+    collapsed ? "true" : "false",
+  );
 }
 
 if (typeof window !== "undefined" && window.matchMedia) {

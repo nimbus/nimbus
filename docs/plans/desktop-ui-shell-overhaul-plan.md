@@ -436,8 +436,8 @@ the Execution Log.
 | O0 | Lock four decisions: restructure vs additive, two-view IA, view-switcher pattern, tenant-selector behavior per view | `done` |
 | O1 | IA migration: DESIGN.md + nav-entries (per view) + placeholder routes under `app/` and `admin/` | `done` |
 | OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `done` |
-| O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `in_progress` |
-| O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `todo` |
+| O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `done` |
+| O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `in_progress` |
 | O4 | Sub-drawer consumers: 13 routes across both views | `todo` |
 | O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `todo` |
 | O6 | Active-tenant store + per-route refetch on tenant change | `todo` |
@@ -629,7 +629,7 @@ restore behavior.
 
 ### O2 — Collapsible primary drawer
 
-**Status:** `in_progress`
+**Status:** `done`
 
 **Goal:** Replace the fixed-width sidebar with a drawer that toggles
 between full (`w-56`) and icon-only (`w-12`) states. State persists
@@ -678,7 +678,7 @@ across reloads. Keyboard accessible. Token-respecting. Renders the
 
 ### O3 — Sub-drawer surface (dual-mode contributor API)
 
-**Status:** `todo`
+**Status:** `in_progress`
 
 **Goal:** Introduce a persistent right-of-primary column. Supports two
 contributor modes: **static menu** (fixed list of links, like Convex
@@ -1196,28 +1196,71 @@ verification run, anything surprising._
   - Verification: `npm run codegen` clean; `npm run typecheck` clean;
     `npm run test` 123/123 (18 spec files); `npm run build` clean
     (deferred chunk set). OV closes; **O2** opens.
+- **2026-05-17 (g)** — **O2 complete.** Collapsible primary drawer
+  landed and replaces the fixed-width sidebar:
+  - `packages/nimbus-ui/src/store/ui-store.ts` adds
+    `primaryDrawerCollapsed: boolean` (default `false`),
+    `setPrimaryDrawerCollapsed(collapsed)`, `togglePrimaryDrawer()`,
+    and `readPrimaryDrawerCollapsed()`. Storage key
+    `nimbus-ui:primary-drawer-collapsed`; persistor matches the
+    existing `persistMode`/`persistPalette` shape.
+  - `packages/nimbus-ui/src/shell/primary-drawer.tsx` (new) reads the
+    active view from the router pathname and renders
+    `navEntriesForView(view)`. Width transitions via Tailwind: `w-56
+    px-2` ↔ `w-12 px-1` with `transition-[width] duration-150`.
+    Collapsed mode hides each entry's text label and `NavCount`,
+    leaves only the icon, and exposes `title` + `aria-label` so the
+    target is still announceable. Toggle lives at the bottom of the
+    drawer with `data-testid="primary-drawer-toggle"`, `aria-expanded`
+    reflecting `!collapsed`, `aria-controls="primary-drawer-nav"`,
+    and a dynamic `aria-label` (`"Collapse navigation"` /
+    `"Expand navigation"`). The chevron icon flips (`ChevronsLeft` ↔
+    `ChevronsRight`) and the "Phase 1 · Embedded SPA" footer hides
+    when collapsed. The drawer carries no logo or wordmark — those
+    live in `TopNav` now (OV).
+  - `packages/nimbus-ui/src/shell/sidebar.tsx` deleted;
+    `routes/__root.tsx` imports `<PrimaryDrawer />` instead.
+  - `packages/nimbus-ui/src/shell/primary-drawer.spec.tsx` (new):
+    8 cases covering the 7 developer entries on `/app`, the 7
+    operator entries on `/admin`, default-expanded
+    aria-expanded/label, toggle flipping `data-collapsed` and
+    persisting to localStorage, collapsed-mode label hiding with
+    `title`+`aria-label` retained, focus retention after click,
+    `aria-controls` wired to the nav id, and view-driven entry
+    swap in place.
+  - Browser proof (Chrome DevTools MCP, 1440×900) at
+    `docs/plans/proof/desktop-ui-shell-overhaul/`:
+    `o2-developer-expanded.png`, `o2-developer-collapsed.png`,
+    `o2-operator-expanded.png`, `o2-operator-collapsed.png`,
+    `o2-developer-expanded-mono.png`,
+    `o2-operator-expanded-mono.png`. No console errors observed
+    across view × drawer-state × palette toggles.
+  - Verification: `npm run typecheck` clean; `npm run test` 131/131
+    (19 spec files); `npm run build` clean; biome check clean on all
+    changed files. O2 closes; **O3** opens.
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, especially the O2 phase detail.
-2. Re-read what OV landed:
+1. Re-read this plan top-to-bottom, especially the O3 phase detail
+   (Sub-drawer surface and dual-mode contributor API).
+2. Re-read what O2 landed:
+   `packages/nimbus-ui/src/shell/primary-drawer.tsx`,
    `packages/nimbus-ui/src/routes/__root.tsx`,
-   `packages/nimbus-ui/src/shell/top-nav.tsx`,
-   `packages/nimbus-ui/src/shell/view-switcher.tsx`,
-   `packages/nimbus-ui/src/shell/sidebar.tsx`,
    `packages/nimbus-ui/src/store/ui-store.ts`.
-3. Extend `ui-store.ts` with `primaryDrawerCollapsed: boolean`,
-   `togglePrimaryDrawer()`, and `persistPrimaryDrawerCollapsed`
-   matching the existing `persistMode`/`persistPalette` shape (key
-   `nimbus-ui:primary-drawer-collapsed`).
-4. Create `packages/nimbus-ui/src/shell/primary-drawer.tsx` reading
-   the active view, rendering `navEntriesForView(activeView)`, with a
-   `w-56 ↔ w-12` width transition, icon-only collapsed mode (hide
-   label and `NavCount`, `title` tooltips), and a toggle button at
-   the bottom (`data-testid="primary-drawer-toggle"`, `aria-expanded`,
-   `aria-controls`, `aria-label="Collapse navigation" /
-   "Expand navigation"`). The drawer is pure nav — no wordmark, no
-   logo (those live in `TopNav` now).
-5. Delete `shell/sidebar.tsx` and update imports in `__root.tsx`.
-6. Add `shell/primary-drawer.spec.tsx` covering toggle behavior,
-   persistence, focus retention, and view-driven entry selection.
+3. Extend `ui-store.ts` with `subDrawerOpen: boolean` (default
+   `true`) and `setSubDrawerOpen(open)` persisted under
+   `nimbus-ui:sub-drawer-open`.
+4. Create `packages/nimbus-ui/src/shell/sub-drawer.tsx`: fixed `w-64`
+   when open, unmounts when closed, `border-r border-app bg-surface`,
+   header row with section title + close button
+   (`data-testid="sub-drawer-close"`), optional search slot, and
+   contributor body.
+5. Pick the contributor API path and document it inline at the top of
+   `sub-drawer.tsx`. The plan recommends a route-driven slot
+   (TanStack Router context) — each route exports an optional
+   `subDrawer: () => SubDrawerSpec` that the layout resolves.
+6. Mount the SubDrawer in `__root.tsx` between `<PrimaryDrawer />`
+   and `<main>`; coexist with collapsed primary drawer.
+7. Add `shell/sub-drawer.spec.tsx` covering: opens by default; close
+   button hides it and persists; search input rendered when
+   contributor supplies one; route-without-spec yields no sub-drawer.
