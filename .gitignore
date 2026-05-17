@@ -39,7 +39,11 @@ __pycache__
 **/.nimbus
 
 # playwright-cli snapshots/screenshots/traces (per-session artifacts)
-.playwright-cli/
+**/.playwright-cli/*
+# UL3 screencast is a committed deliverable referenced from the update-lifecycle plan.
+!/.playwright-cli/ul3/
+/.playwright-cli/ul3/*
+!/.playwright-cli/ul3/full-flow.webm
 # Playwright runner artifacts (when run from repo root)
 test-results/
 playwright-report/
