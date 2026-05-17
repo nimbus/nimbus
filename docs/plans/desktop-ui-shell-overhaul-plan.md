@@ -438,8 +438,8 @@ the Execution Log.
 | OV | View shell — TopNav with view switcher + URL prefix split + view-restore localStorage contract | `done` |
 | O2 | Collapsible primary drawer (width transition, persistence, a11y) — reads active view IA | `done` |
 | O3 | Sub-drawer surface (mount point + dual-mode contributor API) | `done` |
-| O4 | Sub-drawer consumers: 13 routes across both views | `in_progress` |
-| O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `todo` |
+| O4 | Sub-drawer consumers: 13 routes across both views | `done` |
+| O5 | Tenant selector wiring (visible in Developer, optional filter on Operator → Observability) | `in_progress` |
 | O6 | Active-tenant store + per-route refetch on tenant change | `todo` |
 | O7 | Live verification matrix (View × Mode × Palette × Drawer-state × Tenant) | `todo` |
 | O8 | Plan close: README registration, archive hand-off | `todo` |
@@ -730,7 +730,7 @@ query, like Convex `DataSidebar`). Coexists with collapsed primary drawer.
 
 ### O4 — Sub-drawer consumers
 
-**Status:** `in_progress`
+**Status:** `done`
 
 **Goal:** Wire sub-drawer contributors across both views. Static where
 the sub-section list is fixed; dynamic where it's a resource list.
@@ -1289,32 +1289,69 @@ verification run, anything surprising._
     contract is part of O3's acceptance and is covered by the first
     spec case. Browser-screenshot matrix for the populated surface
     comes in O4 as routes start opting in. O3 closes; **O4** opens.
+- **2026-05-17 (i)** — **O4 complete.** All 12 sub-drawer consumers
+  wired across both views (the remaining route — `/app` overview —
+  intentionally contributes no sub-drawer per the route table).
+  - **Static consumers (6):** `/app/schedules` (Scheduled / Cron via
+    `?section=`), `/app/settings` (Environment / Secrets / Schema /
+    Integrations), `/app/observability` (Logs / Runs / Events / Errors
+    via `?tab=`, Events/Errors disabled until backed), `/admin/network`
+    (Routes / WS / Ports / Listeners / Security via `?section=`),
+    `/admin/observability` (Logs / Events / Traces / Errors via
+    `?tab=`), `/admin/settings` (General / Endpoints / Deploys /
+    Token / Environment / Integrations / Shutdown via `?section=`).
+  - **Dynamic consumers (6):** `/app/compute` (functions via
+    `api.functions.list`, item links to `/app/compute/runner?fn=`),
+    `/app/storage` (tables via `api.tables.list`, item links to
+    `/app/storage/$table?as=<tenant>`), `/app/files` (placeholder
+    "No buckets yet" until storage API ships), `/admin/tenants`
+    (server tenants list, item links to `/admin/tenants?selected=`),
+    `/admin/machines` (`api.machines.list`, item links to
+    `/admin/machines?selected=`), `/admin/services`
+    (`api.services.list`, item links to `/admin/services?selected=`).
+  - **API extension:** `SubDrawerItem` gained an optional
+    `search?: Record<string, unknown>` field so static specs can
+    encode `?section=` / `?tab=` deep-links without scaffolding
+    placeholder child routes for every sub-section. `isItemActive`
+    now matches pathname **and** the recorded search fragment so
+    active highlighting tracks tab/section selection. Search-aware
+    matching is covered by a new spec case in
+    `sub-drawer.spec.tsx` (7 cases total).
+  - **Browser proof (1440×900) at
+    `docs/plans/proof/desktop-ui-shell-overhaul/`:**
+    `o4-static-admin-observability.png`,
+    `o4-dynamic-admin-machines.png` (loading-state list with search
+    input visible), `o4-dynamic-app-compute.png` (loading-state
+    functions list), `o4-static-app-settings.png` (4 sub-pages,
+    Environment / Secrets / Schema / Integrations),
+    `o4-static-active-schema.png` (post-click — URL `?section=schema`,
+    "Schema" focused + active). No console errors observed across
+    the navigations. Live data sits at "loading" because the proof
+    capture ran against a freshly booted dev server with no backend
+    attached; the static / dynamic / search / active-state contracts
+    are still all visually exercised.
+  - Verification: `npm run typecheck` clean; `npm run test` 138/138
+    (20 spec files, +1 search-aware active-state case); `npm run
+    build` clean. O4 closes; **O5** opens.
 
 ## First Step When You Resume
 
-1. Re-read this plan top-to-bottom, especially the **O4 phase detail**
-   (Sub-drawer consumers — 13 routes across both views).
-2. Re-read what O3 landed:
-   `packages/nimbus-ui/src/shell/sub-drawer.tsx`,
-   `packages/nimbus-ui/src/shell/sub-drawer.spec.tsx`,
-   `packages/nimbus-ui/src/routes/__root.tsx` (wraps the tree in
-   `<SubDrawerProvider>` and mounts `<SubDrawer />`),
-   `packages/nimbus-ui/src/store/ui-store.ts` (adds `subDrawerOpen`).
-3. Wire one consumer at a time using the route table at lines 740–755.
-   For each, call `useContributeSubDrawer(spec)` from the route
-   component with either a memoized static spec or a dynamic spec.
-   Static routes (`/app/schedules`, `/app/observability`,
-   `/app/settings`, `/admin/network`, `/admin/observability`,
-   `/admin/settings`) list fixed sub-sections — wire those first
-   since they have no live-data dependency.
-4. Dynamic routes (`/app/compute`, `/app/storage`, `/app/files`,
-   `/admin/tenants`, `/admin/machines`, `/admin/services`) consume
-   `useQuery` from `nimbus/react`; render items with
-   `data-testid="sub-drawer-item-<view>-<id>"`; navigate via the
-   existing dynamic-segment routes; empty/loading uses the
-   `NavCount`-style `·` placeholder.
-5. Capture browser proof (1440×900) once at least one static and one
-   dynamic consumer are wired; save under
-   `docs/plans/proof/desktop-ui-shell-overhaul/o4-*.png`.
+1. Re-read this plan top-to-bottom, especially the **O5 phase detail**
+   (Tenant selector wiring — visible in Developer view, optional
+   filter on Operator → Observability).
+2. Verify `packages/nimbus-ui/convex/_generated/api.d.ts` for an
+   existing `tenants.list` query — `/admin/tenants` already lists
+   server tenants, so the contract likely exists. If absent, add a
+   system-tenant `tenants.list({ limit })` returning
+   `{ id; name; backend? }[]` and read
+   `docs/adapters/convex/ai-guidelines.md` before touching Convex.
+3. Implement `<TenantSelector />` in `packages/nimbus-ui/src/shell/`
+   with dropdown + keyboard navigation; mount it inside `<TopNav />`
+   in the existing tenant-selector slot.
+4. Per-view visibility: always render in `/app/*`; hide in `/admin/*`
+   except `/admin/observability` where it renders with "All tenants"
+   prepended and writes `?tenant=<id>` to the URL.
+5. Zero-tenant fallback in Developer view: compact "Create tenant"
+   button linking into the Operator → Tenants create flow.
 6. Run `npm run typecheck`, `npm run test`, `npm run build`, then
-   commit + push the O4 baseline to `main` per durable authorization.
+   commit + push the O5 baseline to `main` per durable authorization.

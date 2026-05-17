@@ -5,6 +5,10 @@ import { useMemo, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
+import {
+  type SubDrawerSpec,
+  useContributeSubDrawer,
+} from "../../shell/sub-drawer";
 
 export const Route = createFileRoute("/admin/network")({
   component: NetworkPage,
@@ -34,7 +38,45 @@ const METHOD_TONE: Record<string, string> = {
   HEAD: "text-muted",
 };
 
+const NETWORK_SUB_DRAWER: SubDrawerSpec = {
+  kind: "static",
+  title: "Network",
+  items: [
+    {
+      id: "routes",
+      label: "Routes",
+      to: "/admin/network",
+      search: { section: "routes" },
+    },
+    {
+      id: "ws",
+      label: "WS",
+      to: "/admin/network",
+      search: { section: "ws" },
+    },
+    {
+      id: "ports",
+      label: "Ports",
+      to: "/admin/network",
+      search: { section: "ports" },
+    },
+    {
+      id: "listeners",
+      label: "Listeners",
+      to: "/admin/network",
+      search: { section: "listeners" },
+    },
+    {
+      id: "security",
+      label: "Security",
+      to: "/admin/network",
+      search: { section: "security" },
+    },
+  ],
+};
+
 function NetworkPage() {
+  useContributeSubDrawer(NETWORK_SUB_DRAWER);
   const routes = useQuery(api.routes.list, {
     adapter: null,
     limit: 500,

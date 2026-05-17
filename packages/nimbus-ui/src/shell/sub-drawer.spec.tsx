@@ -2,8 +2,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { pathnameRef } = vi.hoisted(() => ({
+const { pathnameRef, searchRef } = vi.hoisted(() => ({
   pathnameRef: { current: "/app/settings" },
+  searchRef: { current: {} as Record<string, unknown> },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -35,8 +36,16 @@ vi.mock("@tanstack/react-router", () => ({
   useRouterState: ({
     select,
   }: {
-    select: (s: { location: { pathname: string } }) => unknown;
-  }) => select({ location: { pathname: pathnameRef.current } }),
+    select: (s: {
+      location: { pathname: string; search: Record<string, unknown> };
+    }) => unknown;
+  }) =>
+    select({
+      location: {
+        pathname: pathnameRef.current,
+        search: searchRef.current,
+      },
+    }),
 }));
 
 import { useUiStore } from "../store/ui-store";
@@ -58,6 +67,7 @@ function Contributor({ spec }: { spec: SubDrawerSpec | null }) {
 
 beforeEach(() => {
   setPathname("/app/settings");
+  searchRef.current = {};
   window.localStorage.clear();
   useUiStore.setState({ subDrawerOpen: true });
 });
@@ -178,6 +188,42 @@ describe("SubDrawer", () => {
       </mod.SubDrawerProvider>,
     );
     expect(screen.queryByTestId("sub-drawer")).toBeNull();
+  });
+
+  it("uses search-param match for active state when items declare search", () => {
+    setPathname("/app/settings");
+    searchRef.current = { section: "secrets" };
+    const spec: SubDrawerSpec = {
+      kind: "static",
+      title: "Settings",
+      items: [
+        {
+          id: "environment",
+          label: "Environment",
+          to: "/app/settings",
+          search: { section: "environment" },
+        },
+        {
+          id: "secrets",
+          label: "Secrets",
+          to: "/app/settings",
+          search: { section: "secrets" },
+        },
+      ],
+    };
+    render(
+      <SubDrawerProvider>
+        <Contributor spec={spec} />
+        <SubDrawer />
+      </SubDrawerProvider>,
+    );
+    expect(
+      screen.getByTestId("sub-drawer-item-environment"),
+    ).toHaveAttribute("data-active", "false");
+    expect(screen.getByTestId("sub-drawer-item-secrets")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
   });
 
   it("clears the spec when the contributor unmounts", () => {

@@ -15,6 +15,7 @@ export type SubDrawerItem = {
   id: string;
   label: string;
   to: string;
+  search?: Record<string, unknown>;
   description?: string;
   disabled?: boolean;
   count?: number | null;
@@ -109,17 +110,38 @@ export function SubDrawer() {
   );
 }
 
+function isItemActive(
+  location: { pathname: string; search?: Record<string, unknown> },
+  item: SubDrawerItem,
+): boolean {
+  const pathMatches =
+    location.pathname === item.to ||
+    location.pathname.startsWith(`${item.to}/`);
+  if (!pathMatches) return false;
+  if (!item.search) return true;
+  const current = location.search ?? {};
+  for (const [key, value] of Object.entries(item.search)) {
+    if (current[key] !== value) return false;
+  }
+  return true;
+}
+
 function SubDrawerStaticList({ items }: { items: SubDrawerItem[] }) {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const location = useRouterState({
+    select: (s) => ({
+      pathname: s.location.pathname,
+      search: s.location.search as Record<string, unknown> | undefined,
+    }),
+  });
   return (
     <ul className="flex flex-col gap-px px-2 py-2">
       {items.map((item) => {
-        const active =
-          pathname === item.to || pathname.startsWith(`${item.to}/`);
+        const active = isItemActive(location, item);
         return (
           <li key={item.id}>
             <Link
               to={item.to}
+              search={item.search ?? undefined}
               aria-current={active ? "page" : undefined}
               data-testid={`sub-drawer-item-${item.id}`}
               data-active={active ? "true" : "false"}

@@ -17,6 +17,10 @@ import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { formatDuration, shortId } from "../../lib/format";
+import {
+  type SubDrawerSpec,
+  useContributeSubDrawer,
+} from "../../shell/sub-drawer";
 
 type ObservabilityTab = "logs" | "runs";
 
@@ -126,7 +130,41 @@ type RunDoc = {
   startedAt?: number;
 };
 
+const OBSERVABILITY_SUB_DRAWER: SubDrawerSpec = {
+  kind: "static",
+  title: "Observability",
+  items: [
+    {
+      id: "logs",
+      label: "Logs",
+      to: "/app/observability",
+      search: { tab: "logs" },
+    },
+    {
+      id: "runs",
+      label: "Runs",
+      to: "/app/observability",
+      search: { tab: "runs" },
+    },
+    {
+      id: "events",
+      label: "Events",
+      to: "/app/observability",
+      search: { tab: "events" },
+      disabled: true,
+    },
+    {
+      id: "errors",
+      label: "Errors",
+      to: "/app/observability",
+      search: { tab: "errors" },
+      disabled: true,
+    },
+  ],
+};
+
 function ObservabilityPage() {
+  useContributeSubDrawer(OBSERVABILITY_SUB_DRAWER);
   const search = Route.useSearch();
   const tab: ObservabilityTab = search.tab ?? "logs";
   return (

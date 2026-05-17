@@ -7,6 +7,10 @@ import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
 import { cn } from "../../lib/cn";
+import {
+  type SubDrawerSpec,
+  useContributeSubDrawer,
+} from "../../shell/sub-drawer";
 
 export const Route = createFileRoute("/admin/tenants")({
   component: TenantsPage,
@@ -161,6 +165,44 @@ function TenantsPage() {
       setDeletingTenant(null);
     }
   }, []);
+
+  const subDrawerSpec = useMemo<SubDrawerSpec>(() => {
+    const tenants = serverTenants ?? [];
+    return {
+      kind: "dynamic",
+      title: "Tenants",
+      search: { placeholder: "Filter tenants" },
+      children:
+        serverTenants === null ? (
+          <div className="px-3 py-3 text-xs text-muted">
+            <span aria-hidden>·</span>
+            <span className="sr-only">loading</span>
+          </div>
+        ) : tenants.length === 0 ? (
+          <div className="px-3 py-6 text-xs text-muted">
+            <p>No tenants yet.</p>
+            <p className="mt-2">Use Create tenant above to add one.</p>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-px px-2 py-2">
+            {tenants.map((tenantId) => (
+              <li key={tenantId}>
+                <a
+                  href={`/admin/tenants?selected=${tenantId}`}
+                  data-testid={`sub-drawer-item-op-${tenantId}`}
+                  className="flex h-8 items-center rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
+                >
+                  <span className="flex-1 truncate font-mono text-xs">
+                    {tenantId}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        ),
+    };
+  }, [serverTenants]);
+  useContributeSubDrawer(subDrawerSpec);
 
   return (
     <section
