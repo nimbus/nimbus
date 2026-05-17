@@ -4,6 +4,7 @@ use super::*;
 fn start_missing_functions_manifest_reports_actionable_error() {
     let temp = tempdir_in_repo_target();
     let app_dir = temp.path().to_path_buf();
+    write_codegen_source_fixture(&app_dir);
     let command = StartCommand {
         app_dir: Some(app_dir.clone()),
         skip_codegen: true,
@@ -37,6 +38,93 @@ fn start_missing_functions_manifest_reports_actionable_error() {
     assert!(
         rendered.contains("--skip-codegen"),
         "error should explain the skip-codegen escape hatch: {rendered}"
+    );
+}
+
+#[test]
+fn resolve_start_explicit_app_dir_without_any_surface_errors_actionably() {
+    let temp = tempdir_in_repo_target();
+    let app_dir = temp.path().to_path_buf();
+    let command = StartCommand {
+        app_dir: Some(app_dir.clone()),
+        skip_codegen: true,
+        ..StartCommand::default()
+    };
+
+    let error = super::boot::resolve_start_app_dir(&command)
+        .expect_err("explicit app dir without any surface should fail to resolve");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("No Convex or Cloud Functions surface found"),
+        "error should explain what is missing: {rendered}"
+    );
+    assert!(
+        rendered.contains(&app_dir.display().to_string()),
+        "error should reference the offending app dir: {rendered}"
+    );
+    assert!(
+        rendered.contains("convex/")
+            && rendered.contains("nimbus/")
+            && rendered.contains("firebase.json"),
+        "error should hint at every accepted surface: {rendered}"
+    );
+}
+
+#[test]
+fn load_convex_registry_skips_when_explicit_app_dir_has_only_cloud_functions_surface() {
+    let temp = tempdir_in_repo_target();
+    let app_dir = temp.path().to_path_buf();
+    write_firebase_cloud_functions_fixture(&app_dir);
+    write_generated_cloud_functions_artifacts(&app_dir);
+    let command = StartCommand {
+        app_dir: Some(app_dir.clone()),
+        skip_codegen: true,
+        ..StartCommand::default()
+    };
+
+    let resolved_app_dir = super::boot::resolve_start_app_dir(&command)
+        .expect("firebase-only explicit app dir should resolve");
+    let registry = super::boot::load_convex_registry(
+        &command,
+        resolved_app_dir.as_ref(),
+        &RuntimeLimits::default(),
+    )
+    .expect("firebase-only app dir should not error from the convex loader");
+    assert!(
+        registry.is_none(),
+        "convex loader must skip when no convex surface is present, even for an explicit --app-dir"
+    );
+}
+
+#[test]
+fn load_cloud_functions_registry_skips_when_explicit_app_dir_has_only_convex_surface() {
+    let temp = tempdir_in_repo_target();
+    let app_dir = temp.path().to_path_buf();
+    let convex_dir = app_dir.join(".nimbus").join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+    fs::write(
+        convex_dir.join("functions.json"),
+        serde_json::to_vec_pretty(&json!({ "functions": [] }))
+            .expect("manifest json should serialize"),
+    )
+    .expect("manifest should write");
+    let command = StartCommand {
+        app_dir: Some(app_dir.clone()),
+        skip_codegen: true,
+        ..StartCommand::default()
+    };
+
+    let resolved_app_dir = super::boot::resolve_start_app_dir(&command)
+        .expect("convex-only explicit app dir should resolve");
+    let registry = super::boot::load_cloud_functions_registry(
+        &command,
+        resolved_app_dir.as_ref(),
+        &RuntimeLimits::default(),
+    )
+    .expect("convex-only app dir should not error from the cloud functions loader");
+    assert!(
+        registry.is_none(),
+        "cloud functions loader must skip when no cloud functions surface is present, even for an explicit --app-dir"
     );
 }
 

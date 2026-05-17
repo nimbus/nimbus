@@ -404,7 +404,11 @@ pub(super) fn remove_file_if_exists(path: &Path) -> Result<(), Error> {
     }
 }
 
-fn read_pid(path: &Path) -> Result<Option<i32>, Error> {
+pub(super) fn read_pid_if_alive(path: &Path) -> Result<Option<i32>, Error> {
+    Ok(read_pid(path)?.filter(|pid| pid_is_alive(*pid)))
+}
+
+pub(super) fn read_pid(path: &Path) -> Result<Option<i32>, Error> {
     match fs::read_to_string(path) {
         Ok(value) => value.trim().parse::<i32>().map(Some).map_err(|error| {
             Error::Internal(format!(

@@ -52,6 +52,7 @@ mod ports_state;
 mod provider_bootstrap;
 mod readiness_startup;
 mod ssh_scp;
+mod start_collision;
 mod stop_cleanup;
 mod support;
 

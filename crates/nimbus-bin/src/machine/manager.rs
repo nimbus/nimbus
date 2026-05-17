@@ -360,7 +360,36 @@ fn ensure_machine_can_start(
             exclusivity_note
         )));
     }
+    ensure_no_external_machine_collision(paths)?;
     Ok(())
+}
+
+fn ensure_no_external_machine_collision(paths: &MachinePaths) -> Result<(), Error> {
+    let krunkit_owner = self::stop::read_pid_if_alive(&paths.krunkit_pid_path)?;
+    let gvproxy_owner = self::stop::read_pid_if_alive(&paths.gvproxy_pid_path)?;
+    let owners: Vec<(&str, i32, &Path)> = krunkit_owner
+        .into_iter()
+        .map(|pid| ("krunkit", pid, paths.krunkit_pid_path.as_path()))
+        .chain(
+            gvproxy_owner
+                .into_iter()
+                .map(|pid| ("gvproxy", pid, paths.gvproxy_pid_path.as_path())),
+        )
+        .collect();
+    if owners.is_empty() {
+        return Ok(());
+    }
+    let summary = owners
+        .iter()
+        .map(|(label, pid, path)| format!("{label} pid {pid} at {}", path.display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(Error::Conflict(format!(
+        "machine '{}' cannot start: another process owns the runtime sockets ({summary}). \
+         Stop the other machine, or set {} to a separate path before starting.",
+        paths.name,
+        nimbus_machine::MACHINE_RUNTIME_ROOT_ENV,
+    )))
 }
 
 fn validate_machine_bootstrap_contract(config: &MachineConfigRecord) -> Result<(), Error> {
