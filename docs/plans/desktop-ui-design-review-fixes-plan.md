@@ -72,8 +72,8 @@ Out of scope (note as follow-up only):
 | Phase | Slice | Status |
 |-------|-------|--------|
 | DR0 | Read-in + baseline screenshot capture | done |
-| DR1 | Copy hygiene + canonical `EmptyState` (F1) | pending |
-| DR2 | Lens gating: ⌘\ Developer-only (F2) | pending |
+| DR1 | Copy hygiene + canonical `EmptyState` (F1) | done |
+| DR2 | Lens gating: ⌘\ Developer-only (F2) | done |
 | DR3 | Section truth: Observability + Schedules (F3, F4) | pending |
 | DR4 | Tenant default + ScopeChip cleanup (F5, F12) | pending |
 | DR5 | Real shells on admin index + observability (F10, F11) | pending |
@@ -412,3 +412,23 @@ findings catalogued, 14 in scope. Phase ledger DR0–DR8 prepared.
 PNGs moved from `.review-shots/` to
 `docs/plans/proof/desktop-ui-design-review-fixes/before/`; design
 review doc updated to reference the proof-bundle paths.
+
+(c) 2026-05-18 — DR1 landed (`9480c11b`): introduced canonical
+`EmptyState` component at
+`packages/nimbus-ui/src/components/empty-state.tsx` with 4-test spec
+(title-only, body, link CTA, button CTA). Deleted
+`shell/placeholder-page.tsx`. Migrated `/app/files`, `/app/settings`,
+`/admin/`, `/admin/observability` to `EmptyState`. Removed the
+"Phase 1 · Embedded SPA" footer div from `primary-drawer.tsx`. Grep
+`DU-shell|Phase 1 · Embedded|PlaceholderPage` against
+`packages/nimbus-ui/src` returns zero hits. 175 vitest tests pass.
+
+(d) 2026-05-18 — DR2 landed: gated the system tenant lens on the
+Developer view per DESIGN.md §952–961. `KeyboardContract` now reads
+`useRouterState`'s pathname and early-returns on `Meta+\` when
+`viewFromPathname(pathname) !== "developer"`. `CommandPalette` also
+filters the `open-system-tenant-lens` Run action out of the palette
+when the active view is operator. New `keyboard-contract.spec.tsx`
+asserts ⌘\ opens the lens from `/app/compute`, leaves it closed from
+`/admin/machines`, and ⌘K still toggles the palette from either view.
+178 vitest tests pass; typecheck clean.

@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Command } from "cmdk";
 import {
   Command as CommandIcon,
@@ -16,6 +16,7 @@ import {
   DEVELOPER_NAV_ENTRIES,
   type NavEntry,
   OPERATOR_NAV_ENTRIES,
+  viewFromPathname,
 } from "./nav-entries";
 
 type Mode = "navigate" | "run" | "filter";
@@ -39,6 +40,8 @@ export function CommandPalette() {
   const setOpen = useUiStore((s) => s.setPaletteOpen);
   const setLensOpen = useUiStore((s) => s.setLensOpen);
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const view = viewFromPathname(pathname);
   const [mode, setMode] = useState<Mode>("navigate");
   const [search, setSearch] = useState("");
   const [recent, setRecent] = useState<string[]>(loadRecent);
@@ -56,15 +59,19 @@ export function CommandPalette() {
   }, [open]);
 
   const runActions: RunAction[] = [
-    {
-      id: "open-system-tenant-lens",
-      label: "Open system tenant lens",
-      hint: `${metaGlyph} \\`,
-      perform: () => {
-        setOpen(false);
-        queueMicrotask(() => setLensOpen(true));
-      },
-    },
+    ...(view === "developer"
+      ? [
+          {
+            id: "open-system-tenant-lens",
+            label: "Open system tenant lens",
+            hint: `${metaGlyph} \\`,
+            perform: () => {
+              setOpen(false);
+              queueMicrotask(() => setLensOpen(true));
+            },
+          },
+        ]
+      : []),
     {
       id: "refresh-current-view",
       label: "Refresh current view",
