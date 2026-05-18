@@ -99,9 +99,8 @@ function StoragePage() {
     >
       <header className="flex flex-col gap-2">
         <Breadcrumb
-          segments={[
-            { label: "storage", href: "/app/storage" },
-            ...(tenant
+          segments={
+            tenant
               ? [
                   {
                     label: tenant,
@@ -110,8 +109,8 @@ function StoragePage() {
                     active: true,
                   },
                 ]
-              : []),
-          ]}
+              : []
+          }
           testid="tenant-breadcrumb"
         />
         <div className="flex items-baseline justify-between">
