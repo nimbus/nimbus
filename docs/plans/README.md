@@ -4,6 +4,22 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/desktop-ui-design-review-fixes-plan.md`
+  - operator-console design + UX cleanup driven by the 2026-05-18
+    end-to-end review at
+    `docs/design-review/2026-05-18-operator-console-review.md`. Closes
+    14 findings clustered into copy hygiene (strip `DU-shell OX` /
+    `Phase 1 · Embedded SPA` from user-visible copy), lens gating
+    (⌘\ Developer-only per DESIGN.md §System Tenant Lens), section
+    truth (reconcile sub-drawer ↔ tab strip on Observability +
+    Schedules), tenant defaults (Developer console always
+    tenant-scoped; auto-default to first tenant), real shells for
+    `/admin` index + `/admin/observability`, service-detail tab
+    pruning, and small polish (breadcrumb, tab casing, sub-drawer
+    grouping). Phases DR0–DR8. Pre-launch policy: no compat shims.
+    Out of scope: theme-matrix smoke (F15) and re-adding service
+    detail Restarts/Density/Drift tabs.
+
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
