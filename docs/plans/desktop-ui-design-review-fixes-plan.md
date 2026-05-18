@@ -75,7 +75,7 @@ Out of scope (note as follow-up only):
 | DR1 | Copy hygiene + canonical `EmptyState` (F1) | done |
 | DR2 | Lens gating: ⌘\ Developer-only (F2) | done |
 | DR3 | Section truth: Observability + Schedules (F3, F4) | done |
-| DR4 | Tenant default + ScopeChip cleanup (F5, F12) | pending |
+| DR4 | Tenant default + ScopeChip cleanup (F5, F12) | done |
 | DR5 | Real shells on admin index + observability (F10, F11) | pending |
 | DR6 | Service detail tab pruning (F6) | pending |
 | DR7 | Polish: breadcrumb / tab casing / sub-drawer grouping (F7, F9, F14) | pending |
@@ -432,6 +432,19 @@ when the active view is operator. New `keyboard-contract.spec.tsx`
 asserts ⌘\ opens the lens from `/app/compute`, leaves it closed from
 `/admin/machines`, and ⌘K still toggles the palette from either view.
 178 vitest tests pass; typecheck clean.
+
+(f) 2026-05-18 — DR4 landed: `useTenantBootstrap` now auto-defaults
+`activeTenant` to the first tenant id (sorted alphabetically) on `/app`
+routes when the store is null and no `?as=` override is present.
+Operator routes are unchanged — cross-tenant scope still applies there.
+ScopeChip on `/app/services` no longer renders the `tenant: all`
+fallback: when `activeTenant === null` (transient pre-fetch state), the
+chip returns null instead. Audit confirms no other `?? "all"` fallbacks
+remain in `routes/app/`. Bootstrap spec extended to 10 tests covering:
+sort determinism across string + object tenants, no-op on operator
+routes, existing-tenant preservation, empty-list handling, error
+swallowing, and `?as=` priority skipping the fetch entirely. 188 vitest
+tests pass; typecheck clean.
 
 (e) 2026-05-18 — DR3 landed: Observability tab strip now renders from
 `OBSERVABILITY_SUB_DRAWER.items` so the sub-drawer is the single source
