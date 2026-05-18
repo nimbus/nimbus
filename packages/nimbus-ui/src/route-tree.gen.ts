@@ -14,6 +14,7 @@ import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as AppStorageRouteImport } from './routes/app/storage'
 import { Route as AppSettingsRouteImport } from './routes/app/settings'
+import { Route as AppServicesRouteImport } from './routes/app/services'
 import { Route as AppSchedulesRouteImport } from './routes/app/schedules'
 import { Route as AppObservabilityRouteImport } from './routes/app/observability'
 import { Route as AppFilesRouteImport } from './routes/app/files'
@@ -25,7 +26,9 @@ import { Route as AdminObservabilityRouteImport } from './routes/admin/observabi
 import { Route as AdminNetworkRouteImport } from './routes/admin/network'
 import { Route as AdminMachinesRouteImport } from './routes/admin/machines'
 import { Route as AppStorageTableRouteImport } from './routes/app/storage_.$table'
+import { Route as AppServicesServiceRouteImport } from './routes/app/services_.$service'
 import { Route as AppComputeFunctionRouteImport } from './routes/app/compute_.$function'
+import { Route as AdminServicesServiceRouteImport } from './routes/admin/services_.$service'
 import { Route as AppComputeRunsRunIdRouteImport } from './routes/app/compute_.runs_.$runId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -51,6 +54,11 @@ const AppStorageRoute = AppStorageRouteImport.update({
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/app/settings',
   path: '/app/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppServicesRoute = AppServicesRouteImport.update({
+  id: '/app/services',
+  path: '/app/services',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppSchedulesRoute = AppSchedulesRouteImport.update({
@@ -108,9 +116,19 @@ const AppStorageTableRoute = AppStorageTableRouteImport.update({
   path: '/app/storage/$table',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppServicesServiceRoute = AppServicesServiceRouteImport.update({
+  id: '/app/services_/$service',
+  path: '/app/services/$service',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppComputeFunctionRoute = AppComputeFunctionRouteImport.update({
   id: '/app/compute_/$function',
   path: '/app/compute/$function',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminServicesServiceRoute = AdminServicesServiceRouteImport.update({
+  id: '/admin/services_/$service',
+  path: '/admin/services/$service',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppComputeRunsRunIdRoute = AppComputeRunsRunIdRouteImport.update({
@@ -131,11 +149,14 @@ export interface FileRoutesByFullPath {
   '/app/files': typeof AppFilesRoute
   '/app/observability': typeof AppObservabilityRoute
   '/app/schedules': typeof AppSchedulesRoute
+  '/app/services': typeof AppServicesRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/storage': typeof AppStorageRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/admin/services/$service': typeof AdminServicesServiceRoute
   '/app/compute/$function': typeof AppComputeFunctionRoute
+  '/app/services/$service': typeof AppServicesServiceRoute
   '/app/storage/$table': typeof AppStorageTableRoute
   '/app/compute/runs/$runId': typeof AppComputeRunsRunIdRoute
 }
@@ -151,11 +172,14 @@ export interface FileRoutesByTo {
   '/app/files': typeof AppFilesRoute
   '/app/observability': typeof AppObservabilityRoute
   '/app/schedules': typeof AppSchedulesRoute
+  '/app/services': typeof AppServicesRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/storage': typeof AppStorageRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
+  '/admin/services/$service': typeof AdminServicesServiceRoute
   '/app/compute/$function': typeof AppComputeFunctionRoute
+  '/app/services/$service': typeof AppServicesServiceRoute
   '/app/storage/$table': typeof AppStorageTableRoute
   '/app/compute/runs/$runId': typeof AppComputeRunsRunIdRoute
 }
@@ -172,11 +196,14 @@ export interface FileRoutesById {
   '/app/files': typeof AppFilesRoute
   '/app/observability': typeof AppObservabilityRoute
   '/app/schedules': typeof AppSchedulesRoute
+  '/app/services': typeof AppServicesRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/storage': typeof AppStorageRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/admin/services_/$service': typeof AdminServicesServiceRoute
   '/app/compute_/$function': typeof AppComputeFunctionRoute
+  '/app/services_/$service': typeof AppServicesServiceRoute
   '/app/storage_/$table': typeof AppStorageTableRoute
   '/app/compute_/runs_/$runId': typeof AppComputeRunsRunIdRoute
 }
@@ -194,11 +221,14 @@ export interface FileRouteTypes {
     | '/app/files'
     | '/app/observability'
     | '/app/schedules'
+    | '/app/services'
     | '/app/settings'
     | '/app/storage'
     | '/admin/'
     | '/app/'
+    | '/admin/services/$service'
     | '/app/compute/$function'
+    | '/app/services/$service'
     | '/app/storage/$table'
     | '/app/compute/runs/$runId'
   fileRoutesByTo: FileRoutesByTo
@@ -214,11 +244,14 @@ export interface FileRouteTypes {
     | '/app/files'
     | '/app/observability'
     | '/app/schedules'
+    | '/app/services'
     | '/app/settings'
     | '/app/storage'
     | '/admin'
     | '/app'
+    | '/admin/services/$service'
     | '/app/compute/$function'
+    | '/app/services/$service'
     | '/app/storage/$table'
     | '/app/compute/runs/$runId'
   id:
@@ -234,11 +267,14 @@ export interface FileRouteTypes {
     | '/app/files'
     | '/app/observability'
     | '/app/schedules'
+    | '/app/services'
     | '/app/settings'
     | '/app/storage'
     | '/admin/'
     | '/app/'
+    | '/admin/services_/$service'
     | '/app/compute_/$function'
+    | '/app/services_/$service'
     | '/app/storage_/$table'
     | '/app/compute_/runs_/$runId'
   fileRoutesById: FileRoutesById
@@ -255,11 +291,14 @@ export interface RootRouteChildren {
   AppFilesRoute: typeof AppFilesRoute
   AppObservabilityRoute: typeof AppObservabilityRoute
   AppSchedulesRoute: typeof AppSchedulesRoute
+  AppServicesRoute: typeof AppServicesRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppStorageRoute: typeof AppStorageRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AppIndexRoute: typeof AppIndexRoute
+  AdminServicesServiceRoute: typeof AdminServicesServiceRoute
   AppComputeFunctionRoute: typeof AppComputeFunctionRoute
+  AppServicesServiceRoute: typeof AppServicesServiceRoute
   AppStorageTableRoute: typeof AppStorageTableRoute
   AppComputeRunsRunIdRoute: typeof AppComputeRunsRunIdRoute
 }
@@ -299,6 +338,13 @@ declare module '@tanstack/react-router' {
       path: '/app/settings'
       fullPath: '/app/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/services': {
+      id: '/app/services'
+      path: '/app/services'
+      fullPath: '/app/services'
+      preLoaderRoute: typeof AppServicesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/schedules': {
@@ -378,11 +424,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppStorageTableRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/services_/$service': {
+      id: '/app/services_/$service'
+      path: '/app/services/$service'
+      fullPath: '/app/services/$service'
+      preLoaderRoute: typeof AppServicesServiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/compute_/$function': {
       id: '/app/compute_/$function'
       path: '/app/compute/$function'
       fullPath: '/app/compute/$function'
       preLoaderRoute: typeof AppComputeFunctionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/services_/$service': {
+      id: '/admin/services_/$service'
+      path: '/admin/services/$service'
+      fullPath: '/admin/services/$service'
+      preLoaderRoute: typeof AdminServicesServiceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/compute_/runs_/$runId': {
@@ -407,11 +467,14 @@ const rootRouteChildren: RootRouteChildren = {
   AppFilesRoute: AppFilesRoute,
   AppObservabilityRoute: AppObservabilityRoute,
   AppSchedulesRoute: AppSchedulesRoute,
+  AppServicesRoute: AppServicesRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppStorageRoute: AppStorageRoute,
   AdminIndexRoute: AdminIndexRoute,
   AppIndexRoute: AppIndexRoute,
+  AdminServicesServiceRoute: AdminServicesServiceRoute,
   AppComputeFunctionRoute: AppComputeFunctionRoute,
+  AppServicesServiceRoute: AppServicesServiceRoute,
   AppStorageTableRoute: AppStorageTableRoute,
   AppComputeRunsRunIdRoute: AppComputeRunsRunIdRoute,
 }

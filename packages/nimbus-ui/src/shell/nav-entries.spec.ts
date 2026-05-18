@@ -11,6 +11,7 @@ import {
 const EXPECTED_DEVELOPER_IDS = [
   "overview",
   "compute",
+  "services",
   "schedules",
   "storage",
   "files",
@@ -29,7 +30,7 @@ const EXPECTED_OPERATOR_IDS = [
 ];
 
 describe("nav-entries", () => {
-  it("exports seven developer entries in the expected order", () => {
+  it("exports eight developer entries in the expected order", () => {
     expect(DEVELOPER_NAV_ENTRIES.map((e) => e.id)).toEqual(
       EXPECTED_DEVELOPER_IDS,
     );
