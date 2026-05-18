@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo } from "react";
-import { PlaceholderPage } from "../../shell/placeholder-page";
+
+import { EmptyState } from "../../components/empty-state";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
@@ -17,22 +18,22 @@ function FilesPage() {
       title: "Files",
       search: { placeholder: "Filter buckets" },
       children: (
-        <div className="px-3 py-6 text-xs text-muted">
-          <p>No buckets yet.</p>
-          <p className="mt-2">
-            Buckets appear here once the file storage API is wired in.
-          </p>
-        </div>
+        <div className="px-3 py-6 text-xs text-muted">No buckets yet.</div>
       ),
     }),
     [],
   );
   useContributeSubDrawer(spec);
   return (
-    <PlaceholderPage
-      title="Files"
-      summary="Object storage buckets scoped to the active tenant. Upload, preview, and manage signed URLs."
-      hint="Bucket list + object browser lands in DU-shell O3 once the file storage API surface is wired."
-    />
+    <section
+      className="flex h-full flex-col"
+      data-testid="page-files"
+    >
+      <EmptyState
+        title="Object storage"
+        body="Buckets, object browsing, and signed-URL uploads scoped to the active tenant will live here."
+        testid="files-empty"
+      />
+    </section>
   );
 }

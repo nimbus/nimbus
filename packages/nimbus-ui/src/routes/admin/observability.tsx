@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PlaceholderPage } from "../../shell/placeholder-page";
+
+import { EmptyState } from "../../components/empty-state";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
@@ -53,10 +54,15 @@ const ADMIN_OBSERVABILITY_SUB_DRAWER: SubDrawerSpec = {
 function AdminObservabilityPage() {
   useContributeSubDrawer(ADMIN_OBSERVABILITY_SUB_DRAWER);
   return (
-    <PlaceholderPage
-      title="Observability"
-      summary="Server-wide logs and runs. Filter by tenant via the optional ?tenant=<id> query, or leave unset to see every tenant."
-      hint="Operator observability reuses the developer observability surface in DU-shell O4 with an additional tenant filter."
-    />
+    <section
+      className="flex h-full flex-col"
+      data-testid="page-admin-observability"
+    >
+      <EmptyState
+        title="Operator observability"
+        body="Server-wide logs, runs, events, and errors across every tenant. Filter by tenant via the ?tenant=<id> query, or leave unset to see every tenant."
+        testid="admin-observability-empty"
+      />
+    </section>
   );
 }
