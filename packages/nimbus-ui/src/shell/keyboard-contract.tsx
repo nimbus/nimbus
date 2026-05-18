@@ -1,10 +1,13 @@
+import { useRouterState } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useUiStore } from "../store/ui-store";
+import { viewFromPathname } from "./nav-entries";
 
 export function KeyboardContract() {
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const setLensOpen = useUiStore((s) => s.setLensOpen);
   const setActionMenuOpen = useUiStore((s) => s.setActionMenuOpen);
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -16,6 +19,9 @@ export function KeyboardContract() {
         return;
       }
       if (meta && (event.key === "\\" || event.key === "|")) {
+        if (viewFromPathname(pathname) !== "developer") {
+          return;
+        }
         event.preventDefault();
         const { lensOpen } = useUiStore.getState();
         setLensOpen(!lensOpen);
@@ -57,7 +63,7 @@ export function KeyboardContract() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setPaletteOpen, setLensOpen, setActionMenuOpen]);
+  }, [setPaletteOpen, setLensOpen, setActionMenuOpen, pathname]);
   return null;
 }
 
