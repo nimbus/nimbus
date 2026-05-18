@@ -74,7 +74,7 @@ Out of scope (note as follow-up only):
 | DR0 | Read-in + baseline screenshot capture | done |
 | DR1 | Copy hygiene + canonical `EmptyState` (F1) | done |
 | DR2 | Lens gating: ⌘\ Developer-only (F2) | done |
-| DR3 | Section truth: Observability + Schedules (F3, F4) | pending |
+| DR3 | Section truth: Observability + Schedules (F3, F4) | done |
 | DR4 | Tenant default + ScopeChip cleanup (F5, F12) | pending |
 | DR5 | Real shells on admin index + observability (F10, F11) | pending |
 | DR6 | Service detail tab pruning (F6) | pending |
@@ -423,12 +423,23 @@ review doc updated to reference the proof-bundle paths.
 `DU-shell|Phase 1 · Embedded|PlaceholderPage` against
 `packages/nimbus-ui/src` returns zero hits. 175 vitest tests pass.
 
-(d) 2026-05-18 — DR2 landed: gated the system tenant lens on the
-Developer view per DESIGN.md §952–961. `KeyboardContract` now reads
-`useRouterState`'s pathname and early-returns on `Meta+\` when
+(d) 2026-05-18 — DR2 landed (`6bbbbdad`): gated the system tenant lens
+on the Developer view per DESIGN.md §952–961. `KeyboardContract` now
+reads `useRouterState`'s pathname and early-returns on `Meta+\` when
 `viewFromPathname(pathname) !== "developer"`. `CommandPalette` also
 filters the `open-system-tenant-lens` Run action out of the palette
 when the active view is operator. New `keyboard-contract.spec.tsx`
 asserts ⌘\ opens the lens from `/app/compute`, leaves it closed from
 `/admin/machines`, and ⌘K still toggles the palette from either view.
 178 vitest tests pass; typecheck clean.
+
+(e) 2026-05-18 — DR3 landed: Observability tab strip now renders from
+`OBSERVABILITY_SUB_DRAWER.items` so the sub-drawer is the single source
+of truth for the four sections (logs, runs, events, errors). Disabled
+items (events, errors) render as `aria-disabled` spans with a
+`coming soon` title tooltip instead of clickable links. Schedules
+sub-drawer switched from `kind: "dynamic"` to `kind: "static"` with
+two items (Scheduled, Cron); body tab strip removed; dynamic
+sub-drawer recent-list + search-box removed (they return when the
+real table lands). `routes/app/section-nav.spec.ts` asserts both
+specs' shape. 178 → 182 vitest tests pass; typecheck + build clean.
