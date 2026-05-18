@@ -55,9 +55,6 @@ export function PrimaryDrawer() {
           )}
           {collapsed ? null : <span>Collapse</span>}
         </button>
-        {collapsed ? null : (
-          <div className="px-2 text-xs text-muted">Phase 1 · Embedded SPA</div>
-        )}
       </div>
     </nav>
   );

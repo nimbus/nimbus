@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
+
+import { EmptyState } from "../../components/empty-state";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
-import { PlaceholderPage } from "../../shell/placeholder-page";
 
 export const Route = createFileRoute("/app/settings")({
   component: TenantSettingsPage,
@@ -43,10 +44,16 @@ const TENANT_SETTINGS_SUB_DRAWER: SubDrawerSpec = {
 function TenantSettingsPage() {
   useContributeSubDrawer(TENANT_SETTINGS_SUB_DRAWER);
   return (
-    <PlaceholderPage
-      title="Settings"
-      summary="Tenant-scoped settings: members, API keys, environment variables, deploy keys, and appearance preferences."
-      hint="Tenant settings sub-drawer lands in DU-shell O4. Operator-wide server settings live under /admin/settings."
-    />
+    <section
+      className="flex h-full flex-col"
+      data-testid="page-settings"
+    >
+      <EmptyState
+        title="Tenant settings"
+        body="Members, API keys, environment variables, deploy keys, and appearance preferences will live here. Server-wide configuration lives under the operator console."
+        cta={{ label: "Operator settings", to: "/admin/settings" }}
+        testid="settings-empty"
+      />
+    </section>
   );
 }
