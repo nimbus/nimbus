@@ -76,7 +76,7 @@ Out of scope (note as follow-up only):
 | DR2 | Lens gating: ⌘\ Developer-only (F2) | done |
 | DR3 | Section truth: Observability + Schedules (F3, F4) | done |
 | DR4 | Tenant default + ScopeChip cleanup (F5, F12) | done |
-| DR5 | Real shells on admin index + observability (F10, F11) | pending |
+| DR5 | Real shells on admin index + observability (F10, F11) | done |
 | DR6 | Service detail tab pruning (F6) | pending |
 | DR7 | Polish: breadcrumb / tab casing / sub-drawer grouping (F7, F9, F14) | pending |
 | DR8 | Verification + plan close + archive | pending |
@@ -432,6 +432,20 @@ when the active view is operator. New `keyboard-contract.spec.tsx`
 asserts ⌘\ opens the lens from `/app/compute`, leaves it closed from
 `/admin/machines`, and ⌘K still toggles the palette from either view.
 178 vitest tests pass; typecheck clean.
+
+(g) 2026-05-18 — DR5 landed: replaced both bleak operator placeholders
+with real content. `/admin` (System) now renders an 8-field overview
+grid: Nimbus version, health, server uptime, listen address, tenant
+count, machine count, service count, and listener count + adapter set.
+Sources: `api.system.status`, `api.machines.list`, `api.services.list`,
+`api.listeners.list`, and a one-shot `/api/tenants` fetch for the
+tenant count. `/admin/observability` now renders the same logs +
+runs surfaces the developer console exposes, with a tenant-scope chip
+that defaults to `tenant: all`. Tab strip mirrors the developer
+Observability strip (logs, runs, events disabled, errors disabled).
+Empty state via the canonical `EmptyState` from DR1. Plan-code grep
+still returns zero hits across `packages/nimbus-ui/src`. 188 vitest
+tests pass; typecheck clean.
 
 (f) 2026-05-18 — DR4 landed: `useTenantBootstrap` now auto-defaults
 `activeTenant` to the first tenant id (sorted alphabetically) on `/app`
