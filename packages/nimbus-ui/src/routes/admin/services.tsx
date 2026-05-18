@@ -168,7 +168,7 @@ function AdminServicesSubDrawer({
   );
 }
 
-function groupByTenant(
+export function groupByTenant(
   services: ServiceDoc[],
 ): Array<[string, ServiceDoc[]]> {
   const map = new Map<string, ServiceDoc[]>();

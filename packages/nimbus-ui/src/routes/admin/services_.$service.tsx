@@ -19,6 +19,7 @@ import {
   useSubDrawerSearch,
 } from "../../shell/sub-drawer";
 import type { ServiceDoc } from "../app/services";
+import { groupByTenant } from "./services";
 
 export type DetailTab = "placement";
 
@@ -166,7 +167,7 @@ function AdminServiceDetailPage() {
               aria-current={isActive ? "page" : undefined}
               data-testid={`admin-service-detail-tab-${t.id}`}
               className={cn(
-                "flex items-center px-3 py-2 font-mono text-xs uppercase tracking-wide",
+                "flex items-center px-3 py-2 font-mono text-xs",
                 isActive
                   ? "border-b-2 border-[color:var(--color-brand)] text-default"
                   : "text-muted hover:text-default",
@@ -291,35 +292,42 @@ function AdminDetailSubDrawer({
       </div>
     );
   }
+  const grouped = groupByTenant(filtered);
   return (
-    <ul className="flex flex-col gap-px px-2 py-2">
-      {filtered.map((svc) => {
-        const isActive = svc._id === activeServiceId;
-        return (
-          <li key={svc._id}>
-            <Link
-              to="/admin/services/$service"
-              params={{ service: svc._id }}
-              data-testid={`sub-drawer-item-op-service-${svc.name ?? svc._id}`}
-              className={cn(
-                "flex h-8 items-center gap-2 rounded-md px-2 text-sm",
-                isActive
-                  ? "bg-surface-2 text-default"
-                  : "text-muted hover:bg-surface-2 hover:text-default",
-              )}
-            >
-              <span className="flex-1 truncate font-mono text-xs">
-                {svc.name ?? shortId(svc._id, 12)}
-              </span>
-              {svc.tenantId ? (
-                <span className="tabular font-mono text-[10px] text-muted">
-                  {svc.tenantId}
+    <ul className="flex flex-col gap-2 px-2 py-2">
+      {grouped.map(([tenant, items]) => (
+        <li key={tenant} className="flex flex-col gap-px">
+          <div className="px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+            {tenant}
+          </div>
+          {items.map((svc) => {
+            const isActive = svc._id === activeServiceId;
+            return (
+              <Link
+                key={svc._id}
+                to="/admin/services/$service"
+                params={{ service: svc._id }}
+                data-testid={`sub-drawer-item-op-service-${svc.name ?? svc._id}`}
+                className={cn(
+                  "flex h-8 items-center gap-2 rounded-md px-2 text-sm",
+                  isActive
+                    ? "bg-surface-2 text-default"
+                    : "text-muted hover:bg-surface-2 hover:text-default",
+                )}
+              >
+                <span className="flex-1 truncate font-mono text-xs">
+                  {svc.name ?? shortId(svc._id, 12)}
                 </span>
-              ) : null}
-            </Link>
-          </li>
-        );
-      })}
+                {svc.state ? (
+                  <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                    {svc.state}
+                  </span>
+                ) : null}
+              </Link>
+            );
+          })}
+        </li>
+      ))}
     </ul>
   );
 }

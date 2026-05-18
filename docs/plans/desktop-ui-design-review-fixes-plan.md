@@ -78,7 +78,7 @@ Out of scope (note as follow-up only):
 | DR4 | Tenant default + ScopeChip cleanup (F5, F12) | done |
 | DR5 | Real shells on admin index + observability (F10, F11) | done |
 | DR6 | Service detail tab pruning (F6) | done |
-| DR7 | Polish: breadcrumb / tab casing / sub-drawer grouping (F7, F9, F14) | pending |
+| DR7 | Polish: breadcrumb / tab casing / sub-drawer grouping (F7, F9, F14) | done |
 | DR8 | Verification + plan close + archive | pending |
 
 ## Roadmap detail
@@ -470,6 +470,17 @@ two items (Scheduled, Cron); body tab strip removed; dynamic
 sub-drawer recent-list + search-box removed (they return when the
 real table lands). `routes/app/section-nav.spec.ts` asserts both
 specs' shape. 178 → 182 vitest tests pass; typecheck + build clean.
+
+(i) 2026-05-18 — DR7 landed: polish triplet for F7, F9, F14.
+`routes/app/storage.tsx` breadcrumbs now start at the tenant id (the
+leading `storage` segment is gone — the primary drawer's selected
+state already implies the section). Admin service detail tab buttons
+drop `uppercase tracking-wide` to match every other operator tab
+strip. Admin service detail sub-drawer now renders tenant-grouped (and
+shows per-service `state` chips) so it visually matches the operator
+services list. Extracted `groupByTenant` from `routes/admin/services.tsx`
+as an exported helper and reuse it from the detail page. 190 vitest
+tests still pass; typecheck + build clean.
 
 (h) 2026-05-18 — DR6 landed: pruned the admin Service detail page to
 a single Placement tab. `DetailTab` collapsed from a four-value union
