@@ -130,7 +130,7 @@ type RunDoc = {
   startedAt?: number;
 };
 
-const OBSERVABILITY_SUB_DRAWER: SubDrawerSpec = {
+export const OBSERVABILITY_SUB_DRAWER: SubDrawerSpec = {
   kind: "static",
   title: "Observability",
   items: [
@@ -199,8 +199,15 @@ function Header({ tab }: { tab: ObservabilityTab }) {
         className="flex gap-px overflow-hidden rounded-md border border-app bg-surface-2 self-start"
         data-testid="observability-tabs"
       >
-        <TabLink id="logs" label="Logs" active={tab === "logs"} />
-        <TabLink id="runs" label="Runs" active={tab === "runs"} />
+        {OBSERVABILITY_SUB_DRAWER.items.map((item) => (
+          <TabLink
+            key={item.id}
+            id={item.id}
+            label={item.label}
+            active={tab === item.id}
+            disabled={Boolean(item.disabled)}
+          />
+        ))}
       </nav>
     </header>
   );
@@ -210,11 +217,28 @@ function TabLink({
   id,
   label,
   active,
+  disabled,
 }: {
-  id: ObservabilityTab;
+  id: string;
   label: string;
   active: boolean;
+  disabled: boolean;
 }) {
+  if (disabled) {
+    return (
+      <span
+        aria-disabled="true"
+        data-testid={`observability-tab-${id}`}
+        title={`${label} — coming soon`}
+        className={cn(
+          "px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
+          "cursor-not-allowed text-muted opacity-60",
+        )}
+      >
+        {label}
+      </span>
+    );
+  }
   return (
     <Link
       to="/app/observability"

@@ -1,11 +1,5 @@
-import {
-  createFileRoute,
-  Link,
-  useNavigate,
-  useSearch,
-} from "@tanstack/react-router";
+import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
-import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { StateChip } from "../../components/state-chip";
@@ -15,16 +9,10 @@ import { formatDuration, shortId } from "../../lib/format";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
-  useSubDrawerSearch,
 } from "../../shell/sub-drawer";
 import { useUiStore } from "../../store/ui-store";
 
 type Section = "scheduled" | "cron";
-
-const SECTIONS: Array<{ id: Section; label: string }> = [
-  { id: "scheduled", label: "Scheduled" },
-  { id: "cron", label: "Cron" },
-];
 
 type SchedulesSearch = {
   section?: Section;
@@ -63,9 +51,28 @@ function isSection(value: unknown): value is Section {
   return value === "scheduled" || value === "cron";
 }
 
+export const SCHEDULES_SUB_DRAWER: SubDrawerSpec = {
+  kind: "static",
+  title: "Schedules",
+  items: [
+    {
+      id: "scheduled",
+      label: "Scheduled",
+      to: "/app/schedules",
+      search: { section: "scheduled" },
+    },
+    {
+      id: "cron",
+      label: "Cron",
+      to: "/app/schedules",
+      search: { section: "cron" },
+    },
+  ],
+};
+
 function SchedulesPage() {
+  useContributeSubDrawer(SCHEDULES_SUB_DRAWER);
   const search = useSearch({ from: "/app/schedules" });
-  const navigate = useNavigate();
   const section: Section = search.section ?? "scheduled";
   const activeTenant = useUiStore((s) => s.activeTenant);
 
@@ -80,30 +87,6 @@ function SchedulesPage() {
     status: null,
     limit: 200,
   }) as CronJobDoc[] | undefined;
-
-  const setSection = (next: Section) =>
-    navigate({
-      to: "/app/schedules",
-      search: { section: next },
-      replace: true,
-    });
-
-  const spec = useMemo<SubDrawerSpec>(
-    () => ({
-      kind: "dynamic",
-      title: "Schedules",
-      search: { placeholder: "Filter schedules" },
-      children: (
-        <SchedulesSubDrawer
-          scheduled={scheduled}
-          cron={cron}
-          activeSection={section}
-        />
-      ),
-    }),
-    [scheduled, cron, section],
-  );
-  useContributeSubDrawer(spec);
 
   return (
     <section
@@ -124,33 +107,6 @@ function SchedulesPage() {
           </p>
         </div>
       </header>
-
-      <nav
-        aria-label="Schedule sections"
-        className="flex shrink-0 gap-px border-b border-app bg-surface-2"
-        data-testid="schedules-tabs"
-      >
-        {SECTIONS.map((s) => {
-          const isActive = section === s.id;
-          return (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setSection(s.id)}
-              aria-current={isActive ? "page" : undefined}
-              data-testid={`schedules-tab-${s.id}`}
-              className={cn(
-                "flex items-center px-3 py-2 font-mono text-xs uppercase tracking-wide",
-                isActive
-                  ? "border-b-2 border-[color:var(--color-brand)] text-default"
-                  : "text-muted hover:text-default",
-              )}
-            >
-              {s.label}
-            </button>
-          );
-        })}
-      </nav>
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {section === "scheduled" ? (
@@ -309,165 +265,6 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
         </tbody>
       </table>
     </div>
-  );
-}
-
-function SchedulesSubDrawer({
-  scheduled,
-  cron,
-  activeSection,
-}: {
-  scheduled: ScheduledJobDoc[] | undefined;
-  cron: CronJobDoc[] | undefined;
-  activeSection: Section;
-}) {
-  const filter = useSubDrawerSearch().trim().toLowerCase();
-
-  return (
-    <div className="flex flex-col gap-2 px-2 py-2">
-      <SectionLink id="scheduled" label="Scheduled" active={activeSection} />
-      <SectionLink id="cron" label="Cron" active={activeSection} />
-      <div className="mt-2 border-t border-app pt-2">
-        <div className="px-2 pb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
-          {activeSection === "scheduled"
-            ? "Recent scheduled"
-            : "Recent cron"}
-        </div>
-        {activeSection === "scheduled" ? (
-          <ScheduledList jobs={scheduled} filter={filter} />
-        ) : (
-          <CronList jobs={cron} filter={filter} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SectionLink({
-  id,
-  label,
-  active,
-}: {
-  id: Section;
-  label: string;
-  active: Section;
-}) {
-  const isActive = id === active;
-  return (
-    <Link
-      to="/app/schedules"
-      search={{ section: id }}
-      data-testid={`sub-drawer-schedules-${id}`}
-      className={cn(
-        "flex h-8 items-center gap-2 rounded-md px-2 text-sm",
-        isActive
-          ? "bg-surface-2 text-default"
-          : "text-muted hover:bg-surface-2 hover:text-default",
-      )}
-    >
-      <span className="flex-1 truncate font-mono text-xs uppercase tracking-wide">
-        {label}
-      </span>
-    </Link>
-  );
-}
-
-function ScheduledList({
-  jobs,
-  filter,
-}: {
-  jobs: ScheduledJobDoc[] | undefined;
-  filter: string;
-}) {
-  if (jobs === undefined) {
-    return (
-      <div className="px-2 py-2 text-xs text-muted">
-        <span aria-hidden>·</span>
-        <span className="sr-only">loading</span>
-      </div>
-    );
-  }
-  const filtered = filter
-    ? jobs.filter(
-        (j) =>
-          (j.functionPath ?? "").toLowerCase().includes(filter) ||
-          (j.status ?? "").toLowerCase().includes(filter),
-      )
-    : jobs;
-  if (filtered.length === 0) {
-    return (
-      <div className="px-2 py-2 text-xs text-muted">
-        {jobs.length === 0 ? "No scheduled jobs." : "No matches."}
-      </div>
-    );
-  }
-  return (
-    <ul className="flex flex-col gap-px">
-      {filtered.slice(0, 30).map((job) => (
-        <li key={job._id}>
-          <div className="flex h-7 items-center gap-2 rounded-md px-2 text-sm text-muted">
-            <span className="flex-1 truncate font-mono text-xs">
-              {job.functionPath ?? shortId(job._id, 12)}
-            </span>
-            {job.status ? (
-              <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
-                {job.status}
-              </span>
-            ) : null}
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function CronList({
-  jobs,
-  filter,
-}: {
-  jobs: CronJobDoc[] | undefined;
-  filter: string;
-}) {
-  if (jobs === undefined) {
-    return (
-      <div className="px-2 py-2 text-xs text-muted">
-        <span aria-hidden>·</span>
-        <span className="sr-only">loading</span>
-      </div>
-    );
-  }
-  const filtered = filter
-    ? jobs.filter(
-        (j) =>
-          (j.name ?? "").toLowerCase().includes(filter) ||
-          (j.functionPath ?? "").toLowerCase().includes(filter) ||
-          (j.cron ?? "").toLowerCase().includes(filter),
-      )
-    : jobs;
-  if (filtered.length === 0) {
-    return (
-      <div className="px-2 py-2 text-xs text-muted">
-        {jobs.length === 0 ? "No cron jobs." : "No matches."}
-      </div>
-    );
-  }
-  return (
-    <ul className="flex flex-col gap-px">
-      {filtered.slice(0, 30).map((job) => (
-        <li key={job._id}>
-          <div className="flex h-7 items-center gap-2 rounded-md px-2 text-sm text-muted">
-            <span className="flex-1 truncate font-mono text-xs">
-              {job.name ?? job.functionPath ?? shortId(job._id, 12)}
-            </span>
-            {job.status ? (
-              <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
-                {job.status}
-              </span>
-            ) : null}
-          </div>
-        </li>
-      ))}
-    </ul>
   );
 }
 
