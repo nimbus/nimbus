@@ -85,11 +85,11 @@ function SummaryChip({ services }: { services: ServiceDoc[] | undefined }) {
   }
   return (
     <span
-      className="font-mono text-[11px] text-muted"
+      className="whitespace-nowrap font-mono text-[11px] text-muted"
       data-testid="admin-services-summary"
     >
-      {services.length} service{services.length === 1 ? "" : "s"} · {tenants.size}{" "}
-      tenant{tenants.size === 1 ? "" : "s"}
+      {services.length} service{services.length === 1 ? "" : "s"} ·{" "}
+      {tenants.size} tenant{tenants.size === 1 ? "" : "s"}
     </span>
   );
 }
