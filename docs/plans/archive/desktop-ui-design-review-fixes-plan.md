@@ -1,6 +1,6 @@
 # Desktop UI — Design Review Fixes
 
-Status: in_progress
+Status: done
 Owner: desktop-ui workstream
 Predecessor (closed, archived): `docs/plans/archive/desktop-ui-compute-services-redesign-plan.md`
 Source: `docs/design-review/2026-05-18-operator-console-review.md`
@@ -79,7 +79,7 @@ Out of scope (note as follow-up only):
 | DR5 | Real shells on admin index + observability (F10, F11) | done |
 | DR6 | Service detail tab pruning (F6) | done |
 | DR7 | Polish: breadcrumb / tab casing / sub-drawer grouping (F7, F9, F14) | done |
-| DR8 | Verification + plan close + archive | pending |
+| DR8 | Verification + plan close + archive | done |
 
 ## Roadmap detail
 
@@ -496,3 +496,22 @@ asserting `TABS.length === 1` and that `isTab()` accepts only
 routes.mjs` + `vite.config.ts`) to ignore `.spec.(ts|tsx)` files so
 route-level specs no longer warn during codegen. 190 vitest tests
 pass; typecheck + build clean.
+
+(j) 2026-05-18 — DR8 landed: plan closure. Captured 17 after-images
+at 1440×900 to `docs/plans/proof/desktop-ui-design-review-fixes/after/`
+(16 mirror the `before/` walk; `dr8-x-03-lens-blocked-on-admin.png` is
+the extra DR2 evidence shot). Re-verified all gates: `grep -rn
+'DU-shell\|Phase 1 · Embedded\|PlaceholderPage' packages/nimbus-ui/src`
+returns zero matches; ⌘\ pressed on `/ui/admin/machines` leaves the
+DOM lens-free; vitest 27 files / 190 tests pass; typecheck clean;
+build clean (only the informational rolldown chunk-size note).
+Console hygiene clean across the walk (the only entry observed is a
+single 404 on a dev-server fetch and does not surface as UI). Wrote
+`docs/plans/proof/desktop-ui-design-review-fixes/README.md` mapping
+F1, F2, F3, F4, F5, F6, F7, F9, F10, F11, F12, F14 each to their
+after-image (12 in-scope findings; F8 was already fixed, F13 folded
+into F1 via `EmptyState`, F15 deferred to a separate
+verification-tooling plan, F16 verified by console-hygiene check).
+Flipped plan status to `done`; `git mv` to
+`docs/plans/archive/`; updated `docs/plans/README.md` to list as an
+archived baseline.

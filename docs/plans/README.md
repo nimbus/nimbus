@@ -4,22 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/desktop-ui-design-review-fixes-plan.md`
-  - operator-console design + UX cleanup driven by the 2026-05-18
-    end-to-end review at
-    `docs/design-review/2026-05-18-operator-console-review.md`. Closes
-    14 findings clustered into copy hygiene (strip `DU-shell OX` /
-    `Phase 1 · Embedded SPA` from user-visible copy), lens gating
-    (⌘\ Developer-only per DESIGN.md §System Tenant Lens), section
-    truth (reconcile sub-drawer ↔ tab strip on Observability +
-    Schedules), tenant defaults (Developer console always
-    tenant-scoped; auto-default to first tenant), real shells for
-    `/admin` index + `/admin/observability`, service-detail tab
-    pruning, and small polish (breadcrumb, tab casing, sub-drawer
-    grouping). Phases DR0–DR8. Pre-launch policy: no compat shims.
-    Out of scope: theme-matrix smoke (F15) and re-adding service
-    detail Restarts/Density/Drift tabs.
-
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -93,6 +77,22 @@ archived plans only when you need historical execution detail.
     a new active plan before implementing real Code-refs (Services)
     or Drift (Operator) backends, or before wiring a Monaco/Shiki
     source viewer.
+- `docs/plans/archive/desktop-ui-design-review-fixes-plan.md`
+  - completed execution record for the 2026-05-18 operator-console
+    design review cleanup. Closed 14 of 16 findings (2 already-fixed
+    or folded into others): copy hygiene + canonical `EmptyState`
+    (F1, F13), lens gating ⌘\ Developer-only (F2), Observability +
+    Schedules section truth (F3, F4), tenant default + ScopeChip
+    cleanup (F5, F12), real shells on `/admin` index +
+    `/admin/observability` (F10, F11), service-detail tab pruning to
+    Placement-only (F6), and polish for breadcrumb / tab casing /
+    sub-drawer grouping (F7, F9, F14). Covered DR0–DR8. Closed
+    2026-05-18; proof bundle under
+    `docs/plans/proof/desktop-ui-design-review-fixes/` (before vs
+    after walks at 1440×900, plus DR2 lens-blocked evidence). Out of
+    scope: theme-matrix smoke (F15) and re-adding service-detail
+    Restarts/Density/Drift tabs — both return when their owning
+    plans land.
 - `docs/plans/archive/update-lifecycle-plan.md`
   - completed execution record for the operator-facing update lifecycle:
     server-side `/api/system/version-info` with stale-while-revalidate
