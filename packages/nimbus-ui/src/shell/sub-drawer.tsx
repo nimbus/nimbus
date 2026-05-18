@@ -33,18 +33,32 @@ export type SubDrawerSpec =
 type SubDrawerContextValue = {
   spec: SubDrawerSpec | null;
   setSpec: (spec: SubDrawerSpec | null) => void;
+  search: string;
+  setSearch: (next: string) => void;
 };
 
 const SubDrawerContext = createContext<SubDrawerContextValue | null>(null);
 
 export function SubDrawerProvider({ children }: { children: ReactNode }) {
   const [spec, setSpec] = useState<SubDrawerSpec | null>(null);
-  const value = useMemo(() => ({ spec, setSpec }), [spec]);
+  const [search, setSearch] = useState<string>("");
+  const value = useMemo(
+    () => ({ spec, setSpec, search, setSearch }),
+    [spec, search],
+  );
   return (
     <SubDrawerContext.Provider value={value}>
       {children}
     </SubDrawerContext.Provider>
   );
+}
+
+export function useSubDrawerSearch(): string {
+  const ctx = useContext(SubDrawerContext);
+  if (!ctx) {
+    throw new Error("useSubDrawerSearch must be used within SubDrawerProvider");
+  }
+  return ctx.search;
 }
 
 export function useContributeSubDrawer(spec: SubDrawerSpec | null) {
@@ -54,11 +68,15 @@ export function useContributeSubDrawer(spec: SubDrawerSpec | null) {
       "useContributeSubDrawer must be used within a SubDrawerProvider",
     );
   }
-  const { setSpec } = ctx;
+  const { setSpec, setSearch } = ctx;
   useEffect(() => {
     setSpec(spec);
-    return () => setSpec(null);
-  }, [spec, setSpec]);
+    setSearch("");
+    return () => {
+      setSpec(null);
+      setSearch("");
+    };
+  }, [spec, setSpec, setSearch]);
 }
 
 export function SubDrawer() {
@@ -66,6 +84,8 @@ export function SubDrawer() {
   const open = useUiStore((s) => s.subDrawerOpen);
   const setSubDrawerOpen = useUiStore((s) => s.setSubDrawerOpen);
   const spec = ctx?.spec ?? null;
+  const search = ctx?.search ?? "";
+  const setSearch = ctx?.setSearch ?? (() => {});
   if (!spec || !open) return null;
   return (
     <aside
@@ -93,6 +113,8 @@ export function SubDrawer() {
         <div className="border-b border-app px-3 py-2">
           <input
             type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             placeholder={spec.search.placeholder}
             data-testid="sub-drawer-search"
             className="h-7 w-full rounded-md border border-app bg-app px-2 text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand)]"

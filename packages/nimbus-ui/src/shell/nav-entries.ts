@@ -50,6 +50,15 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     countArgs: { bundleId: null, kind: null, limit: 200 },
   },
   {
+    id: "services",
+    label: "Services",
+    to: "/app/services",
+    icon: Boxes,
+    view: "developer",
+    countQuery: api.services.list as unknown as CountQuery,
+    countArgs: { tenantId: null, machineId: null, state: null, limit: 200 },
+  },
+  {
     id: "schedules",
     label: "Schedules",
     to: "/app/schedules",

@@ -25,7 +25,7 @@ import { Route as AdminObservabilityRouteImport } from './routes/admin/observabi
 import { Route as AdminNetworkRouteImport } from './routes/admin/network'
 import { Route as AdminMachinesRouteImport } from './routes/admin/machines'
 import { Route as AppStorageTableRouteImport } from './routes/app/storage_.$table'
-import { Route as AppComputeRunnerRouteImport } from './routes/app/compute_.runner'
+import { Route as AppComputeFunctionRouteImport } from './routes/app/compute_.$function'
 import { Route as AppComputeRunsRunIdRouteImport } from './routes/app/compute_.runs_.$runId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -108,9 +108,9 @@ const AppStorageTableRoute = AppStorageTableRouteImport.update({
   path: '/app/storage/$table',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppComputeRunnerRoute = AppComputeRunnerRouteImport.update({
-  id: '/app/compute_/runner',
-  path: '/app/compute/runner',
+const AppComputeFunctionRoute = AppComputeFunctionRouteImport.update({
+  id: '/app/compute_/$function',
+  path: '/app/compute/$function',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppComputeRunsRunIdRoute = AppComputeRunsRunIdRouteImport.update({
@@ -135,7 +135,7 @@ export interface FileRoutesByFullPath {
   '/app/storage': typeof AppStorageRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
-  '/app/compute/runner': typeof AppComputeRunnerRoute
+  '/app/compute/$function': typeof AppComputeFunctionRoute
   '/app/storage/$table': typeof AppStorageTableRoute
   '/app/compute/runs/$runId': typeof AppComputeRunsRunIdRoute
 }
@@ -155,7 +155,7 @@ export interface FileRoutesByTo {
   '/app/storage': typeof AppStorageRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
-  '/app/compute/runner': typeof AppComputeRunnerRoute
+  '/app/compute/$function': typeof AppComputeFunctionRoute
   '/app/storage/$table': typeof AppStorageTableRoute
   '/app/compute/runs/$runId': typeof AppComputeRunsRunIdRoute
 }
@@ -176,7 +176,7 @@ export interface FileRoutesById {
   '/app/storage': typeof AppStorageRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
-  '/app/compute_/runner': typeof AppComputeRunnerRoute
+  '/app/compute_/$function': typeof AppComputeFunctionRoute
   '/app/storage_/$table': typeof AppStorageTableRoute
   '/app/compute_/runs_/$runId': typeof AppComputeRunsRunIdRoute
 }
@@ -198,7 +198,7 @@ export interface FileRouteTypes {
     | '/app/storage'
     | '/admin/'
     | '/app/'
-    | '/app/compute/runner'
+    | '/app/compute/$function'
     | '/app/storage/$table'
     | '/app/compute/runs/$runId'
   fileRoutesByTo: FileRoutesByTo
@@ -218,7 +218,7 @@ export interface FileRouteTypes {
     | '/app/storage'
     | '/admin'
     | '/app'
-    | '/app/compute/runner'
+    | '/app/compute/$function'
     | '/app/storage/$table'
     | '/app/compute/runs/$runId'
   id:
@@ -238,7 +238,7 @@ export interface FileRouteTypes {
     | '/app/storage'
     | '/admin/'
     | '/app/'
-    | '/app/compute_/runner'
+    | '/app/compute_/$function'
     | '/app/storage_/$table'
     | '/app/compute_/runs_/$runId'
   fileRoutesById: FileRoutesById
@@ -259,7 +259,7 @@ export interface RootRouteChildren {
   AppStorageRoute: typeof AppStorageRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AppIndexRoute: typeof AppIndexRoute
-  AppComputeRunnerRoute: typeof AppComputeRunnerRoute
+  AppComputeFunctionRoute: typeof AppComputeFunctionRoute
   AppStorageTableRoute: typeof AppStorageTableRoute
   AppComputeRunsRunIdRoute: typeof AppComputeRunsRunIdRoute
 }
@@ -378,11 +378,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppStorageTableRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/compute_/runner': {
-      id: '/app/compute_/runner'
-      path: '/app/compute/runner'
-      fullPath: '/app/compute/runner'
-      preLoaderRoute: typeof AppComputeRunnerRouteImport
+    '/app/compute_/$function': {
+      id: '/app/compute_/$function'
+      path: '/app/compute/$function'
+      fullPath: '/app/compute/$function'
+      preLoaderRoute: typeof AppComputeFunctionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/compute_/runs_/$runId': {
@@ -411,7 +411,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppStorageRoute: AppStorageRoute,
   AdminIndexRoute: AdminIndexRoute,
   AppIndexRoute: AppIndexRoute,
-  AppComputeRunnerRoute: AppComputeRunnerRoute,
+  AppComputeFunctionRoute: AppComputeFunctionRoute,
   AppStorageTableRoute: AppStorageTableRoute,
   AppComputeRunsRunIdRoute: AppComputeRunsRunIdRoute,
 }
