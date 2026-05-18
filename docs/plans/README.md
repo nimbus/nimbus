@@ -4,6 +4,20 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/desktop-ui-compute-services-redesign-plan.md`
+  - canonical plan for correcting two IA mistakes from the archived
+    desktop-ui-shell-overhaul plan: (1) Services placed Operator-only
+    when it is a primary developer surface (compose.yaml authoring,
+    `ctx.services.<name>` from function code, `nimbus compose ...`
+    CLI), and (2) Compute used as a kitchen sink (Services/Functions/
+    Scheduled/Cron inner tabs). Outcome: Services becomes dual-persona
+    parallel to Observability (Developer `/app/services*` +
+    Operator `/admin/services*`); Compute becomes Functions-only with
+    a Convex-style hierarchical sub-drawer tree, a Function detail
+    page with Statistics/Source/Logs/Runs tabs, and a docked Input/
+    Output runner. Standalone `/app/compute/runner` route is deleted
+    (pre-launch breaking change). Scheduled/Cron migrate to
+    `/app/schedules`. Covers CS0-CS10.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
