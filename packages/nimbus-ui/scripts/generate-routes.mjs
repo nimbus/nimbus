@@ -15,6 +15,7 @@ const parsed = configSchema.parse({
   routesDirectory: resolve(pkgRoot, "src/routes"),
   generatedRouteTree: resolve(pkgRoot, "src/route-tree.gen.ts"),
   autoCodeSplitting: true,
+  routeFileIgnorePattern: "\\.spec\\.(ts|tsx)$",
   tmpDir: resolve(pkgRoot, "node_modules/.tanstack-router"),
 });
 

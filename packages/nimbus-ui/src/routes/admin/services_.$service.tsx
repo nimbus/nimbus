@@ -11,7 +11,6 @@ import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
-import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import {
@@ -21,13 +20,10 @@ import {
 } from "../../shell/sub-drawer";
 import type { ServiceDoc } from "../app/services";
 
-type DetailTab = "placement" | "restarts" | "density" | "drift";
+export type DetailTab = "placement";
 
-const TABS: Array<{ id: DetailTab; label: string }> = [
+export const TABS: ReadonlyArray<{ id: DetailTab; label: string }> = [
   { id: "placement", label: "Placement" },
-  { id: "restarts", label: "Restarts" },
-  { id: "density", label: "Density" },
-  { id: "drift", label: "Drift" },
 ];
 
 type DetailSearch = {
@@ -57,13 +53,8 @@ export const Route = createFileRoute("/admin/services_/$service")({
   component: AdminServiceDetailPage,
 });
 
-function isTab(value: unknown): value is DetailTab {
-  return (
-    value === "placement" ||
-    value === "restarts" ||
-    value === "density" ||
-    value === "drift"
-  );
+export function isTab(value: unknown): value is DetailTab {
+  return value === "placement";
 }
 
 function AdminServiceDetailPage() {
@@ -193,24 +184,11 @@ function AdminServiceDetailPage() {
         ) : service === null ? (
           <NotFound id={serviceId} />
         ) : (
-          <TabBody tab={tab} service={service} />
+          <PlacementTab service={service} />
         )}
       </div>
     </section>
   );
-}
-
-function TabBody({
-  tab,
-  service,
-}: {
-  tab: DetailTab;
-  service: ServiceDoc;
-}) {
-  if (tab === "placement") return <PlacementTab service={service} />;
-  if (tab === "restarts") return <RestartsTab service={service} />;
-  if (tab === "density") return <DensityTab service={service} />;
-  return <DriftTab service={service} />;
 }
 
 function PlacementTab({ service }: { service: ServiceDoc }) {
@@ -256,41 +234,6 @@ function PlacementTab({ service }: { service: ServiceDoc }) {
         the placement controller is wired.
       </div>
     </div>
-  );
-}
-
-function RestartsTab({ service: _service }: { service: ServiceDoc }) {
-  return (
-    <Empty
-      title="Restart history not yet exposed"
-      detail="Restart counts and reasons appear here once the service manager publishes its restart audit log to the system tenant."
-    />
-  );
-}
-
-function DensityTab({ service: _service }: { service: ServiceDoc }) {
-  return (
-    <Empty
-      title="Density telemetry not yet exposed"
-      detail="Per-machine service density, CPU/memory pressure, and packing efficiency populate this panel once cluster telemetry lands."
-    />
-  );
-}
-
-function DriftTab({ service }: { service: ServiceDoc }) {
-  if (!service.bundleId) {
-    return (
-      <Empty
-        title="No bundle to compare against"
-        detail="Drift detection requires a registered bundle to diff against the running service revision."
-      />
-    );
-  }
-  return (
-    <Empty
-      title="Drift detection not yet exposed"
-      detail="Bundle SHA drift between the declared revision and the running revision will be surfaced once the comparator lands."
-    />
   );
 }
 
@@ -407,11 +350,3 @@ function NotFound({ id }: { id: string }) {
   );
 }
 
-function Empty({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-      <span className="font-mono text-sm text-default">{title}</span>
-      <span className="max-w-md text-xs text-muted">{detail}</span>
-    </div>
-  );
-}
