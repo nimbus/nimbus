@@ -4,20 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/desktop-ui-compute-services-redesign-plan.md`
-  - canonical plan for correcting two IA mistakes from the archived
-    desktop-ui-shell-overhaul plan: (1) Services placed Operator-only
-    when it is a primary developer surface (compose.yaml authoring,
-    `ctx.services.<name>` from function code, `nimbus compose ...`
-    CLI), and (2) Compute used as a kitchen sink (Services/Functions/
-    Scheduled/Cron inner tabs). Outcome: Services becomes dual-persona
-    parallel to Observability (Developer `/app/services*` +
-    Operator `/admin/services*`); Compute becomes Functions-only with
-    a Convex-style hierarchical sub-drawer tree, a Function detail
-    page with Statistics/Source/Logs/Runs tabs, and a docked Input/
-    Output runner. Standalone `/app/compute/runner` route is deleted
-    (pre-launch breaking change). Scheduled/Cron migrate to
-    `/app/schedules`. Covers CS0-CS10.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -72,6 +58,25 @@ archived plans only when you need historical execution detail.
     `docs/plans/proof/desktop-ui-shell-overhaul/`. Promote new active
     plans before implementing real feature content for the placeholder
     Services / Files / Schedules surfaces.
+- `docs/plans/archive/desktop-ui-compute-services-redesign-plan.md`
+  - completed execution record for correcting two IA mistakes in the
+    shell-overhaul plan: (1) Services moves from Operator-only to
+    dual-persona (Developer `/app/services*` + Operator
+    `/admin/services*`, parallel to Observability), sharing
+    `ServicesTable`/`ServiceDoc` with a `showTenantColumn` toggle;
+    (2) Compute stops being a kitchen sink — inner tabs deleted, the
+    page becomes a Functions-only landing with a Convex-style
+    hierarchical function tree in the sub-drawer, a per-function
+    detail page at `/app/compute_/$function` with Statistics/Source/
+    Logs/Runs tabs, and a docked Input/Output runner; the standalone
+    `/app/compute/runner` route was deleted (pre-launch breaking
+    change). Scheduled/Cron migrated out of Compute into
+    `/app/schedules` with `?section=scheduled|cron`. Covered CS0–CS10.
+    Closed 2026-05-18; proof bundle under
+    `docs/plans/proof/desktop-ui-compute-services-redesign/`. Promote
+    a new active plan before implementing real Code-refs (Services)
+    or Drift (Operator) backends, or before wiring a Monaco/Shiki
+    source viewer.
 - `docs/plans/archive/update-lifecycle-plan.md`
   - completed execution record for the operator-facing update lifecycle:
     server-side `/api/system/version-info` with stale-while-revalidate

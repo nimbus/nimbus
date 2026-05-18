@@ -1,6 +1,6 @@
 # Desktop UI — Compute & Services Redesign
 
-Status: in_progress
+Status: done
 Owner: desktop-ui workstream
 Predecessor (closed, archived): `docs/plans/archive/desktop-ui-shell-overhaul-plan.md`
 Related current references:
@@ -102,17 +102,17 @@ Top-level nav after this plan:
 
 | Phase | Slice | Status |
 |-------|-------|--------|
-| CS0 | Read-in + baseline screenshot capture | in_progress |
-| CS1 | nav-entries IA correction (add developer Services) | not_started |
-| CS2 | Strip Compute inner tabs; Functions-only landing | not_started |
-| CS3 | Hierarchical function tree sub-drawer | not_started |
-| CS4 | Function detail page (`/app/compute/$function`) with Statistics/Source/Logs/Runs tabs | not_started |
-| CS5 | Docked Function Input/Output runner; delete `/app/compute/runner` standalone route | not_started |
-| CS6 | Services developer view: `/app/services`, `/app/services/$service` | not_started |
-| CS7 | Services operator view: replace placeholder content under `/admin/services*` | not_started |
-| CS8 | Schedules/Cron migration from Compute to `/app/schedules` | not_started |
-| CS9 | Verification matrix (build, run, screenshot, navigate via MCP) | not_started |
-| CS10 | Plan close + archive | not_started |
+| CS0 | Read-in + baseline screenshot capture | done |
+| CS1 | nav-entries IA correction (add developer Services) | done |
+| CS2 | Strip Compute inner tabs; Functions-only landing | done |
+| CS3 | Hierarchical function tree sub-drawer | done |
+| CS4 | Function detail page (`/app/compute/$function`) with Statistics/Source/Logs/Runs tabs | done |
+| CS5 | Docked Function Input/Output runner; delete `/app/compute/runner` standalone route | done |
+| CS6 | Services developer view: `/app/services`, `/app/services/$service` | done |
+| CS7 | Services operator view: replace placeholder content under `/admin/services*` | done |
+| CS8 | Schedules/Cron migration from Compute to `/app/schedules` | done |
+| CS9 | Verification matrix (build, run, screenshot, navigate via MCP) | done |
+| CS10 | Plan close + archive | done |
 
 ## Roadmap detail
 
@@ -457,6 +457,22 @@ Done when:
   + docked runner, Services dual-persona scaffold, Schedules/Cron
   migration. Pre-launch breaking-change policy applies; standalone
   `/app/compute/runner` route will be deleted, not preserved.
+- (b) 2026-05-18 — CS0-CS10 landed. Compute now a Functions-only
+  landing with a hierarchical function tree in the sub-drawer; a new
+  per-function detail route (`/app/compute_/$function`) carries
+  Statistics/Source/Logs/Runs tabs plus a docked Input/Output runner
+  (the standalone `/app/compute/runner` route was deleted). Services
+  is dual-persona: `/app/services` + `/app/services/$service` for
+  developers (Overview/Endpoints/Health/Bundle), `/admin/services` +
+  `/admin/services/$service` for operators (Placement/Restarts/
+  Density/Drift); both views share `ServicesTable` and `ServiceDoc`,
+  toggling `showTenantColumn`. Scheduled and Cron tables migrated out
+  of Compute into `/app/schedules` with `?section=scheduled|cron` URL
+  state. Vitest: 171/171 pass. Proof bundle:
+  `docs/plans/proof/desktop-ui-compute-services-redesign/after/`
+  (5 screenshots, all with clean console). Commits on `main`:
+  baseline through CS8 `037d6cb1`; CS9 verification + operator
+  summary-chip `whitespace-nowrap` fix `67928461`.
 
 ## Risks
 
