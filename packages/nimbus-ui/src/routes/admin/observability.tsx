@@ -32,7 +32,10 @@ function parseTab(value: unknown): AdminObservabilityTab | undefined {
   return value === "logs" || value === "runs" ? value : undefined;
 }
 
-export const ADMIN_OBSERVABILITY_SUB_DRAWER: SubDrawerSpec = {
+export const ADMIN_OBSERVABILITY_SUB_DRAWER: Extract<
+  SubDrawerSpec,
+  { kind: "static" }
+> = {
   kind: "static",
   title: "Observability",
   items: [
@@ -126,18 +129,16 @@ function Header({
         className="flex gap-px overflow-hidden rounded-md border border-app bg-surface-2 self-start"
         data-testid="admin-observability-tabs"
       >
-        {ADMIN_OBSERVABILITY_SUB_DRAWER.kind === "static"
-          ? ADMIN_OBSERVABILITY_SUB_DRAWER.items.map((item) => (
-              <TabLink
-                key={item.id}
-                id={item.id}
-                label={item.label}
-                active={tab === item.id}
-                disabled={Boolean(item.disabled)}
-                tenant={tenant}
-              />
-            ))
-          : null}
+        {ADMIN_OBSERVABILITY_SUB_DRAWER.items.map((item) => (
+          <TabLink
+            key={item.id}
+            id={item.id as AdminObservabilityTab}
+            label={item.label}
+            active={tab === item.id}
+            disabled={Boolean(item.disabled)}
+            tenant={tenant}
+          />
+        ))}
       </nav>
     </header>
   );
@@ -161,7 +162,7 @@ function TabLink({
   disabled,
   tenant,
 }: {
-  id: string;
+  id: AdminObservabilityTab;
   label: string;
   active: boolean;
   disabled: boolean;

@@ -77,7 +77,7 @@ Out of scope (note as follow-up only):
 | DR3 | Section truth: Observability + Schedules (F3, F4) | done |
 | DR4 | Tenant default + ScopeChip cleanup (F5, F12) | done |
 | DR5 | Real shells on admin index + observability (F10, F11) | done |
-| DR6 | Service detail tab pruning (F6) | pending |
+| DR6 | Service detail tab pruning (F6) | done |
 | DR7 | Polish: breadcrumb / tab casing / sub-drawer grouping (F7, F9, F14) | pending |
 | DR8 | Verification + plan close + archive | pending |
 
@@ -470,3 +470,18 @@ two items (Scheduled, Cron); body tab strip removed; dynamic
 sub-drawer recent-list + search-box removed (they return when the
 real table lands). `routes/app/section-nav.spec.ts` asserts both
 specs' shape. 178 → 182 vitest tests pass; typecheck + build clean.
+
+(h) 2026-05-18 — DR6 landed: pruned the admin Service detail page to
+a single Placement tab. `DetailTab` collapsed from a four-value union
+to the literal `"placement"`; `TABS` exports a one-entry array; the
+stale `RestartsTab`, `DensityTab`, `DriftTab` body components and the
+local `Empty` helper were deleted (the canonical `EmptyState` from DR1
+covers any future revival). Strengthened the `Extract<SubDrawerSpec,
+{ kind: "static" }>` annotation on both Observability sub-drawer
+exports so the tab strip mappings drop the prior `.kind === "static"`
+narrowing branch. Added `routes/admin/services_.$service.spec.ts`
+asserting `TABS.length === 1` and that `isTab()` accepts only
+`"placement"`. Wired the TanStack route generator (`scripts/generate-
+routes.mjs` + `vite.config.ts`) to ignore `.spec.(ts|tsx)` files so
+route-level specs no longer warn during codegen. 190 vitest tests
+pass; typecheck + build clean.

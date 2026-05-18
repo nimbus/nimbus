@@ -130,7 +130,10 @@ type RunDoc = {
   startedAt?: number;
 };
 
-export const OBSERVABILITY_SUB_DRAWER: SubDrawerSpec = {
+export const OBSERVABILITY_SUB_DRAWER: Extract<
+  SubDrawerSpec,
+  { kind: "static" }
+> = {
   kind: "static",
   title: "Observability",
   items: [
@@ -202,7 +205,7 @@ function Header({ tab }: { tab: ObservabilityTab }) {
         {OBSERVABILITY_SUB_DRAWER.items.map((item) => (
           <TabLink
             key={item.id}
-            id={item.id}
+            id={item.id as ObservabilityTab}
             label={item.label}
             active={tab === item.id}
             disabled={Boolean(item.disabled)}
@@ -219,7 +222,7 @@ function TabLink({
   active,
   disabled,
 }: {
-  id: string;
+  id: ObservabilityTab;
   label: string;
   active: boolean;
   disabled: boolean;
