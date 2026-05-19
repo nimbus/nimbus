@@ -1,11 +1,17 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
+import { useNimbusConnectionState, useQuery } from "nimbus/react";
 
 import { api } from "../../../convex/_generated/api";
 import { CopyChip } from "../../components/copy-chip";
+import { LoadingCell } from "../../components/loading-cell";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime, Uptime } from "../../components/time";
 import { formatDuration, shortId } from "../../lib/format";
+import {
+  type ConnectionSnapshot,
+  type LoadingValue,
+  toLoadingValue,
+} from "../../shell/loading-value";
 
 export const Route = createFileRoute("/app/")({
   component: OverviewPage,
@@ -24,6 +30,7 @@ type SystemStatusDoc = {
 type AnyDoc = Record<string, unknown> & { _id?: string };
 
 function OverviewPage() {
+  const conn = useConnSnapshot();
   const status = useQuery(api.system.status, {}) as SystemStatusDoc | undefined;
   const machines = useQuery(api.machines.list, {
     state: null,
@@ -89,11 +96,11 @@ function OverviewPage() {
       <TopStrip status={status} />
 
       <ResourceCountsGrid
-        machines={machines}
-        services={services}
-        functions={functions}
-        tables={tables}
-        runs={runs}
+        machines={toLoadingValue(machines, conn)}
+        services={toLoadingValue(services, conn)}
+        functions={toLoadingValue(functions, conn)}
+        tables={toLoadingValue(tables, conn)}
+        runs={toLoadingValue(runs, conn)}
         tenantCount={tenantIdSet.size}
       />
 
@@ -101,11 +108,19 @@ function OverviewPage() {
         className="grid grid-cols-1 gap-3 lg:grid-cols-2"
         data-testid="overview-activity"
       >
-        <EventsFeed events={events} />
-        <RecentRuns runs={runs} />
+        <EventsFeed events={toLoadingValue(events, conn)} />
+        <RecentRuns runs={toLoadingValue(runs, conn)} />
       </div>
     </section>
   );
+}
+
+function useConnSnapshot(): ConnectionSnapshot {
+  const conn = useNimbusConnectionState();
+  return {
+    isWebSocketConnected: conn.isWebSocketConnected,
+    hasEverConnected: conn.hasEverConnected,
+  };
 }
 
 function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
@@ -200,11 +215,11 @@ function ResourceCountsGrid({
   runs,
   tenantCount,
 }: {
-  machines: AnyDoc[] | undefined;
-  services: AnyDoc[] | undefined;
-  functions: AnyDoc[] | undefined;
-  tables: AnyDoc[] | undefined;
-  runs: AnyDoc[] | undefined;
+  machines: LoadingValue<AnyDoc[]>;
+  services: LoadingValue<AnyDoc[]>;
+  functions: LoadingValue<AnyDoc[]>;
+  tables: LoadingValue<AnyDoc[]>;
+  runs: LoadingValue<AnyDoc[]>;
   tenantCount: number;
 }) {
   return (
@@ -229,7 +244,7 @@ function ResourceCountsGrid({
       <CountPanel
         title="Tenants"
         testid="overview-count-tenants"
-        docs={undefined}
+        docs={{ kind: "ok", value: [] }}
         explicitTotal={tenantCount}
         groupBy={null}
         to="/app/storage"
@@ -269,7 +284,7 @@ function CountPanel({
 }: {
   title: string;
   testid: string;
-  docs: AnyDoc[] | undefined;
+  docs: LoadingValue<AnyDoc[]>;
   groupBy: string | null;
   to:
     | "/admin/machines"
@@ -278,9 +293,6 @@ function CountPanel({
     | "/app/observability";
   explicitTotal?: number;
 }) {
-  const loading = docs === undefined && explicitTotal === undefined;
-  const total = explicitTotal ?? docs?.length ?? 0;
-  const breakdown = groupBy && docs ? groupCount(docs, groupBy) : [];
   return (
     <Link
       to={to}
@@ -295,26 +307,59 @@ function CountPanel({
           className="tabular font-mono text-lg text-default"
           data-testid={`${testid}-total`}
         >
-          {loading ? "·" : total}
+          {explicitTotal !== undefined ? (
+            explicitTotal
+          ) : (
+            <LoadingCell value={docs} testid={`${testid}-total`}>
+              {(items) => items.length}
+            </LoadingCell>
+          )}
         </span>
       </div>
-      {loading ? (
-        <span className="text-xs text-muted">Loading…</span>
-      ) : breakdown.length === 0 ? (
-        <span className="text-xs text-muted">No state breakdown</span>
-      ) : (
-        <ul className="flex flex-wrap gap-1.5">
-          {breakdown.map(([key, count]) => (
-            <li key={key} className="inline-flex items-center gap-1">
-              <StateChip state={key} />
-              <span className="tabular font-mono text-xs text-default">
-                {count}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <CountPanelBreakdown docs={docs} groupBy={groupBy} />
     </Link>
+  );
+}
+
+function CountPanelBreakdown({
+  docs,
+  groupBy,
+}: {
+  docs: LoadingValue<AnyDoc[]>;
+  groupBy: string | null;
+}) {
+  if (docs.kind === "loading") {
+    return <span className="text-xs text-muted">Loading…</span>;
+  }
+  if (docs.kind === "offline") {
+    return (
+      <span className="text-xs text-muted" title="Disconnected">
+        offline · last value shown elsewhere
+      </span>
+    );
+  }
+  if (docs.kind === "error") {
+    return (
+      <span className="text-xs text-danger" title={docs.message}>
+        {docs.message}
+      </span>
+    );
+  }
+  const breakdown = groupBy ? groupCount(docs.value, groupBy) : [];
+  if (breakdown.length === 0) {
+    return <span className="text-xs text-muted">No state breakdown</span>;
+  }
+  return (
+    <ul className="flex flex-wrap gap-1.5">
+      {breakdown.map(([key, count]) => (
+        <li key={key} className="inline-flex items-center gap-1">
+          <StateChip state={key} />
+          <span className="tabular font-mono text-xs text-default">
+            {count}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -328,7 +373,7 @@ function groupCount(docs: AnyDoc[], field: string): Array<[string, number]> {
   return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
 }
 
-function EventsFeed({ events }: { events: AnyDoc[] | undefined }) {
+function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
   return (
     <section
       data-testid="overview-events"
@@ -345,21 +390,54 @@ function EventsFeed({ events }: { events: AnyDoc[] | undefined }) {
           View all
         </Link>
       </header>
-      {events === undefined ? (
-        <p className="px-3 py-4 text-xs text-muted">Loading…</p>
-      ) : events.length === 0 ? (
-        <p className="px-3 py-4 text-xs text-muted">
-          No events recorded yet — the feed updates live.
-        </p>
-      ) : (
-        <ul className="divide-y divide-app">
-          {events.slice(0, 20).map((event) => (
-            <EventRow key={String(event._id)} event={event} />
-          ))}
-        </ul>
-      )}
+      <FeedBody
+        value={events}
+        emptyMessage="No events recorded yet — the feed updates live."
+        renderItems={(items) => (
+          <ul className="divide-y divide-app">
+            {items.slice(0, 20).map((event) => (
+              <EventRow key={String(event._id)} event={event} />
+            ))}
+          </ul>
+        )}
+      />
     </section>
   );
+}
+
+function FeedBody({
+  value,
+  emptyMessage,
+  renderItems,
+}: {
+  value: LoadingValue<AnyDoc[]>;
+  emptyMessage: string;
+  renderItems: (items: AnyDoc[]) => React.ReactNode;
+}) {
+  if (value.kind === "loading") {
+    return <p className="px-3 py-4 text-xs text-muted">Loading…</p>;
+  }
+  if (value.kind === "offline") {
+    return (
+      <p
+        className="px-3 py-4 text-xs text-muted"
+        title="Disconnected — stream resumes on reconnect"
+      >
+        offline · live feed paused
+      </p>
+    );
+  }
+  if (value.kind === "error") {
+    return (
+      <p className="px-3 py-4 text-xs text-danger" title={value.message}>
+        {value.message}
+      </p>
+    );
+  }
+  if (value.value.length === 0) {
+    return <p className="px-3 py-4 text-xs text-muted">{emptyMessage}</p>;
+  }
+  return <>{renderItems(value.value)}</>;
 }
 
 function EventRow({ event }: { event: AnyDoc }) {
@@ -399,7 +477,7 @@ function EventRow({ event }: { event: AnyDoc }) {
   );
 }
 
-function RecentRuns({ runs }: { runs: AnyDoc[] | undefined }) {
+function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
   return (
     <section
       data-testid="overview-runs"
@@ -416,19 +494,17 @@ function RecentRuns({ runs }: { runs: AnyDoc[] | undefined }) {
           View all
         </Link>
       </header>
-      {runs === undefined ? (
-        <p className="px-3 py-4 text-xs text-muted">Loading…</p>
-      ) : runs.length === 0 ? (
-        <p className="px-3 py-4 text-xs text-muted">
-          No runs yet — invoke a function to populate this list.
-        </p>
-      ) : (
-        <ul className="divide-y divide-app">
-          {runs.slice(0, 10).map((run) => (
-            <RunRow key={String(run._id)} run={run} />
-          ))}
-        </ul>
-      )}
+      <FeedBody
+        value={runs}
+        emptyMessage="No runs yet — invoke a function to populate this list."
+        renderItems={(items) => (
+          <ul className="divide-y divide-app">
+            {items.slice(0, 10).map((run) => (
+              <RunRow key={String(run._id)} run={run} />
+            ))}
+          </ul>
+        )}
+      />
     </section>
   );
 }

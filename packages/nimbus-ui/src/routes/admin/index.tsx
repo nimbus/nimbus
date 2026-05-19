@@ -1,9 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
+import { useNimbusConnectionState, useQuery } from "nimbus/react";
 import { useEffect, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import { LoadingCell } from "../../components/loading-cell";
 import { RelativeTime } from "../../components/time";
+import {
+  type ConnectionSnapshot,
+  toLoadingValue,
+} from "../../shell/loading-value";
 
 export const Route = createFileRoute("/admin/")({
   component: SystemOverviewPage,
@@ -22,7 +27,11 @@ type ServiceDoc = { _id: string };
 type ListenerDoc = { _id: string; adapter?: string; state?: string };
 
 function SystemOverviewPage() {
-  const status = useQuery(api.system.status, {}) as SystemStatus | null | undefined;
+  const conn = useConnSnapshot();
+  const status = useQuery(api.system.status, {}) as
+    | SystemStatus
+    | null
+    | undefined;
   const machines = useQuery(api.machines.list, {
     state: null,
     provider: null,
@@ -41,6 +50,12 @@ function SystemOverviewPage() {
   }) as ListenerDoc[] | undefined;
 
   const tenantCount = useTenantCount();
+
+  const statusLv = toLoadingValue(status, conn);
+  const machinesLv = toLoadingValue(machines, conn);
+  const servicesLv = toLoadingValue(services, conn);
+  const listenersLv = toLoadingValue(listeners, conn);
+  const tenantsLv = toLoadingValue(tenantCount, conn);
 
   return (
     <section
@@ -61,36 +76,50 @@ function SystemOverviewPage() {
         data-testid="system-overview"
       >
         <Field label="Nimbus version" testid="system-overview-version">
-          {status?.version ?? "—"}
+          <LoadingCell value={statusLv} testid="system-overview-version">
+            {(s) => s.version ?? "—"}
+          </LoadingCell>
         </Field>
         <Field label="Health" testid="system-overview-health">
-          {status?.health ?? "—"}
+          <LoadingCell value={statusLv} testid="system-overview-health">
+            {(s) => s.health ?? "—"}
+          </LoadingCell>
         </Field>
         <Field label="Server uptime" testid="system-overview-uptime">
-          {typeof status?.startedAt === "number" ? (
-            <RelativeTime epochMs={status.startedAt} />
-          ) : (
-            "—"
-          )}
+          <LoadingCell value={statusLv} testid="system-overview-uptime">
+            {(s) =>
+              typeof s.startedAt === "number" ? (
+                <RelativeTime epochMs={s.startedAt} />
+              ) : (
+                "—"
+              )
+            }
+          </LoadingCell>
         </Field>
         <Field label="Listen address" testid="system-overview-listen">
-          {status?.details?.listenAddress ?? "—"}
+          <LoadingCell value={statusLv} testid="system-overview-listen">
+            {(s) => s.details?.listenAddress ?? "—"}
+          </LoadingCell>
         </Field>
         <Field label="Tenants" testid="system-overview-tenants">
-          {tenantCount === undefined ? "…" : tenantCount.toString()}
+          <LoadingCell value={tenantsLv} testid="system-overview-tenants">
+            {(n) => n.toString()}
+          </LoadingCell>
         </Field>
         <Field label="Machines" testid="system-overview-machines">
-          {machines === undefined ? "…" : machines.length.toString()}
+          <LoadingCell value={machinesLv} testid="system-overview-machines">
+            {(m) => m.length.toString()}
+          </LoadingCell>
         </Field>
         <Field label="Services" testid="system-overview-services">
-          {services === undefined ? "…" : services.length.toString()}
+          <LoadingCell value={servicesLv} testid="system-overview-services">
+            {(s) => s.length.toString()}
+          </LoadingCell>
         </Field>
         <Field label="Listeners" testid="system-overview-listeners">
-          {listeners === undefined ? (
-            "…"
-          ) : (
-            <ListenersValue listeners={listeners} />
-          )}
+          <LoadingCell value={listenersLv} testid="system-overview-listeners">
+            {(items) => <ListenersValue listeners={items} />}
+          </LoadingCell>
         </Field>
       </div>
     </section>
@@ -135,6 +164,14 @@ function ListenersValue({ listeners }: { listeners: ListenerDoc[] }) {
       {adapterLabel}
     </>
   );
+}
+
+function useConnSnapshot(): ConnectionSnapshot {
+  const conn = useNimbusConnectionState();
+  return {
+    isWebSocketConnected: conn.isWebSocketConnected,
+    hasEverConnected: conn.hasEverConnected,
+  };
 }
 
 function useTenantCount(): number | undefined {
