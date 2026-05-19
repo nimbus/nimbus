@@ -221,7 +221,7 @@ After this wave closes:
 | R0 | Read-in + before-state freeze | done |
 | R1 | Discriminated query wrapper — eliminate `as unknown as` (BLOCKER) | done |
 | R2 | Loaderize `_.$service.tsx` sibling queries (BLOCKER) | done |
-| R3 | Codegen specs + audit-comment fix + `JsonValue` dedup + convention decision (BLOCKER) | pending |
+| R3 | Codegen specs + audit-comment fix + `JsonValue` dedup + convention decision (BLOCKER) | done |
 | R4 | Loaderize `compute_.runs_.$runId.tsx` | pending |
 | R5 | Loader-error envelope coverage on the four A4 routes | pending |
 | R6 | Extract shared filter + table-cell primitives | pending |
@@ -901,3 +901,85 @@ Verifications:
     → 0 hits.
 
 Ledger flipped pending → done for R2 at close of phase.
+
+(d) **R3 — Codegen specs + audit-comment + JsonValue dedup +
+convention decision (2026-05-19).** Five emit-side changes plus a new
+unit/fixture file. All edits live in `packages/codegen/src/emit/` and
+`packages/codegen/src/selftest/`; no nimbus-ui source changes, but the
+regenerated `convex/_generated/{api,scheduled_functions,dataModel.d}.ts`
+is part of the commit.
+
+`emit/schema_types.mjs`: `isTrivialValidator` now unwraps `union` —
+any union with at least one trivial member (e.g. `v.any()`) is
+treated as trivial, since the trivial member widens the whole union
+to `JsonValue` and the validator provides no real type information.
+This intentionally catches `union(v.any(), v.null())` (system:status's
+textbook shape) while leaving standalone `v.null()` precise. A comment
+on the new branch records the rule.
+
+`emit/type_inference.mjs`: `inferMutationResultType` now throws at
+codegen time when `plan.type === "insert" | "update"` and `plan.table`
+is missing or empty — refuses to emit the silent `Id<"unknown">`.
+`inferFunctionResultType`'s action branch now lets the recursion
+short-circuit and return the inner function's `{type, source}` object
+when an action plan's `call_query` / `call_mutation` / `call_action`
+target itself came from a fallback or convention layer; previously
+the source was dropped and the action's wrapping helper reported
+`plan-inferred` even when the body inherited a fallback type.
+
+`emit/reference_helpers.mjs`: `helperCall` now adds an audit entry on
+`source === "convention-inferred"` in addition to the existing
+`source.startsWith("fallback")` predicate. The convention-inference
+layer (LIST_EXPORT_NAMES / SINGLETON_EXPORT_NAMES) is kept rather than
+dropped — rationale recorded in this entry: dropping the layer would
+force every `module:list` query that doesn't have a plan-readable
+shape to either type-explicitly or fall to a JsonValue audit, which is
+a much wider rippling change than the audit-on-firing approach. The
+audit comment now reads "Inference audit — handlers whose return type
+came from a fallback or from a module/export-name convention rather
+than an informative validator or a readable query plan" so the wording
+fits both buckets.
+
+`emit/generated_files.mjs`: dedup of `JsonValue`. The single declaration
+now lives in `dataModel.d.ts` as `export type JsonValue = ...`. The
+two consumers (`api.ts`, `scheduled_functions.ts`) drop their inline
+`type JsonValue = ...` decls and import the type alongside `Doc, Id`
+via `import type { Doc, Id, JsonValue } from "./dataModel"`.
+
+`selftest/type_inference_fixtures.mjs` (new): ten test cases covering
+(1) `isTrivialValidator` union-of-trivials unwrap (positive +
+negative); (2) `inferFunctionResultType` throws on missing
+`plan.table`; (3) explicit-return path (no audit); (4) plan-inferred
+query (no audit); (5) plan-inferred mutation (no audit);
+(6) convention-inferred (audit entry with `(convention-inferred)`
+suffix); (7) fallback-no-validator (audit entry); (8)
+union-of-trivials path emits `fallback-trivial-validator` audit;
+(9) action recursion propagation guard (skips on harness-side gaps);
+(10) JsonValue dedup — exactly one `export type JsonValue` in
+dataModel, none in the two consumer files, both consumers import the
+type from dataModel. Hooked into `selftest.mjs` via
+`runTypeInferenceFixtures`.
+
+Regenerated `packages/nimbus-ui/convex/_generated/*` to consume the
+new emit. The audit block lists 14 convention-inferred entries (every
+`module:list` / `module:recent` query the dashboard uses); these are
+now visible at the top of the file and can be tightened individually
+in future work. `system:status` no longer needs audit — its plan
+shape (singleton lookup) infers cleanly to
+`Doc<"system_status"> | null` once the trivial-validator widening
+unblocks plan inference.
+
+Verifications:
+
+- `node packages/codegen/src/selftest.mjs` exits 0 (all existing fixtures
+  plus the new ten cases pass).
+- `npx tsc --noEmit` in `packages/nimbus-ui/` exits 0.
+- `npm run typecheck` (workspace-wide) exits 0.
+- `npx vitest run` in `packages/nimbus-ui/` → 36 files / 240 tests pass
+  (unchanged from R2 close).
+- `npx vite build` clean (chunk-size warning unchanged).
+- Grep gate: `grep -c 'export type JsonValue'
+  packages/nimbus-ui/convex/_generated/*.{ts,d.ts}` → exactly 1
+  (in `dataModel.d.ts`).
+
+Ledger flipped pending → done for R3 at close of phase.

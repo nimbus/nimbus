@@ -7,6 +7,7 @@ import { runCloudFunctionsFixtures } from "./selftest/cloud_functions_fixtures.m
 import { runCoreFixtures } from "./selftest/core_fixtures.mjs";
 import { runDatabaseFixtures } from "./selftest/database_fixtures.mjs";
 import { runRuntimeFixtures } from "./selftest/runtime_fixtures.mjs";
+import { runTypeInferenceFixtures } from "./selftest/type_inference_fixtures.mjs";
 
 const isDirectExecution =
   !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -22,6 +23,7 @@ async function main() {
   await runDatabaseFixtures();
   await runActionFixtures();
   await runRuntimeFixtures();
+  await runTypeInferenceFixtures();
 }
 
 export { main };

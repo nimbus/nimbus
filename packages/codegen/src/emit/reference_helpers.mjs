@@ -3,7 +3,10 @@ import { inferFunctionResultType, renderArgsType } from "./type_inference.mjs";
 function helperCall(fn, schema, functionIndex, audit) {
   const argsType = renderArgsType(fn.argsSchema ?? {});
   const result = inferFunctionResultType(fn, schema, functionIndex);
-  if (audit && result.source.startsWith("fallback")) {
+  if (
+    audit &&
+    (result.source.startsWith("fallback") || result.source === "convention-inferred")
+  ) {
     audit.push({ name: fn.name, source: result.source });
   }
   return `${helperName(fn.kind)}<${argsType}, ${result.type}>(${JSON.stringify(fn.name)}, ${JSON.stringify(fn.visibility)})`;
