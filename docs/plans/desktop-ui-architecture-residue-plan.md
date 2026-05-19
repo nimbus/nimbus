@@ -228,7 +228,7 @@ After this wave closes:
 | R7 | `Route.loaderDeps` for tenant-switch invalidation | done |
 | R8 | A3 residue cleanup (dead refs, typed sub-drawer) | done |
 | R9 | CSP test tightening + workflow path filter widening | done |
-| R10 | Smoke spec — deterministic fixture seeding | pending |
+| R10 | Smoke spec — deterministic fixture seeding | done |
 | R11 | Polish — catalog story state coverage + nit pass | pending |
 | R12 | Verification + close + archive | pending |
 
@@ -1361,3 +1361,72 @@ Verifications:
   lanes; R9 doesn't touch the JS side.
 
 Ledger flipped pending → done for R9 at close of phase.
+
+(k) **R10 — Smoke spec deterministic fixture seeding
+(2026-05-19).** `packages/nimbus-ui/tests/e2e/smoke.spec.ts` now
+seeds one tenant (`smoke`) and one service document (`smoke-svc`)
+before the walk begins, so steps 3, 4, and 5 assert non-empty
+envelopes unconditionally.
+
+Seeding path:
+
+- Tenant: `POST /api/tenants` with `{ "id": "smoke" }` — the same
+  public tenants API used by the `useTenantBootstrap` happy path.
+  Status 201 is asserted; the assertion message is the response
+  body so a future regression surfaces the server's error.
+- Service: `POST /convex/_nimbus/mutation` with a raw
+  `Mutation::Insert` payload targeting the `_nimbus.services`
+  system table. The convex raw-mutation route accepts the system
+  tenant id (it parses through `TenantId::new`, not the
+  user-tenant guard) and gates on `authorize_standard_server_access`,
+  which the smoke spec's cookie session already satisfies. The
+  raw `Insert` lowers directly to `service.insert_document_async_with`
+  — the same engine call the documents HTTP route uses — so no
+  named-mutation function in the system bundle is required.
+- The `_nimbus.services` schema requires `tenantId`, `name`,
+  `kind`, `state`; the seed sets them to `smoke`, `smoke-svc`,
+  `sandbox`, `running`, with an empty `endpoints` array.
+
+Three `if (count) { assert }` bypass sites at the old lines 87,
+91, 111 are gone:
+
+- ScopeChip: was `if (count) { toContainText(/tenant/i) }`; now
+  `expect(getByTestId("services-scope")).toContainText(/smoke/i)`
+  unconditionally. The tenant bootstrap auto-selects the only
+  tenant on the first developer-view navigation, so the chip is
+  populated by the time the spec asserts it.
+- Services table: was `if (count) { toBeVisible }`; now
+  `expect(getByTestId("services-table")).toBeVisible()` plus a
+  row-level assertion `services-row-smoke-svc` so a regression
+  that empties the table is caught (not just one that hides the
+  envelope).
+- Operator service detail: was a two-branch `if/else` between the
+  detail page and the not-found envelope; now the
+  `sub-drawer-item-op-service-` link is asserted visible and the
+  placement-tab assertions run unconditionally.
+
+Optional R10 items deferred:
+
+- `NIMBUS_E2E_BIN` resolution stayed `process.cwd()`-relative —
+  no flakiness observed under the current invocation
+  (`npm run test:e2e:smoke` runs from
+  `packages/nimbus-ui/`, so the default
+  `../../target/debug/nimbus` resolves cleanly).
+- `⌘K` vs `Ctrl+K` platform detection stayed on the
+  meta-then-ctrl fallback — the current shape is documented and
+  the Linux CI run has not surfaced flakiness on the meta press.
+
+Verifications:
+
+- `cargo build -p nimbus-bin` clean.
+- `npm run build -w packages/nimbus-ui` clean (pre-existing chunk-
+  size warning unchanged).
+- `npx playwright test tests/e2e/smoke.spec.ts` →
+  1 passed (5.4s, single chromium worker).
+- `npx tsc -p tsconfig.json --noEmit` (in `packages/nimbus-ui/`)
+  exits 0 with zero output.
+- Grep gate (run from repo root):
+  - `grep -n 'if (await' packages/nimbus-ui/tests/e2e/smoke.spec.ts`
+    → 0 hits (was 3).
+
+Ledger flipped pending → done for R10 at close of phase.
