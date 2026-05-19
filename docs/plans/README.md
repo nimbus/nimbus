@@ -13,6 +13,23 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
+- `docs/plans/desktop-ui-architecture-residue-plan.md`
+  - operator-console architecture residue from the Architecture-Hardening
+    wave (A0–A8, closed 2026-05-18). Promoted 2026-05-19 from a four-stream
+    post-closure code review that surfaced three blockers the A2/A4 grep
+    gates missed (vanity-gate `as unknown as` residue in `shell/nav-entries
+    .ts`, partial loader migration on `_.$service.tsx` siblings, un-specced
+    codegen inference layer) plus ~12 cleanup items and four nits. Covers
+    R0–R12: discriminated producer-side query wrapper, loaderization of the
+    five remaining sibling/route queries, codegen specs + `system:status`
+    audit-comment fix + `JsonValue` dedup, loader-error envelope coverage
+    across the four A4 routes, shared filter/table primitives, `loaderDeps`
+    tenant pattern, A3 residue (dead `dialogRef`s, typed sub-drawer const),
+    CSP test tightening + workflow path-filter widening, deterministic
+    smoke fixture seeding, catalog story state coverage, and a nit pass.
+    Successor to `docs/plans/archive/desktop-ui-architecture-hardening-
+    plan.md`; visual identity inherits the predecessor's sealed `h7-*`
+    bundle at `docs/plans/proof/desktop-ui-followup-hardening/after/`.
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
