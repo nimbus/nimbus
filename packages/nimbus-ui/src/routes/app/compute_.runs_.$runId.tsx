@@ -1,5 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -10,8 +9,25 @@ import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
+import { getNimbusClient } from "../../lib/nimbus-client";
 
 export const Route = createFileRoute("/app/compute_/runs_/$runId")({
+  loader: async ({ params }) => {
+    const client = getNimbusClient();
+    const [run, events] = await Promise.all([
+      client.query(api.runs.byId, { id: params.runId as Id<"runs"> }),
+      client.query(api.events.recent, {
+        source: null,
+        level: null,
+        category: null,
+        correlationId: params.runId,
+        limit: 200,
+      }),
+    ]);
+    if (!run) throw notFound();
+    return { run, events };
+  },
+  notFoundComponent: RunNotFound,
   component: RunDetailPage,
 });
 
@@ -20,20 +36,10 @@ type EventDoc = Doc<"events">;
 
 function RunDetailPage() {
   const { runId } = Route.useParams();
-  const run = useQuery(api.runs.byId, {
-    id: runId as Id<"runs">,
-  });
-
-  const events = useQuery(api.events.recent, {
-    source: null,
-    level: null,
-    category: null,
-    correlationId: runId,
-    limit: 200,
-  });
+  const { run, events } = Route.useLoaderData();
 
   const sortedEvents = useMemo(() => {
-    return (events ?? [])
+    return events
       .slice()
       .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
   }, [events]);
@@ -62,18 +68,7 @@ function RunDetailPage() {
         </h1>
       </header>
 
-      {run === undefined ? (
-        <Loading label="Loading run…" />
-      ) : run === null ? (
-        <Missing runId={runId} />
-      ) : (
-        <RunDetailBody
-          run={run}
-          runId={runId}
-          events={sortedEvents}
-          eventsLoading={events === undefined}
-        />
-      )}
+      <RunDetailBody run={run} runId={runId} events={sortedEvents} />
     </section>
   );
 }
@@ -82,12 +77,10 @@ function RunDetailBody({
   run,
   runId,
   events,
-  eventsLoading,
 }: {
   run: RunDoc;
   runId: string;
   events: EventDoc[];
-  eventsLoading: boolean;
 }) {
   const startedAt = run.startedAt ?? run._creationTime;
   const duration = run.durationMs ?? null;
@@ -99,7 +92,7 @@ function RunDetailBody({
         duration={duration}
         events={events}
       />
-      <CorrelatedEvents events={events} loading={eventsLoading} runId={runId} />
+      <CorrelatedEvents events={events} runId={runId} />
       {run.error ? <ErrorPanel error={run.error} /> : null}
     </div>
   );
@@ -332,11 +325,9 @@ function WaterfallBar({
 
 function CorrelatedEvents({
   events,
-  loading,
   runId,
 }: {
   events: EventDoc[];
-  loading: boolean;
   runId: string;
 }) {
   return (
@@ -357,14 +348,7 @@ function CorrelatedEvents({
           open in logs →
         </Link>
       </div>
-      {loading ? (
-        <div
-          className="px-4 py-6 font-mono text-xs text-muted"
-          data-testid="run-detail-events-loading"
-        >
-          Loading events…
-        </div>
-      ) : events.length === 0 ? (
+      {events.length === 0 ? (
         <div
           className="px-4 py-6 font-mono text-xs text-muted"
           data-testid="run-detail-events-empty"
@@ -442,37 +426,32 @@ function Panel({
   );
 }
 
-function Loading({ label }: { label: string }) {
+function RunNotFound() {
+  const { runId } = Route.useParams();
   return (
-    <div
-      className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-app bg-surface font-mono text-xs text-muted"
-      data-testid="run-detail-loading"
+    <section
+      className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
+      data-testid="page-run-detail"
     >
-      {label}
-    </div>
-  );
-}
-
-function Missing({ runId }: { runId: string }) {
-  return (
-    <div
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-md border border-app bg-surface px-6 py-10 text-center"
-      data-testid="run-detail-missing"
-    >
-      <p className="font-mono text-sm text-default">Run not found</p>
-      <p className="max-w-md text-xs text-muted">
-        No run with id <code className="font-mono text-default">{runId}</code>.
-        It may have been pruned, or the correlation id does not point to a run
-        record.
-      </p>
-      <Link
-        to="/app/observability"
-        search={{ tab: "runs" }}
-        className="mt-2 rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
-        data-testid="run-detail-back"
+      <div
+        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-md border border-app bg-surface px-6 py-10 text-center"
+        data-testid="run-detail-missing"
       >
-        ← all runs
-      </Link>
-    </div>
+        <p className="font-mono text-sm text-default">Run not found</p>
+        <p className="max-w-md text-xs text-muted">
+          No run with id <code className="font-mono text-default">{runId}</code>.
+          It may have been pruned, or the correlation id does not point to a run
+          record.
+        </p>
+        <Link
+          to="/app/observability"
+          search={{ tab: "runs" }}
+          className="mt-2 rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          data-testid="run-detail-back"
+        >
+          ← all runs
+        </Link>
+      </div>
+    </section>
   );
 }
