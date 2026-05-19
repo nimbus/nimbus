@@ -4,20 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/desktop-ui-followup-hardening-plan.md`
-  - active execution plan for the post-design-review hardening wave on
-    the operator console. Consumes a 2026-05-18 four-reviewer pass
-    against the predecessor's after-state (~30 follow-up items: 1
-    BLOCKER, 8 MAJORs, 13 MINORs, 7 NITs). Ratifies the shipped dual-
-    persona Services IA into `DESIGN.md` (H1), introduces end-to-end
-    discriminated unions for tenant scope + sub-drawer item id (H2),
-    adds `loading | ok | offline | error` envelopes to Overview /
-    System / `/admin/tenants` (H3), and lands surface-level polish +
-    cleanup (H4–H6). Predecessor proof bundle stays sealed; this
-    wave's bundle closes the predecessor's `/admin/services/$service`
-    visual-evidence gap. Ledger H0–H7; pre-launch policy continues.
-    Promoted 2026-05-18; predecessor:
-    `docs/plans/archive/desktop-ui-design-review-fixes-plan.md`.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -93,8 +79,10 @@ archived plans only when you need historical execution detail.
     source viewer.
 - `docs/plans/archive/desktop-ui-design-review-fixes-plan.md`
   - completed execution record for the 2026-05-18 operator-console
-    design review cleanup. Closed 14 of 16 findings (2 already-fixed
-    or folded into others): copy hygiene + canonical `EmptyState`
+    design review cleanup. Closed 12 of 14 in-scope findings (16
+    total; F8 already-fixed and F16 folded into F1; F15 theme-matrix
+    smoke and F6-restore of Restarts/Density/Drift deferred to owning
+    plans): copy hygiene + canonical `EmptyState`
     (F1, F13), lens gating ⌘\ Developer-only (F2), Observability +
     Schedules section truth (F3, F4), tenant default + ScopeChip
     cleanup (F5, F12), real shells on `/admin` index +
@@ -107,6 +95,26 @@ archived plans only when you need historical execution detail.
     scope: theme-matrix smoke (F15) and re-adding service-detail
     Restarts/Density/Drift tabs — both return when their owning
     plans land.
+- `docs/plans/archive/desktop-ui-followup-hardening-plan.md`
+  - completed execution record for the post-design-review correctness
+    wave on the operator console. Consumed a 2026-05-18 four-reviewer
+    pass against the predecessor's after-state (~30 follow-up items: 1
+    BLOCKER, 8 MAJORs, 13 MINORs, 7 NITs). Ratified the shipped dual-
+    persona Services IA into `DESIGN.md` (H1, BLOCKER cleared);
+    introduced `TenantScope` + `SubDrawerItem<TId>` discriminated
+    unions and dropped the `extractTenantId` regex helper (H2);
+    wired `LoadingValue<T>` envelopes through Overview / System /
+    `/admin/tenants` 404 (H3); landed casing + breadcrumb +
+    `EmptyState` + `/admin/network` default-section polish (H4); and
+    closed the cleanup + spec-backfill items including the shared
+    `fetchTenants` helper and the AbortController unmount-path test
+    (H5). Covered H0–H7. Closed 2026-05-18; proof bundle under
+    `docs/plans/proof/desktop-ui-followup-hardening/` (predecessor's
+    sealed `after/` serves as this wave's `before/`; this wave's
+    `after/` closes the predecessor's `/admin/services/$service`
+    evidence gap and adds 10 new `h7-*` captures). Out of scope:
+    F15 theme-matrix smoke and the Restarts/Density/Drift restore —
+    both still return when their owning plans land.
 - `docs/plans/archive/update-lifecycle-plan.md`
   - completed execution record for the operator-facing update lifecycle:
     server-side `/api/system/version-info` with stale-while-revalidate

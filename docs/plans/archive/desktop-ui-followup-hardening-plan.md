@@ -1,6 +1,6 @@
 # Desktop UI — Followup Hardening
 
-Status: pending
+Status: done
 Owner: desktop-ui workstream
 Predecessor (closed, archived): `docs/plans/archive/desktop-ui-design-review-fixes-plan.md`
 Source: 2026-05-18 post-closure four-reviewer pass (design vs DESIGN.md + code review of DR1–DR7 + proof-bundle audit + benchmark comparison against Convex / Firebase / Docker Desktop / Podman Desktop).
@@ -146,14 +146,14 @@ After this plan:
 
 | Phase | Slice | Status |
 |-------|-------|--------|
-| H0 | Read-in + before-state confirmation | pending |
-| H1 | `DESIGN.md` ↔ shipped IA reconciliation (BLOCKER) | pending |
-| H2 | Type safety + magic-string removal (3 MAJORs) | pending |
-| H3 | Offline + error envelopes (4 MAJORs) | pending |
-| H4 | Polish: casing + breadcrumb + EmptyState (5 MINORs + 3 NITs) | pending |
-| H5 | Code cleanup + test gaps (8 MINORs + 4 NITs) | pending |
-| H6 | Live-doc corrections from proof audit (3 MINORs) | pending |
-| H7 | Verification + close + archive | pending |
+| H0 | Read-in + before-state confirmation | done |
+| H1 | `DESIGN.md` ↔ shipped IA reconciliation (BLOCKER) | done |
+| H2 | Type safety + magic-string removal (3 MAJORs) | done |
+| H3 | Offline + error envelopes (4 MAJORs) | done |
+| H4 | Polish: casing + breadcrumb + EmptyState (5 MINORs + 3 NITs) | done |
+| H5 | Code cleanup + test gaps (8 MINORs + 4 NITs) | done |
+| H6 | Live-doc corrections from proof audit (3 MINORs) | done |
+| H7 | Verification + close + archive | done |
 
 ## Roadmap detail
 
@@ -630,3 +630,26 @@ disagreement, missing service-detail after-screenshot), 13 MINORs
 prepared (H0–H7). Pre-launch policy continues to apply. Predecessor
 proof bundle stays sealed; this wave's bundle closes the F6/F9/F14
 visual-evidence gap.
+
+(b) 2026-05-18 — Plan closed. H0 confirmed scope and surfaced a
+plan-accuracy delta: the "Follow-up plans will surface" prose
+lived in one file, not two. H1 ratified the dual-persona Services
+IA into `DESIGN.md` (BLOCKER cleared). H2 introduced
+`TenantScope`/`SubDrawerItem<TId>` discriminated unions and dropped
+the `extractTenantId` regex helper plus every `as ObservabilityTab`
+cast. H3 wired `LoadingValue<T>` envelopes through Overview /
+System / `/admin/tenants` (the 404 now renders a diagnostic
+`EmptyState` with a RETRY CTA) and canonicalized the status-bar
+tenant slot per view. H4 landed the surface polish (ScopeChip
+casing, command-palette scroll-fit, encryption `StateDot`, lens
+`›` separator, `EmptyState` mono title, `/admin/network` default
+section). H5 backfilled specs (controller-abort path,
+narrowing-throw helpers) and pulled `fetchTenants` into a shared
+module; the EmptyStateCta `onClick` deletion was skipped because
+H3's RETRY button now consumes that branch. H6 corrected the
+`docs/plans/README.md` archived-baseline blurb. H7 captured 11
+`after/h7-*.png` proofs (DESIGN.md visual omitted; covered by
+diff), verified the four grep gates (zero hits each), and
+recorded 32 files / 222 tests passing, typecheck clean, build
+clean, and the ⌘\ no-op invariant holding on `/admin/*`. Wave
+moves to `docs/plans/archive/` alongside the predecessor.
