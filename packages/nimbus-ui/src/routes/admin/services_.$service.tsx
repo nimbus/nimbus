@@ -5,11 +5,10 @@ import {
   useNavigate,
   useSearch,
 } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
@@ -34,29 +33,13 @@ type DetailSearch = {
   tab?: DetailTab;
 };
 
-type BundleDoc = {
-  _id: string;
-  sha256?: string;
-  status?: string;
-  sourceRef?: string;
-  _creationTime?: number;
-};
-
-type MachineDoc = {
-  _id: string;
-  tenantId?: string;
-  name?: string;
-  hostname?: string;
-  state?: string;
-};
-
 export const Route = createFileRoute("/admin/services_/$service")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
   }),
   loader: async ({ params }) => {
     const client = getNimbusClient();
-    const [service, services] = await Promise.all([
+    const [service, services, bundles, machines] = await Promise.all([
       client.query(api.services.byId, {
         id: params.service as Id<"services">,
       }),
@@ -66,9 +49,15 @@ export const Route = createFileRoute("/admin/services_/$service")({
         state: null,
         limit: 200,
       }),
+      client.query(api.bundles.list, { status: null, limit: 50 }),
+      client.query(api.machines.list, {
+        state: null,
+        provider: null,
+        limit: 200,
+      }),
     ]);
     if (!service) throw notFound();
-    return { service, services };
+    return { service, services, bundles, machines };
   },
   notFoundComponent: AdminServiceNotFound,
   component: AdminServiceDetailPage,
@@ -80,17 +69,13 @@ export function isTab(value: unknown): value is DetailTab {
 
 function AdminServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
-  const { service, services } = Route.useLoaderData();
+  const { service, services, bundles, machines } = Route.useLoaderData();
   const search = useSearch({ from: "/admin/services_/$service" });
   const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "placement";
 
-  const bundles = useQuery(api.bundles.list, {
-    status: null,
-    limit: 50,
-  }) as BundleDoc[] | undefined;
-  const bundle = useMemo<BundleDoc | null>(() => {
-    if (!service?.bundleId || !bundles) return null;
+  const bundle = useMemo<Doc<"bundles"> | null>(() => {
+    if (!service?.bundleId) return null;
     return bundles.find((b) => b._id === service.bundleId) ?? null;
   }, [service, bundles]);
 
@@ -190,20 +175,21 @@ function AdminServiceDetailPage() {
       </nav>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <PlacementTab service={service} />
+        <PlacementTab service={service} machines={machines} />
       </div>
     </section>
   );
 }
 
-function PlacementTab({ service }: { service: ServiceDoc }) {
-  const machines = useQuery(api.machines.list, {
-    state: null,
-    provider: null,
-    limit: 200,
-  }) as MachineDoc[] | undefined;
-  const machine = useMemo<MachineDoc | null>(() => {
-    if (!service.machineId || !machines) return null;
+function PlacementTab({
+  service,
+  machines,
+}: {
+  service: ServiceDoc;
+  machines: Doc<"machines">[];
+}) {
+  const machine = useMemo<Doc<"machines"> | null>(() => {
+    if (!service.machineId) return null;
     return machines.find((m) => m._id === service.machineId) ?? null;
   }, [service.machineId, machines]);
 
@@ -228,7 +214,6 @@ function PlacementTab({ service }: { service: ServiceDoc }) {
           )
         }
       />
-      <Stat label="Host" value={machine?.hostname ?? "—"} />
       <Stat
         label="Machine state"
         value={machine?.state ? <StateChip state={machine.state} /> : "—"}

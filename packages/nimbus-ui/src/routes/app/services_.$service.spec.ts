@@ -26,6 +26,7 @@ const routeInternals = Route as unknown as {
   loader: (args: LoaderArgs) => Promise<{
     service: unknown;
     services: unknown[];
+    bundles: unknown[];
     activeTenant: string | null;
   }>;
 };
@@ -42,13 +43,15 @@ afterEach(() => {
 });
 
 describe("app/services/$service loader", () => {
-  it("returns service + tenant-scoped services list + active tenant snapshot", async () => {
+  it("returns service + tenant-scoped services + bundles + active tenant", async () => {
     useUiStore.setState({ activeTenant: "acme" });
     const target = { _id: "svc-1", name: "api", tenantId: "acme" };
     const tenantServices = [target];
+    const allBundles = [{ _id: "bun-1", sha256: "deadbeef", status: "ready" }];
     nimbusQueryMock
       .mockResolvedValueOnce(target)
-      .mockResolvedValueOnce(tenantServices);
+      .mockResolvedValueOnce(tenantServices)
+      .mockResolvedValueOnce(allBundles);
 
     const result = await routeInternals.loader({
       params: { service: "svc-1" },
@@ -56,7 +59,9 @@ describe("app/services/$service loader", () => {
 
     expect(result.service).toEqual(target);
     expect(result.services).toEqual(tenantServices);
+    expect(result.bundles).toEqual(allBundles);
     expect(result.activeTenant).toBe("acme");
+    expect(nimbusQueryMock).toHaveBeenCalledTimes(3);
     expect(nimbusQueryMock.mock.calls[0]?.[1]).toMatchObject({ id: "svc-1" });
     expect(nimbusQueryMock.mock.calls[1]?.[1]).toMatchObject({
       tenantId: "acme",
@@ -64,11 +69,16 @@ describe("app/services/$service loader", () => {
       state: null,
       limit: 200,
     });
+    expect(nimbusQueryMock.mock.calls[2]?.[1]).toMatchObject({
+      status: null,
+      limit: 50,
+    });
   });
 
   it("throws notFound() when the service is missing", async () => {
     nimbusQueryMock
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
 
     await expect(
@@ -81,7 +91,8 @@ describe("app/services/$service loader", () => {
     const target = { _id: "svc-1", name: "api" };
     nimbusQueryMock
       .mockResolvedValueOnce(target)
-      .mockResolvedValueOnce([target]);
+      .mockResolvedValueOnce([target])
+      .mockResolvedValueOnce([]);
 
     const result = await routeInternals.loader({
       params: { service: "svc-1" },

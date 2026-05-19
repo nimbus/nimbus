@@ -6,11 +6,10 @@ import {
   useRouter,
   useSearch,
 } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
 import { useEffect, useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
@@ -39,14 +38,6 @@ type DetailSearch = {
   tab?: DetailTab;
 };
 
-type BundleDoc = {
-  _id: string;
-  sha256?: string;
-  status?: string;
-  sourceRef?: string;
-  _creationTime?: number;
-};
-
 export const Route = createFileRoute("/app/services_/$service")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
@@ -54,7 +45,7 @@ export const Route = createFileRoute("/app/services_/$service")({
   loader: async ({ params }) => {
     const activeTenant = useUiStore.getState().activeTenant;
     const client = getNimbusClient();
-    const [service, services] = await Promise.all([
+    const [service, services, bundles] = await Promise.all([
       client.query(api.services.byId, {
         id: params.service as Id<"services">,
       }),
@@ -64,9 +55,10 @@ export const Route = createFileRoute("/app/services_/$service")({
         state: null,
         limit: 200,
       }),
+      client.query(api.bundles.list, { status: null, limit: 50 }),
     ]);
     if (!service) throw notFound();
-    return { service, services, activeTenant };
+    return { service, services, bundles, activeTenant };
   },
   notFoundComponent: ServiceNotFound,
   component: ServiceDetailPage,
@@ -83,7 +75,7 @@ function isTab(value: unknown): value is DetailTab {
 
 function ServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
-  const { service, services, activeTenant: loadedTenant } =
+  const { service, services, bundles, activeTenant: loadedTenant } =
     Route.useLoaderData();
   const activeTenant = useUiStore((s) => s.activeTenant);
   const router = useRouter();
@@ -97,12 +89,8 @@ function ServiceDetailPage() {
     }
   }, [activeTenant, loadedTenant, router]);
 
-  const bundles = useQuery(api.bundles.list, {
-    status: null,
-    limit: 50,
-  }) as BundleDoc[] | undefined;
-  const bundle = useMemo<BundleDoc | null>(() => {
-    if (!service.bundleId || !bundles) return null;
+  const bundle = useMemo<Doc<"bundles"> | null>(() => {
+    if (!service.bundleId) return null;
     return bundles.find((b) => b._id === service.bundleId) ?? null;
   }, [service, bundles]);
 
@@ -207,7 +195,7 @@ function TabBody({
 }: {
   tab: DetailTab;
   service: ServiceDoc;
-  bundle: BundleDoc | null;
+  bundle: Doc<"bundles"> | null;
 }) {
   if (tab === "overview") return <OverviewTab service={service} />;
   if (tab === "endpoints") return <EndpointsTab service={service} />;
@@ -295,7 +283,7 @@ function BundleTab({
   bundle,
 }: {
   service: ServiceDoc;
-  bundle: BundleDoc | null;
+  bundle: Doc<"bundles"> | null;
 }) {
   if (!service.bundleId) {
     return (
