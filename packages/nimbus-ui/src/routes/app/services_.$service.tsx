@@ -1,11 +1,13 @@
 import {
   createFileRoute,
   Link,
+  notFound,
   useNavigate,
+  useRouter,
   useSearch,
 } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -15,6 +17,7 @@ import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
   type SubDrawerSpec,
@@ -48,6 +51,24 @@ export const Route = createFileRoute("/app/services_/$service")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
   }),
+  loader: async ({ params }) => {
+    const activeTenant = useUiStore.getState().activeTenant;
+    const client = getNimbusClient();
+    const [service, services] = await Promise.all([
+      client.query(api.services.byId, {
+        id: params.service as Id<"services">,
+      }),
+      client.query(api.services.list, {
+        tenantId: activeTenant,
+        machineId: null,
+        state: null,
+        limit: 200,
+      }),
+    ]);
+    if (!service) throw notFound();
+    return { service, services, activeTenant };
+  },
+  notFoundComponent: ServiceNotFound,
   component: ServiceDetailPage,
 });
 
@@ -62,28 +83,26 @@ function isTab(value: unknown): value is DetailTab {
 
 function ServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
+  const { service, services, activeTenant: loadedTenant } =
+    Route.useLoaderData();
+  const activeTenant = useUiStore((s) => s.activeTenant);
+  const router = useRouter();
   const search = useSearch({ from: "/app/services_/$service" });
   const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "overview";
-  const activeTenant = useUiStore((s) => s.activeTenant);
 
-  const service = useQuery(api.services.byId, {
-    id: serviceId as Id<"services">,
-  });
-
-  const services = useQuery(api.services.list, {
-    tenantId: activeTenant,
-    machineId: null,
-    state: null,
-    limit: 200,
-  });
+  useEffect(() => {
+    if (activeTenant !== loadedTenant) {
+      void router.invalidate();
+    }
+  }, [activeTenant, loadedTenant, router]);
 
   const bundles = useQuery(api.bundles.list, {
     status: null,
     limit: 50,
   }) as BundleDoc[] | undefined;
   const bundle = useMemo<BundleDoc | null>(() => {
-    if (!service?.bundleId || !bundles) return null;
+    if (!service.bundleId || !bundles) return null;
     return bundles.find((b) => b._id === service.bundleId) ?? null;
   }, [service, bundles]);
 
@@ -108,7 +127,7 @@ function ServiceDetailPage() {
       replace: true,
     });
 
-  const displayName = service?.name ?? shortId(serviceId, 12);
+  const displayName = service.name ?? shortId(serviceId, 12);
 
   return (
     <section
@@ -129,12 +148,12 @@ function ServiceDetailPage() {
           >
             {displayName}
           </h1>
-          {service?.kind ? (
+          {service.kind ? (
             <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
               {service.kind}
             </span>
           ) : null}
-          {service?.state ? <StateChip state={service.state} /> : null}
+          {service.state ? <StateChip state={service.state} /> : null}
           {bundle?.sha256 ? (
             <CopyChip
               label="bundle sha256"
@@ -175,13 +194,7 @@ function ServiceDetailPage() {
       </nav>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        {service === undefined ? (
-          <Loading label="Loading service…" />
-        ) : service === null ? (
-          <NotFound id={serviceId} />
-        ) : (
-          <TabBody tab={tab} service={service} bundle={bundle} />
-        )}
+        <TabBody tab={tab} service={service} bundle={bundle} />
       </div>
     </section>
   );
@@ -358,18 +371,10 @@ function DetailSubDrawer({
   services,
   activeServiceId,
 }: {
-  services: ServiceDoc[] | undefined;
+  services: ServiceDoc[];
   activeServiceId: string;
 }) {
   const filter = useSubDrawerSearch().trim().toLowerCase();
-  if (services === undefined) {
-    return (
-      <div className="px-3 py-3 text-xs text-muted">
-        <span aria-hidden>·</span>
-        <span className="sr-only">loading</span>
-      </div>
-    );
-  }
   const filtered = filter
     ? services.filter(
         (s) =>
@@ -425,22 +430,18 @@ function DetailSubDrawer({
   );
 }
 
-function Loading({ label }: { label: string }) {
+function ServiceNotFound() {
+  const { service: serviceId } = Route.useParams();
   return (
-    <div className="flex h-full items-center justify-center text-xs text-muted">
-      {label}
-    </div>
-  );
-}
-
-function NotFound({ id }: { id: string }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+    <div
+      className="flex h-full flex-col items-center justify-center gap-2 text-center"
+      data-testid="service-not-found"
+    >
       <span className="font-mono text-sm text-default">Service not found</span>
       <span className="max-w-md text-xs text-muted">
         No service matches the id{" "}
-        <code className="font-mono text-default">{shortId(id, 12)}</code>. It
-        may have been stopped or never registered.
+        <code className="font-mono text-default">{shortId(serviceId, 12)}</code>
+        . It may have been stopped or never registered.
       </span>
       <Link
         to="/app/services"

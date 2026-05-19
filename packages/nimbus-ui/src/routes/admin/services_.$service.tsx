@@ -1,6 +1,7 @@
 import {
   createFileRoute,
   Link,
+  notFound,
   useNavigate,
   useSearch,
 } from "@tanstack/react-router";
@@ -14,6 +15,7 @@ import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
   type SubDrawerSpec,
@@ -52,6 +54,23 @@ export const Route = createFileRoute("/admin/services_/$service")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
   }),
+  loader: async ({ params }) => {
+    const client = getNimbusClient();
+    const [service, services] = await Promise.all([
+      client.query(api.services.byId, {
+        id: params.service as Id<"services">,
+      }),
+      client.query(api.services.list, {
+        tenantId: null,
+        machineId: null,
+        state: null,
+        limit: 200,
+      }),
+    ]);
+    if (!service) throw notFound();
+    return { service, services };
+  },
+  notFoundComponent: AdminServiceNotFound,
   component: AdminServiceDetailPage,
 });
 
@@ -61,20 +80,10 @@ export function isTab(value: unknown): value is DetailTab {
 
 function AdminServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
+  const { service, services } = Route.useLoaderData();
   const search = useSearch({ from: "/admin/services_/$service" });
   const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "placement";
-
-  const service = useQuery(api.services.byId, {
-    id: serviceId as Id<"services">,
-  });
-
-  const services = useQuery(api.services.list, {
-    tenantId: null,
-    machineId: null,
-    state: null,
-    limit: 200,
-  });
 
   const bundles = useQuery(api.bundles.list, {
     status: null,
@@ -109,7 +118,7 @@ function AdminServiceDetailPage() {
       replace: true,
     });
 
-  const displayName = service?.name ?? shortId(serviceId, 12);
+  const displayName = service.name ?? shortId(serviceId, 12);
 
   return (
     <section
@@ -130,13 +139,13 @@ function AdminServiceDetailPage() {
           >
             {displayName}
           </h1>
-          {service?.kind ? (
+          {service.kind ? (
             <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
               {service.kind}
             </span>
           ) : null}
-          {service?.state ? <StateChip state={service.state} /> : null}
-          {service?.tenantId ? (
+          {service.state ? <StateChip state={service.state} /> : null}
+          {service.tenantId ? (
             <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
               {service.tenantId}
             </span>
@@ -181,13 +190,7 @@ function AdminServiceDetailPage() {
       </nav>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        {service === undefined ? (
-          <Loading label="Loading service…" />
-        ) : service === null ? (
-          <NotFound id={serviceId} />
-        ) : (
-          <PlacementTab service={service} />
-        )}
+        <PlacementTab service={service} />
       </div>
     </section>
   );
@@ -255,18 +258,10 @@ function AdminDetailSubDrawer({
   services,
   activeServiceId,
 }: {
-  services: ServiceDoc[] | undefined;
+  services: ServiceDoc[];
   activeServiceId: string;
 }) {
   const filter = useSubDrawerSearch().trim().toLowerCase();
-  if (services === undefined) {
-    return (
-      <div className="px-3 py-3 text-xs text-muted">
-        <span aria-hidden>·</span>
-        <span className="sr-only">loading</span>
-      </div>
-    );
-  }
   const filtered = filter
     ? services.filter(
         (s) =>
@@ -328,21 +323,18 @@ function AdminDetailSubDrawer({
   );
 }
 
-function Loading({ label }: { label: string }) {
+function AdminServiceNotFound() {
+  const { service: serviceId } = Route.useParams();
   return (
-    <div className="flex h-full items-center justify-center text-xs text-muted">
-      {label}
-    </div>
-  );
-}
-
-function NotFound({ id }: { id: string }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+    <div
+      className="flex h-full flex-col items-center justify-center gap-2 text-center"
+      data-testid="admin-service-not-found"
+    >
       <span className="font-mono text-sm text-default">Service not found</span>
       <span className="max-w-md text-xs text-muted">
         No service matches the id{" "}
-        <code className="font-mono text-default">{shortId(id, 12)}</code>.
+        <code className="font-mono text-default">{shortId(serviceId, 12)}</code>
+        .
       </span>
       <Link
         to="/admin/services"
@@ -353,4 +345,3 @@ function NotFound({ id }: { id: string }) {
     </div>
   );
 }
-

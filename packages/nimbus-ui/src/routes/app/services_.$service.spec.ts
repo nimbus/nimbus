@@ -17,61 +17,49 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
-import { isTab, Route, TABS } from "./services_.$service";
+import { useUiStore } from "../../store/ui-store";
+import { Route } from "./services_.$service";
 
 type LoaderArgs = { params: { service: string } };
 
 const routeInternals = Route as unknown as {
-  loader: (args: LoaderArgs) => Promise<{ service: unknown; services: unknown[] }>;
+  loader: (args: LoaderArgs) => Promise<{
+    service: unknown;
+    services: unknown[];
+    activeTenant: string | null;
+  }>;
 };
 
 beforeEach(() => {
   nimbusQueryMock.mockReset();
   notFoundMock.mockClear();
+  useUiStore.setState({ activeTenant: null });
 });
 
 afterEach(() => {
+  useUiStore.setState({ activeTenant: null });
   vi.restoreAllMocks();
 });
 
-describe("Admin service detail tabs (DR6 / F6)", () => {
-  it("TABS has exactly one entry: Placement", () => {
-    expect(TABS).toHaveLength(1);
-    expect(TABS[0]).toEqual({ id: "placement", label: "Placement" });
-  });
-
-  it("isTab accepts only 'placement'", () => {
-    expect(isTab("placement")).toBe(true);
-    expect(isTab("restarts")).toBe(false);
-    expect(isTab("density")).toBe(false);
-    expect(isTab("drift")).toBe(false);
-    expect(isTab(undefined)).toBe(false);
-    expect(isTab(null)).toBe(false);
-    expect(isTab(42)).toBe(false);
-  });
-});
-
-describe("admin/services/$service loader", () => {
-  it("returns the targeted service + the full services list", async () => {
-    const targetService = { _id: "svc-1", name: "api", tenantId: "alpha" };
-    const allServices = [
-      targetService,
-      { _id: "svc-2", name: "web", tenantId: "beta" },
-    ];
+describe("app/services/$service loader", () => {
+  it("returns service + tenant-scoped services list + active tenant snapshot", async () => {
+    useUiStore.setState({ activeTenant: "acme" });
+    const target = { _id: "svc-1", name: "api", tenantId: "acme" };
+    const tenantServices = [target];
     nimbusQueryMock
-      .mockResolvedValueOnce(targetService)
-      .mockResolvedValueOnce(allServices);
+      .mockResolvedValueOnce(target)
+      .mockResolvedValueOnce(tenantServices);
 
     const result = await routeInternals.loader({
       params: { service: "svc-1" },
     });
 
-    expect(result.service).toEqual(targetService);
-    expect(result.services).toEqual(allServices);
-    expect(nimbusQueryMock).toHaveBeenCalledTimes(2);
+    expect(result.service).toEqual(target);
+    expect(result.services).toEqual(tenantServices);
+    expect(result.activeTenant).toBe("acme");
     expect(nimbusQueryMock.mock.calls[0]?.[1]).toMatchObject({ id: "svc-1" });
     expect(nimbusQueryMock.mock.calls[1]?.[1]).toMatchObject({
-      tenantId: null,
+      tenantId: "acme",
       machineId: null,
       state: null,
       limit: 200,
@@ -87,5 +75,19 @@ describe("admin/services/$service loader", () => {
       routeInternals.loader({ params: { service: "missing" } }),
     ).rejects.toThrow("__NOT_FOUND__");
     expect(notFoundMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes activeTenant=null when no tenant is selected", async () => {
+    const target = { _id: "svc-1", name: "api" };
+    nimbusQueryMock
+      .mockResolvedValueOnce(target)
+      .mockResolvedValueOnce([target]);
+
+    const result = await routeInternals.loader({
+      params: { service: "svc-1" },
+    });
+
+    expect(result.activeTenant).toBeNull();
+    expect(nimbusQueryMock.mock.calls[1]?.[1]?.tenantId).toBeNull();
   });
 });
