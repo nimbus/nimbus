@@ -13,6 +13,18 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
+- `docs/plans/desktop-ui-architecture-hardening-plan.md`
+  - active architecture-debt wave promoted 2026-05-18 from the
+    post-closure review of `desktop-ui-followup-hardening-plan.md`.
+    Phases A0–A8 ordered critical → low: A1 codegen typing kills all
+    `as never` and `as ServiceDoc[]` casts at the codegen source; A2
+    lifts `ServiceDoc` into `lib/types/` and eliminates cross-persona
+    route-to-route type imports; A3 decomposes `routes/admin/settings.tsx`
+    (1608 LOC) below the CLAUDE.md warning band; A4 migrates clean data
+    routes to TanStack Router loaders; A5 ships a Ladle (or Storybook)
+    component catalog for the eleven reusable components; A6 wires a
+    playwright-cli `verify-desktop-ui` lane into CI; A7 audits the
+    next-tier large files; A8 verifies, captures proof, archives.
 
 ## Current Reference Baselines
 
