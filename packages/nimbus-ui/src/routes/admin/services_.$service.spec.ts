@@ -22,7 +22,12 @@ import { isTab, Route, TABS } from "./services_.$service";
 type LoaderArgs = { params: { service: string } };
 
 const routeInternals = Route as unknown as {
-  loader: (args: LoaderArgs) => Promise<{ service: unknown; services: unknown[] }>;
+  loader: (args: LoaderArgs) => Promise<{
+    service: unknown;
+    services: unknown[];
+    bundles: unknown[];
+    machines: unknown[];
+  }>;
 };
 
 beforeEach(() => {
@@ -52,15 +57,19 @@ describe("Admin service detail tabs (DR6 / F6)", () => {
 });
 
 describe("admin/services/$service loader", () => {
-  it("returns the targeted service + the full services list", async () => {
+  it("returns service + services + bundles + machines from one parallel fetch", async () => {
     const targetService = { _id: "svc-1", name: "api", tenantId: "alpha" };
     const allServices = [
       targetService,
       { _id: "svc-2", name: "web", tenantId: "beta" },
     ];
+    const allBundles = [{ _id: "bun-1", sha256: "deadbeef", status: "ready" }];
+    const allMachines = [{ _id: "mac-1", name: "alpha-1", state: "running" }];
     nimbusQueryMock
       .mockResolvedValueOnce(targetService)
-      .mockResolvedValueOnce(allServices);
+      .mockResolvedValueOnce(allServices)
+      .mockResolvedValueOnce(allBundles)
+      .mockResolvedValueOnce(allMachines);
 
     const result = await routeInternals.loader({
       params: { service: "svc-1" },
@@ -68,7 +77,9 @@ describe("admin/services/$service loader", () => {
 
     expect(result.service).toEqual(targetService);
     expect(result.services).toEqual(allServices);
-    expect(nimbusQueryMock).toHaveBeenCalledTimes(2);
+    expect(result.bundles).toEqual(allBundles);
+    expect(result.machines).toEqual(allMachines);
+    expect(nimbusQueryMock).toHaveBeenCalledTimes(4);
     expect(nimbusQueryMock.mock.calls[0]?.[1]).toMatchObject({ id: "svc-1" });
     expect(nimbusQueryMock.mock.calls[1]?.[1]).toMatchObject({
       tenantId: null,
@@ -76,11 +87,22 @@ describe("admin/services/$service loader", () => {
       state: null,
       limit: 200,
     });
+    expect(nimbusQueryMock.mock.calls[2]?.[1]).toMatchObject({
+      status: null,
+      limit: 50,
+    });
+    expect(nimbusQueryMock.mock.calls[3]?.[1]).toMatchObject({
+      state: null,
+      provider: null,
+      limit: 200,
+    });
   });
 
   it("throws notFound() when the service is missing", async () => {
     nimbusQueryMock
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
 
     await expect(

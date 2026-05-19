@@ -220,7 +220,7 @@ After this wave closes:
 |-------|-------|--------|
 | R0 | Read-in + before-state freeze | done |
 | R1 | Discriminated query wrapper — eliminate `as unknown as` (BLOCKER) | done |
-| R2 | Loaderize `_.$service.tsx` sibling queries (BLOCKER) | pending |
+| R2 | Loaderize `_.$service.tsx` sibling queries (BLOCKER) | done |
 | R3 | Codegen specs + audit-comment fix + `JsonValue` dedup + convention decision (BLOCKER) | pending |
 | R4 | Loaderize `compute_.runs_.$runId.tsx` | pending |
 | R5 | Loader-error envelope coverage on the four A4 routes | pending |
@@ -851,3 +851,53 @@ Verifications:
     spec files only) is recorded in `before.md`.
 
 Ledger flipped pending → done for R1 at close of phase.
+
+(c) **R2 — Loaderize `_.$service.tsx` sibling queries (2026-05-19).**
+Folded all three sibling `useQuery` calls into their route loaders.
+
+`packages/nimbus-ui/src/routes/admin/services_.$service.tsx`: loader
+now fans out four parallel queries via `Promise.all` —
+`services.byId`, `services.list`, `bundles.list`, `machines.list` —
+and returns `{ service, services, bundles, machines }`. Component
+body destructures the loader payload via `Route.useLoaderData()`.
+Removed local `BundleDoc` and `MachineDoc` shape declarations;
+switched `useMemo<BundleDoc | null>` → `useMemo<Doc<"bundles"> | null>`
+and `useMemo<MachineDoc | null>` → `useMemo<Doc<"machines"> | null>`,
+importing `Doc` from the codegen `_generated/dataModel`. `PlacementTab`
+signature took on `machines: Doc<"machines">[]` and dropped its own
+inline `useQuery`. Dropped the dead `<Stat label="Host" />` row —
+`Doc<"machines">` has no `hostname` field, so that row always rendered
+"—". Dropped the `useQuery` import.
+
+`packages/nimbus-ui/src/routes/app/services_.$service.tsx`: loader
+now fans out three parallel queries — adds `bundles.list` to the
+existing `services.byId` + `services.list`, returning
+`{ service, services, bundles, activeTenant }`. Component body
+destructures `bundles` from the loader payload; `useMemo<BundleDoc |
+null>` → `useMemo<Doc<"bundles"> | null>`. Removed local `BundleDoc`
+shape declaration and the `useQuery` import. `BundleTab` /
+`TabBody` props now type `bundle: Doc<"bundles"> | null`.
+
+Specs: extended `routes/admin/services_.$service.spec.ts` to mock
+four parallel queries and assert the new
+`{ service, services, bundles, machines }` payload shape and the
+four `nimbusQueryMock` call args (id, services-list args, bundles
+args, machines args). Extended `routes/app/services_.$service.spec.ts`
+to mock three parallel queries and assert the
+`{ service, services, bundles, activeTenant }` payload shape across
+the happy-tenant, missing-service, and null-tenant cases.
+
+Verifications:
+
+- `npx tsc --noEmit` (in `packages/nimbus-ui/`) exits 0.
+- `npx vitest run` → 36 files / 240 tests pass (R1 close baseline
+  unchanged; the two service-detail specs gained one assertion each
+  without adding a test case).
+- `npx vite build` clean (chunk-size warning unchanged from R1).
+- Grep gate:
+  - `grep -n 'useQuery'
+    packages/nimbus-ui/src/routes/admin/services_.$service.tsx
+    packages/nimbus-ui/src/routes/app/services_.$service.tsx`
+    → 0 hits.
+
+Ledger flipped pending → done for R2 at close of phase.
