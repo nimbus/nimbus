@@ -225,7 +225,7 @@ After this wave closes:
 | R4 | Loaderize `compute_.runs_.$runId.tsx` | done |
 | R5 | Loader-error envelope coverage on the four A4 routes | done |
 | R6 | Extract shared filter + table-cell primitives | done |
-| R7 | `Route.loaderDeps` for tenant-switch invalidation | pending |
+| R7 | `Route.loaderDeps` for tenant-switch invalidation | done |
 | R8 | A3 residue cleanup (dead refs, typed sub-drawer) | pending |
 | R9 | CSP test tightening + workflow path filter widening | pending |
 | R10 | Smoke spec — deterministic fixture seeding | pending |
@@ -1135,3 +1135,91 @@ Verifications:
 - `npx vite build` clean (chunk-size warning unchanged).
 
 Ledger flipped pending → done for R6 at close of phase.
+
+(h) **R7 — `Route.loaderDeps` for tenant-switch invalidation
+(2026-05-19).** The two `useEffect → router.invalidate()` blocks
+that watched `activeTenant` in `app/services.tsx` and
+`app/services_.$service.tsx` are replaced with TanStack Router's
+`loaderDeps`, and the R5 `errorComponent` Retry callbacks switch
+to the `reset` prop on `ErrorComponentProps`. The Zustand
+store → router bridge moves into a single shell hook so the
+route files don't reference `router.invalidate` at all (the
+plan's grep gate).
+
+Touch list:
+
+- `packages/nimbus-ui/src/shell/use-tenant-bootstrap.ts` — adds
+  exported `useTenantSwitchInvalidation()` hook. It subscribes
+  to `useUiStore` and calls `router.invalidate()` whenever
+  `activeTenant` changes (using Zustand's native `subscribe`
+  with `prevState` so we don't fire on mount). Imports
+  `useRouter` from `@tanstack/react-router`.
+- `packages/nimbus-ui/src/routes/__root.tsx` — `ShellLayout`
+  now calls `useTenantSwitchInvalidation()` alongside
+  `useTenantBootstrap()`. Import line widened to bring in
+  both names from the same module.
+- `packages/nimbus-ui/src/routes/app/services.tsx`:
+  - `Route.loaderDeps = () => ({ activeTenant:
+    useUiStore.getState().activeTenant })`.
+  - Loader signature now `({ deps }) => { ... }`; reads
+    `deps.activeTenant` instead of pulling from the store
+    inside the body.
+  - `useEffect → router.invalidate()` block at the former
+    lines 72–76 deleted along with `loadedTenant`, `router`,
+    `useRouter`, `useEffect`, and `useCallback` imports.
+  - `ServicesLoaderError` now accepts `{ error, reset }` from
+    `ErrorComponentProps`; the Retry CTA points at `reset`
+    directly, so `router.invalidate()` no longer appears in
+    this file.
+- `packages/nimbus-ui/src/routes/app/services_.$service.tsx`:
+  same shape — `loaderDeps`, `({ params, deps })` loader
+  signature, deletion of the `useEffect` invalidation block at
+  former lines 121–125 with its supporting `loadedTenant`,
+  `router`, `useRouter`, `useEffect`, `useCallback` imports,
+  and `ServiceDetailLoaderError` rewired to use `reset`.
+- `packages/nimbus-ui/src/routes/app/services.spec.tsx` and
+  `services_.$service.spec.tsx` — drop the `invalidateMock`
+  hoist and the `useRouter` mock; assert `loaderDeps()` snapshots
+  the store; pass `{ deps: { activeTenant } }` into every loader
+  invocation; assert the error-component Retry button calls
+  the injected `reset` mock once.
+
+Why `errorComponent` Retry uses `reset` instead of
+`router.invalidate()`:
+TanStack Router gives `ErrorComponentProps` a built-in `reset`
+function that clears the captured error and re-runs the loader.
+It satisfies the grep gate without changing user-visible
+behavior, and it's the more idiomatic call inside an error
+boundary (the route knows it errored; it doesn't need a
+router-wide invalidation to unstick itself).
+
+Why the bridge lives in a shell hook:
+`loaderDeps` is only re-evaluated when the router itself
+re-evaluates a match (route change, search-param change,
+explicit invalidate). Zustand mutations don't drive that on
+their own. Pushing the bridge to one shell-level subscription
+keeps the route files declarative (`loaderDeps` declares
+"this loader depends on tenant"), centralizes the invalidation,
+and matches the "no `useEffect → invalidate` in route
+modules" intent of the plan. The hook uses Zustand's
+`subscribe((state, prev) => ...)` form instead of a React
+`useEffect` so it doesn't fire on mount (when the loader has
+already run with the current tenant) and only invalidates on
+genuine transitions.
+
+Verifications:
+
+- Grep gate from the plan body:
+  - `grep -n 'router.invalidate'
+    packages/nimbus-ui/src/routes/app/services*.tsx` → 0 hits.
+- `npx tsc --noEmit` in `packages/nimbus-ui/` exits 0.
+- `npx vitest run src/routes/app/services.spec.tsx
+  'src/routes/app/services_.$service.spec.tsx'
+  src/shell/use-tenant-bootstrap.spec.tsx` → 3 files / 21 tests
+  pass.
+- `npx vitest run` (full UI suite) → 37 files / 248 tests pass
+  (R5/R6 baseline 246; the +2 are the two new
+  `loaderDeps`/`reset` assertions added in R7's spec rewrites).
+- `npx vite build` clean (chunk-size warning unchanged).
+
+Ledger flipped pending → done for R7 at close of phase.

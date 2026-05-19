@@ -1,5 +1,5 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { EmptyState } from "../../components/empty-state";
@@ -17,25 +17,29 @@ import {
 import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/app/services")({
-  loader: async () => {
-    const activeTenant = useUiStore.getState().activeTenant;
+  loaderDeps: () => ({
+    activeTenant: useUiStore.getState().activeTenant,
+  }),
+  loader: async ({ deps }) => {
     const services = await getNimbusClient().query(api.services.list, {
-      tenantId: activeTenant,
+      tenantId: deps.activeTenant,
       machineId: null,
       state: null,
       limit: 200,
     });
-    return { services, activeTenant };
+    return { services, activeTenant: deps.activeTenant };
   },
   component: ServicesPage,
   errorComponent: ServicesLoaderError,
 });
 
-export function ServicesLoaderError({ error }: { error: Error }) {
-  const router = useRouter();
-  const reload = useCallback(() => {
-    void router.invalidate();
-  }, [router]);
+export function ServicesLoaderError({
+  error,
+  reset,
+}: {
+  error: Error;
+  reset: () => void;
+}) {
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
@@ -56,7 +60,7 @@ export function ServicesLoaderError({ error }: { error: Error }) {
               . Retry once the backend is reachable.
             </>
           }
-          cta={{ label: "Retry", onClick: reload }}
+          cta={{ label: "Retry", onClick: reset }}
           testid="storage-server-error-envelope"
         />
       </div>
@@ -65,15 +69,8 @@ export function ServicesLoaderError({ error }: { error: Error }) {
 }
 
 function ServicesPage() {
-  const { services, activeTenant: loadedTenant } = Route.useLoaderData();
+  const { services } = Route.useLoaderData();
   const activeTenant = useUiStore((s) => s.activeTenant);
-  const router = useRouter();
-
-  useEffect(() => {
-    if (activeTenant !== loadedTenant) {
-      void router.invalidate();
-    }
-  }, [activeTenant, loadedTenant, router]);
 
   const spec = useMemo<SubDrawerSpec>(
     () => ({
