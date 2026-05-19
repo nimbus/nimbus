@@ -18,14 +18,14 @@ import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { formatDuration, shortId } from "../../lib/format";
 import {
-  type SubDrawerSpec,
+  type StaticSubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
 
-type ObservabilityTab = "logs" | "runs";
+type ActiveObservabilityTab = "logs" | "runs";
 
 type ObservabilitySearch = {
-  tab?: ObservabilityTab;
+  tab?: ActiveObservabilityTab;
   level?: string;
   category?: string;
   source?: string;
@@ -75,7 +75,7 @@ function usePerfEventStream(): EventDoc[] | undefined {
   return getPerfStore() ? snapshot : undefined;
 }
 
-function parseTab(value: unknown): ObservabilityTab | undefined {
+function parseTab(value: unknown): ActiveObservabilityTab | undefined {
   return value === "logs" || value === "runs" ? value : undefined;
 }
 
@@ -130,10 +130,7 @@ type RunDoc = {
   startedAt?: number;
 };
 
-export const OBSERVABILITY_SUB_DRAWER: Extract<
-  SubDrawerSpec,
-  { kind: "static" }
-> = {
+export const OBSERVABILITY_SUB_DRAWER = {
   kind: "static",
   title: "Observability",
   items: [
@@ -142,12 +139,14 @@ export const OBSERVABILITY_SUB_DRAWER: Extract<
       label: "Logs",
       to: "/app/observability",
       search: { tab: "logs" },
+      disabled: false,
     },
     {
       id: "runs",
       label: "Runs",
       to: "/app/observability",
       search: { tab: "runs" },
+      disabled: false,
     },
     {
       id: "events",
@@ -164,12 +163,17 @@ export const OBSERVABILITY_SUB_DRAWER: Extract<
       disabled: true,
     },
   ],
-};
+} as const satisfies StaticSubDrawerSpec<
+  "logs" | "runs" | "events" | "errors"
+>;
+
+export type ObservabilityTab =
+  (typeof OBSERVABILITY_SUB_DRAWER.items)[number]["id"];
 
 function ObservabilityPage() {
   useContributeSubDrawer(OBSERVABILITY_SUB_DRAWER);
   const search = Route.useSearch();
-  const tab: ObservabilityTab = search.tab ?? "logs";
+  const tab: ActiveObservabilityTab = search.tab ?? "logs";
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
@@ -185,7 +189,7 @@ function ObservabilityPage() {
   );
 }
 
-function Header({ tab }: { tab: ObservabilityTab }) {
+function Header({ tab }: { tab: ActiveObservabilityTab }) {
   return (
     <header className="flex flex-col gap-3">
       <div>
@@ -202,46 +206,61 @@ function Header({ tab }: { tab: ObservabilityTab }) {
         className="flex gap-px overflow-hidden rounded-md border border-app bg-surface-2 self-start"
         data-testid="observability-tabs"
       >
-        {OBSERVABILITY_SUB_DRAWER.items.map((item) => (
-          <TabLink
-            key={item.id}
-            id={item.id as ObservabilityTab}
-            label={item.label}
-            active={tab === item.id}
-            disabled={Boolean(item.disabled)}
-          />
-        ))}
+        {OBSERVABILITY_SUB_DRAWER.items.map((item) =>
+          item.disabled ? (
+            <DisabledTab key={item.id} id={item.id} label={item.label} />
+          ) : (
+            <ActiveTabLink
+              key={item.id}
+              id={item.id}
+              label={item.label}
+              active={tab === item.id}
+            />
+          ),
+        )}
       </nav>
     </header>
   );
 }
 
-function TabLink({
+function DisabledTab({
   id,
   label,
-  active,
-  disabled,
 }: {
   id: ObservabilityTab;
   label: string;
-  active: boolean;
-  disabled: boolean;
 }) {
-  if (disabled) {
-    return (
+  return (
+    <span
+      aria-disabled="true"
+      data-testid={`observability-tab-${id}`}
+      title={`${label} — coming soon`}
+      className={cn(
+        "inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
+        "cursor-not-allowed text-muted opacity-60",
+      )}
+    >
+      {label}
       <span
-        aria-disabled="true"
-        data-testid={`observability-tab-${id}`}
-        title={`${label} — coming soon`}
-        className={cn(
-          "px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
-          "cursor-not-allowed text-muted opacity-60",
-        )}
+        aria-hidden
+        className="rounded bg-surface-2 px-1 text-[9px] uppercase tracking-wide text-muted"
+        data-testid={`observability-tab-${id}-coming-soon`}
       >
-        {label}
+        coming soon
       </span>
-    );
-  }
+    </span>
+  );
+}
+
+function ActiveTabLink({
+  id,
+  label,
+  active,
+}: {
+  id: ActiveObservabilityTab;
+  label: string;
+  active: boolean;
+}) {
   return (
     <Link
       to="/app/observability"

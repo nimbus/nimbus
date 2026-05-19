@@ -11,24 +11,32 @@ import {
 import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 
-export type SubDrawerItem = {
-  id: string;
-  label: string;
-  to: string;
-  search?: Record<string, unknown>;
-  description?: string;
-  disabled?: boolean;
-  count?: number | null;
+export type SubDrawerItem<TId extends string = string> = {
+  readonly id: TId;
+  readonly label: string;
+  readonly to: string;
+  readonly search?: Record<string, unknown>;
+  readonly description?: string;
+  readonly disabled?: boolean;
+  readonly count?: number | null;
 };
 
-export type SubDrawerSpec =
-  | { kind: "static"; title: string; items: SubDrawerItem[] }
-  | {
-      kind: "dynamic";
-      title: string;
-      search?: { placeholder: string };
-      children: ReactNode;
-    };
+export type StaticSubDrawerSpec<TId extends string = string> = {
+  readonly kind: "static";
+  readonly title: string;
+  readonly items: ReadonlyArray<SubDrawerItem<TId>>;
+};
+
+export type DynamicSubDrawerSpec = {
+  readonly kind: "dynamic";
+  readonly title: string;
+  readonly search?: { placeholder: string };
+  readonly children: ReactNode;
+};
+
+export type SubDrawerSpec<TId extends string = string> =
+  | StaticSubDrawerSpec<TId>
+  | DynamicSubDrawerSpec;
 
 type SubDrawerContextValue = {
   spec: SubDrawerSpec | null;
@@ -134,7 +142,7 @@ export function SubDrawer() {
 
 function isItemActive(
   location: { pathname: string; search?: Record<string, unknown> },
-  item: SubDrawerItem,
+  item: SubDrawerItem<string>,
 ): boolean {
   const pathMatches =
     location.pathname === item.to ||
@@ -148,7 +156,11 @@ function isItemActive(
   return true;
 }
 
-function SubDrawerStaticList({ items }: { items: SubDrawerItem[] }) {
+function SubDrawerStaticList({
+  items,
+}: {
+  items: ReadonlyArray<SubDrawerItem<string>>;
+}) {
   const location = useRouterState({
     select: (s) => ({
       pathname: s.location.pathname,
