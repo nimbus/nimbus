@@ -16,7 +16,15 @@ use crate::local_server::{
     SessionBootstrapFailure, SessionValidationResult, origin_from_headers,
 };
 
-const UI_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*;";
+// The SPA shell embeds a single inline <script> in `index.html` that resolves
+// the theme synchronously before paint to avoid FOUC. Its SHA-256 is pinned
+// in `script-src` so CSP stays strict (no `'unsafe-inline'`) while still
+// allowing exactly that script. The `inline_fouc_script_hash_matches_csp`
+// test recomputes the hash from the embedded asset and fails the build if
+// the script body drifts without a CSP update.
+#[cfg(test)]
+const UI_INLINE_FOUC_SCRIPT_HASH: &str = "sha256-j4dvfQhOc0aIpLHfDFjtJTFdEOwAQgL/0GWxK/Rbx/0=";
+const UI_CSP: &str = "default-src 'self'; script-src 'self' 'sha256-j4dvfQhOc0aIpLHfDFjtJTFdEOwAQgL/0GWxK/Rbx/0='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*;";
 
 const SPA_INDEX: &str = "index.html";
 
@@ -333,6 +341,54 @@ mod tests {
         assert_eq!(
             guess_content_type("unknown.xyz"),
             "application/octet-stream"
+        );
+    }
+
+    // The single inline <script> in the SPA shell (theme-resolution / FOUC
+    // prevention) is allowlisted in `UI_CSP` by its SHA-256. If the script
+    // body drifts and the CSP hash isn't updated, the browser blocks the
+    // script. This test recomputes the hash from the embedded asset and
+    // fails the build if it no longer matches the pinned constant, so the
+    // drift is caught at compile-time rather than at runtime in the
+    // browser.
+    #[test]
+    fn inline_fouc_script_hash_matches_csp() {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+
+        let index = UiAssets::get(SPA_INDEX)
+            .expect("SPA index.html should be embedded at build time");
+        let html = std::str::from_utf8(&index.data)
+            .expect("SPA index.html should be valid UTF-8");
+
+        let open = "<script>";
+        let close = "</script>";
+        let start = html
+            .find(open)
+            .expect("SPA index.html should contain an inline <script>");
+        let body_start = start + open.len();
+        let body_end = html[body_start..]
+            .find(close)
+            .map(|offset| body_start + offset)
+            .expect("inline <script> should have a matching </script>");
+        let body = &html[body_start..body_end];
+
+        let mut hasher = Sha256::new();
+        hasher.update(body.as_bytes());
+        let digest = hasher.finalize();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(digest);
+        let actual = format!("sha256-{encoded}");
+
+        assert_eq!(
+            actual, UI_INLINE_FOUC_SCRIPT_HASH,
+            "inline FOUC script SHA-256 in dist/index.html has drifted from \
+             the CSP pin; update UI_INLINE_FOUC_SCRIPT_HASH and the matching \
+             value in UI_CSP",
+        );
+        assert!(
+            UI_CSP.contains(UI_INLINE_FOUC_SCRIPT_HASH),
+            "UI_CSP must contain UI_INLINE_FOUC_SCRIPT_HASH so the inline \
+             FOUC script is allowlisted",
         );
     }
 }
