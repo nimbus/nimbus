@@ -43,6 +43,17 @@ function isTrivialValidator(validator) {
       return isTrivialValidator(validator.element);
     case "optional":
       return isTrivialValidator(validator.inner);
+    case "union":
+      // A union is "trivial" when at least one member is itself trivial —
+      // the trivial member (e.g. `v.any()`) widens the whole union to
+      // `JsonValue`, so the validator provides no real type information.
+      // This intentionally captures `union(v.any(), v.null())`
+      // (system:status's textbook shape) and similar `any | X` shapes.
+      return (
+        Array.isArray(validator.members) &&
+        validator.members.length > 0 &&
+        validator.members.some(isTrivialValidator)
+      );
     default:
       return false;
   }

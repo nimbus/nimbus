@@ -40,9 +40,22 @@ function inferFunctionResultType(fn, schema, functionIndex, seen = new Set()) {
     case "mutation":
       inferred = inferMutationResultType(fn.plan, schema);
       break;
-    case "action":
-      inferred = inferActionResultType(fn.plan, schema, functionIndex, nextSeen);
+    case "action": {
+      const actionResult = inferActionResultType(
+        fn.plan,
+        schema,
+        functionIndex,
+        nextSeen,
+      );
+      // call_query / call_mutation / call_action propagate the inner
+      // function's source object so a fallback or convention layer
+      // crossed by the action chain is still audited at this level.
+      if (actionResult && typeof actionResult === "object" && actionResult.source) {
+        return actionResult;
+      }
+      inferred = actionResult;
       break;
+    }
     default:
       inferred = "unknown";
   }
@@ -92,8 +105,14 @@ function inferMutationResultType(plan, schema) {
   }
   switch (plan?.type) {
     case "insert":
-    case "update":
-      return `Id<${JSON.stringify(plan.table ?? "unknown")}>`;
+    case "update": {
+      if (typeof plan.table !== "string" || plan.table.length === 0) {
+        throw new Error(
+          `codegen: mutation plan of type "${plan.type}" is missing a "table" string — refusing to emit Id<"unknown">`,
+        );
+      }
+      return `Id<${JSON.stringify(plan.table)}>`;
+    }
     case "delete":
     case "schedule_cancel":
       return "null";
