@@ -4,6 +4,20 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/desktop-ui-followup-hardening-plan.md`
+  - active execution plan for the post-design-review hardening wave on
+    the operator console. Consumes a 2026-05-18 four-reviewer pass
+    against the predecessor's after-state (~30 follow-up items: 1
+    BLOCKER, 8 MAJORs, 13 MINORs, 7 NITs). Ratifies the shipped dual-
+    persona Services IA into `DESIGN.md` (H1), introduces end-to-end
+    discriminated unions for tenant scope + sub-drawer item id (H2),
+    adds `loading | ok | offline | error` envelopes to Overview /
+    System / `/admin/tenants` (H3), and lands surface-level polish +
+    cleanup (H4–H6). Predecessor proof bundle stays sealed; this
+    wave's bundle closes the predecessor's `/admin/services/$service`
+    visual-evidence gap. Ledger H0–H7; pre-launch policy continues.
+    Promoted 2026-05-18; predecessor:
+    `docs/plans/archive/desktop-ui-design-review-fixes-plan.md`.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
