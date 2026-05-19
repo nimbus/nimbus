@@ -1,6 +1,7 @@
 # Desktop UI — Architecture Hardening
 
-Status: active
+Status: done
+Closed: 2026-05-18 — see proof bundle at `docs/plans/proof/desktop-ui-architecture-hardening/`.
 Owner: desktop-ui workstream
 Predecessor (closed, archived): `docs/plans/archive/desktop-ui-followup-hardening-plan.md`
 Source: 2026-05-18 post-closure critical-reflection review of the Followup-Hardening wave (H0–H7). The wave closed cleanly on its own scope, but the review surfaced architecture debt that the wave intentionally did not touch.
@@ -194,15 +195,15 @@ After this plan:
 
 | Phase | Slice | Status |
 |-------|-------|--------|
-| A0 | Read-in + before-state confirmation | pending |
-| A1 | Convex codegen typing (CRITICAL) | pending |
-| A2 | Lift `ServiceDoc` + cross-persona type-leak audit (HIGH) | pending |
-| A3 | Decompose `routes/admin/settings.tsx` (HIGH) | pending |
-| A4 | Router-level loaders for data routes (MEDIUM) | pending |
-| A5 | Component catalog (MEDIUM) | pending |
-| A6 | CI browser-smoke harness (MEDIUM) | pending |
-| A7 | Large-file audit pass (LOW) | pending |
-| A8 | Verification + close + archive | pending |
+| A0 | Read-in + before-state confirmation | done |
+| A1 | Convex codegen typing (CRITICAL) | done |
+| A2 | Lift `ServiceDoc` + cross-persona type-leak audit (HIGH) | done |
+| A3 | Decompose `routes/admin/settings.tsx` (HIGH) | done |
+| A4 | Router-level loaders for data routes (MEDIUM) | done |
+| A5 | Component catalog (MEDIUM) | done |
+| A6 | CI browser-smoke harness (MEDIUM) | done |
+| A7 | Large-file audit pass (LOW) | done |
+| A8 | Verification + close + archive | done |
 
 ## Roadmap detail
 
@@ -828,3 +829,45 @@ inline script fails the Rust test before it reaches CI.
 
 Typecheck clean, 35 test files / 236 tests passing, Vite build
 green post-split.
+
+(i) 2026-05-18 — A8 close + archive. All four grep gates clean at
+HEAD:
+- `grep -rn 'as never' packages/nimbus-ui/src` → 0 hits.
+- `grep -rn 'as ServiceDoc\[\] | undefined\|as ServiceDoc | null | undefined' packages/nimbus-ui/src` → 0 hits.
+- `grep -rn 'import.*ServiceDoc.*from ".*routes/app' packages/nimbus-ui/src/routes/admin` → 0 hits.
+- `routes/admin/settings.tsx` is 93 LOC (well under the ≤900 cap).
+
+Verification commands recorded at close:
+- `cd packages/nimbus-ui && npx tsc -p tsconfig.json --noEmit` → clean.
+- `cd packages/nimbus-ui && npx vitest run` → 35 files / 236 tests.
+- `cd packages/nimbus-ui && npm run build` → clean (only the
+  unchanged informational `chunkSizeWarningLimit` note).
+- `cargo build -p nimbus-bin` → clean.
+- `cd packages/nimbus-ui && npx playwright test tests/e2e/smoke.spec.ts`
+  → 1 passed; the inline-FOUC CSP-hash fix from A6 holds (zero
+  `console.error`).
+- `make check` → clean (full workspace).
+
+Visual evidence approach: A1–A7 are code/architecture changes
+(codegen emit, type lift, file decomposition, loader hoisting,
+catalog plumbing, smoke harness, large-file audit) — none change
+the rendered UI surface. The predecessor's sealed `h7-*` capture
+bundle remains the canonical visual baseline; the proof README
+records this and points to the predecessor bundle rather than
+duplicating identical pixels. The one visual lane that is genuinely
+new — `verify-desktop-ui` running in CI — is evidenced by the
+workflow file itself (`.github/workflows/desktop-ui.yml`) and the
+green smoke run recorded above.
+
+A8 deferral re-evaluation:
+- F15 theme-matrix smoke remains deferred. The verification-tooling
+  plan that owns Light/Dark/System × Blue/Mono/Warm matrix coverage
+  has not landed yet; restate in the next downstream plan when it
+  promotes.
+- F6 admin service-detail Restarts/Density/Drift remains deferred.
+  Owning plan is the placement-controller / restart-audit-log work;
+  the single `Placement` tab stays canonical until that lands.
+
+Plan archived to `docs/plans/archive/desktop-ui-architecture-hardening-plan.md`;
+`docs/plans/README.md` updated to remove the active-plan entry and
+add the archived-baseline blurb.
