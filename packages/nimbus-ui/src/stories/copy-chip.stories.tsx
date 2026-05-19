@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { useEffect } from "react";
 
 import { CopyChip } from "../components/copy-chip";
 
@@ -37,3 +38,38 @@ export const HiddenUntilHover: Story = {
     </div>
   ),
 };
+
+export const ClipboardDenied: Story = {
+  args: { label: "bundle sha", value: "8a1f1cc4a9d4ecd6" },
+  render: (args) => <ClipboardDeniedFrame {...args} />,
+};
+
+function ClipboardDeniedFrame(args: {
+  label: string;
+  value: string;
+  testid?: string;
+  hideUntilHover?: boolean;
+  className?: string;
+  children?: React.ReactNode;
+}) {
+  useEffect(() => {
+    const original = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(navigator),
+      "clipboard",
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: () => Promise.reject(new Error("clipboard denied")),
+      },
+    });
+    return () => {
+      if (original) {
+        Object.defineProperty(navigator, "clipboard", original);
+      } else {
+        Reflect.deleteProperty(navigator as object, "clipboard");
+      }
+    };
+  }, []);
+  return <CopyChip {...args} />;
+}

@@ -32,12 +32,9 @@ export {
   queryEntry,
 } from "./internal/shared.ts";
 export type {
-  ActionReference,
   FunctionReference,
   InferArgs,
   InferResult,
-  MutationReference,
-  PaginatedQueryReference,
   QueryEntry,
   QueryReference,
 } from "./internal/shared.ts";

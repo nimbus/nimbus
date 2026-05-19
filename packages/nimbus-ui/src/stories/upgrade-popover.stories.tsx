@@ -43,6 +43,22 @@ const FALLBACK_INFO: VersionInfo = {
   },
 };
 
+const NOT_AVAILABLE_INFO: VersionInfo = {
+  ...HOMEBREW_INFO,
+  latest: HOMEBREW_INFO.current,
+  available: false,
+};
+
+const STALE_CHECK_INFO: VersionInfo = {
+  ...HOMEBREW_INFO,
+  checkStatus: "stale",
+};
+
+const ERROR_CHECK_INFO: VersionInfo = {
+  ...HOMEBREW_INFO,
+  checkStatus: "error",
+};
+
 function StoryFrame({
   info,
   isLocal,
@@ -126,4 +142,22 @@ export const ClosedTrigger: Story = {
     }
     return <Closed />;
   },
+};
+
+export const NotAvailable: Story = {
+  render: () => (
+    <StoryFrame info={NOT_AVAILABLE_INFO} isLocal hasDesktopBridge />
+  ),
+};
+
+export const StaleCheck: Story = {
+  render: () => (
+    <StoryFrame info={STALE_CHECK_INFO} isLocal hasDesktopBridge />
+  ),
+};
+
+export const ErrorCheck: Story = {
+  render: () => (
+    <StoryFrame info={ERROR_CHECK_INFO} isLocal hasDesktopBridge />
+  ),
 };

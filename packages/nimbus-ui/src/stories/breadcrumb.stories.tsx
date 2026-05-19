@@ -33,3 +33,25 @@ export const ThreeSegment: Story = {
     ],
   },
 };
+
+export const LongPathTruncation: Story = {
+  args: {
+    segments: [
+      { label: "Storage", href: "/storage" },
+      {
+        label: "very-long-tenant-name-that-should-truncate-cleanly",
+        href: "/storage/long",
+        copyValue: "tnt_very_long_tenant_identifier_abcdef0123456789",
+      },
+      {
+        label: "machines/with/an/unusually-long-trailing-segment-label",
+        active: true,
+      },
+    ],
+  },
+  render: (args) => (
+    <div className="w-[420px] rounded border border-app bg-surface px-3 py-2">
+      <Breadcrumb {...args} />
+    </div>
+  ),
+};

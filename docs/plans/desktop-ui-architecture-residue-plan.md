@@ -229,7 +229,7 @@ After this wave closes:
 | R8 | A3 residue cleanup (dead refs, typed sub-drawer) | done |
 | R9 | CSP test tightening + workflow path filter widening | done |
 | R10 | Smoke spec — deterministic fixture seeding | done |
-| R11 | Polish — catalog story state coverage + nit pass | pending |
+| R11 | Polish — catalog story state coverage + nit pass | done |
 | R12 | Verification + close + archive | pending |
 
 ## Roadmap detail
@@ -1430,3 +1430,101 @@ Verifications:
     → 0 hits (was 3).
 
 Ledger flipped pending → done for R10 at close of phase.
+
+(l) **R11 — Polish — story state coverage + nit pass (2026-05-19).**
+Three nit-pass edits plus five Storybook variants, all under
+`packages/nimbus-ui/`.
+
+Nit pass:
+
+- `routes/admin/services_.$service.tsx:114` — replaced defensive
+  `service?.bundleId` with `service.bundleId`. The loader's
+  `if (!service) throw notFound();` already narrows the return type,
+  so the optional-chain was inert defensive code. `useLoaderData()`
+  consumers see `service: ServiceDoc` (not `ServiceDoc | null`)
+  without any non-null assertion. `routes/app/services_.$service.tsx`
+  audited — already uses `service.bundleId` / `service.name` /
+  `service.state` unconditionally; no defensive `service?.` sites.
+- `routes/app/observability/types.ts` — replaced the hand-written
+  `ActiveObservabilityTab` union with a typed-const derivation:
+  `ACTIVE_OBSERVABILITY_TABS = ["logs", "runs"] as const` and
+  `DISABLED_OBSERVABILITY_TABS = ["events", "errors"] as const`,
+  with `ActiveObservabilityTab = (typeof ACTIVE_OBSERVABILITY_TABS)[number]`
+  and similarly for the disabled and full unions. `parseTab` rewritten
+  to a single `ACTIVE_OBSERVABILITY_TABS.find(...)`. The two parallel
+  union spellings the R0 audit flagged are now one canonical
+  declaration — adding a tab is a single-line array edit.
+  `routes/app/observability.tsx` rebuilt `OBSERVABILITY_SUB_DRAWER`
+  programmatically from the two arrays (with a small `TAB_LABELS`
+  record); re-exports `ObservabilityTab` from the types module so the
+  existing `observability-types.spec.ts` keeps passing (2/2).
+- `shell/tenant-selector.tsx` — dropped the unused `useRouterState`
+  import, the local `pathname = useRouterState(...)` declaration,
+  and the trailing `<span className="sr-only" aria-live="polite">`
+  debug-residue region that announced the route path. The tenant
+  selector no longer leaks the active route into aria-live; route
+  announcements live where they belong (the page-level header).
+- `packages/nimbus/src/browser.ts` — dropped the three unconsumed
+  type re-exports `ActionReference`, `MutationReference`, and
+  `PaginatedQueryReference` from the public `export type` block.
+  A workspace grep across `packages/nimbus-ui/src`,
+  `packages/convex/src`, `packages/codegen/src`, `demos/`, and
+  `crates/` finds zero non-`packages/nimbus/src/` consumers for these
+  three; they're only used internally by `http-client.ts`,
+  `browser-utils.ts`, `react.ts`, and `server.ts` to type method
+  signatures. The remaining six re-exports (`FunctionReference`,
+  `InferArgs`, `InferResult`, `QueryEntry`, `QueryReference`, plus
+  the function exports) all have real consumers.
+
+Story state coverage (`packages/nimbus-ui/src/stories/`):
+
+- `copy-chip.stories.tsx` — added `ClipboardDenied` that wraps the
+  chip in a frame which, on mount, replaces `navigator.clipboard`
+  with a stub whose `writeText` rejects, and restores the original
+  descriptor on unmount. Exercises the `toast.error(\`Failed to
+  copy ${label}\`)` branch in `components/copy-chip.tsx`.
+- `breadcrumb.stories.tsx` — added `LongPathTruncation` with three
+  segments each carrying a deliberately long label (one
+  `very-long-tenant-name-that-should-truncate-cleanly`, one
+  `machines/with/an/unusually-long-trailing-segment-label`) inside
+  a `w-[420px]` container so the truncate-on-overflow path is
+  visible in the catalog.
+- `time.stories.tsx` — added three skew variants:
+  `RelativeFutureSkew` (NOW + 45s — clock-skew "in N seconds"),
+  `RelativeFarPast` (NOW − 5 years), and `RelativeFarFuture`
+  (NOW + 5 years). Covers the under-a-minute, multi-year-past, and
+  multi-year-future branches of `formatRelativeTime`.
+- `upgrade-popover.stories.tsx` — added three VersionInfo-state
+  variants: `NotAvailable` (`available: false` with `latest ===
+  current`), `StaleCheck` (`checkStatus: "stale"`), and
+  `ErrorCheck` (`checkStatus: "error"`). The popover doesn't branch
+  on these fields directly, but the variants document the
+  realistic VersionInfo shapes the popover may render against.
+- `appearance-section.stories.tsx` — `Frame` now snapshots
+  `themeMode` + `palette` on mount (`useUiStore.getState()`),
+  applies the story's args, and restores the snapshot on unmount.
+  Prevents cross-story zustand pollution when the catalog tabs
+  between an appearance story and another component that reads
+  `useUiStore`.
+
+Verifications:
+
+- `npx tsc -p tsconfig.json --noEmit` (in `packages/nimbus-ui/`)
+  exits 0 with zero output.
+- `npx vitest run` → 37 files / 248 tests pass (R10 baseline was
+  37 / 248; the `*.stories.tsx` additions are story-only, no new
+  spec files).
+- `npm run typecheck` (workspace) exits 0 — `@nimbus/codegen`,
+  `@nimbus/mongodb`, `nimbus`, and `@nimbus/ui` all clean.
+- `npm run build` (nimbus-ui) clean (10.56 kB JS / 3.10 kB CSS;
+  no new warnings).
+- Grep sanity gates (run from repo root):
+  - `grep -n 'service?\.' packages/nimbus-ui/src/routes/admin/services_.\$service.tsx
+    packages/nimbus-ui/src/routes/app/services_.\$service.tsx` → 0
+    hits.
+  - `grep -n 'useRouterState' packages/nimbus-ui/src/shell/tenant-selector.tsx`
+    → 0 hits.
+  - `grep -nE 'export type \{[^}]*ActionReference|MutationReference|PaginatedQueryReference'
+    packages/nimbus/src/browser.ts` → 0 hits in the export block.
+
+Ledger flipped pending → done for R11 at close of phase.

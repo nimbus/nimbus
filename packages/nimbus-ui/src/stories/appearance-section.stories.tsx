@@ -25,8 +25,14 @@ function Frame({ mode, palette }: StoryArgs) {
   const setThemeMode = useUiStore((s) => s.setThemeMode);
   const setPalette = useUiStore((s) => s.setPalette);
   useEffect(() => {
+    const previousMode = useUiStore.getState().themeMode;
+    const previousPalette = useUiStore.getState().palette;
     setThemeMode(mode);
     setPalette(palette);
+    return () => {
+      setThemeMode(previousMode);
+      setPalette(previousPalette);
+    };
   }, [mode, palette, setThemeMode, setPalette]);
   return <AppearanceSection />;
 }

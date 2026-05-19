@@ -1,4 +1,18 @@
-export type ActiveObservabilityTab = "logs" | "runs";
+// One canonical declaration of the observability tab universe. The full
+// union (`ObservabilityTab`) is what shows up in the tab strip; the active
+// subset (`ActiveObservabilityTab`) is what the route's `tab` search param
+// is allowed to take. Both unions derive from the literal arrays below so
+// adding a tab is a single-line change.
+export const ACTIVE_OBSERVABILITY_TABS = ["logs", "runs"] as const;
+export const DISABLED_OBSERVABILITY_TABS = ["events", "errors"] as const;
+
+export type ActiveObservabilityTab =
+  (typeof ACTIVE_OBSERVABILITY_TABS)[number];
+export type DisabledObservabilityTab =
+  (typeof DISABLED_OBSERVABILITY_TABS)[number];
+export type ObservabilityTab =
+  | ActiveObservabilityTab
+  | DisabledObservabilityTab;
 
 export type ObservabilitySearch = {
   tab?: ActiveObservabilityTab;
@@ -37,7 +51,7 @@ export type RunDoc = {
 };
 
 export function parseTab(value: unknown): ActiveObservabilityTab | undefined {
-  return value === "logs" || value === "runs" ? value : undefined;
+  return ACTIVE_OBSERVABILITY_TABS.find((id) => id === value);
 }
 
 export function parseString(value: unknown): string | undefined {

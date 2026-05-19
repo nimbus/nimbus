@@ -111,7 +111,7 @@ function AdminServiceDetailPage() {
   const tab: DetailTab = search.tab ?? "placement";
 
   const bundle = useMemo<Doc<"bundles"> | null>(() => {
-    if (!service?.bundleId) return null;
+    if (!service.bundleId) return null;
     return bundles.find((b) => b._id === service.bundleId) ?? null;
   }, [service, bundles]);
 
