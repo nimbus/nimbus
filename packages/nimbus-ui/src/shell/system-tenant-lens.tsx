@@ -41,7 +41,7 @@ export function SystemTenantLens() {
             System tenant lens
           </div>
           <div className="font-mono text-sm text-default">
-            _nimbus · {view.label}
+            _nimbus <span aria-hidden="true">›</span> {view.label}
           </div>
         </div>
         <button

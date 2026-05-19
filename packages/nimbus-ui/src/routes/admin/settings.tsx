@@ -7,6 +7,7 @@ import { api } from "../../../convex/_generated/api";
 import { AppearanceSection } from "../../components/appearance-section";
 import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
+import { StateDot } from "../../components/state-dot";
 import { RelativeTime, Uptime } from "../../components/time";
 import { UpgradePopover } from "../../components/upgrade-popover";
 import { useStalenessContext } from "../../hooks/use-staleness";
@@ -459,14 +460,24 @@ function ServerInfoSection({
         </Definition>
         <Definition label="Encryption">
           {encryptionEnabled === "loading" ? (
-            <span className="text-muted">loading…</span>
+            <span className="inline-flex items-center gap-1.5 text-muted">
+              <StateDot state="reconnecting" />
+              loading…
+            </span>
           ) : encryptionEnabled === "error" ? (
-            <span className="text-danger">unavailable</span>
+            <span
+              className="inline-flex items-center gap-1.5 text-danger"
+              data-testid="settings-encryption-unavailable"
+            >
+              <StateDot state="offline" />
+              unavailable
+            </span>
           ) : encryptionEnabled ? (
             <span
-              className="font-mono text-xs text-default"
+              className="inline-flex items-center gap-1.5 font-mono text-xs text-default"
               data-testid="settings-encryption-enabled"
             >
+              <StateDot state="connected" />
               on
               {encryptedFamilies.length > 0 ? (
                 <span className="ml-1 text-muted">
@@ -475,7 +486,13 @@ function ServerInfoSection({
               ) : null}
             </span>
           ) : (
-            <span className="font-mono text-xs text-muted">off</span>
+            <span
+              className="inline-flex items-center gap-1.5 font-mono text-xs text-muted"
+              data-testid="settings-encryption-off"
+            >
+              <StateDot state="offline" />
+              off
+            </span>
           )}
         </Definition>
         <Definition label="Updates">

@@ -28,6 +28,11 @@ describe("EmptyState", () => {
     expect(screen.queryByTestId("es-cta")).toBeNull();
   });
 
+  it("renders the title in font-mono per DESIGN.md", () => {
+    render(<EmptyState title="Tenants endpoint unavailable" testid="es" />);
+    expect(screen.getByTestId("es-title")).toHaveClass("font-mono");
+  });
+
   it("renders body content when provided", () => {
     render(
       <EmptyState

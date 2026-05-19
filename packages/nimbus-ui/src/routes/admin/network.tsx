@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQuery } from "nimbus/react";
 import { useMemo, useState } from "react";
 
@@ -10,8 +10,32 @@ import {
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
 
+const SECTIONS = ["routes", "ws", "ports", "listeners", "security"] as const;
+type NetworkSection = (typeof SECTIONS)[number];
+
+type NetworkSearch = { section: NetworkSection };
+
+function parseSection(value: unknown): NetworkSection | undefined {
+  return typeof value === "string" &&
+    (SECTIONS as readonly string[]).includes(value)
+    ? (value as NetworkSection)
+    : undefined;
+}
+
 export const Route = createFileRoute("/admin/network")({
   component: NetworkPage,
+  validateSearch: (search: Record<string, unknown>): NetworkSearch => ({
+    section: parseSection(search.section) ?? "routes",
+  }),
+  beforeLoad: ({ search }) => {
+    if (parseSection((search as Record<string, unknown>).section) === undefined) {
+      throw redirect({
+        to: "/admin/network",
+        search: { section: "routes" },
+        replace: true,
+      });
+    }
+  },
 });
 
 type RouteDoc = {
