@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import { EmptyState } from "../../components/empty-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
@@ -27,7 +28,41 @@ export const Route = createFileRoute("/app/services")({
     return { services, activeTenant };
   },
   component: ServicesPage,
+  errorComponent: ServicesLoaderError,
 });
+
+export function ServicesLoaderError({ error }: { error: Error }) {
+  const router = useRouter();
+  const reload = useCallback(() => {
+    void router.invalidate();
+  }, [router]);
+  return (
+    <section
+      className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
+      data-testid="page-services"
+    >
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+        <EmptyState
+          title="Services endpoint unavailable"
+          body={
+            <>
+              The services query failed:{" "}
+              <span
+                className="font-mono text-default"
+                data-testid="storage-server-error"
+              >
+                {error.message}
+              </span>
+              . Retry once the backend is reachable.
+            </>
+          }
+          cta={{ label: "Retry", onClick: reload }}
+          testid="storage-server-error-envelope"
+        />
+      </div>
+    </section>
+  );
+}
 
 function ServicesPage() {
   const { services, activeTenant: loadedTenant } = Route.useLoaderData();

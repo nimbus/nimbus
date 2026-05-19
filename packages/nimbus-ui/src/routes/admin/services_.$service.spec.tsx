@@ -1,12 +1,30 @@
+import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { notFoundMock } = vi.hoisted(() => ({
+const { notFoundMock, invalidateMock } = vi.hoisted(() => ({
   notFoundMock: vi.fn(() => new Error("__NOT_FOUND__")),
+  invalidateMock: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (config: Record<string, unknown>) => config,
   notFound: notFoundMock,
+  useRouter: () => ({ invalidate: invalidateMock }),
+  Link: ({
+    to,
+    children,
+    "data-testid": testId,
+    className,
+  }: {
+    to: string;
+    children: React.ReactNode;
+    "data-testid"?: string;
+    className?: string;
+  }) => (
+    <a href={to} data-testid={testId} className={className}>
+      {children}
+    </a>
+  ),
 }));
 
 const { nimbusQueryMock } = vi.hoisted(() => ({
@@ -17,7 +35,12 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
-import { isTab, Route, TABS } from "./services_.$service";
+import {
+  AdminServiceDetailLoaderError,
+  isTab,
+  Route,
+  TABS,
+} from "./services_.$service";
 
 type LoaderArgs = { params: { service: string } };
 
@@ -33,6 +56,7 @@ const routeInternals = Route as unknown as {
 beforeEach(() => {
   nimbusQueryMock.mockReset();
   notFoundMock.mockClear();
+  invalidateMock.mockReset();
 });
 
 afterEach(() => {
@@ -109,5 +133,25 @@ describe("admin/services/$service loader", () => {
       routeInternals.loader({ params: { service: "missing" } }),
     ).rejects.toThrow("__NOT_FOUND__");
     expect(notFoundMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("admin/services/$service errorComponent", () => {
+  it("renders the diagnostic envelope with the loader-error message and a Retry CTA", () => {
+    render(
+      <AdminServiceDetailLoaderError error={new Error("convex down")} />,
+    );
+    expect(
+      screen.getByTestId("storage-server-error-envelope"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("storage-server-error-envelope-title"),
+    ).toHaveTextContent("Service detail unavailable");
+    expect(
+      screen.getByTestId("storage-server-error-envelope-cta"),
+    ).toHaveTextContent("Retry");
+    expect(screen.getByTestId("storage-server-error")).toHaveTextContent(
+      "convex down",
+    );
   });
 });

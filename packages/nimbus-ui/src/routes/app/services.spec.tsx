@@ -1,7 +1,28 @@
+import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { invalidateMock } = vi.hoisted(() => ({
+  invalidateMock: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (config: Record<string, unknown>) => config,
+  useRouter: () => ({ invalidate: invalidateMock }),
+  Link: ({
+    to,
+    children,
+    "data-testid": testId,
+    className,
+  }: {
+    to: string;
+    children: React.ReactNode;
+    "data-testid"?: string;
+    className?: string;
+  }) => (
+    <a href={to} data-testid={testId} className={className}>
+      {children}
+    </a>
+  ),
 }));
 
 const { nimbusQueryMock } = vi.hoisted(() => ({
@@ -13,7 +34,7 @@ vi.mock("../../lib/nimbus-client", () => ({
 }));
 
 import { useUiStore } from "../../store/ui-store";
-import { Route } from "./services";
+import { Route, ServicesLoaderError } from "./services";
 
 type LoaderArgs = Record<string, unknown>;
 
@@ -26,6 +47,7 @@ const routeInternals = Route as unknown as {
 
 beforeEach(() => {
   nimbusQueryMock.mockReset();
+  invalidateMock.mockReset();
   useUiStore.setState({ activeTenant: null });
 });
 
@@ -69,5 +91,23 @@ describe("app/services loader", () => {
     useUiStore.setState({ activeTenant: "beta" });
 
     expect(result.activeTenant).toBe("alpha");
+  });
+});
+
+describe("app/services errorComponent", () => {
+  it("renders the diagnostic envelope with the loader-error message and a Retry CTA", () => {
+    render(<ServicesLoaderError error={new Error("convex down")} />);
+    expect(
+      screen.getByTestId("storage-server-error-envelope"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("storage-server-error-envelope-title"),
+    ).toHaveTextContent("Services endpoint unavailable");
+    expect(
+      screen.getByTestId("storage-server-error-envelope-cta"),
+    ).toHaveTextContent("Retry");
+    expect(screen.getByTestId("storage-server-error")).toHaveTextContent(
+      "convex down",
+    );
   });
 });

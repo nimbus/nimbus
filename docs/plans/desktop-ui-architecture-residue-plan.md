@@ -223,7 +223,7 @@ After this wave closes:
 | R2 | Loaderize `_.$service.tsx` sibling queries (BLOCKER) | done |
 | R3 | Codegen specs + audit-comment fix + `JsonValue` dedup + convention decision (BLOCKER) | done |
 | R4 | Loaderize `compute_.runs_.$runId.tsx` | done |
-| R5 | Loader-error envelope coverage on the four A4 routes | pending |
+| R5 | Loader-error envelope coverage on the four A4 routes | done |
 | R6 | Extract shared filter + table-cell primitives | pending |
 | R7 | `Route.loaderDeps` for tenant-switch invalidation | pending |
 | R8 | A3 residue cleanup (dead refs, typed sub-drawer) | pending |
@@ -1026,3 +1026,50 @@ Verifications:
   `compute_.runs_._runId-*.js` chunk weighs 7.55 kB / 2.24 kB gzip).
 
 Ledger flipped pending → done for R4 at close of phase.
+
+(f) **R5 — Loader-error envelope coverage on the four A4 routes
+(2026-05-19).** Each of the four service routes (`admin/services`,
+`admin/services_.$service`, `app/services`, `app/services_.$service`)
+now declares `Route.errorComponent`, bringing them up to the
+`/admin/tenants` standard. The error component renders the same
+`storage-server-error-envelope` testid surface as
+`tenants.tsx:258-280` and offers a Retry CTA wired to
+`router.invalidate()`. Approach choice: `Route.errorComponent` over
+the discriminated `LoaderResult` pattern. The tenants route returns
+a discriminated kind because its loader catches a `fetch` failure
+plus a downstream query failure and wants to disambiguate; the four
+A4 routes have a single query path each (or a `Promise.all` fan-out
+of queries that share the same failure mode), so a single
+errorComponent is simpler and keeps the loader free of try/catch
+ornament. `notFound()` paths remain on `notFoundComponent` —
+unchanged.
+
+Touch list:
+
+- `packages/nimbus-ui/src/routes/admin/services.tsx` — new exported
+  `AdminServicesLoaderError({ error })` plus
+  `errorComponent: AdminServicesLoaderError` in the route config.
+- `packages/nimbus-ui/src/routes/admin/services_.$service.tsx` — new
+  exported `AdminServiceDetailLoaderError({ error })` plus
+  `errorComponent` wiring.
+- `packages/nimbus-ui/src/routes/app/services.tsx` — new exported
+  `ServicesLoaderError({ error })` plus `errorComponent` wiring.
+- `packages/nimbus-ui/src/routes/app/services_.$service.tsx` — new
+  exported `ServiceDetailLoaderError({ error })` plus
+  `errorComponent` wiring.
+- Specs: renamed each route's `.spec.ts` → `.spec.tsx` to enable
+  JSX rendering, and appended one render block per route asserting
+  the envelope `data-testid`s (`storage-server-error-envelope`,
+  `-title`, `-cta`, `storage-server-error`) match the tenants
+  pattern. Existing loader tests on each spec are untouched.
+
+Verifications:
+
+- `npx tsc --noEmit` in `packages/nimbus-ui/` exits 0.
+- `npx vitest run` in `packages/nimbus-ui/` → 37 files / 246 tests
+  pass (was 37 / 242 at R4 close; +4 cases, one per route).
+- `npx vite build` clean (chunk-size warning unchanged).
+- `grep -l 'errorComponent' packages/nimbus-ui/src/routes/{admin,app}/services*.tsx`
+  → all four service routes plus their detail siblings appear.
+
+Ledger flipped pending → done for R5 at close of phase.
