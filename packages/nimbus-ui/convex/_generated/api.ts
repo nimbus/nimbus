@@ -10,23 +10,23 @@ export const api = {
   "adapter": string | null;
   "status": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("adapter_capabilities:list", "public")
+}, Doc<"adapter_capabilities">[]>("adapter_capabilities:list", "public")
   },
   bundles: {
     list: makeQueryReference<{
   "status": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("bundles:list", "public"),
+}, Doc<"bundles">[]>("bundles:list", "public"),
     bySha256: makeQueryReference<{
   "sha256": string;
-}, JsonValue>("bundles:bySha256", "public")
+}, Doc<"bundles"> | null>("bundles:bySha256", "public")
   },
   cron_jobs: {
     list: makeQueryReference<{
   "tenantId": string | null;
   "status": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("cron_jobs:list", "public")
+}, Doc<"cron_jobs">[]>("cron_jobs:list", "public")
   },
   events: {
     recent: makeQueryReference<{
@@ -35,31 +35,31 @@ export const api = {
   "category": string | null;
   "correlationId": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("events:recent", "public")
+}, Doc<"events">[]>("events:recent", "public")
   },
   functions: {
     list: makeQueryReference<{
   "bundleId": string | null;
   "kind": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("functions:list", "public")
+}, Doc<"functions">[]>("functions:list", "public")
   },
   listeners: {
     list: makeQueryReference<{
   "adapter": string | null;
   "state": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("listeners:list", "public")
+}, Doc<"listeners">[]>("listeners:list", "public")
   },
   machines: {
     list: makeQueryReference<{
   "state": string | null;
   "provider": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("machines:list", "public"),
+}, Doc<"machines">[]>("machines:list", "public"),
     byId: makeQueryReference<{
   "id": Id<"machines">;
-}, JsonValue>("machines:byId", "public")
+}, Doc<"machines"> | null>("machines:byId", "public")
   },
   ports: {
     list: makeQueryReference<{
@@ -67,13 +67,13 @@ export const api = {
   "serviceId": string | null;
   "state": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("ports:list", "public")
+}, Doc<"ports">[]>("ports:list", "public")
   },
   routes: {
     list: makeQueryReference<{
   "adapter": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("routes:list", "public")
+}, Doc<"routes">[]>("routes:list", "public")
   },
   runs: {
     recent: makeQueryReference<{
@@ -81,17 +81,17 @@ export const api = {
   "functionPath": string | null;
   "status": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("runs:recent", "public"),
+}, Doc<"runs">[]>("runs:recent", "public"),
     byId: makeQueryReference<{
   "id": Id<"runs">;
-}, JsonValue>("runs:byId", "public")
+}, Doc<"runs"> | null>("runs:byId", "public")
   },
   scheduled_jobs: {
     list: makeQueryReference<{
   "tenantId": string | null;
   "status": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("scheduled_jobs:list", "public")
+}, Doc<"scheduled_jobs">[]>("scheduled_jobs:list", "public")
   },
   services: {
     list: makeQueryReference<{
@@ -99,17 +99,17 @@ export const api = {
   "machineId": string | null;
   "state": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("services:list", "public"),
+}, Doc<"services">[]>("services:list", "public"),
     byId: makeQueryReference<{
   "id": Id<"services">;
-}, JsonValue>("services:byId", "public")
+}, Doc<"services"> | null>("services:byId", "public")
   },
   subscriptions: {
     list: makeQueryReference<{
   "tenantId": string | null;
   "adapter": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("subscriptions:list", "public")
+}, Doc<"subscriptions">[]>("subscriptions:list", "public")
   },
   system: {
     status: makeQueryReference<{}, JsonValue | null>("system:status", "public")
@@ -118,11 +118,11 @@ export const api = {
     list: makeQueryReference<{
   "tenantId": string | null;
   "limit": number | null;
-}, (JsonValue)[]>("tables:list", "public"),
+}, Doc<"tables">[]>("tables:list", "public"),
     byName: makeQueryReference<{
   "tenantId": string;
   "name": string;
-}, JsonValue>("tables:byName", "public")
+}, Doc<"tables"> | null>("tables:byName", "public")
   }
 };
 

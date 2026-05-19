@@ -30,6 +30,15 @@ export {
   makePaginatedQueryReference,
   makeQueryReference,
 } from "./internal/shared.ts";
+export type {
+  ActionReference,
+  FunctionReference,
+  InferArgs,
+  InferResult,
+  MutationReference,
+  PaginatedQueryReference,
+  QueryReference,
+} from "./internal/shared.ts";
 export { NimbusHttpClient } from "./http-client.ts";
 export type { AuthTokenFetcher } from "./http-client.ts";
 

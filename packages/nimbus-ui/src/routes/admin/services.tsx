@@ -5,12 +5,13 @@ import { useMemo } from "react";
 import { api } from "../../../convex/_generated/api";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import type { ServiceDoc } from "../../lib/types/service";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
   useSubDrawerSearch,
 } from "../../shell/sub-drawer";
-import { type ServiceDoc, ServicesTable } from "../app/services";
+import { ServicesTable } from "../app/services";
 
 export const Route = createFileRoute("/admin/services")({
   component: AdminServicesPage,
@@ -22,7 +23,7 @@ function AdminServicesPage() {
     machineId: null,
     state: null,
     limit: 200,
-  }) as ServiceDoc[] | undefined;
+  });
 
   const spec = useMemo<SubDrawerSpec>(
     () => ({

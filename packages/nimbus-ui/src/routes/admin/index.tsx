@@ -3,6 +3,7 @@ import { useNimbusConnectionState, useQuery } from "nimbus/react";
 import { useEffect, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import type { Doc } from "../../../convex/_generated/dataModel";
 import { LoadingCell } from "../../components/loading-cell";
 import { RelativeTime } from "../../components/time";
 import {
@@ -23,9 +24,7 @@ type SystemStatus = {
   details?: { listenAddress?: string } | null;
 };
 
-type MachineDoc = { _id: string; state?: string };
-type ServiceDoc = { _id: string };
-type ListenerDoc = { _id: string; adapter?: string; state?: string };
+type ListenerDoc = Doc<"listeners">;
 
 function SystemOverviewPage() {
   const conn = useConnSnapshot();
@@ -37,18 +36,18 @@ function SystemOverviewPage() {
     state: null,
     provider: null,
     limit: 500,
-  }) as MachineDoc[] | undefined;
+  });
   const services = useQuery(api.services.list, {
     tenantId: null,
     machineId: null,
     state: null,
     limit: 500,
-  }) as ServiceDoc[] | undefined;
+  });
   const listeners = useQuery(api.listeners.list, {
     adapter: null,
     state: null,
     limit: 100,
-  }) as ListenerDoc[] | undefined;
+  });
 
   const tenantCount = useTenantCount();
 

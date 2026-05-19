@@ -1,4 +1,4 @@
-import { renderValidatorType } from "./schema_types.mjs";
+import { isTrivialValidator, renderValidatorType } from "./schema_types.mjs";
 
 function renderArgsType(argsSchema) {
   const entries = Object.entries(argsSchema ?? {});
@@ -15,27 +15,55 @@ function renderArgsType(argsSchema) {
 
 function inferFunctionResultType(fn, schema, functionIndex, seen = new Set()) {
   if (seen.has(fn.name)) {
-    return "unknown";
+    return { type: "unknown", source: "fallback-recursive" };
   }
   const nextSeen = new Set(seen);
   nextSeen.add(fn.name);
 
-  if (fn.returnsSchema) {
-    return renderValidatorType(fn.returnsSchema, { idSymbol: "Id" });
+  const hasExplicitReturn =
+    fn.returnsSchema && !isTrivialValidator(fn.returnsSchema);
+  if (hasExplicitReturn) {
+    return {
+      type: renderValidatorType(fn.returnsSchema, { idSymbol: "Id" }),
+      source: "explicit",
+    };
   }
 
+  let inferred;
   switch (fn.kind) {
     case "query":
-      return inferQueryResultType(fn.plan, schema);
+      inferred = inferQueryResultType(fn.plan, schema);
+      break;
     case "paginated_query":
-      return inferPaginatedItemType(fn.plan, schema);
+      inferred = inferPaginatedItemType(fn.plan, schema);
+      break;
     case "mutation":
-      return inferMutationResultType(fn.plan, schema);
+      inferred = inferMutationResultType(fn.plan, schema);
+      break;
     case "action":
-      return inferActionResultType(fn.plan, schema, functionIndex, nextSeen);
+      inferred = inferActionResultType(fn.plan, schema, functionIndex, nextSeen);
+      break;
     default:
-      return "unknown";
+      inferred = "unknown";
   }
+
+  if (inferred !== "unknown") {
+    return { type: inferred, source: "plan-inferred" };
+  }
+
+  const conventional = inferFromModuleConvention(fn, schema);
+  if (conventional) {
+    return { type: conventional, source: "convention-inferred" };
+  }
+
+  if (fn.returnsSchema) {
+    return {
+      type: renderValidatorType(fn.returnsSchema, { idSymbol: "Id" }),
+      source: "fallback-trivial-validator",
+    };
+  }
+
+  return { type: "unknown", source: "fallback-no-validator" };
 }
 
 function inferQueryResultType(plan, schema) {
@@ -91,9 +119,11 @@ function inferActionResultType(plan, schema, functionIndex, seen) {
     case "call_mutation":
     case "call_action": {
       const target = functionIndex.get(plan.name);
-      return target
-        ? inferFunctionResultType(target, schema, functionIndex, seen)
-        : "unknown";
+      if (!target) {
+        return "unknown";
+      }
+      const result = inferFunctionResultType(target, schema, functionIndex, seen);
+      return result.type;
     }
     case "schedule_run_after":
     case "schedule_run_at":
@@ -103,6 +133,33 @@ function inferActionResultType(plan, schema, functionIndex, seen) {
     default:
       return "unknown";
   }
+}
+
+const LIST_EXPORT_NAMES = new Set(["list", "recent", "all", "active"]);
+const SINGLETON_EXPORT_NAMES = new Set(["byId", "get", "current", "first"]);
+
+function inferFromModuleConvention(fn, schema) {
+  if (fn.kind !== "query" && fn.kind !== "paginated_query") {
+    return null;
+  }
+  const [moduleName, exportName] = String(fn.name).split(":");
+  if (!moduleName || !exportName) {
+    return null;
+  }
+  if (!schema?.tables?.[moduleName]) {
+    return null;
+  }
+  const docType = `Doc<${JSON.stringify(moduleName)}>`;
+  if (fn.kind === "paginated_query") {
+    return docType;
+  }
+  if (LIST_EXPORT_NAMES.has(exportName)) {
+    return `${docType}[]`;
+  }
+  if (SINGLETON_EXPORT_NAMES.has(exportName)) {
+    return `${docType} | null`;
+  }
+  return null;
 }
 
 function inferDocumentTypeForTable(tableName, schema) {

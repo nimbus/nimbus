@@ -13,10 +13,11 @@ import {
   Settings,
 } from "lucide-react";
 
-import { api } from "../../convex/_generated/api";
-import type { JsonValue, QueryReference } from "./types";
+import type { QueryReference } from "nimbus/browser";
 
-type CountQuery = QueryReference<unknown, JsonValue[] | null | undefined>;
+import { api } from "../../convex/_generated/api";
+
+export type CountQuery = QueryReference<Record<string, unknown>, unknown[]>;
 
 export type NavView = "developer" | "operator";
 

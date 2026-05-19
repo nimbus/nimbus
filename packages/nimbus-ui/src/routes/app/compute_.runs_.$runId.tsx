@@ -3,6 +3,7 @@ import { useQuery } from "nimbus/react";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
@@ -14,35 +15,14 @@ export const Route = createFileRoute("/app/compute_/runs_/$runId")({
   component: RunDetailPage,
 });
 
-type RunDoc = {
-  _id: string;
-  _creationTime?: number;
-  bundleId?: string;
-  functionPath?: string;
-  kind?: string;
-  durationMs?: number;
-  status?: string;
-  error?: unknown;
-  startedAt?: number;
-};
-
-type EventDoc = {
-  _id: string;
-  _creationTime?: number;
-  source?: string;
-  level?: string;
-  category?: string;
-  message?: string;
-  data?: Record<string, unknown> | null;
-  correlationId?: string | null;
-  createdAt?: number;
-};
+type RunDoc = Doc<"runs">;
+type EventDoc = Doc<"events">;
 
 function RunDetailPage() {
   const { runId } = Route.useParams();
   const run = useQuery(api.runs.byId, {
-    id: runId as never,
-  }) as RunDoc | null | undefined;
+    id: runId as Id<"runs">,
+  });
 
   const events = useQuery(api.events.recent, {
     source: null,
@@ -50,7 +30,7 @@ function RunDetailPage() {
     category: null,
     correlationId: runId,
     limit: 200,
-  }) as EventDoc[] | undefined;
+  });
 
   const sortedEvents = useMemo(() => {
     return (events ?? [])

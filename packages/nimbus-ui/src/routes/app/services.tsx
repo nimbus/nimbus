@@ -7,6 +7,7 @@ import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import type { ServiceDoc } from "../../lib/types/service";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
@@ -18,19 +19,6 @@ export const Route = createFileRoute("/app/services")({
   component: ServicesPage,
 });
 
-export type ServiceDoc = {
-  _id: string;
-  _updateTime?: number;
-  tenantId?: string;
-  name?: string;
-  machineId?: string;
-  bundleId?: string;
-  kind?: string;
-  state?: string;
-  endpoints?: unknown[];
-  health?: unknown;
-};
-
 function ServicesPage() {
   const activeTenant = useUiStore((s) => s.activeTenant);
   const services = useQuery(api.services.list, {
@@ -38,7 +26,7 @@ function ServicesPage() {
     machineId: null,
     state: null,
     limit: 200,
-  }) as ServiceDoc[] | undefined;
+  });
 
   const spec = useMemo<SubDrawerSpec>(
     () => ({
