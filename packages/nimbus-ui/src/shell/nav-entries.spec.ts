@@ -68,9 +68,14 @@ describe("nav-entries", () => {
     }
   });
 
-  it("pairs countQuery with countArgs (both set or both null)", () => {
+  it("packs count entries with both ref and args (or null for non-count entries)", () => {
     for (const entry of [...DEVELOPER_NAV_ENTRIES, ...OPERATOR_NAV_ENTRIES]) {
-      expect(entry.countQuery === null).toBe(entry.countArgs === null);
+      if (entry.count === null) {
+        continue;
+      }
+      expect(entry.count.ref).toBeDefined();
+      expect(entry.count.args).toBeDefined();
+      expect(typeof entry.count.ref.name).toBe("string");
     }
   });
 

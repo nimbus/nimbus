@@ -13,11 +13,15 @@ import {
   Settings,
 } from "lucide-react";
 
-import type { QueryReference } from "nimbus/browser";
+import { queryEntry, type QueryEntry } from "nimbus/browser";
 
 import { api } from "../../convex/_generated/api";
 
-export type CountQuery = QueryReference<Record<string, unknown>, unknown[]>;
+// Storage type for heterogeneous nav-count entries. Each construction site
+// (via `queryEntry(api.X, args)`) is type-checked against api.X's TArgs;
+// TArgs is widened to `any` only at the array level so a single NavEntry
+// shape can host counts with different arg shapes.
+export type NavCountEntry = QueryEntry<any, readonly unknown[]>;
 
 export type NavView = "developer" | "operator";
 
@@ -27,8 +31,7 @@ export type NavEntry = {
   to: string;
   icon: LucideIcon;
   view: NavView;
-  countQuery: CountQuery | null;
-  countArgs: Record<string, unknown> | null;
+  count: NavCountEntry | null;
 };
 
 export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
@@ -38,8 +41,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     to: "/app",
     icon: Gauge,
     view: "developer",
-    countQuery: null,
-    countArgs: null,
+    count: null,
   },
   {
     id: "compute",
@@ -47,8 +49,11 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     to: "/app/compute",
     icon: Cpu,
     view: "developer",
-    countQuery: api.functions.list as unknown as CountQuery,
-    countArgs: { bundleId: null, kind: null, limit: 200 },
+    count: queryEntry(api.functions.list, {
+      bundleId: null,
+      kind: null,
+      limit: 200,
+    }),
   },
   {
     id: "services",
@@ -56,8 +61,12 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     to: "/app/services",
     icon: Boxes,
     view: "developer",
-    countQuery: api.services.list as unknown as CountQuery,
-    countArgs: { tenantId: null, machineId: null, state: null, limit: 200 },
+    count: queryEntry(api.services.list, {
+      tenantId: null,
+      machineId: null,
+      state: null,
+      limit: 200,
+    }),
   },
   {
     id: "schedules",
@@ -65,8 +74,11 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     to: "/app/schedules",
     icon: Clock,
     view: "developer",
-    countQuery: api.scheduled_jobs.list as unknown as CountQuery,
-    countArgs: { tenantId: null, status: null, limit: 200 },
+    count: queryEntry(api.scheduled_jobs.list, {
+      tenantId: null,
+      status: null,
+      limit: 200,
+    }),
   },
   {
     id: "storage",
@@ -74,8 +86,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     to: "/app/storage",
     icon: Database,
     view: "developer",
-    countQuery: api.tables.list as unknown as CountQuery,
-    countArgs: { tenantId: null, limit: 200 },
+    count: queryEntry(api.tables.list, { tenantId: null, limit: 200 }),
   },
   {
     id: "files",
@@ -83,8 +94,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     to: "/app/files",
     icon: HardDrive,
     view: "developer",
-    countQuery: null,
-    countArgs: null,
+    count: null,
   },
   {
     id: "observability",
@@ -92,8 +102,12 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     to: "/app/observability",
     icon: Activity,
     view: "developer",
-    countQuery: api.runs.recent as unknown as CountQuery,
-    countArgs: { bundleId: null, functionPath: null, status: null, limit: 200 },
+    count: queryEntry(api.runs.recent, {
+      bundleId: null,
+      functionPath: null,
+      status: null,
+      limit: 200,
+    }),
   },
   {
     id: "settings",
@@ -101,8 +115,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     to: "/app/settings",
     icon: Settings,
     view: "developer",
-    countQuery: null,
-    countArgs: null,
+    count: null,
   },
 ];
 
@@ -113,8 +126,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
     to: "/admin",
     icon: Gauge,
     view: "operator",
-    countQuery: null,
-    countArgs: null,
+    count: null,
   },
   {
     id: "tenants",
@@ -122,8 +134,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
     to: "/admin/tenants",
     icon: Building2,
     view: "operator",
-    countQuery: null,
-    countArgs: null,
+    count: null,
   },
   {
     id: "machines",
@@ -131,8 +142,11 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
     to: "/admin/machines",
     icon: Server,
     view: "operator",
-    countQuery: api.machines.list as unknown as CountQuery,
-    countArgs: { state: null, provider: null, limit: 200 },
+    count: queryEntry(api.machines.list, {
+      state: null,
+      provider: null,
+      limit: 200,
+    }),
   },
   {
     id: "network",
@@ -140,8 +154,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
     to: "/admin/network",
     icon: Network,
     view: "operator",
-    countQuery: api.routes.list as unknown as CountQuery,
-    countArgs: { adapter: null, limit: 200 },
+    count: queryEntry(api.routes.list, { adapter: null, limit: 200 }),
   },
   {
     id: "services",
@@ -149,8 +162,12 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
     to: "/admin/services",
     icon: Boxes,
     view: "operator",
-    countQuery: api.services.list as unknown as CountQuery,
-    countArgs: { tenantId: null, machineId: null, state: null, limit: 200 },
+    count: queryEntry(api.services.list, {
+      tenantId: null,
+      machineId: null,
+      state: null,
+      limit: 200,
+    }),
   },
   {
     id: "observability",
@@ -158,8 +175,12 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
     to: "/admin/observability",
     icon: Activity,
     view: "operator",
-    countQuery: api.runs.recent as unknown as CountQuery,
-    countArgs: { bundleId: null, functionPath: null, status: null, limit: 200 },
+    count: queryEntry(api.runs.recent, {
+      bundleId: null,
+      functionPath: null,
+      status: null,
+      limit: 200,
+    }),
   },
   {
     id: "settings",
@@ -167,8 +188,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
     to: "/admin/settings",
     icon: Settings,
     view: "operator",
-    countQuery: null,
-    countArgs: null,
+    count: null,
   },
 ];
 

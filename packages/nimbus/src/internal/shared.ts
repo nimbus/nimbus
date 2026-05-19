@@ -99,6 +99,18 @@ export type InferResult<Ref> = Ref extends PaginatedQueryReference<any, infer It
     ? Result
     : never;
 
+export type QueryEntry<TArgs, TReturn> = {
+  readonly ref: QueryReference<TArgs, TReturn>;
+  readonly args: TArgs;
+};
+
+export function queryEntry<TArgs, TReturn>(
+  ref: QueryReference<TArgs, TReturn>,
+  args: TArgs,
+): QueryEntry<TArgs, TReturn> {
+  return { ref, args };
+}
+
 export type Page<T> = {
   data: T[];
   next_cursor: string | null;

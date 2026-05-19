@@ -4,7 +4,7 @@ import { useQuery } from "nimbus/react";
 import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 import {
-  type CountQuery,
+  type NavCountEntry,
   type NavEntry,
   navEntriesForView,
   viewFromPathname,
@@ -95,12 +95,8 @@ function DrawerEntry({
         {collapsed ? null : (
           <>
             <span className="flex-1">{entry.label}</span>
-            {entry.countQuery ? (
-              <NavCount
-                id={entry.id}
-                query={entry.countQuery}
-                args={entry.countArgs}
-              />
+            {entry.count ? (
+              <NavCount id={entry.id} count={entry.count} />
             ) : null}
           </>
         )}
@@ -109,18 +105,10 @@ function DrawerEntry({
   );
 }
 
-function NavCount({
-  id,
-  query,
-  args,
-}: {
-  id: string;
-  query: CountQuery;
-  args: Record<string, unknown> | null;
-}) {
-  const result = useQuery(query, args ?? undefined);
-  const count = Array.isArray(result) ? result.length : undefined;
-  if (count === undefined) {
+function NavCount({ id, count }: { id: string; count: NavCountEntry }) {
+  const result = useQuery(count.ref, count.args);
+  const value = result?.length;
+  if (value === undefined) {
     return (
       <>
         <span
@@ -139,7 +127,7 @@ function NavCount({
       className="tabular font-mono text-xs text-muted"
       data-testid={`nav-${id}-count`}
     >
-      {count}
+      {value}
     </span>
   );
 }
