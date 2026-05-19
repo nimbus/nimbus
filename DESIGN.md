@@ -107,14 +107,20 @@ view.
 | --- | --- | --- |
 | Overview | This app's health and recent activity | Recent runs, error rate, last deploy, schedule status, latest events |
 | Compute | Request-scoped execution | Functions list, function detail, function runner, runs |
+| Services | Long-running placement (this tenant's view) | Compose-declared services in the active tenant, lifecycle state, endpoints, restart policy |
 | Schedules | Periodic and future-dated work | Scheduled jobs (next/last run, cancel/retry), cron jobs |
 | Storage | Schema-aware data | Tables, document browser, schema panel, indexes, query builder |
 | Files | Opaque bytes / blob storage | Buckets, object browser, presigned URLs (placeholder in this baseline) |
 | Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
 | Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding |
 
-7 sections. Every section is tenant-scoped — the active tenant comes from
-the top-nav selector, not the URL.
+8 sections. Every section is tenant-scoped — the active tenant comes from
+the top-nav selector, not the URL. Services is **dual-persona** (it also
+appears in the Operator IA below); both consoles back onto the same
+`ServicesTable` and `ServiceDoc` shape, with the Developer side filtered
+to the active tenant. See
+`docs/plans/archive/desktop-ui-compute-services-redesign-plan.md` for the
+IA decision rationale.
 
 ### Operator console — sidebar IA (`/admin/*`)
 
@@ -124,7 +130,7 @@ the top-nav selector, not the URL.
 | Tenants | Tenant lifecycle | List with backend/quota/table-count, create, archive, per-tenant adapter binding |
 | Machines | Host/guest lifecycle | Machine list, detail (boot image, upgrade state, services placed on it), start/stop/restart/SSH/OS apply/remove |
 | Network | Reachability | HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status, origin allowlist |
-| Services | Long-running placement | Compose-declared services, service catalog, lifecycle state, endpoints, restart policy |
+| Services | Long-running placement (cross-tenant) | Compose-declared services across every tenant, service catalog, lifecycle state, endpoints, restart policy. **Dual-persona** with the Developer IA above; both sides share `ServicesTable`/`ServiceDoc` with a `showTenantColumn` toggle |
 | Observability | Cross-tenant debugging and audit | Logs, events, traces, error groups — default cross-tenant; optional `?tenant=<id>` filter |
 | Settings (server) | Server administration | General, endpoints, deploys, token/session, environment, integrations (adapter capability matrices), shutdown |
 
@@ -175,7 +181,8 @@ No large greeting, hero illustration, or marketing copy.
 ### Compute (Developer)
 
 Compute owns request-scoped function execution for the active tenant.
-Service lifecycle moved out to the Operator console (`Services`).
+Service lifecycle lives in `Services` — a dual-persona surface present
+in both consoles. Compute and Services are siblings, not parent/child.
 
 - Functions list: path, kind, adapter, bundle, args schema, returns schema,
   last run, failure rate, p95 duration when available.
@@ -193,6 +200,26 @@ does not show a tenant chooser.
 Convex-like function runner behavior is useful, but it must be Nimbus-aware:
 show which adapter handles the function and which execution mode is in
 play (query / mutation / action / HTTP route / scheduled job).
+
+### Services (Developer)
+
+Services owns long-running placement for the active tenant. Same surface
+as the Operator-side `/admin/services` (see §Services below); the
+Developer side filters `ServicesTable` to the active tenant and hides
+the cross-tenant column.
+
+- Service list: name, kind, lifecycle state, placement (machine),
+  health, endpoints, restart policy. Scoped to the active tenant.
+- Service detail: backing image, environment, ports, dependencies,
+  lifecycle history. Cross-links to **Operator → Machines** for the
+  underlying machine record.
+- Actions: start, stop, restart, drain, remove — gated by tenant
+  permissions, not visible if the active tenant lacks placement rights.
+
+The Services sub-drawer (Developer) is a **dynamic list** of services
+declared in the active tenant's `compose.yaml`. The Developer side
+never lists system services from `_nimbus`; the System Tenant Lens
+(⌘\\) is the only Developer-side path to system service state.
 
 ### Schedules (Developer)
 
@@ -357,21 +384,28 @@ The Network sub-drawer is a **static menu** (`Routes` / `WS` / `Ports`
 
 ### Services (Operator)
 
-Services owns long-running placement (Compose-declared services, service
-catalog, lifecycle state, endpoints, restart policy). Ships as a
-placeholder surface in this baseline.
+The Operator-side cross-tenant view of the same Services surface
+described under **Services (Developer)** above. The same
+`ServicesTable` component backs both routes; only the query and the
+visible columns differ.
 
-- Service list: name, kind, lifecycle state, placement (machine), health,
-  endpoints, restart policy.
-- Service detail: backing image, environment, ports, dependencies,
-  lifecycle history.
-- Actions: start, stop, restart, drain, remove.
+- Service list: cross-tenant, grouped by tenant. Adds a `Tenant` column
+  not present on the Developer side. Includes system services
+  (`_nimbus`-owned) that the Developer console hides.
+- Service detail: identical schema to the Developer side — backing
+  image, environment, ports, dependencies, lifecycle history. The
+  difference is permissions: Operator actions are not tenant-gated.
+- Actions: start, stop, restart, drain, remove. Operator can act on
+  any tenant's services and on system services.
 
 A service has both a service identity (here) and a machine placement
-(under Operator → Machines). Cross-link both ways; do not duplicate the
-full detail page on the machine side.
+(under **Operator → Machines**). Cross-link both ways; do not duplicate
+the full detail page on the machine side.
 
-The Services sub-drawer is a **dynamic list** of services.
+The Services sub-drawer (Operator) is a **dynamic list** of services,
+grouped by tenant. State chips render per service. The Developer and
+Operator sub-drawers share the same item template — only the grouping
+and the tenant scope of the query differ.
 
 ### Observability (Operator)
 
