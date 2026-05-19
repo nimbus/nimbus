@@ -6,6 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
+import { Td, Th } from "../../components/table-cells";
 import { cn } from "../../lib/cn";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import { fetchTenants } from "../../shell/tenants-fetch";
@@ -385,47 +386,6 @@ function TenantsPage() {
         testid="storage-delete-tenant-dialog"
       />
     </section>
-  );
-}
-
-function Th({
-  children,
-  align = "left",
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-}) {
-  return (
-    <th
-      className={cn(
-        "px-3 py-2 font-semibold",
-        align === "right" ? "text-right" : "text-left",
-      )}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align = "left",
-  mono,
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-  mono?: boolean;
-}) {
-  return (
-    <td
-      className={cn(
-        "px-3 py-2 text-default",
-        align === "right" ? "text-right" : "text-left",
-        mono && "font-mono tabular",
-      )}
-    >
-      {children}
-    </td>
   );
 }
 
