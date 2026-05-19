@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
+import { EmptyState } from "../../components/empty-state";
 import { cn } from "../../lib/cn";
 import {
   type SubDrawerSpec,
@@ -254,18 +255,33 @@ function TenantsPage() {
             </button>
           </form>
         </div>
-        {serverError ? (
-          <p
-            className="font-mono text-xs text-danger"
-            data-testid="storage-server-error"
-          >
-            tenants endpoint: {serverError}
-          </p>
-        ) : null}
       </header>
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
-        {serverTenants === null && tables === undefined ? (
+        {serverError ? (
+          <EmptyState
+            title="Tenants endpoint unavailable"
+            body={
+              <>
+                This deployment can&apos;t reach{" "}
+                <code className="font-mono text-default">/api/tenants</code>:{" "}
+                <span
+                  className="font-mono text-default"
+                  data-testid="storage-server-error"
+                >
+                  {serverError}
+                </span>
+                . The server may be offline or this build doesn&apos;t ship the
+                tenants endpoint.
+              </>
+            }
+            cta={{
+              label: "Retry",
+              onClick: () => setRefreshTick((t) => t + 1),
+            }}
+            testid="storage-server-error-envelope"
+          />
+        ) : serverTenants === null && tables === undefined ? (
           <Loading label="Loading tenants…" />
         ) : rows.length === 0 ? (
           <Empty

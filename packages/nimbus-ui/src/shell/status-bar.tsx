@@ -1,3 +1,4 @@
+import { useRouterState } from "@tanstack/react-router";
 import { useNimbus, useNimbusConnectionState, useQuery } from "nimbus/react";
 
 import { api } from "../../convex/_generated/api";
@@ -7,11 +8,11 @@ import { type ConnState, StateDot } from "../components/state-dot";
 import { UpgradePopover } from "../components/upgrade-popover";
 import { useStalenessContext } from "../hooks/use-staleness";
 import { metaGlyph } from "../lib/platform";
+import { useUiStore } from "../store/ui-store";
 
 type SystemStatus = {
   version?: string | null;
   buildHash?: string | null;
-  activeTenant?: string | null;
 } | null;
 
 export function StatusBar() {
@@ -34,7 +35,7 @@ export function StatusBar() {
 
   const version = status?.version ?? "—";
   const buildHash = status?.buildHash ?? "";
-  const tenant = status?.activeTenant ?? "_nimbus";
+  const tenant = useStatusBarTenant();
 
   const staleness = useStalenessContext();
   const baseValue = `${version}${buildHash ? `+${buildHash.slice(0, 7)}` : ""}`;
@@ -200,4 +201,23 @@ function Divider() {
 function deriveOrigin(): string {
   if (typeof window === "undefined") return "—";
   return window.location.origin;
+}
+
+function useStatusBarTenant(): string {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const search = useRouterState({
+    select: (s) => s.location.search as Record<string, unknown> | undefined,
+  });
+  const activeTenant = useUiStore((s) => s.activeTenant);
+
+  if (pathname.startsWith("/app")) {
+    return activeTenant ?? "—";
+  }
+  if (pathname === "/admin/observability" || pathname.startsWith("/admin/observability/")) {
+    const tenant = search?.tenant;
+    return typeof tenant === "string" && tenant.trim().length > 0
+      ? tenant.trim()
+      : "all tenants";
+  }
+  return "_nimbus";
 }
