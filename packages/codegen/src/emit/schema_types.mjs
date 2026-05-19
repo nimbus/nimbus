@@ -32,6 +32,22 @@ function renderObjectBlock(entries) {
   return `{\n${entries.join("\n")}\n}`;
 }
 
+function isTrivialValidator(validator) {
+  if (!validator || typeof validator !== "object") {
+    return true;
+  }
+  switch (validator.kind) {
+    case "any":
+      return true;
+    case "array":
+      return isTrivialValidator(validator.element);
+    case "optional":
+      return isTrivialValidator(validator.inner);
+    default:
+      return false;
+  }
+}
+
 function renderValidatorType(validator, options = { idSymbol: "GenericId" }) {
   switch (validator.kind) {
     case "any":
@@ -67,6 +83,7 @@ function renderValidatorType(validator, options = { idSymbol: "GenericId" }) {
 }
 
 export {
+  isTrivialValidator,
   renderDocumentType,
   renderIndexUnion,
   renderObjectBlock,

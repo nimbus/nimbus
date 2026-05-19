@@ -190,7 +190,7 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
         type="button"
         data-testid="tenant-selector-create"
         onClick={() =>
-          navigate({ to: "/admin/tenants", search: { create: 1 } as never })
+          navigate({ to: "/admin/tenants", search: { create: 1 } })
         }
         className="flex h-7 items-center gap-1 rounded-md border border-app bg-surface px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted hover:bg-surface-2 hover:text-default"
       >

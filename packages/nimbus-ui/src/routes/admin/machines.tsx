@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "../../../convex/_generated/api";
+import type { Doc } from "../../../convex/_generated/dataModel";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
@@ -19,14 +20,7 @@ export const Route = createFileRoute("/admin/machines")({
   component: MachinesPage,
 });
 
-type MachineDoc = {
-  _id: string;
-  _creationTime?: number;
-  _updateTime?: number;
-  name: string;
-  kind?: string;
-  state: string;
-  provider?: string;
+type MachineDoc = Omit<Doc<"machines">, "resources" | "meta"> & {
   resources?: {
     cpus?: number;
     memoryMiB?: number;
@@ -35,25 +29,7 @@ type MachineDoc = {
   meta?: Record<string, unknown> | null;
 };
 
-type ServiceDoc = {
-  _id: string;
-  name?: string;
-  state?: string;
-  tenantId?: string;
-  machineId?: string;
-  _updateTime?: number;
-};
-
-type EventDoc = {
-  _id: string;
-  level?: string;
-  category?: string;
-  source?: string;
-  message?: string;
-  createdAt?: number;
-  _creationTime?: number;
-  data?: Record<string, unknown> | null;
-};
+type EventDoc = Doc<"events">;
 
 type LifecycleAction = "start" | "stop" | "restart" | "delete";
 
@@ -452,14 +428,14 @@ function MachineDetail({
     machineId: machine._id,
     state: null,
     limit: 50,
-  }) as ServiceDoc[] | undefined;
+  });
   const eventsRaw = useQuery(api.events.recent, {
     source: "machine",
     level: null,
     category: null,
     correlationId: null,
     limit: 100,
-  }) as EventDoc[] | undefined;
+  });
   const events = useMemo<EventDoc[] | undefined>(() => {
     if (eventsRaw === undefined) return undefined;
     return eventsRaw.filter(

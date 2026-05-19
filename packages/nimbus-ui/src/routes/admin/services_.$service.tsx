@@ -8,17 +8,18 @@ import { useQuery } from "nimbus/react";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import type { ServiceDoc } from "../../lib/types/service";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
   useSubDrawerSearch,
 } from "../../shell/sub-drawer";
-import type { ServiceDoc } from "../app/services";
 import { groupByTenant } from "./services";
 
 export type DetailTab = "placement";
@@ -65,15 +66,15 @@ function AdminServiceDetailPage() {
   const tab: DetailTab = search.tab ?? "placement";
 
   const service = useQuery(api.services.byId, {
-    id: serviceId as never,
-  }) as ServiceDoc | null | undefined;
+    id: serviceId as Id<"services">,
+  });
 
   const services = useQuery(api.services.list, {
     tenantId: null,
     machineId: null,
     state: null,
     limit: 200,
-  }) as ServiceDoc[] | undefined;
+  });
 
   const bundles = useQuery(api.bundles.list, {
     status: null,

@@ -13,7 +13,14 @@ import {
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
 
+type TenantsSearch = {
+  create?: 1;
+};
+
 export const Route = createFileRoute("/admin/tenants")({
+  validateSearch: (search: Record<string, unknown>): TenantsSearch => ({
+    create: search.create === 1 || search.create === "1" ? 1 : undefined,
+  }),
   component: TenantsPage,
 });
 
