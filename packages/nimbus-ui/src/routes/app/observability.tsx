@@ -8,8 +8,11 @@ import {
 import { LogsTab } from "./observability/logs";
 import { RunsTab } from "./observability/runs";
 import {
+  ACTIVE_OBSERVABILITY_TABS,
   type ActiveObservabilityTab,
+  DISABLED_OBSERVABILITY_TABS,
   type ObservabilitySearch,
+  type ObservabilityTab,
   parseBool,
   parseString,
   parseTab,
@@ -30,45 +33,35 @@ export const Route = createFileRoute("/app/observability")({
   component: ObservabilityPage,
 });
 
+const TAB_LABELS: Record<ObservabilityTab, string> = {
+  logs: "Logs",
+  runs: "Runs",
+  events: "Events",
+  errors: "Errors",
+};
+
 export const OBSERVABILITY_SUB_DRAWER = {
   kind: "static",
   title: "Observability",
   items: [
-    {
-      id: "logs",
-      label: "Logs",
-      to: "/app/observability",
-      search: { tab: "logs" },
-      disabled: false,
-    },
-    {
-      id: "runs",
-      label: "Runs",
-      to: "/app/observability",
-      search: { tab: "runs" },
-      disabled: false,
-    },
-    {
-      id: "events",
-      label: "Events",
-      to: "/app/observability",
-      search: { tab: "events" },
-      disabled: true,
-    },
-    {
-      id: "errors",
-      label: "Errors",
-      to: "/app/observability",
-      search: { tab: "errors" },
-      disabled: true,
-    },
+    ...ACTIVE_OBSERVABILITY_TABS.map((id) => ({
+      id,
+      label: TAB_LABELS[id],
+      to: "/app/observability" as const,
+      search: { tab: id },
+      disabled: false as const,
+    })),
+    ...DISABLED_OBSERVABILITY_TABS.map((id) => ({
+      id,
+      label: TAB_LABELS[id],
+      to: "/app/observability" as const,
+      search: { tab: id },
+      disabled: true as const,
+    })),
   ],
-} as const satisfies StaticSubDrawerSpec<
-  "logs" | "runs" | "events" | "errors"
->;
+} as const satisfies StaticSubDrawerSpec<ObservabilityTab>;
 
-export type ObservabilityTab =
-  (typeof OBSERVABILITY_SUB_DRAWER.items)[number]["id"];
+export type { ObservabilityTab } from "./observability/types";
 
 function ObservabilityPage() {
   useContributeSubDrawer(OBSERVABILITY_SUB_DRAWER);

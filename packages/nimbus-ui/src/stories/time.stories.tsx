@@ -29,3 +29,15 @@ export const UptimeStripe: Story = {
     </div>
   ),
 };
+
+export const RelativeFutureSkew: Story = {
+  render: () => <RelativeTime epochMs={NOW + 45_000} />,
+};
+
+export const RelativeFarPast: Story = {
+  render: () => <RelativeTime epochMs={NOW - 5 * 365 * 86_400_000} />,
+};
+
+export const RelativeFarFuture: Story = {
+  render: () => <RelativeTime epochMs={NOW + 5 * 365 * 86_400_000} />,
+};

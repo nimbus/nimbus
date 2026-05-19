@@ -1,4 +1,4 @@
-import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { ChevronDown, Plus } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -67,7 +67,6 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuId = useId();
   const navigate = useNavigate();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -313,9 +312,6 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
           )}
         </div>
       ) : null}
-      <span className="sr-only" aria-live="polite">
-        {pathname}
-      </span>
     </div>
   );
 }
