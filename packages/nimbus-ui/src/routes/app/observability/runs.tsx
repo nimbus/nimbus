@@ -5,9 +5,10 @@ import { useCallback } from "react";
 import { api } from "../../../../convex/_generated/api";
 import { CopyChip } from "../../../components/copy-chip";
 import { StateChip } from "../../../components/state-chip";
+import { Td, Th } from "../../../components/table-cells";
 import { RelativeTime } from "../../../components/time";
-import { cn } from "../../../lib/cn";
 import { formatDuration, shortId } from "../../../lib/format";
+import { FilterInput, FilterSelect } from "./_filters";
 import type { ObservabilitySearch, RunDoc } from "./types";
 
 const RUN_STATUSES = ["ok", "error", "running", "queued"] as const;
@@ -192,115 +193,3 @@ function RunsTable({ runs }: { runs: RunDoc[] | undefined }) {
   );
 }
 
-function FilterSelect({
-  id,
-  label,
-  value,
-  options,
-  onChange,
-  testid,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (v: string) => void;
-  testid: string;
-}) {
-  return (
-    <label
-      htmlFor={id}
-      className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted"
-    >
-      <span>{label}</span>
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default focus-visible:border-strong"
-        data-testid={testid}
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function FilterInput({
-  id,
-  label,
-  value,
-  placeholder,
-  onChange,
-  testid,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  placeholder: string;
-  onChange: (v: string) => void;
-  testid: string;
-}) {
-  return (
-    <label
-      htmlFor={id}
-      className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted"
-    >
-      <span>{label}</span>
-      <input
-        id={id}
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted focus-visible:border-strong"
-        data-testid={testid}
-      />
-    </label>
-  );
-}
-
-function Th({
-  children,
-  align = "left",
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-}) {
-  return (
-    <th
-      className={cn(
-        "px-3 py-2 font-semibold",
-        align === "right" ? "text-right" : "text-left",
-      )}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align = "left",
-  mono,
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-  mono?: boolean;
-}) {
-  return (
-    <td
-      className={cn(
-        "px-3 py-2 text-default",
-        align === "right" ? "text-right" : "text-left",
-        mono && "font-mono tabular",
-      )}
-    >
-      {children}
-    </td>
-  );
-}

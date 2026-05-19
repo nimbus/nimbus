@@ -224,7 +224,7 @@ After this wave closes:
 | R3 | Codegen specs + audit-comment fix + `JsonValue` dedup + convention decision (BLOCKER) | done |
 | R4 | Loaderize `compute_.runs_.$runId.tsx` | done |
 | R5 | Loader-error envelope coverage on the four A4 routes | done |
-| R6 | Extract shared filter + table-cell primitives | pending |
+| R6 | Extract shared filter + table-cell primitives | done |
 | R7 | `Route.loaderDeps` for tenant-switch invalidation | pending |
 | R8 | A3 residue cleanup (dead refs, typed sub-drawer) | pending |
 | R9 | CSP test tightening + workflow path filter widening | pending |
@@ -1073,3 +1073,65 @@ Verifications:
   → all four service routes plus their detail siblings appear.
 
 Ledger flipped pending → done for R5 at close of phase.
+
+(g) **R6 — Extract shared filter + table-cell primitives
+(2026-05-19).** Two new modules absorb the duplicated primitives:
+
+- `packages/nimbus-ui/src/routes/app/observability/_filters.tsx`
+  (the TanStack `_`-prefixed sibling convention marks it as not a
+  routable child) exports `FilterSelect` and `FilterInput`. Both
+  `logs.tsx` and `runs.tsx` previously inlined byte-identical
+  definitions; the shared module is byte-identical to the inline
+  copies.
+- `packages/nimbus-ui/src/components/table-cells.tsx` exports `Th`
+  and `Td` (the align-semibold variant — `align: "left" | "right"`
+  for `Th`, plus `mono?: boolean` for `Td`). `runs.tsx` and
+  `admin/tenants.tsx` previously inlined byte-identical
+  definitions; they now import from the shared module.
+
+Touch list:
+
+- `packages/nimbus-ui/src/routes/app/observability/_filters.tsx`
+  (new) — exports `FilterSelect`, `FilterInput`.
+- `packages/nimbus-ui/src/components/table-cells.tsx` (new) —
+  exports `Th`, `Td`.
+- `packages/nimbus-ui/src/routes/app/observability/logs.tsx` —
+  drops inline `FilterSelect`/`FilterInput`; imports them from
+  `./_filters`.
+- `packages/nimbus-ui/src/routes/app/observability/runs.tsx` —
+  drops inline `FilterSelect`/`FilterInput`/`Th`/`Td` (plus the
+  now-unused `cn` import); imports `FilterSelect`/`FilterInput`
+  from `./_filters` and `Th`/`Td` from
+  `../../../components/table-cells`.
+- `packages/nimbus-ui/src/routes/admin/tenants.tsx` — drops inline
+  `Th`/`Td`; imports them from `../../components/table-cells`.
+  `cn` import stays because `tenants.tsx` keeps four other `cn(`
+  call sites.
+
+Scope: the plan's touch list is explicitly `logs.tsx, runs.tsx,
+admin/tenants.tsx` — other routes (`compute.tsx`, `schedules.tsx`,
+`services.tsx`, `machines.tsx`, `network.tsx`, `storage.tsx`,
+`admin/observability.tsx`) define their own `Th`/`Td` variants
+(`border-b` normal, or align-only-no-className), some with
+different signatures. Migrating those is out of R6 scope; the
+shared module is keyed to the align-semibold variant only.
+
+Verifications:
+
+- Grep gates from the plan body:
+  - `grep -n 'function FilterSelect'
+    packages/nimbus-ui/src/routes/app/observability/` →
+    exactly 1 hit (in `_filters.tsx`).
+  - Same for `function FilterInput`.
+  - `grep -n 'function Th\|function Td'
+    packages/nimbus-ui/src/routes/app/observability/` → 0
+    (Th/Td are not exported from the observability subtree; they
+    come from `components/table-cells.tsx`).
+  - `grep -c 'function Th\|function Td'
+    packages/nimbus-ui/src/routes/admin/tenants.tsx` → 0.
+- `npx tsc --noEmit` in `packages/nimbus-ui/` exits 0.
+- `npx vitest run` in `packages/nimbus-ui/` → 37 files / 246 tests
+  pass (unchanged from R5 close — these are pure pull-outs).
+- `npx vite build` clean (chunk-size warning unchanged).
+
+Ledger flipped pending → done for R6 at close of phase.
