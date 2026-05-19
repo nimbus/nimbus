@@ -1,4 +1,4 @@
-import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 
 import { useUiStore } from "../store/ui-store";
@@ -51,4 +51,16 @@ export function useTenantBootstrap() {
       });
     return () => controller.abort();
   }, [view, asParam, activeTenant, setActiveTenant]);
+}
+
+export function useTenantSwitchInvalidation() {
+  const router = useRouter();
+  useEffect(() => {
+    const unsubscribe = useUiStore.subscribe((state, prevState) => {
+      if (state.activeTenant !== prevState.activeTenant) {
+        void router.invalidate();
+      }
+    });
+    return unsubscribe;
+  }, [router]);
 }

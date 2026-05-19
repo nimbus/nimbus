@@ -17,7 +17,10 @@ import { SubDrawer, SubDrawerProvider } from "../shell/sub-drawer";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
 import { TopNav } from "../shell/top-nav";
-import { useTenantBootstrap } from "../shell/use-tenant-bootstrap";
+import {
+  useTenantBootstrap,
+  useTenantSwitchInvalidation,
+} from "../shell/use-tenant-bootstrap";
 import { persistLastRouteForView, useUiStore } from "../store/ui-store";
 
 type RootSearch = {
@@ -34,6 +37,7 @@ export const Route = createRootRoute({
 function ShellLayout() {
   useLastRouteTracker();
   useTenantBootstrap();
+  useTenantSwitchInvalidation();
   return (
     <AppErrorBoundary>
       <ThemeController />

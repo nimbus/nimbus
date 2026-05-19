@@ -1,13 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invalidateMock } = vi.hoisted(() => ({
-  invalidateMock: vi.fn(),
-}));
-
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (config: Record<string, unknown>) => config,
-  useRouter: () => ({ invalidate: invalidateMock }),
   Link: ({
     to,
     children,
@@ -36,9 +31,12 @@ vi.mock("../../lib/nimbus-client", () => ({
 import { useUiStore } from "../../store/ui-store";
 import { Route, ServicesLoaderError } from "./services";
 
-type LoaderArgs = Record<string, unknown>;
+type LoaderArgs = {
+  deps: { activeTenant: string | null };
+};
 
 const routeInternals = Route as unknown as {
+  loaderDeps: () => { activeTenant: string | null };
   loader: (args: LoaderArgs) => Promise<{
     services: unknown[];
     activeTenant: string | null;
@@ -47,7 +45,6 @@ const routeInternals = Route as unknown as {
 
 beforeEach(() => {
   nimbusQueryMock.mockReset();
-  invalidateMock.mockReset();
   useUiStore.setState({ activeTenant: null });
 });
 
@@ -56,13 +53,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("app/services loader", () => {
-  it("queries services scoped to the active tenant from the Zustand store", async () => {
+describe("app/services loaderDeps + loader", () => {
+  it("loaderDeps snapshots activeTenant from the Zustand store", () => {
     useUiStore.setState({ activeTenant: "acme" });
+    expect(routeInternals.loaderDeps()).toEqual({ activeTenant: "acme" });
+  });
+
+  it("loaderDeps returns activeTenant=null when no tenant is selected", () => {
+    expect(routeInternals.loaderDeps()).toEqual({ activeTenant: null });
+  });
+
+  it("queries services scoped to deps.activeTenant", async () => {
     const services = [{ _id: "s1", name: "api", tenantId: "acme" }];
     nimbusQueryMock.mockResolvedValue(services);
 
-    const result = await routeInternals.loader({});
+    const result = await routeInternals.loader({
+      deps: { activeTenant: "acme" },
+    });
 
     expect(nimbusQueryMock.mock.calls[0]?.[1]).toMatchObject({
       tenantId: "acme",
@@ -74,29 +81,22 @@ describe("app/services loader", () => {
     expect(result.activeTenant).toBe("acme");
   });
 
-  it("passes activeTenant=null when no tenant is selected", async () => {
+  it("passes activeTenant=null when deps.activeTenant is null", async () => {
     nimbusQueryMock.mockResolvedValue([]);
 
-    const result = await routeInternals.loader({});
+    const result = await routeInternals.loader({
+      deps: { activeTenant: null },
+    });
 
     expect(nimbusQueryMock.mock.calls[0]?.[1]?.tenantId).toBeNull();
     expect(result.activeTenant).toBeNull();
   });
-
-  it("captures the snapshot of activeTenant taken at load time", async () => {
-    useUiStore.setState({ activeTenant: "alpha" });
-    nimbusQueryMock.mockResolvedValue([]);
-
-    const result = await routeInternals.loader({});
-    useUiStore.setState({ activeTenant: "beta" });
-
-    expect(result.activeTenant).toBe("alpha");
-  });
 });
 
 describe("app/services errorComponent", () => {
-  it("renders the diagnostic envelope with the loader-error message and a Retry CTA", () => {
-    render(<ServicesLoaderError error={new Error("convex down")} />);
+  it("renders the diagnostic envelope with the loader-error message and a Retry CTA wired to reset", async () => {
+    const reset = vi.fn();
+    render(<ServicesLoaderError error={new Error("convex down")} reset={reset} />);
     expect(
       screen.getByTestId("storage-server-error-envelope"),
     ).toBeInTheDocument();
@@ -109,5 +109,7 @@ describe("app/services errorComponent", () => {
     expect(screen.getByTestId("storage-server-error")).toHaveTextContent(
       "convex down",
     );
+    screen.getByTestId("storage-server-error-envelope-cta").click();
+    expect(reset).toHaveBeenCalledTimes(1);
   });
 });

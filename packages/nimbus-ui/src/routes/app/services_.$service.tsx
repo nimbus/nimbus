@@ -3,10 +3,9 @@ import {
   Link,
   notFound,
   useNavigate,
-  useRouter,
   useSearch,
 } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo } from "react";
+import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
@@ -43,15 +42,17 @@ export const Route = createFileRoute("/app/services_/$service")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
   }),
-  loader: async ({ params }) => {
-    const activeTenant = useUiStore.getState().activeTenant;
+  loaderDeps: () => ({
+    activeTenant: useUiStore.getState().activeTenant,
+  }),
+  loader: async ({ params, deps }) => {
     const client = getNimbusClient();
     const [service, services, bundles] = await Promise.all([
       client.query(api.services.byId, {
         id: params.service as Id<"services">,
       }),
       client.query(api.services.list, {
-        tenantId: activeTenant,
+        tenantId: deps.activeTenant,
         machineId: null,
         state: null,
         limit: 200,
@@ -59,18 +60,20 @@ export const Route = createFileRoute("/app/services_/$service")({
       client.query(api.bundles.list, { status: null, limit: 50 }),
     ]);
     if (!service) throw notFound();
-    return { service, services, bundles, activeTenant };
+    return { service, services, bundles, activeTenant: deps.activeTenant };
   },
   notFoundComponent: ServiceNotFound,
   errorComponent: ServiceDetailLoaderError,
   component: ServiceDetailPage,
 });
 
-export function ServiceDetailLoaderError({ error }: { error: Error }) {
-  const router = useRouter();
-  const reload = useCallback(() => {
-    void router.invalidate();
-  }, [router]);
+export function ServiceDetailLoaderError({
+  error,
+  reset,
+}: {
+  error: Error;
+  reset: () => void;
+}) {
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
@@ -91,7 +94,7 @@ export function ServiceDetailLoaderError({ error }: { error: Error }) {
               . Retry once the backend is reachable.
             </>
           }
-          cta={{ label: "Retry", onClick: reload }}
+          cta={{ label: "Retry", onClick: reset }}
           testid="storage-server-error-envelope"
         />
       </div>
@@ -110,19 +113,10 @@ function isTab(value: unknown): value is DetailTab {
 
 function ServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
-  const { service, services, bundles, activeTenant: loadedTenant } =
-    Route.useLoaderData();
-  const activeTenant = useUiStore((s) => s.activeTenant);
-  const router = useRouter();
+  const { service, services, bundles } = Route.useLoaderData();
   const search = useSearch({ from: "/app/services_/$service" });
   const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "overview";
-
-  useEffect(() => {
-    if (activeTenant !== loadedTenant) {
-      void router.invalidate();
-    }
-  }, [activeTenant, loadedTenant, router]);
 
   const bundle = useMemo<Doc<"bundles"> | null>(() => {
     if (!service.bundleId) return null;
