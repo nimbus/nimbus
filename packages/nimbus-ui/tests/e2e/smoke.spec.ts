@@ -13,6 +13,13 @@
 //   7. /ui/app/observability  — disabled `events`/`errors` tab chips
 //   8. command palette via ⌘K — listbox + mode list render
 //
+// Fixture seeding:
+//   Before the walk, this spec seeds one tenant (`SMOKE_TENANT_ID`) and
+//   one service document (`SMOKE_SERVICE_NAME`) so steps 3, 4, and 5
+//   exercise non-empty envelopes (ScopeChip + services-table + a real
+//   placement-tab page) instead of branching on whether the fixture
+//   happens to be empty.
+//
 // Console hygiene:
 //   - assert zero `console.error` across the walk
 //   - allow up to one `console.warn` (TanStack Router's `notFound()` warning
@@ -21,6 +28,9 @@
 
 import type { ConsoleMessage, Page } from "@playwright/test";
 import { expect, test } from "./fixtures/nimbus-server";
+
+const SMOKE_TENANT_ID = "smoke";
+const SMOKE_SERVICE_NAME = "smoke-svc";
 
 async function authenticate(
   page: Page,
@@ -38,6 +48,50 @@ async function authenticate(
     },
   });
   expect(res.status()).toBe(200);
+}
+
+// Seeds one tenant and one service so the walk asserts non-empty envelopes
+// unconditionally. The tenant is created via the public tenants API; the
+// service is inserted directly into the `_nimbus.services` system table via
+// the convex raw-mutation route (the system tenant has no exposed
+// "register service" mutation — services are normally written by the
+// engine when a sandbox starts).
+async function seedSmokeFixture(
+  page: Page,
+  baseURL: string,
+): Promise<void> {
+  const tenantRes = await page.request.post(`${baseURL}/api/tenants`, {
+    data: { id: SMOKE_TENANT_ID },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+  });
+  expect(tenantRes.status(), await tenantRes.text()).toBe(201);
+
+  const serviceRes = await page.request.post(
+    `${baseURL}/convex/_nimbus/mutation`,
+    {
+      data: {
+        mutation: {
+          type: "insert",
+          table: "services",
+          fields: {
+            tenantId: SMOKE_TENANT_ID,
+            name: SMOKE_SERVICE_NAME,
+            kind: "sandbox",
+            state: "running",
+            endpoints: [],
+          },
+        },
+      },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+    },
+  );
+  expect(serviceRes.status(), await serviceRes.text()).toBe(200);
 }
 
 interface ConsoleAccumulator {
@@ -61,6 +115,7 @@ test.describe("desktop UI smoke walk", () => {
   }) => {
     const baseURL = nimbusServer.baseURL;
     await authenticate(page, baseURL, nimbusServer.readToken());
+    await seedSmokeFixture(page, baseURL);
     const console = attachConsoleAccumulator(page);
 
     // 1. Developer Overview
@@ -76,21 +131,19 @@ test.describe("desktop UI smoke walk", () => {
     await expect(page.getByTestId("page-admin-system")).toBeVisible();
     await expect(page.getByTestId("system-overview")).toBeVisible();
 
-    // 3. Developer Services — ScopeChip reads `TENANT <tenant>`
+    // 3. Developer Services — ScopeChip reads `TENANT <tenant>` and the
+    // services table renders. The tenant bootstrap auto-selects the only
+    // seeded tenant on the first developer-view navigation, so both
+    // envelopes are deterministic.
     await page.goto(`${baseURL}/ui/app/services`);
     await expect(page.getByTestId("page-services")).toBeVisible();
-    // The ScopeChip and services-table only render when an active tenant
-    // is selected and at least one service exists. A fresh nimbus server
-    // has neither, so this step is best-effort: any present element is
-    // asserted, but their absence is also valid for an empty fixture.
-    const scopeChip = page.getByTestId("services-scope");
-    if (await scopeChip.count()) {
-      await expect(scopeChip).toContainText(/tenant/i);
-    }
-    const servicesTable = page.getByTestId("services-table");
-    if (await servicesTable.count()) {
-      await expect(servicesTable).toBeVisible();
-    }
+    await expect(page.getByTestId("services-scope")).toContainText(
+      new RegExp(SMOKE_TENANT_ID, "i"),
+    );
+    await expect(page.getByTestId("services-table")).toBeVisible();
+    await expect(
+      page.getByTestId(`services-row-${SMOKE_SERVICE_NAME}`),
+    ).toBeVisible();
 
     // 4. Operator Services — tenant-grouped sub-drawer
     await page.goto(`${baseURL}/ui/admin/services`);
@@ -100,29 +153,21 @@ test.describe("desktop UI smoke walk", () => {
     // the host envelope must be there regardless)
     await expect(page.getByTestId("sub-drawer")).toBeVisible();
 
-    // 5. Operator Service detail — single Placement tab
-    // This step is conditional: we navigate only if at least one service
-    // sub-drawer item exists. A fresh server has none, so we assert the
-    // not-found envelope when navigating to a synthetic id; either path
-    // proves the route is wired.
+    // 5. Operator Service detail — single Placement tab. The seeded
+    // service surfaces in the sub-drawer regardless of which tenant is
+    // active in the operator view.
     const firstServiceLink = page
       .locator('[data-testid^="sub-drawer-item-op-service-"]')
       .first();
-    if (await firstServiceLink.count()) {
-      await firstServiceLink.click();
-      await expect(page.getByTestId("page-admin-service-detail")).toBeVisible();
-      await expect(
-        page.getByTestId("admin-service-detail-tab-placement"),
-      ).toBeVisible();
-      await expect(
-        page.getByTestId("admin-service-tab-placement"),
-      ).toBeVisible();
-    } else {
-      await page.goto(
-        `${baseURL}/ui/admin/services/service_synthetic_smoke_id`,
-      );
-      await expect(page.getByTestId("admin-service-not-found")).toBeVisible();
-    }
+    await expect(firstServiceLink).toBeVisible();
+    await firstServiceLink.click();
+    await expect(page.getByTestId("page-admin-service-detail")).toBeVisible();
+    await expect(
+      page.getByTestId("admin-service-detail-tab-placement"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("admin-service-tab-placement"),
+    ).toBeVisible();
 
     // 6. Operator Tenants — diagnostic envelope is reachable
     await page.goto(`${baseURL}/ui/admin/tenants`);
