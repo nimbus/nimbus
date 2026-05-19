@@ -1,0 +1,99 @@
+name: Desktop UI Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/**"
+      - "packages/nimbus-ui/**"
+      - "packages/codegen/**"
+      - "packages/nimbus/**"
+      - "packages/convex/**"
+      - "Makefile"
+      - ".github/workflows/desktop-ui.yml"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "packages/nimbus-ui/**"
+      - "packages/codegen/**"
+      - "packages/nimbus/**"
+      - "packages/convex/**"
+      - "Makefile"
+      - ".github/workflows/desktop-ui.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-ui-smoke:
+    name: Desktop UI Smoke Walk
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure googlesource credentials
+        if: env.GOOGLESOURCE_COOKIE != ''
+        env:
+          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
+        run: |
+          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
+          git config --global http.cookiefile ~/.gitcookies
+          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
+          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-ubuntu-stable-desktop-ui-v1
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('packages/nimbus-ui/package.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright browsers
+        working-directory: packages/nimbus-ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run desktop UI smoke walk
+        run: make verify-desktop-ui
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: packages/nimbus-ui/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
