@@ -3,14 +3,16 @@ import {
   Link,
   notFound,
   useNavigate,
+  useRouter,
   useSearch,
 } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
+import { EmptyState } from "../../components/empty-state";
 import { StateChip } from "../../components/state-chip";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
@@ -60,8 +62,42 @@ export const Route = createFileRoute("/admin/services_/$service")({
     return { service, services, bundles, machines };
   },
   notFoundComponent: AdminServiceNotFound,
+  errorComponent: AdminServiceDetailLoaderError,
   component: AdminServiceDetailPage,
 });
+
+export function AdminServiceDetailLoaderError({ error }: { error: Error }) {
+  const router = useRouter();
+  const reload = useCallback(() => {
+    void router.invalidate();
+  }, [router]);
+  return (
+    <section
+      className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
+      data-testid="page-admin-service-detail"
+    >
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+        <EmptyState
+          title="Service detail unavailable"
+          body={
+            <>
+              The operator service-detail query failed:{" "}
+              <span
+                className="font-mono text-default"
+                data-testid="storage-server-error"
+              >
+                {error.message}
+              </span>
+              . Retry once the backend is reachable.
+            </>
+          }
+          cta={{ label: "Retry", onClick: reload }}
+          testid="storage-server-error-envelope"
+        />
+      </div>
+    </section>
+  );
+}
 
 export function isTab(value: unknown): value is DetailTab {
   return value === "placement";
