@@ -8,11 +8,14 @@ import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import {
-  type SubDrawerSpec,
+  type StaticSubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
-
-type AdminObservabilityTab = "logs" | "runs";
+import {
+  parseTenantScope,
+  serializeTenantScope,
+  type TenantScope,
+} from "../../shell/tenant-scope";
 
 type AdminObservabilitySearch = {
   tab?: AdminObservabilityTab;
@@ -21,21 +24,17 @@ type AdminObservabilitySearch = {
 
 export const Route = createFileRoute("/admin/observability")({
   component: AdminObservabilityPage,
-  validateSearch: (search: Record<string, unknown>): AdminObservabilitySearch =>
-    ({
-      tab: parseTab(search.tab),
-      tenant: typeof search.tenant === "string" ? search.tenant : undefined,
-    }) as AdminObservabilitySearch,
+  validateSearch: (search: Record<string, unknown>): AdminObservabilitySearch => ({
+    tab: parseTab(search.tab),
+    tenant: typeof search.tenant === "string" ? search.tenant : undefined,
+  }),
 });
 
 function parseTab(value: unknown): AdminObservabilityTab | undefined {
   return value === "logs" || value === "runs" ? value : undefined;
 }
 
-export const ADMIN_OBSERVABILITY_SUB_DRAWER: Extract<
-  SubDrawerSpec,
-  { kind: "static" }
-> = {
+export const ADMIN_OBSERVABILITY_SUB_DRAWER = {
   kind: "static",
   title: "Observability",
   items: [
@@ -44,12 +43,14 @@ export const ADMIN_OBSERVABILITY_SUB_DRAWER: Extract<
       label: "Logs",
       to: "/admin/observability",
       search: { tab: "logs" },
+      disabled: false,
     },
     {
       id: "runs",
       label: "Runs",
       to: "/admin/observability",
       search: { tab: "runs" },
+      disabled: false,
     },
     {
       id: "events",
@@ -66,7 +67,12 @@ export const ADMIN_OBSERVABILITY_SUB_DRAWER: Extract<
       disabled: true,
     },
   ],
-};
+} as const satisfies StaticSubDrawerSpec<
+  "logs" | "runs" | "events" | "errors"
+>;
+
+export type AdminObservabilityTab =
+  (typeof ADMIN_OBSERVABILITY_SUB_DRAWER.items)[number]["id"];
 
 type EventDoc = {
   _id: string;
@@ -92,23 +98,24 @@ function AdminObservabilityPage() {
   useContributeSubDrawer(ADMIN_OBSERVABILITY_SUB_DRAWER);
   const search = Route.useSearch();
   const tab: AdminObservabilityTab = search.tab ?? "logs";
+  const scope = parseTenantScope(search.tenant);
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-admin-observability"
     >
-      <Header tab={tab} tenant={search.tenant} />
-      {tab === "logs" ? <LogsTab tenant={search.tenant} /> : <RunsTab />}
+      <Header tab={tab} scope={scope} />
+      {tab === "logs" ? <LogsTab /> : <RunsTab />}
     </section>
   );
 }
 
 function Header({
   tab,
-  tenant,
+  scope,
 }: {
   tab: AdminObservabilityTab;
-  tenant: string | undefined;
+  scope: TenantScope;
 }) {
   return (
     <header className="flex flex-col gap-3">
@@ -118,11 +125,11 @@ function Header({
             Operator observability
           </h1>
           <p className="text-sm text-muted">
-            Server-wide logs and runs across every tenant. Filter to one tenant
-            via <code className="font-mono text-default">?tenant=&lt;id&gt;</code>.
+            Server-wide logs and runs across every tenant. Tenant filtering is
+            gated until the events table exposes a tenant column.
           </p>
         </div>
-        <ScopeChip tenant={tenant} />
+        <ScopeChip scope={scope} />
       </div>
       <nav
         aria-label="Operator observability tabs"
@@ -132,11 +139,11 @@ function Header({
         {ADMIN_OBSERVABILITY_SUB_DRAWER.items.map((item) => (
           <TabLink
             key={item.id}
-            id={item.id as AdminObservabilityTab}
+            id={item.id}
             label={item.label}
             active={tab === item.id}
             disabled={Boolean(item.disabled)}
-            tenant={tenant}
+            scope={scope}
           />
         ))}
       </nav>
@@ -144,13 +151,26 @@ function Header({
   );
 }
 
-function ScopeChip({ tenant }: { tenant: string | undefined }) {
+function ScopeChip({ scope }: { scope: TenantScope }) {
+  const requested = serializeTenantScope(scope);
+  if (requested === undefined) {
+    return (
+      <span
+        className="rounded border border-app px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted"
+        data-testid="admin-observability-scope"
+        title="Tenant filter unavailable until events table exposes tenant column"
+      >
+        tenant filter unavailable
+      </span>
+    );
+  }
   return (
     <span
       className="rounded border border-app px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted"
       data-testid="admin-observability-scope"
+      title="Tenant filter requested but not honored — events table does not expose tenant column yet"
     >
-      tenant: {tenant ?? "all"}
+      tenant {requested} · filter unavailable
     </span>
   );
 }
@@ -160,13 +180,13 @@ function TabLink({
   label,
   active,
   disabled,
-  tenant,
+  scope,
 }: {
   id: AdminObservabilityTab;
   label: string;
   active: boolean;
   disabled: boolean;
-  tenant: string | undefined;
+  scope: TenantScope;
 }) {
   if (disabled) {
     return (
@@ -175,18 +195,26 @@ function TabLink({
         data-testid={`admin-observability-tab-${id}`}
         title={`${label} — coming soon`}
         className={cn(
-          "px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
+          "inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
           "cursor-not-allowed text-muted opacity-60",
         )}
       >
         {label}
+        <span
+          aria-hidden
+          className="rounded bg-surface-2 px-1 text-[9px] uppercase tracking-wide text-muted"
+          data-testid={`admin-observability-tab-${id}-coming-soon`}
+        >
+          coming soon
+        </span>
       </span>
     );
   }
+  const tenantQuery = serializeTenantScope(scope);
   return (
     <Link
       to="/admin/observability"
-      search={(prev) => ({ ...prev, tab: id, tenant })}
+      search={(prev) => ({ ...prev, tab: id, tenant: tenantQuery })}
       data-testid={`admin-observability-tab-${id}`}
       aria-current={active ? "page" : undefined}
       className={cn(
@@ -201,7 +229,7 @@ function TabLink({
   );
 }
 
-function LogsTab({ tenant }: { tenant: string | undefined }) {
+function LogsTab() {
   const events = useQuery(api.events.recent, {
     source: null,
     level: null,
@@ -209,17 +237,7 @@ function LogsTab({ tenant }: { tenant: string | undefined }) {
     correlationId: null,
     limit: 200,
   }) as EventDoc[] | undefined;
-  const visible =
-    events && tenant
-      ? events.filter((event) => extractTenantId(event) === tenant)
-      : events;
-  return <LogList events={visible} />;
-}
-
-function extractTenantId(event: EventDoc): string | null {
-  const source = event.source ?? "";
-  const match = source.match(/tenant[=:]([\w-]+)/i);
-  return match ? match[1] : null;
+  return <LogList events={events} />;
 }
 
 function LogList({ events }: { events: EventDoc[] | undefined }) {
