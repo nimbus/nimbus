@@ -222,7 +222,7 @@ After this wave closes:
 | R1 | Discriminated query wrapper — eliminate `as unknown as` (BLOCKER) | done |
 | R2 | Loaderize `_.$service.tsx` sibling queries (BLOCKER) | done |
 | R3 | Codegen specs + audit-comment fix + `JsonValue` dedup + convention decision (BLOCKER) | done |
-| R4 | Loaderize `compute_.runs_.$runId.tsx` | pending |
+| R4 | Loaderize `compute_.runs_.$runId.tsx` | done |
 | R5 | Loader-error envelope coverage on the four A4 routes | pending |
 | R6 | Extract shared filter + table-cell primitives | pending |
 | R7 | `Route.loaderDeps` for tenant-switch invalidation | pending |
@@ -983,3 +983,46 @@ Verifications:
   (in `dataModel.d.ts`).
 
 Ledger flipped pending → done for R3 at close of phase.
+
+(e) **R4 — Loaderize `compute_.runs_.$runId.tsx` (2026-05-19).**
+Two `useQuery` calls on the run detail page (the `runs.byId` lookup
+plus the correlated-events `events.recent` query) moved into the
+TanStack route loader. The loader fans out both queries in parallel
+via `Promise.all` and throws `notFound()` when the run is missing;
+the component consumes `{ run, events }` via `Route.useLoaderData()`
+and renders unconditionally. The `as Id<"runs">` cast on the run-id
+parameter is the only cast that survives — it is the TanStack →
+codegen-id seam and is unavoidable without a path-param type plugin.
+The events query argument stays a plain `string` (its `correlationId`
+field is untyped on the producer side), so no second cast appears.
+
+Touch list:
+
+- `packages/nimbus-ui/src/routes/app/compute_.runs_.$runId.tsx` —
+  Route config gains `loader` + `notFoundComponent`; component body
+  destructures from `Route.useLoaderData()`; dead `Loading` helper
+  removed; previous `Missing` helper renamed to `RunNotFound` and
+  promoted to the route-level not-found component (it now pulls
+  `runId` from `Route.useParams()` and renders inside the same
+  `<section>` shell as the happy path so the breadcrumb/test-id
+  surface stays consistent for callers). `CorrelatedEvents` no
+  longer accepts a `loading` prop — events are always present after
+  the loader resolves.
+- `packages/nimbus-ui/src/routes/app/compute_.runs_.$runId.spec.ts`
+  (new) — happy-path test asserts both queries fire, the loader
+  returns `{ run, events }`, and `notFound()` was not called.
+  Not-found test asserts the loader rejects with the hoisted
+  `__NOT_FOUND__` sentinel and `notFound()` fires exactly once.
+
+Verifications:
+
+- `grep -n 'useQuery'
+  packages/nimbus-ui/src/routes/app/compute_.runs_.$runId.tsx` →
+  0 hits (done-when grep gate from the plan body).
+- `npx tsc --noEmit` in `packages/nimbus-ui/` exits 0.
+- `npx vitest run` in `packages/nimbus-ui/` → 37 files / 242 tests
+  pass (was 36 / 240 at R3 close; +1 spec file, +2 cases).
+- `npx vite build` clean (chunk-size warning unchanged; the
+  `compute_.runs_._runId-*.js` chunk weighs 7.55 kB / 2.24 kB gzip).
+
+Ledger flipped pending → done for R4 at close of phase.
