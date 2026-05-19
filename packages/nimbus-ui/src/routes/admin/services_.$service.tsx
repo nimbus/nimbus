@@ -229,11 +229,6 @@ function PlacementTab({ service }: { service: ServiceDoc }) {
         label="Machine state"
         value={machine?.state ? <StateChip state={machine.state} /> : "—"}
       />
-      <div className="rounded border border-app bg-surface-2 px-3 py-3 text-xs text-muted">
-        Placement cost, region affinity, and scheduler hints are not yet
-        exposed by the system tenant. Follow-up plans will surface these once
-        the placement controller is wired.
-      </div>
     </div>
   );
 }

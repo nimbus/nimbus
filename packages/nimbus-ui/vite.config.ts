@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 
+import { ROUTE_FILE_IGNORE_PATTERN } from "./scripts/route-ignore-pattern.mjs";
+
 // Vite serves the SPA under /ui/* in production (embedded by nimbus-server)
 // and under / on the dev server (port 5173) for component iteration with HMR.
 export default defineConfig({
@@ -13,7 +15,7 @@ export default defineConfig({
       autoCodeSplitting: true,
       routesDirectory: "src/routes",
       generatedRouteTree: "src/route-tree.gen.ts",
-      routeFileIgnorePattern: "\\.spec\\.(ts|tsx)$",
+      routeFileIgnorePattern: ROUTE_FILE_IGNORE_PATTERN,
     }),
     react(),
     tailwindcss(),

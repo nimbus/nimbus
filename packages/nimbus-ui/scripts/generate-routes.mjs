@@ -7,6 +7,8 @@ import { dirname, resolve } from "node:path";
 
 import { Generator, configSchema } from "@tanstack/router-generator";
 
+import { ROUTE_FILE_IGNORE_PATTERN } from "./route-ignore-pattern.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(here, "..");
 
@@ -15,7 +17,7 @@ const parsed = configSchema.parse({
   routesDirectory: resolve(pkgRoot, "src/routes"),
   generatedRouteTree: resolve(pkgRoot, "src/route-tree.gen.ts"),
   autoCodeSplitting: true,
-  routeFileIgnorePattern: "\\.spec\\.(ts|tsx)$",
+  routeFileIgnorePattern: ROUTE_FILE_IGNORE_PATTERN,
   tmpDir: resolve(pkgRoot, "node_modules/.tanstack-router"),
 });
 

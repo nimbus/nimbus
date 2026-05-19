@@ -19,10 +19,10 @@ export function KeyboardContract() {
         return;
       }
       if (meta && (event.key === "\\" || event.key === "|")) {
+        event.preventDefault();
         if (viewFromPathname(pathname) !== "developer") {
           return;
         }
-        event.preventDefault();
         const { lensOpen } = useUiStore.getState();
         setLensOpen(!lensOpen);
         return;
