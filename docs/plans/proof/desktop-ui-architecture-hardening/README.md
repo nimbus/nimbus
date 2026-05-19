@@ -46,12 +46,15 @@ below, and the wired CI lane.
   ⌘K command palette. Console hygiene: zero `console.error`, ≤1
   `console.warn` (none observed at close).
 - Workspace check: `make check` clean.
-- Grep gates (all return zero hits at HEAD):
-  - `grep -rn 'as never' packages/nimbus-ui/src` → 0
-  - `grep -rn 'as ServiceDoc\[\] | undefined\|as ServiceDoc | null | undefined' packages/nimbus-ui/src` → 0
-  - `grep -rn 'import.*ServiceDoc.*from ".*routes/app' packages/nimbus-ui/src/routes/admin` → 0
+- Grep gates (all clean at HEAD):
+  - `grep -rn 'as never' packages/nimbus-ui/src` → 0 hits.
+  - `grep -rn 'as ServiceDoc\[\] | undefined\|as ServiceDoc | null | undefined' packages/nimbus-ui/src` → 0 hits.
+  - `grep -rn 'import.*ServiceDoc.*from ".*routes/app' packages/nimbus-ui/src/routes/admin` → 0 hits.
+  - `grep -rn 'type ServiceDoc' packages/nimbus-ui/src` → 1 hit at
+    `packages/nimbus-ui/src/lib/types/service.ts:3:export type ServiceDoc = Doc<"services">;`
+    (the single canonical definition produced by A2's lift).
   - `grep -c '^' packages/nimbus-ui/src/routes/admin/settings.tsx` → 93
-    (well under the ≤900 cap).
+    (well under the ≤900 cap from A3).
 
 ## A-phase → after-evidence mapping
 
