@@ -86,13 +86,11 @@ export function Cell({
 }
 
 export function DialogShell({
-  ref,
   title,
   onClose,
   testid,
   children,
 }: {
-  ref: React.Ref<HTMLDivElement>;
   title: string;
   onClose: () => void;
   testid: string;
@@ -120,7 +118,6 @@ export function DialogShell({
         className="absolute inset-0 cursor-default"
       />
       <div
-        ref={ref}
         role="dialog"
         aria-modal="true"
         aria-label={title}
