@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import { getNimbusClient } from "../../lib/nimbus-client";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import type { ServiceDoc } from "../../lib/types/service";
@@ -14,16 +14,20 @@ import {
 import { ServicesTable } from "../app/services";
 
 export const Route = createFileRoute("/admin/services")({
+  loader: async () => {
+    const services = await getNimbusClient().query(api.services.list, {
+      tenantId: null,
+      machineId: null,
+      state: null,
+      limit: 200,
+    });
+    return { services };
+  },
   component: AdminServicesPage,
 });
 
 function AdminServicesPage() {
-  const services = useQuery(api.services.list, {
-    tenantId: null,
-    machineId: null,
-    state: null,
-    limit: 200,
-  });
+  const { services } = Route.useLoaderData();
 
   const spec = useMemo<SubDrawerSpec>(
     () => ({
@@ -69,17 +73,7 @@ function AdminServicesPage() {
   );
 }
 
-function SummaryChip({ services }: { services: ServiceDoc[] | undefined }) {
-  if (services === undefined) {
-    return (
-      <span
-        className="font-mono text-[11px] text-muted"
-        data-testid="admin-services-summary-loading"
-      >
-        services: loading…
-      </span>
-    );
-  }
+function SummaryChip({ services }: { services: ServiceDoc[] }) {
   const tenants = new Set<string>();
   for (const svc of services) {
     if (svc.tenantId) tenants.add(svc.tenantId);
@@ -95,20 +89,8 @@ function SummaryChip({ services }: { services: ServiceDoc[] | undefined }) {
   );
 }
 
-function AdminServicesSubDrawer({
-  services,
-}: {
-  services: ServiceDoc[] | undefined;
-}) {
+function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
   const filter = useSubDrawerSearch().trim().toLowerCase();
-  if (services === undefined) {
-    return (
-      <div className="px-3 py-3 text-xs text-muted">
-        <span aria-hidden>·</span>
-        <span className="sr-only">loading</span>
-      </div>
-    );
-  }
   if (services.length === 0) {
     return (
       <div className="px-3 py-6 text-xs text-muted">

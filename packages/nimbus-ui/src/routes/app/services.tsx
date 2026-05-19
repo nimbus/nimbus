@@ -1,12 +1,12 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
-import { useMemo } from "react";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { useEffect, useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
   type SubDrawerSpec,
@@ -16,17 +16,29 @@ import {
 import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/app/services")({
+  loader: async () => {
+    const activeTenant = useUiStore.getState().activeTenant;
+    const services = await getNimbusClient().query(api.services.list, {
+      tenantId: activeTenant,
+      machineId: null,
+      state: null,
+      limit: 200,
+    });
+    return { services, activeTenant };
+  },
   component: ServicesPage,
 });
 
 function ServicesPage() {
+  const { services, activeTenant: loadedTenant } = Route.useLoaderData();
   const activeTenant = useUiStore((s) => s.activeTenant);
-  const services = useQuery(api.services.list, {
-    tenantId: activeTenant,
-    machineId: null,
-    state: null,
-    limit: 200,
-  });
+  const router = useRouter();
+
+  useEffect(() => {
+    if (activeTenant !== loadedTenant) {
+      void router.invalidate();
+    }
+  }, [activeTenant, loadedTenant, router]);
 
   const spec = useMemo<SubDrawerSpec>(
     () => ({
@@ -91,18 +103,10 @@ function ServicesSubDrawer({
   services,
   activeTenant,
 }: {
-  services: ServiceDoc[] | undefined;
+  services: ServiceDoc[];
   activeTenant: string | null;
 }) {
   const filter = useSubDrawerSearch().trim().toLowerCase();
-  if (services === undefined) {
-    return (
-      <div className="px-3 py-3 text-xs text-muted">
-        <span aria-hidden>·</span>
-        <span className="sr-only">loading</span>
-      </div>
-    );
-  }
   const filtered = filter
     ? services.filter(
         (s) =>
@@ -118,7 +122,8 @@ function ServicesSubDrawer({
         <p className="mt-2">
           Author a <code>compose.yaml</code> and run{" "}
           <code className="font-mono">nimbus compose up</code> to register
-          services for this tenant.
+          services for {activeTenant ? `tenant ${activeTenant}` : "this tenant"}
+          .
         </p>
       </div>
     );
@@ -160,17 +165,10 @@ export function ServicesTable({
   activeTenant,
   showTenantColumn,
 }: {
-  services: ServiceDoc[] | undefined;
+  services: ServiceDoc[];
   activeTenant: string | null;
   showTenantColumn: boolean;
 }) {
-  if (services === undefined) {
-    return (
-      <div className="flex h-32 items-center justify-center text-xs text-muted">
-        Loading services…
-      </div>
-    );
-  }
   if (services.length === 0) {
     return (
       <div className="flex h-32 flex-col items-center justify-center gap-1 text-center">

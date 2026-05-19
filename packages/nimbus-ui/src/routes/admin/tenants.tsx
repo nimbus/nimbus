@@ -1,6 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "nimbus/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "../../../convex/_generated/api";
@@ -8,6 +7,8 @@ import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
 import { cn } from "../../lib/cn";
+import { getNimbusClient } from "../../lib/nimbus-client";
+import { fetchTenants } from "../../shell/tenants-fetch";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
@@ -16,13 +17,6 @@ import {
 type TenantsSearch = {
   create?: 1;
 };
-
-export const Route = createFileRoute("/admin/tenants")({
-  validateSearch: (search: Record<string, unknown>): TenantsSearch => ({
-    create: search.create === 1 || search.create === "1" ? 1 : undefined,
-  }),
-  component: TenantsPage,
-});
 
 type TableDoc = {
   _id: string;
@@ -38,69 +32,60 @@ type TenantRow = {
   totalRows: number;
 };
 
-type TenantListResponse = {
-  tenants?: Array<string | { id?: string; tenantId?: string; name?: string }>;
-};
+type LoaderResult =
+  | { kind: "ok"; tenants: string[]; tables: TableDoc[] }
+  | { kind: "error"; message: string };
+
+export const Route = createFileRoute("/admin/tenants")({
+  validateSearch: (search: Record<string, unknown>): TenantsSearch => ({
+    create: search.create === 1 || search.create === "1" ? 1 : undefined,
+  }),
+  loader: async ({ abortController }): Promise<LoaderResult> => {
+    try {
+      const tenants = await fetchTenants(abortController.signal);
+      if (tenants === null) {
+        return {
+          kind: "error",
+          message: "Tenants endpoint returned a non-OK response.",
+        };
+      }
+      const tables = (await getNimbusClient().query(api.tables.list, {
+        tenantId: null,
+        limit: 200,
+      })) as TableDoc[];
+      return { kind: "ok", tenants, tables };
+    } catch (err) {
+      return {
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  },
+  component: TenantsPage,
+});
 
 function TenantsPage() {
-  const tables = useQuery(api.tables.list, {
-    tenantId: null,
-    limit: 200,
-  }) as TableDoc[] | undefined;
+  const data = Route.useLoaderData();
+  const router = useRouter();
+  const tenants = data.kind === "ok" ? data.tenants : [];
+  const tables = data.kind === "ok" ? data.tables : [];
+  const serverError = data.kind === "error" ? data.message : null;
 
-  const [serverTenants, setServerTenants] = useState<string[] | null>(null);
-  const [serverError, setServerError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newTenant, setNewTenant] = useState("");
   const [deletingTenant, setDeletingTenant] = useState<string | null>(null);
   const [confirmTenant, setConfirmTenant] = useState<string | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
-
-  const reloadTenants = useCallback(async () => {
-    setServerError(null);
-    try {
-      const response = await fetch("/api/tenants", {
-        credentials: "include",
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        throw new Error(
-          body?.error?.message ?? `Request failed: ${response.status}`,
-        );
-      }
-      const body = (await response.json()) as TenantListResponse;
-      const ids = (body.tenants ?? [])
-        .map((t) =>
-          typeof t === "string" ? t : (t.tenantId ?? t.id ?? t.name ?? ""),
-        )
-        .filter(Boolean);
-      setServerTenants(ids.sort());
-    } catch (err) {
-      setServerError(err instanceof Error ? err.message : String(err));
-      setServerTenants([]);
-    }
-  }, []);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshTick is the manual refetch trigger
-  useEffect(() => {
-    void reloadTenants();
-  }, [reloadTenants, refreshTick]);
 
   const rows: TenantRow[] = useMemo(() => {
     const byTenant = new Map<string, { count: number; rows: number }>();
-    (tables ?? []).forEach((t) => {
-      if (!t.tenantId) return;
+    for (const t of tables) {
+      if (!t.tenantId) continue;
       const entry = byTenant.get(t.tenantId) ?? { count: 0, rows: 0 };
       entry.count += 1;
       entry.rows += t.rowCount ?? 0;
       byTenant.set(t.tenantId, entry);
-    });
-    const ids = new Set<string>([
-      ...(serverTenants ?? []),
-      ...Array.from(byTenant.keys()),
-    ]);
+    }
+    const ids = new Set<string>([...tenants, ...byTenant.keys()]);
     return Array.from(ids)
       .sort()
       .map((id) => ({
@@ -108,7 +93,11 @@ function TenantsPage() {
         tableCount: byTenant.get(id)?.count ?? 0,
         totalRows: byTenant.get(id)?.rows ?? 0,
       }));
-  }, [serverTenants, tables]);
+  }, [tenants, tables]);
+
+  const reload = useCallback(() => {
+    void router.invalidate();
+  }, [router]);
 
   const handleCreate = useCallback(
     async (e: React.FormEvent) => {
@@ -133,7 +122,7 @@ function TenantsPage() {
         }
         toast.success(`Created tenant ${id}`);
         setNewTenant("");
-        setRefreshTick((t) => t + 1);
+        reload();
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to create tenant",
@@ -142,51 +131,51 @@ function TenantsPage() {
         setCreating(false);
       }
     },
-    [newTenant],
+    [newTenant, reload],
   );
 
   const confirmTenantRow = rows.find((r) => r.tenantId === confirmTenant);
 
-  const runDelete = useCallback(async (id: string) => {
-    setDeletingTenant(id);
-    setConfirmTenant(null);
-    try {
-      const response = await fetch(`/api/tenants/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        throw new Error(
-          body?.error?.message ?? `Delete failed: ${response.status}`,
+  const runDelete = useCallback(
+    async (id: string) => {
+      setDeletingTenant(id);
+      setConfirmTenant(null);
+      try {
+        const response = await fetch(
+          `/api/tenants/${encodeURIComponent(id)}`,
+          {
+            method: "DELETE",
+            credentials: "include",
+          },
         );
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as {
+            error?: { message?: string };
+          } | null;
+          throw new Error(
+            body?.error?.message ?? `Delete failed: ${response.status}`,
+          );
+        }
+        toast.success(`Deleted tenant ${id}`);
+        reload();
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to delete tenant",
+        );
+      } finally {
+        setDeletingTenant(null);
       }
-      toast.success(`Deleted tenant ${id}`);
-      setRefreshTick((t) => t + 1);
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to delete tenant",
-      );
-    } finally {
-      setDeletingTenant(null);
-    }
-  }, []);
+    },
+    [reload],
+  );
 
-  const subDrawerSpec = useMemo<SubDrawerSpec>(() => {
-    const tenants = serverTenants ?? [];
-    return {
+  const subDrawerSpec = useMemo<SubDrawerSpec>(
+    () => ({
       kind: "dynamic",
       title: "Tenants",
       search: { placeholder: "Filter tenants" },
       children:
-        serverTenants === null ? (
-          <div className="px-3 py-3 text-xs text-muted">
-            <span aria-hidden>·</span>
-            <span className="sr-only">loading</span>
-          </div>
-        ) : tenants.length === 0 ? (
+        tenants.length === 0 ? (
           <div className="px-3 py-6 text-xs text-muted">
             <p>No tenants yet.</p>
             <p className="mt-2">Use Create tenant above to add one.</p>
@@ -208,8 +197,9 @@ function TenantsPage() {
             ))}
           </ul>
         ),
-    };
-  }, [serverTenants]);
+    }),
+    [tenants],
+  );
   useContributeSubDrawer(subDrawerSpec);
 
   return (
@@ -284,12 +274,10 @@ function TenantsPage() {
             }
             cta={{
               label: "Retry",
-              onClick: () => setRefreshTick((t) => t + 1),
+              onClick: reload,
             }}
             testid="storage-server-error-envelope"
           />
-        ) : serverTenants === null && tables === undefined ? (
-          <Loading label="Loading tenants…" />
         ) : rows.length === 0 ? (
           <Empty
             title="No tenants"
@@ -438,17 +426,6 @@ function Td({
     >
       {children}
     </td>
-  );
-}
-
-function Loading({ label }: { label: string }) {
-  return (
-    <div
-      className="flex h-full items-center justify-center font-mono text-xs text-muted"
-      data-testid="storage-loading"
-    >
-      {label}
-    </div>
   );
 }
 
