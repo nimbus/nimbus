@@ -218,7 +218,7 @@ After this wave closes:
 
 | Phase | Slice | Status |
 |-------|-------|--------|
-| R0 | Read-in + before-state freeze | pending |
+| R0 | Read-in + before-state freeze | done |
 | R1 | Discriminated query wrapper — eliminate `as unknown as` (BLOCKER) | pending |
 | R2 | Loaderize `_.$service.tsx` sibling queries (BLOCKER) | pending |
 | R3 | Codegen specs + audit-comment fix + `JsonValue` dedup + convention decision (BLOCKER) | pending |
@@ -772,4 +772,37 @@ Pause and re-plan if any of the following:
 
 ## Execution log
 
-(empty — append entries (a), (b), ... per phase as work lands)
+(a) **R0 — Read-in + before-state freeze (2026-05-19).** Re-grepped
+the cast/duplication/inline-`useQuery`/conditional-assertion counts
+at HEAD `e11cc9ef`. Two minor deltas from the plan body:
+
+- `shell/nav-entries.ts` `as unknown as CountQuery` count is **9**,
+  not 10. R1's contract is unchanged — drive to zero in non-spec
+  files. The nine lines are 50, 59, 68, 77, 95, 134, 143, 152, 161.
+- Smoke spec conditional-bypass sites are **three**, not two: lines
+  87, 91, 111 of `tests/e2e/smoke.spec.ts`. R10 unconditionalizes
+  all three.
+
+All other counts match the review:
+
+- `as never` count zero (A2 gate clean).
+- `type ServiceDoc` single source at `lib/types/service.ts:3`.
+- 3× inline `useQuery` on `routes/admin/services_.$service.tsx`
+  (lines 88, 200 sibling queries + import).
+- 1× sibling-query inline `useQuery` on
+  `routes/app/services_.$service.tsx:100` (plus import — total 2).
+- 2× inline `useQuery` on `routes/app/compute_.runs_.$runId.tsx`
+  (lines 23, 27 — route not loaderized at all).
+- 2× `useEffect → router.invalidate()` (app/services.tsx:39,
+  app/services_.$service.tsx:96).
+- 3× `JsonValue` declarations (api.ts:5, dataModel.d.ts:4,
+  scheduled_functions.ts:5).
+- 4× `dialogRef` lines in danger-zone.tsx (52, 101, 182, 223).
+- 2× `ActiveObservabilityTab` parallel-union sites.
+- Workflow path filter missing `Cargo.toml`, `Cargo.lock`,
+  `rust-toolchain*`.
+
+Proof bundle directory created at
+`docs/plans/proof/desktop-ui-architecture-residue/` with `before.md`
+written. Zero source edits this phase. Ledger flipped pending → done
+for R0 at close of phase.
