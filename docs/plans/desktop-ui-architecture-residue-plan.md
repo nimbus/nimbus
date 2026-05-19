@@ -219,7 +219,7 @@ After this wave closes:
 | Phase | Slice | Status |
 |-------|-------|--------|
 | R0 | Read-in + before-state freeze | done |
-| R1 | Discriminated query wrapper — eliminate `as unknown as` (BLOCKER) | pending |
+| R1 | Discriminated query wrapper — eliminate `as unknown as` (BLOCKER) | done |
 | R2 | Loaderize `_.$service.tsx` sibling queries (BLOCKER) | pending |
 | R3 | Codegen specs + audit-comment fix + `JsonValue` dedup + convention decision (BLOCKER) | pending |
 | R4 | Loaderize `compute_.runs_.$runId.tsx` | pending |
@@ -806,3 +806,48 @@ Proof bundle directory created at
 `docs/plans/proof/desktop-ui-architecture-residue/` with `before.md`
 written. Zero source edits this phase. Ledger flipped pending → done
 for R0 at close of phase.
+
+(b) **R1 — Producer-side query wrapper (2026-05-19).** Added
+`QueryEntry<TArgs, TReturn>` type and `queryEntry()` constructor to
+`packages/nimbus/src/internal/shared.ts`; re-exported from
+`packages/nimbus/src/browser.ts`. Rewrote
+`packages/nimbus-ui/src/shell/nav-entries.ts`: dropped the
+`CountQuery` alias and the `countQuery`/`countArgs` field pair,
+replaced with a single `count: NavCountEntry | null` field where
+`NavCountEntry = QueryEntry<any, readonly unknown[]>` (heterogeneous
+TArgs widen at the array level only — each `queryEntry(api.X, args)`
+construction site type-checks against `api.X`'s declared arg shape).
+All nine `as unknown as CountQuery` sites gone. Updated
+`packages/nimbus-ui/src/shell/primary-drawer.tsx` to consume the
+wrapper (`<NavCount count={entry.count} />`, `useQuery(count.ref,
+count.args)`). Replaced the lone non-spec `as unknown as
+WindowWithNimbus` in `packages/nimbus-ui/src/lib/desktop-bridge.ts`
+with a `declare global { interface Window { nimbus?: DesktopBridge
+} }` ambient augmentation — no cast at all. Added
+`packages/nimbus-ui/src/shell/query-entry.spec.ts` with four
+`expectTypeOf` checks: TArgs preservation, TReturn preservation, and
+two `@ts-expect-error` rejections for wrong-key + missing-key arg
+shapes. Updated `nav-entries.spec.ts`'s pairing assertion to the new
+field shape.
+
+Verifications:
+
+- `npx tsc -p tsconfig.json --noEmit` (in `packages/nimbus-ui/`)
+  exits 0 with zero output.
+- `npx vitest run` → 36 files / 240 tests pass (predecessor close
+  was 35 / 236; +1 file, +4 tests from `query-entry.spec.ts`).
+- `npm run build` clean (pre-existing chunk-size warning unchanged;
+  no new warnings).
+- Grep gates (run from `packages/nimbus-ui/`):
+  - `grep -rn 'as unknown as ' src packages/nimbus/src
+    --include='*.ts' --include='*.tsx' --exclude='*.spec.ts'
+    --exclude='*.spec.tsx'` → 0 hits.
+  - `grep -rn 'as never' src packages/nimbus/src --include='*.ts'
+    --include='*.tsx' --exclude='*.spec.ts'
+    --exclude='*.spec.tsx'` → 0 hits.
+  - `grep -rn 'CountQuery' src` → 0 hits (alias retired).
+  - The 15 `as unknown as` hits remaining in `*.spec.ts(x)` files
+    are the documented test-fixture idiom; the R1 gate scope (non-
+    spec files only) is recorded in `before.md`.
+
+Ledger flipped pending → done for R1 at close of phase.

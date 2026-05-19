@@ -29,6 +29,7 @@ export {
   makeMutationReference,
   makePaginatedQueryReference,
   makeQueryReference,
+  queryEntry,
 } from "./internal/shared.ts";
 export type {
   ActionReference,
@@ -37,6 +38,7 @@ export type {
   InferResult,
   MutationReference,
   PaginatedQueryReference,
+  QueryEntry,
   QueryReference,
 } from "./internal/shared.ts";
 export { NimbusHttpClient } from "./http-client.ts";

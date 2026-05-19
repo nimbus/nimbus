@@ -10,13 +10,15 @@ export type DesktopBridge = {
   runUpgrade: (method: UpgradeMethod) => AsyncIterable<UpgradeEvent>;
 };
 
-type WindowWithNimbus = {
-  nimbus?: DesktopBridge;
-};
+declare global {
+  interface Window {
+    nimbus?: DesktopBridge;
+  }
+}
 
 export function getDesktopBridge(): DesktopBridge | null {
   if (typeof window === "undefined") return null;
-  const candidate = (window as unknown as WindowWithNimbus).nimbus;
+  const candidate = window.nimbus;
   if (!candidate || typeof candidate.runUpgrade !== "function") return null;
   return candidate;
 }
