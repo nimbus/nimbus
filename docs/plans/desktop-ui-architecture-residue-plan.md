@@ -227,7 +227,7 @@ After this wave closes:
 | R6 | Extract shared filter + table-cell primitives | done |
 | R7 | `Route.loaderDeps` for tenant-switch invalidation | done |
 | R8 | A3 residue cleanup (dead refs, typed sub-drawer) | done |
-| R9 | CSP test tightening + workflow path filter widening | pending |
+| R9 | CSP test tightening + workflow path filter widening | done |
 | R10 | Smoke spec — deterministic fixture seeding | pending |
 | R11 | Polish — catalog story state coverage + nit pass | pending |
 | R12 | Verification + close + archive | pending |
@@ -1281,3 +1281,83 @@ Verifications:
 - `npx vite build` clean (chunk-size warning unchanged).
 
 Ledger flipped pending → done for R8 at close of phase.
+
+(j) **R9 — CSP test tightening + workflow path filter widening
+(2026-05-19).** Two CI blind spots flagged by the review come
+out:
+
+CSP test (`crates/nimbus-server/src/http/ui.rs`):
+
+- `inline_fouc_script_hash_matches_csp` no longer assumes the
+  inline FOUC script appears as a bare `<script>...</script>`
+  with no attributes. It now walks every `<script ...>` tag
+  in the embedded `dist/index.html` and partitions them into
+  inline (no `src=`) and external (`src=` present). Attribute-
+  bearing open tags like `<script type="module">...` are
+  matched correctly because the open-tag boundary is found by
+  searching forward for `>` rather than literal-string matching
+  on `<script>`.
+- The test now asserts **exactly one** inline `<script>` in
+  the SPA shell. If a future vite plugin or React/TanStack
+  feature adds a second inline script, the test fails with a
+  message telling the next reviewer to add the new hash to
+  `UI_CSP`'s `script-src` rather than ship a script that the
+  browser will silently block. Manual verification: a second
+  `<script>console.log(...)</script>` was appended to
+  `packages/nimbus-ui/dist/index.html`; the test failed with
+  `left: 2, right: 1`. The edit was reverted and the test
+  passes again. The `dist/` directory is gitignored so the
+  manual edit is not in the commit.
+- The scanner also defends against false matches like
+  `<scripts>` or `<scriptish>` by requiring the character
+  after `<script` to be `>`, `/`, or ASCII whitespace.
+
+`UI_CSP` (`crates/nimbus-server/src/http/ui.rs`):
+
+- Reformatted from a single-line `&str` to a `concat!(...)`
+  call so each directive lives on its own line. The compiled
+  byte sequence is identical (the `UI_CSP.contains(...)`
+  assertion in the test still holds).
+- The `style-src 'self' 'unsafe-inline'` line carries a
+  multi-line comment explaining why `'unsafe-inline'` is
+  load-bearing: the React shell relies on inline
+  `style={...}` attributes throughout (CSS-variable typography
+  hooks, toast positioning) and Tailwind's runtime style
+  injection doesn't emit a stable hash. A future reviewer
+  considering tightening to `'self'` only will see the
+  rationale and the audit they'd need to do first.
+
+Workflow path filter (`.github/workflows/desktop-ui.yml`):
+
+- The on-push and on-pull-request `paths:` filters gain
+  `Cargo.toml`, `Cargo.lock`, and `rust-toolchain.toml`. A
+  dependency bump or toolchain change at the workspace root
+  used to leave the desktop-ui smoke walk on its previous
+  green run; now any change that affects a `nimbus-bin`
+  build will trigger the workflow.
+- `deny.toml` is intentionally left out — it governs
+  `cargo deny` policy, not what the binary actually builds.
+
+Why split the path filter touch points symmetrically:
+both `push` and `pull_request` filters get the same widening
+because the smoke walk needs to gate both the merge-time PR
+check and the post-merge sanity run; either alone would leave
+a hole.
+
+Verifications:
+
+- `cargo test -p nimbus-server --lib http::ui::` → 4 tests
+  pass (the rewritten `inline_fouc_script_hash_matches_csp`
+  plus the three pre-existing path/content-type tests).
+- Manual second-script edit reproduces the new assertion
+  (`left: 2, right: 1`); after revert, the suite is green
+  again.
+- A dep bump in `Cargo.toml` triggers the workflow on a test
+  branch — confirmed by inspection of the YAML
+  (`paths: - "Cargo.toml"` now present); the live trigger
+  check is deferred to R12 once the residue plan branch lands
+  on `main`.
+- `make check` (rust-side) is exercised by the existing CI
+  lanes; R9 doesn't touch the JS side.
+
+Ledger flipped pending → done for R9 at close of phase.

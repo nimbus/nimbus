@@ -24,7 +24,21 @@ use crate::local_server::{
 // the script body drifts without a CSP update.
 #[cfg(test)]
 const UI_INLINE_FOUC_SCRIPT_HASH: &str = "sha256-j4dvfQhOc0aIpLHfDFjtJTFdEOwAQgL/0GWxK/Rbx/0=";
-const UI_CSP: &str = "default-src 'self'; script-src 'self' 'sha256-j4dvfQhOc0aIpLHfDFjtJTFdEOwAQgL/0GWxK/Rbx/0='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*;";
+const UI_CSP: &str = concat!(
+    "default-src 'self'; ",
+    "script-src 'self' 'sha256-j4dvfQhOc0aIpLHfDFjtJTFdEOwAQgL/0GWxK/Rbx/0='; ",
+    // `style-src 'unsafe-inline'` is required because the React shell attaches
+    // inline `style={...}` attributes throughout (CSS-variable typography
+    // hooks, toast positioning, etc.), and Tailwind's runtime-style escape
+    // hatches don't emit a stable hash we can pin. Tightening this to
+    // `'self'` only would break those inline styles silently. Don't drop it
+    // without auditing every inline `style=` attribute and runtime style
+    // injector the bundle emits.
+    "style-src 'self' 'unsafe-inline'; ",
+    "img-src 'self' data:; ",
+    "font-src 'self' data:; ",
+    "connect-src 'self' ws://127.0.0.1:* ws://localhost:*;",
+);
 
 const SPA_INDEX: &str = "index.html";
 
@@ -350,7 +364,12 @@ mod tests {
     // script. This test recomputes the hash from the embedded asset and
     // fails the build if it no longer matches the pinned constant, so the
     // drift is caught at compile-time rather than at runtime in the
-    // browser.
+    // browser. It also fails the build if a *second* inline script appears
+    // in the SPA shell: every inline script needs its own SHA-256 pin in
+    // `script-src`, so silently shipping a second one would break the page
+    // in production. The scanner tolerates attribute-bearing open tags
+    // (`<script type="module">...`) so a future `vite` upgrade that adds
+    // attributes to the FOUC script doesn't accidentally skip the check.
     #[test]
     fn inline_fouc_script_hash_matches_csp() {
         use base64::Engine;
@@ -361,18 +380,19 @@ mod tests {
         let html = std::str::from_utf8(&index.data)
             .expect("SPA index.html should be valid UTF-8");
 
-        let open = "<script>";
-        let close = "</script>";
-        let start = html
-            .find(open)
-            .expect("SPA index.html should contain an inline <script>");
-        let body_start = start + open.len();
-        let body_end = html[body_start..]
-            .find(close)
-            .map(|offset| body_start + offset)
-            .expect("inline <script> should have a matching </script>");
-        let body = &html[body_start..body_end];
+        let inline_bodies = inline_script_bodies(html);
+        assert_eq!(
+            inline_bodies.len(),
+            1,
+            "SPA index.html must contain exactly one inline <script>; \
+             found {}. Each inline script needs its own SHA-256 pin in \
+             UI_CSP's `script-src`, so add the new hash there (and a sibling \
+             const next to UI_INLINE_FOUC_SCRIPT_HASH) before shipping a \
+             second one.",
+            inline_bodies.len(),
+        );
 
+        let body = inline_bodies[0];
         let mut hasher = Sha256::new();
         hasher.update(body.as_bytes());
         let digest = hasher.finalize();
@@ -390,5 +410,56 @@ mod tests {
             "UI_CSP must contain UI_INLINE_FOUC_SCRIPT_HASH so the inline \
              FOUC script is allowlisted",
         );
+    }
+
+    fn inline_script_bodies(html: &str) -> Vec<&str> {
+        let mut bodies = Vec::new();
+        let mut cursor = 0;
+        while let Some(rel) = html[cursor..].find("<script") {
+            let tag_start = cursor + rel;
+            let after_name = tag_start + "<script".len();
+            // Skip false matches like `<scripts>` or `<scriptish>`: a real
+            // <script> tag is followed by `>`, whitespace, or `/`.
+            let is_tag = match html[after_name..].chars().next() {
+                Some('>') | Some('/') => true,
+                Some(c) if c.is_ascii_whitespace() => true,
+                _ => false,
+            };
+            if !is_tag {
+                cursor = after_name;
+                continue;
+            }
+            let open_end = match html[after_name..].find('>') {
+                Some(offset) => after_name + offset,
+                None => break,
+            };
+            let open_tag = &html[tag_start..=open_end];
+            // External scripts (`<script src="...">`) don't trigger CSP
+            // inline-script enforcement; only ones with an inline body do.
+            let is_inline = !has_src_attr(open_tag);
+            let body_start = open_end + 1;
+            let body_end = match html[body_start..].find("</script>") {
+                Some(offset) => body_start + offset,
+                None => break,
+            };
+            if is_inline {
+                bodies.push(&html[body_start..body_end]);
+            }
+            cursor = body_end + "</script>".len();
+        }
+        bodies
+    }
+
+    fn has_src_attr(open_tag: &str) -> bool {
+        // Cheap attribute scan: split on ASCII whitespace, then each token is
+        // either `name` or `name=value`. We treat `src=...` (case-insensitive
+        // name) as evidence of an external script reference.
+        open_tag
+            .trim_start_matches('<')
+            .split(|c: char| c.is_ascii_whitespace())
+            .any(|token| {
+                let name = token.split('=').next().unwrap_or("");
+                name.eq_ignore_ascii_case("src")
+            })
     }
 }
