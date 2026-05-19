@@ -29,7 +29,7 @@ export function EmptyState({
       data-testid={testid}
     >
       <h2
-        className="text-default"
+        className="font-mono text-default"
         style={{ fontSize: "var(--text-lg)" }}
         data-testid={testid ? `${testid}-title` : undefined}
       >

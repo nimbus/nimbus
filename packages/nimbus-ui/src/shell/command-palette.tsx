@@ -108,7 +108,7 @@ export function CommandPalette() {
         loop
         role="dialog"
         aria-label="Command palette"
-        className="relative w-[min(640px,90vw)] overflow-hidden rounded-lg border bg-surface shadow-2xl border-strong animate-in zoom-in-95 fade-in-0"
+        className="relative flex max-h-[80vh] w-[min(640px,90vw)] flex-col overflow-hidden rounded-lg border bg-surface shadow-2xl border-strong animate-in zoom-in-95 fade-in-0"
         data-testid="command-palette"
       >
         <div className="flex items-center gap-2 border-b border-app px-3 py-2">
@@ -130,7 +130,7 @@ export function CommandPalette() {
           <ModeToggle current={mode} onChange={setMode} />
         </div>
         <Command.List
-          className="max-h-[420px] overflow-auto px-1 py-1"
+          className="min-h-0 flex-1 max-h-[60vh] overflow-y-auto px-1 py-1"
           data-testid="command-palette-list"
         >
           <Command.Empty className="px-3 py-6 text-center text-sm text-muted">
@@ -229,7 +229,10 @@ export function CommandPalette() {
             </Command.Group>
           ) : null}
         </Command.List>
-        <div className="flex items-center gap-3 border-t border-app px-3 py-1.5 text-xs text-muted">
+        <div
+          className="flex shrink-0 items-center gap-3 border-t border-app px-3 py-1.5 text-xs text-muted"
+          data-testid="command-palette-footer"
+        >
           <span className="inline-flex items-center gap-1">
             <Kbd>↑</Kbd>
             <Kbd>↓</Kbd>
@@ -275,7 +278,7 @@ function ModeToggle({
           aria-pressed={current === m.id}
           onClick={() => onChange(m.id)}
           className={cn(
-            "px-2 py-1 transition-colors",
+            "px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition-colors",
             current === m.id
               ? "bg-surface-2 text-default"
               : "text-muted hover:bg-surface-2",

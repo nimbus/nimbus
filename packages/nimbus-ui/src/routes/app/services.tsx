@@ -90,10 +90,11 @@ function ScopeChip({ activeTenant }: { activeTenant: string | null }) {
   if (activeTenant === null) return null;
   return (
     <span
-      className="rounded border border-app px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted"
+      className="inline-flex items-center gap-1 rounded border border-app px-2 py-0.5 font-mono text-[10px] text-muted"
       data-testid="services-scope"
     >
-      tenant: {activeTenant}
+      <span className="uppercase tracking-wide">tenant</span>
+      <span className="font-mono text-default">{activeTenant}</span>
     </span>
   );
 }
