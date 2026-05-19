@@ -49,7 +49,6 @@ function RotateTokenDialog({ onClose }: { onClose: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ generation: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const tokenInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -98,7 +97,6 @@ function RotateTokenDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <DialogShell
-      ref={dialogRef}
       title="Rotate admin token"
       onClose={onClose}
       testid="settings-rotate-dialog"
@@ -179,7 +177,6 @@ function ShutdownDialog({ onClose }: { onClose: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -220,7 +217,6 @@ function ShutdownDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <DialogShell
-      ref={dialogRef}
       title="Shut down server"
       onClose={onClose}
       testid="settings-shutdown-dialog"

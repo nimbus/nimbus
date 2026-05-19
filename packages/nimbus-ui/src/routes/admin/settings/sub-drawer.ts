@@ -1,6 +1,6 @@
-import type { SubDrawerSpec } from "../../../shell/sub-drawer";
+import type { StaticSubDrawerSpec } from "../../../shell/sub-drawer";
 
-export const ADMIN_SETTINGS_SUB_DRAWER: SubDrawerSpec = {
+export const ADMIN_SETTINGS_SUB_DRAWER = {
   kind: "static",
   title: "Settings",
   items: [
@@ -47,4 +47,12 @@ export const ADMIN_SETTINGS_SUB_DRAWER: SubDrawerSpec = {
       search: { section: "shutdown" },
     },
   ],
-};
+} as const satisfies StaticSubDrawerSpec<
+  | "general"
+  | "endpoints"
+  | "deploys"
+  | "token"
+  | "environment"
+  | "integrations"
+  | "shutdown"
+>;

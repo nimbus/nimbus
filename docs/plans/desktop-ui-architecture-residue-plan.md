@@ -226,7 +226,7 @@ After this wave closes:
 | R5 | Loader-error envelope coverage on the four A4 routes | done |
 | R6 | Extract shared filter + table-cell primitives | done |
 | R7 | `Route.loaderDeps` for tenant-switch invalidation | done |
-| R8 | A3 residue cleanup (dead refs, typed sub-drawer) | pending |
+| R8 | A3 residue cleanup (dead refs, typed sub-drawer) | done |
 | R9 | CSP test tightening + workflow path filter widening | pending |
 | R10 | Smoke spec — deterministic fixture seeding | pending |
 | R11 | Polish — catalog story state coverage + nit pass | pending |
@@ -1223,3 +1223,61 @@ Verifications:
 - `npx vite build` clean (chunk-size warning unchanged).
 
 Ledger flipped pending → done for R7 at close of phase.
+
+(i) **R8 — A3 residue cleanup (2026-05-19).** Three small bits
+A3 carried forward come out:
+
+- `packages/nimbus-ui/src/routes/admin/settings/danger-zone.tsx`
+  — both `dialogRef = useRef<HTMLDivElement>(null)` lines and
+  their `<DialogShell ref={dialogRef} ...>` forwards are
+  deleted. The dialog manages its own focus return via
+  `previouslyFocusedRef` inside `DialogShell`, so the consumer
+  ref was always dead weight. With both call sites no longer
+  forwarding a ref, the `ref` prop is also dropped from
+  `DialogShell` itself in
+  `packages/nimbus-ui/src/routes/admin/settings/primitives.tsx`
+  along with the `<div ref={ref} ...>` forward — the dialog
+  element no longer exposes a ref hook because nothing was
+  using it. `useRef` stays imported in `danger-zone.tsx`
+  because `tokenInputRef` still needs it for autofocus.
+- `packages/nimbus-ui/src/routes/admin/settings/sub-drawer.ts`
+  — the export gains the
+  `as const satisfies StaticSubDrawerSpec<"general" |
+  "endpoints" | "deploys" | "token" | "environment" |
+  "integrations" | "shutdown">` typing pattern that matches
+  `routes/admin/observability.tsx:70`. The import switches
+  from `SubDrawerSpec` to `StaticSubDrawerSpec` to feed the
+  satisfies constraint. The literal item ids now flow through
+  as a concrete string-literal union instead of widening to
+  `string`.
+- The optional rename in the plan body (`settings/hooks.ts` →
+  `settings/debug-snapshots.ts`, and inlining `Cell` /
+  `DialogShell` into single consumers) is deferred. The plan
+  records the call here: the current names are concept-clear
+  in context (`useDebugSnapshots` already names the concept;
+  `Cell` and `DialogShell` are conceivably reusable if
+  another admin settings section adds another dialog), and
+  the rename would touch test fixtures and snapshot ids
+  without changing the architecture story. Leaving them
+  unchanged keeps R8 to the two mechanical edits the plan
+  body flagged.
+
+Verifications:
+
+- Grep gates:
+  - `grep -n 'dialogRef'
+    packages/nimbus-ui/src/routes/admin/settings/danger-zone.tsx`
+    → 0 hits.
+  - `grep -n 'satisfies StaticSubDrawerSpec'
+    packages/nimbus-ui/src/routes/admin/settings/sub-drawer.ts`
+    → 1 hit (the new annotation).
+- `npx tsc --noEmit` in `packages/nimbus-ui/` exits 0
+  (`as const satisfies` would catch any item-id drift; it
+  doesn't).
+- `npx vitest run` → 37 files / 248 tests pass (unchanged
+  from R7 close — focus behavior is exercised through
+  DialogShell's own `previouslyFocusedRef`, not the deleted
+  consumer ref).
+- `npx vite build` clean (chunk-size warning unchanged).
+
+Ledger flipped pending → done for R8 at close of phase.
