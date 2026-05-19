@@ -13,23 +13,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
-- `docs/plans/desktop-ui-architecture-residue-plan.md`
-  - operator-console architecture residue from the Architecture-Hardening
-    wave (A0–A8, closed 2026-05-18). Promoted 2026-05-19 from a four-stream
-    post-closure code review that surfaced three blockers the A2/A4 grep
-    gates missed (vanity-gate `as unknown as` residue in `shell/nav-entries
-    .ts`, partial loader migration on `_.$service.tsx` siblings, un-specced
-    codegen inference layer) plus ~12 cleanup items and four nits. Covers
-    R0–R12: discriminated producer-side query wrapper, loaderization of the
-    five remaining sibling/route queries, codegen specs + `system:status`
-    audit-comment fix + `JsonValue` dedup, loader-error envelope coverage
-    across the four A4 routes, shared filter/table primitives, `loaderDeps`
-    tenant pattern, A3 residue (dead `dialogRef`s, typed sub-drawer const),
-    CSP test tightening + workflow path-filter widening, deterministic
-    smoke fixture seeding, catalog story state coverage, and a nit pass.
-    Successor to `docs/plans/archive/desktop-ui-architecture-hardening-
-    plan.md`; visual identity inherits the predecessor's sealed `h7-*`
-    bundle at `docs/plans/proof/desktop-ui-followup-hardening/after/`.
+
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -166,6 +150,56 @@ archived plans only when you need historical execution detail.
     changes. Out of scope continues: F15 theme-matrix smoke and the
     F6 Restarts/Density/Drift restore — both return when their owning
     plans land.
+- `docs/plans/archive/desktop-ui-architecture-residue-plan.md`
+  - completed execution record for the architecture-residue wave on the
+    operator console — the second pass after the Architecture-Hardening
+    wave. Promoted 2026-05-19 from a four-stream post-closure code review
+    that surfaced three blockers the A2/A4 grep gates missed (vanity-gate
+    `as unknown as CountQuery` residue in `shell/nav-entries.ts`, partial
+    loader migration on `_.$service.tsx` siblings, un-specced codegen
+    inference layer) plus ~12 cleanup items and four nits. Covered R0–R12:
+    producer-side typed `QueryEntry<TArgs, TReturn>` wrapper retired the
+    nine remaining `as unknown as` casts (R1); the three sibling-`useQuery`
+    sites on `_.$service.tsx`-class routes and the two page-level
+    `useQuery` calls on `compute_.runs_.$runId.tsx` folded into
+    `Route.loader` (R2 + R4); codegen `isTrivialValidator` now unwraps
+    `union(v.any(), v.null())`, `inferMutationResultType` throws on missing
+    `plan.table`, `helperCall` audits convention-inferred fallbacks, and
+    `JsonValue` collapsed to a single source in `dataModel.d.ts` (R3);
+    loader-error envelope (`Route.errorComponent` + `EmptyState` retry) +
+    spec coverage added to the four A4 routes (R5); shared `_filters.tsx`
+    + `Th`/`Td` primitives consolidate the observability + tenants
+    duplication (R6); `routes/app/services{,_.$service}.tsx` switched
+    from `useEffect → router.invalidate()` to `Route.loaderDeps` keying
+    on `useUiStore.getState().activeTenant` (R7); A3 dead `dialogRef`
+    declarations removed from `danger-zone.tsx` and `settings/sub-drawer.ts`
+    adopted the typed-const `as const satisfies StaticSubDrawerSpec<…>`
+    pattern (R8); `inline_fouc_script_hash_matches_csp` now asserts
+    exactly one inline script and tolerates attribute-bearing tags, and
+    the `desktop-ui.yml` workflow path filter widened to cover
+    `Cargo.{toml,lock}` + `rust-toolchain*` (R9); smoke spec seeds one
+    tenant + one service via `/api/tenants` + raw
+    `/convex/_nimbus/mutation` (`Mutation::Insert`) so ScopeChip,
+    services-table, and operator service-detail assertions fire
+    unconditionally (R10); polish + nit pass (R11) collapsed the parallel
+    `ObservabilityTab` unions, dropped debug-residue aria-live + unused
+    re-exports, and added five Storybook variants
+    (`copy-chip → ClipboardDenied`, `breadcrumb → LongPathTruncation`,
+    `time → RelativeFutureSkew / RelativeFarPast / RelativeFarFuture`,
+    `upgrade-popover → NotAvailable / StaleCheck / ErrorCheck`,
+    `appearance-section → snapshot/restore on unmount`). Closed
+    2026-05-19; proof bundle under
+    `docs/plans/proof/desktop-ui-architecture-residue/` (`before.md`
+    records R0 HEAD counts; `README.md` records R0–R12 →
+    after-evidence mapping plus close-time grep-gate output). Eight
+    grep gates clean at close: `as never` 0 hits, non-spec
+    `as unknown as ` 0 hits, `as ServiceDoc … | undefined` 0 hits,
+    cross-persona `ServiceDoc` import under `routes/admin` 0 hits,
+    `type ServiceDoc` 1 hit (single canonical), `useQuery` in the three
+    loaderized routes 0 hits, `router.invalidate` in `routes/app/services*.tsx`
+    0 hits, `export type JsonValue` 1 hit in `_generated/`. Visual
+    baseline inherits the H wave's sealed `h7-*` bundle since R1–R12
+    are code/architecture-only changes.
 - `docs/plans/archive/update-lifecycle-plan.md`
   - completed execution record for the operator-facing update lifecycle:
     server-side `/api/system/version-info` with stale-while-revalidate
@@ -266,6 +300,28 @@ archived plans only when you need historical execution detail.
     session and codec seams, benchmark-driven optional binary codec work, and
     optional WebTransport evaluation without re-owning the established
     WebSocket protocol or Firebase transport work.
+- `docs/plans/agent-browser-service-plan.md`
+  - canonical deferred plan for adding a first-class `ctx.browser`
+    session resource to Nimbus: `BrowserProvider` trait, single-Chrome-
+    many-BrowserContexts shape, sandboxed-Chrome production provider
+    behind `nimbus-sandbox`, durable Playwright-compatible storage state
+    in `nimbus-storage`, warm pool, extraction cache, mutation-journal
+    integration, and per-tenant capability admission paired with
+    `wasi-agent-capabilities-plan.md`. North-star research at
+    `docs/plans/research/agent-browser-service-prior-art.md`.
+- `docs/plans/secret-management-plan.md`
+  - canonical deferred plan for a tenant-scoped secret-management
+    surface in Nimbus: `SecretProvider` trait + URI-shaped references
+    + capability-gated `ctx.secret.*` host bridge + `_nimbus.secrets`
+    Nimbus-native storage with KMS-DEK-wrapped values + multi-backend
+    routing via `_nimbus.secret_stores` + cache invalidation via
+    iroh-gossip. MVP provider set: NimbusNative, File (SOPS-compatible),
+    AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, HashiCorp
+    Vault, Kubernetes Secrets. Activates when any of the browser plan
+    Phase B5, the wasi-agent Phase A2, or a first paying tenant needs
+    stronger-than-env-var credentials. Prior-art research at
+    `docs/plans/research/secret-management-prior-art.md`. Supersedes
+    the gap note `docs/plans/research/secret-management-shape.md`.
 
 ## Archive Policy
 

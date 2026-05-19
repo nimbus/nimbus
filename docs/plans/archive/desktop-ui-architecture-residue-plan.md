@@ -1,7 +1,8 @@
 # Desktop UI — Architecture Residue
 
-Status: active
+Status: done
 Promoted: 2026-05-19
+Closed: 2026-05-19
 Owner: desktop-ui workstream
 Predecessor (closed, archived): `docs/plans/archive/desktop-ui-architecture-hardening-plan.md`
 Source: 2026-05-19 four-reviewer pass against the A wave's outputs at
@@ -230,7 +231,7 @@ After this wave closes:
 | R9 | CSP test tightening + workflow path filter widening | done |
 | R10 | Smoke spec — deterministic fixture seeding | done |
 | R11 | Polish — catalog story state coverage + nit pass | done |
-| R12 | Verification + close + archive | pending |
+| R12 | Verification + close + archive | done |
 
 ## Roadmap detail
 
@@ -1528,3 +1529,75 @@ Verifications:
     packages/nimbus/src/browser.ts` → 0 hits in the export block.
 
 Ledger flipped pending → done for R11 at close of phase.
+
+(m) **R12 — Verification + close + archive (2026-05-19).** Full close
+gate run from repo root.
+
+Verifications:
+
+- `cd packages/nimbus-ui && npx vitest run` → 37 files / 248 tests
+  pass (R10 baseline 37/248; R11 added story-only edits with no new
+  spec files; baseline holds).
+- `cd packages/nimbus-ui && npx tsc -p tsconfig.json --noEmit`
+  exits 0 with zero output.
+- `cd packages/nimbus-ui && npm run build` exits 0 (pre-existing
+  chunk-size warning unchanged).
+- `cargo build -p nimbus-bin` exits 0.
+- `cargo test -p nimbus-server` → 32 passed; 0 failed (includes the
+  R9-tightened `inline_fouc_script_hash_matches_csp` test).
+- `cd packages/nimbus-ui && npx playwright test
+  tests/e2e/smoke.spec.ts` → 1 passed (5.4s, single chromium
+  worker; R10 seeding path drives all three assertions
+  unconditionally).
+- `make check` exits 0 (workspace `cargo check`).
+
+Grep gates (all run from repo root; expected counts in parentheses):
+
+- `grep -rn 'as never' packages/nimbus-ui/src packages/nimbus/src
+  --include='*.ts' --include='*.tsx' --exclude='*.spec.ts'
+  --exclude='*.spec.tsx'` → 0 (0).
+- `grep -rn 'as unknown as ' packages/nimbus-ui/src
+  packages/nimbus/src --include='*.ts' --include='*.tsx'
+  --exclude='*.spec.ts' --exclude='*.spec.tsx'` → 0 (0).
+- `grep -rn 'as ServiceDoc\[\] | undefined\|as ServiceDoc | null
+  | undefined' packages/nimbus-ui/src` → 0 (0).
+- `grep -rn 'import.*ServiceDoc.*from ".*routes/app'
+  packages/nimbus-ui/src/routes/admin` → 0 (0).
+- `grep -rn 'type ServiceDoc' packages/nimbus-ui/src` → 1 (1, in
+  `lib/types/service.ts:3`).
+- `grep -n 'useQuery'
+  packages/nimbus-ui/src/routes/admin/services_.$service.tsx
+  packages/nimbus-ui/src/routes/app/services_.$service.tsx
+  packages/nimbus-ui/src/routes/app/compute_.runs_.$runId.tsx` →
+  0 (0).
+- `grep -n 'router.invalidate'
+  packages/nimbus-ui/src/routes/app/services*.tsx` → 0 (0).
+- `grep -c 'export type JsonValue'
+  packages/nimbus-ui/convex/_generated/{api.ts,dataModel.d.ts,scheduled_functions.ts}`
+  → 1 (only in `dataModel.d.ts`; the two consumers `import type`).
+- `grep -n 'if (await'
+  packages/nimbus-ui/tests/e2e/smoke.spec.ts` → 0 (was 3 at R0).
+
+Proof bundle finalized:
+
+- `docs/plans/proof/desktop-ui-architecture-residue/before.md` —
+  R0 architecture-level before-state (left as written at R0).
+- `docs/plans/proof/desktop-ui-architecture-residue/README.md` —
+  R0–R12 before→after evidence mapping plus the close-time
+  verification commands and grep-gate output captured above.
+- No new PNGs in this wave. Visual identity baseline remains the
+  predecessor's sealed `docs/plans/proof/desktop-ui-followup-hardening/after/`
+  bundle (11 `h7-*` captures, 2026-05-18).
+
+Closeout:
+
+- Plan front matter flipped `Status: active` → `Status: done`, with
+  `Closed: 2026-05-19` recorded.
+- All 12 ledger rows now `done`.
+- `git mv docs/plans/desktop-ui-architecture-residue-plan.md
+  docs/plans/archive/desktop-ui-architecture-residue-plan.md`.
+- `docs/plans/README.md` active list no longer references the
+  plan; archived-baseline entry added under the A wave's blurb.
+
+Ledger flipped pending → done for R12 at close of phase. Wave
+sealed.
