@@ -3,10 +3,20 @@ import { describe, expect, it } from "vitest";
 import { OBSERVABILITY_SUB_DRAWER } from "./observability";
 import { SCHEDULES_SUB_DRAWER } from "./schedules";
 
+function assertStatic<T extends { kind: string }>(
+  spec: T,
+  name: string,
+): asserts spec is Extract<T, { kind: "static" }> {
+  if (spec.kind !== "static") {
+    throw new Error(
+      `${name} expected to be a static sub-drawer, got kind="${spec.kind}"`,
+    );
+  }
+}
+
 describe("Observability section nav (DR3 / F3)", () => {
   it("sub-drawer is the single source of truth: 4 items (logs, runs, events, errors)", () => {
-    expect(OBSERVABILITY_SUB_DRAWER.kind).toBe("static");
-    if (OBSERVABILITY_SUB_DRAWER.kind !== "static") return;
+    assertStatic(OBSERVABILITY_SUB_DRAWER, "OBSERVABILITY_SUB_DRAWER");
     expect(OBSERVABILITY_SUB_DRAWER.items.map((i) => i.id)).toEqual([
       "logs",
       "runs",
@@ -16,7 +26,7 @@ describe("Observability section nav (DR3 / F3)", () => {
   });
 
   it("events and errors are flagged disabled until their backends land", () => {
-    if (OBSERVABILITY_SUB_DRAWER.kind !== "static") return;
+    assertStatic(OBSERVABILITY_SUB_DRAWER, "OBSERVABILITY_SUB_DRAWER");
     const byId = Object.fromEntries(
       OBSERVABILITY_SUB_DRAWER.items.map((i) => [i.id, i]),
     );
@@ -29,8 +39,7 @@ describe("Observability section nav (DR3 / F3)", () => {
 
 describe("Schedules section nav (DR3 / F4)", () => {
   it("sub-drawer is static with exactly the two stable sections", () => {
-    expect(SCHEDULES_SUB_DRAWER.kind).toBe("static");
-    if (SCHEDULES_SUB_DRAWER.kind !== "static") return;
+    assertStatic(SCHEDULES_SUB_DRAWER, "SCHEDULES_SUB_DRAWER");
     expect(SCHEDULES_SUB_DRAWER.items.map((i) => i.id)).toEqual([
       "scheduled",
       "cron",
@@ -38,7 +47,7 @@ describe("Schedules section nav (DR3 / F4)", () => {
   });
 
   it("each Schedules item routes through the ?section= query, not a path segment", () => {
-    if (SCHEDULES_SUB_DRAWER.kind !== "static") return;
+    assertStatic(SCHEDULES_SUB_DRAWER, "SCHEDULES_SUB_DRAWER");
     for (const item of SCHEDULES_SUB_DRAWER.items) {
       expect(item.to).toBe("/app/schedules");
       expect(item.search).toEqual({ section: item.id });

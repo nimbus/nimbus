@@ -9,6 +9,7 @@ import {
   type ConnectionSnapshot,
   toLoadingValue,
 } from "../../shell/loading-value";
+import { fetchTenants } from "../../shell/tenants-fetch";
 
 export const Route = createFileRoute("/admin/")({
   component: SystemOverviewPage,
@@ -178,16 +179,10 @@ function useTenantCount(): number | undefined {
   const [count, setCount] = useState<number | undefined>(undefined);
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/tenants", {
-      credentials: "include",
-      signal: controller.signal,
-    })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body: { tenants?: unknown[] } | null) => {
+    fetchTenants(controller.signal)
+      .then((ids) => {
         if (controller.signal.aborted) return;
-        if (body && Array.isArray(body.tenants)) {
-          setCount(body.tenants.length);
-        }
+        if (ids !== null) setCount(ids.length);
       })
       .catch(() => {
         /* surfaced elsewhere; render — for the field */

@@ -148,4 +148,30 @@ describe("useTenantBootstrap — auto-default (DR4 / F5)", () => {
     expect(useUiStore.getState().activeTenant).toBe("explicit");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("does not write activeTenant after the controller is aborted (unmount before resolve)", async () => {
+    let resolveFetch: ((value: Response) => void) | undefined;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { unmount } = renderHook(() => useTenantBootstrap());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    resolveFetch?.(
+      new Response(JSON.stringify({ tenants: ["alpha"] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(useUiStore.getState().activeTenant).toBeNull();
+  });
 });
