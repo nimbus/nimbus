@@ -735,3 +735,96 @@ restatement). Cast inventory at promotion: 5× `as never`, 6×
 `as ServiceDoc[] | undefined`, plus 1× `as ServiceDoc | null | undefined`.
 Phases A0–A8 prepared. Pre-launch policy continues; the codegen
 emit shape changes break every consumer in one wave with no shim.
+
+(b) 2026-05-18 — A0 read-in. Plan and predecessor docs walked;
+confirmed the four predecessor gates remain clean and the cast
+inventory above is current at the working tree (`as never` ×5,
+`as ServiceDoc[] | undefined` ×6, one `as ServiceDoc | null | undefined`).
+Before-state snapshot anchored at commit `a51350f3`.
+
+(c) 2026-05-18 — A1+A2 landed in commit `28769f50`. Codegen now
+emits per-export typed surfaces (`{ default, _typed }`) so every
+`useQuery(api.foo, ...)` returns the function's declared return type
+directly; the 12 consumer casts removed in the same wave (5×
+`as never`, 6× `as ServiceDoc[] | undefined`, 1× `as ServiceDoc | null | undefined`).
+`ServiceDoc` was lifted to `lib/types/services.ts` and re-exported
+from both persona routes. Grep gates `as never` (excluding two
+intentional Convex-types upstream sentinels), `as ServiceDoc`, and
+the cross-persona type-leak pattern all return zero hits.
+
+(d) 2026-05-18 — A3 landed in commit `d343be08`. `routes/admin/settings.tsx`
+decomposed from 1608 LOC into a 184-LOC composition root plus four
+concept-owned children under `routes/admin/settings/`
+(`configuration.tsx`, `deploys.tsx`, `server-info.tsx`,
+`danger-zone.tsx`). Verified TanStack Router does not auto-route the
+children because none export `Route = createFileRoute(...)`; the
+route-tree.gen.ts unchanged. Sub-drawer / scope-chip / breadcrumb
+contract preserved.
+
+(e) 2026-05-18 — A4 landed in commit `f325f669`. Five data routes
+moved to router-level `loader` functions with deferred `useQuery`
+in the component body, eliminating the "render-then-fetch" flicker
+on `/app/services`, `/app/storage`, `/app/compute`, `/admin/services`,
+and `/admin/tenants`. Loader signatures typed via the lifted
+`ServiceDoc` and the codegen-typed APIs; no `as` casts reintroduced.
+
+(f) 2026-05-18 — A5 landed in commit `745fcd43`. Component catalog
+vehicle: Storybook (over Ladle, because the Storybook-recommended
+chromatic visual-regression workflow gives us a ready upgrade path).
+11 stories under `packages/nimbus-ui/src/stories/` covering the
+shared chrome (CopyChip, StateChip, RelativeTime, ConfirmDialog,
+Breadcrumb, SubDrawer, ScopeChip, CommandPalette, Drawer,
+EmptyState, ErrorBoundary). `catalog:build` wired and clean.
+
+(g) 2026-05-18 — A6 landed in commit `12250fa6`. CI browser-smoke
+vehicle: playwright-cli (over chrome-devtools-mcp, because
+playwright-cli is the persistent CI lane per MEMORY.md). The 10-step
+smoke walk in `packages/nimbus-ui/tests/e2e/smoke.spec.ts` exercises
+`/ui/app/`, `/ui/admin/`, `/ui/app/services`, `/ui/admin/services`,
+`/ui/admin/services/<id>` (or not-found envelope), `/ui/admin/tenants`,
+`/ui/app/observability`, and the ⌘K command palette, asserting zero
+console errors and at most one warning. New `verify-desktop-ui` make
+target builds nimbus-bin, builds the UI, and runs the smoke spec;
+`.github/workflows/desktop-ui.yml` runs it on push and PR. A
+long-standing CSP violation surfaced during the smoke walk: the
+inline FOUC theme-resolution script in `dist/index.html` was blocked
+by `script-src 'self'`. Fixed at the root by pinning the script's
+SHA-256 hash in `UI_CSP` and adding the compile-time test
+`inline_fouc_script_hash_matches_csp` that recomputes the hash from
+the embedded HTML and asserts identity — any future edit to the
+inline script fails the Rust test before it reaches CI.
+
+(h) 2026-05-18 — A7 large-file audit decisions:
+- `routes/app/observability.tsx` (978 LOC) → SPLIT. New composition
+  root at 180 LOC pulls tab bodies from
+  `routes/app/observability/logs.tsx` (534 LOC), `runs.tsx`
+  (306 LOC), and shared types from `types.ts` (53 LOC). The tab
+  strip, sub-drawer spec, and search validation stay in the root;
+  the live event stream / log filter bar / perf-store integration
+  move to `logs.tsx`; the runs table and adapter-honesty banner
+  move to `runs.tsx`. Verified TanStack Router does not auto-route
+  the children (route-tree.gen.ts unchanged) and the Vite build now
+  code-splits both tab chunks (`observability-*.js` ×2).
+- `routes/app/storage_.$table.tsx` (1154 LOC) → KEPT. The file is
+  under the CLAUDE.md 1500-LOC warning band and has a single
+  coherent ownership story ("the table documents page"): all
+  mutation handlers (`loadPage`, `handleInsert`, `handleUpdate`,
+  `runDelete`) and the shared cursor/selection state live in
+  `TableDocumentsPage`, and the Insert/Edit drawers + Schema/Index
+  panels share the in-file `Drawer`/`PanelHeader` chrome with no
+  external consumers. Extracting would require either threading
+  state through props (re-coupling at a different boundary) or
+  hoisting the chrome to a shared module (over-promotion for a
+  one-page consumer). Recorded per CLAUDE.md "explicit
+  justification" guidance for files in the under-1500 acceptable
+  band.
+- `routes/admin/machines.tsx` (715 LOC) → KEPT. Same reasoning at a
+  smaller scale: well below the warning band; the `MachineDetail`
+  drawer, lifecycle action button, and table chrome (Section,
+  KvRow, Th, Td, LoadingRow, EmptyState) are tightly coupled to
+  the one consumer page and have no external callers. Extracting
+  the per-file Th/Td/EmptyState helpers would duplicate the
+  pattern other route files already keep co-located.
+
+Typecheck clean, 35 test files / 236 tests passing, Vite build
+green post-split.
