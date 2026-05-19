@@ -13,19 +13,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
-- `docs/plans/desktop-ui-architecture-hardening-plan.md`
-  - active architecture-debt wave promoted 2026-05-18 from the
-    post-closure review of `desktop-ui-followup-hardening-plan.md`.
-    Phases A0–A8 ordered critical → low: A1 codegen typing kills all
-    `as never` and `as ServiceDoc[]` casts at the codegen source; A2
-    lifts `ServiceDoc` into `lib/types/` and eliminates cross-persona
-    route-to-route type imports; A3 decomposes `routes/admin/settings.tsx`
-    (1608 LOC) below the CLAUDE.md warning band; A4 migrates clean data
-    routes to TanStack Router loaders; A5 ships a Ladle (or Storybook)
-    component catalog for the eleven reusable components; A6 wires a
-    playwright-cli `verify-desktop-ui` lane into CI; A7 audits the
-    next-tier large files; A8 verifies, captures proof, archives.
-
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -127,6 +114,41 @@ archived plans only when you need historical execution detail.
     evidence gap and adds 10 new `h7-*` captures). Out of scope:
     F15 theme-matrix smoke and the Restarts/Density/Drift restore —
     both still return when their owning plans land.
+- `docs/plans/archive/desktop-ui-architecture-hardening-plan.md`
+  - completed execution record for the architecture-debt wave on the
+    operator console. Consumed a 2026-05-18 post-closure
+    critical-reflection review of the Followup-Hardening wave that
+    surfaced six architecture items the H-wave intentionally did not
+    touch. Covered A0–A8: codegen now emits per-export typed return
+    surfaces (`{ default, _typed }`) so every `useQuery` returns the
+    handler's declared shape directly and every `as never` / `as
+    ServiceDoc[] | undefined` cast was deleted in the same wave (A1);
+    `ServiceDoc` lifted to `lib/types/services.ts` with zero
+    cross-persona route-to-route type imports (A2);
+    `routes/admin/settings.tsx` decomposed from 1608 LOC to 93 LOC
+    plus four concept-owned siblings under `routes/admin/settings/`
+    (A3); five data routes hoisted to TanStack Router `loader` +
+    `Route.useLoaderData()` (A4); Storybook component catalog with
+    11 stories under `packages/nimbus-ui/src/stories/` (A5);
+    `verify-desktop-ui` CI lane wired via playwright-cli with a
+    10-step smoke walk plus zero-error console hygiene gate, and a
+    long-standing CSP violation on the inline FOUC theme-resolution
+    script fixed at the root by pinning its SHA-256 hash in `UI_CSP`
+    with a compile-time drift test (A6); `routes/app/observability.tsx`
+    split 978 → 180 LOC root + three siblings under
+    `routes/app/observability/`, with `routes/app/storage_.$table.tsx`
+    (1154 LOC) and `routes/admin/machines.tsx` (715 LOC) kept under
+    the CLAUDE.md under-1500 acceptable band with explicit
+    justification (A7). Closed 2026-05-18; proof bundle under
+    `docs/plans/proof/desktop-ui-architecture-hardening/`. Four grep
+    gates clean at close: `as never` 0 hits, `as ServiceDoc[] | undefined`
+    0 hits, cross-persona `ServiceDoc` import under `routes/admin` 0
+    hits, `routes/admin/settings.tsx` 93 LOC (well under the 900-LOC
+    cap). Visual baseline points to the sealed `h7-*` bundle from
+    the followup-hardening wave since A1–A7 are code/architecture-only
+    changes. Out of scope continues: F15 theme-matrix smoke and the
+    F6 Restarts/Density/Drift restore — both return when their owning
+    plans land.
 - `docs/plans/archive/update-lifecycle-plan.md`
   - completed execution record for the operator-facing update lifecycle:
     server-side `/api/system/version-info` with stale-while-revalidate
