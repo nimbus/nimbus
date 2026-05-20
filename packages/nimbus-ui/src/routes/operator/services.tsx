@@ -3,18 +3,18 @@ import { useCallback, useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { EmptyState } from "../../components/empty-state";
-import { getNimbusClient } from "../../lib/nimbus-client";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
+import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
   useSubDrawerSearch,
 } from "../../shell/sub-drawer";
-import { ServicesTable } from "../app/services";
+import { ServicesTable } from "../developer/services";
 
-export const Route = createFileRoute("/admin/services")({
+export const Route = createFileRoute("/operator/services")({
   loader: async () => {
     const services = await getNimbusClient().query(api.services.list, {
       tenantId: null,
@@ -90,8 +90,8 @@ function AdminServicesPage() {
           </h1>
           <p className="text-sm text-muted">
             Every service running on this Nimbus cluster, grouped by tenant.
-            Operator-only view: inspect placement, restarts, density, and
-            bundle drift across all tenants.
+            Operator-only view: inspect placement, restarts, density, and bundle
+            drift across all tenants.
           </p>
         </div>
         <SummaryChip services={services} />
@@ -163,7 +163,7 @@ function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
           {items.map((svc) => (
             <Link
               key={svc._id}
-              to="/admin/services/$service"
+              to="/operator/services/$service"
               params={{ service: svc._id }}
               data-testid={`sub-drawer-item-op-service-${svc.name ?? svc._id}`}
               className={cn(

@@ -13,7 +13,7 @@ import {
   toLoadingValue,
 } from "../../shell/loading-value";
 
-export const Route = createFileRoute("/app/")({
+export const Route = createFileRoute("/developer/")({
   component: OverviewPage,
 });
 
@@ -232,14 +232,14 @@ function ResourceCountsGrid({
         testid="overview-count-machines"
         docs={machines}
         groupBy="state"
-        to="/admin/machines"
+        to="/operator/machines"
       />
       <CountPanel
         title="Services"
         testid="overview-count-services"
         docs={services}
         groupBy="state"
-        to="/app/compute"
+        to="/developer/compute"
       />
       <CountPanel
         title="Tenants"
@@ -247,28 +247,28 @@ function ResourceCountsGrid({
         docs={{ kind: "ok", value: [] }}
         explicitTotal={tenantCount}
         groupBy={null}
-        to="/app/storage"
+        to="/developer/storage"
       />
       <CountPanel
         title="Tables"
         testid="overview-count-tables"
         docs={tables}
         groupBy={null}
-        to="/app/storage"
+        to="/developer/storage"
       />
       <CountPanel
         title="Functions"
         testid="overview-count-functions"
         docs={functions}
         groupBy="kind"
-        to="/app/compute"
+        to="/developer/compute"
       />
       <CountPanel
         title="Recent runs"
         testid="overview-count-runs"
         docs={runs}
         groupBy="status"
-        to="/app/observability"
+        to="/developer/observability"
       />
     </div>
   );
@@ -287,10 +287,10 @@ function CountPanel({
   docs: LoadingValue<AnyDoc[]>;
   groupBy: string | null;
   to:
-    | "/admin/machines"
-    | "/app/compute"
-    | "/app/storage"
-    | "/app/observability";
+    | "/operator/machines"
+    | "/developer/compute"
+    | "/developer/storage"
+    | "/developer/observability";
   explicitTotal?: number;
 }) {
   return (
@@ -384,7 +384,7 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
           Recent events
         </h2>
         <Link
-          to="/app/observability"
+          to="/developer/observability"
           className="text-xs text-link hover:underline"
         >
           View all
@@ -488,7 +488,7 @@ function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
           Recent runs
         </h2>
         <Link
-          to="/app/observability"
+          to="/developer/observability"
           className="text-xs text-link hover:underline"
         >
           View all

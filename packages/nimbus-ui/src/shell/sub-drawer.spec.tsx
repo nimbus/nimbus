@@ -3,7 +3,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathnameRef, searchRef } = vi.hoisted(() => ({
-  pathnameRef: { current: "/app/settings" },
+  pathnameRef: { current: "/developer/settings" },
   searchRef: { current: {} as Record<string, unknown> },
 }));
 
@@ -66,7 +66,7 @@ function Contributor({ spec }: { spec: SubDrawerSpec | null }) {
 }
 
 beforeEach(() => {
-  setPathname("/app/settings");
+  setPathname("/developer/settings");
   searchRef.current = {};
   window.localStorage.clear();
   useUiStore.setState({ subDrawerOpen: true });
@@ -87,7 +87,7 @@ describe("SubDrawer", () => {
   });
 
   it("renders a static contributor with items + active-state highlight", () => {
-    setPathname("/app/settings/secrets");
+    setPathname("/developer/settings/secrets");
     const spec: SubDrawerSpec = {
       kind: "static",
       title: "Settings",
@@ -95,10 +95,10 @@ describe("SubDrawer", () => {
         {
           id: "environment",
           label: "Environment",
-          to: "/app/settings/environment",
+          to: "/developer/settings/environment",
         },
-        { id: "secrets", label: "Secrets", to: "/app/settings/secrets" },
-        { id: "schema", label: "Schema", to: "/app/settings/schema" },
+        { id: "secrets", label: "Secrets", to: "/developer/settings/secrets" },
+        { id: "schema", label: "Schema", to: "/developer/settings/schema" },
       ],
     };
     render(
@@ -127,7 +127,7 @@ describe("SubDrawer", () => {
       search: { placeholder: "Filter tenants" },
       children: (
         <div data-testid="dynamic-body">
-          <a href="/admin/tenants/alpha">alpha</a>
+          <a href="/operator/tenants/alpha">alpha</a>
         </div>
       ),
     };
@@ -150,7 +150,7 @@ describe("SubDrawer", () => {
     const spec: SubDrawerSpec = {
       kind: "static",
       title: "Network",
-      items: [{ id: "routes", label: "Routes", to: "/admin/network/routes" }],
+      items: [{ id: "routes", label: "Routes", to: "/operator/network/routes" }],
     };
     render(
       <SubDrawerProvider>
@@ -174,7 +174,7 @@ describe("SubDrawer", () => {
       kind: "static",
       title: "Settings",
       items: [
-        { id: "general", label: "General", to: "/admin/settings/general" },
+        { id: "general", label: "General", to: "/operator/settings/general" },
       ],
     };
     function FreshContributor() {
@@ -191,7 +191,7 @@ describe("SubDrawer", () => {
   });
 
   it("uses search-param match for active state when items declare search", () => {
-    setPathname("/app/settings");
+    setPathname("/developer/settings");
     searchRef.current = { section: "secrets" };
     const spec: SubDrawerSpec = {
       kind: "static",
@@ -200,13 +200,13 @@ describe("SubDrawer", () => {
         {
           id: "environment",
           label: "Environment",
-          to: "/app/settings",
+          to: "/developer/settings",
           search: { section: "environment" },
         },
         {
           id: "secrets",
           label: "Secrets",
-          to: "/app/settings",
+          to: "/developer/settings",
           search: { section: "secrets" },
         },
       ],
@@ -236,7 +236,7 @@ describe("SubDrawer", () => {
           {
             id: "scheduled",
             label: "Scheduled",
-            to: "/app/schedules/scheduled",
+            to: "/developer/schedules/scheduled",
           },
         ],
       };

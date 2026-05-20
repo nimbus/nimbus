@@ -2,7 +2,7 @@ import { fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathnameRef } = vi.hoisted(() => ({
-  pathnameRef: { current: "/app" },
+  pathnameRef: { current: "/developer" },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -32,7 +32,7 @@ function resetUi() {
 }
 
 beforeEach(() => {
-  setPathname("/app");
+  setPathname("/developer");
   resetUi();
 });
 
@@ -42,7 +42,7 @@ afterEach(() => {
 
 describe("KeyboardContract", () => {
   it("opens the lens on Meta+\\ from a developer pathname and resolves the view", () => {
-    setPathname("/app/compute");
+    setPathname("/developer/compute");
     render(<KeyboardContract />);
     fireEvent.keyDown(window, { key: "\\", metaKey: true });
     expect(useUiStore.getState().lensOpen).toBe(true);
@@ -53,7 +53,7 @@ describe("KeyboardContract", () => {
   });
 
   it("opens the lens on Meta+\\ from an operator pathname and resolves the view", () => {
-    setPathname("/admin/machines");
+    setPathname("/operator/machines");
     render(<KeyboardContract />);
     fireEvent.keyDown(window, { key: "\\", metaKey: true });
     expect(useUiStore.getState().lensOpen).toBe(true);
@@ -64,7 +64,7 @@ describe("KeyboardContract", () => {
   });
 
   it("toggles the palette on Meta+K from any pathname", () => {
-    setPathname("/admin/machines");
+    setPathname("/operator/machines");
     render(<KeyboardContract />);
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     expect(useUiStore.getState().paletteOpen).toBe(true);

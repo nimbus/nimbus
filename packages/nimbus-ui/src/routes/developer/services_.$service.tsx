@@ -38,7 +38,7 @@ type DetailSearch = {
   tab?: DetailTab;
 };
 
-export const Route = createFileRoute("/app/services_/$service")({
+export const Route = createFileRoute("/developer/services_/$service")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
   }),
@@ -114,7 +114,7 @@ function isTab(value: unknown): value is DetailTab {
 function ServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
   const { service, services, bundles } = Route.useLoaderData();
-  const search = useSearch({ from: "/app/services_/$service" });
+  const search = useSearch({ from: "/developer/services_/$service" });
   const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "overview";
 
@@ -138,7 +138,7 @@ function ServiceDetailPage() {
 
   const setTab = (next: DetailTab) =>
     navigate({
-      to: "/app/services/$service",
+      to: "/developer/services/$service",
       params: { service: serviceId },
       search: { tab: next },
       replace: true,
@@ -154,7 +154,7 @@ function ServiceDetailPage() {
       <div className="flex shrink-0 flex-col gap-2 border-b border-app px-6 pb-3 pt-4">
         <Breadcrumb
           segments={[
-            { label: "Services", href: "/app/services" },
+            { label: "Services", href: "/developer/services" },
             { label: displayName, active: true },
           ]}
         />
@@ -421,7 +421,7 @@ function DetailSubDrawer({
         return (
           <li key={svc._id}>
             <Link
-              to="/app/services/$service"
+              to="/developer/services/$service"
               params={{ service: svc._id }}
               data-testid={`sub-drawer-item-dev-service-${svc.name ?? svc._id}`}
               className={cn(
@@ -461,7 +461,7 @@ function ServiceNotFound() {
         . It may have been stopped or never registered.
       </span>
       <Link
-        to="/app/services"
+        to="/developer/services"
         className="rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         ← back to services

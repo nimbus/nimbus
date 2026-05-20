@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathnameRef, searchRef } = vi.hoisted(() => ({
-  pathnameRef: { current: "/app" },
+  pathnameRef: { current: "/developer" },
   searchRef: { current: {} as Record<string, unknown> },
 }));
 
@@ -28,7 +28,7 @@ function setLocation(path: string, search: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  setLocation("/app");
+  setLocation("/developer");
   vi.stubGlobal(
     "fetch",
     vi.fn().mockResolvedValue({
@@ -51,7 +51,7 @@ describe("TopNav", () => {
   });
 
   it("shows the developer wordmark on /app routes", () => {
-    setLocation("/app/compute");
+    setLocation("/developer/compute");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-wordmark")).toHaveTextContent(
       "developer console",
@@ -63,7 +63,7 @@ describe("TopNav", () => {
   });
 
   it("shows the operator wordmark on /admin routes", () => {
-    setLocation("/admin/machines");
+    setLocation("/operator/machines");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-wordmark")).toHaveTextContent(
       "operator console",
@@ -75,7 +75,7 @@ describe("TopNav", () => {
   });
 
   it("renders the tenant selector in developer mode on /app routes", () => {
-    setLocation("/app/compute");
+    setLocation("/developer/compute");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-tenant-slot")).toHaveAttribute(
       "data-mode",
@@ -84,7 +84,7 @@ describe("TopNav", () => {
   });
 
   it("hides the tenant selector on /admin/machines", () => {
-    setLocation("/admin/machines");
+    setLocation("/operator/machines");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-tenant-slot")).toHaveAttribute(
       "data-mode",
@@ -97,7 +97,7 @@ describe("TopNav", () => {
   });
 
   it("renders the tenant selector in operator-filter mode on /admin/observability", () => {
-    setLocation("/admin/observability");
+    setLocation("/operator/observability");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-tenant-slot")).toHaveAttribute(
       "data-mode",

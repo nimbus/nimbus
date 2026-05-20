@@ -11,7 +11,7 @@ import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { useUiStore } from "../../store/ui-store";
 
-export const Route = createFileRoute("/app/storage_/$table")({
+export const Route = createFileRoute("/developer/storage_/$table")({
   validateSearch: (search: Record<string, unknown>): TableSearch => ({
     panel:
       search.panel === "schema" || search.panel === "indexes"
@@ -298,12 +298,12 @@ function TableDocumentsPage() {
       <header className="flex flex-col gap-2">
         <Breadcrumb
           segments={[
-            { label: "storage", href: "/app/storage" },
+            { label: "storage", href: "/developer/storage" },
             ...(tenant
               ? [
                   {
                     label: tenant,
-                    href: "/app/storage",
+                    href: "/developer/storage",
                     copyValue: tenant,
                     copyLabel: "tenant id",
                   },

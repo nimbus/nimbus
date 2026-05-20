@@ -1,16 +1,16 @@
 // Smoke walk for the desktop UI.
 //
 // What this covers, in order:
-//   1. /ui/app/        — Developer Overview tile envelopes
-//   2. /ui/admin/      — Operator System tile envelopes
-//   3. /ui/app/services       — ScopeChip reads `TENANT <tenant>` and
+//   1. /ui/developer/        — Developer Overview tile envelopes
+//   2. /ui/operator/      — Operator System tile envelopes
+//   3. /ui/developer/services       — ScopeChip reads `TENANT <tenant>` and
 //                               the services table renders
-//   4. /ui/admin/services     — tenant-grouped sub-drawer renders
-//   5. /ui/admin/services/<id> — single Placement tab is selected
-//   6. /ui/admin/tenants      — diagnostic envelope is reachable (the
+//   4. /ui/operator/services     — tenant-grouped sub-drawer renders
+//   5. /ui/operator/services/<id> — single Placement tab is selected
+//   6. /ui/operator/tenants      — diagnostic envelope is reachable (the
 //                               page renders; the empty/error states
 //                               are owned by the route loader)
-//   7. /ui/app/observability  — disabled `events`/`errors` tab chips
+//   7. /ui/developer/observability  — disabled `events`/`errors` tab chips
 //   8. command palette via ⌘K — listbox + mode list render
 //
 // Fixture seeding:
@@ -119,7 +119,7 @@ test.describe("desktop UI smoke walk", () => {
     const console = attachConsoleAccumulator(page);
 
     // 1. Developer Overview
-    await page.goto(`${baseURL}/ui/app/`);
+    await page.goto(`${baseURL}/ui/developer/`);
     await expect(page.getByTestId("page-overview")).toBeVisible();
     await expect(page.getByTestId("overview-top-strip")).toBeVisible();
     await expect(page.getByTestId("overview-counts")).toBeVisible();
@@ -127,7 +127,7 @@ test.describe("desktop UI smoke walk", () => {
     await expect(page.getByTestId("overview-runs")).toBeVisible();
 
     // 2. Operator System
-    await page.goto(`${baseURL}/ui/admin/`);
+    await page.goto(`${baseURL}/ui/operator/`);
     await expect(page.getByTestId("page-admin-system")).toBeVisible();
     await expect(page.getByTestId("system-overview")).toBeVisible();
 
@@ -135,7 +135,7 @@ test.describe("desktop UI smoke walk", () => {
     // services table renders. The tenant bootstrap auto-selects the only
     // seeded tenant on the first developer-view navigation, so both
     // envelopes are deterministic.
-    await page.goto(`${baseURL}/ui/app/services`);
+    await page.goto(`${baseURL}/ui/developer/services`);
     await expect(page.getByTestId("page-services")).toBeVisible();
     await expect(page.getByTestId("services-scope")).toContainText(
       new RegExp(SMOKE_TENANT_ID, "i"),
@@ -146,7 +146,7 @@ test.describe("desktop UI smoke walk", () => {
     ).toBeVisible();
 
     // 4. Operator Services — tenant-grouped sub-drawer
-    await page.goto(`${baseURL}/ui/admin/services`);
+    await page.goto(`${baseURL}/ui/operator/services`);
     await expect(page.getByTestId("page-admin-services")).toBeVisible();
     await expect(page.getByTestId("admin-services-summary")).toBeVisible();
     // sub-drawer presence (the items only render if services exist;
@@ -170,7 +170,7 @@ test.describe("desktop UI smoke walk", () => {
     ).toBeVisible();
 
     // 6. Operator Tenants — diagnostic envelope is reachable
-    await page.goto(`${baseURL}/ui/admin/tenants`);
+    await page.goto(`${baseURL}/ui/operator/tenants`);
     await expect(page.getByTestId("page-storage")).toBeVisible();
     // Either the table or the empty/server-error envelope renders; the
     // route is wired if any of these are visible.
@@ -183,7 +183,7 @@ test.describe("desktop UI smoke walk", () => {
     ).toBeVisible();
 
     // 7. Developer Observability — disabled events/errors tab chips
-    await page.goto(`${baseURL}/ui/app/observability`);
+    await page.goto(`${baseURL}/ui/developer/observability`);
     await expect(page.getByTestId("page-observability")).toBeVisible();
     await expect(page.getByTestId("observability-tabs")).toBeVisible();
     await expect(

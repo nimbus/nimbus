@@ -35,7 +35,7 @@ type DetailSearch = {
   tab?: DetailTab;
 };
 
-export const Route = createFileRoute("/admin/services_/$service")({
+export const Route = createFileRoute("/operator/services_/$service")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
   }),
@@ -106,7 +106,7 @@ export function isTab(value: unknown): value is DetailTab {
 function AdminServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
   const { service, services, bundles, machines } = Route.useLoaderData();
-  const search = useSearch({ from: "/admin/services_/$service" });
+  const search = useSearch({ from: "/operator/services_/$service" });
   const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "placement";
 
@@ -133,7 +133,7 @@ function AdminServiceDetailPage() {
 
   const setTab = (next: DetailTab) =>
     navigate({
-      to: "/admin/services/$service",
+      to: "/operator/services/$service",
       params: { service: serviceId },
       search: { tab: next },
       replace: true,
@@ -149,7 +149,7 @@ function AdminServiceDetailPage() {
       <div className="flex shrink-0 flex-col gap-2 border-b border-app px-6 pb-3 pt-4">
         <Breadcrumb
           segments={[
-            { label: "Services", href: "/admin/services" },
+            { label: "Services", href: "/operator/services" },
             { label: displayName, active: true },
           ]}
         />
@@ -240,7 +240,7 @@ function PlacementTab({
         value={
           service.machineId ? (
             <Link
-              to="/admin/machines"
+              to="/operator/machines"
               className="font-mono text-default hover:underline"
             >
               {machine?.name ?? shortId(service.machineId, 12)}
@@ -317,7 +317,7 @@ function AdminDetailSubDrawer({
             return (
               <Link
                 key={svc._id}
-                to="/admin/services/$service"
+                to="/operator/services/$service"
                 params={{ service: svc._id }}
                 data-testid={`sub-drawer-item-op-service-${svc.name ?? svc._id}`}
                 className={cn(
@@ -358,7 +358,7 @@ function AdminServiceNotFound() {
         .
       </span>
       <Link
-        to="/admin/services"
+        to="/operator/services"
         className="rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         ← back to services

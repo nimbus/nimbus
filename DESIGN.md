@@ -89,19 +89,19 @@ rather than one tree gated by per-section scope toggles.
 The console renders these as **two views** with a **view switcher** in the
 top horizontal nav. URL prefix is the source of truth:
 
-- **Developer console** — `/app/*` — always tenant-scoped. Tenant selector
+- **Developer console** — `/developer/*` — always tenant-scoped. Tenant selector
   always visible, always active.
-- **Operator console** — `/admin/*` — server-wide. Tenant selector hidden
-  by default; rendered as an optional cross-tenant filter on `/admin/
+- **Operator console** — `/operator/*` — server-wide. Tenant selector hidden
+  by default; rendered as an optional cross-tenant filter on `/operator/
   observability` only (URL `?tenant=<id>`).
 
 Switching the view persists `nimbus-ui:last-view` and the per-view
 `nimbus-ui:last-route:developer` / `nimbus-ui:last-route:operator` so the
 second toggle restores the previous route in each view. Cold load lands on
-`/app` (Developer default) unless localStorage records a different last
+`/developer` (Developer default) unless localStorage records a different last
 view.
 
-### Developer console — sidebar IA (`/app/*`)
+### Developer console — sidebar IA (`/developer/*`)
 
 | Section | Purpose | First required views |
 | --- | --- | --- |
@@ -122,7 +122,7 @@ to the active tenant. See
 `docs/plans/archive/desktop-ui-compute-services-redesign-plan.md` for the
 IA decision rationale.
 
-### Operator console — sidebar IA (`/admin/*`)
+### Operator console — sidebar IA (`/operator/*`)
 
 | Section | Purpose | First required views |
 | --- | --- | --- |
@@ -135,7 +135,7 @@ IA decision rationale.
 | Settings (server) | Server administration | General, endpoints, deploys, token/session, environment, integrations (adapter capability matrices), shutdown |
 
 7 sections. Server-wide by default. Tenant selector appears only on
-`/admin/observability`.
+`/operator/observability`.
 
 ### Secondary navigation rules
 
@@ -154,7 +154,7 @@ IA decision rationale.
 - Use modals only for confirmation, creation, and credential reveal flows.
 - The **system tenant lens** (⌘\\) is a Developer-side overlay onto
   `_nimbus`. It is gated to the Developer view; the Operator view inspects
-  the same data through `/admin/tenants/_nimbus` instead.
+  the same data through `/operator/tenants/_nimbus` instead.
 
 ## Core Screens
 
@@ -204,7 +204,7 @@ play (query / mutation / action / HTTP route / scheduled job).
 ### Services (Developer)
 
 Services owns long-running placement for the active tenant. Same surface
-as the Operator-side `/admin/services` (see §Services below); the
+as the Operator-side `/operator/services` (see §Services below); the
 Developer side filters `ServicesTable` to the active tenant and hides
 the cross-tenant column.
 
@@ -256,8 +256,8 @@ view assumes a tenant is selected.
   the backend would be unsafe.
 
 The Storage sub-drawer is a **dynamic list** of tables for the active
-tenant. URL is store-driven (`/app/storage/<table>`), not
-`/app/storage/<tenant>/<table>` — the tenant lives in the top-nav.
+tenant. URL is store-driven (`/developer/storage/<table>`), not
+`/developer/storage/<tenant>/<table>` — the tenant lives in the top-nav.
 
 The Storage UI should feel familiar to Convex Data, MongoDB Atlas Data
 Explorer, and Firebase Firestore Data, but the implementation should be one
@@ -283,7 +283,7 @@ The placeholder state honors the token system and renders an honest
 
 Observability is the Developer-side debugging surface. Defaults to the
 active tenant; never cross-tenant in this view. (The Operator console
-owns the cross-tenant feed under `/admin/observability`.)
+owns the cross-tenant feed under `/operator/observability`.)
 
 - Logs: structured records with level, timestamp, request ID, function
   path, tenant, search and filters.
@@ -498,7 +498,7 @@ A single horizontal row at the top of the window:
   controls (command palette button, theme toggle, session menu).
 
 The view switcher is the source of truth for view, alongside the URL
-prefix (`/app/*` → Developer, `/admin/*` → Operator). Clicking the
+prefix (`/developer/*` → Developer, `/operator/*` → Operator). Clicking the
 inactive segment navigates to the last-visited route in that view (or
 the view's default landing) and persists `nimbus-ui:last-view`.
 
@@ -506,8 +506,8 @@ the view's default landing) and persists `nimbus-ui:last-view`.
 
 | View | Selector visible? | Default | Notes |
 | --- | --- | --- | --- |
-| Developer | always | last-active tenant (or first tenant alphabetically on fresh install) | when zero tenants exist, the trigger is replaced by a compact "Create tenant" CTA that deep-links to `/admin/tenants?new=1` |
-| Operator | hidden by default | n/a | rendered only on `/admin/observability` where it acts as an optional cross-tenant filter (default "All tenants"); selection encoded as `?tenant=<id>` |
+| Developer | always | last-active tenant (or first tenant alphabetically on fresh install) | when zero tenants exist, the trigger is replaced by a compact "Create tenant" CTA that deep-links to `/operator/tenants?new=1` |
+| Operator | hidden by default | n/a | rendered only on `/operator/observability` where it acts as an optional cross-tenant filter (default "All tenants"); selection encoded as `?tenant=<id>` |
 
 The selector is rendered by the same component in both views; visibility
 and the active-vs-filter mode are driven by view + active route.

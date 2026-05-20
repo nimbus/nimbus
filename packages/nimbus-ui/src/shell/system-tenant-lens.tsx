@@ -82,7 +82,7 @@ const LENS_VIEW_MAP: Record<string, LensView> = {
 };
 
 export function resolveLensView(pathname: string): LensView {
-  const match = pathname.match(/^\/(?:app|admin)\/([^/?#]+)/);
+  const match = pathname.match(/^\/(?:developer|operator)\/([^/?#]+)/);
   const view = match ? LENS_VIEW_MAP[match[1]] : undefined;
   return view ?? { kind: "system", label: "system.status" };
 }

@@ -9,11 +9,11 @@ import { EmptyState } from "../../components/empty-state";
 import { Td, Th } from "../../components/table-cells";
 import { cn } from "../../lib/cn";
 import { getNimbusClient } from "../../lib/nimbus-client";
-import { fetchTenants } from "../../shell/tenants-fetch";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
+import { fetchTenants } from "../../shell/tenants-fetch";
 
 type TenantsSearch = {
   create?: 1;
@@ -37,7 +37,7 @@ type LoaderResult =
   | { kind: "ok"; tenants: string[]; tables: TableDoc[] }
   | { kind: "error"; message: string };
 
-export const Route = createFileRoute("/admin/tenants")({
+export const Route = createFileRoute("/operator/tenants")({
   validateSearch: (search: Record<string, unknown>): TenantsSearch => ({
     create: search.create === 1 || search.create === "1" ? 1 : undefined,
   }),
@@ -142,13 +142,10 @@ function TenantsPage() {
       setDeletingTenant(id);
       setConfirmTenant(null);
       try {
-        const response = await fetch(
-          `/api/tenants/${encodeURIComponent(id)}`,
-          {
-            method: "DELETE",
-            credentials: "include",
-          },
-        );
+        const response = await fetch(`/api/tenants/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          credentials: "include",
+        });
         if (!response.ok) {
           const body = (await response.json().catch(() => null)) as {
             error?: { message?: string };
@@ -307,7 +304,7 @@ function TenantsPage() {
                   >
                     <Td>
                       <Link
-                        to="/app/storage"
+                        to="/developer/storage"
                         search={{ as: row.tenantId }}
                         className="font-mono text-default hover:underline"
                         data-testid={`storage-tenant-link-${row.tenantId}`}

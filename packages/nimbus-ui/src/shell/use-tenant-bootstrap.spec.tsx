@@ -2,7 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathnameRef, searchRef, navigateMock } = vi.hoisted(() => ({
-  pathnameRef: { current: "/app/compute" },
+  pathnameRef: { current: "/developer/compute" },
   searchRef: { current: {} as Record<string, unknown> },
   navigateMock: vi.fn(),
 }));
@@ -44,7 +44,7 @@ function mockTenantsError(status = 500) {
 }
 
 beforeEach(() => {
-  pathnameRef.current = "/app/compute";
+  pathnameRef.current = "/developer/compute";
   searchRef.current = {};
   navigateMock.mockReset();
   window.localStorage.clear();
@@ -57,7 +57,7 @@ afterEach(() => {
 
 describe("useTenantBootstrap — ?as= override", () => {
   it("does nothing on non-/app routes", () => {
-    pathnameRef.current = "/admin/machines";
+    pathnameRef.current = "/operator/machines";
     searchRef.current = { as: "acme" };
     mockTenantsResponse([]);
     renderHook(() => useTenantBootstrap());
@@ -66,20 +66,20 @@ describe("useTenantBootstrap — ?as= override", () => {
   });
 
   it("writes ?as= into the store and strips it from the URL", () => {
-    pathnameRef.current = "/app/compute";
+    pathnameRef.current = "/developer/compute";
     searchRef.current = { as: "acme", other: "1" };
     mockTenantsResponse([]);
     renderHook(() => useTenantBootstrap());
     expect(useUiStore.getState().activeTenant).toBe("acme");
     expect(navigateMock).toHaveBeenCalledWith({
-      to: "/app/compute",
+      to: "/developer/compute",
       search: { other: "1" },
       replace: true,
     });
   });
 
   it("ignores empty-string ?as=", () => {
-    pathnameRef.current = "/app/compute";
+    pathnameRef.current = "/developer/compute";
     searchRef.current = { as: "" };
     mockTenantsResponse([]);
     renderHook(() => useTenantBootstrap());
@@ -109,7 +109,7 @@ describe("useTenantBootstrap — auto-default (DR4 / F5)", () => {
   });
 
   it("does not auto-default on operator routes", async () => {
-    pathnameRef.current = "/admin/machines";
+    pathnameRef.current = "/operator/machines";
     const fetchMock = mockTenantsResponse(["alpha"]);
     renderHook(() => useTenantBootstrap());
     await new Promise((resolve) => setTimeout(resolve, 10));

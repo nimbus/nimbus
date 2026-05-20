@@ -50,13 +50,13 @@ describe("EmptyState", () => {
     render(
       <EmptyState
         title="Files"
-        cta={{ label: "View settings", to: "/admin/settings" }}
+        cta={{ label: "View settings", to: "/operator/settings" }}
         testid="es"
       />,
     );
     const cta = screen.getByTestId("es-cta");
     expect(cta.tagName).toBe("A");
-    expect(cta).toHaveAttribute("href", "/admin/settings");
+    expect(cta).toHaveAttribute("href", "/operator/settings");
     expect(cta).toHaveTextContent("View settings");
   });
 

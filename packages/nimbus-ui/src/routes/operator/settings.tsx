@@ -25,7 +25,7 @@ import type {
   SystemStatusDoc,
 } from "./settings/types";
 
-export const Route = createFileRoute("/admin/settings")({
+export const Route = createFileRoute("/operator/settings")({
   component: SettingsPage,
 });
 

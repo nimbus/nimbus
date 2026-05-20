@@ -97,15 +97,12 @@ export function readLastRouteForView(view: NavView): string | null {
   const stored = window.localStorage.getItem(
     `${LAST_ROUTE_STORAGE_PREFIX}${view}`,
   );
-  return stored?.startsWith(view === "operator" ? "/admin" : "/app")
-    ? stored
-    : null;
+  return stored?.startsWith(`/${view}`) ? stored : null;
 }
 
 export function persistLastRouteForView(view: NavView, pathname: string) {
   if (typeof window === "undefined") return;
-  const prefix = view === "operator" ? "/admin" : "/app";
-  if (!pathname.startsWith(prefix)) return;
+  if (!pathname.startsWith(`/${view}`)) return;
   window.localStorage.setItem(`${LAST_ROUTE_STORAGE_PREFIX}${view}`, pathname);
 }
 

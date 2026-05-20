@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { navigateMock, pathnameRef } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
-  pathnameRef: { current: "/app" },
+  pathnameRef: { current: "/developer" },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -23,7 +23,7 @@ function setPathname(path: string) {
 
 beforeEach(() => {
   navigateMock.mockClear();
-  setPathname("/app");
+  setPathname("/developer");
 });
 
 afterEach(() => {
@@ -32,7 +32,7 @@ afterEach(() => {
 
 describe("ViewSwitcher", () => {
   it("marks the developer segment active on /app pathnames", () => {
-    setPathname("/app/compute");
+    setPathname("/developer/compute");
     render(<ViewSwitcher />);
     expect(screen.getByTestId("view-switcher-developer")).toHaveAttribute(
       "aria-checked",
@@ -45,7 +45,7 @@ describe("ViewSwitcher", () => {
   });
 
   it("marks the operator segment active on /admin pathnames", () => {
-    setPathname("/admin/machines");
+    setPathname("/operator/machines");
     render(<ViewSwitcher />);
     expect(screen.getByTestId("view-switcher-operator")).toHaveAttribute(
       "aria-checked",
@@ -58,52 +58,52 @@ describe("ViewSwitcher", () => {
   });
 
   it("navigates to /admin default on first switch from a developer route with no stored operator route", () => {
-    setPathname("/app/compute");
+    setPathname("/developer/compute");
     render(<ViewSwitcher />);
     fireEvent.click(screen.getByTestId("view-switcher-operator"));
-    expect(navigateMock).toHaveBeenCalledWith({ to: "/admin" });
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/operator" });
   });
 
   it("persists the current pathname under nimbus-ui:last-route:<view> on switch", () => {
-    setPathname("/app/compute");
+    setPathname("/developer/compute");
     render(<ViewSwitcher />);
     fireEvent.click(screen.getByTestId("view-switcher-operator"));
     expect(window.localStorage.getItem("nimbus-ui:last-route:developer")).toBe(
-      "/app/compute",
+      "/developer/compute",
     );
   });
 
   it("restores the other view's last route when one is stored", () => {
     window.localStorage.setItem(
       "nimbus-ui:last-route:operator",
-      "/admin/machines",
+      "/operator/machines",
     );
-    setPathname("/app/compute");
+    setPathname("/developer/compute");
     render(<ViewSwitcher />);
     fireEvent.click(screen.getByTestId("view-switcher-operator"));
-    expect(navigateMock).toHaveBeenCalledWith({ to: "/admin/machines" });
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/operator/machines" });
   });
 
   it("ignores a stored last route that does not match the target view's prefix", () => {
     window.localStorage.setItem(
       "nimbus-ui:last-route:operator",
-      "/app/compute",
+      "/developer/compute",
     );
-    setPathname("/app/compute");
+    setPathname("/developer/compute");
     render(<ViewSwitcher />);
     fireEvent.click(screen.getByTestId("view-switcher-operator"));
-    expect(navigateMock).toHaveBeenCalledWith({ to: "/admin" });
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/operator" });
   });
 
   it("does not navigate when clicking the already-active segment", () => {
-    setPathname("/app/compute");
+    setPathname("/developer/compute");
     render(<ViewSwitcher />);
     fireEvent.click(screen.getByTestId("view-switcher-developer"));
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
   it("moves focus between segments on ArrowLeft/ArrowRight", () => {
-    setPathname("/app");
+    setPathname("/developer");
     render(<ViewSwitcher />);
     const dev = screen.getByTestId("view-switcher-developer");
     const op = screen.getByTestId("view-switcher-operator");

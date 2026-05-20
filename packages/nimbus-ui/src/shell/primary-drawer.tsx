@@ -70,7 +70,7 @@ function DrawerEntry({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const active =
-    entry.to === "/app" || entry.to === "/admin"
+    entry.to === "/developer" || entry.to === "/operator"
       ? pathname === entry.to || pathname === `${entry.to}/`
       : pathname.startsWith(entry.to);
   const Icon = entry.icon;

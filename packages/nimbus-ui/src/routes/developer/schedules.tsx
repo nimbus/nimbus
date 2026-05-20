@@ -40,7 +40,7 @@ type CronJobDoc = {
   status?: string;
 };
 
-export const Route = createFileRoute("/app/schedules")({
+export const Route = createFileRoute("/developer/schedules")({
   validateSearch: (search: Record<string, unknown>): SchedulesSearch => ({
     section: isSection(search.section) ? search.section : undefined,
   }),
@@ -58,13 +58,13 @@ export const SCHEDULES_SUB_DRAWER: SubDrawerSpec = {
     {
       id: "scheduled",
       label: "Scheduled",
-      to: "/app/schedules",
+      to: "/developer/schedules",
       search: { section: "scheduled" },
     },
     {
       id: "cron",
       label: "Cron",
-      to: "/app/schedules",
+      to: "/developer/schedules",
       search: { section: "cron" },
     },
   ],
@@ -72,7 +72,7 @@ export const SCHEDULES_SUB_DRAWER: SubDrawerSpec = {
 
 function SchedulesPage() {
   useContributeSubDrawer(SCHEDULES_SUB_DRAWER);
-  const search = useSearch({ from: "/app/schedules" });
+  const search = useSearch({ from: "/developer/schedules" });
   const section: Section = search.section ?? "scheduled";
   const activeTenant = useUiStore((s) => s.activeTenant);
 
