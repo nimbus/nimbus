@@ -132,7 +132,7 @@ fn run_auth_rotate_admin_command(_command: AuthRotateAdminCommand) -> Result<(),
         println!("rotated_at: {rotated_at}");
     }
     println!(
-        "Active sign-in sessions and launch tickets are invalidated. Run `nimbus auth url` to mint a fresh launch URL."
+        "The new token is on disk. Any running `nimbus start` daemon keeps its in-memory token until restart — restart it to invalidate existing sign-in sessions and launch tickets, then run `nimbus auth url` to mint a fresh launch URL."
     );
     Ok(())
 }
@@ -402,6 +402,16 @@ mod tests {
             }
             other => panic!("expected auth logout command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn cli_parses_auth_rotate_admin_subcommand() {
+        let cli = Cli::parse_from(["nimbus", "auth", "rotate-admin"]);
+        assert!(
+            matches!(cli.command, Command::Auth(AuthCommand::RotateAdmin(_))),
+            "expected auth rotate-admin command, got {:?}",
+            cli.command
+        );
     }
 
     #[tokio::test]

@@ -1,6 +1,9 @@
 # DA9 proof — network-bind guardrails (NB1 + NB2)
 
 Captured 2026-05-20 against the debug build at target/debug/nimbus.
+Refreshed post-audit to reflect the two-stage gate split: `--host` /
+opt-in mismatch fails fast before codegen (stage 1), and the token-
+freshness tripwire runs after the admin token is loaded (stage 2).
 
 ## `nimbus start --help` advertises the `--allow-network` opt-in
 
@@ -11,42 +14,57 @@ $ nimbus start --help | grep -A2 'allow-network\|--host '
       --allow-network
           Opt-in to binding on a non-loopback interface. Without this flag, `nimbus start` refuses any `--host` that resolves outside the loopback range. With the flag set, the daemon additionally requires that the local admin token has been rotated within the staleness window (see `nimbus auth rotate-admin`).
 
-## Unit-test transcript: bind-gate matrix
+## Unit-test transcript: bind-gate matrix (two stages, eight tests)
 
 $ cargo test -p nimbus-bin --bin nimbus start::network_bind 2>&1
-running 6 tests
-test start::network_bind::tests::unparseable_rotation_timestamp_is_treated_as_stale ... ok
-test start::network_bind::tests::loopback_host_passes_without_allow_network ... ok
-test start::network_bind::tests::non_loopback_with_allow_network_and_fresh_rotation_passes ... ok
-test start::network_bind::tests::non_loopback_with_allow_network_and_stale_rotation_triggers_tripwire ... ok
-test start::network_bind::tests::non_loopback_with_allow_network_and_never_rotated_token_triggers_tripwire ... ok
-test start::network_bind::tests::non_loopback_without_allow_network_is_refused_with_hint ... ok
+running 8 tests
+test start::network_bind::tests::ensure_host_opt_in_passes_non_loopback_when_flag_set ... ok
+test start::network_bind::tests::ensure_host_opt_in_passes_loopback_without_allow_network ... ok
+test start::network_bind::tests::ensure_admin_token_fresh_passes_loopback_regardless_of_rotation ... ok
+test start::network_bind::tests::ensure_admin_token_fresh_treats_unparseable_rotated_at_as_stale ... ok
+test start::network_bind::tests::ensure_admin_token_fresh_trips_on_never_rotated_token ... ok
+test start::network_bind::tests::ensure_host_opt_in_refuses_non_loopback_without_flag_with_hint ... ok
+test start::network_bind::tests::ensure_admin_token_fresh_passes_on_fresh_rotation ... ok
+test start::network_bind::tests::ensure_admin_token_fresh_trips_on_stale_rotation ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 498 filtered out
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 499 filtered out
 
-The matrix verifies:
+The matrix verifies, across the two stages:
+
+Stage 1 — `ensure_host_opt_in(host, allow_network)`:
   - Loopback hosts (127.0.0.1, ::1, localhost) bypass the gate.
   - Non-loopback bind without --allow-network exits with the refusal +
     opt-in hint message.
-  - Non-loopback bind with --allow-network and a never-rotated admin
-    token exits with the tripwire pointing at `nimbus auth rotate-admin`.
-  - Non-loopback bind with --allow-network and a stale rotated_at also
-    trips, with the same hint.
-  - Non-loopback bind with --allow-network and a fresh rotated_at is
-    allowed to proceed.
+  - Non-loopback bind with --allow-network proceeds past stage 1 and
+    falls through to the freshness check.
+
+Stage 2 — `ensure_admin_token_fresh_for_public_bind(host, token, now)`:
+  - Loopback hosts (127.0.0.1, ::1, localhost) bypass the gate.
+  - Non-loopback bind with a never-rotated admin token exits with the
+    tripwire pointing at `nimbus auth rotate-admin`.
+  - Non-loopback bind with a stale rotated_at also trips, with the same
+    hint.
+  - Non-loopback bind with a fresh rotated_at is allowed to proceed.
+  - Unparseable rotated_at strings are treated defensively as stale.
+
+Splitting the gate this way means stage 1 fires in `run_start_command`
+before `run_codegen_preflight` (boot.rs), so a typo'd `--host` (or a
+forgotten `--allow-network`) fails fast without paying codegen cost.
+The freshness check still runs after `load_or_create_local_admin_token`.
 
 ## Token-record schema bump: rotated_at populates on rotation
 
 $ cargo test -p nimbus-server local_server::token 2>&1
+running 9 tests
+test local_server::token::tests::source_uses_ring_constant_time_compare_for_token_checks ... ok
 test local_server::token::tests::corrupt_token_file_errors_clearly ... ok
-test local_server::token::tests::load_or_create_creates_and_reuses_token_file ... ok
+test local_server::token::tests::token_authorization_accepts_only_exact_token_matches ... ok
+test local_server::token::tests::records_persisted_without_rotated_at_load_with_none ... ok
 test local_server::token::tests::token_file_is_written_with_user_only_permissions ... ok
 test local_server::token::tests::invalid_scope_is_rejected ... ok
+test local_server::token::tests::load_or_create_creates_and_reuses_token_file ... ok
 test local_server::token::tests::offline_rotation_bumps_generation ... ok
-test local_server::token::tests::records_persisted_without_rotated_at_load_with_none ... ok
 test local_server::token::tests::offline_rotation_populates_rotated_at_freshness_window ... ok
-test local_server::token::tests::token_authorization_accepts_only_exact_token_matches ... ok
-test local_server::token::tests::source_uses_ring_constant_time_compare_for_token_checks ... ok
 
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured
 
@@ -55,3 +73,13 @@ The new tests assert:
     and the record reports fresh inside the 30-day window.
   - Legacy on-disk records (no `rotatedAt` field) still load and surface
     as stale to the bind tripwire.
+
+## `nimbus auth rotate-admin` is locked in by the auth-dx grep gate
+
+$ bash scripts/verify-auth-dx-gates.sh
+auth-dx microcopy grep gates clean
+
+The script pins `name = "rotate-admin"` in `auth.rs` and the
+`nimbus auth rotate-admin` recovery hint in `network_bind.rs`, so a
+rename of the subcommand fails CI rather than silently un-anchoring the
+DA10 agent-auth contract doc that references it.

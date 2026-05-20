@@ -744,11 +744,15 @@ proof artifact under `docs/plans/proof/desktop-auth-dx/`.
 
 - **CI.** Auth-dx microcopy gate (`scripts/verify-auth-dx-gates.sh`)
   clean. Agent-auth contract gate (`scripts/verify-auth-contract.sh`)
-  clean. `cargo test -p nimbus-bin --bin nimbus auth::tests` — 12
-  tests, all green (proof transcript embeds the run).
-  `cargo test -p nimbus-bin --bin nimbus start::network_bind` — 6
-  tests, all green. `cargo test -p nimbus-server local_server::token`
-  — 9 tests, all green.
+  clean. `cargo test -p nimbus-bin --bin nimbus auth::tests` — 13
+  tests, all green (proof transcript embeds the run; the 13th test
+  was added during post-audit cleanup to give `auth rotate-admin`
+  clap-parsing coverage on parity with the other auth subcommands).
+  `cargo test -p nimbus-bin --bin nimbus start::network_bind` — 8
+  tests, all green (split into stage 1 / stage 2 during post-audit
+  cleanup so the cheap host-opt-in check can fire before codegen).
+  `cargo test -p nimbus-server local_server::token` — 9 tests, all
+  green.
 - **Proof.** Every priority-ladder item with a UI or CLI surface has
   a named artifact under `docs/plans/proof/desktop-auth-dx/after/`:
   - `auth-light.png` / `auth-dark.png` (C3, C4, H1-H4)

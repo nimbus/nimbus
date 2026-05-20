@@ -55,21 +55,26 @@ $ stat -f "%Lp %N" $XDG_CONFIG_HOME/nimbus/credentials
 ## Unit-test transcript: round-trip + precedence ladder
 
 $ cargo test -p nimbus-bin --bin nimbus auth::tests 2>&1
-running 12 tests
-test auth::tests::resolve_login_bearer_uses_explicit_flag_when_present ... ok
+running 13 tests
 test auth::tests::resolve_login_bearer_trims_explicit_flag_value ... ok
 test auth::tests::resolve_login_bearer_rejects_empty_explicit_value ... ok
+test auth::tests::resolve_login_bearer_uses_explicit_flag_when_present ... ok
 test auth::tests::print_auth_status_with_empty_file_prompts_for_login ... ok
-test auth::tests::print_auth_status_masks_bearer_and_lists_metadata ... ok
-test auth::tests::auth_url_without_running_server_returns_actionable_error ... ok
+test auth::tests::cli_parses_auth_rotate_admin_subcommand ... ok
 test auth::tests::cli_parses_auth_url_subcommand ... ok
 test auth::tests::cli_parses_auth_url_copy_flag ... ok
 test auth::tests::cli_parses_auth_login_with_url_and_bearer ... ok
 test auth::tests::cli_parses_auth_status_and_logout ... ok
+test auth::tests::print_auth_status_masks_bearer_and_lists_metadata ... ok
+test auth::tests::auth_url_without_running_server_returns_actionable_error ... ok
 test auth::tests::auth_login_status_deploy_logout_roundtrip_uses_credentials_file ... ok
 test auth::tests::auth_url_against_live_server_returns_launch_url ... ok
 
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured
 
 The round-trip test exercises the precedence ladder:
   --token flag > NIMBUS_DEPLOY_TOKEN env > credentials file.
+
+`cli_parses_auth_rotate_admin_subcommand` was added during post-audit
+cleanup so the new `nimbus auth rotate-admin` subcommand has the same
+clap-parsing coverage as `auth url` / `login` / `status` / `logout`.

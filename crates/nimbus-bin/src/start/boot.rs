@@ -13,7 +13,7 @@ use super::config::{
     control_data_dir_from_persistence_config, persistence_config_from_start_command,
 };
 use super::first_boot::{is_first_boot, spawn_first_boot_announce};
-use super::network_bind::enforce_loopback_or_allow_network;
+use super::network_bind::{ensure_admin_token_fresh_for_public_bind, ensure_host_opt_in};
 use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
@@ -40,6 +40,12 @@ impl ResolvedStartAppDir {
 pub(crate) async fn run_start_command(
     command: StartCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Stage 1 of the network-bind gate runs before any expensive
+    // initialization so a typo'd `--host` (or a forgotten
+    // `--allow-network`) fails fast without paying codegen or registry
+    // load costs. The freshness check (stage 2) runs after the admin
+    // token is loaded from disk.
+    ensure_host_opt_in(&command.host, command.allow_network)?;
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
@@ -68,9 +74,8 @@ pub(crate) async fn run_start_command(
     let machine_lifecycle_manager = crate::machine::host_machine_lifecycle_manager()?;
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
-    enforce_loopback_or_allow_network(
+    ensure_admin_token_fresh_for_public_bind(
         &command.host,
-        command.allow_network,
         &local_admin_token,
         time::OffsetDateTime::now_utc(),
     )?;
