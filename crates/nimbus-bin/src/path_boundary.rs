@@ -23,7 +23,10 @@ mod tests {
     fn at_git_boundary_detects_dot_git_directory() {
         let temp = tempdir().expect("tempdir should create");
         let root = temp.path();
-        assert!(!at_git_boundary(root), "bare tempdir should not be a boundary");
+        assert!(
+            !at_git_boundary(root),
+            "bare tempdir should not be a boundary"
+        );
         fs::create_dir_all(root.join(".git")).expect(".git dir should create");
         assert!(at_git_boundary(root), ".git directory must be a boundary");
     }

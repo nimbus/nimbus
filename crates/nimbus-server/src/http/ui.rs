@@ -375,10 +375,9 @@ mod tests {
         use base64::Engine;
         use sha2::{Digest, Sha256};
 
-        let index = UiAssets::get(SPA_INDEX)
-            .expect("SPA index.html should be embedded at build time");
-        let html = std::str::from_utf8(&index.data)
-            .expect("SPA index.html should be valid UTF-8");
+        let index =
+            UiAssets::get(SPA_INDEX).expect("SPA index.html should be embedded at build time");
+        let html = std::str::from_utf8(&index.data).expect("SPA index.html should be valid UTF-8");
 
         let inline_bodies = inline_script_bodies(html);
         assert_eq!(
