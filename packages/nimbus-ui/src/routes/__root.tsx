@@ -63,6 +63,7 @@ function ShellLayout() {
         </SubDrawerProvider>
         <Toaster
           position="bottom-right"
+          offset="calc(var(--statusbar-height) + 12px)"
           toastOptions={{
             style: {
               background: "var(--color-surface)",
