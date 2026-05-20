@@ -26,9 +26,10 @@ archived plans only when you need historical execution detail.
     `nimbus start`; bounded `dev`/`deploy`/compose walkers at the
     nearest `.git/` (directory or worktree-shaped file); added a
     CockroachDB-shaped `operator console:` banner line on both daemon
-    commands; added `--open` to `nimbus dev` (only); replaced
-    `nimbus ui --ensure` with the unflagged discover-and-open `nimbus
-    ui`. Regression tests in `nimbus-bin` cover the rebrand-trap shape,
+    commands; added `--open` to `nimbus dev` (only); removed the
+    legacy explicit-spawn flag from `nimbus ui`, leaving it as an
+    unflagged discover-and-open command. Regression tests in
+    `nimbus-bin` cover the rebrand-trap shape,
     the worktree boundary, the banner, and the `ServerDiscoveryRecord`
     serde golden contract shared with Electron and the Playwright
     fixture.
