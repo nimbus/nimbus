@@ -81,7 +81,7 @@ pub(crate) async fn ui_path(
 }
 
 pub(crate) async fn ui_auth() -> Html<String> {
-    Html(render_auth_page())
+    Html(render_auth_page(None))
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,21 +105,19 @@ pub(crate) async fn mint_ui_launch_ticket(
         )
     })?;
     let origin = origin_from_headers(&headers);
-    let auth_method = authorize_standard_server_access(
-        &headers,
-        Some(local_server_security.as_ref()),
-    )
-    .inspect_err(|error| {
-        state.record_local_server_audit(LocalServerAuditEvent {
-            route_family: LocalServerRouteFamily::UiAuthSession,
-            tenant_id: None,
-            auth_scope: "launch_ticket_mint",
-            auth_method: None,
-            success: false,
-            origin: origin.clone(),
-            reason: error.to_string(),
-        });
-    })?;
+    let auth_method =
+        authorize_standard_server_access(&headers, Some(local_server_security.as_ref()))
+            .inspect_err(|error| {
+                state.record_local_server_audit(LocalServerAuditEvent {
+                    route_family: LocalServerRouteFamily::UiAuthSession,
+                    tenant_id: None,
+                    auth_scope: "launch_ticket_mint",
+                    auth_method: None,
+                    success: false,
+                    origin: origin.clone(),
+                    reason: error.to_string(),
+                });
+            })?;
     let ticket = local_server_security
         .mint_launch_ticket()
         .map_err(|error| {
@@ -205,13 +203,50 @@ fn short_prefix(ticket: &str) -> &str {
     &ticket[..visible]
 }
 
-fn render_auth_page() -> String {
+fn render_auth_page(error: Option<&str>) -> String {
     let latin_400 = find_embedded_font("jetbrains-mono-latin-400-normal").unwrap_or_default();
     let latin_500 = find_embedded_font("jetbrains-mono-latin-500-normal").unwrap_or_default();
+    let (error_block, aria_invalid) = match error {
+        Some(message) => (
+            format!(
+                "<div class=\"error-message\" role=\"alert\"><span class=\"error-icon\" aria-hidden=\"true\">!</span><span>{}</span></div>",
+                escape_html(message)
+            ),
+            " aria-invalid=\"true\"".to_string(),
+        ),
+        None => (String::new(), String::new()),
+    };
     AUTH_PAGE_TEMPLATE
         .replace("{{ JETBRAINS_MONO_400 }}", &latin_400)
         .replace("{{ JETBRAINS_MONO_500 }}", &latin_500)
         .replace("{{ NIMBUS_VERSION }}", env!("CARGO_PKG_VERSION"))
+        .replace("{{ ERROR_BLOCK }}", &error_block)
+        .replace("{{ ARIA_INVALID }}", &aria_invalid)
+}
+
+fn auth_page_with_error_response(message: &str) -> Response {
+    let body = render_auth_page(Some(message));
+    let mut response = (StatusCode::UNAUTHORIZED, Html(body)).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
+}
+
+fn escape_html(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 fn find_embedded_font(stem: &str) -> Option<String> {
@@ -238,42 +273,42 @@ pub(crate) async fn create_ui_session(
             "ui session bootstrap is unavailable because server access auth is not configured",
         )
     })?;
+    let prefers_json = headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.contains("application/json"));
     let request = parse_ui_auth_session_request(&body)?;
     let origin = origin_from_headers(&headers);
+    let record_failure = |error: SessionBootstrapFailure, auth_method: &'static str| -> Response {
+        let app_error = map_session_bootstrap_error(error);
+        let reason = app_error.to_string();
+        state.record_local_server_audit(LocalServerAuditEvent {
+            route_family: LocalServerRouteFamily::UiAuthSession,
+            tenant_id: None,
+            auth_scope: "session",
+            auth_method: Some(auth_method),
+            success: false,
+            origin: origin.clone(),
+            reason: reason.clone(),
+        });
+        if prefers_json {
+            app_error.into_response()
+        } else {
+            auth_page_with_error_response(&reason)
+        }
+    };
     let (issued, auth_method) = if let Some(token) = request.token.as_deref() {
-        let issued = local_server_security
-            .create_session_for_local_admin_token(token)
-            .map_err(|error| {
-                state.record_local_server_audit(LocalServerAuditEvent {
-                    route_family: LocalServerRouteFamily::UiAuthSession,
-                    tenant_id: None,
-                    auth_scope: "session",
-                    auth_method: Some("local_admin_token_post"),
-                    success: false,
-                    origin: origin.clone(),
-                    reason: map_session_bootstrap_error(error.clone()).to_string(),
-                });
-                map_session_bootstrap_error(error)
-            })?;
-        (issued, Some("local_admin_token_post"))
+        match local_server_security.create_session_for_local_admin_token(token) {
+            Ok(issued) => (issued, Some("local_admin_token_post")),
+            Err(error) => return Ok(record_failure(error, "local_admin_token_post")),
+        }
     } else if let Some(launch_ticket) = request.launch_ticket.as_deref() {
-        let issued = local_server_security
-            .create_session_for_launch_ticket(launch_ticket)
-            .map_err(|error| {
-                state.record_local_server_audit(LocalServerAuditEvent {
-                    route_family: LocalServerRouteFamily::UiAuthSession,
-                    tenant_id: None,
-                    auth_scope: "session",
-                    auth_method: Some("launch_ticket"),
-                    success: false,
-                    origin: origin.clone(),
-                    reason: map_session_bootstrap_error(error.clone()).to_string(),
-                });
-                map_session_bootstrap_error(error)
-            })?;
-        (issued, Some("launch_ticket"))
+        match local_server_security.create_session_for_launch_ticket(launch_ticket) {
+            Ok(issued) => (issued, Some("launch_ticket")),
+            Err(error) => return Ok(record_failure(error, "launch_ticket")),
+        }
     } else {
-        let error = AppError::unauthorized(
+        let app_error = AppError::unauthorized(
             "ui session bootstrap requires a local admin token or launch ticket in the POST body",
         );
         state.record_local_server_audit(LocalServerAuditEvent {
@@ -283,9 +318,9 @@ pub(crate) async fn create_ui_session(
             auth_method: None,
             success: false,
             origin,
-            reason: error.to_string(),
+            reason: app_error.to_string(),
         });
-        return Err(error);
+        return Err(app_error);
     };
     state.record_local_server_audit(LocalServerAuditEvent {
         route_family: LocalServerRouteFamily::UiAuthSession,
