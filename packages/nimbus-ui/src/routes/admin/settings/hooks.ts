@@ -66,10 +66,6 @@ export function useRuntimeDiagnostics(): AsyncSnapshot<RuntimeDiagnostics> {
         const res = await fetch("/debug/runtime/metrics", {
           credentials: "include",
         });
-        if (res.status === 404) {
-          if (!cancelled) setDiagnostics({});
-          return;
-        }
         if (!res.ok) throw new Error(`metrics ${res.status}`);
         const body = (await res.json()) as RuntimeDiagnostics;
         if (!cancelled) setDiagnostics(body);

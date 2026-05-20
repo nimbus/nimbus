@@ -1,14 +1,23 @@
 use super::*;
 
 #[tokio::test]
-async fn runtime_metrics_route_requires_convex_support() {
+async fn runtime_metrics_route_returns_null_fields_without_convex_support() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(build_router(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api.runtime_metrics().await;
 
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    // Returns 200 with a stable shape so the operator settings UI sees a
+    // single null-fields payload instead of a 404 on default `nimbus start`.
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("runtime metrics json should parse");
+    assert!(body["limits"].is_null());
+    assert!(body["reset_capabilities"].is_null());
+    assert!(body["metrics"].is_null());
 }
 
 #[tokio::test]
