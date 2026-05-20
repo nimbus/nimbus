@@ -48,6 +48,7 @@ under `src/stories/`:
 | AppearanceSection     | `appearance-section.stories.tsx` |
 | Select                | `select.stories.tsx`             |
 | SegmentedControl      | `segmented-control.stories.tsx`  |
+| Kbd                   | `kbd.stories.tsx`                |
 | SubDrawer (host)      | `sub-drawer.stories.tsx`         |
 
 `SubDrawer` is rendered through a story-only `FakeSubDrawerHost` wrapper

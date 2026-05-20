@@ -1,0 +1,13 @@
+Network requests on http://127.0.0.1:3211/ui/admin/settings (after UX6 fix).
+Captured via chrome-devtools-mcp list_network_requests on 2026-05-20.
+Proves F7: /debug/runtime/metrics no longer 404s; all requests are 2xx.
+
+reqid=122 GET http://127.0.0.1:3211/ui/admin/settings [200]
+reqid=123 GET http://127.0.0.1:3211/ui/assets/index-B6mpMar3.js [200]
+reqid=124 GET http://127.0.0.1:3211/ui/assets/index-F0uA8n18.css [200]
+reqid=125 GET http://127.0.0.1:3211/ui/assets/settings-BzCngSAc.js [200]
+reqid=126 GET http://127.0.0.1:3211/debug/license/status [200]
+reqid=127 GET http://127.0.0.1:3211/debug/encryption/status [200]
+reqid=128 GET http://127.0.0.1:3211/debug/runtime/metrics [200]
+reqid=129 GET http://127.0.0.1:3211/api/system/version-info [200]
+reqid=130 GET http://127.0.0.1:3211/ui/assets/jetbrains-mono-latin-400-normal-V6pRDFza.woff2 [200]

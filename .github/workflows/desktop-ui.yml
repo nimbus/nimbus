@@ -80,6 +80,9 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      - name: Desktop UI shell-component grep gate
+        run: scripts/verify-desktop-ui-shell-gates.sh
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
