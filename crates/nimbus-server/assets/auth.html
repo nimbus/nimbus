@@ -420,10 +420,13 @@ button[type="submit"]:focus-visible {
   line-height: 1.5;
 }
 
-/* Each "Other ways" entry is a section, not a definition-list row. The
-   eyebrow title sits *above* its body so the body gets the full card
-   width — long token paths fit on one line, and the layout mirrors how
-   the LOCAL TOKEN label sits above its input. */
+/* Eyebrow-titled section block. Used by the URL entries inside the
+   `Other ways to login` disclosure and by the standalone AUTH TOKEN block
+   that sits above the disclosure — same visual treatment in both spots so
+   the recovery paths share a coherent eyebrow language. The eyebrow
+   title sits *above* its body so the body gets the full card width —
+   long token paths fit on one line, and the layout mirrors how the
+   LOCAL TOKEN label sits above its input. */
 .other-section + .other-section {
   margin-top: 16px;
   padding-top: 16px;
@@ -451,9 +454,17 @@ button[type="submit"]:focus-visible {
 
 /* Used when the body holds only a chip (no surrounding prose). Centers the
    chip so the section reads as a single CTA, contrasting with the inline
-   chip placement used by the URL-based sections above. */
+   chip placement used by the URL-based sections inside the disclosure. */
 .other-section-body-center {
   text-align: center;
+}
+
+/* Placement for the standalone AUTH TOKEN section that sits between the
+   form's CONTINUE button and the `Other ways to login` disclosure.
+   Mirrors `.other-ways` top spacing so the two recovery surfaces sit in
+   the same vertical rhythm under the form. */
+.auth-token-section {
+  margin-top: 14px;
 }
 
 .local-only {
@@ -557,6 +568,10 @@ button[type="submit"]:focus-visible {
     </label>
     <button type="submit">Continue</button>
   </form>
+  <section class="other-section auth-token-section">
+    <h2 class="other-section-title">Auth Token</h2>
+    <p class="other-section-body other-section-body-center"><button type="button" class="copyable" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button></p>
+  </section>
   <details class="other-ways">
     <summary>Other ways to login</summary>
     <div class="other-ways-body">
@@ -567,10 +582,6 @@ button[type="submit"]:focus-visible {
       <section class="other-section">
         <h2 class="other-section-title">Copy URL</h2>
         <p class="other-section-body">Run <button type="button" class="copyable" data-copy="nimbus auth url --copy" aria-label="Copy: nimbus auth url --copy">nimbus auth url --copy</button> and paste the printed URL in the address bar.</p>
-      </section>
-      <section class="other-section">
-        <h2 class="other-section-title">Auth Token</h2>
-        <p class="other-section-body other-section-body-center"><button type="button" class="copyable" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button></p>
       </section>
     </div>
   </details>

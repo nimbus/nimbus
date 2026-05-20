@@ -482,9 +482,12 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
         !body.contains("Local admin token") && !body.contains("local-admin-token"),
         "auth page should not retain the prior `Local admin token` label or `local-admin-token` id"
     );
-    // The `.hint` block is gone; the token recovery chip lives inside the
-    // `Other ways to login` disclosure under an `Auth Token` subtitle so the
-    // disclosure becomes the single home for every CLI fallback path.
+    // The `.hint` block is gone. The token recovery chip lives in a
+    // standalone `Auth Token` section that sits *between* the CONTINUE
+    // button and the `Other ways to login` disclosure — same eyebrow
+    // treatment as the URL flows inside the disclosure, but pulled out so
+    // the most direct recovery (paste a token into the input above) reads
+    // as a peer of the form rather than a hidden fallback.
     assert!(
         !body.contains("class=\"hint\""),
         "auth page should no longer render the standalone `.hint` block"
@@ -492,13 +495,28 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
     assert!(
         body.contains("<details class=\"other-ways\"")
             && body.contains("<summary>Other ways to login</summary>"),
-        "auth page should wrap the CLI flows inside an `Other ways to login` disclosure"
+        "auth page should wrap the URL recovery flows inside an `Other ways to login` disclosure"
     );
     assert!(
-        body.contains(">Auth Token</h2>")
+        body.contains("class=\"other-section auth-token-section\"")
+            && body.contains(">Auth Token</h2>")
             && body.contains("other-section-body-center")
             && body.contains("data-copy=\"nimbus auth token --copy\""),
-        "auth page disclosure should expose an `Auth Token` subtitle with a centered `nimbus auth token --copy` chip"
+        "auth page should expose a standalone `Auth Token` section with a centered `nimbus auth token --copy` chip"
+    );
+    let auth_token_pos = body
+        .find("auth-token-section")
+        .expect("auth-token-section must render on the unauthenticated page");
+    let disclosure_pos = body
+        .find("<details class=\"other-ways\"")
+        .expect("`Other ways to login` disclosure must render on the unauthenticated page");
+    assert!(
+        auth_token_pos < disclosure_pos,
+        "AUTH TOKEN section must sit above the `Other ways to login` disclosure, not inside it"
+    );
+    assert!(
+        !body.contains("<div class=\"other-ways-body\">\n      <section class=\"other-section\">\n        <h2 class=\"other-section-title\">Auth Token</h2>"),
+        "AUTH TOKEN section must not be nested back inside `.other-ways-body`"
     );
     // CL3: the auth-page chrome should no longer *use* the
     // operator-console `--color-brand` token; the page is brand-tier only.
