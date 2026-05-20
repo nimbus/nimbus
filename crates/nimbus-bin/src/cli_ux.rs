@@ -102,7 +102,13 @@ Examples:
 pub(crate) const AUTH_URL_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus auth url
-  nimbus auth url --copy";
+  nimbus auth url --copy
+  nimbus auth url --open";
+
+pub(crate) const AUTH_TOKEN_HELP_EXAMPLES: &str = "\
+Examples:
+  nimbus auth token
+  nimbus auth token --copy";
 
 pub(crate) const MACHINE_HELP_EXAMPLES: &str = "\
 Examples:

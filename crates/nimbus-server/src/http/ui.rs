@@ -18,6 +18,11 @@ use crate::local_server::{
 };
 
 const AUTH_PAGE_TEMPLATE: &str = include_str!("../../assets/auth.html");
+// Served from `/ui/auth.js`; loaded by the auth template as a same-origin
+// `<script src="/ui/auth.js">`. Keeping it external (rather than inline)
+// means the strict `script-src 'self'` CSP applies without needing a hash
+// pin that drifts every time the body changes.
+const AUTH_PAGE_SCRIPT: &str = include_str!("../../assets/auth.js");
 
 // The SPA shell embeds a single inline <script> in `index.html` that resolves
 // the theme synchronously before paint to avoid FOUC. Its SHA-256 is pinned
@@ -82,6 +87,15 @@ pub(crate) async fn ui_path(
 
 pub(crate) async fn ui_auth() -> Html<String> {
     Html(render_auth_page(None))
+}
+
+pub(crate) async fn ui_auth_script() -> Response {
+    let mut response = (StatusCode::OK, AUTH_PAGE_SCRIPT).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/javascript; charset=utf-8"),
+    );
+    response
 }
 
 #[derive(Debug, Deserialize)]

@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use nimbus_server::{
-    LocalServerPaths, read_live_server_discovery, rotate_local_admin_token_offline,
+    LocalServerPaths, load_local_admin_token, read_live_server_discovery,
+    rotate_local_admin_token_offline,
 };
 
 use crate::credentials::{
@@ -18,6 +19,8 @@ use crate::local_server_client::LocalServerHttpClient;
 pub(crate) enum AuthCommand {
     /// Mint a single-use launch URL for the local operator console.
     Url(AuthUrlCommand),
+    /// Print (or copy) the local admin token from the on-disk token file.
+    Token(AuthTokenCommand),
     /// Store a deploy bearer for a remote Nimbus daemon.
     Login(AuthLoginCommand),
     /// List configured deploy connections.
@@ -35,7 +38,21 @@ pub(crate) enum AuthCommand {
     after_help = crate::cli_ux::AUTH_URL_HELP_EXAMPLES,
 )]
 pub(crate) struct AuthUrlCommand {
-    /// Copy the launch URL to the OS clipboard instead of (only) printing it.
+    /// Copy the launch URL to the OS clipboard in addition to printing it.
+    #[arg(long)]
+    pub(crate) copy: bool,
+    /// Open the launch URL in the default browser in addition to printing it.
+    #[arg(long)]
+    pub(crate) open: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = crate::cli_ux::AUTH_TOKEN_HELP_EXAMPLES,
+)]
+pub(crate) struct AuthTokenCommand {
+    /// Copy the token to the OS clipboard in addition to printing it.
     #[arg(long)]
     pub(crate) copy: bool,
 }
@@ -72,6 +89,7 @@ pub(crate) enum AuthUrlError {
     Io(io::Error),
     Mint(nimbus::Error),
     Clipboard(String),
+    OpenBrowser(io::Error),
 }
 
 impl fmt::Debug for AuthUrlError {
@@ -96,6 +114,9 @@ impl fmt::Display for AuthUrlError {
             AuthUrlError::Clipboard(message) => {
                 write!(f, "failed to copy launch URL to clipboard: {message}")
             }
+            AuthUrlError::OpenBrowser(error) => {
+                write!(f, "failed to open launch URL in browser: {error}")
+            }
         }
     }
 }
@@ -106,6 +127,40 @@ impl Error for AuthUrlError {
             AuthUrlError::ServerNotRunning | AuthUrlError::Clipboard(_) => None,
             AuthUrlError::Io(error) => Some(error),
             AuthUrlError::Mint(error) => Some(error),
+            AuthUrlError::OpenBrowser(error) => Some(error),
+        }
+    }
+}
+
+pub(crate) enum AuthTokenError {
+    Io(io::Error),
+    Clipboard(String),
+}
+
+impl fmt::Debug for AuthTokenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl fmt::Display for AuthTokenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AuthTokenError::Io(error) => {
+                write!(f, "failed to read local admin token: {error}")
+            }
+            AuthTokenError::Clipboard(message) => {
+                write!(f, "failed to copy token to clipboard: {message}")
+            }
+        }
+    }
+}
+
+impl Error for AuthTokenError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            AuthTokenError::Io(error) => Some(error),
+            AuthTokenError::Clipboard(_) => None,
         }
     }
 }
@@ -113,6 +168,7 @@ impl Error for AuthUrlError {
 pub(crate) async fn run_auth_command(command: AuthCommand) -> Result<(), Box<dyn Error>> {
     match command {
         AuthCommand::Url(command) => run_auth_url_command(command).await,
+        AuthCommand::Token(command) => run_auth_token_command(command),
         AuthCommand::Login(command) => run_auth_login_command(command),
         AuthCommand::Status(command) => run_auth_status_command(command),
         AuthCommand::Logout(command) => run_auth_logout_command(command),
@@ -250,6 +306,21 @@ async fn run_auth_url_command(command: AuthUrlCommand) -> Result<(), Box<dyn Err
         copy_to_clipboard(&url).map_err(AuthUrlError::Clipboard)?;
         eprintln!("(launch URL copied to clipboard)");
     }
+    if command.open {
+        open_in_browser(&url).map_err(AuthUrlError::OpenBrowser)?;
+        eprintln!("(launch URL opened in browser)");
+    }
+    Ok(())
+}
+
+fn run_auth_token_command(command: AuthTokenCommand) -> Result<(), Box<dyn Error>> {
+    let paths = LocalServerPaths::resolve_for_current_platform()?;
+    let record = load_local_admin_token(&paths).map_err(AuthTokenError::Io)?;
+    println!("{}", record.token);
+    if command.copy {
+        copy_to_clipboard(&record.token).map_err(AuthTokenError::Clipboard)?;
+        eprintln!("(local admin token copied to clipboard)");
+    }
     Ok(())
 }
 
@@ -316,6 +387,16 @@ fn copy_to_clipboard(_value: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(test))]
+fn open_in_browser(url: &str) -> io::Result<()> {
+    open::that(url)
+}
+
+#[cfg(test)]
+fn open_in_browser(_url: &str) -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
@@ -347,6 +428,7 @@ mod tests {
         match cli.command {
             Command::Auth(AuthCommand::Url(command)) => {
                 assert!(!command.copy, "url default should not copy");
+                assert!(!command.open, "url default should not open the browser");
             }
             other => panic!("expected auth url command, got {other:?}"),
         }
@@ -356,9 +438,74 @@ mod tests {
     fn cli_parses_auth_url_copy_flag() {
         let cli = Cli::parse_from(["nimbus", "auth", "url", "--copy"]);
         match cli.command {
-            Command::Auth(AuthCommand::Url(command)) => assert!(command.copy),
+            Command::Auth(AuthCommand::Url(command)) => {
+                assert!(command.copy);
+                assert!(!command.open);
+            }
             other => panic!("expected auth url --copy, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn cli_parses_auth_url_open_flag() {
+        let cli = Cli::parse_from(["nimbus", "auth", "url", "--open"]);
+        match cli.command {
+            Command::Auth(AuthCommand::Url(command)) => {
+                assert!(command.open);
+                assert!(!command.copy);
+            }
+            other => panic!("expected auth url --open, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_auth_url_open_and_copy_flags() {
+        let cli = Cli::parse_from(["nimbus", "auth", "url", "--copy", "--open"]);
+        match cli.command {
+            Command::Auth(AuthCommand::Url(command)) => {
+                assert!(command.copy, "--copy should compose with --open");
+                assert!(command.open, "--open should compose with --copy");
+            }
+            other => panic!("expected auth url --copy --open, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_auth_token_subcommand() {
+        let cli = Cli::parse_from(["nimbus", "auth", "token"]);
+        match cli.command {
+            Command::Auth(AuthCommand::Token(command)) => {
+                assert!(!command.copy, "token default should not copy");
+            }
+            other => panic!("expected auth token command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_auth_token_copy_flag() {
+        let cli = Cli::parse_from(["nimbus", "auth", "token", "--copy"]);
+        match cli.command {
+            Command::Auth(AuthCommand::Token(command)) => assert!(command.copy),
+            other => panic!("expected auth token --copy, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn auth_token_reads_token_from_admin_file() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_paths(temp.path());
+        let minted =
+            load_or_create_local_admin_token(&paths).expect("admin token should initialize");
+        let loaded = load_local_admin_token(&paths).expect("loaded token should round-trip");
+        assert_eq!(
+            loaded.token, minted.token,
+            "auth token must read the same value that load_or_create wrote"
+        );
+        assert!(
+            loaded.token.starts_with("nimbus_at_"),
+            "token must carry the local-admin prefix, got: {}",
+            loaded.token
+        );
     }
 
     #[test]

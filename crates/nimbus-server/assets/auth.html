@@ -22,6 +22,12 @@
 
 :root {
   color-scheme: light;
+  /* Lucide-family copy + check icons. Inlined via mask-image so the glyph
+     inherits `currentColor` from the host button — keeps the icon in sync
+     with text color, hover state, and data-copied state without re-encoding
+     the SVG per theme. Source: lucide.dev (MIT) — `Copy` and `Check`. */
+  --icon-copy: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect width='14' height='14' x='8' y='8' rx='2'/><path d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/></svg>");
+  --icon-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M20 6 9 17l-5-5'/></svg>");
   --color-bg: oklch(96.5% 0.008 248);
   --color-surface: oklch(100% 0 0);
   --color-surface-2: oklch(96% 0.008 248);
@@ -37,10 +43,6 @@
      palette (mono / warm) because /ui/auth is a first-contact surface. */
   --brand-blue: oklch(62% 0.20 258);
   --brand-blue-soft: oklch(85% 0.10 197);
-  /* Brand-tier teal accents (DESIGN.md two-tier bridge). Used as a 1px
-     decorative gradient under the brand mark only. */
-  --brand-teal-light: oklch(89% 0.10 197);
-  --brand-teal-deep: oklch(72% 0.13 215);
   --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04),
                  0 8px 24px rgba(15, 23, 42, 0.06);
 }
@@ -60,8 +62,6 @@
     --color-danger-soft: oklch(28% 0.08 24);
     --brand-blue: oklch(72% 0.17 248);
     --brand-blue-soft: oklch(70% 0.13 207);
-    --brand-teal-light: oklch(78% 0.10 197);
-    --brand-teal-deep: oklch(62% 0.12 215);
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4),
                    0 8px 24px rgba(0, 0, 0, 0.45);
   }
@@ -94,6 +94,10 @@ body {
 main {
   width: 100%;
   max-width: 380px;
+  /* Positioning context for the absolute `.brand-version` chip in the
+     upper-right corner. The hero brand block underneath stays centered
+     without having to share an axis with the version metadata. */
+  position: relative;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 12px;
@@ -101,37 +105,56 @@ main {
   box-shadow: var(--shadow-card);
 }
 
+/* Hero brand block. Stacked vertically and centered so the cloud mark sits
+   above the wordmark as a single identity unit — gives the first-contact
+   surface clear brand presence without resorting to marketing-tier
+   decoration. The version chip moves out of this row entirely and lives
+   in the footer alongside the trust-scope readout. */
 .brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 10px;
-  margin-bottom: 6px;
+  margin-bottom: 28px;
 }
 
 .brand-mark {
-  width: 36px;
+  width: 52px;
   height: auto;
   aspect-ratio: 322 / 201;
   display: block;
   /* Two-Tier Bridge: brand-tier blue, NOT chrome-tier --color-brand,
-     so the mark never swaps with the operator-console palette. */
+     so the mark never swaps with the operator-console palette. The mark
+     reads as outline-only — `--logo-fill` stays transparent so the cloud
+     body does not flatten into a heavy silhouette next to the wordmark. */
   --logo-stroke: var(--brand-blue);
-  --logo-fill: var(--brand-blue-soft);
+  --logo-fill: transparent;
   color: var(--brand-blue);
 }
 
 .brand-wordmark {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 500;
-  font-size: 15px;
+  font-size: 19px;
   letter-spacing: 0.02em;
-  color: var(--color-text);
+  /* Same brand-tier blue as the logo outline so the mark + wordmark read as
+     one brand block on this first-contact surface. */
+  color: var(--brand-blue);
 }
 
+/* Version chip — pinned to the card's upper-right corner. Floats over the
+   hero so the centered brand block stays on-axis. Treatment matches the
+   pre-hero chip (mono, surface-2 fill, hairline border, muted text) so it
+   reads as quiet metadata, not a CTA. Rendered as a button so the value
+   is one click from the clipboard; trailing icon stays permanently
+   visible (at low opacity) so the affordance is discoverable without
+   needing to hover the upper-right corner. */
 .brand-version {
-  margin-left: auto;
+  position: absolute;
+  top: 16px;
+  right: 16px;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 400;
   letter-spacing: 0.04em;
   color: var(--color-muted);
@@ -139,55 +162,134 @@ main {
   border-radius: 4px;
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
 }
 
-/* L4 — brand-tier accent gradient under the mark row. 1px decorative bar;
-   stays in the brand tier (teal light → deep) so the auth surface keeps a
-   bridge gesture to the operator console without leaking chrome-tier
-   tokens onto the first-contact page. */
-.brand-accent {
-  height: 1px;
-  width: 100%;
-  margin: 0 0 22px;
-  background: linear-gradient(
-    to right,
-    transparent 0%,
-    var(--brand-teal-light) 18%,
-    var(--brand-teal-deep) 50%,
-    var(--brand-teal-light) 82%,
-    transparent 100%
-  );
-  opacity: 0.85;
-}
-
-h1 {
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 1.3;
-  margin: 0 0 6px;
+.brand-version:hover {
+  border-color: color-mix(in oklch, var(--brand-blue) 45%, var(--color-border));
   color: var(--color-text);
 }
 
-.lede {
-  color: var(--color-muted);
-  font-size: 13px;
-  margin: 0 0 20px;
+.brand-version:focus-visible {
+  outline: none;
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-blue) 22%, transparent);
 }
 
-.lede code {
+.brand-version[data-copied="true"] {
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+/* Trailing affordance — kept permanently visible at low opacity so the
+   copy gesture is discoverable without having to hover the upper-right
+   corner first. Bumps to fuller opacity on hover/focus, swaps to the
+   check glyph on success. */
+.brand-version::after {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 5px;
+  vertical-align: -1px;
+  background-color: currentColor;
+  -webkit-mask: var(--icon-copy) center/contain no-repeat;
+          mask: var(--icon-copy) center/contain no-repeat;
+  opacity: 0.5;
+  transition: opacity 120ms ease;
+}
+
+.brand-version:hover::after,
+.brand-version:focus-visible::after {
+  opacity: 0.85;
+}
+
+.brand-version[data-copied="true"]::after {
+  -webkit-mask-image: var(--icon-check);
+          mask-image: var(--icon-check);
+  opacity: 1;
+}
+
+/* Copyable command — interactive sibling of <code>. Click to copy; the
+   pseudo-element animates in a check on success. Mirrors the React
+   `CopyChip` component from packages/nimbus-ui/src/components/copy-chip.tsx
+   so the auth surface honours the DESIGN.md "Copy-to-Clipboard Chip" rule
+   for every machine-readable value. */
+.copyable {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: inherit;
+  letter-spacing: 0.01em;
+  display: inline-block;
   color: var(--color-text);
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  padding: 1px 5px;
+  padding: 2px 8px;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+  word-break: break-all;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.copyable:hover {
+  border-color: color-mix(in oklch, var(--brand-blue) 55%, var(--color-border));
+  color: var(--color-text);
+}
+
+.copyable:focus-visible {
+  outline: none;
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-blue) 22%, transparent);
+}
+
+.copyable[data-copied="true"] {
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+/* Trailing copy glyph — 11px lucide mark masked from the button's
+   currentColor so it tracks text color, hover, and data-copied transitions
+   without a per-state SVG swap. Placed *after* the value because the chip
+   IS the value (Pattern B in DESIGN.md §Copy-to-Clipboard Chip terms) —
+   trailing matches Stripe, Vercel, Convex, Firebase, and Linear's chip
+   conventions and keeps every value left-anchored regardless of length.
+   CSP-clean: no inline `<img>`, no external request. */
+.copyable::after {
+  content: "";
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin-left: 6px;
+  vertical-align: -2px;
+  background-color: currentColor;
+  -webkit-mask: var(--icon-copy) center/contain no-repeat;
+          mask: var(--icon-copy) center/contain no-repeat;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.copyable:hover::after,
+.copyable:focus-visible::after {
+  opacity: 0.85;
+}
+
+.copyable[data-copied="true"]::after {
+  -webkit-mask-image: var(--icon-check);
+          mask-image: var(--icon-check);
+  opacity: 1;
 }
 
 form {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* Compensates for the removed h1 spacer — keeps the LOCAL ADMIN TOKEN
+     label clear of the wordmark without resurrecting a heading. */
+  margin-top: 4px;
 }
 
 label {
@@ -203,9 +305,9 @@ label {
 
 input[type="password"] {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-size: 14px;
   letter-spacing: 0.01em;
-  padding: 9px 11px;
+  padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--color-border);
   background: var(--color-bg);
@@ -253,9 +355,9 @@ button[type="submit"] {
   color: var(--color-surface);
   border: 1px solid var(--brand-blue);
   border-radius: 8px;
-  padding: 9px 14px;
+  padding: 11px 14px;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -273,46 +375,39 @@ button[type="submit"]:focus-visible {
 }
 
 .hint {
-  margin: 22px 0 0;
+  margin: 20px 0 0;
   padding: 12px 14px;
   border-radius: 8px;
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
-  font-size: 12px;
+  font-size: 14.5px;
   color: var(--color-muted);
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .hint p {
   margin: 0;
+  text-align: center;
 }
 
-.hint p + p {
-  margin-top: 6px;
-}
-
-.hint code {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
-  color: var(--color-text);
+/* The hint surface is itself surface-2, so its embedded copyables pop
+   against the page (--color-bg) rather than blending into the panel. */
+.hint .copyable {
   background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 1px 6px;
 }
 
 /* M3 — token-file disclosure. Demoted to a collapsed details/summary so
    the recommended `nimbus auth url` path stays the primary CTA. */
 .other-ways {
   margin: 14px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-muted);
 }
 
 .other-ways summary {
   cursor: pointer;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -343,33 +438,43 @@ button[type="submit"]:focus-visible {
 }
 
 .other-ways-body {
-  padding: 8px 2px 2px;
-  line-height: 1.55;
+  padding: 10px 2px 2px;
+  line-height: 1.5;
 }
 
-.other-ways-body p {
+/* Each "Other ways" entry is a section, not a definition-list row. The
+   eyebrow title sits *above* its body so the body gets the full card
+   width — long token paths fit on one line, and the layout mirrors how
+   the LOCAL ADMIN TOKEN label sits above its input. */
+.other-section + .other-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.other-section-title {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
   margin: 0 0 8px;
 }
 
-.other-ways-body p:last-child {
+.other-section-body {
+  margin: 0 0 10px;
+  color: var(--color-muted);
+}
+
+.other-section-body:last-child {
   margin-bottom: 0;
 }
 
-.other-ways-body code {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
-  color: var(--color-text);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 1px 6px;
-  word-break: break-all;
-}
-
 .local-only {
-  margin: 18px 0 0;
+  margin: 20px 0 0;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--color-muted);
   text-align: center;
@@ -384,10 +489,70 @@ button[type="submit"]:focus-visible {
   margin: 0 6px 1px;
   vertical-align: middle;
 }
+
+/* Trust-scope host readout. Inline copy button without chip chrome so it
+   sits flush against the "Local-only" prefix; the underline-on-hover is
+   the discoverability cue, not a border. Brand-blue + check-icon swap on
+   data-copied state mirror the full chip variant. */
+.local-host {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-decoration: underline dotted color-mix(in oklch, var(--color-muted) 60%, transparent);
+  text-underline-offset: 3px;
+  transition: color 120ms ease, text-decoration-color 120ms ease;
+}
+
+.local-host:hover,
+.local-host:focus-visible {
+  outline: none;
+  color: var(--color-text);
+  text-decoration-color: var(--brand-blue);
+}
+
+.local-host[data-copied="true"] {
+  color: var(--brand-blue);
+  text-decoration-color: var(--brand-blue);
+}
+
+/* Hover-revealed trailing affordance — same DESIGN.md §923 ghost pattern
+   as `.brand-version`. The dotted underline is the always-visible
+   "interactive" cue; the icon is the secondary "what kind of action"
+   cue, revealed on intent so the trust-scope line reads as a quiet
+   footer at rest. */
+.local-host::after {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 5px;
+  vertical-align: -1px;
+  background-color: currentColor;
+  -webkit-mask: var(--icon-copy) center/contain no-repeat;
+          mask: var(--icon-copy) center/contain no-repeat;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.local-host:hover::after,
+.local-host:focus-visible::after {
+  opacity: 0.75;
+}
+
+.local-host[data-copied="true"]::after {
+  -webkit-mask-image: var(--icon-check);
+          mask-image: var(--icon-check);
+  opacity: 1;
+}
 </style>
 </head>
 <body>
-<main aria-labelledby="auth-title">
+<main aria-label="Sign in to Nimbus">
+  <button type="button" class="brand-version" data-copy="v{{ NIMBUS_VERSION }}" aria-label="Copy version v{{ NIMBUS_VERSION }}" title="v{{ NIMBUS_VERSION }}">v{{ NIMBUS_VERSION }}</button>
   <div class="brand">
     <svg class="brand-mark" viewBox="0 0 322 201" role="img" aria-label="Nimbus">
       <title>Nimbus</title>
@@ -398,11 +563,7 @@ button[type="submit"]:focus-visible {
       </g>
     </svg>
     <span class="brand-wordmark">nimbus</span>
-    <span class="brand-version" aria-label="Version">v{{ NIMBUS_VERSION }}</span>
   </div>
-  <div class="brand-accent" aria-hidden="true"></div>
-  <h1 id="auth-title">Sign in</h1>
-  <p class="lede">Sign in with a launch URL from <code>nimbus auth url</code>, or paste the local admin token below.</p>
   <form method="post" action="/ui/auth/session" aria-label="Local admin sign in">
     {{ ERROR_BLOCK }}
     <label for="local-admin-token">
@@ -412,18 +573,25 @@ button[type="submit"]:focus-visible {
     <button type="submit">Continue</button>
   </form>
   <div class="hint">
-    <p>Run <code>nimbus auth url</code> on this machine to mint a one-shot launch URL &mdash; the console opens already signed in.</p>
+    <p>Copy Token: <button type="button" class="copyable" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button></p>
   </div>
   <details class="other-ways">
-    <summary>Other ways to sign in</summary>
+    <summary>Other ways to login</summary>
     <div class="other-ways-body">
-      <p><strong>Launch URL.</strong> <code>nimbus auth url</code> prints a fresh <code>nimbus_lt_…</code> URL on stdout. Paste it into the address bar to skip this form.</p>
-      <p><strong>Token file.</strong> The local admin token lives at <code>~/Library/Application Support/nimbus/auth/token</code> on macOS (or <code>$XDG_CONFIG_HOME/nimbus/auth/token</code> on Linux). Paste its contents above.</p>
+      <section class="other-section">
+        <h2 class="other-section-title">Auto Login</h2>
+        <p class="other-section-body">Run <button type="button" class="copyable" data-copy="nimbus auth url --open" aria-label="Copy: nimbus auth url --open">nimbus auth url --open</button> to open a single-use launch URL in your browser.</p>
+      </section>
+      <section class="other-section">
+        <h2 class="other-section-title">Copy URL</h2>
+        <p class="other-section-body">Run <button type="button" class="copyable" data-copy="nimbus auth url --copy" aria-label="Copy: nimbus auth url --copy">nimbus auth url --copy</button> and paste the printed URL in the address bar.</p>
+      </section>
     </div>
   </details>
   <p class="local-only" aria-label="Trust scope">
-    Local-only<span class="dot" aria-hidden="true"></span>127.0.0.1
+    Local-only<span class="dot" aria-hidden="true"></span><button type="button" class="local-host" data-copy="127.0.0.1" aria-label="Copy host 127.0.0.1" title="127.0.0.1">127.0.0.1</button>
   </p>
 </main>
+<script src="/ui/auth.js" defer></script>
 </body>
 </html>

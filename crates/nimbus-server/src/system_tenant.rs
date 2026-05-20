@@ -1443,6 +1443,7 @@ fn route_inventory() -> Vec<RouteInventoryEntry> {
         route("GET", "/health", "native", "health", false),
         route("GET", "/ui", "ui", "ui_root", false),
         route("GET", "/ui/auth", "ui", "ui_auth", false),
+        route("GET", "/ui/auth.js", "ui", "ui_auth_script", false),
         route("POST", "/ui/auth/session", "ui", "create_ui_session", false),
         route(
             "GET",
