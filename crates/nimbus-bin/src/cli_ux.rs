@@ -68,7 +68,13 @@ Examples:
 
 Deploy target:
   nimbus deploy requires an explicit self-hosted target URL via --url or
-  NIMBUS_DEPLOY_URL. Authenticate with --token or NIMBUS_DEPLOY_TOKEN.";
+  NIMBUS_DEPLOY_URL. Authenticate via one of:
+    --token <value>             explicit CLI flag (wins)
+    NIMBUS_DEPLOY_TOKEN env     CI / automation path
+    nimbus auth login --url <daemon> --bearer <value>
+                                stores a bearer in ~/.config/nimbus/credentials
+                                (mode 0600) that subsequent `nimbus deploy`
+                                calls reuse when no env var is set";
 
 pub(crate) const START_HELP_EXAMPLES: &str = "\
 Examples:

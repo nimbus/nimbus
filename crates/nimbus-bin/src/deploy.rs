@@ -130,7 +130,12 @@ pub(crate) async fn run_deploy_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
     let target_url = resolve_deploy_url(command.url.as_deref(), |name| env::var(name).ok())?;
-    let token = resolve_deploy_token(command.token.as_deref(), |name| env::var(name).ok())?;
+    let token = resolve_deploy_token(
+        command.token.as_deref(),
+        &target_url,
+        |name| env::var(name).ok(),
+        crate::auth::lookup_credentials_bearer,
+    )?;
     let app_dir = resolve_deploy_app_dir(command.app_dir.as_deref(), &cwd)?;
 
     emit_deploy_phase(format!("Preparing Nimbus app from {}", app_dir.display()));
@@ -200,17 +205,30 @@ fn resolve_deploy_url(
 
 fn resolve_deploy_token(
     explicit_token: Option<&str>,
+    target_url: &str,
     env_lookup: impl Fn(&str) -> Option<String>,
+    credentials_lookup: impl Fn(&str) -> io::Result<Option<(String, PathBuf)>>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let token = explicit_token
-        .map(str::to_owned)
-        .or_else(|| env_lookup(DEPLOY_TOKEN_ENV))
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "nimbus deploy requires --token or NIMBUS_DEPLOY_TOKEN",
-            )
-        })?;
+    // Precedence: --token CLI flag > NIMBUS_DEPLOY_TOKEN env > credentials
+    // file. Env wins over the file so that CI never accidentally consumes
+    // developer credentials. See `docs/plans/desktop-auth-dx-plan.md`
+    // DEP3.
+    let token = if let Some(value) = explicit_token {
+        value.to_owned()
+    } else if let Some(value) = env_lookup(DEPLOY_TOKEN_ENV) {
+        value
+    } else if let Some((value, _path)) = credentials_lookup(target_url)? {
+        value
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "nimbus deploy requires --token, NIMBUS_DEPLOY_TOKEN, or a stored bearer for {target_url} \
+                 (set one with `nimbus auth login --url {target_url} --bearer <value>`)",
+            ),
+        )
+        .into());
+    };
     if token.trim().is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -637,12 +655,72 @@ mod tests {
         assert_eq!(url, "http://localhost:3210");
 
         let missing_token =
-            resolve_deploy_token(None, |_| None).expect_err("token should be required");
-        assert!(missing_token.to_string().contains("requires --token"));
+            resolve_deploy_token(None, "http://localhost:3210", |_| None, |_| Ok(None))
+                .expect_err("token should be required");
+        let missing_message = missing_token.to_string();
+        assert!(
+            missing_message.contains("--token"),
+            "missing-token error should mention --token, got: {missing_message}"
+        );
+        assert!(
+            missing_message.contains("NIMBUS_DEPLOY_TOKEN"),
+            "missing-token error should mention NIMBUS_DEPLOY_TOKEN, got: {missing_message}"
+        );
+        assert!(
+            missing_message.contains("nimbus auth login"),
+            "missing-token error should point at `nimbus auth login`, got: {missing_message}"
+        );
 
-        let token =
-            resolve_deploy_token(Some("secret"), |_| None).expect("explicit token should resolve");
+        let token = resolve_deploy_token(
+            Some("secret"),
+            "http://localhost:3210",
+            |_| None,
+            |_| Ok(None),
+        )
+        .expect("explicit token should resolve");
         assert_eq!(token, "secret");
+    }
+
+    #[test]
+    fn deploy_token_resolution_prefers_explicit_over_env_and_file() {
+        let token = resolve_deploy_token(
+            Some("explicit-cli"),
+            "http://localhost:3210",
+            |_| Some("env-token".to_string()),
+            |_| Ok(Some(("file-token".to_string(), PathBuf::from("/dev/null")))),
+        )
+        .expect("explicit token should win");
+        assert_eq!(token, "explicit-cli");
+    }
+
+    #[test]
+    fn deploy_token_resolution_prefers_env_over_credentials_file() {
+        let token = resolve_deploy_token(
+            None,
+            "http://localhost:3210",
+            |name| (name == DEPLOY_TOKEN_ENV).then(|| "env-token".to_string()),
+            |_| Ok(Some(("file-token".to_string(), PathBuf::from("/dev/null")))),
+        )
+        .expect("env token should resolve when CLI flag is absent");
+        assert_eq!(
+            token, "env-token",
+            "env var must win over credentials file so CI never reads developer creds"
+        );
+    }
+
+    #[test]
+    fn deploy_token_resolution_falls_back_to_credentials_file() {
+        let token = resolve_deploy_token(
+            None,
+            "http://localhost:3210",
+            |_| None,
+            |url| {
+                assert_eq!(url, "http://localhost:3210");
+                Ok(Some(("file-token".to_string(), PathBuf::from("/dev/null"))))
+            },
+        )
+        .expect("credentials file should resolve when env and CLI are absent");
+        assert_eq!(token, "file-token");
     }
 
     #[test]

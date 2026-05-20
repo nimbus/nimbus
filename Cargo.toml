@@ -112,6 +112,7 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 time = "0.3"
+toml = "0.9"
 twox-hash = "2"
 ulid = { version = "1", features = ["serde"] }
 sys_traits = "0.1.27"
