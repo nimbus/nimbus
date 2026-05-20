@@ -16,6 +16,9 @@
 #      remain present in the surfaces that announce it — dev.rs and the
 #      first-boot banner — so that all CLI surfaces converge on the same
 #      copy.
+#   4. The `nimbus auth rotate-admin` subcommand spelling must stay pinned.
+#      The DA9 bind-gate tripwire and the DA10 agent-auth contract doc both
+#      reference it; a silent rename would un-anchor both surfaces.
 
 set -euo pipefail
 
@@ -76,6 +79,20 @@ check_present \
   "canonical sign-in sentence in first_boot.rs" \
   "Open this URL to sign in:" \
   crates/nimbus-bin/src/start/first_boot.rs
+
+# 4. The `nimbus auth rotate-admin` subcommand spelling must stay pinned.
+#    The DA9 bind-gate tripwire (network_bind.rs) prints it as the recovery
+#    hint, and the DA10 agent-auth contract doc names it as the kill switch.
+#    If this subcommand is ever renamed, both surfaces must update intentionally.
+check_present \
+  "rotate-admin subcommand registration in auth.rs" \
+  'name = "rotate-admin"' \
+  crates/nimbus-bin/src/auth.rs
+
+check_present \
+  "rotate-admin recovery hint in network_bind.rs" \
+  "nimbus auth rotate-admin" \
+  crates/nimbus-bin/src/start/network_bind.rs
 
 if (( fail )); then
   exit 1

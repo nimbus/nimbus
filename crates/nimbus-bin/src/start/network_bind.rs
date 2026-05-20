@@ -11,15 +11,11 @@ use time::{Duration, OffsetDateTime};
 /// `--allow-network` bind active.
 pub(super) const ADMIN_TOKEN_FRESHNESS_WINDOW: Duration = Duration::days(30);
 
-/// Pre-bind gate for `nimbus start` host selection. Loopback hosts always
-/// pass. Non-loopback hosts require the explicit `--allow-network` opt-in
-/// AND a freshly rotated admin token.
-pub(super) fn enforce_loopback_or_allow_network(
-    host: &str,
-    allow_network: bool,
-    admin_token: &LocalAdminTokenRecord,
-    now: OffsetDateTime,
-) -> Result<(), NetworkBindError> {
+/// Stage 1: refuse non-loopback hosts unless the operator passed
+/// `--allow-network`. Loopback hosts always pass. Called before any
+/// expensive startup work (codegen, registry loads) so a typo'd `--host`
+/// fails fast.
+pub(super) fn ensure_host_opt_in(host: &str, allow_network: bool) -> Result<(), NetworkBindError> {
     if host_is_loopback(host) {
         return Ok(());
     }
@@ -27,6 +23,20 @@ pub(super) fn enforce_loopback_or_allow_network(
         return Err(NetworkBindError::NonLoopbackRequiresOptIn {
             host: host.to_string(),
         });
+    }
+    Ok(())
+}
+
+/// Stage 2: refuse non-loopback hosts whose admin token has not been
+/// rotated within [`ADMIN_TOKEN_FRESHNESS_WINDOW`]. Loopback hosts always
+/// pass. Called after the admin token is loaded from disk.
+pub(super) fn ensure_admin_token_fresh_for_public_bind(
+    host: &str,
+    admin_token: &LocalAdminTokenRecord,
+    now: OffsetDateTime,
+) -> Result<(), NetworkBindError> {
+    if host_is_loopback(host) {
+        return Ok(());
     }
     if !admin_token.rotation_is_fresh(now, ADMIN_TOKEN_FRESHNESS_WINDOW) {
         return Err(NetworkBindError::StaleAdminTokenRotation {
@@ -104,21 +114,19 @@ mod tests {
         .expect("fixed test timestamp should parse")
     }
 
+    // Stage 1 — `ensure_host_opt_in` (cheap pre-codegen check).
+
     #[test]
-    fn loopback_host_passes_without_allow_network() {
-        let token = admin_token(None);
-        let now = fixed_now();
+    fn ensure_host_opt_in_passes_loopback_without_allow_network() {
         for host in ["127.0.0.1", "::1", "localhost", "LOCALHOST"] {
-            enforce_loopback_or_allow_network(host, false, &token, now)
+            ensure_host_opt_in(host, false)
                 .unwrap_or_else(|error| panic!("loopback host {host} should pass: {error}"));
         }
     }
 
     #[test]
-    fn non_loopback_without_allow_network_is_refused_with_hint() {
-        let token = admin_token(Some("2026-05-19T00:00:00Z"));
-        let now = fixed_now();
-        let error = enforce_loopback_or_allow_network("0.0.0.0", false, &token, now)
+    fn ensure_host_opt_in_refuses_non_loopback_without_flag_with_hint() {
+        let error = ensure_host_opt_in("0.0.0.0", false)
             .expect_err("non-loopback bind without --allow-network must be refused");
         match &error {
             NetworkBindError::NonLoopbackRequiresOptIn { host } => assert_eq!(host, "0.0.0.0"),
@@ -136,10 +144,30 @@ mod tests {
     }
 
     #[test]
-    fn non_loopback_with_allow_network_and_never_rotated_token_triggers_tripwire() {
+    fn ensure_host_opt_in_passes_non_loopback_when_flag_set() {
+        ensure_host_opt_in("0.0.0.0", true)
+            .expect("--allow-network should let non-loopback through stage 1");
+        ensure_host_opt_in("203.0.113.5", true)
+            .expect("--allow-network should let non-loopback through stage 1");
+    }
+
+    // Stage 2 — `ensure_admin_token_fresh_for_public_bind` (post-token-load check).
+
+    #[test]
+    fn ensure_admin_token_fresh_passes_loopback_regardless_of_rotation() {
         let token = admin_token(None);
         let now = fixed_now();
-        let error = enforce_loopback_or_allow_network("0.0.0.0", true, &token, now)
+        for host in ["127.0.0.1", "::1", "localhost"] {
+            ensure_admin_token_fresh_for_public_bind(host, &token, now)
+                .unwrap_or_else(|error| panic!("loopback host {host} should pass: {error}"));
+        }
+    }
+
+    #[test]
+    fn ensure_admin_token_fresh_trips_on_never_rotated_token() {
+        let token = admin_token(None);
+        let now = fixed_now();
+        let error = ensure_admin_token_fresh_for_public_bind("0.0.0.0", &token, now)
             .expect_err("never-rotated admin token must trip the rotation gate");
         match &error {
             NetworkBindError::StaleAdminTokenRotation { host } => assert_eq!(host, "0.0.0.0"),
@@ -153,10 +181,10 @@ mod tests {
     }
 
     #[test]
-    fn non_loopback_with_allow_network_and_stale_rotation_triggers_tripwire() {
+    fn ensure_admin_token_fresh_trips_on_stale_rotation() {
         let token = admin_token(Some("2026-01-01T00:00:00Z"));
         let now = fixed_now();
-        let error = enforce_loopback_or_allow_network("203.0.113.5", true, &token, now)
+        let error = ensure_admin_token_fresh_for_public_bind("203.0.113.5", &token, now)
             .expect_err("stale rotation must trip the gate");
         assert!(matches!(
             error,
@@ -166,18 +194,18 @@ mod tests {
     }
 
     #[test]
-    fn non_loopback_with_allow_network_and_fresh_rotation_passes() {
+    fn ensure_admin_token_fresh_passes_on_fresh_rotation() {
         let token = admin_token(Some("2026-05-15T00:00:00Z"));
         let now = fixed_now();
-        enforce_loopback_or_allow_network("0.0.0.0", true, &token, now)
-            .expect("fresh rotation under --allow-network should bind");
+        ensure_admin_token_fresh_for_public_bind("0.0.0.0", &token, now)
+            .expect("fresh rotation should pass stage 2");
     }
 
     #[test]
-    fn unparseable_rotation_timestamp_is_treated_as_stale() {
+    fn ensure_admin_token_fresh_treats_unparseable_rotated_at_as_stale() {
         let token = admin_token(Some("not-an-rfc3339-string"));
         let now = fixed_now();
-        let error = enforce_loopback_or_allow_network("0.0.0.0", true, &token, now)
+        let error = ensure_admin_token_fresh_for_public_bind("0.0.0.0", &token, now)
             .expect_err("unparseable rotated_at must be treated as stale");
         assert!(matches!(
             error,
