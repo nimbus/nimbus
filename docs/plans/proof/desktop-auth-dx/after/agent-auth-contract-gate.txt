@@ -1,0 +1,34 @@
+# DA10 proof — agent auth contract grep gate (AG1)
+
+Captured 2026-05-20 against the in-tree gate script.
+
+## Contract pinned in canonical doc
+
+$ ls -1 docs/architecture/server/auth-runtime-trust.md
+docs/architecture/server/auth-runtime-trust.md
+
+$ grep -c "## Agent Auth Contract" docs/architecture/server/auth-runtime-trust.md
+1
+
+The section is referenced from the canonical server auth doc and is
+re-read at the start of the `nimbus agent` implementation plan.
+
+## Forget-this-existed grep gate
+
+$ bash scripts/verify-auth-contract.sh
+agent auth contract grep gates clean
+
+The gate pins:
+  - The `## Agent Auth Contract` section heading.
+  - The `### Scoped session shape` sub-heading.
+  - The scoped-session field vocabulary: `capabilities`, `tenant_id`,
+    `parent_generation`.
+  - The `### Revocation requirements` sub-heading and the
+    `nimbus auth rotate-admin` kill-switch reference.
+  - The `### Audit-log requirements` sub-heading and the three audit
+    event names: `agent_session_minted`, `agent_session_used`,
+    `agent_session_revoked`.
+
+Any rename or removal of those tokens must update the gate
+intentionally — silent drift will fail CI before the agent runtime
+lands.

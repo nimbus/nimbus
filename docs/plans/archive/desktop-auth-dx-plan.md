@@ -1,9 +1,14 @@
 # Desktop Auth & Sign-in DX (2026-05-20)
 
-Status: active
+Status: archived (closed 2026-05-20)
 Owner: desktop-ui workstream
 Predecessor (closed, archived): `docs/plans/archive/desktop-ui-ux-review-fixes-plan.md`
 Promoted: 2026-05-20
+Closed: 2026-05-20
+
+See the **Disposition** section at the foot of this file for the
+ship / defer / decline record of every priority-ladder item and the
+list of proof artifacts under `docs/plans/proof/desktop-auth-dx/`.
 
 Related current references:
 
@@ -580,3 +585,142 @@ shipped, deferred-with-justification, or declined-with-rationale.
     grep gate clean.
 19. **Proof.** `docs/plans/proof/desktop-auth-dx/after/` contains the
     auth-page screenshots and CLI transcripts named in DA11.
+
+## Disposition
+
+Closed 2026-05-20. Every priority-ladder item is recorded below with
+its disposition (shipped / deferred / declined) and a pointer to the
+proof artifact under `docs/plans/proof/desktop-auth-dx/`.
+
+### Slice ledger
+
+| Slice | Subject                                                  | Commit     | Status   |
+| ----- | -------------------------------------------------------- | ---------- | -------- |
+| DA1   | Auth page logo + version chip + footer cleanup           | `870adc39` | shipped  |
+| DA2   | `nimbus auth url` command + integration test             | `0c406095` | shipped  |
+| DA3   | `nimbus dev` auto-open default + `--no-open`             | `64e1077b` | shipped  |
+| DA4   | `nimbus start` first-boot launch URL banner              | `770ffba1` | shipped  |
+| DA5   | Auth page design polish (lede, hint, error state, brand) | `51b99618` | shipped  |
+| DA6   | Cross-CLI microcopy cleanup + grep gate                  | `3d309b4d` | shipped  |
+| DA7   | (skipped per plan)                                       | —          | declined |
+| DA8   | Deploy auth: login/status/logout + credentials file      | `b3a41de2` | shipped  |
+| DA9   | Network-bind guardrails: `--allow-network` + tripwire    | `d209cf9f` | shipped  |
+| DA10  | Agent auth contract (doc-only) + grep gate               | `92e10aa3` | shipped  |
+| DA11  | Proof folder + plan archive                              | this slice | shipped  |
+
+### Completion-gate ledger
+
+#### Local-console DX (C / H tier)
+
+- **C1.** shipped (DA3 — `nimbus dev` auto-opens by default;
+  `--no-open` reverts to the printed banner). Proof:
+  `proof/desktop-auth-dx/after/dev-stdout.txt`.
+- **C2.** shipped (DA2 — `nimbus auth url` mints a launch URL).
+  Proof: `proof/desktop-auth-dx/after/auth-url-stdout.txt`.
+- **C3.** shipped (DA1 — `/ui/auth` now references the canonical
+  `nimbus-mark.svg`). Proof: `proof/desktop-auth-dx/after/auth-light.png`
+  and `auth-dark.png`; `proof/desktop-auth-dx/before/` retains the
+  hand-rolled placeholder for comparison.
+- **C4.** shipped (DA5 — hint copy promotes `nimbus auth url` first).
+  Proof: same auth screenshots.
+- **H1.** shipped (DA1 — version chip upper-right). Proof: auth
+  screenshots.
+- **H2.** shipped (DA1 — footer wordmark removed; only the version
+  chip remains down there). Proof: auth screenshots.
+- **H3.** shipped (DA5 — lede leads with the launch URL).
+- **H4.** shipped (DA5 — brand mark uses the brand-tier blue).
+- **H5.** shipped (DA4 — `nimbus start` prints a one-shot banner on
+  first boot). Proof:
+  `proof/desktop-auth-dx/after/start-first-boot-stdout.txt`.
+- **H6.** shipped (DA3 — when `open::that` fails the launch URL is
+  still printed). Proof: `dev-stdout.txt` (fallback case section).
+
+#### Medium / Low / Cleanup / Nice-to-have
+
+- **M1-M6.** shipped (DA3 smart-detect ladder, DA5 error/disclosure
+  copy, DA2 `--copy` flag, test coverage across the auth surface).
+  Proof: `dev-stdout.txt` (smart-detect ladder section).
+- **L1-L6.** All disposed:
+  - **L1** (terminal-color hint copy) — declined; current copy is
+    plain ASCII and reads cleanly on muted terminals, no demonstrable
+    regression.
+  - **L2** (operator console `Sign out` shortcut) — deferred; better
+    handled inside the upcoming console UX pass, not the on-ramp.
+  - **L3** (launch-ticket TTL telemetry) — deferred to the
+    observability slice.
+  - **L4** (auth-page favicon tuning) — declined; current favicon
+    follows the brand-tier palette already.
+  - **L5** (deploy URL prompt UI) — deferred to a deploy-UX plan.
+  - **L6** (dark-mode token-copy contrast) — shipped as part of
+    DA5 polish; folded into the H4 brand-tier work.
+- **CL1-CL5.** All disposed:
+  - **CL1** (consolidate auth-page CSS into the design-system file)
+    — deferred; on the post-shell desktop-design-system plan.
+  - **CL2** (replace `crates/nimbus-server/assets/auth.html` inline
+    SVG with `<img src=…>`) — shipped in DA1.
+  - **CL3** (drop the obsolete `Open` button text helper) — shipped
+    in DA3.
+  - **CL4** (consolidate `mask_bearer` helpers) — shipped in DA8
+    (only one implementation now, in `credentials.rs`).
+  - **CL5** (delete the unused `--open` clap arg) — shipped in DA3
+    and locked in by the auth-dx grep gate (`scripts/verify-auth-dx-gates.sh`).
+- **N1-N5.** All deferred as nice-to-have; none landed in this plan
+  and no follow-up plan is required:
+  - **N1** (auth-page Spanish localization) — deferred; no demand
+    signal yet.
+  - **N2** (`nimbus auth url --json`) — deferred; the human-friendly
+    one-line URL is the canonical surface today.
+  - **N3** (custom URL scheme handler `nimbus://`) — deferred.
+  - **N4** (auth-page reduced-motion polish) — deferred; current
+    page has no entry animation.
+  - **N5** (Touch ID / Windows Hello unlock) — deferred; out of
+    scope for the pre-launch posture.
+
+#### Auth posture across commands (DEP / NB / AG tier)
+
+- **DEP1.** shipped (DA8 — `nimbus auth login` accepts `--bearer` or
+  stdin and writes the credentials file). Proof:
+  `auth-login-status-logout-stdout.txt`.
+- **DEP2.** shipped (DA8 — TOML credentials file at
+  `~/.config/nimbus/credentials`, mode 0600 on Unix asserted in
+  unit + transcript tests). Proof: `auth-login-status-logout-stdout.txt`
+  (final `stat -f` section).
+- **DEP3.** shipped (DA8 — `nimbus deploy` reads the credentials
+  file as a fallback when `NIMBUS_DEPLOY_TOKEN` is unset; env wins
+  on tie, asserted by the round-trip unit test).
+- **DEP4.** shipped (DA8 — `nimbus auth status` masks bearers,
+  `nimbus auth logout` removes a connection). Proof:
+  `auth-login-status-logout-stdout.txt`.
+- **NB1.** shipped (DA9 — `nimbus start --host 0.0.0.0` refuses
+  without `--allow-network` with an opt-in hint; `nimbus dev` only
+  binds loopback so the gate never fires there). Proof:
+  `start-allow-network-stdout.txt` (matrix transcript section).
+- **NB2.** shipped (DA9 — `--allow-network` plus a never-rotated or
+  stale `rotated_at` exits with the tripwire pointing at
+  `nimbus auth rotate-admin`; a fresh `rotated_at` binds). Proof:
+  `start-allow-network-stdout.txt`.
+- **AG1.** shipped (DA10 — agent auth contract documented at
+  `docs/architecture/server/auth-runtime-trust.md` and pinned by
+  `scripts/verify-auth-contract.sh`). Proof:
+  `agent-auth-contract-gate.txt`.
+
+### Verification ledger
+
+- **CI.** Auth-dx microcopy gate (`scripts/verify-auth-dx-gates.sh`)
+  clean. Agent-auth contract gate (`scripts/verify-auth-contract.sh`)
+  clean. `cargo test -p nimbus-bin --bin nimbus auth::tests` — 12
+  tests, all green (proof transcript embeds the run).
+  `cargo test -p nimbus-bin --bin nimbus start::network_bind` — 6
+  tests, all green. `cargo test -p nimbus-server local_server::token`
+  — 9 tests, all green.
+- **Proof.** Every priority-ladder item with a UI or CLI surface has
+  a named artifact under `docs/plans/proof/desktop-auth-dx/after/`:
+  - `auth-light.png` / `auth-dark.png` (C3, C4, H1-H4)
+  - `dev-stdout.txt` (C1, H6, M1)
+  - `start-first-boot-stdout.txt` (H5)
+  - `auth-url-stdout.txt` (C2)
+  - `auth-login-status-logout-stdout.txt` (DEP1-DEP4)
+  - `start-allow-network-stdout.txt` (NB1-NB2)
+  - `agent-auth-contract-gate.txt` (AG1)
+- **Plan archive.** This file: moved from `docs/plans/` to
+  `docs/plans/archive/` on close.

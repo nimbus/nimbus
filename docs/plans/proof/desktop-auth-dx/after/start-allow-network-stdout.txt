@@ -1,0 +1,57 @@
+# DA9 proof — network-bind guardrails (NB1 + NB2)
+
+Captured 2026-05-20 against the debug build at target/debug/nimbus.
+
+## `nimbus start --help` advertises the `--allow-network` opt-in
+
+$ nimbus start --help | grep -A2 'allow-network\|--host '
+      --host <HOST>
+          Host interface to listen on. Defaults to loopback for local safety
+
+      --allow-network
+          Opt-in to binding on a non-loopback interface. Without this flag, `nimbus start` refuses any `--host` that resolves outside the loopback range. With the flag set, the daemon additionally requires that the local admin token has been rotated within the staleness window (see `nimbus auth rotate-admin`).
+
+## Unit-test transcript: bind-gate matrix
+
+$ cargo test -p nimbus-bin --bin nimbus start::network_bind 2>&1
+running 6 tests
+test start::network_bind::tests::unparseable_rotation_timestamp_is_treated_as_stale ... ok
+test start::network_bind::tests::loopback_host_passes_without_allow_network ... ok
+test start::network_bind::tests::non_loopback_with_allow_network_and_fresh_rotation_passes ... ok
+test start::network_bind::tests::non_loopback_with_allow_network_and_stale_rotation_triggers_tripwire ... ok
+test start::network_bind::tests::non_loopback_with_allow_network_and_never_rotated_token_triggers_tripwire ... ok
+test start::network_bind::tests::non_loopback_without_allow_network_is_refused_with_hint ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 498 filtered out
+
+The matrix verifies:
+  - Loopback hosts (127.0.0.1, ::1, localhost) bypass the gate.
+  - Non-loopback bind without --allow-network exits with the refusal +
+    opt-in hint message.
+  - Non-loopback bind with --allow-network and a never-rotated admin
+    token exits with the tripwire pointing at `nimbus auth rotate-admin`.
+  - Non-loopback bind with --allow-network and a stale rotated_at also
+    trips, with the same hint.
+  - Non-loopback bind with --allow-network and a fresh rotated_at is
+    allowed to proceed.
+
+## Token-record schema bump: rotated_at populates on rotation
+
+$ cargo test -p nimbus-server local_server::token 2>&1
+test local_server::token::tests::corrupt_token_file_errors_clearly ... ok
+test local_server::token::tests::load_or_create_creates_and_reuses_token_file ... ok
+test local_server::token::tests::token_file_is_written_with_user_only_permissions ... ok
+test local_server::token::tests::invalid_scope_is_rejected ... ok
+test local_server::token::tests::offline_rotation_bumps_generation ... ok
+test local_server::token::tests::records_persisted_without_rotated_at_load_with_none ... ok
+test local_server::token::tests::offline_rotation_populates_rotated_at_freshness_window ... ok
+test local_server::token::tests::token_authorization_accepts_only_exact_token_matches ... ok
+test local_server::token::tests::source_uses_ring_constant_time_compare_for_token_checks ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured
+
+The new tests assert:
+  - Offline rotation sets `rotated_at` to a parseable RFC 3339 timestamp
+    and the record reports fresh inside the 30-day window.
+  - Legacy on-disk records (no `rotatedAt` field) still load and surface
+    as stale to the bind tripwire.
