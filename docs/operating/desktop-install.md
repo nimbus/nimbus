@@ -102,9 +102,10 @@ SmartScreen prompt is the supported path.
 ## After install
 
 `nimbus-desktop` starts up looking for a running `nimbus` server. If
-none is found, it prompts to spawn one — the same lifecycle the `nimbus
-ui --ensure` CLI flow uses. The shell does not bundle `nimbus`; install
-the CLI separately:
+none is found, it prompts to spawn one through its own discover-or-spawn
+loop in the Electron main process (`desktop/src/main/server.ts`); the
+shell deliberately owns this lifecycle instead of shelling out to the
+CLI. The shell does not bundle `nimbus`; install the CLI separately:
 
 ```bash
 brew install nimbus/tap/nimbus            # macOS

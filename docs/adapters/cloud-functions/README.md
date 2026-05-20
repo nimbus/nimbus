@@ -15,7 +15,7 @@ export const onMessageCreated = onDocumentCreated("messages/{messageId}", async 
 ```
 
 ```bash
-nimbus codegen && nimbus start
+nimbus codegen && nimbus start --app-dir .
 ```
 
 Your existing `firebase-functions/v2` handlers run on Nimbus unchanged --
@@ -54,7 +54,7 @@ local server.
 
 ```bash
 nimbus codegen
-nimbus start
+nimbus start --app-dir .
 ```
 
 **3. Test it:**

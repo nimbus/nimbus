@@ -20,10 +20,13 @@ Nimbus-specific handler API.
 
 1. Keep your existing handler modules and imports for the covered surface.
 2. Run Nimbus from the existing Firebase repo root or standalone package root.
-3. Let Nimbus auto-detect the app root in the common case.
-4. Use `--app-dir` only when the repo layout is ambiguous or nonstandard.
+3. For watched dev with auto-detection, use `nimbus dev` — it walks
+   ancestors bounded by `.git/` to find the app root.
+4. For production-shaped startup, use `nimbus start --app-dir <path>` —
+   `start` does no walk-up; pass the path explicitly.
 5. Generate and validate artifacts with `nimbus codegen`.
-6. Run locally with `nimbus start`.
+6. Run locally with `nimbus start --app-dir .` (or `nimbus dev` for the
+   watched loop).
 7. Deploy with `nimbus deploy` once the local path is verified.
 
 ## Project Layouts That Work Today
@@ -81,14 +84,19 @@ nimbus codegen
 Local server:
 
 ```bash
-nimbus start
+nimbus start --app-dir .
 ```
 
-Explicit override when needed:
+For a monorepo layout where the functions package is not at the project
+root, pass an explicit path:
 
 ```bash
 nimbus start --app-dir ./packages/functions
 ```
+
+`nimbus start` does not walk ancestors looking for a source app — pass
+`--app-dir` explicitly. See
+[How Apps Reach a Running Daemon](../../operating/cli.md#how-apps-reach-a-running-daemon).
 
 Deploy:
 
@@ -244,7 +252,8 @@ For most teams:
 
 1. Confirm your app root auto-detects with `nimbus codegen`.
 2. Add `targets.json` for standalone Functions Framework targets if needed.
-3. Run `nimbus start` locally and verify trigger/HTTP flows.
+3. Run `nimbus start --app-dir .` (or `nimbus dev` for the watched loop)
+   locally and verify trigger/HTTP flows.
 4. Confirm any `firebase-admin` usage stays inside the documented subset.
 5. Make handler writes idempotent with at-least-once delivery in mind.
 6. Deploy with `nimbus deploy`.

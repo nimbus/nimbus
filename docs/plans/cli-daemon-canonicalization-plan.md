@@ -385,7 +385,7 @@ nimbus ui
 | CD5 | Replace `nimbus ui --ensure` with unflagged `nimbus ui` (discovery + browser open only). Concrete deletions and updates: drop the `--ensure` flag from the clap derive on `UiArgs`; delete `spawn_nimbus_start` (`crates/nimbus-bin/src/ui.rs:170-191`); update error messages at `ui.rs:50`, `ui.rs:58` to point at `nimbus dev --open` (for spawn-and-open) or `nimbus start` followed by `nimbus ui` (for production-shaped startup); rewrite the test at `crates/nimbus-bin/src/ui.rs:280-300` (`ui_command_without_running_server_returns_actionable_error`) to assert the new no-daemon error wording and remove any `--ensure` reference; remove the `nimbus ui --ensure` example at `crates/nimbus-bin/src/cli_ux.rs:89` (`UI_HELP_EXAMPLES`) and replace it with the `nimbus dev --open` shortcut. | done |
 | CD6 | Sanity-check Electron flow: `desktop/src/main/server.ts:188` calls `spawn(executable, ["start"], { detached: true, stdio: "ignore", windowsHide: true })` with no `cwd` override, so the desktop shell inherits the user's launching CWD. Post-CD1 this is now safe regardless of where the user launches the desktop app from. Verify by running `verify:ds1` (`@nimbus/desktop`) from `~/src/github.com/nimbus/desktop` (the worst-case CWD pre-fix), then once from `/tmp` (control). No Electron code changes expected; this row only confirms the contract. | done |
 | CD7 | Regression tests in `crates/nimbus-bin/src/start/tests/`, `crates/nimbus-bin/src/dev/tests/`, `crates/nimbus-bin/src/deploy.rs`'s existing test module (lines 649, 671, 699), and a new `crates/nimbus-bin/src/compose/discovery.rs` test module. Each test builds an isolated fixture under `tempdir()` and asserts behaviour, not just non-panic: (a) `nimbus start` from `<tmp>/inner/sub/`, where `<tmp>/` contains `nimbus/` (no `.git/` anywhere), does NOT trigger codegen and does NOT return an app dir; (b) `nimbus dev` from `<tmp>/inner/sub/`, where `<tmp>/inner/.git/` exists and `<tmp>/nimbus/` exists as a sibling outside the boundary, returns `None` (the unrelated `nimbus/` is correctly invisible); (c) `nimbus dev` from `<tmp>/app/src/components/`, where `<tmp>/app/convex/` and `<tmp>/.git/` both exist, returns `<tmp>/app/` (multi-level discovery still works); (d) `nimbus deploy` mirrors (b) and (c) against the deploy walker's surfaces (`firebase.json`, `package.json` with `@google-cloud/functions-framework`, etc.); (e) compose discovery: `<tmp>/inner/.git/` exists, `<tmp>/compose.yaml` exists as a sibling outside the boundary — `resolve_auto_discovered_compose_selection` from `<tmp>/inner/sub/` returns `None`; positive case inside the boundary still works; (f) **Worktree + submodule semantics** (load-bearing — agents in this codebase work primarily through `git worktree add`-created worktrees): test 1 — synthetic `.git` *file* (not directory) at the boundary candidate, confirm `at_git_boundary` returns true (covers the unit-level shape). Test 2 — invoke `git init` + `git worktree add <wt>` in a `tempdir()`, then run each of `detect_app_dir` (dev), `detect_app_dir` (deploy), and `resolve_auto_discovered_compose_selection` from a subdir inside `<wt>` with the relevant marker placed both *inside* and *outside* the worktree root, and assert the walker stops at the worktree's `.git` file rather than escaping to the main repo's `.git/` directory. This is the production-shaped case for every agent and dev who works in worktrees and is the test that fails loudly if anyone ever regresses CD2 to `is_dir()`. (g) `nimbus ui` errors cleanly when no daemon is running, with the new error wording from CD5. (h) banner: `nimbus start --port 0` (ephemeral) prints a line matching `operator console:.*\\b/ui/\\b`. (i) **Discovery file serde round-trip** in `nimbus-bin`: build a `ServerDiscoveryRecord` fixture, serialize to JSON, deserialize, byte-compare against a checked-in `tests/fixtures/server.json.golden` — fails loudly on any silent format drift that would break Electron (`desktop/src/main/discovery.ts`) or the Playwright fixture (mitigates R4). | done |
-| CD8 | **Documentation pass — enumerated touchpoints, not "the docs."** (1) `docs/operating/cli.md`: rewrite the daemon-CLI section to cover Storybook (component HMR, port 6006), `nimbus dev` (full operator console + watched codegen + `--open`), `nimbus start` (production daemon, no walk-up, deployed-app autostart from storage), `nimbus deploy` (project-rooted, `.git/`-bounded), and `nimbus ui` (discover-and-open only, no `--ensure`); add a "How apps reach a running daemon" subsection distinguishing source-load (`--app-dir`) from deploy-load (admin API); note `npm run dev` inside `packages/nimbus-ui/` is for *component iteration only* (vite at port 5173, no daemon proxy), not a full-app workflow. (2) `docs/operating/desktop-install.md`: remove the live `--ensure` reference (surfaced by repo-wide grep). (3) `docs/plans/README.md`: remove the `--ensure` reference; add a one-line index entry for this plan while active. (4) `README.md` (top-level): audit and update any quickstart that names `nimbus ui --ensure` or assumes pre-CD1 `start` behavior. (5) Adapter docs audit pass — `git grep -l 'nimbus ui\|nimbus start' docs/adapters/` returns ~8 files (convex, firebase, cloud-functions, mongodb, native READMEs and migration/compatibility docs); read each and update only where they reference removed behaviour. (6) Architecture docs audit — `docs/architecture/sandbox/{macos-machine-flow,microvm-service-baseline}.md` and `docs/operating/{deploy-admin-api,encryption,storage-backends}.md`; same audit shape. (7) `CLAUDE.md` "Routing By Work Type": add an entry (suggested wording: `- CLI daemon canonicalization, walk-up boundaries, or banner shape: docs/plans/cli-daemon-canonicalization-plan.md (active until closeout, then archive), docs/operating/cli.md, docs/plans/archive/cli-command-surface-plan.md (prior wave), docs/plans/archive/compose-discovery-plan.md (compose precedent).`). (8) **Plan archival on closeout**: move this file to `docs/plans/archive/cli-daemon-canonicalization-plan.md`, update `docs/plans/README.md` to reflect the move, and update the CLAUDE.md routing entry from (7) to point at the archived path. | pending |
+| CD8 | **Documentation pass — enumerated touchpoints, not "the docs."** (1) `docs/operating/cli.md`: rewrite the daemon-CLI section to cover Storybook (component HMR, port 6006), `nimbus dev` (full operator console + watched codegen + `--open`), `nimbus start` (production daemon, no walk-up, deployed-app autostart from storage), `nimbus deploy` (project-rooted, `.git/`-bounded), and `nimbus ui` (discover-and-open only, no `--ensure`); add a "How apps reach a running daemon" subsection distinguishing source-load (`--app-dir`) from deploy-load (admin API); note `npm run dev` inside `packages/nimbus-ui/` is for *component iteration only* (vite at port 5173, no daemon proxy), not a full-app workflow. (2) `docs/operating/desktop-install.md`: remove the live `--ensure` reference (surfaced by repo-wide grep). (3) `docs/plans/README.md`: remove the `--ensure` reference; add a one-line index entry for this plan while active. (4) `README.md` (top-level): audit and update any quickstart that names `nimbus ui --ensure` or assumes pre-CD1 `start` behavior. (5) Adapter docs audit pass — `git grep -l 'nimbus ui\|nimbus start' docs/adapters/` returns ~8 files (convex, firebase, cloud-functions, mongodb, native READMEs and migration/compatibility docs); read each and update only where they reference removed behaviour. (6) Architecture docs audit — `docs/architecture/sandbox/{macos-machine-flow,microvm-service-baseline}.md` and `docs/operating/{deploy-admin-api,encryption,storage-backends}.md`; same audit shape. (7) `CLAUDE.md` "Routing By Work Type": add an entry (suggested wording: `- CLI daemon canonicalization, walk-up boundaries, or banner shape: docs/plans/cli-daemon-canonicalization-plan.md (active until closeout, then archive), docs/operating/cli.md, docs/plans/archive/cli-command-surface-plan.md (prior wave), docs/plans/archive/compose-discovery-plan.md (compose precedent).`). (8) **Plan archival on closeout**: move this file to `docs/plans/archive/cli-daemon-canonicalization-plan.md`, update `docs/plans/README.md` to reflect the move, and update the CLAUDE.md routing entry from (7) to point at the archived path. | done |
 | CD9 | **Tooling and repo-wide audit hygiene.** (a) Cargo: no new dependency added — CD4 uses the already-present `open = "5.3"` in `crates/nimbus-bin/Cargo.toml:29`. Document this in the CD4 implementation note (commit message or PR description) so a future "dependency consolidation" pass does not strip it. (b) `deny.toml`: no change required (existing config already accepts the `open` crate). (c) Repo-wide grep audit at close time, with the captured output appended to the Execution Log: `git grep -n '\-\-ensure' -- ':(exclude)docs/plans/archive'` → **0**; `git grep -n 'spawn_nimbus_start'` → **0**; `git grep -n 'nimbus ui --ensure'` → **0** (the third is a sanity check — the prefix grep should already cover it, but matching the exact user-visible string catches stray instances where `--ensure` was wrapped). (d) Confirm Makefile lanes pass: `make check`, `make clippy`, `make fmt-check`, `make test`, `make deny`, `make verify-desktop-ui` all clean. Prefer these wrappers over raw `cargo` invocations per CLAUDE.md "Verification Commands" guidance. | pending |
 
 ## Completion Gate
@@ -948,3 +948,64 @@ test result: ok. 463 passed; 0 failed; 0 ignored; 0 measured
 $ cargo test -p nimbus-bin --test server_discovery_serde
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured
 ```
+
+(h) CD8 — Documentation pass across the eight enumerated touchpoints.
+
+1. `docs/operating/cli.md` — rewrote the `## UI Command` section to describe
+   the unflagged discover-and-open shape, deleted the `--ensure` example,
+   and pointed operators at `nimbus dev --open` (spawn-and-open) and
+   `nimbus start` (banner-then-`nimbus ui`). Added a `## How Apps Reach a
+   Running Daemon` section that distinguishes source-load (`--app-dir`)
+   from deploy-load (admin API) and explicitly names the
+   `app dir: none; Convex-compatible routes wait for deploy activation`
+   banner line as the production shape. Added a `### Why dev has --open
+   and start does not` subsection anchoring the dev-tool vs production-
+   daemon precedent. Documented `--open` in the dev-command flag table.
+   Rewrote the dev auto-detect bullet to name the `.git/` boundary
+   (covering both directory and worktree-shaped file). Added a
+   `npm run dev` clarification note that `packages/nimbus-ui/` is for
+   component iteration only. Updated the Startup Behavior block so the
+   bullet list now names `operator console:` as part of the banner shape
+   and states that `nimbus start` does not walk ancestors.
+2. `docs/operating/desktop-install.md` — replaced the `nimbus ui --ensure`
+   reference with a description of the Electron shell's discover-or-
+   spawn loop owned by `desktop/src/main/server.ts`.
+3. `docs/plans/README.md` — updated the active-plan entry to describe the
+   landed shape (walk-up removed from `start`, bounded for the others;
+   `--open` on `dev` only; CD1-CD7 landed, CD8/CD9 in flight) instead of
+   the pre-execution framing.
+4. `README.md` (top-level) — audit pass; no `nimbus ui --ensure`
+   references found and `nimbus start` invocations in the curl-quickstart
+   section are correct (those flows don't need source-load).
+5. Adapter docs — `docs/adapters/cloud-functions/README.md` and
+   `docs/adapters/cloud-functions/migration.md` had `nimbus start`
+   examples that implied auto-detection; updated to `nimbus start
+   --app-dir .` for the source-load shape and added a pointer to the new
+   "How Apps Reach a Running Daemon" section. The Convex, Firebase,
+   MongoDB, and Native adapter READMEs were audited and are correct as-is
+   — they describe driver-shape adapters that connect over the wire and
+   don't need source-load.
+6. Architecture/operating docs — `macos-machine-flow.md`,
+   `microvm-service-baseline.md`, `deploy-admin-api.md`,
+   `encryption.md`, and `storage-backends.md` were audited; their
+   `nimbus start` invocations are accurate (storage and encryption flags
+   don't depend on source-load) and the `deploy-admin-api.md` line
+   already names `nimbus start --app-dir` correctly.
+7. `AGENTS.md` (`CLAUDE.md` symlinks to it) — added a "CLI daemon
+   canonicalization, walk-up boundaries, or banner shape" entry to the
+   Routing By Work Type section, pointing at this plan, `cli.md`, and
+   the two relevant archived precedents.
+8. Plan archival on closeout — deferred until CD9 verification passes;
+   the file move + CLAUDE.md re-pointing happens as the last action.
+
+```
+$ git grep -n 'nimbus ui --ensure' -- ':(exclude)docs/plans/archive' ':(exclude)docs/plans/cli-daemon-canonicalization-plan.md'
+(0 matches)
+
+$ git grep -n '\-\-ensure' -- ':(exclude)docs/plans/archive' ':(exclude)docs/plans/cli-daemon-canonicalization-plan.md'
+crates/nimbus-bin/src/ui.rs:195:            !message.contains("--ensure"),
+crates/nimbus-bin/src/ui.rs:196:            "post-CD5 error must not reference the removed --ensure flag, got: {message}"
+```
+
+The two remaining matches are the post-CD5 test assertion that *forbids*
+the substring — load-bearing regression coverage, retained intentionally.

@@ -14,6 +14,21 @@ This directory prefers a small-number-of-plans model with clear ownership.
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
 
+- `docs/plans/cli-daemon-canonicalization-plan.md`
+  - canonical plan for aligning the Nimbus daemon CLI surface with
+    Cockroach/Vault/Grafana/MinIO-style embedded-UI daemons:
+    `nimbus start` and `nimbus dev` start cleanly from any CWD, both
+    always serve `/ui/*`, and `nimbus ui` becomes a thin "discover
+    running daemon + open browser" launcher with no spawn behaviour.
+    Removed the ancestor walk-up from `nimbus start`; bounded it at
+    the nearest `.git/` (directory or worktree-shaped file) for
+    `nimbus dev`, `nimbus deploy`, and compose discovery. Adds
+    `--open` to `nimbus dev` (only) as the canonical spawn-and-open
+    dev ergonomic; `nimbus start` follows the production-daemon
+    precedent and prints the operator-console URL on its startup
+    banner instead. Activation gate met 2026-05-19; CD1-CD7 landed,
+    CD8 (docs) + CD9 (audit) in flight.
+
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not

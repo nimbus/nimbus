@@ -6,7 +6,7 @@ also exposes compose-backed service and machine management subcommands.
 Current shipped CLI shape:
 
 ```bash
-nimbus dev [--app-dir PATH] [--port 3210] [--data-dir ./.nimbus/dev] [--once] [--skip-codegen] [--tail-logs always|pause-on-sync|disable] [--compose-file PATH]...
+nimbus dev [--app-dir PATH] [--port 3210] [--data-dir ./.nimbus/dev] [--once] [--skip-codegen] [--tail-logs always|pause-on-sync|disable] [--compose-file PATH]... [--open]
 ```
 
 ```bash
@@ -338,14 +338,24 @@ discovery rule:
 
 ## UI Command
 
-`nimbus ui` opens the operator console served by a running Nimbus
-instance.
+`nimbus ui` is the unflagged "discover the running daemon and open it"
+launcher. It reads the local discovery record (`server.json`) and opens
+the operator-console URL in the default browser. It does **not** spawn a
+daemon — that is the job of `nimbus start` (production-shaped) or
+`nimbus dev --open` (spawn-and-open dev loop). If no discovery record is
+present it exits with an actionable error pointing at those two
+entrypoints.
 
 ```
 nimbus ui                # discover a running server and open its /ui/ in a browser
-nimbus ui --ensure       # spawn a server first if none is running, then open
 nimbus ui --print-url    # discover and print the URL without opening anything
 ```
+
+For a spawn-and-open ergonomic, use `nimbus dev --open` — `dev` brings
+the daemon up with watched codegen and launches the browser as soon as
+the readiness probe passes. For production startup, `nimbus start` prints
+the operator-console URL on its startup banner; copy it from the banner
+or run `nimbus ui` from any CWD.
 
 For a desktop-app experience (signed, notarized, auto-updating),
 install [nimbus-desktop](https://github.com/nimbus/desktop) — a
@@ -353,6 +363,58 @@ standalone Electron shell that wraps the operator console with
 native window chrome, tray, and update flow. It uses the same
 `server.json` discovery seam as `nimbus ui`, so it picks up any
 running `nimbus` automatically.
+
+> Note: `npm run dev` inside `packages/nimbus-ui/` is for **operator-console
+> component iteration only** — it runs Vite at `:5173` with no daemon
+> proxy and is not a substitute for `nimbus dev`. Use it when iterating
+> on a single component in isolation; use `nimbus dev` (or `nimbus
+> dev --open`) for full-app development against a real daemon.
+
+## How Apps Reach a Running Daemon
+
+A Nimbus daemon (`nimbus start` or `nimbus dev`) can serve apps loaded by
+two distinct paths. They compose: a daemon can have both an
+`--app-dir`-loaded source app *and* deploy-loaded apps in its storage at
+the same time.
+
+**Source-load (`--app-dir`).** When started with `--app-dir <path>`, the
+daemon runs one codegen preflight pass, loads the Convex-compatible
+registry from that path, and serves it. `nimbus dev` additionally
+watches the source root and rebuilds on change. **`nimbus start` no
+longer walks ancestors looking for an app** — pass `--app-dir` explicitly
+when you want source-load behavior. (Pre-CLI-daemon-canonicalization,
+`nimbus start` from inside a project directory auto-discovered the app;
+that walk-up was removed because daemons in the Cockroach/Vault/Grafana
+shape do not do filesystem heuristics for source detection.)
+
+**Deploy-load (`nimbus deploy` against a running daemon).** Apps pushed
+through `nimbus deploy` (or the deploy admin API directly) are stored in
+the daemon's data directory. On every subsequent startup, the engine
+rehydrates them from storage during `Service` construction —
+**independent of CWD or `--app-dir`**. The banner line `app dir: none;
+Convex-compatible routes wait for deploy activation` is not "the daemon
+is idle"; it's "no source app is loaded, but the engine will still
+rehydrate any previously deployed app on this daemon's storage." This is
+the production shape.
+
+### Why dev has `--open` and start does not
+
+`--open` ships on `nimbus dev` only. The two commands have different
+shapes:
+
+- `nimbus dev` is a **dev-tool daemon** (the `vite` / `cargo doc`
+  precedent). `--open` is part of the inner-loop ergonomic and is
+  expected to launch a browser on the same machine.
+- `nimbus start` is a **production daemon** (the CockroachDB / Vault /
+  Grafana precedent). Those projects don't ship `--open` because the
+  operator workflow is "bring the daemon up, then connect from wherever
+  the operator is" — frequently a different machine. `--open` implies
+  the operator and the daemon share a graphical session, which is the
+  less common production case.
+
+The two-step flow for `start` is: `nimbus start &; nimbus ui` (same
+host), or copy the operator-console URL from the startup banner and
+open it from a different host.
 
 ## Dev Command
 
@@ -363,10 +425,15 @@ slice it:
   because startup codegen still runs through external `node` by default, and
   the external authoring path verifies the `node --version` baseline before it
   executes
-- auto-detects the app directory from the current directory by looking for a
-  `nimbus/` or `convex/` source root, `firebase.json`, or
-  `@google-cloud/functions-framework` in `package.json`, falling back to the
-  current directory
+- auto-detects the app directory by walking ancestors from the current
+  directory, looking at each level for a `nimbus/` or `convex/` source root,
+  `firebase.json`, or `@google-cloud/functions-framework` in `package.json`.
+  The walk stops at the nearest `.git/` boundary (whether `.git` is a
+  directory or a worktree-shaped file) — the same shape `git`, `gh`,
+  `pre-commit`, and `ripgrep` use. If no app surface is found inside the
+  boundary, `dev` runs as a plain daemon with a stderr note; outside any
+  git repo the walk has no upper bound and the explicit `--app-dir` should
+  be preferred
 - when no compatible adapter is detected and `--skip-codegen` is not set, exits
   with guidance to run `nimbus init convex` or `nimbus init cloud-functions`
 - when `package.json` exists and declared dependencies or devDependencies are
@@ -432,6 +499,7 @@ Flags:
 | `--skip-codegen` | `false` | skip the initial codegen pass and use already-generated artifacts |
 | `--tail-logs` | `pause-on-sync` | accepted log-tail mode (`always`, `pause-on-sync`, or `disable`); live runtime log multiplexing remains pending runtime log plumbing |
 | `--compose-file` | unset | optional explicit ordered Compose path list for local service dependencies; repeat the flag to merge overlays in order. When omitted, `dev` uses `COMPOSE_FILE` if set, then the shared cwd/parent discovery rule |
+| `--open` | `false` | after the HTTP listener binds and the operator-console readiness probe passes (60s budget, 200ms poll), launch the default browser at the `/ui/` URL. Best-effort: a headless host or failed launcher logs an `error:`-prefixed stderr line and the daemon continues serving (exit code 0). Not available on `nimbus start` — see [Why dev has --open and start does not](#why-dev-has---open-and-start-does-not) |
 
 ## Init Command
 
@@ -537,8 +605,11 @@ matching the token configured on the server.
 
 Default behavior:
 
-- auto-detects the app directory from the current directory by looking for a
-  `nimbus/` or `convex/` source root, falling back to the current directory
+- auto-detects the app directory by walking ancestors from the current
+  directory looking for a `nimbus/` or `convex/` source root, bounded by
+  the nearest `.git/` (directory or worktree-shaped file). If no app
+  surface is found inside the boundary, `deploy` exits with an actionable
+  error; use `--app-dir` to bypass discovery
 - runs codegen before packaging unless `--skip-codegen` is set
 - packages generated artifacts from `.nimbus/convex/`
 - uploads to `POST /api/admin/deploy`
@@ -578,11 +649,16 @@ Nimbus requires an explicit subcommand. `nimbus start` starts the server. On
 startup, it:
 
 - initializes tracing
-- prints a concise startup summary with the local URL, server-owned scope,
-  app directory/codegen state, optional Compose selection, and deploy-admin
-  status
+- prints a concise startup summary with the local URL, the operator-console
+  URL on a separate `operator console:` line (CockroachDB-shape), the
+  server-owned scope, app directory/codegen state, optional Compose
+  selection, and deploy-admin status
 - when `--app-dir` is set and `--skip-codegen` is not, runs one codegen
   preflight pass before loading manifests
+- does **not** walk ancestors looking for a source app — `--app-dir` is the
+  explicit opt-in to source-load behavior. Without it, the daemon serves
+  any apps previously deployed to its storage through the engine's normal
+  rehydration path (see [How Apps Reach a Running Daemon](#how-apps-reach-a-running-daemon))
 - loads the service with the configured data directory
 - loads tenants with scheduled work
 - starts the scheduler loop
