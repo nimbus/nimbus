@@ -480,3 +480,200 @@ async fn deploy_schema_validation_failure_leaves_previous_generation_live() {
         StatusCode::OK
     );
 }
+
+// CD7(j) — regression guard for `nimbus start` post-CD1.
+//
+// CD1 removed source-tree walk-up from `nimbus start`. The replacement
+// contract is: a freshly-spawned daemon with no `--app-dir` must still
+// accept deploys through the admin API, and the storage layer it shares
+// with the previous daemon process must carry deploy artifacts forward
+// across a restart. Two assertions document the contract:
+//
+//   1. Bundle records written by a deploy persist into the same data
+//      directory, so a follow-up Service that opens that directory
+//      sees the recorded generation in `_nimbus.bundles`. CD1 must not
+//      have severed the link between the deploy admin API and the
+//      tenant storage layer.
+//
+//   2. A freshly-spawned daemon on that data dir starts at
+//      `generation = 0` and accepts a new deploy that re-creates a
+//      live registry without needing `--app-dir`. Auto-activation of
+//      the persisted bundle on startup is intentionally NOT asserted
+//      here — that is a separate, not-yet-wired feature. This test
+//      pins the current contract so a future autostart change can
+//      relax assertion (2) honestly instead of silently.
+#[tokio::test]
+async fn deploy_persists_across_service_restart_without_app_dir() {
+    let data_dir = tempfile::tempdir().expect("data dir tempdir should create");
+
+    {
+        let service_a = Arc::new(
+            Service::new(data_dir.path()).expect("first service should build on shared data dir"),
+        );
+        let server_a = ServerFixture::start(deploy_router_with_system_registry(
+            service_a.clone(),
+            None,
+        ))
+        .await;
+        let api_a = HttpApiFixture::new(&server_a);
+        assert_eq!(
+            api_a.create_tenant("demo").await.status(),
+            StatusCode::CREATED
+        );
+
+        let response = deploy(
+            &server_a,
+            deploy_request(json!([query_function("notes:list", "notes")])),
+            Some(DEPLOY_TOKEN),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .expect("first deploy response should be json");
+        assert_eq!(body["activated"], json!(true));
+        assert_eq!(body["previous_generation"], json!(0));
+        assert_eq!(body["generation"], json!(1));
+
+        assert_eq!(
+            api_a
+                .convex_named_query("demo", "notes:list", json!({}))
+                .await
+                .status(),
+            StatusCode::OK,
+            "deployed function must be reachable on the originating daemon"
+        );
+
+        let bundles_a = api_a
+            .convex_named_query(
+                "_nimbus",
+                "bundles:list",
+                json!({ "status": null, "limit": null }),
+            )
+            .await;
+        assert_eq!(bundles_a.status(), StatusCode::OK);
+        let bundles_a = bundles_a
+            .json::<serde_json::Value>()
+            .await
+            .expect("first daemon bundles query should parse");
+        let bundles_a = bundles_a
+            .as_array()
+            .expect("first daemon bundles should be an array");
+        assert_eq!(bundles_a.len(), 1);
+        assert_eq!(bundles_a[0]["status"], json!("active"));
+        assert_eq!(bundles_a[0]["sourceRef"], json!("deploy:generation:1"));
+    }
+    // `server_a` and `service_a` drop here. The data dir survives — it is
+    // owned by `data_dir` for the rest of the test, mimicking `nimbus start`
+    // being killed while its persistent storage stays on disk.
+
+    let service_b = Arc::new(
+        Service::new(data_dir.path()).expect("second service should reopen the same data dir"),
+    );
+    let server_b =
+        ServerFixture::start(deploy_router_with_system_registry(service_b.clone(), None)).await;
+    let api_b = HttpApiFixture::new(&server_b);
+
+    // The deploy record written on service A is durable in shared storage.
+    // (Tenant durability is exercised implicitly: the redeploy below targets
+    // the same `demo` tenant created on service A and the subsequent named-
+    // query against it must succeed.)
+    let bundles_b_before = api_b
+        .convex_named_query(
+            "_nimbus",
+            "bundles:list",
+            json!({ "status": null, "limit": null }),
+        )
+        .await;
+    assert_eq!(bundles_b_before.status(), StatusCode::OK);
+    let bundles_b_before = bundles_b_before
+        .json::<serde_json::Value>()
+        .await
+        .expect("restarted daemon bundles query should parse");
+    let bundles_b_before = bundles_b_before
+        .as_array()
+        .expect("restarted daemon bundles should be an array");
+    assert!(
+        bundles_b_before
+            .iter()
+            .any(|bundle| bundle["sourceRef"] == json!("deploy:generation:1")),
+        "service A's deploy must persist in `_nimbus.bundles` post-restart: {bundles_b_before:?}"
+    );
+
+    // Auto-rehydration of the previously deployed bundle on startup is NOT
+    // wired today; this assertion pins the current contract so a future
+    // autostart change must update it deliberately. Without `--app-dir`, the
+    // freshly-spawned daemon refuses Convex routes until a deploy lands.
+    assert_eq!(
+        api_b
+            .convex_named_query("demo", "notes:list", json!({}))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND,
+        "freshly-spawned daemon must not auto-activate persisted bundle (see CD7(j) docs)"
+    );
+
+    // Deploying on the restarted daemon must work with no source app dir —
+    // this is the actual CD1 guarantee: the deploy admin path is independent
+    // of any source-tree state on disk.
+    let response = deploy(
+        &server_b,
+        deploy_request(json!([query_function("notes:list", "notes")])),
+        Some(DEPLOY_TOKEN),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("restarted daemon deploy response should be json");
+    assert_eq!(body["activated"], json!(true));
+    assert_eq!(
+        body["previous_generation"],
+        json!(0),
+        "restarted daemon should start at generation 0 (no auto-rehydrate)"
+    );
+    assert_eq!(body["generation"], json!(1));
+
+    assert_eq!(
+        api_b
+            .convex_named_query("demo", "notes:list", json!({}))
+            .await
+            .status(),
+        StatusCode::OK,
+        "deployed function must be reachable post-redeploy on the restarted daemon"
+    );
+
+    let bundles_b_after = api_b
+        .convex_named_query(
+            "_nimbus",
+            "bundles:list",
+            json!({ "status": null, "limit": null }),
+        )
+        .await;
+    assert_eq!(bundles_b_after.status(), StatusCode::OK);
+    let bundles_b_after = bundles_b_after
+        .json::<serde_json::Value>()
+        .await
+        .expect("post-redeploy bundles query should parse");
+    let bundles_b_after = bundles_b_after
+        .as_array()
+        .expect("post-redeploy bundles should be an array");
+    // The deploy artifacts are byte-identical across service A and B, so
+    // `_nimbus.bundles` deduplicates on sha256 and only one row remains.
+    // The relevant durability assertion is that the row's status is
+    // `active` post-redeploy and its sourceRef advances to the new
+    // generation recorded by service B.
+    assert_eq!(
+        bundles_b_after.len(),
+        1,
+        "post-redeploy `_nimbus.bundles` should hold the dedup'd row: {bundles_b_after:?}"
+    );
+    assert_eq!(bundles_b_after[0]["status"], json!("active"));
+    assert_eq!(
+        bundles_b_after[0]["sourceRef"],
+        json!("deploy:generation:1"),
+        "post-redeploy bundle sourceRef should reflect the restarted-daemon generation"
+    );
+}

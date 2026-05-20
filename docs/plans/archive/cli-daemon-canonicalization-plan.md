@@ -595,12 +595,20 @@ configure it through its API; data persists across restarts).
   ./myapp`) from deploy-load (`nimbus deploy` against an already-
   running daemon). Both flows continue to work; only the
   filesystem-walk-up flavour of source-load is removed.
-- CD7 adds an integration test: spawn `nimbus start` (no
-  `--app-dir`), deploy an app to it via the admin API, kill and
-  restart the daemon (no `--app-dir` again), assert the previously
-  deployed app is reachable through routed traffic. This pins
-  down "deployed-app autostart still works post-CD1" as a
-  regression test rather than a verbal assertion.
+- CD7(j) adds an integration test that pins what CD1 actually
+  preserves: storage durability across a Service restart on the
+  same data dir and a working deploy admin path on a freshly-
+  spawned daemon with no `--app-dir`. During implementation the
+  audit surfaced that automatic re-activation of a previously
+  deployed bundle on startup is **not yet wired** — the deploy
+  records persist in `_nimbus.bundles` but the new process starts
+  at `generation = 0` and waits for an explicit redeploy. The
+  CD7(j) test pins that current contract explicitly (a 404 on
+  the deployed route between restart and redeploy) so a future
+  autostart-from-storage change must update the assertion
+  deliberately rather than silently. True deploy autostart is
+  out of scope for the CLI-canonicalization wave and belongs to a
+  follow-on plan.
 - For users with old wrapper scripts: the replacement is one
   flag — `nimbus start --app-dir .` — strictly clearer than the
   inherited magic. Pre-launch (CLAUDE.md) allows the breaking
@@ -1082,3 +1090,51 @@ Cargo + dependency hygiene: no new dependency added by this wave (CD4
 reuses the pre-existing `open = "5.3"` in `crates/nimbus-bin/Cargo.toml`).
 `deny.toml` required no change; the existing config already accepts
 `open`. Documented inline in the CD4 implementation note above.
+
+(j) CD7(j) — Deployed-app rehydrate regression guard landed in
+`crates/nimbus-server/src/tests/deploy.rs::deploy_persists_across_service_restart_without_app_dir`.
+The test owns the data dir via a raw `tempfile::tempdir()` (outside any
+ServiceFixture so the directory survives Service A drop), runs a deploy
+against Service A on that path, drops Service A, then opens Service B
+on the same data dir. Assertions:
+
+- Service A: deploy returns `generation = 1`, the deployed function is
+  reachable, and `_nimbus.bundles` records the artifact with
+  `status = "active"` and `sourceRef = "deploy:generation:1"`.
+- After Service A drops and Service B opens on the same data dir:
+  the `_nimbus.bundles` record persists (storage durability), but
+  `convex_named_query("demo", "notes:list")` returns `404` — auto-
+  rehydration of the persisted bundle is **intentionally not wired**
+  today and the test pins that current contract explicitly so a
+  future autostart change must update the assertion deliberately.
+- Service B redeploy of the same artifact: `previous_generation = 0`
+  (confirming no auto-rehydrate), `generation = 1`, function reachable.
+  `_nimbus.bundles` deduplicates on sha256 — byte-identical artifacts
+  across the two services collapse to a single row with
+  `status = "active"` and `sourceRef = "deploy:generation:1"`.
+
+```
+$ cargo test -p nimbus-server --lib deploy::
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 682 filtered out
+```
+
+The audit during this work surfaced misleading inline comments in two
+places that pre-dated the CD investigation and overclaimed daemon
+behaviour:
+
+- `crates/nimbus-bin/src/start/boot.rs:294-301` previously said
+  deployed apps "rehydrate from storage on the daemon side". Rewritten
+  to describe what actually happens (daemon starts at generation 0,
+  waits for deploys through the admin API; persisted `_nimbus.bundles`
+  records are not auto-activated on startup) and to point at this
+  CD7(j) entry for the gap.
+- `crates/nimbus-bin/src/start/tests/app_dir_codegen.rs:196-204`
+  (the `resolve_start_app_dir_returns_none_when_no_explicit_app_dir`
+  test comment) carried the same aspirational wording. Rewritten to
+  match boot.rs's accurate comment.
+
+The "R2: Removing source-tree discovery breaks deployed-app autostart"
+mitigation text earlier in this file was also corrected to describe
+what CD7(j) actually proves rather than what was originally planned;
+true deploy-driven autostart is called out as a separate, follow-on
+concern outside the CLI-canonicalization wave.

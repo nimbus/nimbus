@@ -196,9 +196,11 @@ fn load_cloud_functions_registry_accepts_generated_app_dir() {
 #[test]
 fn resolve_start_app_dir_returns_none_when_no_explicit_app_dir() {
     // `nimbus start` does no source-tree discovery — even from a CWD
-    // that contains a complete Firebase project. The daemon rehydrates
-    // deployed apps from storage; source-load requires explicit
-    // `--app-dir`. See cli-daemon-canonicalization plan, CD1.
+    // that contains a complete Firebase project. Source-load requires
+    // explicit `--app-dir`; without it, the daemon starts at
+    // generation 0 and waits for deploys through the admin API.
+    // Auto-activation of persisted bundles on startup is not yet
+    // wired — see CD7(j) in the cli-daemon-canonicalization plan.
     let temp = tempdir_in_repo_target();
     write_firebase_cloud_functions_fixture(temp.path());
     let nested_child = temp.path().join("functions").join("src");
