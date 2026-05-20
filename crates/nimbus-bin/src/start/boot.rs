@@ -291,10 +291,12 @@ pub(super) fn resolve_start_app_dir(
     command: &StartCommand,
 ) -> Result<Option<ResolvedStartAppDir>, Error> {
     let Some(explicit_app_dir) = command.app_dir.as_deref() else {
-        // `nimbus start` does no source-tree discovery. Deployed apps
-        // arrive through the deploy admin API and rehydrate from
-        // storage on the daemon side. See cli-daemon-canonicalization
-        // plan, CD1.
+        // `nimbus start` does no source-tree discovery. Without
+        // `--app-dir`, the daemon starts at generation 0 and waits for
+        // deploys to arrive through the admin API. Deploy records
+        // persist in `_nimbus.bundles`, but auto-activating a
+        // previously deployed bundle on startup is not yet wired —
+        // see CD7(j) in the cli-daemon-canonicalization plan. CD1.
         return Ok(None);
     };
     let cwd = std::env::current_dir().map_err(|error| {
