@@ -250,6 +250,12 @@ fn detect_app_dir(cwd: &Path) -> PathBuf {
         {
             return candidate.to_path_buf();
         }
+        // Bound the walk-up at the project's `.git` boundary so the deploy
+        // walker cannot escape into a parent repo or unrelated tree. See
+        // `docs/plans/cli-daemon-canonicalization-plan.md` CD2.
+        if crate::path_boundary::at_git_boundary(candidate) {
+            break;
+        }
     }
     cwd.to_path_buf()
 }

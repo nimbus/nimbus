@@ -86,7 +86,7 @@ Examples:
 pub(crate) const UI_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus ui
-  nimbus ui --ensure";
+  nimbus dev --open";
 
 pub(crate) const MACHINE_HELP_EXAMPLES: &str = "\
 Examples:

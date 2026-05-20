@@ -1,39 +1,24 @@
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 use clap::Args;
 use nimbus_server::{LocalServerPaths, ServerDiscoveryRecord, read_live_server_discovery};
-use reqwest::Client;
-use tokio::time::sleep;
 
 use crate::local_server_client::normalize_loopback_connect_address;
-
-const ENSURE_READY_TIMEOUT: Duration = Duration::from_secs(60);
-const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Args)]
 #[command(
     help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE,
     after_help = crate::cli_ux::UI_HELP_EXAMPLES,
 )]
-pub(crate) struct UiCommand {
-    /// Start a Nimbus server first if one is not already running.
-    #[arg(long)]
-    pub(crate) ensure: bool,
-}
+pub(crate) struct UiCommand {}
 
 pub(crate) enum UiError {
     ServerNotRunning,
     Io(io::Error),
-    Spawn(io::Error),
     Address(io::Error),
     Open(io::Error),
-    ReadinessTimeout,
 }
 
 impl fmt::Debug for UiError {
@@ -47,16 +32,11 @@ impl fmt::Display for UiError {
         match self {
             UiError::ServerNotRunning => write!(
                 f,
-                "Nimbus server is not running. Start one with `nimbus start` (in another terminal) or rerun this command with `nimbus ui --ensure` to spawn one."
+                "Nimbus server is not running. Start one with `nimbus start` (in another terminal) for production-shaped startup, or `nimbus dev --open` for a dev loop that opens the operator console for you."
             ),
             UiError::Io(error) => write!(f, "failed to read server discovery state: {error}"),
-            UiError::Spawn(error) => write!(f, "failed to spawn `nimbus start`: {error}"),
             UiError::Address(error) => write!(f, "server discovery address invalid: {error}"),
             UiError::Open(error) => write!(f, "failed to open browser: {error}"),
-            UiError::ReadinessTimeout => write!(
-                f,
-                "timed out waiting for Nimbus server to come online after `--ensure` spawn"
-            ),
         }
     }
 }
@@ -64,18 +44,15 @@ impl fmt::Display for UiError {
 impl Error for UiError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            UiError::ServerNotRunning | UiError::ReadinessTimeout => None,
-            UiError::Io(error)
-            | UiError::Spawn(error)
-            | UiError::Address(error)
-            | UiError::Open(error) => Some(error),
+            UiError::ServerNotRunning => None,
+            UiError::Io(error) | UiError::Address(error) | UiError::Open(error) => Some(error),
         }
     }
 }
 
-pub(crate) async fn run_ui_command(command: UiCommand) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run_ui_command(_command: UiCommand) -> Result<(), Box<dyn Error>> {
     let paths = LocalServerPaths::resolve_for_current_platform()?;
-    let discovery = resolve_discovery(&paths, command.ensure).await?;
+    let discovery = resolve_discovery(&paths).await?;
     let url = build_ui_url(&discovery)?;
     let opened_with = open_in_preferred_browser(&url)?;
     match opened_with {
@@ -167,87 +144,11 @@ const CHROMIUM_CANDIDATES: &[ChromiumCandidate] = &[];
 
 async fn resolve_discovery(
     paths: &LocalServerPaths,
-    ensure: bool,
 ) -> Result<ServerDiscoveryRecord, UiError> {
     if let Some(record) = read_live_server_discovery(paths).map_err(UiError::Io)? {
         return Ok(record);
     }
-    if !ensure {
-        return Err(UiError::ServerNotRunning);
-    }
-    spawn_nimbus_start()?;
-    wait_for_server_ready(paths).await
-}
-
-fn spawn_nimbus_start() -> Result<(), UiError> {
-    let executable = current_executable().map_err(UiError::Spawn)?;
-    let mut command = Command::new(&executable);
-    command
-        .arg("start")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    detach_process(&mut command);
-    command.spawn().map_err(UiError::Spawn)?;
-    Ok(())
-}
-
-fn current_executable() -> io::Result<PathBuf> {
-    env::current_exe()
-}
-
-#[cfg(unix)]
-fn detach_process(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    // SAFETY: setsid only adjusts the child process group / session.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-}
-
-#[cfg(windows)]
-fn detach_process(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-}
-
-#[cfg(not(any(unix, windows)))]
-fn detach_process(_command: &mut Command) {}
-
-async fn wait_for_server_ready(paths: &LocalServerPaths) -> Result<ServerDiscoveryRecord, UiError> {
-    let client = Client::new();
-    let deadline = Instant::now() + ENSURE_READY_TIMEOUT;
-    loop {
-        if let Some(record) = read_live_server_discovery(paths).map_err(UiError::Io)?
-            && probe_ui_endpoint(&client, &record).await
-        {
-            return Ok(record);
-        }
-        if Instant::now() >= deadline {
-            return Err(UiError::ReadinessTimeout);
-        }
-        sleep(POLL_INTERVAL).await;
-    }
-}
-
-async fn probe_ui_endpoint(client: &Client, record: &ServerDiscoveryRecord) -> bool {
-    let Ok(address) = normalize_loopback_connect_address(&record.address) else {
-        return false;
-    };
-    client
-        .get(format!("http://{address}/ui/auth"))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-        .map(|response| response.status().is_success() || response.status().is_redirection())
-        .unwrap_or(false)
+    Err(UiError::ServerNotRunning)
 }
 
 fn build_ui_url(record: &ServerDiscoveryRecord) -> Result<String, UiError> {
@@ -266,6 +167,7 @@ mod tests {
     };
     use nimbus_testing::wait_for_condition;
     use std::net::Ipv4Addr;
+    use std::time::Duration;
 
     use super::*;
 
@@ -281,7 +183,7 @@ mod tests {
     async fn ui_command_without_running_server_returns_actionable_error() {
         let temp = tempfile::tempdir().expect("tempdir should build");
         let paths = sample_paths(temp.path());
-        let error = resolve_discovery(&paths, false)
+        let error = resolve_discovery(&paths)
             .await
             .expect_err("missing server should produce error");
         let message = error.to_string();
@@ -290,12 +192,16 @@ mod tests {
             "expected ServerNotRunning, got {error}"
         );
         assert!(
-            message.contains("--ensure"),
-            "error should mention --ensure, got: {message}"
+            !message.contains("--ensure"),
+            "post-CD5 error must not reference the removed --ensure flag, got: {message}"
         );
         assert!(
             message.contains("nimbus start"),
             "error should mention `nimbus start`, got: {message}"
+        );
+        assert!(
+            message.contains("nimbus dev --open"),
+            "error should point at `nimbus dev --open` as the spawn-and-open shortcut, got: {message}"
         );
     }
 
@@ -338,7 +244,7 @@ mod tests {
         let lease = nimbus_server::ServerDiscoveryLease::acquire(&paths, address)
             .expect("discovery lease should write");
 
-        let resolved = resolve_discovery(&paths, false)
+        let resolved = resolve_discovery(&paths)
             .await
             .expect("live server should resolve");
         assert_eq!(resolved.address, address.to_string());

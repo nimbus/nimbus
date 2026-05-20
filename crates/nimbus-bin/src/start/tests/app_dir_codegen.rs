@@ -194,7 +194,11 @@ fn load_cloud_functions_registry_accepts_generated_app_dir() {
 }
 
 #[test]
-fn resolve_start_app_dir_auto_detects_firebase_project_root_from_nested_child() {
+fn resolve_start_app_dir_returns_none_when_no_explicit_app_dir() {
+    // `nimbus start` does no source-tree discovery — even from a CWD
+    // that contains a complete Firebase project. The daemon rehydrates
+    // deployed apps from storage; source-load requires explicit
+    // `--app-dir`. See cli-daemon-canonicalization plan, CD1.
     let temp = tempdir_in_repo_target();
     write_firebase_cloud_functions_fixture(temp.path());
     let nested_child = temp.path().join("functions").join("src");
@@ -202,43 +206,12 @@ fn resolve_start_app_dir_auto_detects_firebase_project_root_from_nested_child() 
     let resolved = with_current_dir(&nested_child, || {
         super::boot::resolve_start_app_dir(&StartCommand::default())
     })
-    .expect("start app dir should resolve")
-    .expect("start app dir should auto-detect");
+    .expect("start app dir should resolve");
 
-    assert_eq!(
-        resolved,
-        super::boot::ResolvedStartAppDir::AutoDetected(
-            temp.path()
-                .canonicalize()
-                .expect("tempdir should canonicalize")
-        )
+    assert!(
+        resolved.is_none(),
+        "start must not auto-detect; got {resolved:?}"
     );
-}
-
-#[test]
-fn load_cloud_functions_registry_auto_detects_generated_app_dir_from_nested_child() {
-    let temp = tempdir_in_repo_target();
-    write_firebase_cloud_functions_fixture(temp.path());
-    write_generated_cloud_functions_artifacts(temp.path());
-    let nested_child = temp.path().join("functions").join("src");
-
-    let registry = with_current_dir(&nested_child, || {
-        let command = StartCommand {
-            skip_codegen: true,
-            ..StartCommand::default()
-        };
-        let resolved = super::boot::resolve_start_app_dir(&command)
-            .expect("start app dir should resolve")
-            .expect("start app dir should auto-detect");
-        super::boot::load_cloud_functions_registry(
-            &command,
-            Some(&resolved),
-            &RuntimeLimits::default(),
-        )
-        .expect("generated cloud functions app dir should load")
-    });
-
-    assert!(registry.is_some(), "auto-detected Firebase app should load");
 }
 
 #[test]

@@ -197,6 +197,13 @@ fn resolve_auto_discovered_compose_selection(
 ) -> Result<Option<ResolvedComposeSelection>, ComposeDiscoveryError> {
     for directory in cwd.ancestors() {
         let Some(primary_file) = discover_primary_compose_file(directory)? else {
+            if crate::path_boundary::at_git_boundary(directory) {
+                // Stop the walk-up at the project's `.git` boundary so a
+                // sibling compose file *outside* the repo cannot be
+                // discovered by accident. See
+                // `docs/plans/cli-daemon-canonicalization-plan.md` CD2.
+                break;
+            }
             continue;
         };
         let mut files = vec![primary_file.clone()];
