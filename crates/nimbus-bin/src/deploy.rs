@@ -848,4 +848,75 @@ mod tests {
         assert!(rendered.contains("~ indexes"));
         assert!(rendered.contains("~ runtime bundle"));
     }
+
+    #[test]
+    fn detect_app_dir_stops_at_git_boundary_when_marker_lives_outside() {
+        // CD7(d) — mirror of dev's CD7(b). A sibling `firebase.json`
+        // outside the inner `.git/` boundary must NOT be discovered by
+        // the deploy walker; the walker falls through and returns the
+        // original cwd as the "give up" sentinel.
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let inner = temp.path().join("inner");
+        fs::create_dir_all(inner.join(".git")).expect(".git dir should create");
+        let nested_cwd = inner.join("sub");
+        fs::create_dir_all(&nested_cwd).expect("nested cwd should create");
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions":{"source":"functions"}}"#,
+        )
+        .expect("sibling firebase.json outside boundary should write");
+
+        let resolved = detect_app_dir(&nested_cwd);
+        assert_eq!(
+            resolved, nested_cwd,
+            "deploy walker must stop at the inner `.git` boundary; got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn detect_app_dir_walks_multiple_levels_within_git_boundary() {
+        // CD7(d) — mirror of dev's CD7(c). Multi-level discovery still
+        // works inside the boundary: CWD at `<tmp>/app/src/components/`,
+        // `convex/` at `<tmp>/app/convex/`, `.git/` at `<tmp>/.git/`.
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let app_dir = temp.path().join("app");
+        let components = app_dir.join("src").join("components");
+        fs::create_dir_all(app_dir.join("convex")).expect("convex dir should create");
+        fs::create_dir_all(&components).expect("components cwd should create");
+        fs::create_dir_all(temp.path().join(".git")).expect("repo .git should create");
+
+        let resolved = detect_app_dir(&components);
+        assert_eq!(
+            resolved, app_dir,
+            "deploy walker must climb two levels to find `<tmp>/app/`"
+        );
+    }
+
+    #[test]
+    fn detect_app_dir_treats_dot_git_file_as_worktree_boundary() {
+        // CD7(f) deploy — worktree shape (`.git` is a *file*) must stop
+        // the deploy walker the same way a real `.git/` directory does.
+        // Sibling `firebase.json` outside the worktree must stay invisible.
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let worktree_root = temp.path().join("wt");
+        fs::create_dir_all(&worktree_root).expect("worktree root should create");
+        fs::write(
+            worktree_root.join(".git"),
+            "gitdir: /fake/elsewhere/.git/worktrees/wt\n",
+        )
+        .expect(".git file should write");
+        let nested_cwd = worktree_root.join("inner").join("sub");
+        fs::create_dir_all(&nested_cwd).expect("nested cwd should create");
+        fs::write(
+            temp.path().join("firebase.json"),
+            r#"{"functions":{"source":"functions"}}"#,
+        )
+        .expect("firebase outside worktree should write");
+
+        let resolved = detect_app_dir(&nested_cwd);
+        assert_eq!(
+            resolved, nested_cwd,
+            "deploy walker must stop at worktree `.git` *file*; got {resolved:?}"
+        );
+    }
 }

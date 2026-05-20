@@ -1,0 +1,9 @@
+{
+  "pid": 12345,
+  "address": "127.0.0.1:8088",
+  "startedAt": "2026-05-19T12:34:56Z",
+  "version": "0.1.31",
+  "protocolVersions": [
+    "nimbus.v2"
+  ]
+}

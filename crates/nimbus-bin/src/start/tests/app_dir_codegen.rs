@@ -215,6 +215,32 @@ fn resolve_start_app_dir_returns_none_when_no_explicit_app_dir() {
 }
 
 #[test]
+fn resolve_start_app_dir_ignores_sibling_nimbus_directory_with_no_git() {
+    // CD7(a) worst case shape — mirrors the rebrand trap from the plan:
+    // CWD lives several levels below `<tmp>/`, and `<tmp>/nimbus/` is the
+    // canonical Nimbus source repo sitting as a sibling of the user's
+    // working tree. Pre-CD1 the walk-up would treat `<tmp>/` as a Nimbus
+    // app because of the sibling `nimbus/` directory; post-CD1 the daemon
+    // refuses to look at the filesystem at all when no `--app-dir` is
+    // given. No `.git/` is placed anywhere so the boundary helper is
+    // irrelevant — this is purely the "start no longer walks" contract.
+    let temp = tempdir_in_repo_target();
+    fs::create_dir_all(temp.path().join("nimbus")).expect("sibling nimbus dir should create");
+    let nested_cwd = temp.path().join("inner").join("sub");
+    fs::create_dir_all(&nested_cwd).expect("nested CWD should create");
+
+    let resolved = with_current_dir(&nested_cwd, || {
+        super::boot::resolve_start_app_dir(&StartCommand::default())
+    })
+    .expect("start app dir should resolve cleanly");
+
+    assert!(
+        resolved.is_none(),
+        "sibling nimbus/ must not be auto-discovered; got {resolved:?}"
+    );
+}
+
+#[test]
 fn load_cloud_functions_registry_honors_explicit_override_for_nested_framework_package() {
     let temp = tempdir_in_repo_target();
     write_firebase_cloud_functions_fixture(temp.path());

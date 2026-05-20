@@ -1685,4 +1685,75 @@ mod tests {
             "banner must include Deployment line, got: {lines:?}"
         );
     }
+
+    #[test]
+    fn detect_app_dir_stops_at_git_boundary_when_marker_lives_outside() {
+        // CD7(b) — `.git/` directory bounds the dev walker. A sibling
+        // `nimbus/` outside the boundary is invisible; the walker falls
+        // through and returns the original CWD, which is the "give up"
+        // sentinel that dev later rejects via `detect_dev_adapter`.
+        let temp = tempdir().expect("tempdir should build");
+        fs::create_dir_all(temp.path().join("inner").join(".git"))
+            .expect(".git dir should create");
+        let nested_cwd = temp.path().join("inner").join("sub");
+        fs::create_dir_all(&nested_cwd).expect("nested CWD should create");
+        fs::create_dir_all(temp.path().join("nimbus"))
+            .expect("sibling nimbus outside boundary should create");
+
+        let resolved = super::detect_app_dir(&nested_cwd);
+        assert_eq!(
+            resolved, nested_cwd,
+            "walk-up must stop at the inner `.git` boundary and ignore the sibling nimbus/; got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn detect_app_dir_walks_multiple_levels_within_git_boundary() {
+        // CD7(c) — multi-level discovery still works inside the boundary.
+        // CWD is `<tmp>/app/src/components/`; `convex/` lives at
+        // `<tmp>/app/convex/`; `.git/` is the outer repo at `<tmp>/.git/`.
+        // The walker must find `<tmp>/app/` even though it has to climb
+        // two ancestor levels to get there.
+        let temp = tempdir().expect("tempdir should build");
+        let app_dir = temp.path().join("app");
+        let convex_dir = app_dir.join("convex");
+        let components_cwd = app_dir.join("src").join("components");
+        fs::create_dir_all(&convex_dir).expect("convex dir should create");
+        fs::create_dir_all(&components_cwd).expect("components cwd should create");
+        fs::create_dir_all(temp.path().join(".git")).expect("repo .git should create");
+
+        let resolved = super::detect_app_dir(&components_cwd);
+        assert_eq!(
+            resolved, app_dir,
+            "walker must find the parent `<tmp>/app/` (multi-level discovery inside boundary)"
+        );
+    }
+
+    #[test]
+    fn detect_app_dir_treats_dot_git_file_as_worktree_boundary() {
+        // CD7(f) part 1 — agents in this repo work primarily out of `git
+        // worktree` checkouts where `.git` is a *file*, not a directory.
+        // The boundary helper uses `Path::exists()` precisely so this
+        // shape stops the walker the same way a real `.git/` directory
+        // would. Regressing to `is_dir()` would silently escape a
+        // worktree and find unrelated parents.
+        let temp = tempdir().expect("tempdir should build");
+        let worktree_root = temp.path().join("wt");
+        fs::create_dir_all(&worktree_root).expect("worktree root should create");
+        fs::write(
+            worktree_root.join(".git"),
+            "gitdir: /fake/elsewhere/.git/worktrees/wt\n",
+        )
+        .expect(".git file should write");
+        let nested_cwd = worktree_root.join("inner").join("sub");
+        fs::create_dir_all(&nested_cwd).expect("nested cwd should create");
+        fs::create_dir_all(temp.path().join("nimbus"))
+            .expect("sibling nimbus outside worktree should create");
+
+        let resolved = super::detect_app_dir(&nested_cwd);
+        assert_eq!(
+            resolved, nested_cwd,
+            "walker must stop at the worktree's `.git` *file* and ignore parents; got {resolved:?}"
+        );
+    }
 }
