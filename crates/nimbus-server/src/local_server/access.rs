@@ -14,7 +14,7 @@ use time::format_description::well_known::Rfc3339;
 use super::audit::{LocalServerAuditEvent, LocalServerAuditLog};
 use super::paths::LocalServerPaths;
 use super::token::{
-    LocalAdminTokenRecord, generate_local_admin_token, with_token_file_lock,
+    LocalAdminTokenRecord, generate_local_admin_token, now_rfc3339, with_token_file_lock,
     write_local_admin_token_file,
 };
 
@@ -231,8 +231,9 @@ impl LocalServerSecurityState {
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let previous = guard.clone();
                 let invalidated_sessions = guard.sessions.len();
-                let rotated =
+                let mut rotated =
                     generate_local_admin_token(previous.token.generation.saturating_add(1))?;
+                rotated.rotated_at = Some(now_rfc3339()?);
                 guard.token = rotated.clone();
                 guard.sessions.clear();
                 guard.launch_tickets.clear();

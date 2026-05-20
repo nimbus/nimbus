@@ -5,6 +5,7 @@ use clap::Args;
 mod boot;
 mod config;
 mod first_boot;
+mod network_bind;
 mod runtime_limits;
 #[cfg(test)]
 mod tests;
@@ -36,6 +37,14 @@ pub(crate) struct StartCommand {
     /// Host interface to listen on. Defaults to loopback for local safety.
     #[arg(long, default_value = "127.0.0.1")]
     pub(crate) host: String,
+
+    /// Opt-in to binding on a non-loopback interface. Without this flag,
+    /// `nimbus start` refuses any `--host` that resolves outside the
+    /// loopback range. With the flag set, the daemon additionally
+    /// requires that the local admin token has been rotated within
+    /// the staleness window (see `nimbus auth rotate-admin`).
+    #[arg(long, default_value_t = false)]
+    pub(crate) allow_network: bool,
 
     /// Local data directory used for embedded tenant databases and, by default,
     /// the local redb control plane.
@@ -221,6 +230,7 @@ impl Default for StartCommand {
             config: None,
             port: 8080,
             host: "127.0.0.1".to_string(),
+            allow_network: false,
             data_dir: None,
             control_data_dir: None,
             tenant_provider: None,

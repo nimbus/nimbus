@@ -13,6 +13,7 @@ use super::config::{
     control_data_dir_from_persistence_config, persistence_config_from_start_command,
 };
 use super::first_boot::{is_first_boot, spawn_first_boot_announce};
+use super::network_bind::enforce_loopback_or_allow_network;
 use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
@@ -67,6 +68,12 @@ pub(crate) async fn run_start_command(
     let machine_lifecycle_manager = crate::machine::host_machine_lifecycle_manager()?;
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
+    enforce_loopback_or_allow_network(
+        &command.host,
+        command.allow_network,
+        &local_admin_token,
+        time::OffsetDateTime::now_utc(),
+    )?;
     let local_server_security = Arc::new(LocalServerSecurityState::new(
         local_server_paths.clone(),
         local_admin_token,
@@ -92,7 +99,6 @@ pub(crate) async fn run_start_command(
         listener.local_addr()?,
         deploy_admin_enabled,
     );
-    emit_non_loopback_warning(listener.local_addr()?);
     let first_boot_handle = if is_first_boot_run {
         let console_url = operator_console_url_from_base(&local_listen_url(listener.local_addr()?));
         Some(spawn_first_boot_announce(
@@ -233,21 +239,6 @@ pub(super) fn load_sandbox_service_manager(
 fn emit_start_info(message: impl AsRef<str>) {
     if cli_ux::info_output_enabled() {
         let _ = cli_ux::write_stderr_prefixed_line("info:", message.as_ref());
-    }
-}
-
-fn emit_start_warning(message: impl AsRef<str>) {
-    if cli_ux::info_output_enabled() {
-        let _ = cli_ux::write_stderr_prefixed_line("warning:", message.as_ref());
-    }
-}
-
-fn emit_non_loopback_warning(listen_addr: SocketAddr) {
-    if !listen_addr.ip().is_loopback() {
-        emit_start_warning(format!(
-            "server is listening on non-loopback address {}; local admin routes are reachable from that interface",
-            listen_addr.ip()
-        ));
     }
 }
 
