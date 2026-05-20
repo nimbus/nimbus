@@ -1212,3 +1212,65 @@ historical prose — the function name necessarily appears where the
 plan documents its deletion. The CD9 grep gate as defined in the
 Completion Gate (`crates/nimbus-bin/src/`) is what's load-bearing and
 returns 0.)
+
+Final Makefile-lane verification at closeout (re-run after entry (j)
+and entry (k) landed, against the same shared `target/`):
+
+```
+$ make fmt-check
+cargo fmt --all --check
+(clean)
+
+$ make check
+bash scripts/single-flight.sh --key cargo-check-workspace -- cargo check --workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.34s
+(clean)
+
+$ make clippy
+bash scripts/single-flight.sh --key cargo-clippy-workspace -- cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.57s
+(clean)
+
+$ make verify-desktop-ui
+…
+✓ built in 728ms
+…
+Running 1 test using 1 worker
+  ✓  1 [chromium] › tests/e2e/smoke.spec.ts:112:3 › desktop UI smoke walk › 10-step deterministic walk asserts envelopes and console hygiene (4.8s)
+  1 passed (5.3s)
+```
+
+Final archive housekeeping confirmed at closeout:
+
+```
+$ grep -E '^\| CD[1-9] \|' docs/plans/archive/cli-daemon-canonicalization-plan.md \
+    | awk -F'|' '{n=NF; printf "Row %s status: %s\n", $2, $(n-1)}'
+Row  CD1  status:  done
+Row  CD2  status:  done
+Row  CD3  status:  done
+Row  CD4  status:  done
+Row  CD5  status:  done
+Row  CD6  status:  done
+Row  CD7  status:  done
+Row  CD8  status:  done
+Row  CD9  status:  done
+
+$ ls docs/plans/cli-daemon-canonicalization-plan.md 2>&1
+ls: docs/plans/cli-daemon-canonicalization-plan.md: No such file or directory
+
+$ ls docs/plans/archive/cli-daemon-canonicalization-plan.md
+docs/plans/archive/cli-daemon-canonicalization-plan.md  (present)
+
+$ grep -n 'cli-daemon-canonicalization' docs/plans/README.md
+23:- `docs/plans/archive/cli-daemon-canonicalization-plan.md`
+
+$ grep -n -B1 -A1 'cli-daemon-canonicalization' CLAUDE.md
+69-- CLI daemon canonicalization, walk-up boundaries, or banner shape:
+70:  `docs/plans/archive/cli-daemon-canonicalization-plan.md` (completed
+71-  baseline, closed 2026-05-19), `docs/operating/cli.md`,
+```
+
+Pre-existing failures noted in entry (i) (`make test` libc++ assertion
+in nimbus-runtime, `make deny` RUSTSEC-2026-0145 via testcontainers)
+remain pre-existing and unaffected by the CD wave; they belong to
+separate follow-on advisory/runtime-hardening passes.
