@@ -59,7 +59,7 @@ describe("nav-entries", () => {
     expectUniqueIds(OPERATOR_NAV_ENTRIES);
   });
 
-  it("targets developer paths under /app and operator paths under /admin", () => {
+  it("targets developer paths under /developer and operator paths under /operator", () => {
     for (const entry of DEVELOPER_NAV_ENTRIES) {
       expect(entry.to.startsWith("/developer")).toBe(true);
     }

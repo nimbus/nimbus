@@ -3,63 +3,63 @@ import { describe, expect, it } from "vitest";
 import { resolveLensView } from "./system-tenant-lens";
 
 describe("resolveLensView", () => {
-  it("maps /app/storage to the tables view", () => {
+  it("maps /developer/storage to the tables view", () => {
     expect(resolveLensView("/developer/storage")).toEqual({
       kind: "tables",
       label: "tables",
     });
   });
 
-  it("maps /app/compute to the functions view", () => {
+  it("maps /developer/compute to the functions view", () => {
     expect(resolveLensView("/developer/compute")).toEqual({
       kind: "functions",
       label: "functions",
     });
   });
 
-  it("maps /app/observability to the runs view", () => {
+  it("maps /developer/observability to the runs view", () => {
     expect(resolveLensView("/developer/observability")).toEqual({
       kind: "runs",
       label: "runs",
     });
   });
 
-  it("maps /admin/machines to the machines view", () => {
+  it("maps /operator/machines to the machines view", () => {
     expect(resolveLensView("/operator/machines")).toEqual({
       kind: "machines",
       label: "machines",
     });
   });
 
-  it("maps /admin/network to the listeners view", () => {
+  it("maps /operator/network to the listeners view", () => {
     expect(resolveLensView("/operator/network")).toEqual({
       kind: "listeners",
       label: "listeners",
     });
   });
 
-  it("falls back to system.status on /admin/settings", () => {
+  it("falls back to system.status on /operator/settings", () => {
     expect(resolveLensView("/operator/settings")).toEqual({
       kind: "system",
       label: "system.status",
     });
   });
 
-  it("falls back to system.status on /app/settings", () => {
+  it("falls back to system.status on /developer/settings", () => {
     expect(resolveLensView("/developer/settings")).toEqual({
       kind: "system",
       label: "system.status",
     });
   });
 
-  it("falls back to system.status on bare /app", () => {
+  it("falls back to system.status on bare /developer", () => {
     expect(resolveLensView("/developer")).toEqual({
       kind: "system",
       label: "system.status",
     });
   });
 
-  it("falls back to system.status on bare /admin", () => {
+  it("falls back to system.status on bare /operator", () => {
     expect(resolveLensView("/operator")).toEqual({
       kind: "system",
       label: "system.status",

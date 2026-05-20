@@ -129,7 +129,7 @@ const DYNAMIC_SPEC: DynamicSubDrawerSpec = {
       ].map((svc) => (
         <li key={svc.id}>
           <a
-            href={`/app/services/${svc.id}`}
+            href={`/developer/services/${svc.id}`}
             data-testid={`sub-drawer-item-dev-service-${svc.label}`}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default no-underline"
           >

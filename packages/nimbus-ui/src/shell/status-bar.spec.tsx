@@ -57,14 +57,14 @@ beforeEach(() => {
 });
 
 describe("StatusBar tenant slot", () => {
-  it("shows the active dev tenant on /app/*", () => {
+  it("shows the active dev tenant on /developer/*", () => {
     setLocation("/developer/compute");
     useUiStore.setState({ activeTenant: "beta" });
     render(<StatusBar />);
     expect(screen.getByTestId("status-tenant")).toHaveTextContent("beta");
   });
 
-  it("shows 'all tenants' on /admin/observability without a tenant query", () => {
+  it("shows 'all tenants' on /operator/observability without a tenant query", () => {
     setLocation("/operator/observability");
     render(<StatusBar />);
     expect(screen.getByTestId("status-tenant")).toHaveTextContent(
@@ -72,13 +72,13 @@ describe("StatusBar tenant slot", () => {
     );
   });
 
-  it("shows the requested tenant on /admin/observability?tenant=beta", () => {
+  it("shows the requested tenant on /operator/observability?tenant=beta", () => {
     setLocation("/operator/observability", { tenant: "beta" });
     render(<StatusBar />);
     expect(screen.getByTestId("status-tenant")).toHaveTextContent("beta");
   });
 
-  it("shows _nimbus on system-tenant /admin/* views", () => {
+  it("shows _nimbus on system-tenant /operator/* views", () => {
     setLocation("/operator/machines");
     render(<StatusBar />);
     expect(screen.getByTestId("status-tenant")).toHaveTextContent("_nimbus");

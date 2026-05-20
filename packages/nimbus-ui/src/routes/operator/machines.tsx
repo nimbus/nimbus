@@ -90,7 +90,7 @@ function MachinesPage() {
             {list.map((machine) => (
               <li key={machine._id}>
                 <a
-                  href={`/admin/machines?selected=${machine._id}`}
+                  href={`/operator/machines?selected=${machine._id}`}
                   data-testid={`sub-drawer-item-op-${machine._id}`}
                   className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
                 >
