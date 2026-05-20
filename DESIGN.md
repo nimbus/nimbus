@@ -932,8 +932,11 @@ the resource header), the chip is permanent rather than hover-only.
 
 ### Toast / Notification Queue
 
-Use `sonner` for transient feedback. Anchor: bottom-right (above the status
-bar). Rules:
+Use `sonner` for transient feedback. Anchor: bottom-right, offset by
+`calc(var(--statusbar-height) + 12px)` so the toast stack clears the
+fixed status bar at every viewport. The same `--statusbar-height` token
+drives the status bar height, so the gap stays correct if either changes.
+Rules:
 
 - Mutations confirm via toast (`Started machine-01`), not via modal.
 - Errors show until dismissed; never auto-disappear.
