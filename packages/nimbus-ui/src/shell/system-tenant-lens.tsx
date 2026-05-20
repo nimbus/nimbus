@@ -65,27 +65,26 @@ export function SystemTenantLens() {
   );
 }
 
-type LensView =
+export type LensView =
   | { kind: "machines"; label: string }
   | { kind: "listeners"; label: string }
   | { kind: "system"; label: string }
   | { kind: "tables"; label: string }
-  | { kind: "routes"; label: string }
   | { kind: "runs"; label: string }
   | { kind: "functions"; label: string };
 
-function resolveLensView(pathname: string): LensView {
-  if (pathname.startsWith("/machines"))
-    return { kind: "machines", label: "machines" };
-  if (pathname.startsWith("/network"))
-    return { kind: "listeners", label: "listeners" };
-  if (pathname.startsWith("/storage"))
-    return { kind: "tables", label: "tables" };
-  if (pathname.startsWith("/compute"))
-    return { kind: "functions", label: "functions" };
-  if (pathname.startsWith("/observability"))
-    return { kind: "runs", label: "runs" };
-  return { kind: "system", label: "system.status" };
+const LENS_VIEW_MAP: Record<string, LensView> = {
+  machines: { kind: "machines", label: "machines" },
+  network: { kind: "listeners", label: "listeners" },
+  storage: { kind: "tables", label: "tables" },
+  compute: { kind: "functions", label: "functions" },
+  observability: { kind: "runs", label: "runs" },
+};
+
+export function resolveLensView(pathname: string): LensView {
+  const match = pathname.match(/^\/(?:app|admin)\/([^/?#]+)/);
+  const view = match ? LENS_VIEW_MAP[match[1]] : undefined;
+  return view ?? { kind: "system", label: "system.status" };
 }
 
 function LensBody({ view }: { view: LensView }) {
@@ -120,7 +119,6 @@ function useLensDocuments(view: LensView) {
   });
   const status = useQuery(api.system.status, {});
   const tables = useQuery(api.tables.list, { tenantId: null, limit: 50 });
-  const routes = useQuery(api.routes.list, { adapter: null, limit: 50 });
   const runs = useQuery(api.runs.recent, {
     bundleId: null,
     functionPath: null,
@@ -142,8 +140,6 @@ function useLensDocuments(view: LensView) {
       return status;
     case "tables":
       return tables;
-    case "routes":
-      return routes;
     case "runs":
       return runs;
     case "functions":
