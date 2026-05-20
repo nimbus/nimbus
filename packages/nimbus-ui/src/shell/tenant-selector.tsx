@@ -9,82 +9,26 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTenantList, type TenantListEntry } from "../hooks/use-tenant-list";
 import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 
-type TenantListResponse = {
-  tenants?: Array<
-    string | { id?: string; tenantId?: string; name?: string; backend?: string }
-  >;
-};
-
-type TenantEntry = {
-  id: string;
-  backend?: string;
-};
-
-type TenantsState =
-  | { kind: "loading" }
-  | { kind: "loaded"; tenants: TenantEntry[] }
-  | { kind: "error"; message: string };
+type TenantEntry = TenantListEntry;
 
 export type TenantSelectorMode =
   | { kind: "developer" }
   | { kind: "operator-filter"; currentFilter: string | null };
 
-async function loadTenants(signal: AbortSignal): Promise<TenantEntry[]> {
-  const response = await fetch("/api/tenants", {
-    credentials: "include",
-    signal,
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      error?: { message?: string };
-    } | null;
-    throw new Error(
-      body?.error?.message ?? `Request failed: ${response.status}`,
-    );
-  }
-  const body = (await response.json()) as TenantListResponse;
-  return (body.tenants ?? [])
-    .map<TenantEntry | null>((entry) => {
-      if (typeof entry === "string") return { id: entry };
-      const id = entry.tenantId ?? entry.id ?? entry.name;
-      if (!id) return null;
-      return { id, backend: entry.backend };
-    })
-    .filter((entry): entry is TenantEntry => entry !== null)
-    .sort((a, b) => a.id.localeCompare(b.id));
-}
-
 export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
   const activeTenant = useUiStore((s) => s.activeTenant);
   const setActiveTenant = useUiStore((s) => s.setActiveTenant);
-  const [state, setState] = useState<TenantsState>({ kind: "loading" });
+  const state = useTenantList();
   const [open, setOpen] = useState(false);
   const [focusIndex, setFocusIndex] = useState(0);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuId = useId();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setState({ kind: "loading" });
-    loadTenants(controller.signal)
-      .then((tenants) => {
-        if (controller.signal.aborted) return;
-        setState({ kind: "loaded", tenants });
-      })
-      .catch((err) => {
-        if (controller.signal.aborted) return;
-        setState({
-          kind: "error",
-          message: err instanceof Error ? err.message : String(err),
-        });
-      });
-    return () => controller.abort();
-  }, []);
 
   const tenants = state.kind === "loaded" ? state.tenants : [];
   const entries = useMemo<

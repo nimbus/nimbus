@@ -6,6 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { RelativeTime } from "../../components/time";
+import { useTenantList } from "../../hooks/use-tenant-list";
 import { cn } from "../../lib/cn";
 import {
   type SubDrawerSpec,
@@ -28,10 +29,14 @@ type TableDoc = {
 
 function StoragePage() {
   const tenant = useUiStore((s) => s.activeTenant);
+  const tenantList = useTenantList();
   const tables = useQuery(
     api.tables.list,
     tenant ? { tenantId: tenant, limit: 200 } : "skip",
   ) as TableDoc[] | undefined;
+
+  const hasTenants =
+    tenantList.kind === "loaded" ? tenantList.tenants.length > 0 : undefined;
 
   const sortedTables = (tables ?? [])
     .slice()
@@ -44,10 +49,24 @@ function StoragePage() {
       search: { placeholder: "Filter tables" },
       children: !tenant ? (
         <div className="px-3 py-6 text-xs text-muted">
-          <p>Select a tenant.</p>
-          <p className="mt-2">
-            Choose a tenant from the top-nav selector to list its tables.
-          </p>
+          {hasTenants === false ? (
+            <>
+              <p>No tenants yet.</p>
+              <p className="mt-2">
+                Click{" "}
+                <code className="font-mono text-default">+ CREATE TENANT</code>{" "}
+                in the top nav to create one. Tables and documents scope to a
+                tenant.
+              </p>
+            </>
+          ) : (
+            <>
+              <p>Select a tenant.</p>
+              <p className="mt-2">
+                Pick a tenant from the top-nav selector to see its tables.
+              </p>
+            </>
+          )}
         </div>
       ) : tables === undefined ? (
         <div className="px-3 py-3 text-xs text-muted">
@@ -89,7 +108,7 @@ function StoragePage() {
         </ul>
       ),
     };
-  }, [tenant, tables, sortedTables]);
+  }, [tenant, tables, sortedTables, hasTenants]);
   useContributeSubDrawer(spec);
 
   return (
@@ -134,10 +153,17 @@ function StoragePage() {
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {!tenant ? (
-          <Empty
-            title="Select a tenant"
-            detail="Choose a tenant from the top-nav tenant selector to view its tables."
-          />
+          hasTenants === false ? (
+            <Empty
+              title="No tenants yet"
+              detail="Click + CREATE TENANT in the top nav to create one. Tables and documents scope to a tenant — once a tenant exists, you can pick it from the selector to see its tables."
+            />
+          ) : (
+            <Empty
+              title="Select a tenant"
+              detail="Pick a tenant from the top-nav selector to see its tables."
+            />
+          )
         ) : tables === undefined ? (
           <Loading label="Loading tables…" />
         ) : sortedTables.length === 0 ? (
