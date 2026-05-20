@@ -11,6 +11,7 @@ mod init;
 mod local_server_client;
 mod machine;
 mod node;
+mod path_boundary;
 mod start;
 #[cfg(test)]
 mod test_support;

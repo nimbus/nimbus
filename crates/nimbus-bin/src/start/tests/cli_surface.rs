@@ -200,23 +200,23 @@ fn start_startup_summary_reports_auto_discovered_override_companion() {
 }
 
 #[test]
-fn start_startup_summary_reports_auto_detected_app_dir() {
+fn start_startup_summary_reports_no_app_dir_when_none_resolved() {
+    // Post-CD1: `nimbus start` returns Ok(None) when no `--app-dir`
+    // is passed (no source-tree walk-up). The banner must clearly
+    // state that Convex-compatible routes wait for deploy activation
+    // rather than implying an autodetect happened.
     let command = StartCommand::default();
     let lines = super::boot::start_startup_summary_lines(
         &command,
-        Some(&super::boot::ResolvedStartAppDir::AutoDetected(
-            PathBuf::from("/workspace/functions"),
-        )),
+        None,
         None,
         SocketAddr::from((Ipv4Addr::UNSPECIFIED, 3210)),
         false,
     );
 
-    assert!(
-        lines
-            .iter()
-            .any(|line| line == "app dir: auto-detected /workspace/functions")
-    );
+    assert!(lines.iter().any(|line| {
+        line == "app dir: none; Convex-compatible routes wait for deploy activation"
+    }));
 }
 
 #[test]

@@ -25,13 +25,12 @@ use crate::dirs;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ResolvedStartAppDir {
     Explicit(PathBuf),
-    AutoDetected(PathBuf),
 }
 
 impl ResolvedStartAppDir {
     fn path(&self) -> &Path {
         match self {
-            Self::Explicit(path) | Self::AutoDetected(path) => path.as_path(),
+            Self::Explicit(path) => path.as_path(),
         }
     }
 }
@@ -255,24 +254,18 @@ pub(super) fn start_startup_summary_lines(
     listen_addr: SocketAddr,
     deploy_admin_enabled: bool,
 ) -> Vec<String> {
+    let base_url = local_listen_url(listen_addr);
     let mut lines = vec![
+        format!("Nimbus server listening at {base_url}"),
         format!(
-            "Nimbus server listening at {}",
-            local_listen_url(listen_addr)
+            "operator console:\t{}",
+            operator_console_url_from_base(&base_url)
         ),
         "server process owns HTTP, WebSocket, scheduler, and runtime startup".to_string(),
     ];
     match resolved_app_dir {
         Some(ResolvedStartAppDir::Explicit(app_dir)) => {
             lines.push(format!("app dir: {}", app_dir.display()));
-            if command.skip_codegen {
-                lines.push("codegen preflight: skipped by --skip-codegen".to_string());
-            } else {
-                lines.push("codegen preflight: completed before registry load".to_string());
-            }
-        }
-        Some(ResolvedStartAppDir::AutoDetected(app_dir)) => {
-            lines.push(format!("app dir: auto-detected {}", app_dir.display()));
             if command.skip_codegen {
                 lines.push("codegen preflight: skipped by --skip-codegen".to_string());
             } else {
@@ -297,30 +290,27 @@ pub(super) fn start_startup_summary_lines(
 pub(super) fn resolve_start_app_dir(
     command: &StartCommand,
 ) -> Result<Option<ResolvedStartAppDir>, Error> {
+    let Some(explicit_app_dir) = command.app_dir.as_deref() else {
+        // `nimbus start` does no source-tree discovery. Deployed apps
+        // arrive through the deploy admin API and rehydrate from
+        // storage on the daemon side. See cli-daemon-canonicalization
+        // plan, CD1.
+        return Ok(None);
+    };
     let cwd = std::env::current_dir().map_err(|error| {
         Error::Internal(format!("failed to determine current directory: {error}"))
     })?;
-    if let Some(explicit_app_dir) = command.app_dir.as_deref() {
-        let resolved = resolve_deploy_app_dir(Some(explicit_app_dir), &cwd)
-            .map_err(|error| Error::InvalidInput(error.to_string()))?;
-        if !app_dir_has_convex_surface(&resolved) && !app_dir_has_cloud_functions_surface(&resolved)
-        {
-            return Err(Error::InvalidInput(format!(
-                "No Convex or Cloud Functions surface found in {}.\n\n\
-                 Create a `convex/` or `nimbus/` source directory, a `firebase.json`, \
-                 or a Functions Framework `package.json` and place your app functions there.",
-                resolved.display()
-            )));
-        }
-        return Ok(Some(ResolvedStartAppDir::Explicit(resolved)));
-    }
-
-    let detected = resolve_deploy_app_dir(None, &cwd)
+    let resolved = resolve_deploy_app_dir(Some(explicit_app_dir), &cwd)
         .map_err(|error| Error::InvalidInput(error.to_string()))?;
-    if app_dir_has_convex_surface(&detected) || app_dir_has_cloud_functions_surface(&detected) {
-        return Ok(Some(ResolvedStartAppDir::AutoDetected(detected)));
+    if !app_dir_has_convex_surface(&resolved) && !app_dir_has_cloud_functions_surface(&resolved) {
+        return Err(Error::InvalidInput(format!(
+            "No Convex or Cloud Functions surface found in {}.\n\n\
+             Create a `convex/` or `nimbus/` source directory, a `firebase.json`, \
+             or a Functions Framework `package.json` and place your app functions there.",
+            resolved.display()
+        )));
     }
-    Ok(None)
+    Ok(Some(ResolvedStartAppDir::Explicit(resolved)))
 }
 
 fn local_listen_url(addr: SocketAddr) -> String {
@@ -332,6 +322,15 @@ fn local_listen_url(addr: SocketAddr) -> String {
         addr.ip().to_string()
     };
     format!("http://{host}:{}/", addr.port())
+}
+
+/// Build the operator-console URL by appending `/ui/` to the daemon's base
+/// URL. Discovery callers keep using `local_listen_url`; the banner adds the
+/// path. Mirrors the CockroachDB `webui:\t<url>` precedent (see CD3 in the
+/// canonicalization plan).
+fn operator_console_url_from_base(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    format!("{trimmed}/ui/")
 }
 
 fn app_dir_has_convex_surface(app_dir: &Path) -> bool {

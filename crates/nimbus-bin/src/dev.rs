@@ -64,6 +64,12 @@ pub(crate) struct DevCommand {
     /// Shared local dev persistence root for tenant data and control state.
     #[arg(long)]
     pub(crate) data_dir: Option<PathBuf>,
+
+    /// Open the operator console in the default browser after the server is
+    /// ready. Best-effort: a launcher failure is logged and the daemon
+    /// continues serving.
+    #[arg(long, default_value_t = false)]
+    pub(crate) open: bool,
 }
 
 pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn std::error::Error>> {
@@ -111,6 +117,10 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     }
 
     emit_dev_banner(&plan)?;
+    if plan.open_browser {
+        let console_url = operator_console_url(&plan.local_url);
+        tokio::spawn(open_operator_console_when_ready(console_url));
+    }
     if plan.once {
         return run_start_command(plan.start_command).await;
     }
@@ -119,6 +129,48 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     tokio::select! {
         result = run_start_command(plan.start_command) => result,
         result = run_dev_watch_loop(watch_plan) => result,
+    }
+}
+
+/// Wait for the operator console to start answering at `<url>auth`, then
+/// launch the default browser. Best-effort: a launcher failure or a probe
+/// timeout is reported via `tracing::error!` plus a stderr line and does
+/// not bring the daemon down. See CD4 in
+/// `docs/plans/cli-daemon-canonicalization-plan.md`.
+async fn open_operator_console_when_ready(console_url: String) {
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+    const POLL_INTERVAL: Duration = Duration::from_millis(200);
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let probe_url = format!("{}auth", console_url);
+    let client = reqwest::Client::new();
+    loop {
+        if std::time::Instant::now() >= deadline {
+            let message = format!(
+                "--open requested but operator console did not become ready at {console_url} within {}s; daemon is reachable at {console_url}",
+                PROBE_TIMEOUT.as_secs()
+            );
+            tracing::error!("{message}");
+            let _ = cli_ux::write_stderr_line(&format!("error: {message}"));
+            return;
+        }
+        let probed = client
+            .get(&probe_url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .map(|response| response.status().is_success() || response.status().is_redirection())
+            .unwrap_or(false);
+        if probed {
+            break;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    if let Err(error) = open::that(&console_url) {
+        let message = format!(
+            "--open requested but browser launcher failed: {error}; daemon is reachable at {console_url}"
+        );
+        tracing::error!("{message}");
+        let _ = cli_ux::write_stderr_line(&format!("error: {message}"));
     }
 }
 
@@ -141,6 +193,7 @@ struct DevPlan {
     once: bool,
     tail_logs: DevTailLogsMode,
     start_command: StartCommand,
+    open_browser: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +228,7 @@ impl DevPlan {
 }
 
 fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
+    let open_browser = command.open;
     let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
     let adapter = detect_dev_adapter(&app_dir)?;
     let deployment_slug =
@@ -213,6 +267,7 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
         once: command.once,
         tail_logs: command.tail_logs,
         start_command,
+        open_browser,
     })
 }
 
@@ -319,6 +374,13 @@ fn detect_app_dir(cwd: &Path) -> PathBuf {
             || candidate.join("firebase.json").is_file()
         {
             return candidate.to_path_buf();
+        }
+        // Stop the walk-up at the project's `.git` boundary so a sibling
+        // `nimbus/`, `convex/`, or `firebase.json` *outside* the repo can
+        // never accidentally become the app dir. See
+        // `docs/plans/cli-daemon-canonicalization-plan.md` CD2.
+        if crate::path_boundary::at_git_boundary(candidate) {
+            break;
         }
     }
     cwd.to_path_buf()
@@ -464,6 +526,7 @@ fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
     let mut lines = vec![
         "Nimbus dev ready to start".to_string(),
         format!("Local:      {}", plan.local_url),
+        format!("operator console:\t{}", operator_console_url(&plan.local_url)),
         format!("Deployment: local:{}", plan.deployment_slug),
         format!("App dir:    {}", plan.app_dir.display()),
         format!("Data:       {}", plan.data_dir.display()),
@@ -694,6 +757,15 @@ fn collect_source_snapshot_recursive(
         );
     }
     Ok(())
+}
+
+/// Append `/ui/` to the daemon's base URL so the dev banner can advertise the
+/// operator console without the caller having to assemble paths. Mirrors
+/// the CockroachDB precedent (`webui:\t<url>`) — see CD3 in
+/// `docs/plans/cli-daemon-canonicalization-plan.md`.
+fn operator_console_url(local_url: &str) -> String {
+    let trimmed = local_url.trim_end_matches('/');
+    format!("{trimmed}/ui/")
 }
 
 fn format_watch_roots(source_roots: &[PathBuf]) -> String {
@@ -998,6 +1070,7 @@ mod tests {
             once: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             start_command: StartCommand::default(),
+            open_browser: false,
         };
 
         let lines = dev_banner_lines(&plan);
