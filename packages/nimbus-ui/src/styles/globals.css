@@ -37,7 +37,7 @@
   :root {
     color-scheme: light;
 
-    --color-bg: oklch(98% 0.005 248);
+    --color-bg: oklch(96.5% 0.008 248);
     --color-surface: oklch(100% 0 0);
     --color-surface-2: oklch(96% 0.008 248);
     --color-border: oklch(91% 0.013 252);
@@ -88,7 +88,7 @@
 
   /* Mono palette, Light mode (Monochrome) */
   [data-palette="mono"] {
-    --color-bg: oklch(98% 0.003 257);
+    --color-bg: oklch(96.5% 0.006 257);
     --color-surface: oklch(100% 0 0);
     --color-surface-2: oklch(96% 0.005 257);
     --color-border: oklch(91% 0.008 257);
@@ -118,7 +118,7 @@
 
   /* Warm palette, Light mode (Warm) */
   [data-palette="warm"] {
-    --color-bg: oklch(98% 0.012 82);
+    --color-bg: oklch(96.5% 0.020 82);
     --color-surface: oklch(100% 0 0);
     --color-surface-2: oklch(96% 0.025 82);
     --color-border: oklch(90% 0.025 82);
