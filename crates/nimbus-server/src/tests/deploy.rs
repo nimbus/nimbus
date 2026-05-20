@@ -510,11 +510,8 @@ async fn deploy_persists_across_service_restart_without_app_dir() {
         let service_a = Arc::new(
             Service::new(data_dir.path()).expect("first service should build on shared data dir"),
         );
-        let server_a = ServerFixture::start(deploy_router_with_system_registry(
-            service_a.clone(),
-            None,
-        ))
-        .await;
+        let server_a =
+            ServerFixture::start(deploy_router_with_system_registry(service_a.clone(), None)).await;
         let api_a = HttpApiFixture::new(&server_a);
         assert_eq!(
             api_a.create_tenant("demo").await.status(),
