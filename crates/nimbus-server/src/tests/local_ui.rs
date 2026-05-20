@@ -456,45 +456,51 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
         body.contains("brand-wordmark") && body.contains(">nimbus<"),
         "auth page should render the nimbus brand wordmark"
     );
-    // DA5 — C4: hint copy leads with `nimbus auth url`, no longer
-    // `nimbus dev --open`. The dev shortcut moved into the M3 disclosure.
+    // C4: every CLI recovery path goes through the `nimbus auth` surface;
+    // the legacy `nimbus dev --open` shortcut is no longer offered here.
     assert!(
         body.contains("nimbus auth url"),
-        "auth page hint should recommend `nimbus auth url` as the primary CTA"
+        "auth page should recommend `nimbus auth url` for the URL flows"
+    );
+    assert!(
+        body.contains("nimbus auth token --copy"),
+        "auth page should surface `nimbus auth token --copy` for the token flow"
     );
     assert!(
         !body.contains("nimbus dev --open"),
-        "auth page hint should no longer surface `nimbus dev --open` as the primary CTA"
+        "auth page should not surface `nimbus dev --open` as a recovery CTA"
     );
-    // DA5 — H3: lede leads with the launch URL path, demotes the
-    // paste-token-below sentence to a fallback.
+    // Visible label is `Local token` (the form input the operator types into).
+    // The renamed `id=\"local-token\"` keeps the label/input association.
     assert!(
-        body.contains("Sign in with a launch URL") && body.contains("paste the local admin token"),
-        "auth page lede should lead with the launch URL and mention the token as a fallback"
+        body.contains("<span>Local token</span>")
+            && body.contains("id=\"local-token\"")
+            && body.contains("for=\"local-token\""),
+        "auth page should render the `Local token` label tied to id=\"local-token\""
     );
-    // DA5 — M3: token-file path is wrapped in a collapsed disclosure so the
-    // launch URL stays the primary CTA. Snapshot the disclosure summary so a
-    // future refactor that flips the file-path back to the primary surface
-    // breaks this test.
+    assert!(
+        !body.contains("Local admin token") && !body.contains("local-admin-token"),
+        "auth page should not retain the prior `Local admin token` label or `local-admin-token` id"
+    );
+    // The `.hint` block is gone; the token recovery chip lives inside the
+    // `Other ways to login` disclosure under an `Auth Token` subtitle so the
+    // disclosure becomes the single home for every CLI fallback path.
+    assert!(
+        !body.contains("class=\"hint\""),
+        "auth page should no longer render the standalone `.hint` block"
+    );
     assert!(
         body.contains("<details class=\"other-ways\"")
-            && body.contains("<summary>Other ways to sign in</summary>"),
-        "auth page should wrap the token-file path inside an `Other ways to sign in` disclosure"
+            && body.contains("<summary>Other ways to login</summary>"),
+        "auth page should wrap the CLI flows inside an `Other ways to login` disclosure"
     );
     assert!(
-        body.contains("Application Support/nimbus/auth/token"),
-        "auth page disclosure should still mention the local admin token file path"
+        body.contains(">Auth Token</h2>")
+            && body.contains("other-section-body-center")
+            && body.contains("data-copy=\"nimbus auth token --copy\""),
+        "auth page disclosure should expose an `Auth Token` subtitle with a centered `nimbus auth token --copy` chip"
     );
-    // DA5 — L4: brand-tier teal accent gradient sits under the brand row.
-    assert!(
-        body.contains("class=\"brand-accent\""),
-        "auth page should render the brand-tier accent strip under the mark"
-    );
-    assert!(
-        body.contains("--brand-teal-light") && body.contains("--brand-teal-deep"),
-        "auth page should declare brand-tier teal tokens for the L4 accent gradient"
-    );
-    // DA5 — CL3: the auth-page chrome should no longer *use* the
+    // CL3: the auth-page chrome should no longer *use* the
     // operator-console `--color-brand` token; the page is brand-tier only.
     // (Documenting comments may still mention the token by name to explain
     // why the page diverges, so we look for any `var(--color-brand)`
@@ -535,10 +541,12 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
         !body.contains("M4 20c0-6 4-10 10-10"),
         "auth page should no longer carry the arcs+dot placeholder mark path"
     );
-    // DA1 — version chip moves into the .brand row; footer wordmark goes away.
+    // Version chip lives in the card chrome (upper-right of the brand row)
+    // and copies its own version string. Pin the class + copy hook so a
+    // refactor that drops or relocates it surfaces here.
     assert!(
-        body.contains("brand-version") && body.contains("aria-label=\"Version\""),
-        "auth page should render the version chip inside the .brand row"
+        body.contains("class=\"brand-version\"") && body.contains("aria-label=\"Copy version v"),
+        "auth page should render the brand-version chip with a copy aria-label"
     );
     assert!(
         !body.contains("<footer>") && !body.contains("footer .wordmark"),

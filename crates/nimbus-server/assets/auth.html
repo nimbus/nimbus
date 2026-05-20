@@ -287,8 +287,8 @@ form {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* Compensates for the removed h1 spacer — keeps the LOCAL ADMIN TOKEN
-     label clear of the wordmark without resurrecting a heading. */
+  /* Compensates for the removed h1 spacer — keeps the LOCAL TOKEN label
+     clear of the wordmark without resurrecting a heading. */
   margin-top: 4px;
 }
 
@@ -374,28 +374,6 @@ button[type="submit"]:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-blue) 35%, transparent);
 }
 
-.hint {
-  margin: 20px 0 0;
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  font-size: 14.5px;
-  color: var(--color-muted);
-  line-height: 1.5;
-}
-
-.hint p {
-  margin: 0;
-  text-align: center;
-}
-
-/* The hint surface is itself surface-2, so its embedded copyables pop
-   against the page (--color-bg) rather than blending into the panel. */
-.hint .copyable {
-  background: var(--color-bg);
-}
-
 /* M3 — token-file disclosure. Demoted to a collapsed details/summary so
    the recommended `nimbus auth url` path stays the primary CTA. */
 .other-ways {
@@ -445,7 +423,7 @@ button[type="submit"]:focus-visible {
 /* Each "Other ways" entry is a section, not a definition-list row. The
    eyebrow title sits *above* its body so the body gets the full card
    width — long token paths fit on one line, and the layout mirrors how
-   the LOCAL ADMIN TOKEN label sits above its input. */
+   the LOCAL TOKEN label sits above its input. */
 .other-section + .other-section {
   margin-top: 16px;
   padding-top: 16px;
@@ -469,6 +447,13 @@ button[type="submit"]:focus-visible {
 
 .other-section-body:last-child {
   margin-bottom: 0;
+}
+
+/* Used when the body holds only a chip (no surrounding prose). Centers the
+   chip so the section reads as a single CTA, contrasting with the inline
+   chip placement used by the URL-based sections above. */
+.other-section-body-center {
+  text-align: center;
 }
 
 .local-only {
@@ -564,17 +549,14 @@ button[type="submit"]:focus-visible {
     </svg>
     <span class="brand-wordmark">nimbus</span>
   </div>
-  <form method="post" action="/ui/auth/session" aria-label="Local admin sign in">
+  <form method="post" action="/ui/auth/session" aria-label="Local token sign in">
     {{ ERROR_BLOCK }}
-    <label for="local-admin-token">
-      <span>Local admin token</span>
-      <input id="local-admin-token" type="password" name="token" autocomplete="off" autofocus required spellcheck="false"{{ ARIA_INVALID }} />
+    <label for="local-token">
+      <span>Local token</span>
+      <input id="local-token" type="password" name="token" autocomplete="off" autofocus required spellcheck="false"{{ ARIA_INVALID }} />
     </label>
     <button type="submit">Continue</button>
   </form>
-  <div class="hint">
-    <p>Copy Token: <button type="button" class="copyable" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button></p>
-  </div>
   <details class="other-ways">
     <summary>Other ways to login</summary>
     <div class="other-ways-body">
@@ -585,6 +567,10 @@ button[type="submit"]:focus-visible {
       <section class="other-section">
         <h2 class="other-section-title">Copy URL</h2>
         <p class="other-section-body">Run <button type="button" class="copyable" data-copy="nimbus auth url --copy" aria-label="Copy: nimbus auth url --copy">nimbus auth url --copy</button> and paste the printed URL in the address bar.</p>
+      </section>
+      <section class="other-section">
+        <h2 class="other-section-title">Auth Token</h2>
+        <p class="other-section-body other-section-body-center"><button type="button" class="copyable" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button></p>
       </section>
     </div>
   </details>
