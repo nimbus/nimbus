@@ -15,6 +15,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 import { KeyboardContract } from "./keyboard-contract";
 import { useUiStore } from "../store/ui-store";
+import { resolveLensView } from "./system-tenant-lens";
 
 function setPathname(path: string) {
   pathnameRef.current = path;
@@ -40,18 +41,26 @@ afterEach(() => {
 });
 
 describe("KeyboardContract", () => {
-  it("opens the lens on Meta+\\ from a developer pathname", () => {
+  it("opens the lens on Meta+\\ from a developer pathname and resolves the view", () => {
     setPathname("/app/compute");
     render(<KeyboardContract />);
     fireEvent.keyDown(window, { key: "\\", metaKey: true });
     expect(useUiStore.getState().lensOpen).toBe(true);
+    expect(resolveLensView(pathnameRef.current)).toEqual({
+      kind: "functions",
+      label: "functions",
+    });
   });
 
-  it("does not open the lens on Meta+\\ from an operator pathname", () => {
+  it("opens the lens on Meta+\\ from an operator pathname and resolves the view", () => {
     setPathname("/admin/machines");
     render(<KeyboardContract />);
     fireEvent.keyDown(window, { key: "\\", metaKey: true });
-    expect(useUiStore.getState().lensOpen).toBe(false);
+    expect(useUiStore.getState().lensOpen).toBe(true);
+    expect(resolveLensView(pathnameRef.current)).toEqual({
+      kind: "machines",
+      label: "machines",
+    });
   });
 
   it("toggles the palette on Meta+K from any pathname", () => {
