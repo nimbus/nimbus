@@ -66,6 +66,11 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/architecture/sandbox/macos-machine-flow.md` when relevant,
   `docs/operating/cli.md`, and the active platform plan from
   `docs/plans/README.md`
+- CLI daemon canonicalization, walk-up boundaries, or banner shape:
+  `docs/plans/cli-daemon-canonicalization-plan.md` (active until closeout,
+  then archive), `docs/operating/cli.md`,
+  `docs/plans/archive/cli-command-surface-plan.md` (prior wave),
+  `docs/plans/archive/compose-discovery-plan.md` (compose precedent)
 - Localhost/server security:
   `docs/plans/archive/localhost-server-security-plan.md`
 - Install script work:
