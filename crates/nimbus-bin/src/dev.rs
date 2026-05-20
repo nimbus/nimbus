@@ -1,5 +1,5 @@
 use std::env;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::time::SystemTime;
@@ -65,11 +65,12 @@ pub(crate) struct DevCommand {
     #[arg(long)]
     pub(crate) data_dir: Option<PathBuf>,
 
-    /// Open the operator console in the default browser after the server is
-    /// ready. Best-effort: a launcher failure is logged and the daemon
-    /// continues serving.
+    /// Suppress the default browser auto-open and print a one-line launch
+    /// URL banner instead. Auto-open is also suppressed automatically in
+    /// non-interactive environments (when `$CI` or `$NO_BROWSER` is set,
+    /// or stdout is not a TTY); in those cases the same banner is printed.
     #[arg(long, default_value_t = false)]
-    pub(crate) open: bool,
+    pub(crate) no_open: bool,
 }
 
 pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn std::error::Error>> {
@@ -117,10 +118,12 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     }
 
     emit_dev_banner(&plan)?;
-    if plan.open_browser {
-        let console_url = operator_console_url(&plan.local_url);
-        tokio::spawn(open_operator_console_when_ready(console_url));
-    }
+    let console_url = operator_console_url(&plan.local_url);
+    let auto_open_decision = plan.auto_open_decision.clone();
+    tokio::spawn(announce_launch_url_when_ready(
+        console_url,
+        auto_open_decision,
+    ));
     if plan.once {
         return run_start_command(plan.start_command).await;
     }
@@ -133,13 +136,14 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
 }
 
 /// Wait for the operator console to start answering at `<url>auth`, then
-/// mint a single-use launch ticket from the local server so the browser
-/// lands already signed in. Best-effort: a launcher failure or a probe
-/// timeout is reported via `tracing::error!` plus a stderr line and does
-/// not bring the daemon down. If the mint endpoint fails we fall back to
-/// opening the bare console URL so the user still sees the styled auth
-/// page. See CD4 in `docs/plans/cli-daemon-canonicalization-plan.md`.
-async fn open_operator_console_when_ready(console_url: String) {
+/// mint a single-use launch ticket from the local server. If auto-open
+/// is allowed (interactive TTY, `$CI` and `$NO_BROWSER` unset, user did
+/// not pass `--no-open`), spawn the OS browser at the launch URL so the
+/// user lands already signed in. Otherwise print the H6 banner with the
+/// launch URL so the user can copy/paste it. Best-effort: a launcher
+/// failure or a probe timeout is reported via `tracing::error!` plus a
+/// stderr line and does not bring the daemon down.
+async fn announce_launch_url_when_ready(console_url: String, decision: AutoOpenDecision) {
     const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
     const POLL_INTERVAL: Duration = Duration::from_millis(200);
     let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
@@ -148,7 +152,7 @@ async fn open_operator_console_when_ready(console_url: String) {
     loop {
         if std::time::Instant::now() >= deadline {
             let message = format!(
-                "--open requested but operator console did not become ready at {console_url} within {}s; daemon is reachable at {console_url}",
+                "operator console did not become ready at {console_url} within {}s; daemon is reachable at {console_url}",
                 PROBE_TIMEOUT.as_secs()
             );
             tracing::error!("{message}");
@@ -167,13 +171,19 @@ async fn open_operator_console_when_ready(console_url: String) {
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-    let open_url = mint_launch_url_or_fallback(&console_url).await;
-    if let Err(error) = open::that(&open_url) {
-        let message = format!(
-            "--open requested but browser launcher failed: {error}; daemon is reachable at {console_url}"
-        );
-        tracing::error!("{message}");
-        let _ = cli_ux::write_stderr_line(&format!("error: {message}"));
+    let launch_url = mint_launch_url_or_fallback(&console_url).await;
+    if decision.auto_open {
+        if let Err(error) = open::that(&launch_url) {
+            let message =
+                format!("browser launcher failed: {error}; open this URL to sign in: {launch_url}");
+            tracing::error!("{message}");
+            let _ = cli_ux::write_stderr_line(&format!("error: {message}"));
+        }
+        return;
+    }
+    let _ = cli_ux::write_stderr_line(&format!("Open this URL to sign in: {launch_url}"));
+    if let Some(reason) = decision.reason {
+        let _ = cli_ux::write_stderr_line(&format!("(auto-open suppressed: {reason})"));
     }
 }
 
@@ -182,7 +192,7 @@ async fn mint_launch_url_or_fallback(console_url: &str) -> String {
         Ok(paths) => paths,
         Err(error) => {
             tracing::warn!(
-                "--open: unable to resolve local server paths for launch-ticket mint ({error}); opening unauthenticated /ui/"
+                "launch ticket: unable to resolve local server paths for mint ({error}); falling back to unauthenticated /ui/"
             );
             return console_url.to_string();
         }
@@ -195,7 +205,7 @@ async fn mint_launch_url_or_fallback(console_url: &str) -> String {
         Ok(None) => return console_url.to_string(),
         Err(error) => {
             tracing::warn!(
-                "--open: launch-ticket client unavailable ({error}); opening unauthenticated /ui/"
+                "launch ticket: client unavailable ({error}); falling back to unauthenticated /ui/"
             );
             return console_url.to_string();
         }
@@ -204,7 +214,7 @@ async fn mint_launch_url_or_fallback(console_url: &str) -> String {
         Ok(minted) => format!("{}{}", client.base_url(), minted.url),
         Err(error) => {
             tracing::warn!(
-                "--open: launch-ticket mint failed ({error}); opening unauthenticated /ui/"
+                "launch ticket: mint failed ({error}); falling back to unauthenticated /ui/"
             );
             console_url.to_string()
         }
@@ -230,7 +240,64 @@ struct DevPlan {
     once: bool,
     tail_logs: DevTailLogsMode,
     start_command: StartCommand,
-    open_browser: bool,
+    auto_open_decision: AutoOpenDecision,
+}
+
+/// Result of the M1 smart-detect ladder. Either auto-open is on, or it
+/// is off with a reason worth surfacing under the H6 banner so the user
+/// knows why the browser didn't pop.
+#[derive(Debug, Clone)]
+struct AutoOpenDecision {
+    auto_open: bool,
+    reason: Option<String>,
+}
+
+impl AutoOpenDecision {
+    fn open() -> Self {
+        Self {
+            auto_open: true,
+            reason: None,
+        }
+    }
+
+    fn suppressed(reason: impl Into<String>) -> Self {
+        Self {
+            auto_open: false,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+/// Smart-detect M1: only auto-open when stdout is a TTY, `$CI` is
+/// unset, `$NO_BROWSER` is unset, and the user did not pass `--no-open`.
+/// The detector takes its inputs explicitly so tests can drive every
+/// branch without poking process env / file descriptors.
+fn resolve_auto_open(no_open: bool, stdout_is_tty: bool, env: &dyn EnvLookup) -> AutoOpenDecision {
+    if no_open {
+        return AutoOpenDecision::suppressed("--no-open");
+    }
+    if env.get("CI").is_some() {
+        return AutoOpenDecision::suppressed("$CI is set");
+    }
+    if env.get("NO_BROWSER").is_some() {
+        return AutoOpenDecision::suppressed("$NO_BROWSER is set");
+    }
+    if !stdout_is_tty {
+        return AutoOpenDecision::suppressed("stdout is not a TTY");
+    }
+    AutoOpenDecision::open()
+}
+
+trait EnvLookup {
+    fn get(&self, key: &str) -> Option<String>;
+}
+
+struct ProcessEnv;
+
+impl EnvLookup for ProcessEnv {
+    fn get(&self, key: &str) -> Option<String> {
+        env::var(key).ok().filter(|value| !value.is_empty())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -265,7 +332,8 @@ impl DevPlan {
 }
 
 fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
-    let open_browser = command.open;
+    let auto_open_decision =
+        resolve_auto_open(command.no_open, io::stdout().is_terminal(), &ProcessEnv);
     let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
     let adapter = detect_dev_adapter(&app_dir)?;
     let deployment_slug =
@@ -304,7 +372,7 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
         once: command.once,
         tail_logs: command.tail_logs,
         start_command,
-        open_browser,
+        auto_open_decision,
     })
 }
 
@@ -865,6 +933,10 @@ mod tests {
         assert!(!command.skip_codegen);
         assert!(!command.debug_node_apis);
         assert_eq!(command.tail_logs, DevTailLogsMode::PauseOnSync);
+        assert!(
+            !command.no_open,
+            "nimbus dev should default to auto-opening the browser (no_open=false)"
+        );
     }
 
     #[test]
@@ -885,6 +957,7 @@ mod tests {
             "--debug-node-apis",
             "--tail-logs",
             "disable",
+            "--no-open",
         ]);
         assert_eq!(command.port, 4567);
         assert_eq!(command.app_dir, Some(PathBuf::from("./demo")));
@@ -894,6 +967,87 @@ mod tests {
         assert!(command.skip_codegen);
         assert!(command.debug_node_apis);
         assert_eq!(command.tail_logs, DevTailLogsMode::Disable);
+        assert!(command.no_open, "--no-open should opt out of auto-open");
+    }
+
+    /// Test stub for [`EnvLookup`] so smart-detect branches can be driven
+    /// without poking process env.
+    struct StubEnv {
+        ci: Option<&'static str>,
+        no_browser: Option<&'static str>,
+    }
+
+    impl EnvLookup for StubEnv {
+        fn get(&self, key: &str) -> Option<String> {
+            match key {
+                "CI" => self.ci.map(str::to_owned),
+                "NO_BROWSER" => self.no_browser.map(str::to_owned),
+                _ => None,
+            }
+        }
+    }
+
+    const ENV_EMPTY: StubEnv = StubEnv {
+        ci: None,
+        no_browser: None,
+    };
+
+    #[test]
+    fn smart_detect_opens_when_tty_and_env_clean() {
+        let decision = resolve_auto_open(false, true, &ENV_EMPTY);
+        assert!(
+            decision.auto_open,
+            "TTY + clean env + no --no-open should auto-open: {decision:?}"
+        );
+        assert!(decision.reason.is_none());
+    }
+
+    #[test]
+    fn smart_detect_suppresses_on_no_open_flag() {
+        let decision = resolve_auto_open(true, true, &ENV_EMPTY);
+        assert!(!decision.auto_open);
+        assert_eq!(decision.reason.as_deref(), Some("--no-open"));
+    }
+
+    #[test]
+    fn smart_detect_suppresses_on_ci_env() {
+        let env = StubEnv {
+            ci: Some("true"),
+            no_browser: None,
+        };
+        let decision = resolve_auto_open(false, true, &env);
+        assert!(!decision.auto_open);
+        assert_eq!(decision.reason.as_deref(), Some("$CI is set"));
+    }
+
+    #[test]
+    fn smart_detect_suppresses_on_no_browser_env() {
+        let env = StubEnv {
+            ci: None,
+            no_browser: Some("1"),
+        };
+        let decision = resolve_auto_open(false, true, &env);
+        assert!(!decision.auto_open);
+        assert_eq!(decision.reason.as_deref(), Some("$NO_BROWSER is set"));
+    }
+
+    #[test]
+    fn smart_detect_suppresses_when_stdout_is_not_a_tty() {
+        let decision = resolve_auto_open(false, false, &ENV_EMPTY);
+        assert!(!decision.auto_open);
+        assert_eq!(decision.reason.as_deref(), Some("stdout is not a TTY"));
+    }
+
+    #[test]
+    fn smart_detect_prefers_no_open_reason_over_env_suppression() {
+        // --no-open is the most user-explicit signal; surface it first.
+        let env = StubEnv {
+            ci: Some("true"),
+            no_browser: Some("1"),
+        };
+        let decision = resolve_auto_open(true, false, &env);
+        assert!(!decision.auto_open);
+        assert_eq!(decision.reason.as_deref(), Some("--no-open"));
     }
 
     #[test]
@@ -1110,7 +1264,7 @@ mod tests {
             once: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             start_command: StartCommand::default(),
-            open_browser: false,
+            auto_open_decision: AutoOpenDecision::open(),
         };
 
         let lines = dev_banner_lines(&plan);

@@ -1,0 +1,74 @@
+# DA3 proof — `nimbus dev` flips to auto-open by default
+
+## Help (--help) shows --no-open opt-out and auto-open default
+
+$ nimbus dev --help
+Start a local development server with watched codegen and dev defaults
+Usage:
+  nimbus dev [OPTIONS]
+
+Options:
+      --port <PORT>                  Port to listen on [default: 3210]
+      --app-dir <APP_DIR>            App directory containing an adapter source root
+      --compose-file <COMPOSE_FILE>  Optional ordered Compose file list that declares local service dependencies. Repeat `--compose-file` to merge overlays. When omitted, Nimbus uses `COMPOSE_FILE` when set, then discovers from the current directory and parent directories
+      --once                         Run startup only, without the watched codegen loop
+      --skip-codegen                 Skip initial codegen before starting the local server. Watched reruns still use codegen
+      --debug-node-apis              Diagnose Node.js builtin imports that should move behind "use node"
+      --tail-logs <TAIL_LOGS>        Runtime log tailing mode. Log multiplexing is pending runtime log plumbing [default: pause-on-sync] [possible values: always, pause-on-sync, disable]
+      --data-dir <DATA_DIR>          Shared local dev persistence root for tenant data and control state
+      --no-open                      Suppress the default browser auto-open and print a one-line launch URL banner instead. Auto-open is also suppressed automatically in non-interactive environments (when `$CI` or `$NO_BROWSER` is set, or stdout is not a TTY); in those cases the same banner is printed
+  -h, --help                         Print help
+
+Examples:
+  nimbus dev                  # auto-opens the operator console
+  nimbus dev --no-open        # print the launch URL instead of opening
+  nimbus dev --app-dir ./demos/convex/html
+  nimbus dev --app-dir ./demos/convex/html --skip-codegen
+  nimbus dev --data-dir ./.nimbus/dev
+
+P3 scope:
+  nimbus dev now watches nimbus/ or convex/ for debounced codegen reruns.
+  Use --once for startup only. Watched codegen locally activates generated
+  artifacts after validation. Live runtime log multiplexing is still pending.
+
+Browser auto-open is suppressed automatically when $CI or $NO_BROWSER is
+set, when stdout is not a TTY, or when --no-open is passed; in those cases
+the launch URL is printed on a single line you can copy / paste.
+
+## Unit-test transcript: M1 smart-detect ladder
+
+$ cargo test -p nimbus-bin dev::tests::smart_detect 2>&1
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.44s
+     Running unittests src/main.rs
+
+running 6 tests
+test dev::tests::smart_detect_opens_when_tty_and_env_clean ... ok
+test dev::tests::smart_detect_prefers_no_open_reason_over_env_suppression ... ok
+test dev::tests::smart_detect_suppresses_on_ci_env ... ok
+test dev::tests::smart_detect_suppresses_on_no_browser_env ... ok
+test dev::tests::smart_detect_suppresses_on_no_open_flag ... ok
+test dev::tests::smart_detect_suppresses_when_stdout_is_not_a_tty ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured
+
+## Unit-test transcript: CLI parse defaults + opt-out
+
+$ cargo test -p nimbus-bin dev::tests::cli_parses_dev 2>&1 | grep -E "(cli_parses_dev|test result)"
+test dev::tests::cli_parses_dev_defaults ... ok
+test dev::tests::cli_parses_dev_overrides ... ok
+test dev::tests::cli_parses_dev_multiple_compose_files_in_order ... ok
+
+`cli_parses_dev_defaults` asserts `!command.no_open` (default-true auto-open).
+`cli_parses_dev_overrides` asserts `--no-open` flips `command.no_open == true`.
+
+## Notes
+
+- M1 ladder order: `--no-open` (most explicit) → `$CI` → `$NO_BROWSER` → TTY.
+  When more than one suppressor fires, the most user-explicit reason wins,
+  so `nimbus dev --no-open` always reports "auto-open suppressed: --no-open"
+  even in CI environments.
+- H6 fallback banner format: `Open this URL to sign in: http://127.0.0.1:<port>/ui/launch?lt=<ticket>`
+  followed by `(auto-open suppressed: <reason>)`. Both lines go to stderr so
+  they don't pollute pipe-able stdout.
+- Auto-open code path is unchanged in spirit: `open::that(&launch_url)` is
+  only called when the M1 ladder green-lights it.

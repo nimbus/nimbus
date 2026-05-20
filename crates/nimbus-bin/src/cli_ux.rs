@@ -45,7 +45,8 @@ Examples:
 
 pub(crate) const DEV_HELP_EXAMPLES: &str = "\
 Examples:
-  nimbus dev
+  nimbus dev                  # auto-opens the operator console
+  nimbus dev --no-open        # print the launch URL instead of opening
   nimbus dev --app-dir ./demos/convex/html
   nimbus dev --app-dir ./demos/convex/html --skip-codegen
   nimbus dev --data-dir ./.nimbus/dev
@@ -53,7 +54,11 @@ Examples:
 P3 scope:
   nimbus dev now watches nimbus/ or convex/ for debounced codegen reruns.
   Use --once for startup only. Watched codegen locally activates generated
-  artifacts after validation. Live runtime log multiplexing is still pending.";
+  artifacts after validation. Live runtime log multiplexing is still pending.
+
+Browser auto-open is suppressed automatically when $CI or $NO_BROWSER is
+set, when stdout is not a TTY, or when --no-open is passed; in those cases
+the launch URL is printed on a single line you can copy / paste.";
 
 pub(crate) const DEPLOY_HELP_EXAMPLES: &str = "\
 Examples:
@@ -86,7 +91,7 @@ Examples:
 pub(crate) const UI_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus ui
-  nimbus dev --open";
+  nimbus dev               # auto-opens the console (use --no-open for CI / headless)";
 
 pub(crate) const AUTH_URL_HELP_EXAMPLES: &str = "\
 Examples:
