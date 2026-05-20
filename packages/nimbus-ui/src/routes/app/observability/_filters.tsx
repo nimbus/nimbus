@@ -1,12 +1,13 @@
+import { Select } from "../../../components/select";
+
 export function FilterSelect({
-  id,
   label,
   value,
   options,
   onChange,
   testid,
 }: {
-  id: string;
+  id?: string;
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;
@@ -14,25 +15,13 @@ export function FilterSelect({
   testid: string;
 }) {
   return (
-    <label
-      htmlFor={id}
-      className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted"
-    >
-      <span>{label}</span>
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default focus-visible:border-strong"
-        data-testid={testid}
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <Select
+      label={label}
+      value={value}
+      options={options}
+      onChange={onChange}
+      testid={testid}
+    />
   );
 }
 
