@@ -1,10 +1,15 @@
 use std::error::Error;
 use std::fmt;
-use std::io;
+use std::io::{self, BufRead, IsTerminal, Write};
+use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use nimbus_server::{LocalServerPaths, read_live_server_discovery};
 
+use crate::credentials::{
+    self, ConnectionEntry, CredentialsFile, default_credentials_path, find_connection, mask_bearer,
+    read_credentials_file, remove_connection, upsert_connection, write_credentials_file,
+};
 use crate::local_server_client::LocalServerHttpClient;
 
 #[derive(Debug, Subcommand)]
@@ -99,13 +104,115 @@ impl Error for AuthUrlError {
 pub(crate) async fn run_auth_command(command: AuthCommand) -> Result<(), Box<dyn Error>> {
     match command {
         AuthCommand::Url(command) => run_auth_url_command(command).await,
-        AuthCommand::Login(_) | AuthCommand::Status(_) | AuthCommand::Logout(_) => {
-            Err(Box::new(io::Error::other(
-                "nimbus auth login/status/logout ships in DA8 (deploy auth credentials file); \
-             not yet wired up — see docs/plans/desktop-auth-dx-plan.md DEP1-DEP4.",
-            )))
+        AuthCommand::Login(command) => run_auth_login_command(command),
+        AuthCommand::Status(command) => run_auth_status_command(command),
+        AuthCommand::Logout(command) => run_auth_logout_command(command),
+    }
+}
+
+fn run_auth_login_command(command: AuthLoginCommand) -> Result<(), Box<dyn Error>> {
+    let path = default_credentials_path()?;
+    let bearer = resolve_login_bearer(command.bearer.as_deref(), &mut io::stdin().lock())?;
+    let mut file = read_credentials_file(&path)?;
+    upsert_connection(&mut file, &command.url, bearer.clone(), None, false)?;
+    write_credentials_file(&path, &file)?;
+    let normalized = credentials::normalize_url(&command.url);
+    println!(
+        "Stored bearer for {normalized} (mask: {})",
+        mask_bearer(&bearer)
+    );
+    println!("Credentials file: {}", path.display());
+    Ok(())
+}
+
+fn run_auth_status_command(_command: AuthStatusCommand) -> Result<(), Box<dyn Error>> {
+    let path = default_credentials_path()?;
+    let file = read_credentials_file(&path)?;
+    print_auth_status(&file, &path, &mut io::stdout().lock())?;
+    Ok(())
+}
+
+fn run_auth_logout_command(command: AuthLogoutCommand) -> Result<(), Box<dyn Error>> {
+    let path = default_credentials_path()?;
+    let mut file = read_credentials_file(&path)?;
+    let normalized = credentials::normalize_url(&command.url);
+    if !remove_connection(&mut file, &command.url) {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no stored bearer for {normalized}; nothing to remove"),
+        )));
+    }
+    write_credentials_file(&path, &file)?;
+    println!("Removed bearer for {normalized}");
+    Ok(())
+}
+
+fn resolve_login_bearer(
+    explicit: Option<&str>,
+    stdin: &mut impl BufRead,
+) -> Result<String, Box<dyn Error>> {
+    if let Some(bearer) = explicit {
+        let trimmed = bearer.trim();
+        if trimmed.is_empty() {
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--bearer value must not be empty",
+            )));
+        }
+        return Ok(trimmed.to_string());
+    }
+    if io::stdin().is_terminal() {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no --bearer flag and stdin is a TTY — re-run with `--bearer <value>` or pipe the bearer in",
+        )));
+    }
+    let mut buffer = String::new();
+    stdin.read_to_string(&mut buffer)?;
+    let trimmed = buffer.trim();
+    if trimmed.is_empty() {
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "stdin bearer was empty",
+        )));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn print_auth_status(
+    file: &CredentialsFile,
+    path: &std::path::Path,
+    out: &mut impl Write,
+) -> io::Result<()> {
+    writeln!(out, "Credentials file: {}", path.display())?;
+    if file.connection.is_empty() {
+        writeln!(
+            out,
+            "No stored deploy bearers. Use `nimbus auth login --url <daemon> --bearer <value>` to add one."
+        )?;
+        return Ok(());
+    }
+    writeln!(out)?;
+    for (url, entry) in &file.connection {
+        writeln!(out, "  {url}")?;
+        writeln!(out, "    bearer:       {}", mask_bearer(&entry.bearer))?;
+        if let Some(expires) = &entry.expires_at {
+            writeln!(out, "    expires_at:   {expires}")?;
+        }
+        if let Some(last_used) = &entry.last_used_at {
+            writeln!(out, "    last_used_at: {last_used}")?;
         }
     }
+    Ok(())
+}
+
+/// Read the credentials file and return the bearer + path used (if any).
+/// Used by `nimbus deploy` to fall back to the credentials file when the
+/// `NIMBUS_DEPLOY_TOKEN` env var is unset.
+pub(crate) fn lookup_credentials_bearer(url: &str) -> io::Result<Option<(String, PathBuf)>> {
+    let path = default_credentials_path()?;
+    let file = read_credentials_file(&path)?;
+    Ok(find_connection(&file, url).map(|entry: &ConnectionEntry| (entry.bearer.clone(), path)))
 }
 
 async fn run_auth_url_command(command: AuthUrlCommand) -> Result<(), Box<dyn Error>> {
@@ -347,5 +454,145 @@ mod tests {
         server_task.abort();
         let _ = server_task.await;
         service.quiesce().await;
+    }
+
+    #[test]
+    fn resolve_login_bearer_uses_explicit_flag_when_present() {
+        let mut stdin: &[u8] = b"";
+        let bearer = resolve_login_bearer(Some("deploy_tok_abc"), &mut stdin)
+            .expect("explicit bearer should resolve");
+        assert_eq!(bearer, "deploy_tok_abc");
+    }
+
+    #[test]
+    fn resolve_login_bearer_trims_explicit_flag_value() {
+        let mut stdin: &[u8] = b"";
+        let bearer = resolve_login_bearer(Some("  deploy_tok_abc  "), &mut stdin)
+            .expect("explicit bearer should resolve");
+        assert_eq!(bearer, "deploy_tok_abc");
+    }
+
+    #[test]
+    fn resolve_login_bearer_rejects_empty_explicit_value() {
+        let mut stdin: &[u8] = b"";
+        let error = resolve_login_bearer(Some("   "), &mut stdin)
+            .expect_err("empty bearer should be rejected");
+        assert!(
+            error.to_string().contains("must not be empty"),
+            "error should explain emptiness, got: {error}"
+        );
+    }
+
+    #[test]
+    fn print_auth_status_with_empty_file_prompts_for_login() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let path = temp.path().join("credentials");
+        let mut buffer = Vec::new();
+        print_auth_status(&CredentialsFile::default(), &path, &mut buffer)
+            .expect("status should render");
+        let rendered = String::from_utf8(buffer).expect("output is utf-8");
+        assert!(
+            rendered.contains("Credentials file:"),
+            "output should label the credentials path: {rendered}"
+        );
+        assert!(
+            rendered.contains("nimbus auth login"),
+            "empty-state should recommend `nimbus auth login`: {rendered}"
+        );
+    }
+
+    #[test]
+    fn print_auth_status_masks_bearer_and_lists_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let path = temp.path().join("credentials");
+        let mut file = CredentialsFile::default();
+        upsert_connection(
+            &mut file,
+            "https://nimbus.example.com",
+            "deploy_tok_abcdef0123456789".to_string(),
+            Some("2026-12-01T00:00:00Z".to_string()),
+            true,
+        )
+        .expect("upsert should succeed");
+        let mut buffer = Vec::new();
+        print_auth_status(&file, &path, &mut buffer).expect("status should render");
+        let rendered = String::from_utf8(buffer).expect("output is utf-8");
+        assert!(
+            rendered.contains("https://nimbus.example.com"),
+            "status should list the daemon URL: {rendered}"
+        );
+        assert!(
+            rendered.contains("deploy_tok_…6789"),
+            "status should mask the bearer to prefix + last four, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("deploy_tok_abcdef0123456789"),
+            "status must not leak the full bearer in cleartext, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("2026-12-01T00:00:00Z"),
+            "status should show expires_at, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("last_used_at"),
+            "status should show last_used_at, got: {rendered}"
+        );
+    }
+
+    /// End-to-end: login → status → deploy-token-lookup → logout against a
+    /// tempdir credentials path. The DEP1-DEP4 verifier from the plan.
+    #[test]
+    fn auth_login_status_deploy_logout_roundtrip_uses_credentials_file() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let path = temp.path().join("credentials");
+
+        let mut file = read_credentials_file(&path).expect("missing file should read as empty");
+        assert!(
+            file.connection.is_empty(),
+            "fresh tempdir should have no connections"
+        );
+
+        upsert_connection(
+            &mut file,
+            "http://localhost:3210",
+            "deploy_tok_abcdef0123456789".to_string(),
+            None,
+            false,
+        )
+        .expect("login should upsert the entry");
+        write_credentials_file(&path, &file).expect("login should write the file");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)
+                .expect("credentials file should exist")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "credentials file must be mode 0600");
+        }
+
+        let loaded = read_credentials_file(&path).expect("status read should succeed");
+        assert_eq!(loaded.connection.len(), 1);
+        let entry =
+            find_connection(&loaded, "http://localhost:3210").expect("entry should be present");
+        assert_eq!(entry.bearer, "deploy_tok_abcdef0123456789");
+
+        // Deploy lookup behavior: a daemon-URL lookup against the same file
+        // must surface the stored bearer + the file path. This is the
+        // contract `crate::deploy::resolve_deploy_token` relies on.
+        let mut file_for_logout = read_credentials_file(&path).expect("logout read should succeed");
+        assert!(
+            remove_connection(&mut file_for_logout, "http://localhost:3210"),
+            "logout should report that an entry was removed"
+        );
+        write_credentials_file(&path, &file_for_logout).expect("logout should rewrite the file");
+
+        let after_logout = read_credentials_file(&path).expect("post-logout read should succeed");
+        assert!(
+            after_logout.connection.is_empty(),
+            "logout should leave the credentials file empty"
+        );
     }
 }

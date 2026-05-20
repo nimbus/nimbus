@@ -4,6 +4,7 @@ mod auth;
 mod cli_ux;
 mod codegen;
 mod compose;
+mod credentials;
 mod deploy;
 mod dev;
 mod dirs;
