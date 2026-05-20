@@ -389,13 +389,19 @@ shape do not do filesystem heuristics for source detection.)
 
 **Deploy-load (`nimbus deploy` against a running daemon).** Apps pushed
 through `nimbus deploy` (or the deploy admin API directly) are stored in
-the daemon's data directory. On every subsequent startup, the engine
-rehydrates them from storage during `Service` construction —
-**independent of CWD or `--app-dir`**. The banner line `app dir: none;
-Convex-compatible routes wait for deploy activation` is not "the daemon
-is idle"; it's "no source app is loaded, but the engine will still
-rehydrate any previously deployed app on this daemon's storage." This is
-the production shape.
+the daemon's data directory; the artifact metadata lives in the
+`_nimbus.bundles` system table and survives across restarts. While the
+daemon is running, the active deploy stays activated and serves traffic
+on its assigned generation. **What does not yet happen automatically:**
+a freshly-restarted daemon with no `--app-dir` does *not* re-activate a
+previously-deployed bundle on startup — it starts at `generation = 0`
+and waits for an explicit redeploy through the admin API. The banner
+line `app dir: none; Convex-compatible routes wait for deploy
+activation` describes exactly that state. Auto-activation of persisted
+bundles on restart is a tracked follow-on; for now, post-restart
+operators must redeploy. The deploy admin path itself is independent of
+CWD or `--app-dir` and works on a freshly-spawned daemon regardless of
+where it was launched from.
 
 ### Why dev has `--open` and start does not
 
@@ -656,9 +662,11 @@ startup, it:
 - when `--app-dir` is set and `--skip-codegen` is not, runs one codegen
   preflight pass before loading manifests
 - does **not** walk ancestors looking for a source app — `--app-dir` is the
-  explicit opt-in to source-load behavior. Without it, the daemon serves
-  any apps previously deployed to its storage through the engine's normal
-  rehydration path (see [How Apps Reach a Running Daemon](#how-apps-reach-a-running-daemon))
+  explicit opt-in to source-load behavior. Without it, the daemon starts
+  at `generation = 0` with no active registry and waits for deploys through
+  the admin API; previously-deployed bundles persist in `_nimbus.bundles`
+  but are not auto-activated on startup (see
+  [How Apps Reach a Running Daemon](#how-apps-reach-a-running-daemon))
 - loads the service with the configured data directory
 - loads tenants with scheduled work
 - starts the scheduler loop

@@ -574,20 +574,28 @@ not scan the filesystem for a project. **This is the intended
 behaviour change; the surface that *replaces* it is the deploy
 admin API.**
 
-**What does NOT break — deployed apps still autostart.** Apps
-that have been bundled and deployed to the daemon (via
-`nimbus deploy` against a running daemon) live in the daemon's
-storage, not on the filesystem the operator boots from. The
-engine's normal boot path rehydrates them from storage during
-`Service` construction, completely independent of CWD or the
-walk-up that CD1 deletes. The startup banner at
-`crates/nimbus-bin/src/start/boot.rs:283` already prints `app
-dir: none; Convex-compatible routes wait for deploy activation`
-when no `--app-dir` is provided — that branch is *not* "the
-daemon is useless." It's "the daemon is ready to receive deploys
-and rehydrate them on subsequent boots." This is the production
-shape (Cockroach/Vault/Grafana: bring up the daemon, then
-configure it through its API; data persists across restarts).
+**What CD1 preserves — and what it doesn't.** The walk-up
+removed by CD1 was source-load discovery; the deploy admin path
+is untouched. Apps bundled and deployed to the daemon (via
+`nimbus deploy` against a running daemon) write their artifact
+records into the `_nimbus.bundles` system table, which lives in
+the daemon's data directory and survives across restarts. CD7(j)
+pins that storage durability with an integration test.
+
+What CD1 does **not** preserve and never claimed to: automatic
+re-activation of those persisted bundles on the next startup.
+The audit during CD7(j) confirmed that `Service::new` does not
+read `_nimbus.bundles` to rehydrate a previously-deployed
+registry; a freshly-spawned daemon with no `--app-dir` starts at
+`generation = 0` and waits for an explicit redeploy. The
+startup banner at `crates/nimbus-bin/src/start/boot.rs:283`
+prints `app dir: none; Convex-compatible routes wait for deploy
+activation` for exactly this reason — the banner is honest about
+the gap. This is still the production shape
+(Cockroach/Vault/Grafana: bring up the daemon, then configure
+it through its API; data persists across restarts) — but the
+"re-activate on next boot" half of that production shape is a
+follow-on plan, not a CD-wave promise.
 
 **Mitigation.**
 - CD8 docs include a dedicated "How apps reach a running daemon"
@@ -1274,3 +1282,43 @@ Pre-existing failures noted in entry (i) (`make test` libc++ assertion
 in nimbus-runtime, `make deny` RUSTSEC-2026-0145 via testcontainers)
 remain pre-existing and unaffected by the CD wave; they belong to
 separate follow-on advisory/runtime-hardening passes.
+
+(l) Post-closeout doc-honesty pass. An independent review of the
+wave caught that the CD7(j) audit had corrected the
+`crates/nimbus-bin/src/start/boot.rs` and
+`crates/nimbus-bin/src/start/tests/app_dir_codegen.rs` inline
+comments but left three downstream prose surfaces still asserting
+the aspirational "engine rehydrates persisted bundles from storage
+on every startup" framing that CD7(j) disproved:
+
+- This plan's own R2 subsection "What does NOT break — deployed
+  apps still autostart" (lines 577-590) had been only partially
+  corrected: the Mitigation bullet honestly acknowledged the
+  gap, but the headline paragraph above it still claimed the
+  rehydration path existed. Rewritten to lead with what CD1
+  preserves (storage durability across restarts, pinned by
+  CD7(j)) and what it does *not* preserve (auto-activation of
+  persisted bundles on next boot — a follow-on concern), with
+  the banner line `app dir: none; Convex-compatible routes wait
+  for deploy activation` framed as honest disclosure rather
+  than promise of rehydration.
+- `docs/operating/cli.md` "Deploy-load" paragraph (formerly
+  lines 390-398) had the same false claim that subsequent
+  startups rehydrate from storage during `Service`
+  construction. Rewritten to describe what is actually durable
+  (the `_nimbus.bundles` record, while the daemon is running
+  *and* across restarts) and to call out explicitly that
+  restart requires redeploy until autostart is wired.
+- `docs/operating/cli.md` Startup Behavior bullet (formerly
+  lines 658-661) repeated the same false claim in shorter form.
+  Rewritten to match: the daemon starts at `generation = 0`,
+  persisted bundles are visible in `_nimbus.bundles` but not
+  auto-activated, redeploy is required after restart.
+
+After this pass the only place in the repo that describes deploy
+autostart-from-storage as "wired" is *historical* references
+inside this archive (the R2 mitigation history above is faithful
+to what was originally planned vs. what actually shipped); every
+user-facing surface (`cli.md`, `boot.rs` comment, the test
+comment in `app_dir_codegen.rs`, the CD7(j) test itself) tells
+the same honest story.
