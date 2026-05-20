@@ -15,16 +15,25 @@ pub(crate) async fn license_status(
 }
 
 /// Returns runtime limits and live runtime metrics for diagnostics.
+///
+/// Always returns 200 with a stable shape so the operator settings UI never
+/// sees a 4xx on the default `nimbus start` (no app generation yet). The
+/// limits/metrics/reset_capabilities fields are null until a deployment is
+/// active.
 pub(crate) async fn runtime_diagnostics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<RuntimeDiagnosticsResponse>, AppError> {
     let deployment = state.current_deployment();
-    let registry = deployment.convex_registry().ok_or_else(|| {
-        AppError::not_found("runtime diagnostics require an active app generation")
-    })?;
+    let Some(registry) = deployment.convex_registry() else {
+        return Ok(Json(RuntimeDiagnosticsResponse {
+            limits: None,
+            reset_capabilities: None,
+            metrics: None,
+        }));
+    };
     let limits = registry.runtime_limits();
     Ok(Json(RuntimeDiagnosticsResponse {
-        limits: RuntimeLimitsResponse {
+        limits: Some(RuntimeLimitsResponse {
             runtime_backend: limits.backend_kind,
             compatibility_target: limits.compatibility_target,
             execution_model: limits.execution_model,
@@ -53,9 +62,9 @@ pub(crate) async fn runtime_diagnostics(
             max_queued_top_level_invocations_per_tenant: limits
                 .max_queued_top_level_invocations_per_tenant,
             max_nested_runtime_invocations: limits.max_nested_runtime_invocations,
-        },
-        reset_capabilities: limits.reset_capabilities(),
-        metrics: registry.runtime_metrics_snapshot(),
+        }),
+        reset_capabilities: Some(limits.reset_capabilities()),
+        metrics: Some(registry.runtime_metrics_snapshot()),
     }))
 }
 

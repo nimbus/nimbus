@@ -87,9 +87,9 @@ pub(crate) struct VersionUpgradeAction {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct RuntimeDiagnosticsResponse {
-    pub limits: RuntimeLimitsResponse,
-    pub reset_capabilities: RuntimeResetCapabilities,
-    pub metrics: RuntimeMetricsSnapshot,
+    pub limits: Option<RuntimeLimitsResponse>,
+    pub reset_capabilities: Option<RuntimeResetCapabilities>,
+    pub metrics: Option<RuntimeMetricsSnapshot>,
 }
 
 #[derive(Debug, Serialize)]
