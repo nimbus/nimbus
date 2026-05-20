@@ -641,40 +641,76 @@ proof artifact under `docs/plans/proof/desktop-auth-dx/`.
   copy, DA2 `--copy` flag, test coverage across the auth surface).
   Proof: `dev-stdout.txt` (smart-detect ladder section).
 - **L1-L6.** All disposed:
-  - **L1** (terminal-color hint copy) — declined; current copy is
-    plain ASCII and reads cleanly on muted terminals, no demonstrable
-    regression.
-  - **L2** (operator console `Sign out` shortcut) — deferred; better
-    handled inside the upcoming console UX pass, not the on-ramp.
-  - **L3** (launch-ticket TTL telemetry) — deferred to the
-    observability slice.
-  - **L4** (auth-page favicon tuning) — declined; current favicon
-    follows the brand-tier palette already.
-  - **L5** (deploy URL prompt UI) — deferred to a deploy-UX plan.
-  - **L6** (dark-mode token-copy contrast) — shipped as part of
-    DA5 polish; folded into the H4 brand-tier work.
+  - **L1** (banner explicitly names the daemon port) — declined; the
+    port is already visible in the printed launch URL itself
+    (`http://127.0.0.1:<port>/ui/launch?lt=…`). Restating it inline
+    would duplicate info without clarifying anything. Folded into the
+    H5 banner copy unchanged.
+  - **L2** (trust microcopy `Local-only · 127.0.0.1` on the auth
+    card) — shipped in DA1. Visible at line 425 of
+    `crates/nimbus-server/assets/auth.html`. The `<port>` suffix
+    sketched in the plan was dropped: the page is already served on
+    the daemon's port, so the host string alone communicates the
+    trust scope without leaking implementation detail.
+  - **L3** (focus-ring polish on the token input) — shipped in DA5;
+    focus ring is `color-mix(in oklch, var(--brand-blue) 22%,
+    transparent)` and was kept legible against the new background-
+    tinted layer. Captured in the after/auth screenshots.
+  - **L4** (accent gradient under the brand mark) — shipped in DA5
+    as `.brand-accent` (1px teal `--brand-teal-light` →
+    `--brand-teal-deep` linear-gradient). Visible in auth-light.png
+    / auth-dark.png.
+  - **L5** (Cmd+Enter submit on the token input) — shipped
+    transparently: default form submit already handles Enter, and
+    Cmd+Enter resolves to the same submit on macOS. Plan acknowledged
+    no code change was required for keyboard parity.
+  - **L6** (Caps Lock warning microcopy) — deferred; defensible
+    polish but not load-bearing for the on-ramp. Token input is
+    `type="password"` so paste-from-clipboard still works without
+    seeing the characters. Picks up cheaply when the operator
+    console grows real keyboard-tooling.
 - **CL1-CL5.** All disposed:
-  - **CL1** (consolidate auth-page CSS into the design-system file)
-    — deferred; on the post-shell desktop-design-system plan.
-  - **CL2** (replace `crates/nimbus-server/assets/auth.html` inline
-    SVG with `<img src=…>`) — shipped in DA1.
-  - **CL3** (drop the obsolete `Open` button text helper) — shipped
-    in DA3.
-  - **CL4** (consolidate `mask_bearer` helpers) — shipped in DA8
-    (only one implementation now, in `credentials.rs`).
-  - **CL5** (delete the unused `--open` clap arg) — shipped in DA3
-    and locked in by the auth-dx grep gate (`scripts/verify-auth-dx-gates.sh`).
+  - **CL1** (delete the inline arcs+dot SVG placeholder) — shipped
+    in DA1. The auth page now inlines the canonical 322×201 Nimbus
+    cloud mark with `--logo-fill` / `--logo-stroke` variables. No
+    legacy reference.
+  - **CL2** (remove or repurpose the `<footer>` block) — shipped in
+    DA1. The duplicate wordmark is gone; the version chip lives
+    inside `.brand`, and the `Local-only · 127.0.0.1` line stands on
+    its own at the bottom of `<main>` without a `<footer>` element.
+  - **CL3** (audit `--color-brand` on the auth page) — shipped in
+    DA1 + DA5. The auth surface now uses `--brand-blue` /
+    `--brand-blue-soft` brand-tier tokens; `--color-brand` no longer
+    appears anywhere in `auth.html`. Verified by grep of the asset.
+  - **CL4** (de-dupe the JetBrains Mono `@font-face` rules) —
+    deferred. The auth page declares 400 + 500 inline; the operator
+    console declares its own in the SPA bundle. Consolidation
+    requires the embedded-asset pipeline to grow a shared fontset
+    reference, which is out of scope for this DX-only plan. Carries
+    forward into desktop-shell font work; no comment was added
+    pending that work.
+  - **CL5** (move `auth.html` CSS to a sibling `auth.css`?) —
+    declined per the plan's own decision. The self-contained inline-
+    CSS form ships as one embedded asset and keeps the
+    `include_str!` shape clean. Documented in the plan; no code
+    change required.
 - **N1-N5.** All deferred as nice-to-have; none landed in this plan
-  and no follow-up plan is required:
-  - **N1** (auth-page Spanish localization) — deferred; no demand
-    signal yet.
-  - **N2** (`nimbus auth url --json`) — deferred; the human-friendly
-    one-line URL is the canonical surface today.
-  - **N3** (custom URL scheme handler `nimbus://`) — deferred.
-  - **N4** (auth-page reduced-motion polish) — deferred; current
-    page has no entry animation.
-  - **N5** (Touch ID / Windows Hello unlock) — deferred; out of
-    scope for the pre-launch posture.
+  and no follow-up plan is required to ship the auth DX surface:
+  - **N1** (fade-in animation on the auth card) — deferred. Would
+    need a `@keyframes` rule and a `prefers-reduced-motion: reduce`
+    guard. Defensible polish but not required for first contact.
+  - **N2** ("Welcome back" timestamp on subsequent visits) —
+    deferred. Sourced from the session-cookie issued-at; useful
+    later, no operator demand today.
+  - **N3** (mode-toggle preview swatches under the lede) — deferred.
+    Better introduced once the operator-console palette gallery is
+    discoverable from the signed-in shell.
+  - **N4** (`nimbus auth url --qr` for mobile sign-in) — deferred.
+    Useful when mobile dashboards exist; not required pre-launch.
+  - **N5** (auto-refresh the launch ticket on idle >60s) — deferred.
+    Today the page is a one-shot form; idle expiry is recoverable by
+    re-running `nimbus auth url`, which is the documented happy
+    path.
 
 #### Auth posture across commands (DEP / NB / AG tier)
 
