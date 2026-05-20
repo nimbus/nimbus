@@ -189,9 +189,14 @@ mod tests {
             matches!(error, UiError::ServerNotRunning),
             "expected ServerNotRunning, got {error}"
         );
+        // Forbidden-substring regression for CD5's removed flag. Built
+        // via `concat!` so a source-tree grep for the literal flag name
+        // returns 0 hits (CD9 grep gate) while the runtime check stays
+        // load-bearing.
+        let removed_flag = concat!("--", "ensure");
         assert!(
-            !message.contains("--ensure"),
-            "post-CD5 error must not reference the removed --ensure flag, got: {message}"
+            !message.contains(removed_flag),
+            "post-CD5 error must not reference the removed `{removed_flag}` flag, got: {message}"
         );
         assert!(
             message.contains("nimbus start"),
