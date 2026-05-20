@@ -27,6 +27,12 @@ pub struct LocalAdminTokenRecord {
     pub generation: u64,
     pub issued_at: String,
     pub scope: String,
+    /// RFC 3339 timestamp of the last explicit rotation, or `None` for the
+    /// auto-minted first-boot token. Used by the non-loopback bind tripwire
+    /// in `nimbus start` to refuse exposing a never-rotated token on a
+    /// public interface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotated_at: Option<String>,
 }
 
 impl LocalAdminTokenRecord {
@@ -34,6 +40,20 @@ impl LocalAdminTokenRecord {
         let key = hmac::Key::new(hmac::HMAC_SHA256, self.token.as_bytes());
         let expected = hmac::sign(&key, self.token.as_bytes());
         hmac::verify(&key, candidate.as_bytes(), expected.as_ref()).is_ok()
+    }
+
+    /// True when the record carries a parseable `rotated_at` timestamp that
+    /// is no older than `max_age`. Never-rotated tokens (rotated_at = None)
+    /// are always considered stale: the non-loopback bind tripwire must
+    /// demand an explicit rotation before exposing the token publicly.
+    pub fn rotation_is_fresh(&self, now: OffsetDateTime, max_age: time::Duration) -> bool {
+        let Some(rotated_at) = self.rotated_at.as_deref() else {
+            return false;
+        };
+        let Ok(rotated) = OffsetDateTime::parse(rotated_at, &Rfc3339) else {
+            return false;
+        };
+        now - rotated < max_age
     }
 }
 
@@ -82,10 +102,17 @@ pub fn rotate_local_admin_token_offline(
                 ),
             )
         })?;
-        let rotated = generate_local_admin_token(current.generation.saturating_add(1))?;
+        let mut rotated = generate_local_admin_token(current.generation.saturating_add(1))?;
+        rotated.rotated_at = Some(now_rfc3339()?);
         write_local_admin_token_file(&paths.auth_token_path, &rotated)?;
         Ok(rotated)
     })
+}
+
+pub(crate) fn now_rfc3339() -> io::Result<String> {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .map_err(|error| io::Error::other(format!("failed to format timestamp: {error}")))
 }
 
 pub(crate) fn with_token_file_lock<T>(
@@ -195,6 +222,7 @@ pub(crate) fn generate_local_admin_token(generation: u64) -> io::Result<LocalAdm
         generation,
         issued_at,
         scope: LOCAL_ADMIN_TOKEN_SCOPE.to_string(),
+        rotated_at: None,
     })
 }
 
@@ -342,6 +370,63 @@ mod tests {
             load_local_admin_token(&paths).expect("rotated token should load"),
             rotated
         );
+    }
+
+    #[test]
+    fn offline_rotation_populates_rotated_at_freshness_window() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_paths(temp.path());
+
+        let first = load_or_create_local_admin_token(&paths).expect("token should be created");
+        assert!(
+            first.rotated_at.is_none(),
+            "auto-minted first-boot token must leave rotated_at unset"
+        );
+        assert!(
+            !first.rotation_is_fresh(OffsetDateTime::now_utc(), time::Duration::days(30)),
+            "never-rotated token must report as stale to the bind tripwire"
+        );
+
+        let rotated =
+            rotate_local_admin_token_offline(&paths).expect("offline rotation should succeed");
+        let rotated_at = rotated
+            .rotated_at
+            .as_deref()
+            .expect("offline rotation must populate rotated_at");
+        OffsetDateTime::parse(rotated_at, &Rfc3339)
+            .expect("rotated_at should round-trip as RFC 3339");
+        assert!(
+            rotated.rotation_is_fresh(OffsetDateTime::now_utc(), time::Duration::days(30)),
+            "freshly rotated token must report fresh inside the 30-day window"
+        );
+    }
+
+    #[test]
+    fn records_persisted_without_rotated_at_load_with_none() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_paths(temp.path());
+        paths
+            .ensure_auth_parent_dir()
+            .expect("auth directory should build");
+        // Older on-disk format omitted `rotatedAt`. Confirm we still load it
+        // and treat it as never-rotated (the bind tripwire then forces an
+        // explicit rotation before exposing the token publicly).
+        let legacy = serde_json::json!({
+            "version": LOCAL_ADMIN_TOKEN_VERSION,
+            "token": "nimbus_at_8j-X3yfa1RuC0WMNB7TtoFu1eK0vCSEhSAxwo0xPYcA",
+            "generation": 1,
+            "issuedAt": "2026-01-01T00:00:00Z",
+            "scope": LOCAL_ADMIN_TOKEN_SCOPE,
+        });
+        fs::write(
+            &paths.auth_token_path,
+            serde_json::to_vec_pretty(&legacy).expect("legacy fixture should serialize"),
+        )
+        .expect("legacy token fixture should write");
+
+        let record = load_local_admin_token(&paths).expect("legacy file should load");
+        assert!(record.rotated_at.is_none());
+        assert!(!record.rotation_is_fresh(OffsetDateTime::now_utc(), time::Duration::days(30)));
     }
 
     #[test]

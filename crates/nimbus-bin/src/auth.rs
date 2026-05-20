@@ -4,7 +4,9 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use nimbus_server::{LocalServerPaths, read_live_server_discovery};
+use nimbus_server::{
+    LocalServerPaths, read_live_server_discovery, rotate_local_admin_token_offline,
+};
 
 use crate::credentials::{
     self, ConnectionEntry, CredentialsFile, default_credentials_path, find_connection, mask_bearer,
@@ -22,6 +24,9 @@ pub(crate) enum AuthCommand {
     Status(AuthStatusCommand),
     /// Remove a stored deploy bearer.
     Logout(AuthLogoutCommand),
+    /// Rotate the local admin token (required before `nimbus start --allow-network`).
+    #[command(name = "rotate-admin")]
+    RotateAdmin(AuthRotateAdminCommand),
 }
 
 #[derive(Debug, Args)]
@@ -57,6 +62,10 @@ pub(crate) struct AuthLogoutCommand {
     #[arg(long)]
     pub(crate) url: String,
 }
+
+#[derive(Debug, Args)]
+#[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
+pub(crate) struct AuthRotateAdminCommand {}
 
 pub(crate) enum AuthUrlError {
     ServerNotRunning,
@@ -107,7 +116,25 @@ pub(crate) async fn run_auth_command(command: AuthCommand) -> Result<(), Box<dyn
         AuthCommand::Login(command) => run_auth_login_command(command),
         AuthCommand::Status(command) => run_auth_status_command(command),
         AuthCommand::Logout(command) => run_auth_logout_command(command),
+        AuthCommand::RotateAdmin(command) => run_auth_rotate_admin_command(command),
     }
+}
+
+fn run_auth_rotate_admin_command(_command: AuthRotateAdminCommand) -> Result<(), Box<dyn Error>> {
+    let paths = LocalServerPaths::resolve_for_current_platform()?;
+    let rotated = rotate_local_admin_token_offline(&paths)?;
+    println!(
+        "Rotated local admin token (generation {} → token file: {}).",
+        rotated.generation,
+        paths.auth_token_path.display()
+    );
+    if let Some(rotated_at) = rotated.rotated_at.as_deref() {
+        println!("rotated_at: {rotated_at}");
+    }
+    println!(
+        "Active sign-in sessions and launch tickets are invalidated. Run `nimbus auth url` to mint a fresh launch URL."
+    );
+    Ok(())
 }
 
 fn run_auth_login_command(command: AuthLoginCommand) -> Result<(), Box<dyn Error>> {
