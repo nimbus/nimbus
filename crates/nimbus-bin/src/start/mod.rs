@@ -4,6 +4,7 @@ use clap::Args;
 
 mod boot;
 mod config;
+mod first_boot;
 mod runtime_limits;
 #[cfg(test)]
 mod tests;

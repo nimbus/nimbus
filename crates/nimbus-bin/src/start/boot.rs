@@ -12,6 +12,7 @@ use super::StartCommand;
 use super::config::{
     control_data_dir_from_persistence_config, persistence_config_from_start_command,
 };
+use super::first_boot::{is_first_boot, spawn_first_boot_announce};
 use super::runtime_limits::runtime_limits_from_command;
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
@@ -41,6 +42,13 @@ pub(crate) async fn run_start_command(
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
+    // Snapshot first-boot before `Service::new_with_persistence_config`
+    // touches the data dir; otherwise the marker landscape we observe
+    // would always say "second boot" because Service initialization
+    // would have already populated the dir. The H5 banner is fired
+    // after the listener is up and the discovery lease is held so the
+    // launch ticket can mint against the live server.
+    let is_first_boot_run = is_first_boot(&compose_control_data_dir);
     let resolved_app_dir = resolve_start_app_dir(&command)?;
     run_codegen_preflight(&command, resolved_app_dir.as_ref()).await?;
     let runtime_limits = runtime_limits_from_command(&command);
@@ -85,6 +93,16 @@ pub(crate) async fn run_start_command(
         deploy_admin_enabled,
     );
     emit_non_loopback_warning(listener.local_addr()?);
+    let first_boot_handle = if is_first_boot_run {
+        let console_url = operator_console_url_from_base(&local_listen_url(listener.local_addr()?));
+        Some(spawn_first_boot_announce(
+            console_url,
+            local_server_paths.clone(),
+            compose_control_data_dir.clone(),
+        ))
+    } else {
+        None
+    };
 
     tracing::info!(
         license_kind = ?license_snapshot.kind,
@@ -117,6 +135,10 @@ pub(crate) async fn run_start_command(
     drop(discovery_lease);
     let _ = shutdown_tx.send(true);
     let _ = scheduler_handle.await;
+    if let Some(handle) = first_boot_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
     shutdown_service.quiesce().await;
     server_result?;
     Ok(())
