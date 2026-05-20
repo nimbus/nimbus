@@ -54,7 +54,10 @@ pub(crate) use scheduling::{
 pub(crate) use schema::{delete_table_schema, get_schema, get_table_schema, set_table_schema};
 pub(crate) use services::{restart_service, start_service, stop_service};
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};
-pub(crate) use ui::{create_ui_session, ui_auth, ui_csp_middleware, ui_path, ui_root};
+pub(crate) use ui::{
+    consume_ui_launch_ticket, create_ui_session, mint_ui_launch_ticket, ui_auth, ui_csp_middleware,
+    ui_path, ui_root,
+};
 pub(crate) use version_info::version_info;
 
 fn parse_document_id(value: &str) -> Result<DocumentId, AppError> {

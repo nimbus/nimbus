@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::body::Bytes;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -13,8 +13,11 @@ use serde_json::json;
 use super::{AppError, AppState};
 use crate::local_server::{
     IssuedSessionCookie, LOCAL_SESSION_COOKIE_NAME, LocalServerAuditEvent, LocalServerRouteFamily,
-    SessionBootstrapFailure, SessionValidationResult, origin_from_headers,
+    SessionBootstrapFailure, SessionValidationResult, authorize_standard_server_access,
+    origin_from_headers,
 };
+
+const AUTH_PAGE_TEMPLATE: &str = include_str!("../../assets/auth.html");
 
 // The SPA shell embeds a single inline <script> in `index.html` that resolves
 // the theme synchronously before paint to avoid FOUC. Its SHA-256 is pinned
@@ -77,10 +80,152 @@ pub(crate) async fn ui_path(
     serve_spa_shell(&state, &headers)
 }
 
-pub(crate) async fn ui_auth() -> Html<&'static str> {
-    Html(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Nimbus Sign In</title></head><body><main><h1>Nimbus</h1><form method=\"post\" action=\"/ui/auth/session\"><label>Local admin token <input type=\"password\" name=\"token\" autocomplete=\"off\" autofocus /></label><button type=\"submit\">Continue</button></form></main></body></html>",
+pub(crate) async fn ui_auth() -> Html<String> {
+    Html(render_auth_page())
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LaunchTicketQuery {
+    lt: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct LaunchTicketMintResponse {
+    ticket: String,
+    url: String,
+}
+
+pub(crate) async fn mint_ui_launch_ticket(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+        AppError::unauthorized(
+            "ui launch ticket mint is unavailable because server access auth is not configured",
+        )
+    })?;
+    let origin = origin_from_headers(&headers);
+    let auth_method = authorize_standard_server_access(
+        &headers,
+        Some(local_server_security.as_ref()),
     )
+    .inspect_err(|error| {
+        state.record_local_server_audit(LocalServerAuditEvent {
+            route_family: LocalServerRouteFamily::UiAuthSession,
+            tenant_id: None,
+            auth_scope: "launch_ticket_mint",
+            auth_method: None,
+            success: false,
+            origin: origin.clone(),
+            reason: error.to_string(),
+        });
+    })?;
+    let ticket = local_server_security
+        .mint_launch_ticket()
+        .map_err(|error| {
+            AppError::from(nimbus_core::Error::Internal(format!(
+                "failed to mint launch ticket: {error}"
+            )))
+        })?;
+    state.record_local_server_audit(LocalServerAuditEvent {
+        route_family: LocalServerRouteFamily::UiAuthSession,
+        tenant_id: None,
+        auth_scope: "launch_ticket_mint",
+        auth_method,
+        success: true,
+        origin,
+        reason: format!("launch_ticket.minted prefix={}", short_prefix(&ticket)),
+    });
+    let url = format!("/ui/launch?lt={ticket}");
+    Ok(axum::Json(LaunchTicketMintResponse { ticket, url }).into_response())
+}
+
+pub(crate) async fn consume_ui_launch_ticket(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<LaunchTicketQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let local_server_security = state.local_server_security.as_ref().ok_or_else(|| {
+        AppError::unauthorized(
+            "ui launch ticket consume is unavailable because server access auth is not configured",
+        )
+    })?;
+    let origin = origin_from_headers(&headers);
+    let Some(ticket) = query.lt.as_deref().filter(|value| !value.is_empty()) else {
+        let error = AppError::unauthorized("ui launch endpoint requires `lt=<ticket>` query");
+        state.record_local_server_audit(LocalServerAuditEvent {
+            route_family: LocalServerRouteFamily::UiAuthSession,
+            tenant_id: None,
+            auth_scope: "launch_ticket_consume",
+            auth_method: Some("launch_ticket"),
+            success: false,
+            origin,
+            reason: error.to_string(),
+        });
+        return Err(error);
+    };
+    let issued = local_server_security
+        .create_session_for_launch_ticket(ticket)
+        .map_err(|error| {
+            state.record_local_server_audit(LocalServerAuditEvent {
+                route_family: LocalServerRouteFamily::UiAuthSession,
+                tenant_id: None,
+                auth_scope: "launch_ticket_consume",
+                auth_method: Some("launch_ticket"),
+                success: false,
+                origin: origin.clone(),
+                reason: map_session_bootstrap_error(error.clone()).to_string(),
+            });
+            map_session_bootstrap_error(error)
+        })?;
+    state.record_local_server_audit(LocalServerAuditEvent {
+        route_family: LocalServerRouteFamily::UiAuthSession,
+        tenant_id: None,
+        auth_scope: "launch_ticket_consume",
+        auth_method: Some("launch_ticket"),
+        success: true,
+        origin,
+        reason: format!("session.created prefix={}", short_prefix(ticket)),
+    });
+
+    let mut response = Redirect::to("/ui/").into_response();
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&build_session_set_cookie(&issued)).map_err(|error| {
+            AppError::from(nimbus_core::Error::Internal(format!(
+                "failed to encode session cookie: {error}"
+            )))
+        })?,
+    );
+    Ok(response)
+}
+
+fn short_prefix(ticket: &str) -> &str {
+    let visible = ticket.len().min(8);
+    &ticket[..visible]
+}
+
+fn render_auth_page() -> String {
+    let latin_400 = find_embedded_font("jetbrains-mono-latin-400-normal").unwrap_or_default();
+    let latin_500 = find_embedded_font("jetbrains-mono-latin-500-normal").unwrap_or_default();
+    AUTH_PAGE_TEMPLATE
+        .replace("{{ JETBRAINS_MONO_400 }}", &latin_400)
+        .replace("{{ JETBRAINS_MONO_500 }}", &latin_500)
+        .replace("{{ NIMBUS_VERSION }}", env!("CARGO_PKG_VERSION"))
+}
+
+fn find_embedded_font(stem: &str) -> Option<String> {
+    UiAssets::iter().find_map(|name| {
+        let candidate = name.as_ref();
+        if candidate.starts_with("assets/")
+            && candidate.contains(stem)
+            && candidate.ends_with(".woff2")
+        {
+            Some(candidate.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 pub(crate) async fn create_ui_session(
