@@ -174,10 +174,9 @@ async fn announce_launch_url_when_ready(console_url: String, decision: AutoOpenD
     let launch_url = mint_launch_url_or_fallback(&console_url).await;
     if decision.auto_open {
         if let Err(error) = open::that(&launch_url) {
-            let message =
-                format!("browser launcher failed: {error}; open this URL to sign in: {launch_url}");
-            tracing::error!("{message}");
-            let _ = cli_ux::write_stderr_line(&format!("error: {message}"));
+            tracing::error!("browser launcher failed: {error}; falling back to printed URL");
+            let _ = cli_ux::write_stderr_line(&format!("error: browser launcher failed: {error}"));
+            let _ = cli_ux::write_stderr_line(&format!("Open this URL to sign in: {launch_url}"));
         }
         return;
     }
