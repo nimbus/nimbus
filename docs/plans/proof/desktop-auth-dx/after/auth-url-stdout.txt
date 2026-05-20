@@ -1,0 +1,12 @@
+Proof of DA2: `nimbus auth url` mints a single-use launch URL.
+Captured 2026-05-20 against the debug build at target/debug/nimbus.
+
+# Success case — daemon running on 127.0.0.1:3211
+$ nimbus auth url
+http://127.0.0.1:3211/ui/launch?lt=nimbus_lt_c8U5BfSn9Bacpo-JS-AvGCjpqC_7RQSrEnrZUvWGA34
+exit=0
+
+# No-daemon case — fresh HOME/TMPDIR with no server discovery
+$ TMPDIR=/tmp/nimbus-da2-proof/tmp HOME=/tmp/nimbus-da2-proof/home nimbus auth url
+Error: Nimbus server is not running. Start one with `nimbus start` (or `nimbus dev` for a watched dev loop) and re-run `nimbus auth url`.
+exit=1
