@@ -29,13 +29,18 @@
   --color-border-strong: oklch(82% 0.020 250);
   --color-text: oklch(20% 0.035 263);
   --color-muted: oklch(48% 0.028 255);
-  --color-brand: oklch(62% 0.20 258);
   --color-link: oklch(54% 0.22 264);
+  --color-danger: oklch(54% 0.20 27);
+  --color-danger-soft: oklch(96% 0.04 27);
   /* Brand-tier blue. Locked to the Cool Blue primary from DESIGN.md
      §Brand Palette / Two-Tier Bridge; never swaps with operator-console
      palette (mono / warm) because /ui/auth is a first-contact surface. */
   --brand-blue: oklch(62% 0.20 258);
   --brand-blue-soft: oklch(85% 0.10 197);
+  /* Brand-tier teal accents (DESIGN.md two-tier bridge). Used as a 1px
+     decorative gradient under the brand mark only. */
+  --brand-teal-light: oklch(89% 0.10 197);
+  --brand-teal-deep: oklch(72% 0.13 215);
   --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04),
                  0 8px 24px rgba(15, 23, 42, 0.06);
 }
@@ -50,10 +55,13 @@
     --color-border-strong: oklch(40% 0.030 258);
     --color-text: oklch(91% 0.014 252);
     --color-muted: oklch(67% 0.026 248);
-    --color-brand: oklch(72% 0.17 248);
     --color-link: oklch(82% 0.11 247);
+    --color-danger: oklch(70% 0.18 24);
+    --color-danger-soft: oklch(28% 0.08 24);
     --brand-blue: oklch(72% 0.17 248);
     --brand-blue-soft: oklch(70% 0.13 207);
+    --brand-teal-light: oklch(78% 0.10 197);
+    --brand-teal-deep: oklch(62% 0.12 215);
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4),
                    0 8px 24px rgba(0, 0, 0, 0.45);
   }
@@ -97,7 +105,7 @@ main {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 24px;
+  margin-bottom: 6px;
 }
 
 .brand-mark {
@@ -133,6 +141,25 @@ main {
   border: 1px solid var(--color-border);
 }
 
+/* L4 — brand-tier accent gradient under the mark row. 1px decorative bar;
+   stays in the brand tier (teal light → deep) so the auth surface keeps a
+   bridge gesture to the operator console without leaking chrome-tier
+   tokens onto the first-contact page. */
+.brand-accent {
+  height: 1px;
+  width: 100%;
+  margin: 0 0 22px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    var(--brand-teal-light) 18%,
+    var(--brand-teal-deep) 50%,
+    var(--brand-teal-light) 82%,
+    transparent 100%
+  );
+  opacity: 0.85;
+}
+
 h1 {
   font-size: 20px;
   font-weight: 500;
@@ -145,6 +172,16 @@ h1 {
   color: var(--color-muted);
   font-size: 13px;
   margin: 0 0 20px;
+}
+
+.lede code {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 form {
@@ -178,15 +215,43 @@ input[type="password"] {
 }
 
 input[type="password"]:focus {
-  border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-brand) 22%, transparent);
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-blue) 22%, transparent);
+}
+
+input[type="password"][aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+input[type="password"][aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-danger) 25%, transparent);
+}
+
+.error-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 9px 11px;
+  background: var(--color-danger-soft);
+  border: 1px solid color-mix(in oklch, var(--color-danger) 45%, transparent);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-danger);
+}
+
+.error-message .error-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-weight: 600;
 }
 
 button[type="submit"] {
   margin-top: 6px;
-  background: var(--color-brand);
+  background: var(--brand-blue);
   color: var(--color-surface);
-  border: 1px solid var(--color-brand);
+  border: 1px solid var(--brand-blue);
   border-radius: 8px;
   padding: 9px 14px;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -204,7 +269,7 @@ button[type="submit"]:hover {
 
 button[type="submit"]:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-brand) 35%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-blue) 35%, transparent);
 }
 
 .hint {
@@ -215,7 +280,15 @@ button[type="submit"]:focus-visible {
   border: 1px solid var(--color-border);
   font-size: 12px;
   color: var(--color-muted);
-  line-height: 1.5;
+  line-height: 1.55;
+}
+
+.hint p {
+  margin: 0;
+}
+
+.hint p + p {
+  margin-top: 6px;
 }
 
 .hint code {
@@ -226,6 +299,71 @@ button[type="submit"]:focus-visible {
   border: 1px solid var(--color-border);
   border-radius: 4px;
   padding: 1px 6px;
+}
+
+/* M3 — token-file disclosure. Demoted to a collapsed details/summary so
+   the recommended `nimbus auth url` path stays the primary CTA. */
+.other-ways {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.other-ways summary {
+  cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  outline: none;
+  list-style: none;
+  padding: 6px 0;
+}
+
+.other-ways summary::-webkit-details-marker { display: none; }
+
+.other-ways summary::before {
+  content: "›";
+  display: inline-block;
+  width: 12px;
+  margin-right: 2px;
+  transition: transform 120ms ease;
+  color: var(--color-muted);
+}
+
+.other-ways[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.other-ways summary:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-blue) 22%, transparent);
+  border-radius: 4px;
+}
+
+.other-ways-body {
+  padding: 8px 2px 2px;
+  line-height: 1.55;
+}
+
+.other-ways-body p {
+  margin: 0 0 8px;
+}
+
+.other-ways-body p:last-child {
+  margin-bottom: 0;
+}
+
+.other-ways-body code {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  word-break: break-all;
 }
 
 .local-only {
@@ -262,18 +400,27 @@ button[type="submit"]:focus-visible {
     <span class="brand-wordmark">nimbus</span>
     <span class="brand-version" aria-label="Version">v{{ NIMBUS_VERSION }}</span>
   </div>
+  <div class="brand-accent" aria-hidden="true"></div>
   <h1 id="auth-title">Sign in</h1>
-  <p class="lede">Paste the local admin token to open the operator console.</p>
+  <p class="lede">Sign in with a launch URL from <code>nimbus auth url</code>, or paste the local admin token below.</p>
   <form method="post" action="/ui/auth/session" aria-label="Local admin sign in">
+    {{ ERROR_BLOCK }}
     <label for="local-admin-token">
       <span>Local admin token</span>
-      <input id="local-admin-token" type="password" name="token" autocomplete="off" autofocus required spellcheck="false" />
+      <input id="local-admin-token" type="password" name="token" autocomplete="off" autofocus required spellcheck="false"{{ ARIA_INVALID }} />
     </label>
     <button type="submit">Continue</button>
   </form>
-  <p class="hint">
-    Or run <code>nimbus dev --open</code> next time &mdash; the CLI opens the console already signed in.
-  </p>
+  <div class="hint">
+    <p>Run <code>nimbus auth url</code> on this machine to mint a one-shot launch URL &mdash; the console opens already signed in.</p>
+  </div>
+  <details class="other-ways">
+    <summary>Other ways to sign in</summary>
+    <div class="other-ways-body">
+      <p><strong>Launch URL.</strong> <code>nimbus auth url</code> prints a fresh <code>nimbus_lt_…</code> URL on stdout. Paste it into the address bar to skip this form.</p>
+      <p><strong>Token file.</strong> The local admin token lives at <code>~/Library/Application Support/nimbus/auth/token</code> on macOS (or <code>$XDG_CONFIG_HOME/nimbus/auth/token</code> on Linux). Paste its contents above.</p>
+    </div>
+  </details>
   <p class="local-only" aria-label="Trust scope">
     Local-only<span class="dot" aria-hidden="true"></span>127.0.0.1
   </p>

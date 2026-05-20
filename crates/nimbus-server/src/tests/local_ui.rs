@@ -376,6 +376,19 @@ async fn invalid_token_post_fails_and_rotated_cookie_is_revoked() {
         .await
         .expect("invalid session bootstrap should send");
     assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+    // DA5 — the form-encoded POST path re-renders the auth page with an
+    // inline error block instead of falling through to the generic JSON
+    // 401. JSON callers still get the structured error (covered by
+    // `invalid_token_json_post_returns_structured_unauthorized`).
+    let invalid_body = invalid.text().await.expect("invalid response should read");
+    assert!(
+        invalid_body.contains("aria-invalid=\"true\""),
+        "invalid token POST should re-render the form with aria-invalid"
+    );
+    assert!(
+        invalid_body.contains("class=\"error-message\""),
+        "invalid token POST should surface an inline error block above the input"
+    );
 
     let valid = server
         .client()
@@ -443,9 +456,67 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
         body.contains("brand-wordmark") && body.contains(">nimbus<"),
         "auth page should render the nimbus brand wordmark"
     );
+    // DA5 — C4: hint copy leads with `nimbus auth url`, no longer
+    // `nimbus dev --open`. The dev shortcut moved into the M3 disclosure.
     assert!(
-        body.contains("nimbus dev --open"),
-        "auth page should hint at the spawn-and-open shortcut"
+        body.contains("nimbus auth url"),
+        "auth page hint should recommend `nimbus auth url` as the primary CTA"
+    );
+    assert!(
+        !body.contains("nimbus dev --open"),
+        "auth page hint should no longer surface `nimbus dev --open` as the primary CTA"
+    );
+    // DA5 — H3: lede leads with the launch URL path, demotes the
+    // paste-token-below sentence to a fallback.
+    assert!(
+        body.contains("Sign in with a launch URL") && body.contains("paste the local admin token"),
+        "auth page lede should lead with the launch URL and mention the token as a fallback"
+    );
+    // DA5 — M3: token-file path is wrapped in a collapsed disclosure so the
+    // launch URL stays the primary CTA. Snapshot the disclosure summary so a
+    // future refactor that flips the file-path back to the primary surface
+    // breaks this test.
+    assert!(
+        body.contains("<details class=\"other-ways\"")
+            && body.contains("<summary>Other ways to sign in</summary>"),
+        "auth page should wrap the token-file path inside an `Other ways to sign in` disclosure"
+    );
+    assert!(
+        body.contains("Application Support/nimbus/auth/token"),
+        "auth page disclosure should still mention the local admin token file path"
+    );
+    // DA5 — L4: brand-tier teal accent gradient sits under the brand row.
+    assert!(
+        body.contains("class=\"brand-accent\""),
+        "auth page should render the brand-tier accent strip under the mark"
+    );
+    assert!(
+        body.contains("--brand-teal-light") && body.contains("--brand-teal-deep"),
+        "auth page should declare brand-tier teal tokens for the L4 accent gradient"
+    );
+    // DA5 — CL3: the auth-page chrome should no longer *use* the
+    // operator-console `--color-brand` token; the page is brand-tier only.
+    // (Documenting comments may still mention the token by name to explain
+    // why the page diverges, so we look for any `var(--color-brand)`
+    // reference rather than the literal substring.)
+    assert!(
+        !body.contains("var(--color-brand)"),
+        "auth page CSS should not reach for var(--color-brand) (brand-tier only)"
+    );
+    // DA5 — M2: in the unauthenticated GET path, the form should render
+    // without an aria-invalid bit on the input element or an .error-message
+    // block. (CSS selectors that match `aria-invalid="true"` may appear in
+    // the stylesheet; the negative check targets the input element by
+    // looking for the closing slug that only renders when no aria-invalid
+    // attribute is substituted in.) The error path is exercised separately
+    // in `invalid_token_form_post_rerenders_auth_with_error_state`.
+    assert!(
+        body.contains("spellcheck=\"false\" />"),
+        "auth GET input should close cleanly with no aria-invalid attribute"
+    );
+    assert!(
+        !body.contains("class=\"error-message\""),
+        "auth GET should not render an inline error block"
     );
     assert!(
         body.contains("@font-face") && body.contains("JetBrains Mono"),
@@ -630,4 +701,99 @@ async fn consume_ui_launch_ticket_rejects_missing_or_unknown_tickets() {
         .await
         .expect("consume with unknown ticket should send");
     assert_eq!(bogus.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// DA5 — When a form-encoded POST to `/ui/auth/session` carries a bad
+/// token, the server re-renders the auth page with the error block above
+/// the input and an `aria-invalid="true"` bit on the field. The status is
+/// still 401 so the form submission round-trips cleanly. JSON callers
+/// keep the structured error envelope (covered separately by
+/// `invalid_token_json_post_returns_structured_unauthorized`).
+#[tokio::test]
+async fn invalid_token_form_post_rerenders_auth_with_error_state() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, _token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let response = server
+        .client()
+        .post(server.http_url("/ui/auth/session"))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body("token=this-is-not-the-token")
+        .send()
+        .await
+        .expect("invalid form post should send");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        content_type.contains("text/html"),
+        "form-encoded failure should respond with HTML, got content-type {content_type}"
+    );
+    let body = response.text().await.expect("error body should read");
+    assert!(
+        body.contains("class=\"error-message\"") && body.contains("role=\"alert\""),
+        "error response should render the .error-message block with role=alert"
+    );
+    assert!(
+        body.contains("aria-invalid=\"true\""),
+        "error response should mark the token input as aria-invalid"
+    );
+    assert!(
+        body.contains("invalid local admin token"),
+        "error response should surface the specific reason copy"
+    );
+    // The form structure must remain intact so the user can retry without
+    // losing the brand chrome or the disclosure CTA.
+    assert!(
+        body.contains("<details class=\"other-ways\"") && body.contains("nimbus auth url"),
+        "error response should still render the canonical hint + disclosure"
+    );
+    assert!(
+        !body.contains("Set-Cookie: nimbus_local_session="),
+        "error response should not issue a session cookie"
+    );
+}
+
+/// DA5 — JSON callers still get the structured 401 envelope (no HTML
+/// re-render). Verifies the `Accept: application/json` branch keeps the
+/// existing programmatic contract intact while form posts get the new
+/// inline error rendering.
+#[tokio::test]
+async fn invalid_token_json_post_returns_structured_unauthorized() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, _token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let response = server
+        .client()
+        .post(server.http_url("/ui/auth/session"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json")
+        .body(r#"{"token":"this-is-not-the-token"}"#)
+        .send()
+        .await
+        .expect("invalid json post should send");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("json failure response should parse");
+    assert_eq!(body["error"]["message"], json!("invalid local admin token"));
 }
