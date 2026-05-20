@@ -183,7 +183,7 @@ function TenantsPage() {
             {tenants.map((tenantId) => (
               <li key={tenantId}>
                 <a
-                  href={`/admin/tenants?selected=${tenantId}`}
+                  href={`/operator/tenants?selected=${tenantId}`}
                   data-testid={`sub-drawer-item-op-${tenantId}`}
                   className="flex h-8 items-center rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
                 >

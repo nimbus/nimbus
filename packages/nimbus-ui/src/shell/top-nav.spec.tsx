@@ -83,7 +83,7 @@ describe("TopNav", () => {
     );
   });
 
-  it("hides the tenant selector on /admin/machines", () => {
+  it("hides the tenant selector on /operator/machines", () => {
     setLocation("/operator/machines");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-tenant-slot")).toHaveAttribute(
@@ -96,7 +96,7 @@ describe("TopNav", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the tenant selector in operator-filter mode on /admin/observability", () => {
+  it("renders the tenant selector in operator-filter mode on /operator/observability", () => {
     setLocation("/operator/observability");
     render(<TopNav />);
     expect(screen.getByTestId("top-nav-tenant-slot")).toHaveAttribute(
