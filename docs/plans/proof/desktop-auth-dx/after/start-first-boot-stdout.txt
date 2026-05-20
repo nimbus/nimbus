@@ -1,0 +1,61 @@
+# DA4 proof — `nimbus start` first-boot launch URL banner (H5)
+
+## Marker shape
+
+The first-boot signal is a stamp file at
+`<control-data-dir>/.nimbus-init-stamp`. It is written *after* the
+banner emits, so a Ctrl-C between the listener binding and the stamp
+write still surfaces the banner on the next boot. The marker is in
+the control data dir (not LocalServerPaths) so a user blowing away
+`--data-dir` triggers a fresh welcome.
+
+## Unit + integration test transcript
+
+$ cargo test -p nimbus-bin start::first_boot:: 2>&1 | tail -20
+running 6 tests
+test start::first_boot::tests::banner_lines_include_launch_url_and_setup_hint ... ok
+test start::first_boot::tests::first_boot_true_when_stamp_absent ... ok
+test start::first_boot::tests::first_boot_stamp_path_uses_dotfile_marker ... ok
+test start::first_boot::tests::first_boot_false_after_stamp_write ... ok
+test start::first_boot::tests::write_first_boot_stamp_creates_missing_parent_dirs ... ok
+Welcome to Nimbus — this looks like a first boot.
+Open this URL to sign in: http://127.0.0.1:62030/ui/launch?lt=nimbus_lt_Xv4UXzJbdZIh33NqRS9T-Dux3vY20vA2zCWEaXktQXc
+(this hint shows once; later starts stay quiet)
+test start::first_boot::tests::announce_first_boot_writes_stamp_after_minting_against_live_server ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 475 filtered out; finished in 0.28s
+
+## Captured banner (live local server, integration test stdout)
+
+Welcome to Nimbus — this looks like a first boot.
+Open this URL to sign in: http://127.0.0.1:62030/ui/launch?lt=nimbus_lt_Xv4UXzJbdZIh33NqRS9T-Dux3vY20vA2zCWEaXktQXc
+(this hint shows once; later starts stay quiet)
+
+The launch URL is a real, single-use `nimbus_lt_*` ticket minted via
+`LocalServerHttpClient::mint_ui_launch_ticket` against the daemon
+that started under the test's `serve_with_options` listener.
+
+## Coverage matrix
+
+| Behavior                                                | Test                                                     |
+|---------------------------------------------------------|----------------------------------------------------------|
+| Fresh data dir reports first-boot                       | `first_boot_true_when_stamp_absent`                      |
+| Writing the stamp flips first-boot back to false        | `first_boot_false_after_stamp_write`                     |
+| Stamp file uses the documented dotfile name             | `first_boot_stamp_path_uses_dotfile_marker`              |
+| Missing parent dirs are created on first write          | `write_first_boot_stamp_creates_missing_parent_dirs`     |
+| Banner contains setup hint + launch URL + "shows once"  | `banner_lines_include_launch_url_and_setup_hint`         |
+| End-to-end mint + announce + stamp against live server  | `announce_first_boot_writes_stamp_after_minting…`        |
+
+## Wiring (see crates/nimbus-bin/src/start/boot.rs)
+
+1. Snapshot `is_first_boot_run = is_first_boot(&compose_control_data_dir)`
+   *before* `Service::new_with_persistence_config` runs, so the marker
+   isn't poisoned by Service initialization touching the data dir.
+2. After binding the listener and acquiring the discovery lease, spawn
+   `first_boot::spawn_first_boot_announce(...)` only when
+   `is_first_boot_run` was true.
+3. The spawned task waits for `/ui/auth` to answer, mints a launch
+   ticket against the local server, prints the H5 banner to stderr,
+   then writes `.nimbus-init-stamp`.
+4. On shutdown, the join handle is aborted so the announce task does
+   not outlive the daemon if /health never came up.
