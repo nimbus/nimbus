@@ -798,10 +798,16 @@ Tables are the default shape for resources:
 
 ### Forms And Editors
 
-- Use segmented controls for mutually exclusive modes.
+- Use **`SegmentedControl`** as the canonical exclusive-choice control for
+  ≤4 options (`packages/nimbus-ui/src/components/segmented-control.tsx`).
+  Both the top-nav DEVELOPER/OPERATOR view switcher and the appearance
+  mode toggle render through it so they cannot drift. `role="radiogroup"`
+  with each segment `role="radio"`; ArrowLeft/Right (and ArrowUp/Down)
+  move focus, Home/End jump to the edges, Enter/Space commit.
+- Use **`Select`** for >4 options or when a label-prefixed dropdown reads
+  better than a row of segments (`packages/nimbus-ui/src/components/select.tsx`).
 - Use toggles/checkboxes for binary settings.
 - Use inputs/sliders/steppers for numeric values.
-- Use menus/comboboxes for bounded option sets.
 - Use JSON/code editors for document, argument, and config values.
 - Validate on blur and before submit. Show field-specific errors.
 

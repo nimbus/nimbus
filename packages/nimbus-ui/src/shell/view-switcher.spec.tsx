@@ -35,11 +35,11 @@ describe("ViewSwitcher", () => {
     setPathname("/app/compute");
     render(<ViewSwitcher />);
     expect(screen.getByTestId("view-switcher-developer")).toHaveAttribute(
-      "aria-pressed",
+      "aria-checked",
       "true",
     );
     expect(screen.getByTestId("view-switcher-operator")).toHaveAttribute(
-      "aria-pressed",
+      "aria-checked",
       "false",
     );
   });
@@ -48,11 +48,11 @@ describe("ViewSwitcher", () => {
     setPathname("/admin/machines");
     render(<ViewSwitcher />);
     expect(screen.getByTestId("view-switcher-operator")).toHaveAttribute(
-      "aria-pressed",
+      "aria-checked",
       "true",
     );
     expect(screen.getByTestId("view-switcher-developer")).toHaveAttribute(
-      "aria-pressed",
+      "aria-checked",
       "false",
     );
   });

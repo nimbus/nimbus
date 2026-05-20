@@ -7,6 +7,7 @@ import {
   type ThemeMode,
   useUiStore,
 } from "../store/ui-store";
+import { SegmentedControl } from "./segmented-control";
 
 type PaletteSwatch = {
   brand: string;
@@ -76,39 +77,13 @@ export function AppearanceSection() {
           <h3 className="mb-2 text-[10px] uppercase tracking-[0.14em] text-muted">
             Mode
           </h3>
-          <div
-            role="radiogroup"
-            aria-label="Theme mode"
-            className="inline-flex overflow-hidden rounded-md border border-app"
-            data-testid="appearance-mode"
-          >
-            {MODE_OPTIONS.map((opt, idx) => {
-              const active = themeMode === opt.value;
-              const Icon = opt.icon;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  aria-label={opt.description}
-                  onClick={() => setThemeMode(opt.value)}
-                  data-testid={`appearance-mode-${opt.value}`}
-                  data-active={active ? "true" : "false"}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 text-xs",
-                    idx > 0 && "border-l border-app",
-                    active
-                      ? "bg-surface-2 text-default"
-                      : "text-muted hover:bg-surface-2 hover:text-default",
-                  )}
-                >
-                  <Icon size={14} aria-hidden className="shrink-0" />
-                  <span>{opt.label}</span>
-                </button>
-              );
-            })}
-          </div>
+          <SegmentedControl<ThemeMode>
+            label="Theme mode"
+            value={themeMode}
+            options={MODE_OPTIONS}
+            onChange={setThemeMode}
+            testid="appearance-mode"
+          />
         </div>
 
         <div>
