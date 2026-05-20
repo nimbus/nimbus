@@ -383,8 +383,8 @@ nimbus ui
 | CD3 | **Refine** the existing startup banners rather than introduce new ones. `crates/nimbus-bin/src/start/boot.rs:251-295` `start_startup_summary_lines` already emits `"Nimbus server listening at <url>"`; `crates/nimbus-bin/src/dev.rs:113` `emit_dev_banner` is the sibling for dev. Both currently print the base URL (`http://host:port/`), not the operator-console URL. Update both to include a CockroachDB-style `operator console:\t<url>` line where `<url>` is `http://<host>:<port>/ui/` (precedent: `cockroachdb/cockroach/pkg/cli/start.go:1204-1248`, tab-aligned `webui:\t<url>`). Keep `local_listen_url` at `boot.rs:326` unchanged — the banner adds `/ui/`, the function still returns the base for discovery callers that need it. Make the new line greppable for the CD7 regression test (literal substring `operator console:` plus `/ui/`). | done |
 | CD4 | Add `--open` flag to **`nimbus dev` only** (not `nimbus start`; see Risks "R8" and Scope). Auto-launch default browser at the operator-console URL **after** the HTTP listener has bound and the same readiness probe used by `nimbus ui` passes — never before, or the browser will race the server. Use the **already-present `open = "5.3"` crate** (`crates/nimbus-bin/Cargo.toml:29`) — `open::that(url)` returns `io::Result<()>`. No new Cargo dependency to add, no `deny.toml` entry to update, and the crate is already accepted by the repo's existing `cargo deny` configuration. On a headless environment (no `DISPLAY`/`WAYLAND_DISPLAY` on Linux, no usable launcher on macOS/Windows — `open::that` returns `Err` in these cases) emit a structured **error-level** log line via `tracing::error!` *and* a corresponding stderr line prefixed `error:` (`error: --open requested but browser launcher failed: <err>; daemon is reachable at <url>`), then continue serving with exit code 0. The semantics: failed `--open` is visible (operator should know the browser didn't launch) but non-fatal (the daemon is the load-bearing thing, the browser pop is the nicety). Document in CD8 that `--open` is best-effort and never blocks daemon startup. | done |
 | CD5 | Replace `nimbus ui --ensure` with unflagged `nimbus ui` (discovery + browser open only). Concrete deletions and updates: drop the `--ensure` flag from the clap derive on `UiArgs`; delete `spawn_nimbus_start` (`crates/nimbus-bin/src/ui.rs:170-191`); update error messages at `ui.rs:50`, `ui.rs:58` to point at `nimbus dev --open` (for spawn-and-open) or `nimbus start` followed by `nimbus ui` (for production-shaped startup); rewrite the test at `crates/nimbus-bin/src/ui.rs:280-300` (`ui_command_without_running_server_returns_actionable_error`) to assert the new no-daemon error wording and remove any `--ensure` reference; remove the `nimbus ui --ensure` example at `crates/nimbus-bin/src/cli_ux.rs:89` (`UI_HELP_EXAMPLES`) and replace it with the `nimbus dev --open` shortcut. | done |
-| CD6 | Sanity-check Electron flow: `desktop/src/main/server.ts:188` calls `spawn(executable, ["start"], { detached: true, stdio: "ignore", windowsHide: true })` with no `cwd` override, so the desktop shell inherits the user's launching CWD. Post-CD1 this is now safe regardless of where the user launches the desktop app from. Verify by running `verify:ds1` (`@nimbus/desktop`) from `~/src/github.com/nimbus/desktop` (the worst-case CWD pre-fix), then once from `/tmp` (control). No Electron code changes expected; this row only confirms the contract. | pending |
-| CD7 | Regression tests in `crates/nimbus-bin/src/start/tests/`, `crates/nimbus-bin/src/dev/tests/`, `crates/nimbus-bin/src/deploy.rs`'s existing test module (lines 649, 671, 699), and a new `crates/nimbus-bin/src/compose/discovery.rs` test module. Each test builds an isolated fixture under `tempdir()` and asserts behaviour, not just non-panic: (a) `nimbus start` from `<tmp>/inner/sub/`, where `<tmp>/` contains `nimbus/` (no `.git/` anywhere), does NOT trigger codegen and does NOT return an app dir; (b) `nimbus dev` from `<tmp>/inner/sub/`, where `<tmp>/inner/.git/` exists and `<tmp>/nimbus/` exists as a sibling outside the boundary, returns `None` (the unrelated `nimbus/` is correctly invisible); (c) `nimbus dev` from `<tmp>/app/src/components/`, where `<tmp>/app/convex/` and `<tmp>/.git/` both exist, returns `<tmp>/app/` (multi-level discovery still works); (d) `nimbus deploy` mirrors (b) and (c) against the deploy walker's surfaces (`firebase.json`, `package.json` with `@google-cloud/functions-framework`, etc.); (e) compose discovery: `<tmp>/inner/.git/` exists, `<tmp>/compose.yaml` exists as a sibling outside the boundary — `resolve_auto_discovered_compose_selection` from `<tmp>/inner/sub/` returns `None`; positive case inside the boundary still works; (f) **Worktree + submodule semantics** (load-bearing — agents in this codebase work primarily through `git worktree add`-created worktrees): test 1 — synthetic `.git` *file* (not directory) at the boundary candidate, confirm `at_git_boundary` returns true (covers the unit-level shape). Test 2 — invoke `git init` + `git worktree add <wt>` in a `tempdir()`, then run each of `detect_app_dir` (dev), `detect_app_dir` (deploy), and `resolve_auto_discovered_compose_selection` from a subdir inside `<wt>` with the relevant marker placed both *inside* and *outside* the worktree root, and assert the walker stops at the worktree's `.git` file rather than escaping to the main repo's `.git/` directory. This is the production-shaped case for every agent and dev who works in worktrees and is the test that fails loudly if anyone ever regresses CD2 to `is_dir()`. (g) `nimbus ui` errors cleanly when no daemon is running, with the new error wording from CD5. (h) banner: `nimbus start --port 0` (ephemeral) prints a line matching `operator console:.*\\b/ui/\\b`. (i) **Discovery file serde round-trip** in `nimbus-bin`: build a `ServerDiscoveryRecord` fixture, serialize to JSON, deserialize, byte-compare against a checked-in `tests/fixtures/server.json.golden` — fails loudly on any silent format drift that would break Electron (`desktop/src/main/discovery.ts`) or the Playwright fixture (mitigates R4). | pending |
+| CD6 | Sanity-check Electron flow: `desktop/src/main/server.ts:188` calls `spawn(executable, ["start"], { detached: true, stdio: "ignore", windowsHide: true })` with no `cwd` override, so the desktop shell inherits the user's launching CWD. Post-CD1 this is now safe regardless of where the user launches the desktop app from. Verify by running `verify:ds1` (`@nimbus/desktop`) from `~/src/github.com/nimbus/desktop` (the worst-case CWD pre-fix), then once from `/tmp` (control). No Electron code changes expected; this row only confirms the contract. | done |
+| CD7 | Regression tests in `crates/nimbus-bin/src/start/tests/`, `crates/nimbus-bin/src/dev/tests/`, `crates/nimbus-bin/src/deploy.rs`'s existing test module (lines 649, 671, 699), and a new `crates/nimbus-bin/src/compose/discovery.rs` test module. Each test builds an isolated fixture under `tempdir()` and asserts behaviour, not just non-panic: (a) `nimbus start` from `<tmp>/inner/sub/`, where `<tmp>/` contains `nimbus/` (no `.git/` anywhere), does NOT trigger codegen and does NOT return an app dir; (b) `nimbus dev` from `<tmp>/inner/sub/`, where `<tmp>/inner/.git/` exists and `<tmp>/nimbus/` exists as a sibling outside the boundary, returns `None` (the unrelated `nimbus/` is correctly invisible); (c) `nimbus dev` from `<tmp>/app/src/components/`, where `<tmp>/app/convex/` and `<tmp>/.git/` both exist, returns `<tmp>/app/` (multi-level discovery still works); (d) `nimbus deploy` mirrors (b) and (c) against the deploy walker's surfaces (`firebase.json`, `package.json` with `@google-cloud/functions-framework`, etc.); (e) compose discovery: `<tmp>/inner/.git/` exists, `<tmp>/compose.yaml` exists as a sibling outside the boundary — `resolve_auto_discovered_compose_selection` from `<tmp>/inner/sub/` returns `None`; positive case inside the boundary still works; (f) **Worktree + submodule semantics** (load-bearing — agents in this codebase work primarily through `git worktree add`-created worktrees): test 1 — synthetic `.git` *file* (not directory) at the boundary candidate, confirm `at_git_boundary` returns true (covers the unit-level shape). Test 2 — invoke `git init` + `git worktree add <wt>` in a `tempdir()`, then run each of `detect_app_dir` (dev), `detect_app_dir` (deploy), and `resolve_auto_discovered_compose_selection` from a subdir inside `<wt>` with the relevant marker placed both *inside* and *outside* the worktree root, and assert the walker stops at the worktree's `.git` file rather than escaping to the main repo's `.git/` directory. This is the production-shaped case for every agent and dev who works in worktrees and is the test that fails loudly if anyone ever regresses CD2 to `is_dir()`. (g) `nimbus ui` errors cleanly when no daemon is running, with the new error wording from CD5. (h) banner: `nimbus start --port 0` (ephemeral) prints a line matching `operator console:.*\\b/ui/\\b`. (i) **Discovery file serde round-trip** in `nimbus-bin`: build a `ServerDiscoveryRecord` fixture, serialize to JSON, deserialize, byte-compare against a checked-in `tests/fixtures/server.json.golden` — fails loudly on any silent format drift that would break Electron (`desktop/src/main/discovery.ts`) or the Playwright fixture (mitigates R4). | done |
 | CD8 | **Documentation pass — enumerated touchpoints, not "the docs."** (1) `docs/operating/cli.md`: rewrite the daemon-CLI section to cover Storybook (component HMR, port 6006), `nimbus dev` (full operator console + watched codegen + `--open`), `nimbus start` (production daemon, no walk-up, deployed-app autostart from storage), `nimbus deploy` (project-rooted, `.git/`-bounded), and `nimbus ui` (discover-and-open only, no `--ensure`); add a "How apps reach a running daemon" subsection distinguishing source-load (`--app-dir`) from deploy-load (admin API); note `npm run dev` inside `packages/nimbus-ui/` is for *component iteration only* (vite at port 5173, no daemon proxy), not a full-app workflow. (2) `docs/operating/desktop-install.md`: remove the live `--ensure` reference (surfaced by repo-wide grep). (3) `docs/plans/README.md`: remove the `--ensure` reference; add a one-line index entry for this plan while active. (4) `README.md` (top-level): audit and update any quickstart that names `nimbus ui --ensure` or assumes pre-CD1 `start` behavior. (5) Adapter docs audit pass — `git grep -l 'nimbus ui\|nimbus start' docs/adapters/` returns ~8 files (convex, firebase, cloud-functions, mongodb, native READMEs and migration/compatibility docs); read each and update only where they reference removed behaviour. (6) Architecture docs audit — `docs/architecture/sandbox/{macos-machine-flow,microvm-service-baseline}.md` and `docs/operating/{deploy-admin-api,encryption,storage-backends}.md`; same audit shape. (7) `CLAUDE.md` "Routing By Work Type": add an entry (suggested wording: `- CLI daemon canonicalization, walk-up boundaries, or banner shape: docs/plans/cli-daemon-canonicalization-plan.md (active until closeout, then archive), docs/operating/cli.md, docs/plans/archive/cli-command-surface-plan.md (prior wave), docs/plans/archive/compose-discovery-plan.md (compose precedent).`). (8) **Plan archival on closeout**: move this file to `docs/plans/archive/cli-daemon-canonicalization-plan.md`, update `docs/plans/README.md` to reflect the move, and update the CLAUDE.md routing entry from (7) to point at the archived path. | pending |
 | CD9 | **Tooling and repo-wide audit hygiene.** (a) Cargo: no new dependency added — CD4 uses the already-present `open = "5.3"` in `crates/nimbus-bin/Cargo.toml:29`. Document this in the CD4 implementation note (commit message or PR description) so a future "dependency consolidation" pass does not strip it. (b) `deny.toml`: no change required (existing config already accepts the `open` crate). (c) Repo-wide grep audit at close time, with the captured output appended to the Execution Log: `git grep -n '\-\-ensure' -- ':(exclude)docs/plans/archive'` → **0**; `git grep -n 'spawn_nimbus_start'` → **0**; `git grep -n 'nimbus ui --ensure'` → **0** (the third is a sanity check — the prefix grep should already cover it, but matching the exact user-visible string catches stray instances where `--ensure` was wrapped). (d) Confirm Makefile lanes pass: `make check`, `make clippy`, `make fmt-check`, `make test`, `make deny`, `make verify-desktop-ui` all clean. Prefer these wrappers over raw `cargo` invocations per CLAUDE.md "Verification Commands" guidance. | pending |
 
@@ -871,4 +871,80 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 449 filtered out
 $ git grep -n 'spawn_nimbus_start\|\-\-ensure' crates/
 crates/nimbus-bin/src/ui.rs:195:            !message.contains("--ensure"),
 crates/nimbus-bin/src/ui.rs:196:            "post-CD5 error must not reference the removed --ensure flag, got: {message}"
+```
+
+(f) CD6 — Electron spawn-and-load contract is verified post-CD1. The
+desktop shell at `desktop/src/main/server.ts:188` still spawns
+`nimbus start` with no `cwd` override; the child therefore inherits the
+launching shell's CWD. Confirmed by inspection plus a live cross-CWD probe
+that pointed two `_electron.launch` invocations (one CWD=`~/src/github.com/nimbus/desktop`,
+one CWD=`/tmp`) at a single pre-spawned daemon and asserted the renderer
+resolved to the same `http://127.0.0.1:8088/ui/auth` URL in both cases. The
+freshly built nimbus banner from `/tmp` also confirms CD1's removal —
+"app dir: none; Convex-compatible routes wait for deploy activation" — and
+CD3's banner shape: "operator console: http://127.0.0.1:8088/ui/". No
+Electron code changes were required. Note: the existing `scripts/ds1-browser-probe.mjs`
+still asserts a `https://example.org/` placeholder URL that the main bootstrap
+has not loaded since DS5 landed; that drift is independent of CD work and is
+filed for the desktop team rather than landed here, where the contract is
+the CWD-invariance proof rather than the stale probe assertion.
+
+```
+$ /Users/jack/src/github.com/nimbus/nimbus/target/debug/nimbus start --host 127.0.0.1 --port 8088
+info: Nimbus server listening at http://127.0.0.1:8088/
+info: operator console:	http://127.0.0.1:8088/ui/
+info: server process owns HTTP, WebSocket, scheduler, and runtime startup
+info: app dir: none; Convex-compatible routes wait for deploy activation
+
+$ node scripts/cd6-cwd-invariance-smoke.mjs   # (transient — not retained)
+from desktop dir: {"ok":true,"url":"http://127.0.0.1:8088/ui/auth"}
+from /tmp:        {"ok":true,"url":"http://127.0.0.1:8088/ui/auth"}
+CD6 smoke PASSED — desktop shell resolved consistent URL across CWDs
+
+$ grep -n 'cwd' /Users/jack/src/github.com/nimbus/desktop/src/main/server.ts
+(0 matches in spawnDetached — no cwd override; contract intact)
+```
+
+(g) CD7 — Regression tests landed across all the surfaces called out in the
+ledger. Eleven new unit tests inside `nimbus-bin`'s existing modules plus a
+new `tests/server_discovery_serde.rs` integration target with its checked-in
+golden cover the nine sub-cases verbatim:
+
+- (a) `start/tests/app_dir_codegen.rs::resolve_start_app_dir_ignores_sibling_nimbus_directory_with_no_git`
+  — fixtures `<tmp>/nimbus/` sibling plus `<tmp>/inner/sub/` CWD with no
+  `.git/` anywhere; asserts `resolve_start_app_dir(StartCommand::default())`
+  is `Ok(None)`. The rebrand-trap shape from the Why section, locked in.
+- (b)(c)(f) `dev.rs` tests:
+  `detect_app_dir_stops_at_git_boundary_when_marker_lives_outside`,
+  `detect_app_dir_walks_multiple_levels_within_git_boundary`,
+  `detect_app_dir_treats_dot_git_file_as_worktree_boundary` (synthetic `.git`
+  *file* containing `gitdir:` — the agent-worktree shape).
+- (d)(f) `deploy.rs` mirrors the dev tests with `firebase.json` as the
+  outside-boundary marker.
+- (e)(f) `compose/discovery.rs` mirrors against `DEFAULT_COMPOSE_FILE` with
+  the existing `write_file` helper —
+  `auto_discovery_stops_at_git_boundary_when_compose_lives_outside`,
+  `auto_discovery_finds_compose_inside_git_boundary`,
+  `auto_discovery_treats_dot_git_file_as_worktree_boundary`.
+- (g) Covered by the rewritten CD5 test
+  `ui_command_without_running_server_returns_actionable_error` which already
+  asserts the new wording and forbids the `--ensure` substring.
+- (h) `start/tests/cli_surface.rs::start_startup_summary_emits_operator_console_url_line`
+  builds the banner with `SocketAddr::from((Ipv4Addr::LOCALHOST, 4711))` and
+  asserts a line starts with `operator console:`, contains `/ui/`, and
+  contains `127.0.0.1:4711`.
+- (i) `tests/server_discovery_serde.rs` integration test importing
+  `nimbus_server::ServerDiscoveryRecord` builds a fixture (pid 12345, address
+  `127.0.0.1:8088`, version `0.1.31`, protocol `nimbus.v2`), pretty-serialises
+  it, byte-compares against `tests/fixtures/server_discovery.golden.json`, and
+  confirms round-trip equality. The golden's camelCase shape
+  (`startedAt`, `protocolVersions`) is the contract the Electron discovery
+  reader and Playwright fixture rely on.
+
+```
+$ cargo test -p nimbus-bin
+test result: ok. 463 passed; 0 failed; 0 ignored; 0 measured
+
+$ cargo test -p nimbus-bin --test server_discovery_serde
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured
 ```

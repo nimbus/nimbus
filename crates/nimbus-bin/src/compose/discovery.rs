@@ -655,4 +655,69 @@ mod tests {
             "auto-discovered /workspace/compose.yaml (+ compose.override.yaml)"
         );
     }
+
+    #[test]
+    fn auto_discovery_stops_at_git_boundary_when_compose_lives_outside() {
+        // CD7(e) — compose discovery must not climb past the project's
+        // `.git/` directory. Sibling `compose.yaml` placed outside the
+        // boundary stays invisible; auto-discovery returns `None`.
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let inner = tempdir.path().join("inner");
+        fs::create_dir_all(inner.join(".git")).expect(".git dir should create");
+        let nested_cwd = inner.join("sub");
+        fs::create_dir_all(&nested_cwd).expect("nested cwd should create");
+        write_file(&tempdir.path().join(DEFAULT_COMPOSE_FILE));
+
+        let selection = resolve_auto_discovered_compose_selection(&nested_cwd)
+            .expect("compose discovery should succeed");
+
+        assert!(
+            selection.is_none(),
+            "sibling compose.yaml outside `.git/` must stay invisible; got {selection:?}"
+        );
+    }
+
+    #[test]
+    fn auto_discovery_finds_compose_inside_git_boundary() {
+        // CD7(e) positive case — compose at the project root, CWD nested
+        // below, `.git/` at the root. Walker must find the compose file.
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        fs::create_dir_all(tempdir.path().join(".git")).expect("repo .git should create");
+        let nested_cwd = tempdir.path().join("app").join("src");
+        fs::create_dir_all(&nested_cwd).expect("nested cwd should create");
+        let compose_path = tempdir.path().join(DEFAULT_COMPOSE_FILE);
+        write_file(&compose_path);
+
+        let selection = resolve_auto_discovered_compose_selection(&nested_cwd)
+            .expect("compose discovery should succeed")
+            .expect("compose at project root must be discovered");
+
+        assert_eq!(selection.project_root, tempdir.path());
+        assert_eq!(selection.files, vec![compose_path]);
+    }
+
+    #[test]
+    fn auto_discovery_treats_dot_git_file_as_worktree_boundary() {
+        // CD7(f) compose — `.git` as a *file* (worktree shape) bounds the
+        // compose walker the same way a directory does.
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let worktree_root = tempdir.path().join("wt");
+        fs::create_dir_all(&worktree_root).expect("worktree root should create");
+        fs::write(
+            worktree_root.join(".git"),
+            "gitdir: /fake/elsewhere/.git/worktrees/wt\n",
+        )
+        .expect(".git file should write");
+        let nested_cwd = worktree_root.join("inner").join("sub");
+        fs::create_dir_all(&nested_cwd).expect("nested cwd should create");
+        write_file(&tempdir.path().join(DEFAULT_COMPOSE_FILE));
+
+        let selection = resolve_auto_discovered_compose_selection(&nested_cwd)
+            .expect("compose discovery should succeed");
+
+        assert!(
+            selection.is_none(),
+            "worktree boundary must hide the outer compose file; got {selection:?}"
+        );
+    }
 }

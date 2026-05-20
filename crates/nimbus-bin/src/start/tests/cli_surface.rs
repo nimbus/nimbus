@@ -200,6 +200,40 @@ fn start_startup_summary_reports_auto_discovered_override_companion() {
 }
 
 #[test]
+fn start_startup_summary_emits_operator_console_url_line() {
+    // CD7(h) — the operator-console banner is the contract that
+    // documentation, the install card, and Electron all hang off of. A
+    // missing `/ui/` suffix or a missing `operator console:` label would
+    // silently regress that contract, so this test asserts both literally.
+    // See cli-daemon-canonicalization plan, CD3 / CD7(h).
+    let command = StartCommand {
+        port: 0,
+        ..StartCommand::default()
+    };
+
+    let lines = super::boot::start_startup_summary_lines(
+        &command,
+        None,
+        None,
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 4711)),
+        false,
+    );
+
+    let console_line = lines
+        .iter()
+        .find(|line| line.starts_with("operator console:"))
+        .expect("startup banner must contain an `operator console:` line");
+    assert!(
+        console_line.contains("/ui/"),
+        "operator-console URL must end at /ui/, got: {console_line}"
+    );
+    assert!(
+        console_line.contains("127.0.0.1:4711"),
+        "operator-console URL must reflect the listener address, got: {console_line}"
+    );
+}
+
+#[test]
 fn start_startup_summary_reports_no_app_dir_when_none_resolved() {
     // Post-CD1: `nimbus start` returns Ok(None) when no `--app-dir`
     // is passed (no source-tree walk-up). The banner must clearly
