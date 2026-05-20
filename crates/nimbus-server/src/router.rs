@@ -551,6 +551,8 @@ fn build_ui_router() -> Router<Arc<AppState>> {
         .route("/ui/", get(http::ui_root))
         .route("/ui/auth", get(http::ui_auth))
         .route("/ui/auth/session", post(http::create_ui_session))
+        .route("/ui/auth/launch-ticket", post(http::mint_ui_launch_ticket))
+        .route("/ui/launch", get(http::consume_ui_launch_ticket))
         .route("/ui/{*path}", get(http::ui_path))
 }
 

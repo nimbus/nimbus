@@ -6,9 +6,14 @@ use nimbus_server::{
     LocalServerPaths, ServerDiscoveryRecord, load_local_admin_token, read_live_server_discovery,
 };
 use reqwest::{Method, StatusCode};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct MintedLaunchTicket {
+    pub(crate) url: String,
+}
 
 #[derive(Clone)]
 pub(crate) struct LocalServerHttpClient {
@@ -54,11 +59,20 @@ impl LocalServerHttpClient {
         })
     }
 
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     pub(crate) async fn post_empty<T>(&self, path: &str) -> Result<T, Error>
     where
         T: DeserializeOwned,
     {
         self.request(Method::POST, path, Option::<&()>::None).await
+    }
+
+    pub(crate) async fn mint_ui_launch_ticket(&self) -> Result<MintedLaunchTicket, Error> {
+        self.post_empty::<MintedLaunchTicket>("/ui/auth/launch-ticket")
+            .await
     }
 
     pub(crate) async fn post_json<T, B>(&self, path: &str, body: &B) -> Result<T, Error>

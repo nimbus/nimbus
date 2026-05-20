@@ -5,7 +5,7 @@ use std::io;
 use clap::Args;
 use nimbus_server::{LocalServerPaths, ServerDiscoveryRecord, read_live_server_discovery};
 
-use crate::local_server_client::normalize_loopback_connect_address;
+use crate::local_server_client::{LocalServerHttpClient, normalize_loopback_connect_address};
 
 #[derive(Debug, Args)]
 #[command(
@@ -53,7 +53,7 @@ impl Error for UiError {
 pub(crate) async fn run_ui_command(_command: UiCommand) -> Result<(), Box<dyn Error>> {
     let paths = LocalServerPaths::resolve_for_current_platform()?;
     let discovery = resolve_discovery(&paths).await?;
-    let url = build_ui_url(&discovery)?;
+    let url = resolve_open_url(&paths, &discovery).await?;
     let opened_with = open_in_preferred_browser(&url)?;
     match opened_with {
         OpenedBrowser::Chromium(label) => {
@@ -64,6 +64,27 @@ pub(crate) async fn run_ui_command(_command: UiCommand) -> Result<(), Box<dyn Er
         }
     }
     Ok(())
+}
+
+async fn resolve_open_url(
+    paths: &LocalServerPaths,
+    discovery: &ServerDiscoveryRecord,
+) -> Result<String, UiError> {
+    let fallback = build_ui_url(discovery)?;
+    let client = match LocalServerHttpClient::discover(paths, reqwest::Client::new()) {
+        Ok(Some(client)) => client,
+        _ => return Ok(fallback),
+    };
+    match client.mint_ui_launch_ticket().await {
+        Ok(minted) => Ok(format!("{}{}", client.base_url(), minted.url)),
+        Err(error) => {
+            tracing::warn!(
+                target: "nimbus_bin::ui",
+                "failed to mint launch ticket; opening unauthenticated /ui/: {error}"
+            );
+            Ok(fallback)
+        }
+    }
 }
 
 #[derive(Debug)]

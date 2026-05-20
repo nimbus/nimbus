@@ -6,7 +6,8 @@ use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 use super::*;
 use crate::local_server::{
-    LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
+    LOCAL_SESSION_COOKIE_NAME, LocalServerPaths, LocalServerSecurityState,
+    load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
 
@@ -409,4 +410,195 @@ async fn invalid_token_post_fails_and_rotated_cookie_is_revoked() {
         .await
         .expect("revoked response should be json");
     assert_eq!(body["error"]["message"], json!("auth.token_revoked"));
+}
+
+#[tokio::test]
+async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, _token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let response = server
+        .client()
+        .get(server.http_url("/ui/auth"))
+        .send()
+        .await
+        .expect("auth page request should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .is_some(),
+        "auth page must carry CSP header"
+    );
+    let body = response.text().await.expect("auth page body should read");
+    assert!(
+        body.contains("brand-wordmark") && body.contains(">nimbus<"),
+        "auth page should render the nimbus brand wordmark"
+    );
+    assert!(
+        body.contains("nimbus dev --open"),
+        "auth page should hint at the spawn-and-open shortcut"
+    );
+    assert!(
+        body.contains("@font-face") && body.contains("JetBrains Mono"),
+        "auth page should embed JetBrains Mono via @font-face"
+    );
+    assert!(
+        body.contains("/ui/assets/") && body.contains("jetbrains-mono-latin-400-normal"),
+        "auth page should reference the embedded JetBrains Mono asset path"
+    );
+}
+
+#[tokio::test]
+async fn mint_ui_launch_ticket_requires_admin_bearer_and_returns_consume_url() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let unauth = server
+        .client()
+        .post(server.http_url("/ui/auth/launch-ticket"))
+        .send()
+        .await
+        .expect("unauthenticated mint request should send");
+    assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+
+    let minted = server
+        .client()
+        .post(server.http_url("/ui/auth/launch-ticket"))
+        .bearer_auth(&token.token)
+        .send()
+        .await
+        .expect("authenticated mint request should send");
+    assert_eq!(minted.status(), StatusCode::OK);
+    let body = minted
+        .json::<serde_json::Value>()
+        .await
+        .expect("mint response should parse as json");
+    let ticket = body["ticket"]
+        .as_str()
+        .expect("mint response should include ticket");
+    let url = body["url"]
+        .as_str()
+        .expect("mint response should include url");
+    assert!(
+        ticket.starts_with("nimbus_lt_"),
+        "ticket should be prefixed nimbus_lt_, got {ticket}"
+    );
+    assert_eq!(url, format!("/ui/launch?lt={ticket}"));
+}
+
+#[tokio::test]
+async fn consume_ui_launch_ticket_sets_session_cookie_and_redirects_to_ui_root() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let minted = server
+        .client()
+        .post(server.http_url("/ui/auth/launch-ticket"))
+        .bearer_auth(&token.token)
+        .send()
+        .await
+        .expect("mint request should send");
+    assert_eq!(minted.status(), StatusCode::OK);
+    let body = minted
+        .json::<serde_json::Value>()
+        .await
+        .expect("mint response should parse");
+    let ticket = body["ticket"]
+        .as_str()
+        .expect("mint response should include ticket")
+        .to_string();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("redirect-disabled client should build");
+    let consumed = client
+        .get(server.http_url(&format!("/ui/launch?lt={ticket}")))
+        .send()
+        .await
+        .expect("consume request should send");
+    assert_eq!(consumed.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        consumed
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("/ui/")
+    );
+    let cookie = extract_cookie(&consumed);
+    assert!(
+        cookie.starts_with(&format!("{LOCAL_SESSION_COOKIE_NAME}=")),
+        "consume should issue the local session cookie, got {cookie}"
+    );
+
+    let ui_response = server
+        .client()
+        .get(server.http_url("/ui/"))
+        .header(header::COOKIE, &cookie)
+        .send()
+        .await
+        .expect("ui shell request should send");
+    assert_eq!(ui_response.status(), StatusCode::OK);
+
+    let reuse = client
+        .get(server.http_url(&format!("/ui/launch?lt={ticket}")))
+        .send()
+        .await
+        .expect("ticket reuse request should send");
+    assert_eq!(reuse.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn consume_ui_launch_ticket_rejects_missing_or_unknown_tickets() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, _token) = local_server_security(temp.path());
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("redirect-disabled client should build");
+
+    let missing = client
+        .get(server.http_url("/ui/launch"))
+        .send()
+        .await
+        .expect("consume without ticket should send");
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let bogus = client
+        .get(server.http_url("/ui/launch?lt=nimbus_lt_not_a_real_ticket"))
+        .send()
+        .await
+        .expect("consume with unknown ticket should send");
+    assert_eq!(bogus.status(), StatusCode::UNAUTHORIZED);
 }

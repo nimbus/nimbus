@@ -133,10 +133,12 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
 }
 
 /// Wait for the operator console to start answering at `<url>auth`, then
-/// launch the default browser. Best-effort: a launcher failure or a probe
+/// mint a single-use launch ticket from the local server so the browser
+/// lands already signed in. Best-effort: a launcher failure or a probe
 /// timeout is reported via `tracing::error!` plus a stderr line and does
-/// not bring the daemon down. See CD4 in
-/// `docs/plans/cli-daemon-canonicalization-plan.md`.
+/// not bring the daemon down. If the mint endpoint fails we fall back to
+/// opening the bare console URL so the user still sees the styled auth
+/// page. See CD4 in `docs/plans/cli-daemon-canonicalization-plan.md`.
 async fn open_operator_console_when_ready(console_url: String) {
     const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
     const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -165,12 +167,47 @@ async fn open_operator_console_when_ready(console_url: String) {
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-    if let Err(error) = open::that(&console_url) {
+    let open_url = mint_launch_url_or_fallback(&console_url).await;
+    if let Err(error) = open::that(&open_url) {
         let message = format!(
             "--open requested but browser launcher failed: {error}; daemon is reachable at {console_url}"
         );
         tracing::error!("{message}");
         let _ = cli_ux::write_stderr_line(&format!("error: {message}"));
+    }
+}
+
+async fn mint_launch_url_or_fallback(console_url: &str) -> String {
+    let paths = match nimbus_server::LocalServerPaths::resolve_for_current_platform() {
+        Ok(paths) => paths,
+        Err(error) => {
+            tracing::warn!(
+                "--open: unable to resolve local server paths for launch-ticket mint ({error}); opening unauthenticated /ui/"
+            );
+            return console_url.to_string();
+        }
+    };
+    let client = match crate::local_server_client::LocalServerHttpClient::discover(
+        &paths,
+        reqwest::Client::new(),
+    ) {
+        Ok(Some(client)) => client,
+        Ok(None) => return console_url.to_string(),
+        Err(error) => {
+            tracing::warn!(
+                "--open: launch-ticket client unavailable ({error}); opening unauthenticated /ui/"
+            );
+            return console_url.to_string();
+        }
+    };
+    match client.mint_ui_launch_ticket().await {
+        Ok(minted) => format!("{}{}", client.base_url(), minted.url),
+        Err(error) => {
+            tracing::warn!(
+                "--open: launch-ticket mint failed ({error}); opening unauthenticated /ui/"
+            );
+            console_url.to_string()
+        }
     }
 }
 

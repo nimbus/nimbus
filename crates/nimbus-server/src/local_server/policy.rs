@@ -31,7 +31,7 @@ impl LocalServerRouteFamily {
         if path == "/demos" || path.starts_with("/demos/") {
             return Self::Demos;
         }
-        if path == "/ui/auth/session" {
+        if path == "/ui/auth/session" || path == "/ui/auth/launch-ticket" || path == "/ui/launch" {
             return Self::UiAuthSession;
         }
         if path == "/ui" || path.starts_with("/ui/") {
