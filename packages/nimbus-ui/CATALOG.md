@@ -46,6 +46,7 @@ under `src/stories/`:
 | Breadcrumb            | `breadcrumb.stories.tsx`         |
 | UpgradePopover        | `upgrade-popover.stories.tsx`    |
 | AppearanceSection     | `appearance-section.stories.tsx` |
+| Select                | `select.stories.tsx`             |
 | SubDrawer (host)      | `sub-drawer.stories.tsx`         |
 
 `SubDrawer` is rendered through a story-only `FakeSubDrawerHost` wrapper
