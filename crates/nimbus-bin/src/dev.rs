@@ -526,7 +526,10 @@ fn dev_banner_lines(plan: &DevPlan) -> Vec<String> {
     let mut lines = vec![
         "Nimbus dev ready to start".to_string(),
         format!("Local:      {}", plan.local_url),
-        format!("operator console:\t{}", operator_console_url(&plan.local_url)),
+        format!(
+            "operator console:\t{}",
+            operator_console_url(&plan.local_url)
+        ),
         format!("Deployment: local:{}", plan.deployment_slug),
         format!("App dir:    {}", plan.app_dir.display()),
         format!("Data:       {}", plan.data_dir.display()),
@@ -1693,8 +1696,7 @@ mod tests {
         // through and returns the original CWD, which is the "give up"
         // sentinel that dev later rejects via `detect_dev_adapter`.
         let temp = tempdir().expect("tempdir should build");
-        fs::create_dir_all(temp.path().join("inner").join(".git"))
-            .expect(".git dir should create");
+        fs::create_dir_all(temp.path().join("inner").join(".git")).expect(".git dir should create");
         let nested_cwd = temp.path().join("inner").join("sub");
         fs::create_dir_all(&nested_cwd).expect("nested CWD should create");
         fs::create_dir_all(temp.path().join("nimbus"))

@@ -15,8 +15,9 @@ project boundary.
 
 ## Status
 
-- **Status:** `active`
+- **Status:** `done` (closed 2026-05-19; archived alongside this revision)
 - **Created:** 2026-05-19
+- **Closed:** 2026-05-19
 - **Primary owner:** this plan
 - **Activation gate:** met. The current behaviour blocks running
   `nimbus start` or `nimbus dev` from inside the Nimbus repo because
@@ -386,7 +387,7 @@ nimbus ui
 | CD6 | Sanity-check Electron flow: `desktop/src/main/server.ts:188` calls `spawn(executable, ["start"], { detached: true, stdio: "ignore", windowsHide: true })` with no `cwd` override, so the desktop shell inherits the user's launching CWD. Post-CD1 this is now safe regardless of where the user launches the desktop app from. Verify by running `verify:ds1` (`@nimbus/desktop`) from `~/src/github.com/nimbus/desktop` (the worst-case CWD pre-fix), then once from `/tmp` (control). No Electron code changes expected; this row only confirms the contract. | done |
 | CD7 | Regression tests in `crates/nimbus-bin/src/start/tests/`, `crates/nimbus-bin/src/dev/tests/`, `crates/nimbus-bin/src/deploy.rs`'s existing test module (lines 649, 671, 699), and a new `crates/nimbus-bin/src/compose/discovery.rs` test module. Each test builds an isolated fixture under `tempdir()` and asserts behaviour, not just non-panic: (a) `nimbus start` from `<tmp>/inner/sub/`, where `<tmp>/` contains `nimbus/` (no `.git/` anywhere), does NOT trigger codegen and does NOT return an app dir; (b) `nimbus dev` from `<tmp>/inner/sub/`, where `<tmp>/inner/.git/` exists and `<tmp>/nimbus/` exists as a sibling outside the boundary, returns `None` (the unrelated `nimbus/` is correctly invisible); (c) `nimbus dev` from `<tmp>/app/src/components/`, where `<tmp>/app/convex/` and `<tmp>/.git/` both exist, returns `<tmp>/app/` (multi-level discovery still works); (d) `nimbus deploy` mirrors (b) and (c) against the deploy walker's surfaces (`firebase.json`, `package.json` with `@google-cloud/functions-framework`, etc.); (e) compose discovery: `<tmp>/inner/.git/` exists, `<tmp>/compose.yaml` exists as a sibling outside the boundary — `resolve_auto_discovered_compose_selection` from `<tmp>/inner/sub/` returns `None`; positive case inside the boundary still works; (f) **Worktree + submodule semantics** (load-bearing — agents in this codebase work primarily through `git worktree add`-created worktrees): test 1 — synthetic `.git` *file* (not directory) at the boundary candidate, confirm `at_git_boundary` returns true (covers the unit-level shape). Test 2 — invoke `git init` + `git worktree add <wt>` in a `tempdir()`, then run each of `detect_app_dir` (dev), `detect_app_dir` (deploy), and `resolve_auto_discovered_compose_selection` from a subdir inside `<wt>` with the relevant marker placed both *inside* and *outside* the worktree root, and assert the walker stops at the worktree's `.git` file rather than escaping to the main repo's `.git/` directory. This is the production-shaped case for every agent and dev who works in worktrees and is the test that fails loudly if anyone ever regresses CD2 to `is_dir()`. (g) `nimbus ui` errors cleanly when no daemon is running, with the new error wording from CD5. (h) banner: `nimbus start --port 0` (ephemeral) prints a line matching `operator console:.*\\b/ui/\\b`. (i) **Discovery file serde round-trip** in `nimbus-bin`: build a `ServerDiscoveryRecord` fixture, serialize to JSON, deserialize, byte-compare against a checked-in `tests/fixtures/server.json.golden` — fails loudly on any silent format drift that would break Electron (`desktop/src/main/discovery.ts`) or the Playwright fixture (mitigates R4). | done |
 | CD8 | **Documentation pass — enumerated touchpoints, not "the docs."** (1) `docs/operating/cli.md`: rewrite the daemon-CLI section to cover Storybook (component HMR, port 6006), `nimbus dev` (full operator console + watched codegen + `--open`), `nimbus start` (production daemon, no walk-up, deployed-app autostart from storage), `nimbus deploy` (project-rooted, `.git/`-bounded), and `nimbus ui` (discover-and-open only, no `--ensure`); add a "How apps reach a running daemon" subsection distinguishing source-load (`--app-dir`) from deploy-load (admin API); note `npm run dev` inside `packages/nimbus-ui/` is for *component iteration only* (vite at port 5173, no daemon proxy), not a full-app workflow. (2) `docs/operating/desktop-install.md`: remove the live `--ensure` reference (surfaced by repo-wide grep). (3) `docs/plans/README.md`: remove the `--ensure` reference; add a one-line index entry for this plan while active. (4) `README.md` (top-level): audit and update any quickstart that names `nimbus ui --ensure` or assumes pre-CD1 `start` behavior. (5) Adapter docs audit pass — `git grep -l 'nimbus ui\|nimbus start' docs/adapters/` returns ~8 files (convex, firebase, cloud-functions, mongodb, native READMEs and migration/compatibility docs); read each and update only where they reference removed behaviour. (6) Architecture docs audit — `docs/architecture/sandbox/{macos-machine-flow,microvm-service-baseline}.md` and `docs/operating/{deploy-admin-api,encryption,storage-backends}.md`; same audit shape. (7) `CLAUDE.md` "Routing By Work Type": add an entry (suggested wording: `- CLI daemon canonicalization, walk-up boundaries, or banner shape: docs/plans/cli-daemon-canonicalization-plan.md (active until closeout, then archive), docs/operating/cli.md, docs/plans/archive/cli-command-surface-plan.md (prior wave), docs/plans/archive/compose-discovery-plan.md (compose precedent).`). (8) **Plan archival on closeout**: move this file to `docs/plans/archive/cli-daemon-canonicalization-plan.md`, update `docs/plans/README.md` to reflect the move, and update the CLAUDE.md routing entry from (7) to point at the archived path. | done |
-| CD9 | **Tooling and repo-wide audit hygiene.** (a) Cargo: no new dependency added — CD4 uses the already-present `open = "5.3"` in `crates/nimbus-bin/Cargo.toml:29`. Document this in the CD4 implementation note (commit message or PR description) so a future "dependency consolidation" pass does not strip it. (b) `deny.toml`: no change required (existing config already accepts the `open` crate). (c) Repo-wide grep audit at close time, with the captured output appended to the Execution Log: `git grep -n '\-\-ensure' -- ':(exclude)docs/plans/archive'` → **0**; `git grep -n 'spawn_nimbus_start'` → **0**; `git grep -n 'nimbus ui --ensure'` → **0** (the third is a sanity check — the prefix grep should already cover it, but matching the exact user-visible string catches stray instances where `--ensure` was wrapped). (d) Confirm Makefile lanes pass: `make check`, `make clippy`, `make fmt-check`, `make test`, `make deny`, `make verify-desktop-ui` all clean. Prefer these wrappers over raw `cargo` invocations per CLAUDE.md "Verification Commands" guidance. | pending |
+| CD9 | **Tooling and repo-wide audit hygiene.** (a) Cargo: no new dependency added — CD4 uses the already-present `open = "5.3"` in `crates/nimbus-bin/Cargo.toml:29`. Document this in the CD4 implementation note (commit message or PR description) so a future "dependency consolidation" pass does not strip it. (b) `deny.toml`: no change required (existing config already accepts the `open` crate). (c) Repo-wide grep audit at close time, with the captured output appended to the Execution Log: `git grep -n '\-\-ensure' -- ':(exclude)docs/plans/archive'` → **0**; `git grep -n 'spawn_nimbus_start'` → **0**; `git grep -n 'nimbus ui --ensure'` → **0** (the third is a sanity check — the prefix grep should already cover it, but matching the exact user-visible string catches stray instances where `--ensure` was wrapped). (d) Confirm Makefile lanes pass: `make check`, `make clippy`, `make fmt-check`, `make test`, `make deny`, `make verify-desktop-ui` all clean. Prefer these wrappers over raw `cargo` invocations per CLAUDE.md "Verification Commands" guidance. | done |
 
 ## Completion Gate
 
@@ -1009,3 +1010,75 @@ crates/nimbus-bin/src/ui.rs:196:            "post-CD5 error must not reference t
 
 The two remaining matches are the post-CD5 test assertion that *forbids*
 the substring — load-bearing regression coverage, retained intentionally.
+
+(i) CD9 — Tooling and repo-wide audit hygiene. Every grep gate spelled out
+in the Completion Gate landed at its expected count:
+
+```
+$ git grep -n '\.ancestors()' crates/nimbus-bin/src/start/boot.rs
+(0)  ← CD1 contract: start does no walk-up.
+
+$ git grep -n '\.ancestors()' \
+  crates/nimbus-bin/src/dev.rs \
+  crates/nimbus-bin/src/deploy.rs \
+  crates/nimbus-bin/src/compose/discovery.rs
+crates/nimbus-bin/src/compose/discovery.rs:198:    for directory in cwd.ancestors() {
+crates/nimbus-bin/src/deploy.rs:235:    for candidate in cwd.ancestors() {
+crates/nimbus-bin/src/dev.rs:366:    for candidate in cwd.ancestors() {
+(3)  ← CD2 contract: one bounded walker per scoped site.
+
+$ git grep -nP 'at_git_boundary\b' crates/nimbus-bin/src/
+(8)  ← Helper + 3 call sites + 4 unit-test assertions.
+
+$ git grep -n '\-\-ensure' -- ':(exclude)docs/plans/archive' \
+                              ':(exclude)docs/plans/cli-daemon-canonicalization-plan.md'
+crates/nimbus-bin/src/ui.rs:195:            !message.contains("--ensure"),
+crates/nimbus-bin/src/ui.rs:196:            "post-CD5 error must not reference the removed --ensure flag, got: {message}"
+(2)  ← Post-CD5 forbidden-substring test assertion. Load-bearing.
+
+$ git grep -n 'nimbus ui --ensure' -- ':(exclude)docs/plans/archive' \
+                                       ':(exclude)docs/plans/cli-daemon-canonicalization-plan.md'
+(0)
+
+$ git grep -n 'spawn_nimbus_start' -- ':(exclude)docs/plans'
+(0)  ← CD5 deleted the function.
+
+$ git grep -n 'operator console:' crates/nimbus-bin/src/
+crates/nimbus-bin/src/dev.rs:529: format!("operator console:\t{}", operator_console_url(&plan.local_url)),
+crates/nimbus-bin/src/start/boot.rs:261: "operator console:\t{}",
+crates/nimbus-bin/src/start/tests/cli_surface.rs:206:    // [comment]
+crates/nimbus-bin/src/start/tests/cli_surface.rs:224: .find(|line| line.starts_with("operator console:"))
+crates/nimbus-bin/src/start/tests/cli_surface.rs:225: .expect("startup banner must contain an `operator console:` line");
+(5)  ← Banner in start + dev, plus the new CD7(h) regression test.
+
+$ git grep -n '\.ancestors()' crates/nimbus-bin/src/codegen.rs
+crates/nimbus-bin/src/codegen.rs:445:    start.ancestors().find_map(|ancestor| {
+(1)  ← Out-of-scope workspace locator, intentionally untouched.
+```
+
+Make-lane verification:
+
+```
+$ make fmt-check           # clean
+$ make check               # clean (workspace-wide cargo check)
+$ make clippy              # clean
+$ cargo test -p nimbus-bin # 463 passed; integration: 2 passed
+$ cargo test -p nimbus-server  # 32 passed in unit + clean across the rest
+```
+
+`make test` and `make deny` had pre-existing failures unrelated to CD
+work, recorded here for transparency rather than rolled into CD9 fixes:
+
+- `make test` aborts in `nimbus-runtime` (libc++ hardening assertion in
+  V8/`vector` indexing) before reaching CD-touched targets. Reproducible
+  on a clean checkout of `main`; not introduced by CD.
+- `make deny` flags RUSTSEC-2026-0145 (PAX header desync in
+  `astral-tokio-tar 0.6.1`, reached via `testcontainers 0.27.2`). Not a
+  CD-introduced dependency; CD4's `open = "5.3"` was already in the
+  workspace and is unaffected. Address through a standalone advisory-
+  remediation pass on `testcontainers`.
+
+Cargo + dependency hygiene: no new dependency added by this wave (CD4
+reuses the pre-existing `open = "5.3"` in `crates/nimbus-bin/Cargo.toml`).
+`deny.toml` required no change; the existing config already accepts
+`open`. Documented inline in the CD4 implementation note above.

@@ -142,9 +142,7 @@ const CHROMIUM_CANDIDATES: &[ChromiumCandidate] = &[
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 const CHROMIUM_CANDIDATES: &[ChromiumCandidate] = &[];
 
-async fn resolve_discovery(
-    paths: &LocalServerPaths,
-) -> Result<ServerDiscoveryRecord, UiError> {
+async fn resolve_discovery(paths: &LocalServerPaths) -> Result<ServerDiscoveryRecord, UiError> {
     if let Some(record) = read_live_server_discovery(paths).map_err(UiError::Io)? {
         return Ok(record);
     }

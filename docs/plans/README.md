@@ -14,27 +14,24 @@ This directory prefers a small-number-of-plans model with clear ownership.
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
 
-- `docs/plans/cli-daemon-canonicalization-plan.md`
-  - canonical plan for aligning the Nimbus daemon CLI surface with
-    Cockroach/Vault/Grafana/MinIO-style embedded-UI daemons:
-    `nimbus start` and `nimbus dev` start cleanly from any CWD, both
-    always serve `/ui/*`, and `nimbus ui` becomes a thin "discover
-    running daemon + open browser" launcher with no spawn behaviour.
-    Removed the ancestor walk-up from `nimbus start`; bounded it at
-    the nearest `.git/` (directory or worktree-shaped file) for
-    `nimbus dev`, `nimbus deploy`, and compose discovery. Adds
-    `--open` to `nimbus dev` (only) as the canonical spawn-and-open
-    dev ergonomic; `nimbus start` follows the production-daemon
-    precedent and prints the operator-console URL on its startup
-    banner instead. Activation gate met 2026-05-19; CD1-CD7 landed,
-    CD8 (docs) + CD9 (audit) in flight.
-
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/archive/cli-daemon-canonicalization-plan.md`
+  - completed execution record for the CLI daemon canonicalization wave
+    (CD1-CD9, closed 2026-05-19). Removed source-tree walk-up from
+    `nimbus start`; bounded `dev`/`deploy`/compose walkers at the
+    nearest `.git/` (directory or worktree-shaped file); added a
+    CockroachDB-shaped `operator console:` banner line on both daemon
+    commands; added `--open` to `nimbus dev` (only); replaced
+    `nimbus ui --ensure` with the unflagged discover-and-open `nimbus
+    ui`. Regression tests in `nimbus-bin` cover the rebrand-trap shape,
+    the worktree boundary, the banner, and the `ServerDiscoveryRecord`
+    serde golden contract shared with Electron and the Playwright
+    fixture.
 - `docs/plans/archive/install-script-plan.md`
   - completed execution record for the nimbus install script (Channel 1):
     POSIX `curl | sh` quick start for Linux (Debian/Ubuntu, Fedora/RHEL) and
