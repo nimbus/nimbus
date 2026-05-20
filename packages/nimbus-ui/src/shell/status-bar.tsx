@@ -44,7 +44,7 @@ export function StatusBar() {
     <footer
       role="contentinfo"
       aria-label="Status bar"
-      className="flex h-7 items-center gap-3 border-t border-app bg-surface px-3 text-xs font-mono text-muted"
+      className="flex h-[var(--statusbar-height)] items-center gap-3 border-t border-app bg-surface px-3 text-xs font-mono text-muted"
     >
       <span
         className="inline-flex items-center gap-1.5"

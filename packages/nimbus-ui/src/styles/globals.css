@@ -28,6 +28,8 @@
   --text-md: 14px;
   --text-lg: 16px;
   --text-xl: 22px;
+
+  --statusbar-height: 1.75rem;
 }
 
 @layer base {
