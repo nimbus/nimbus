@@ -455,6 +455,35 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
         body.contains("/ui/assets/") && body.contains("jetbrains-mono-latin-400-normal"),
         "auth page should reference the embedded JetBrains Mono asset path"
     );
+    // DA1 — canonical Nimbus brand mark replaces the arcs+dot placeholder.
+    assert!(
+        body.contains("viewBox=\"0 0 322 201\"") && body.contains("<title>Nimbus</title>"),
+        "auth page should embed the canonical nimbus-mark SVG (322x201 viewBox + Nimbus title)"
+    );
+    assert!(
+        !body.contains("M4 20c0-6 4-10 10-10"),
+        "auth page should no longer carry the arcs+dot placeholder mark path"
+    );
+    // DA1 — version chip moves into the .brand row; footer wordmark goes away.
+    assert!(
+        body.contains("brand-version") && body.contains("aria-label=\"Version\""),
+        "auth page should render the version chip inside the .brand row"
+    );
+    assert!(
+        !body.contains("<footer>") && !body.contains("footer .wordmark"),
+        "auth page should not duplicate the wordmark in a footer block"
+    );
+    // DA1 — trust microcopy (Local-only · 127.0.0.1) replaces the footer slot.
+    assert!(
+        body.contains("local-only") && body.contains("Local-only") && body.contains("127.0.0.1"),
+        "auth page should display the Local-only trust line"
+    );
+    // DA1 — brand-tier color treatment locked: brand-blue token present and
+    // independent of the chrome-tier --color-brand used elsewhere.
+    assert!(
+        body.contains("--brand-blue"),
+        "auth page should declare the brand-tier --brand-blue token for the mark"
+    );
 }
 
 #[tokio::test]

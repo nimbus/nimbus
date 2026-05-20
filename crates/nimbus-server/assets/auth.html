@@ -31,6 +31,11 @@
   --color-muted: oklch(48% 0.028 255);
   --color-brand: oklch(62% 0.20 258);
   --color-link: oklch(54% 0.22 264);
+  /* Brand-tier blue. Locked to the Cool Blue primary from DESIGN.md
+     §Brand Palette / Two-Tier Bridge; never swaps with operator-console
+     palette (mono / warm) because /ui/auth is a first-contact surface. */
+  --brand-blue: oklch(62% 0.20 258);
+  --brand-blue-soft: oklch(85% 0.10 197);
   --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04),
                  0 8px 24px rgba(15, 23, 42, 0.06);
 }
@@ -47,6 +52,8 @@
     --color-muted: oklch(67% 0.026 248);
     --color-brand: oklch(72% 0.17 248);
     --color-link: oklch(82% 0.11 247);
+    --brand-blue: oklch(72% 0.17 248);
+    --brand-blue-soft: oklch(70% 0.13 207);
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4),
                    0 8px 24px rgba(0, 0, 0, 0.45);
   }
@@ -94,10 +101,15 @@ main {
 }
 
 .brand-mark {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: auto;
+  aspect-ratio: 322 / 201;
   display: block;
-  color: var(--color-brand);
+  /* Two-Tier Bridge: brand-tier blue, NOT chrome-tier --color-brand,
+     so the mark never swaps with the operator-console palette. */
+  --logo-stroke: var(--brand-blue);
+  --logo-fill: var(--brand-blue-soft);
+  color: var(--brand-blue);
 }
 
 .brand-wordmark {
@@ -106,6 +118,19 @@ main {
   font-size: 15px;
   letter-spacing: 0.02em;
   color: var(--color-text);
+}
+
+.brand-version {
+  margin-left: auto;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--color-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
 }
 
 h1 {
@@ -203,33 +228,39 @@ button[type="submit"]:focus-visible {
   padding: 1px 6px;
 }
 
-footer {
-  margin-top: 18px;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
+.local-only {
+  margin: 18px 0 0;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10.5px;
-  color: var(--color-muted);
   letter-spacing: 0.04em;
+  color: var(--color-muted);
+  text-align: center;
 }
 
-footer .wordmark {
-  text-transform: lowercase;
-  color: var(--color-text);
+.local-only .dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand-blue);
+  margin: 0 6px 1px;
+  vertical-align: middle;
 }
 </style>
 </head>
 <body>
 <main aria-labelledby="auth-title">
   <div class="brand">
-    <svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M4 20c0-6 4-10 10-10s10 4 10 10" />
-      <path d="M8 20c0-3.5 2.7-6 6-6s6 2.5 6 6" />
-      <circle cx="14" cy="20" r="2" fill="currentColor" stroke="none" />
+    <svg class="brand-mark" viewBox="0 0 322 201" role="img" aria-label="Nimbus">
+      <title>Nimbus</title>
+      <g transform="translate(-30,231) scale(0.1,-0.1)">
+        <path fill="var(--logo-fill, transparent)" d="M1447 2194 c-196 -47 -457 -291 -457 -425 0 -16 -8 -19 -45 -19 -155 0 -320 -89 -425 -228 -259 -345 -71 -840 323 -848 l97 -2 40 -51 c194 -245 610 -293 880 -101 27 19 29 19 66 3 140 -62 369 -1 497 133 l43 44 38 -20 c131 -66 304 -39 413 66 35 33 58 45 111 58 189 46 340 179 382 334 23 88 -11 115 -99 77 -133 -55 -228 -22 -326 115 -94 132 -196 196 -331 207 l-62 6 -4 56 c-15 204 -211 367 -431 359 l-79 -2 -34 46 c-116 160 -380 245 -597 192z" />
+        <path fill="var(--logo-stroke, currentColor)" d="M1447 2194 c-196 -47 -457 -291 -457 -425 0 -16 -8 -19 -45 -19 -155 0 -320 -89 -425 -228 -259 -345 -71 -840 323 -848 l97 -2 40 -51 c194 -245 610 -293 880 -101 27 19 29 19 66 3 140 -62 369 -1 497 133 l43 44 38 -20 c131 -66 304 -39 413 66 35 33 58 45 111 58 189 46 340 179 382 334 23 88 -11 115 -99 77 -133 -55 -228 -22 -326 115 -94 132 -196 196 -331 207 l-62 6 -4 56 c-15 204 -211 367 -431 359 l-79 -2 -34 46 c-116 160 -380 245 -597 192z m296 -81 c119 -35 217 -108 269 -200 23 -41 35 -52 47 -47 259 107 536 -166 435 -430 -5 -14 0 -13 37 4 82 37 196 20 287 -42 40 -27 71 -63 148 -170 65 -90 210 -138 317 -105 54 17 53 19 26 -35 -52 -101 -194 -196 -326 -217 -54 -9 -66 -15 -99 -51 -184 -203 -557 -49 -439 180 46 89 206 72 193 -20 -4 -24 -2 -27 9 -19 43 36 -20 147 -85 150 -164 7 -259 -157 -179 -310 l26 -51 -49 -50 c-107 -110 -292 -152 -427 -98 l-60 24 -29 -24 c-222 -185 -605 -160 -791 53 l-43 48 46 40 c172 151 121 432 -82 463 -144 21 -258 -194 -122 -229 20 -6 20 -5 -2 18 -82 87 70 201 169 127 180 -133 12 -416 -221 -372 -516 97 -360 950 167 917 l83 -5 5 45 c31 278 396 493 690 406z" />
+        <path fill="var(--logo-stroke, currentColor)" d="M1574 1556 c-119 -56 -171 -187 -110 -281 34 -52 108 -74 153 -45 16 10 14 10 -9 5 -71 -14 -137 56 -124 130 36 192 336 194 441 4 125 -226 -99 -523 -375 -496 l-55 6 35 -17 c163 -75 410 42 481 229 109 287 -173 588 -437 465z" />
+      </g>
     </svg>
     <span class="brand-wordmark">nimbus</span>
+    <span class="brand-version" aria-label="Version">v{{ NIMBUS_VERSION }}</span>
   </div>
   <h1 id="auth-title">Sign in</h1>
   <p class="lede">Paste the local admin token to open the operator console.</p>
@@ -243,10 +274,9 @@ footer .wordmark {
   <p class="hint">
     Or run <code>nimbus dev --open</code> next time &mdash; the CLI opens the console already signed in.
   </p>
-  <footer>
-    <span class="wordmark">nimbus</span>
-    <span aria-label="Version">v{{ NIMBUS_VERSION }}</span>
-  </footer>
+  <p class="local-only" aria-label="Trust scope">
+    Local-only<span class="dot" aria-hidden="true"></span>127.0.0.1
+  </p>
 </main>
 </body>
 </html>
