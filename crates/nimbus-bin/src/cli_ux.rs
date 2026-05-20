@@ -88,6 +88,11 @@ Examples:
   nimbus ui
   nimbus dev --open";
 
+pub(crate) const AUTH_URL_HELP_EXAMPLES: &str = "\
+Examples:
+  nimbus auth url
+  nimbus auth url --copy";
+
 pub(crate) const MACHINE_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus machine init --now

@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+mod auth;
 mod cli_ux;
 mod codegen;
 mod compose;
@@ -18,6 +19,7 @@ mod test_support;
 mod token;
 mod ui;
 
+use crate::auth::{AuthCommand, run_auth_command};
 use crate::codegen::{CodegenCommand, run_codegen_command};
 use crate::compose::{ComposeCommand, run_compose_command};
 use crate::deploy::{DeployCommand, run_deploy_command};
@@ -58,6 +60,9 @@ enum Command {
     /// Local admin token management commands.
     #[command(subcommand)]
     Token(TokenCommand),
+    /// Sign-in URLs for the local console and credentials for remote deploys.
+    #[command(subcommand)]
+    Auth(AuthCommand),
     /// Open the Nimbus operator console in a browser.
     Ui(UiCommand),
     /// Manage local developer machines.
@@ -81,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Codegen(command) => run_codegen_command(command).await?,
         Command::Init(command) => run_init_command(command).await?,
         Command::Token(command) => run_token_command(command).await?,
+        Command::Auth(command) => run_auth_command(command).await?,
         Command::Ui(command) => run_ui_command(command).await?,
         Command::Machine(command) => {
             run_machine_command(command).await?;
