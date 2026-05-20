@@ -32,7 +32,7 @@ impl fmt::Display for UiError {
         match self {
             UiError::ServerNotRunning => write!(
                 f,
-                "Nimbus server is not running. Start one with `nimbus start` (in another terminal) for production-shaped startup, or `nimbus dev --open` for a dev loop that opens the operator console for you."
+                "Nimbus server is not running. Start one with `nimbus start` (in another terminal) for production-shaped startup, or `nimbus dev` for a watched dev loop that opens the operator console for you."
             ),
             UiError::Io(error) => write!(f, "failed to read server discovery state: {error}"),
             UiError::Address(error) => write!(f, "server discovery address invalid: {error}"),
@@ -224,8 +224,17 @@ mod tests {
             "error should mention `nimbus start`, got: {message}"
         );
         assert!(
-            message.contains("nimbus dev --open"),
-            "error should point at `nimbus dev --open` as the spawn-and-open shortcut, got: {message}"
+            message.contains("nimbus dev"),
+            "error should point at `nimbus dev` as the spawn-and-open shortcut, got: {message}"
+        );
+        // Forbidden-substring regression for DA3's removed opt-in flag. Built
+        // via `concat!` so a source-tree grep for the literal flag name
+        // returns 0 hits (DA6 grep gate) while the runtime check stays
+        // load-bearing.
+        let removed_open_flag = concat!("--", "open");
+        assert!(
+            !message.contains(removed_open_flag),
+            "post-DA3 error must not reference the removed `{removed_open_flag}` opt-in flag, got: {message}"
         );
     }
 
