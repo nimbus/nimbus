@@ -16,7 +16,7 @@ import {
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
 
-export const Route = createFileRoute("/admin/machines")({
+export const Route = createFileRoute("/operator/machines")({
   component: MachinesPage,
 });
 

@@ -12,7 +12,7 @@ import {
 } from "../../shell/loading-value";
 import { fetchTenants } from "../../shell/tenants-fetch";
 
-export const Route = createFileRoute("/admin/")({
+export const Route = createFileRoute("/operator/")({
   component: SystemOverviewPage,
 });
 

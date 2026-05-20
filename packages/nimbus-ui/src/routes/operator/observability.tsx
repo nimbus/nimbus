@@ -22,7 +22,7 @@ type AdminObservabilitySearch = {
   tenant?: string;
 };
 
-export const Route = createFileRoute("/admin/observability")({
+export const Route = createFileRoute("/operator/observability")({
   component: AdminObservabilityPage,
   validateSearch: (search: Record<string, unknown>): AdminObservabilitySearch => ({
     tab: parseTab(search.tab),
@@ -41,28 +41,28 @@ export const ADMIN_OBSERVABILITY_SUB_DRAWER = {
     {
       id: "logs",
       label: "Logs",
-      to: "/admin/observability",
+      to: "/operator/observability",
       search: { tab: "logs" },
       disabled: false,
     },
     {
       id: "runs",
       label: "Runs",
-      to: "/admin/observability",
+      to: "/operator/observability",
       search: { tab: "runs" },
       disabled: false,
     },
     {
       id: "events",
       label: "Events",
-      to: "/admin/observability",
+      to: "/operator/observability",
       search: { tab: "events" },
       disabled: true,
     },
     {
       id: "errors",
       label: "Errors",
-      to: "/admin/observability",
+      to: "/operator/observability",
       search: { tab: "errors" },
       disabled: true,
     },
@@ -213,7 +213,7 @@ function TabLink({
   const tenantQuery = serializeTenantScope(scope);
   return (
     <Link
-      to="/admin/observability"
+      to="/operator/observability"
       search={(prev) => ({ ...prev, tab: id, tenant: tenantQuery })}
       data-testid={`admin-observability-tab-${id}`}
       aria-current={active ? "page" : undefined}

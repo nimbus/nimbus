@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathnameRef, searchRef } = vi.hoisted(() => ({
-  pathnameRef: { current: "/app" },
+  pathnameRef: { current: "/developer" },
   searchRef: { current: {} as Record<string, unknown> },
 }));
 
@@ -52,20 +52,20 @@ function setLocation(path: string, search: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  setLocation("/app");
+  setLocation("/developer");
   useUiStore.setState({ activeTenant: null });
 });
 
 describe("StatusBar tenant slot", () => {
   it("shows the active dev tenant on /app/*", () => {
-    setLocation("/app/compute");
+    setLocation("/developer/compute");
     useUiStore.setState({ activeTenant: "beta" });
     render(<StatusBar />);
     expect(screen.getByTestId("status-tenant")).toHaveTextContent("beta");
   });
 
   it("shows 'all tenants' on /admin/observability without a tenant query", () => {
-    setLocation("/admin/observability");
+    setLocation("/operator/observability");
     render(<StatusBar />);
     expect(screen.getByTestId("status-tenant")).toHaveTextContent(
       "all tenants",
@@ -73,13 +73,13 @@ describe("StatusBar tenant slot", () => {
   });
 
   it("shows the requested tenant on /admin/observability?tenant=beta", () => {
-    setLocation("/admin/observability", { tenant: "beta" });
+    setLocation("/operator/observability", { tenant: "beta" });
     render(<StatusBar />);
     expect(screen.getByTestId("status-tenant")).toHaveTextContent("beta");
   });
 
   it("shows _nimbus on system-tenant /admin/* views", () => {
-    setLocation("/admin/machines");
+    setLocation("/operator/machines");
     render(<StatusBar />);
     expect(screen.getByTestId("status-tenant")).toHaveTextContent("_nimbus");
   });

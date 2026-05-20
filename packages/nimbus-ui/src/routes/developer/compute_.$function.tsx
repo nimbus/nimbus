@@ -36,7 +36,7 @@ type DetailSearch = {
   tab?: DetailTab;
 };
 
-export const Route = createFileRoute("/app/compute_/$function")({
+export const Route = createFileRoute("/developer/compute_/$function")({
   validateSearch: (search: Record<string, unknown>): DetailSearch => ({
     tab: isTab(search.tab) ? search.tab : undefined,
   }),
@@ -95,7 +95,7 @@ type EventDoc = {
 
 function FunctionDetailPage() {
   const { function: functionPath } = Route.useParams();
-  const search = useSearch({ from: "/app/compute_/$function" });
+  const search = useSearch({ from: "/developer/compute_/$function" });
   const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "statistics";
 
@@ -132,7 +132,7 @@ function FunctionDetailPage() {
 
   const setTab = (next: DetailTab) =>
     navigate({
-      to: "/app/compute/$function",
+      to: "/developer/compute/$function",
       params: { function: functionPath },
       search: { tab: next },
       replace: true,
@@ -146,7 +146,7 @@ function FunctionDetailPage() {
       <div className="flex shrink-0 flex-col gap-2 border-b border-app px-6 pb-3 pt-4">
         <Breadcrumb
           segments={[
-            { label: "Compute", href: "/app/compute" },
+            { label: "Compute", href: "/developer/compute" },
             { label: functionPath, active: true },
           ]}
         />
@@ -438,7 +438,7 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
             <tr key={run._id} className="border-t border-app hover:bg-surface-2">
               <td className="px-3 py-2">
                 <Link
-                  to="/app/compute/runs/$runId"
+                  to="/developer/compute/runs/$runId"
                   params={{ runId: run._id }}
                   className="font-mono text-xs text-default hover:underline"
                   data-testid={`function-tab-runs-link-${run._id}`}
@@ -511,7 +511,7 @@ function NotFound({ path }: { path: string }) {
         been removed or renamed. Open Compute to see the current inventory.
       </span>
       <Link
-        to="/app/compute"
+        to="/developer/compute"
         className="rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         ← back to compute

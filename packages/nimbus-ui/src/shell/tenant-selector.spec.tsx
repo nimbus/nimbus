@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathnameRef, navigateMock } = vi.hoisted(() => ({
-  pathnameRef: { current: "/app/compute" },
+  pathnameRef: { current: "/developer/compute" },
   navigateMock: vi.fn(),
 }));
 
@@ -29,7 +29,7 @@ function mockTenants(tenants: Array<string | Record<string, string>>) {
 }
 
 beforeEach(() => {
-  pathnameRef.current = "/app/compute";
+  pathnameRef.current = "/developer/compute";
   navigateMock.mockReset();
   window.localStorage.clear();
   useUiStore.setState({ activeTenant: null });
@@ -64,7 +64,7 @@ describe("TenantSelector", () => {
     });
     fireEvent.click(screen.getByTestId("tenant-selector-create"));
     expect(navigateMock).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "/admin/tenants" }),
+      expect.objectContaining({ to: "/operator/tenants" }),
     );
   });
 
@@ -96,7 +96,7 @@ describe("TenantSelector", () => {
     fireEvent.click(screen.getByTestId("tenant-selector-option-beta"));
     expect(navigateMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: "/admin/observability",
+        to: "/operator/observability",
         search: { tenant: "beta" },
       }),
     );

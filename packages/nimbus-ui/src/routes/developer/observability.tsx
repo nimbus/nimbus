@@ -18,7 +18,7 @@ import {
   parseTab,
 } from "./observability/types";
 
-export const Route = createFileRoute("/app/observability")({
+export const Route = createFileRoute("/developer/observability")({
   validateSearch: (search: Record<string, unknown>): ObservabilitySearch => ({
     tab: parseTab(search.tab),
     level: parseString(search.level),
@@ -47,14 +47,14 @@ export const OBSERVABILITY_SUB_DRAWER = {
     ...ACTIVE_OBSERVABILITY_TABS.map((id) => ({
       id,
       label: TAB_LABELS[id],
-      to: "/app/observability" as const,
+      to: "/developer/observability" as const,
       search: { tab: id },
       disabled: false as const,
     })),
     ...DISABLED_OBSERVABILITY_TABS.map((id) => ({
       id,
       label: TAB_LABELS[id],
-      to: "/app/observability" as const,
+      to: "/developer/observability" as const,
       search: { tab: id },
       disabled: true as const,
     })),
@@ -156,7 +156,7 @@ function ActiveTabLink({
 }) {
   return (
     <Link
-      to="/app/observability"
+      to="/developer/observability"
       search={(prev) => ({ ...prev, tab: id })}
       data-testid={`observability-tab-${id}`}
       aria-current={active ? "page" : undefined}

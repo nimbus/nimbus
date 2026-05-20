@@ -210,10 +210,10 @@ function useStatusBarTenant(): string {
   });
   const activeTenant = useUiStore((s) => s.activeTenant);
 
-  if (pathname.startsWith("/app")) {
+  if (pathname.startsWith("/developer")) {
     return activeTenant ?? "—";
   }
-  if (pathname === "/admin/observability" || pathname.startsWith("/admin/observability/")) {
+  if (pathname === "/operator/observability" || pathname.startsWith("/operator/observability/")) {
     const tenant = search?.tenant;
     return typeof tenant === "string" && tenant.trim().length > 0
       ? tenant.trim()

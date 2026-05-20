@@ -41,6 +41,6 @@ export const WithLinkCta: Story = {
   args: {
     title: "Welcome to Nimbus",
     body: "Get started by visiting the developer console.",
-    cta: { label: "Open Developer", to: "/app" },
+    cta: { label: "Open Developer", to: "/developer" },
   },
 };

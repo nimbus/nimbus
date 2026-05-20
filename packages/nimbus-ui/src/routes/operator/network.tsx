@@ -22,7 +22,7 @@ function parseSection(value: unknown): NetworkSection | undefined {
     : undefined;
 }
 
-export const Route = createFileRoute("/admin/network")({
+export const Route = createFileRoute("/operator/network")({
   component: NetworkPage,
   validateSearch: (search: Record<string, unknown>): NetworkSearch => ({
     section: parseSection(search.section) ?? "routes",
@@ -30,7 +30,7 @@ export const Route = createFileRoute("/admin/network")({
   beforeLoad: ({ search }) => {
     if (parseSection((search as Record<string, unknown>).section) === undefined) {
       throw redirect({
-        to: "/admin/network",
+        to: "/operator/network",
         search: { section: "routes" },
         replace: true,
       });
@@ -69,31 +69,31 @@ const NETWORK_SUB_DRAWER: SubDrawerSpec = {
     {
       id: "routes",
       label: "Routes",
-      to: "/admin/network",
+      to: "/operator/network",
       search: { section: "routes" },
     },
     {
       id: "ws",
       label: "WS",
-      to: "/admin/network",
+      to: "/operator/network",
       search: { section: "ws" },
     },
     {
       id: "ports",
       label: "Ports",
-      to: "/admin/network",
+      to: "/operator/network",
       search: { section: "ports" },
     },
     {
       id: "listeners",
       label: "Listeners",
-      to: "/admin/network",
+      to: "/operator/network",
       search: { section: "listeners" },
     },
     {
       id: "security",
       label: "Security",
-      to: "/admin/network",
+      to: "/operator/network",
       search: { section: "security" },
     },
   ],

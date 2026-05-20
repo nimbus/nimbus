@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathnameRef } = vi.hoisted(() => ({
-  pathnameRef: { current: "/app" },
+  pathnameRef: { current: "/developer" },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -52,7 +52,7 @@ function setPathname(path: string) {
 }
 
 beforeEach(() => {
-  setPathname("/app");
+  setPathname("/developer");
 });
 
 afterEach(() => {
@@ -61,7 +61,7 @@ afterEach(() => {
 
 describe("PrimaryDrawer", () => {
   it("renders all 7 developer entries on /app routes", () => {
-    setPathname("/app/compute");
+    setPathname("/developer/compute");
     render(<PrimaryDrawer />);
     expect(screen.getByTestId("primary-drawer")).toHaveAttribute(
       "data-view",
@@ -81,7 +81,7 @@ describe("PrimaryDrawer", () => {
   });
 
   it("renders all 7 operator entries on /admin routes", () => {
-    setPathname("/admin/machines");
+    setPathname("/operator/machines");
     render(<PrimaryDrawer />);
     expect(screen.getByTestId("primary-drawer")).toHaveAttribute(
       "data-view",
@@ -164,11 +164,11 @@ describe("PrimaryDrawer", () => {
   });
 
   it("flips entries in place when the pathname changes view", () => {
-    setPathname("/app");
+    setPathname("/developer");
     const { rerender } = render(<PrimaryDrawer />);
     expect(screen.getByTestId("nav-compute")).toBeInTheDocument();
     expect(screen.queryByTestId("nav-machines")).toBeNull();
-    setPathname("/admin");
+    setPathname("/operator");
     rerender(<PrimaryDrawer />);
     expect(screen.getByTestId("nav-machines")).toBeInTheDocument();
     expect(screen.queryByTestId("nav-compute")).toBeNull();

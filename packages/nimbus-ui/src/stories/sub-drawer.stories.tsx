@@ -109,10 +109,10 @@ const STATIC_SPEC: StaticSubDrawerSpec = {
   kind: "static",
   title: "Storage",
   items: [
-    { id: "tenants", label: "Tenants", to: "/admin/tenants", count: 4 },
-    { id: "tables", label: "Tables", to: "/admin/tables", count: 17 },
-    { id: "documents", label: "Documents", to: "/admin/documents" },
-    { id: "indexes", label: "Indexes", to: "/admin/indexes", disabled: true },
+    { id: "tenants", label: "Tenants", to: "/operator/tenants", count: 4 },
+    { id: "tables", label: "Tables", to: "/operator/tables", count: 17 },
+    { id: "documents", label: "Documents", to: "/operator/documents" },
+    { id: "indexes", label: "Indexes", to: "/operator/indexes", disabled: true },
   ],
 };
 

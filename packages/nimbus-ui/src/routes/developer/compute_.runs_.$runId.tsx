@@ -11,7 +11,7 @@ import { cn } from "../../lib/cn";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 
-export const Route = createFileRoute("/app/compute_/runs_/$runId")({
+export const Route = createFileRoute("/developer/compute_/runs_/$runId")({
   loader: async ({ params }) => {
     const client = getNimbusClient();
     const [run, events] = await Promise.all([
@@ -340,7 +340,7 @@ function CorrelatedEvents({
           Correlated events
         </h2>
         <Link
-          to="/app/observability"
+          to="/developer/observability"
           search={{ tab: "logs", correlationId: runId }}
           className="font-mono text-[10px] uppercase tracking-wide text-muted hover:text-default focus-visible:text-default"
           data-testid="run-detail-open-logs"
@@ -444,7 +444,7 @@ function RunNotFound() {
           record.
         </p>
         <Link
-          to="/app/observability"
+          to="/developer/observability"
           search={{ tab: "runs" }}
           className="mt-2 rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
           data-testid="run-detail-back"

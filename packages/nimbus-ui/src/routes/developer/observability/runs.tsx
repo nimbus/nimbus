@@ -14,7 +14,7 @@ import type { ObservabilitySearch, RunDoc } from "./types";
 const RUN_STATUSES = ["ok", "error", "running", "queued"] as const;
 
 export function RunsTab({ search }: { search: ObservabilitySearch }) {
-  const navigate = useNavigate({ from: "/app/observability" });
+  const navigate = useNavigate({ from: "/developer/observability" });
   const runs = useQuery(api.runs.recent, {
     bundleId: null,
     functionPath: search.functionPath ?? null,
@@ -25,7 +25,7 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
   const setSearch = useCallback(
     (patch: Partial<ObservabilitySearch>) => {
       void navigate({
-        to: "/app/observability",
+        to: "/developer/observability",
         search: (prev) => ({ ...prev, ...patch }),
         replace: true,
       });
@@ -92,7 +92,7 @@ function AdapterHonesty() {
       Native HTTP, scheduler, MongoDB, Firebase, and Cloud Functions traffic is
       surfaced under Logs — see the{" "}
       <Link
-        to="/app/observability"
+        to="/developer/observability"
         search={(prev) => ({ ...prev, tab: "logs" })}
         className="underline hover:text-default focus-visible:text-default"
         data-testid="observability-adapter-honesty-events-link"
@@ -150,7 +150,7 @@ function RunsTable({ runs }: { runs: RunDoc[] | undefined }) {
             >
               <Td>
                 <Link
-                  to="/app/compute/runs/$runId"
+                  to="/developer/compute/runs/$runId"
                   params={{ runId: run._id }}
                   className="font-mono text-default hover:underline"
                   data-testid={`observability-run-link-${run._id}`}

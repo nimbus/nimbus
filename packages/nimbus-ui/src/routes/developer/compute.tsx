@@ -16,7 +16,7 @@ import {
   useSubDrawerSearch,
 } from "../../shell/sub-drawer";
 
-export const Route = createFileRoute("/app/compute")({
+export const Route = createFileRoute("/developer/compute")({
   component: ComputePage,
 });
 
@@ -227,7 +227,7 @@ function FunctionsTable({
                 <Td>
                   {path ? (
                     <Link
-                      to="/app/compute/$function"
+                      to="/developer/compute/$function"
                       params={{ function: path }}
                       data-testid={`compute-function-open-${path}`}
                       className="rounded border border-app px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"

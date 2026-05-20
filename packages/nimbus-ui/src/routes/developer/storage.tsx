@@ -14,7 +14,7 @@ import {
 } from "../../shell/sub-drawer";
 import { useUiStore } from "../../store/ui-store";
 
-export const Route = createFileRoute("/app/storage")({
+export const Route = createFileRoute("/developer/storage")({
   component: StoragePage,
 });
 
@@ -88,7 +88,7 @@ function StoragePage() {
             return (
               <li key={table._id}>
                 <Link
-                  to="/app/storage/$table"
+                  to="/developer/storage/$table"
                   params={{ table: name }}
                   data-testid={`sub-drawer-item-dev-${name}`}
                   className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
@@ -196,7 +196,7 @@ function StoragePage() {
                     >
                       <Td>
                         <Link
-                          to="/app/storage/$table"
+                          to="/developer/storage/$table"
                           params={{ table: name }}
                           className="font-mono text-default hover:underline"
                           data-testid={`tenant-table-link-${name}`}

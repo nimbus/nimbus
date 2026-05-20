@@ -212,7 +212,7 @@ function LeafRow({
 }) {
   return (
     <Link
-      to="/app/compute/$function"
+      to="/developer/compute/$function"
       params={{ function: leaf.path }}
       data-testid={`${testidPrefix}-fn-${leaf.path}`}
       className="flex h-7 items-center gap-2 rounded-md px-1 text-sm text-muted hover:bg-surface-2 hover:text-default"

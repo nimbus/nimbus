@@ -10,297 +10,300 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AppIndexRouteImport } from './routes/app/index'
-import { Route as AdminIndexRouteImport } from './routes/admin/index'
-import { Route as AppStorageRouteImport } from './routes/app/storage'
-import { Route as AppSettingsRouteImport } from './routes/app/settings'
-import { Route as AppServicesRouteImport } from './routes/app/services'
-import { Route as AppSchedulesRouteImport } from './routes/app/schedules'
-import { Route as AppObservabilityRouteImport } from './routes/app/observability'
-import { Route as AppFilesRouteImport } from './routes/app/files'
-import { Route as AppComputeRouteImport } from './routes/app/compute'
-import { Route as AdminTenantsRouteImport } from './routes/admin/tenants'
-import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
-import { Route as AdminServicesRouteImport } from './routes/admin/services'
-import { Route as AdminObservabilityRouteImport } from './routes/admin/observability'
-import { Route as AdminNetworkRouteImport } from './routes/admin/network'
-import { Route as AdminMachinesRouteImport } from './routes/admin/machines'
-import { Route as AppStorageTableRouteImport } from './routes/app/storage_.$table'
-import { Route as AppServicesServiceRouteImport } from './routes/app/services_.$service'
-import { Route as AppComputeFunctionRouteImport } from './routes/app/compute_.$function'
-import { Route as AdminServicesServiceRouteImport } from './routes/admin/services_.$service'
-import { Route as AppComputeRunsRunIdRouteImport } from './routes/app/compute_.runs_.$runId'
+import { Route as OperatorIndexRouteImport } from './routes/operator/index'
+import { Route as DeveloperIndexRouteImport } from './routes/developer/index'
+import { Route as OperatorTenantsRouteImport } from './routes/operator/tenants'
+import { Route as OperatorSettingsRouteImport } from './routes/operator/settings'
+import { Route as OperatorServicesRouteImport } from './routes/operator/services'
+import { Route as OperatorObservabilityRouteImport } from './routes/operator/observability'
+import { Route as OperatorNetworkRouteImport } from './routes/operator/network'
+import { Route as OperatorMachinesRouteImport } from './routes/operator/machines'
+import { Route as DeveloperStorageRouteImport } from './routes/developer/storage'
+import { Route as DeveloperSettingsRouteImport } from './routes/developer/settings'
+import { Route as DeveloperServicesRouteImport } from './routes/developer/services'
+import { Route as DeveloperSchedulesRouteImport } from './routes/developer/schedules'
+import { Route as DeveloperObservabilityRouteImport } from './routes/developer/observability'
+import { Route as DeveloperFilesRouteImport } from './routes/developer/files'
+import { Route as DeveloperComputeRouteImport } from './routes/developer/compute'
+import { Route as OperatorServicesServiceRouteImport } from './routes/operator/services_.$service'
+import { Route as DeveloperStorageTableRouteImport } from './routes/developer/storage_.$table'
+import { Route as DeveloperServicesServiceRouteImport } from './routes/developer/services_.$service'
+import { Route as DeveloperComputeFunctionRouteImport } from './routes/developer/compute_.$function'
+import { Route as DeveloperComputeRunsRunIdRouteImport } from './routes/developer/compute_.runs_.$runId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppIndexRoute = AppIndexRouteImport.update({
-  id: '/app/',
-  path: '/app/',
+const OperatorIndexRoute = OperatorIndexRouteImport.update({
+  id: '/operator/',
+  path: '/operator/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminIndexRoute = AdminIndexRouteImport.update({
-  id: '/admin/',
-  path: '/admin/',
+const DeveloperIndexRoute = DeveloperIndexRouteImport.update({
+  id: '/developer/',
+  path: '/developer/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppStorageRoute = AppStorageRouteImport.update({
-  id: '/app/storage',
-  path: '/app/storage',
+const OperatorTenantsRoute = OperatorTenantsRouteImport.update({
+  id: '/operator/tenants',
+  path: '/operator/tenants',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppSettingsRoute = AppSettingsRouteImport.update({
-  id: '/app/settings',
-  path: '/app/settings',
+const OperatorSettingsRoute = OperatorSettingsRouteImport.update({
+  id: '/operator/settings',
+  path: '/operator/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppServicesRoute = AppServicesRouteImport.update({
-  id: '/app/services',
-  path: '/app/services',
+const OperatorServicesRoute = OperatorServicesRouteImport.update({
+  id: '/operator/services',
+  path: '/operator/services',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppSchedulesRoute = AppSchedulesRouteImport.update({
-  id: '/app/schedules',
-  path: '/app/schedules',
+const OperatorObservabilityRoute = OperatorObservabilityRouteImport.update({
+  id: '/operator/observability',
+  path: '/operator/observability',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppObservabilityRoute = AppObservabilityRouteImport.update({
-  id: '/app/observability',
-  path: '/app/observability',
+const OperatorNetworkRoute = OperatorNetworkRouteImport.update({
+  id: '/operator/network',
+  path: '/operator/network',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppFilesRoute = AppFilesRouteImport.update({
-  id: '/app/files',
-  path: '/app/files',
+const OperatorMachinesRoute = OperatorMachinesRouteImport.update({
+  id: '/operator/machines',
+  path: '/operator/machines',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppComputeRoute = AppComputeRouteImport.update({
-  id: '/app/compute',
-  path: '/app/compute',
+const DeveloperStorageRoute = DeveloperStorageRouteImport.update({
+  id: '/developer/storage',
+  path: '/developer/storage',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminTenantsRoute = AdminTenantsRouteImport.update({
-  id: '/admin/tenants',
-  path: '/admin/tenants',
+const DeveloperSettingsRoute = DeveloperSettingsRouteImport.update({
+  id: '/developer/settings',
+  path: '/developer/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminSettingsRoute = AdminSettingsRouteImport.update({
-  id: '/admin/settings',
-  path: '/admin/settings',
+const DeveloperServicesRoute = DeveloperServicesRouteImport.update({
+  id: '/developer/services',
+  path: '/developer/services',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminServicesRoute = AdminServicesRouteImport.update({
-  id: '/admin/services',
-  path: '/admin/services',
+const DeveloperSchedulesRoute = DeveloperSchedulesRouteImport.update({
+  id: '/developer/schedules',
+  path: '/developer/schedules',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminObservabilityRoute = AdminObservabilityRouteImport.update({
-  id: '/admin/observability',
-  path: '/admin/observability',
+const DeveloperObservabilityRoute = DeveloperObservabilityRouteImport.update({
+  id: '/developer/observability',
+  path: '/developer/observability',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminNetworkRoute = AdminNetworkRouteImport.update({
-  id: '/admin/network',
-  path: '/admin/network',
+const DeveloperFilesRoute = DeveloperFilesRouteImport.update({
+  id: '/developer/files',
+  path: '/developer/files',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminMachinesRoute = AdminMachinesRouteImport.update({
-  id: '/admin/machines',
-  path: '/admin/machines',
+const DeveloperComputeRoute = DeveloperComputeRouteImport.update({
+  id: '/developer/compute',
+  path: '/developer/compute',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppStorageTableRoute = AppStorageTableRouteImport.update({
-  id: '/app/storage_/$table',
-  path: '/app/storage/$table',
+const OperatorServicesServiceRoute = OperatorServicesServiceRouteImport.update({
+  id: '/operator/services_/$service',
+  path: '/operator/services/$service',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppServicesServiceRoute = AppServicesServiceRouteImport.update({
-  id: '/app/services_/$service',
-  path: '/app/services/$service',
+const DeveloperStorageTableRoute = DeveloperStorageTableRouteImport.update({
+  id: '/developer/storage_/$table',
+  path: '/developer/storage/$table',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppComputeFunctionRoute = AppComputeFunctionRouteImport.update({
-  id: '/app/compute_/$function',
-  path: '/app/compute/$function',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdminServicesServiceRoute = AdminServicesServiceRouteImport.update({
-  id: '/admin/services_/$service',
-  path: '/admin/services/$service',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppComputeRunsRunIdRoute = AppComputeRunsRunIdRouteImport.update({
-  id: '/app/compute_/runs_/$runId',
-  path: '/app/compute/runs/$runId',
-  getParentRoute: () => rootRouteImport,
-} as any)
+const DeveloperServicesServiceRoute =
+  DeveloperServicesServiceRouteImport.update({
+    id: '/developer/services_/$service',
+    path: '/developer/services/$service',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DeveloperComputeFunctionRoute =
+  DeveloperComputeFunctionRouteImport.update({
+    id: '/developer/compute_/$function',
+    path: '/developer/compute/$function',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DeveloperComputeRunsRunIdRoute =
+  DeveloperComputeRunsRunIdRouteImport.update({
+    id: '/developer/compute_/runs_/$runId',
+    path: '/developer/compute/runs/$runId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/admin/machines': typeof AdminMachinesRoute
-  '/admin/network': typeof AdminNetworkRoute
-  '/admin/observability': typeof AdminObservabilityRoute
-  '/admin/services': typeof AdminServicesRoute
-  '/admin/settings': typeof AdminSettingsRoute
-  '/admin/tenants': typeof AdminTenantsRoute
-  '/app/compute': typeof AppComputeRoute
-  '/app/files': typeof AppFilesRoute
-  '/app/observability': typeof AppObservabilityRoute
-  '/app/schedules': typeof AppSchedulesRoute
-  '/app/services': typeof AppServicesRoute
-  '/app/settings': typeof AppSettingsRoute
-  '/app/storage': typeof AppStorageRoute
-  '/admin/': typeof AdminIndexRoute
-  '/app/': typeof AppIndexRoute
-  '/admin/services/$service': typeof AdminServicesServiceRoute
-  '/app/compute/$function': typeof AppComputeFunctionRoute
-  '/app/services/$service': typeof AppServicesServiceRoute
-  '/app/storage/$table': typeof AppStorageTableRoute
-  '/app/compute/runs/$runId': typeof AppComputeRunsRunIdRoute
+  '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/files': typeof DeveloperFilesRoute
+  '/developer/observability': typeof DeveloperObservabilityRoute
+  '/developer/schedules': typeof DeveloperSchedulesRoute
+  '/developer/services': typeof DeveloperServicesRoute
+  '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/storage': typeof DeveloperStorageRoute
+  '/operator/machines': typeof OperatorMachinesRoute
+  '/operator/network': typeof OperatorNetworkRoute
+  '/operator/observability': typeof OperatorObservabilityRoute
+  '/operator/services': typeof OperatorServicesRoute
+  '/operator/settings': typeof OperatorSettingsRoute
+  '/operator/tenants': typeof OperatorTenantsRoute
+  '/developer/': typeof DeveloperIndexRoute
+  '/operator/': typeof OperatorIndexRoute
+  '/developer/compute/$function': typeof DeveloperComputeFunctionRoute
+  '/developer/services/$service': typeof DeveloperServicesServiceRoute
+  '/developer/storage/$table': typeof DeveloperStorageTableRoute
+  '/operator/services/$service': typeof OperatorServicesServiceRoute
+  '/developer/compute/runs/$runId': typeof DeveloperComputeRunsRunIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/admin/machines': typeof AdminMachinesRoute
-  '/admin/network': typeof AdminNetworkRoute
-  '/admin/observability': typeof AdminObservabilityRoute
-  '/admin/services': typeof AdminServicesRoute
-  '/admin/settings': typeof AdminSettingsRoute
-  '/admin/tenants': typeof AdminTenantsRoute
-  '/app/compute': typeof AppComputeRoute
-  '/app/files': typeof AppFilesRoute
-  '/app/observability': typeof AppObservabilityRoute
-  '/app/schedules': typeof AppSchedulesRoute
-  '/app/services': typeof AppServicesRoute
-  '/app/settings': typeof AppSettingsRoute
-  '/app/storage': typeof AppStorageRoute
-  '/admin': typeof AdminIndexRoute
-  '/app': typeof AppIndexRoute
-  '/admin/services/$service': typeof AdminServicesServiceRoute
-  '/app/compute/$function': typeof AppComputeFunctionRoute
-  '/app/services/$service': typeof AppServicesServiceRoute
-  '/app/storage/$table': typeof AppStorageTableRoute
-  '/app/compute/runs/$runId': typeof AppComputeRunsRunIdRoute
+  '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/files': typeof DeveloperFilesRoute
+  '/developer/observability': typeof DeveloperObservabilityRoute
+  '/developer/schedules': typeof DeveloperSchedulesRoute
+  '/developer/services': typeof DeveloperServicesRoute
+  '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/storage': typeof DeveloperStorageRoute
+  '/operator/machines': typeof OperatorMachinesRoute
+  '/operator/network': typeof OperatorNetworkRoute
+  '/operator/observability': typeof OperatorObservabilityRoute
+  '/operator/services': typeof OperatorServicesRoute
+  '/operator/settings': typeof OperatorSettingsRoute
+  '/operator/tenants': typeof OperatorTenantsRoute
+  '/developer': typeof DeveloperIndexRoute
+  '/operator': typeof OperatorIndexRoute
+  '/developer/compute/$function': typeof DeveloperComputeFunctionRoute
+  '/developer/services/$service': typeof DeveloperServicesServiceRoute
+  '/developer/storage/$table': typeof DeveloperStorageTableRoute
+  '/operator/services/$service': typeof OperatorServicesServiceRoute
+  '/developer/compute/runs/$runId': typeof DeveloperComputeRunsRunIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/admin/machines': typeof AdminMachinesRoute
-  '/admin/network': typeof AdminNetworkRoute
-  '/admin/observability': typeof AdminObservabilityRoute
-  '/admin/services': typeof AdminServicesRoute
-  '/admin/settings': typeof AdminSettingsRoute
-  '/admin/tenants': typeof AdminTenantsRoute
-  '/app/compute': typeof AppComputeRoute
-  '/app/files': typeof AppFilesRoute
-  '/app/observability': typeof AppObservabilityRoute
-  '/app/schedules': typeof AppSchedulesRoute
-  '/app/services': typeof AppServicesRoute
-  '/app/settings': typeof AppSettingsRoute
-  '/app/storage': typeof AppStorageRoute
-  '/admin/': typeof AdminIndexRoute
-  '/app/': typeof AppIndexRoute
-  '/admin/services_/$service': typeof AdminServicesServiceRoute
-  '/app/compute_/$function': typeof AppComputeFunctionRoute
-  '/app/services_/$service': typeof AppServicesServiceRoute
-  '/app/storage_/$table': typeof AppStorageTableRoute
-  '/app/compute_/runs_/$runId': typeof AppComputeRunsRunIdRoute
+  '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/files': typeof DeveloperFilesRoute
+  '/developer/observability': typeof DeveloperObservabilityRoute
+  '/developer/schedules': typeof DeveloperSchedulesRoute
+  '/developer/services': typeof DeveloperServicesRoute
+  '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/storage': typeof DeveloperStorageRoute
+  '/operator/machines': typeof OperatorMachinesRoute
+  '/operator/network': typeof OperatorNetworkRoute
+  '/operator/observability': typeof OperatorObservabilityRoute
+  '/operator/services': typeof OperatorServicesRoute
+  '/operator/settings': typeof OperatorSettingsRoute
+  '/operator/tenants': typeof OperatorTenantsRoute
+  '/developer/': typeof DeveloperIndexRoute
+  '/operator/': typeof OperatorIndexRoute
+  '/developer/compute_/$function': typeof DeveloperComputeFunctionRoute
+  '/developer/services_/$service': typeof DeveloperServicesServiceRoute
+  '/developer/storage_/$table': typeof DeveloperStorageTableRoute
+  '/operator/services_/$service': typeof OperatorServicesServiceRoute
+  '/developer/compute_/runs_/$runId': typeof DeveloperComputeRunsRunIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/admin/machines'
-    | '/admin/network'
-    | '/admin/observability'
-    | '/admin/services'
-    | '/admin/settings'
-    | '/admin/tenants'
-    | '/app/compute'
-    | '/app/files'
-    | '/app/observability'
-    | '/app/schedules'
-    | '/app/services'
-    | '/app/settings'
-    | '/app/storage'
-    | '/admin/'
-    | '/app/'
-    | '/admin/services/$service'
-    | '/app/compute/$function'
-    | '/app/services/$service'
-    | '/app/storage/$table'
-    | '/app/compute/runs/$runId'
+    | '/developer/compute'
+    | '/developer/files'
+    | '/developer/observability'
+    | '/developer/schedules'
+    | '/developer/services'
+    | '/developer/settings'
+    | '/developer/storage'
+    | '/operator/machines'
+    | '/operator/network'
+    | '/operator/observability'
+    | '/operator/services'
+    | '/operator/settings'
+    | '/operator/tenants'
+    | '/developer/'
+    | '/operator/'
+    | '/developer/compute/$function'
+    | '/developer/services/$service'
+    | '/developer/storage/$table'
+    | '/operator/services/$service'
+    | '/developer/compute/runs/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/admin/machines'
-    | '/admin/network'
-    | '/admin/observability'
-    | '/admin/services'
-    | '/admin/settings'
-    | '/admin/tenants'
-    | '/app/compute'
-    | '/app/files'
-    | '/app/observability'
-    | '/app/schedules'
-    | '/app/services'
-    | '/app/settings'
-    | '/app/storage'
-    | '/admin'
-    | '/app'
-    | '/admin/services/$service'
-    | '/app/compute/$function'
-    | '/app/services/$service'
-    | '/app/storage/$table'
-    | '/app/compute/runs/$runId'
+    | '/developer/compute'
+    | '/developer/files'
+    | '/developer/observability'
+    | '/developer/schedules'
+    | '/developer/services'
+    | '/developer/settings'
+    | '/developer/storage'
+    | '/operator/machines'
+    | '/operator/network'
+    | '/operator/observability'
+    | '/operator/services'
+    | '/operator/settings'
+    | '/operator/tenants'
+    | '/developer'
+    | '/operator'
+    | '/developer/compute/$function'
+    | '/developer/services/$service'
+    | '/developer/storage/$table'
+    | '/operator/services/$service'
+    | '/developer/compute/runs/$runId'
   id:
     | '__root__'
     | '/'
-    | '/admin/machines'
-    | '/admin/network'
-    | '/admin/observability'
-    | '/admin/services'
-    | '/admin/settings'
-    | '/admin/tenants'
-    | '/app/compute'
-    | '/app/files'
-    | '/app/observability'
-    | '/app/schedules'
-    | '/app/services'
-    | '/app/settings'
-    | '/app/storage'
-    | '/admin/'
-    | '/app/'
-    | '/admin/services_/$service'
-    | '/app/compute_/$function'
-    | '/app/services_/$service'
-    | '/app/storage_/$table'
-    | '/app/compute_/runs_/$runId'
+    | '/developer/compute'
+    | '/developer/files'
+    | '/developer/observability'
+    | '/developer/schedules'
+    | '/developer/services'
+    | '/developer/settings'
+    | '/developer/storage'
+    | '/operator/machines'
+    | '/operator/network'
+    | '/operator/observability'
+    | '/operator/services'
+    | '/operator/settings'
+    | '/operator/tenants'
+    | '/developer/'
+    | '/operator/'
+    | '/developer/compute_/$function'
+    | '/developer/services_/$service'
+    | '/developer/storage_/$table'
+    | '/operator/services_/$service'
+    | '/developer/compute_/runs_/$runId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AdminMachinesRoute: typeof AdminMachinesRoute
-  AdminNetworkRoute: typeof AdminNetworkRoute
-  AdminObservabilityRoute: typeof AdminObservabilityRoute
-  AdminServicesRoute: typeof AdminServicesRoute
-  AdminSettingsRoute: typeof AdminSettingsRoute
-  AdminTenantsRoute: typeof AdminTenantsRoute
-  AppComputeRoute: typeof AppComputeRoute
-  AppFilesRoute: typeof AppFilesRoute
-  AppObservabilityRoute: typeof AppObservabilityRoute
-  AppSchedulesRoute: typeof AppSchedulesRoute
-  AppServicesRoute: typeof AppServicesRoute
-  AppSettingsRoute: typeof AppSettingsRoute
-  AppStorageRoute: typeof AppStorageRoute
-  AdminIndexRoute: typeof AdminIndexRoute
-  AppIndexRoute: typeof AppIndexRoute
-  AdminServicesServiceRoute: typeof AdminServicesServiceRoute
-  AppComputeFunctionRoute: typeof AppComputeFunctionRoute
-  AppServicesServiceRoute: typeof AppServicesServiceRoute
-  AppStorageTableRoute: typeof AppStorageTableRoute
-  AppComputeRunsRunIdRoute: typeof AppComputeRunsRunIdRoute
+  DeveloperComputeRoute: typeof DeveloperComputeRoute
+  DeveloperFilesRoute: typeof DeveloperFilesRoute
+  DeveloperObservabilityRoute: typeof DeveloperObservabilityRoute
+  DeveloperSchedulesRoute: typeof DeveloperSchedulesRoute
+  DeveloperServicesRoute: typeof DeveloperServicesRoute
+  DeveloperSettingsRoute: typeof DeveloperSettingsRoute
+  DeveloperStorageRoute: typeof DeveloperStorageRoute
+  OperatorMachinesRoute: typeof OperatorMachinesRoute
+  OperatorNetworkRoute: typeof OperatorNetworkRoute
+  OperatorObservabilityRoute: typeof OperatorObservabilityRoute
+  OperatorServicesRoute: typeof OperatorServicesRoute
+  OperatorSettingsRoute: typeof OperatorSettingsRoute
+  OperatorTenantsRoute: typeof OperatorTenantsRoute
+  DeveloperIndexRoute: typeof DeveloperIndexRoute
+  OperatorIndexRoute: typeof OperatorIndexRoute
+  DeveloperComputeFunctionRoute: typeof DeveloperComputeFunctionRoute
+  DeveloperServicesServiceRoute: typeof DeveloperServicesServiceRoute
+  DeveloperStorageTableRoute: typeof DeveloperStorageTableRoute
+  OperatorServicesServiceRoute: typeof OperatorServicesServiceRoute
+  DeveloperComputeRunsRunIdRoute: typeof DeveloperComputeRunsRunIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -312,144 +315,144 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/': {
-      id: '/app/'
-      path: '/app'
-      fullPath: '/app/'
-      preLoaderRoute: typeof AppIndexRouteImport
+    '/operator/': {
+      id: '/operator/'
+      path: '/operator'
+      fullPath: '/operator/'
+      preLoaderRoute: typeof OperatorIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/': {
-      id: '/admin/'
-      path: '/admin'
-      fullPath: '/admin/'
-      preLoaderRoute: typeof AdminIndexRouteImport
+    '/developer/': {
+      id: '/developer/'
+      path: '/developer'
+      fullPath: '/developer/'
+      preLoaderRoute: typeof DeveloperIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/storage': {
-      id: '/app/storage'
-      path: '/app/storage'
-      fullPath: '/app/storage'
-      preLoaderRoute: typeof AppStorageRouteImport
+    '/operator/tenants': {
+      id: '/operator/tenants'
+      path: '/operator/tenants'
+      fullPath: '/operator/tenants'
+      preLoaderRoute: typeof OperatorTenantsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/settings': {
-      id: '/app/settings'
-      path: '/app/settings'
-      fullPath: '/app/settings'
-      preLoaderRoute: typeof AppSettingsRouteImport
+    '/operator/settings': {
+      id: '/operator/settings'
+      path: '/operator/settings'
+      fullPath: '/operator/settings'
+      preLoaderRoute: typeof OperatorSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/services': {
-      id: '/app/services'
-      path: '/app/services'
-      fullPath: '/app/services'
-      preLoaderRoute: typeof AppServicesRouteImport
+    '/operator/services': {
+      id: '/operator/services'
+      path: '/operator/services'
+      fullPath: '/operator/services'
+      preLoaderRoute: typeof OperatorServicesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/schedules': {
-      id: '/app/schedules'
-      path: '/app/schedules'
-      fullPath: '/app/schedules'
-      preLoaderRoute: typeof AppSchedulesRouteImport
+    '/operator/observability': {
+      id: '/operator/observability'
+      path: '/operator/observability'
+      fullPath: '/operator/observability'
+      preLoaderRoute: typeof OperatorObservabilityRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/observability': {
-      id: '/app/observability'
-      path: '/app/observability'
-      fullPath: '/app/observability'
-      preLoaderRoute: typeof AppObservabilityRouteImport
+    '/operator/network': {
+      id: '/operator/network'
+      path: '/operator/network'
+      fullPath: '/operator/network'
+      preLoaderRoute: typeof OperatorNetworkRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/files': {
-      id: '/app/files'
-      path: '/app/files'
-      fullPath: '/app/files'
-      preLoaderRoute: typeof AppFilesRouteImport
+    '/operator/machines': {
+      id: '/operator/machines'
+      path: '/operator/machines'
+      fullPath: '/operator/machines'
+      preLoaderRoute: typeof OperatorMachinesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/compute': {
-      id: '/app/compute'
-      path: '/app/compute'
-      fullPath: '/app/compute'
-      preLoaderRoute: typeof AppComputeRouteImport
+    '/developer/storage': {
+      id: '/developer/storage'
+      path: '/developer/storage'
+      fullPath: '/developer/storage'
+      preLoaderRoute: typeof DeveloperStorageRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/tenants': {
-      id: '/admin/tenants'
-      path: '/admin/tenants'
-      fullPath: '/admin/tenants'
-      preLoaderRoute: typeof AdminTenantsRouteImport
+    '/developer/settings': {
+      id: '/developer/settings'
+      path: '/developer/settings'
+      fullPath: '/developer/settings'
+      preLoaderRoute: typeof DeveloperSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/settings': {
-      id: '/admin/settings'
-      path: '/admin/settings'
-      fullPath: '/admin/settings'
-      preLoaderRoute: typeof AdminSettingsRouteImport
+    '/developer/services': {
+      id: '/developer/services'
+      path: '/developer/services'
+      fullPath: '/developer/services'
+      preLoaderRoute: typeof DeveloperServicesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/services': {
-      id: '/admin/services'
-      path: '/admin/services'
-      fullPath: '/admin/services'
-      preLoaderRoute: typeof AdminServicesRouteImport
+    '/developer/schedules': {
+      id: '/developer/schedules'
+      path: '/developer/schedules'
+      fullPath: '/developer/schedules'
+      preLoaderRoute: typeof DeveloperSchedulesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/observability': {
-      id: '/admin/observability'
-      path: '/admin/observability'
-      fullPath: '/admin/observability'
-      preLoaderRoute: typeof AdminObservabilityRouteImport
+    '/developer/observability': {
+      id: '/developer/observability'
+      path: '/developer/observability'
+      fullPath: '/developer/observability'
+      preLoaderRoute: typeof DeveloperObservabilityRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/network': {
-      id: '/admin/network'
-      path: '/admin/network'
-      fullPath: '/admin/network'
-      preLoaderRoute: typeof AdminNetworkRouteImport
+    '/developer/files': {
+      id: '/developer/files'
+      path: '/developer/files'
+      fullPath: '/developer/files'
+      preLoaderRoute: typeof DeveloperFilesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/machines': {
-      id: '/admin/machines'
-      path: '/admin/machines'
-      fullPath: '/admin/machines'
-      preLoaderRoute: typeof AdminMachinesRouteImport
+    '/developer/compute': {
+      id: '/developer/compute'
+      path: '/developer/compute'
+      fullPath: '/developer/compute'
+      preLoaderRoute: typeof DeveloperComputeRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/storage_/$table': {
-      id: '/app/storage_/$table'
-      path: '/app/storage/$table'
-      fullPath: '/app/storage/$table'
-      preLoaderRoute: typeof AppStorageTableRouteImport
+    '/operator/services_/$service': {
+      id: '/operator/services_/$service'
+      path: '/operator/services/$service'
+      fullPath: '/operator/services/$service'
+      preLoaderRoute: typeof OperatorServicesServiceRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/services_/$service': {
-      id: '/app/services_/$service'
-      path: '/app/services/$service'
-      fullPath: '/app/services/$service'
-      preLoaderRoute: typeof AppServicesServiceRouteImport
+    '/developer/storage_/$table': {
+      id: '/developer/storage_/$table'
+      path: '/developer/storage/$table'
+      fullPath: '/developer/storage/$table'
+      preLoaderRoute: typeof DeveloperStorageTableRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/compute_/$function': {
-      id: '/app/compute_/$function'
-      path: '/app/compute/$function'
-      fullPath: '/app/compute/$function'
-      preLoaderRoute: typeof AppComputeFunctionRouteImport
+    '/developer/services_/$service': {
+      id: '/developer/services_/$service'
+      path: '/developer/services/$service'
+      fullPath: '/developer/services/$service'
+      preLoaderRoute: typeof DeveloperServicesServiceRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/services_/$service': {
-      id: '/admin/services_/$service'
-      path: '/admin/services/$service'
-      fullPath: '/admin/services/$service'
-      preLoaderRoute: typeof AdminServicesServiceRouteImport
+    '/developer/compute_/$function': {
+      id: '/developer/compute_/$function'
+      path: '/developer/compute/$function'
+      fullPath: '/developer/compute/$function'
+      preLoaderRoute: typeof DeveloperComputeFunctionRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/compute_/runs_/$runId': {
-      id: '/app/compute_/runs_/$runId'
-      path: '/app/compute/runs/$runId'
-      fullPath: '/app/compute/runs/$runId'
-      preLoaderRoute: typeof AppComputeRunsRunIdRouteImport
+    '/developer/compute_/runs_/$runId': {
+      id: '/developer/compute_/runs_/$runId'
+      path: '/developer/compute/runs/$runId'
+      fullPath: '/developer/compute/runs/$runId'
+      preLoaderRoute: typeof DeveloperComputeRunsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -457,26 +460,26 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AdminMachinesRoute: AdminMachinesRoute,
-  AdminNetworkRoute: AdminNetworkRoute,
-  AdminObservabilityRoute: AdminObservabilityRoute,
-  AdminServicesRoute: AdminServicesRoute,
-  AdminSettingsRoute: AdminSettingsRoute,
-  AdminTenantsRoute: AdminTenantsRoute,
-  AppComputeRoute: AppComputeRoute,
-  AppFilesRoute: AppFilesRoute,
-  AppObservabilityRoute: AppObservabilityRoute,
-  AppSchedulesRoute: AppSchedulesRoute,
-  AppServicesRoute: AppServicesRoute,
-  AppSettingsRoute: AppSettingsRoute,
-  AppStorageRoute: AppStorageRoute,
-  AdminIndexRoute: AdminIndexRoute,
-  AppIndexRoute: AppIndexRoute,
-  AdminServicesServiceRoute: AdminServicesServiceRoute,
-  AppComputeFunctionRoute: AppComputeFunctionRoute,
-  AppServicesServiceRoute: AppServicesServiceRoute,
-  AppStorageTableRoute: AppStorageTableRoute,
-  AppComputeRunsRunIdRoute: AppComputeRunsRunIdRoute,
+  DeveloperComputeRoute: DeveloperComputeRoute,
+  DeveloperFilesRoute: DeveloperFilesRoute,
+  DeveloperObservabilityRoute: DeveloperObservabilityRoute,
+  DeveloperSchedulesRoute: DeveloperSchedulesRoute,
+  DeveloperServicesRoute: DeveloperServicesRoute,
+  DeveloperSettingsRoute: DeveloperSettingsRoute,
+  DeveloperStorageRoute: DeveloperStorageRoute,
+  OperatorMachinesRoute: OperatorMachinesRoute,
+  OperatorNetworkRoute: OperatorNetworkRoute,
+  OperatorObservabilityRoute: OperatorObservabilityRoute,
+  OperatorServicesRoute: OperatorServicesRoute,
+  OperatorSettingsRoute: OperatorSettingsRoute,
+  OperatorTenantsRoute: OperatorTenantsRoute,
+  DeveloperIndexRoute: DeveloperIndexRoute,
+  OperatorIndexRoute: OperatorIndexRoute,
+  DeveloperComputeFunctionRoute: DeveloperComputeFunctionRoute,
+  DeveloperServicesServiceRoute: DeveloperServicesServiceRoute,
+  DeveloperStorageTableRoute: DeveloperStorageTableRoute,
+  OperatorServicesServiceRoute: OperatorServicesServiceRoute,
+  DeveloperComputeRunsRunIdRoute: DeveloperComputeRunsRunIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

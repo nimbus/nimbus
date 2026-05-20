@@ -58,7 +58,7 @@ function usePerfEventStream(): EventDoc[] | undefined {
 }
 
 export function LogsTab({ search }: { search: ObservabilitySearch }) {
-  const navigate = useNavigate({ from: "/app/observability" });
+  const navigate = useNavigate({ from: "/developer/observability" });
   const live = useQuery(api.events.recent, {
     source: search.source ?? null,
     level: search.level ?? null,
@@ -75,7 +75,7 @@ export function LogsTab({ search }: { search: ObservabilitySearch }) {
   const setSearch = useCallback(
     (patch: Partial<ObservabilitySearch>) => {
       void navigate({
-        to: "/app/observability",
+        to: "/developer/observability",
         search: (prev) => ({ ...prev, ...patch }),
         replace: true,
       });
@@ -86,7 +86,7 @@ export function LogsTab({ search }: { search: ObservabilitySearch }) {
   const setSearchAction = useCallback(
     (patch: Partial<ObservabilitySearch>) => {
       void navigate({
-        to: "/app/observability",
+        to: "/developer/observability",
         search: (prev) => ({ ...prev, ...patch }),
       });
     },
@@ -420,7 +420,7 @@ function LogStream({
           }}
         >
           <Link
-            to="/app/compute/runs/$runId"
+            to="/developer/compute/runs/$runId"
             params={{ runId: menu.correlationId }}
             role="menuitem"
             className="flex w-full items-center gap-2 px-3 py-1.5 text-default hover:bg-surface-2"
@@ -448,7 +448,7 @@ function CorrelationBadge({
   return (
     <span className="inline-flex items-center gap-1">
       <Link
-        to="/app/compute/runs/$runId"
+        to="/developer/compute/runs/$runId"
         params={{ runId: correlationId }}
         className="inline-flex items-center gap-1 rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default focus-visible:bg-surface-2 focus-visible:text-default"
         data-testid={`observability-log-jump-${eventId}`}

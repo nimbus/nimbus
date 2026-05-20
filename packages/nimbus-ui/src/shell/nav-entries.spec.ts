@@ -61,10 +61,10 @@ describe("nav-entries", () => {
 
   it("targets developer paths under /app and operator paths under /admin", () => {
     for (const entry of DEVELOPER_NAV_ENTRIES) {
-      expect(entry.to.startsWith("/app")).toBe(true);
+      expect(entry.to.startsWith("/developer")).toBe(true);
     }
     for (const entry of OPERATOR_NAV_ENTRIES) {
-      expect(entry.to.startsWith("/admin")).toBe(true);
+      expect(entry.to.startsWith("/operator")).toBe(true);
     }
   });
 
@@ -85,11 +85,11 @@ describe("nav-entries", () => {
   });
 
   it("viewFromPathname maps /admin* to operator and everything else to developer", () => {
-    expect(viewFromPathname("/admin")).toBe("operator");
-    expect(viewFromPathname("/admin/")).toBe("operator");
-    expect(viewFromPathname("/admin/machines")).toBe("operator");
-    expect(viewFromPathname("/app")).toBe("developer");
-    expect(viewFromPathname("/app/compute")).toBe("developer");
+    expect(viewFromPathname("/operator")).toBe("operator");
+    expect(viewFromPathname("/operator/")).toBe("operator");
+    expect(viewFromPathname("/operator/machines")).toBe("operator");
+    expect(viewFromPathname("/developer")).toBe("developer");
+    expect(viewFromPathname("/developer/compute")).toBe("developer");
     expect(viewFromPathname("/")).toBe("developer");
   });
 });

@@ -16,7 +16,7 @@ import {
 } from "../../shell/sub-drawer";
 import { useUiStore } from "../../store/ui-store";
 
-export const Route = createFileRoute("/app/services")({
+export const Route = createFileRoute("/developer/services")({
   loaderDeps: () => ({
     activeTenant: useUiStore.getState().activeTenant,
   }),
@@ -172,7 +172,7 @@ function ServicesSubDrawer({
       {filtered.map((svc) => (
         <li key={svc._id}>
           <Link
-            to="/app/services/$service"
+            to="/developer/services/$service"
             params={{ service: svc._id }}
             data-testid={`sub-drawer-item-dev-service-${svc.name ?? svc._id}`}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
@@ -245,8 +245,8 @@ export function ServicesTable({
                   <Link
                     to={
                       showTenantColumn
-                        ? "/admin/services/$service"
-                        : "/app/services/$service"
+                        ? "/operator/services/$service"
+                        : "/developer/services/$service"
                     }
                     params={{ service: svc._id }}
                     className="font-mono text-default hover:underline"

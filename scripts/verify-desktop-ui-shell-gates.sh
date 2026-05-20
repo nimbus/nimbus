@@ -50,7 +50,7 @@ check_gate \
 # 3. /debug/runtime/metrics references must stay in the wired-up hook and
 #    its msw fixtures; surface any new caller.
 allowed_debug_runtime_metrics=$(cat <<'EOF'
-packages/nimbus-ui/src/routes/admin/settings/hooks.ts
+packages/nimbus-ui/src/routes/operator/settings/hooks.ts
 packages/nimbus-ui/src/test/handlers.ts
 packages/nimbus-ui/src/test/msw.spec.ts
 EOF

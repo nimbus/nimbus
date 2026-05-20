@@ -49,7 +49,7 @@ describe("Schedules section nav (DR3 / F4)", () => {
   it("each Schedules item routes through the ?section= query, not a path segment", () => {
     assertStatic(SCHEDULES_SUB_DRAWER, "SCHEDULES_SUB_DRAWER");
     for (const item of SCHEDULES_SUB_DRAWER.items) {
-      expect(item.to).toBe("/app/schedules");
+      expect(item.to).toBe("/developer/schedules");
       expect(item.search).toEqual({ section: item.id });
     }
   });

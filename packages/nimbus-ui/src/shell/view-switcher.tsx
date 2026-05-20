@@ -14,11 +14,6 @@ const SEGMENTS: ReadonlyArray<{ value: NavView; label: string }> = [
   { value: "operator", label: "Operator" },
 ];
 
-const VIEW_DEFAULT: Record<NavView, string> = {
-  developer: "/app",
-  operator: "/admin",
-};
-
 export function ViewSwitcher() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -31,7 +26,7 @@ export function ViewSwitcher() {
       persistLastRouteForView(activeView, pathname);
       setLastView(target);
       const restored = readLastRouteForView(target);
-      void navigate({ to: restored ?? VIEW_DEFAULT[target] });
+      void navigate({ to: restored ?? `/${target}` });
     },
     [activeView, pathname, navigate, setLastView],
   );

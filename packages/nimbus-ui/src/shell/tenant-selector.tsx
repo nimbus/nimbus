@@ -72,7 +72,7 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
     (next: string | null) => {
       if (mode.kind === "operator-filter") {
         navigate({
-          to: "/admin/observability",
+          to: "/operator/observability",
           search: next ? { tenant: next } : {},
           replace: true,
         });
@@ -133,7 +133,7 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
         type="button"
         data-testid="tenant-selector-create"
         onClick={() =>
-          navigate({ to: "/admin/tenants", search: { create: 1 } })
+          navigate({ to: "/operator/tenants", search: { create: 1 } })
         }
         className="flex h-7 items-center gap-1 rounded-md border border-app bg-surface px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted hover:bg-surface-2 hover:text-default"
       >

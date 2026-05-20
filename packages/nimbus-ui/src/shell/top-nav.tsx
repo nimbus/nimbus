@@ -10,7 +10,7 @@ function selectorModeForRoute(
 ): TenantSelectorMode | null {
   const view = viewFromPathname(pathname);
   if (view === "developer") return { kind: "developer" };
-  if (pathname === "/admin/observability") {
+  if (pathname === "/operator/observability") {
     const tenant = search?.tenant;
     return {
       kind: "operator-filter",

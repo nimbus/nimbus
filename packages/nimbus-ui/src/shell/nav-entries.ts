@@ -38,7 +38,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "overview",
     label: "Overview",
-    to: "/app",
+    to: "/developer",
     icon: Gauge,
     view: "developer",
     count: null,
@@ -46,7 +46,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "compute",
     label: "Compute",
-    to: "/app/compute",
+    to: "/developer/compute",
     icon: Cpu,
     view: "developer",
     count: queryEntry(api.functions.list, {
@@ -58,7 +58,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "services",
     label: "Services",
-    to: "/app/services",
+    to: "/developer/services",
     icon: Boxes,
     view: "developer",
     count: queryEntry(api.services.list, {
@@ -71,7 +71,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "schedules",
     label: "Schedules",
-    to: "/app/schedules",
+    to: "/developer/schedules",
     icon: Clock,
     view: "developer",
     count: queryEntry(api.scheduled_jobs.list, {
@@ -83,7 +83,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "storage",
     label: "Storage",
-    to: "/app/storage",
+    to: "/developer/storage",
     icon: Database,
     view: "developer",
     count: queryEntry(api.tables.list, { tenantId: null, limit: 200 }),
@@ -91,7 +91,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "files",
     label: "Files",
-    to: "/app/files",
+    to: "/developer/files",
     icon: HardDrive,
     view: "developer",
     count: null,
@@ -99,7 +99,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "observability",
     label: "Observability",
-    to: "/app/observability",
+    to: "/developer/observability",
     icon: Activity,
     view: "developer",
     count: queryEntry(api.runs.recent, {
@@ -112,7 +112,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "settings",
     label: "Settings",
-    to: "/app/settings",
+    to: "/developer/settings",
     icon: Settings,
     view: "developer",
     count: null,
@@ -123,7 +123,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
   {
     id: "system",
     label: "System",
-    to: "/admin",
+    to: "/operator",
     icon: Gauge,
     view: "operator",
     count: null,
@@ -131,7 +131,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
   {
     id: "tenants",
     label: "Tenants",
-    to: "/admin/tenants",
+    to: "/operator/tenants",
     icon: Building2,
     view: "operator",
     count: null,
@@ -139,7 +139,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
   {
     id: "machines",
     label: "Machines",
-    to: "/admin/machines",
+    to: "/operator/machines",
     icon: Server,
     view: "operator",
     count: queryEntry(api.machines.list, {
@@ -151,7 +151,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
   {
     id: "network",
     label: "Network",
-    to: "/admin/network",
+    to: "/operator/network",
     icon: Network,
     view: "operator",
     count: queryEntry(api.routes.list, { adapter: null, limit: 200 }),
@@ -159,7 +159,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
   {
     id: "services",
     label: "Services",
-    to: "/admin/services",
+    to: "/operator/services",
     icon: Boxes,
     view: "operator",
     count: queryEntry(api.services.list, {
@@ -172,7 +172,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
   {
     id: "observability",
     label: "Observability",
-    to: "/admin/observability",
+    to: "/operator/observability",
     icon: Activity,
     view: "operator",
     count: queryEntry(api.runs.recent, {
@@ -185,7 +185,7 @@ export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
   {
     id: "settings",
     label: "Settings",
-    to: "/admin/settings",
+    to: "/operator/settings",
     icon: Settings,
     view: "operator",
     count: null,
@@ -197,5 +197,5 @@ export function navEntriesForView(view: NavView): NavEntry[] {
 }
 
 export function viewFromPathname(pathname: string): NavView {
-  return pathname.startsWith("/admin") ? "operator" : "developer";
+  return pathname.startsWith("/operator") ? "operator" : "developer";
 }
