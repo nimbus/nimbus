@@ -18,6 +18,21 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
+- `docs/plans/ci-caching-canonicalization-plan.md`
+  - canonical plan for canonicalizing the Rust + JS + Playwright caching
+    architecture across all nine `.github/workflows/*.yml`. Lands sccache
+    as the primary Rust compilation cache, uses Swatinem as a secondary
+    `target/` floor, fixes Swatinem rerun save-suppression
+    (`save-always: true`), introduces a `ui-artifacts` leader job to
+    deduplicate the UI build across six Rust followers, introduces a
+    `warm-sccache` leader job to convert parallel-cold to
+    serial-cold-then-parallel-warm, and re-tests the
+    `cargo-llvm-cov -j 1` linker-parallelism constraint. Activation gate
+    met 2026-05-21 (Coverage cache silently dropped after rerun; 27 GB
+    of duplicated dep content across 9 cache slots). Ledger CC0..CC8.
+    `/goal` control plane gated on
+    `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
+    conditions).
 
 ## Current Reference Baselines
 

@@ -87,6 +87,17 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `crates/nimbus-server/build.rs` only asserts that those inputs exist
   and errors actionably otherwise. Promote a new active plan before
   another local-dev / build-graph wave.
+- CI caching / sccache / Swatinem orchestration:
+  `docs/plans/ci-caching-canonicalization-plan.md` as the active
+  execution plan (CC0..CC8). Covers sccache rollout across every Rust
+  job in `.github/workflows/*.yml`, Swatinem `shared-key` rotation
+  v1→v2, `save-always: true` for rerun-safety, the `ui-artifacts`
+  leader job that deduplicates the UI build, and the `warm-sccache`
+  leader job that converts parallel-cold-start to
+  serial-cold-then-parallel-warm. `/goal` control plane gated on
+  `bash scripts/verify-ci-caching-canonicalization.sh`. Once the plan
+  closes, `docs/operating/ci-caching.md` becomes the canonical
+  caching contract.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,
