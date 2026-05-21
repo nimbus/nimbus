@@ -34,12 +34,18 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
         SandboxStatus::Ready,
         "image-backed sandbox should reach ready"
     );
+    assert_eq!(
+        ready_handle.published_endpoints[0].address,
+        std::net::SocketAddr::from(([127, 0, 0, 1], host_port)),
+        "image-backed sandbox endpoint should stay on loopback"
+    );
 
     let http_response = wait_for_http_response(host_port, Duration::from_secs(15));
     assert_httpish_response(
         &http_response,
         "expected HTTP response from image-backed sandbox",
     );
+    assert_host_port_not_bound_to_non_loopback(host_port);
 
     let restarted_backend = KrunSandboxBackend::new(config);
     let restarted_handle = block_on(restarted_backend.inspect(&handle.id))
