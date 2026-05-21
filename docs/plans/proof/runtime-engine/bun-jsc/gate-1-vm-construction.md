@@ -164,6 +164,9 @@ can be embedded safely.
 
 ## Next Required Evidence
 
+The follow-up Rust staticlib-root scout is recorded in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-2-embed-staticlib-probe.md`.
+
 1. Identify or create an upstream Bun-side embeddable link target that is not
    rooted at `src/bun_bin/lib.rs::main`.
 2. That target must link the same C++/WebKit/JSC inputs needed by
