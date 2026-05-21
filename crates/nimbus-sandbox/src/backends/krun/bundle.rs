@@ -9,6 +9,129 @@ use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
+const KRUN_REQUIRED_CAPABILITIES: &[&str] =
+    &["CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE", "CAP_SYS_ADMIN"];
+const KRUN_SECCOMP_ALLOWLIST: &[&str] = &[
+    "accept",
+    "accept4",
+    "access",
+    "arch_prctl",
+    "bind",
+    "brk",
+    "capget",
+    "capset",
+    "chdir",
+    "clock_getres",
+    "clock_gettime",
+    "clock_nanosleep",
+    "clone",
+    "clone3",
+    "close",
+    "connect",
+    "copy_file_range",
+    "dup",
+    "dup2",
+    "dup3",
+    "epoll_create1",
+    "epoll_ctl",
+    "epoll_pwait",
+    "epoll_pwait2",
+    "epoll_wait",
+    "eventfd2",
+    "execve",
+    "exit",
+    "exit_group",
+    "faccessat",
+    "faccessat2",
+    "fadvise64",
+    "fallocate",
+    "fcntl",
+    "fdatasync",
+    "fstat",
+    "fstatfs",
+    "fsync",
+    "ftruncate",
+    "futex",
+    "getcwd",
+    "getdents64",
+    "getegid",
+    "geteuid",
+    "getgid",
+    "getpeername",
+    "getpid",
+    "getppid",
+    "getrandom",
+    "getrlimit",
+    "getrusage",
+    "getsockname",
+    "getsockopt",
+    "gettid",
+    "gettimeofday",
+    "getuid",
+    "ioctl",
+    "listen",
+    "lseek",
+    "madvise",
+    "membarrier",
+    "memfd_create",
+    "mkdirat",
+    "mmap",
+    "mprotect",
+    "mremap",
+    "munmap",
+    "nanosleep",
+    "newfstatat",
+    "open",
+    "openat",
+    "openat2",
+    "pipe2",
+    "poll",
+    "ppoll",
+    "prctl",
+    "pread64",
+    "prlimit64",
+    "pwrite64",
+    "read",
+    "readlink",
+    "readlinkat",
+    "recvfrom",
+    "recvmmsg",
+    "recvmsg",
+    "renameat",
+    "renameat2",
+    "restart_syscall",
+    "rseq",
+    "rt_sigaction",
+    "rt_sigprocmask",
+    "rt_sigreturn",
+    "sched_getaffinity",
+    "sched_setaffinity",
+    "sched_yield",
+    "sendmmsg",
+    "sendmsg",
+    "sendto",
+    "set_robust_list",
+    "set_tid_address",
+    "setrlimit",
+    "setsockopt",
+    "shutdown",
+    "sigaltstack",
+    "socket",
+    "socketpair",
+    "stat",
+    "statfs",
+    "statx",
+    "symlinkat",
+    "tgkill",
+    "timerfd_create",
+    "timerfd_settime",
+    "umask",
+    "uname",
+    "unlinkat",
+    "wait4",
+    "write",
+    "writev",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct KrunBundleLayout {
@@ -129,6 +252,7 @@ pub(crate) fn build_bundle_config(
     if let Some(resources) = build_linux_resources(&spec.resources) {
         linux.insert("resources".to_owned(), resources);
     }
+    linux.insert("seccomp".to_owned(), krun_seccomp_profile());
 
     let mut mounts = default_linux_mounts();
     mounts.extend(options.additional_mounts.iter().map(bundle_mount_json));
@@ -141,6 +265,8 @@ pub(crate) fn build_bundle_config(
                 "uid": process_user.uid,
                 "gid": process_user.gid,
             },
+            "noNewPrivileges": true,
+            "capabilities": krun_process_capabilities(),
             "args": spec.process.args,
             "env": process_env(&spec.process),
             "cwd": process_cwd(&spec.process),
@@ -154,6 +280,35 @@ pub(crate) fn build_bundle_config(
         "annotations": annotations,
         "linux": Value::Object(linux),
     }))
+}
+
+fn krun_process_capabilities() -> Value {
+    json!({
+        "bounding": KRUN_REQUIRED_CAPABILITIES,
+        "effective": KRUN_REQUIRED_CAPABILITIES,
+        "inheritable": [],
+        "permitted": KRUN_REQUIRED_CAPABILITIES,
+        "ambient": [],
+    })
+}
+
+fn krun_seccomp_profile() -> Value {
+    json!({
+        "defaultAction": "SCMP_ACT_ERRNO",
+        "defaultErrnoRet": 1,
+        "architectures": [
+            "SCMP_ARCH_X86_64",
+            "SCMP_ARCH_X86",
+            "SCMP_ARCH_X32",
+            "SCMP_ARCH_AARCH64",
+        ],
+        "syscalls": [
+            {
+                "names": KRUN_SECCOMP_ALLOWLIST,
+                "action": "SCMP_ACT_ALLOW",
+            },
+        ],
+    })
 }
 
 fn default_linux_mounts() -> Vec<Value> {
@@ -310,6 +465,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use serde_json::json;
     use tempfile::TempDir;
 
     use nimbus_core::TenantId;
@@ -395,6 +551,62 @@ mod tests {
             config["process"]["user"]["gid"], 0,
             "krun bundle must use root gid for VMM access to /dev/kvm"
         );
+    }
+
+    #[test]
+    fn bundle_config_sets_no_new_privileges() {
+        let spec = sample_spec();
+        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build");
+
+        assert_eq!(
+            config["process"]["noNewPrivileges"], true,
+            "krun VMM process should not be able to gain new privileges through exec"
+        );
+    }
+
+    #[test]
+    fn bundle_config_sets_explicit_krun_capabilities() {
+        let spec = sample_spec();
+        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build");
+        let capabilities = &config["process"]["capabilities"];
+        let expected = json!(["CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE", "CAP_SYS_ADMIN"]);
+
+        assert_eq!(capabilities["bounding"], expected);
+        assert_eq!(capabilities["effective"], expected);
+        assert_eq!(capabilities["permitted"], expected);
+        assert_eq!(capabilities["inheritable"], json!([]));
+        assert_eq!(capabilities["ambient"], json!([]));
+    }
+
+    #[test]
+    fn bundle_config_sets_explicit_seccomp_allowlist() {
+        let spec = sample_spec();
+        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build");
+        let seccomp = &config["linux"]["seccomp"];
+
+        assert_eq!(seccomp["defaultAction"], "SCMP_ACT_ERRNO");
+        assert_eq!(seccomp["defaultErrnoRet"], 1);
+        assert_eq!(
+            seccomp["architectures"],
+            json!([
+                "SCMP_ARCH_X86_64",
+                "SCMP_ARCH_X86",
+                "SCMP_ARCH_X32",
+                "SCMP_ARCH_AARCH64"
+            ])
+        );
+        let names = seccomp["syscalls"][0]["names"]
+            .as_array()
+            .expect("seccomp allowlist should contain syscall names");
+        for syscall in ["execve", "ioctl", "mmap", "openat", "read", "write"] {
+            assert!(
+                names.iter().any(|name| name.as_str() == Some(syscall)),
+                "expected krun seccomp allowlist to include {syscall}"
+            );
+        }
     }
 
     #[test]
