@@ -2,6 +2,9 @@
 
 Date: 2026-05-21
 
+Superseded by:
+`docs/plans/proof/runtime-engine/bun-jsc/gate-6-async-host-call.md`
+
 Nimbus revision: `1703db5f` (`Record Bun native embed proof`)
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
@@ -236,8 +239,9 @@ host calls and event-loop progress, bundle/module loading without CLI module
 state assumptions, timeout/cancel behavior, permission containment, and
 teardown/reuse semantics.
 
-The immediate next recommended gate is an async host-call proof. It should
-install a JS-visible function that returns a promise, have Rust resolve or
-reject it from a scheduled host task, drive the Bun/JSC event loop until
-settlement, and assert the guest observes the resolved value without using
-Bun's CLI runner.
+The immediate next recommended gate was an async host-call proof. Gate 6
+completed that proof locally by returning a pending `JSPromise`, resolving it
+from a scheduled `ManagedTask`, and driving `wait_for_promise` until a guest
+`.then` observer saw the fulfilled value. Bun/JSC remains proof-only until
+bundle/module loading, timeout/cancel behavior, permission containment,
+teardown/reuse, and artifact/server routing gates pass.
