@@ -122,7 +122,10 @@ verify-release-archive-layout-helper:
 
 # Desktop UI browser-smoke harness. Builds the nimbus binary the
 # disposable-server fixture spawns, then runs the deterministic walk.
+# Convex codegen must run first because nimbus-server `include_str!`s
+# the artifacts it produces under packages/nimbus-ui/.nimbus/convex/.
 verify-desktop-ui:
+	npm run codegen -w packages/nimbus-ui
 	cargo build -p nimbus-bin
 	npm run build -w packages/nimbus-ui
 	npm run test:e2e:smoke -w packages/nimbus-ui

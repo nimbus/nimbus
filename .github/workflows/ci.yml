@@ -223,6 +223,13 @@ jobs:
       - name: Generate nimbus-ui convex codegen artifacts
         run: npm run codegen -w packages/nimbus-ui
 
+      # http::ui::tests::inline_fouc_script_hash_matches_csp verifies the
+      # FOUC-script SHA-256 in dist/index.html matches the CSP pin, and the
+      # nimbus-server build.rs only writes a hash-less stub when dist is
+      # missing. Build the real SPA so that test sees production output.
+      - name: Build nimbus-ui SPA
+        run: npm run build -w packages/nimbus-ui
+
       - name: Run workspace test lane
         # Verification-harness corpus tests are ignored by default and run in
         # the dedicated harness matrix below, so this lane stays focused on the
@@ -637,6 +644,12 @@ jobs:
 
       - name: Generate nimbus-ui convex codegen artifacts
         run: npm run codegen -w packages/nimbus-ui
+
+      # Coverage runs the workspace test lane (including the FOUC inline
+      # script CSP-pin check), so dist/index.html must contain the real
+      # SPA output rather than the build.rs stub.
+      - name: Build nimbus-ui SPA
+        run: npm run build -w packages/nimbus-ui
 
       - name: Start libsql provider fixture
         run: |

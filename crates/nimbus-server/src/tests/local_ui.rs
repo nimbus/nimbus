@@ -512,9 +512,7 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
             && body.contains("data-copy=\"nimbus auth token --copy\"")
             && body.contains("<span class=\"shell-block-lang\">terminal</span>")
             && body.contains("<span class=\"shell-block-prompt\"")
-            && body.contains(
-                "<span class=\"shell-block-cmd\">nimbus auth token --copy</span>",
-            ),
+            && body.contains("<span class=\"shell-block-cmd\">nimbus auth token --copy</span>",),
         "auth page should expose a full-width `.shell-block` with a `terminal` chrome label, `$` prompt, and `nimbus auth token --copy` body"
     );
     assert!(
@@ -574,7 +572,9 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
         "`.shell-block` must sit between the CONTINUE button and the `How to login` disclosure"
     );
     assert!(
-        !body.contains("<div class=\"other-ways-body\">\n      <button type=\"button\" class=\"shell-block\""),
+        !body.contains(
+            "<div class=\"other-ways-body\">\n      <button type=\"button\" class=\"shell-block\""
+        ),
         "`.shell-block` must not be nested back inside `.other-ways-body`"
     );
     // CL3: the auth-page chrome should no longer *use* the
