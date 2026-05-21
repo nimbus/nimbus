@@ -33,20 +33,19 @@ fn ensure_ui_assets() -> io::Result<()> {
     );
     let dist_dir = manifest.join("../../packages/nimbus-ui/dist");
     let index_path = dist_dir.join("index.html");
-    let profile = std::env::var("PROFILE").unwrap_or_default();
+    let codegen_dir = manifest.join("../../packages/nimbus-ui/.nimbus/convex");
 
     println!("cargo:rerun-if-changed={}", dist_dir.display());
+    println!("cargo:rerun-if-changed={}", codegen_dir.display());
 
     if !index_path.exists() {
-        if profile == "release" {
-            return Err(io::Error::other(format!(
-                "release build requires nimbus-ui dist; run `make build-ui` first (missing {})",
-                index_path.display()
-            )));
-        }
-        fs::create_dir_all(&dist_dir)?;
-        let stub = "<!doctype html><html><head><meta charset=\"utf-8\"><title>Nimbus UI</title></head><body><main><h1>Nimbus UI</h1><p>Run <code>make build-ui</code> to populate this stub.</p></main></body></html>";
-        fs::write(&index_path, stub)?;
+        return Err(io::Error::other(format!(
+            "nimbus-ui dist is missing — {} does not exist. \
+             Run any `make` target (e.g. `make build-ui`, `make check`, `make test`); \
+             Make's dependency graph will build the SPA on demand. \
+             Cargo-direct builds of nimbus-server require dist to exist beforehand.",
+            index_path.display()
+        )));
     }
 
     Ok(())
