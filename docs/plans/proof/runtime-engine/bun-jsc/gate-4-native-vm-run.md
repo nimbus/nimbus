@@ -2,6 +2,9 @@
 
 Date: 2026-05-21
 
+Superseded by:
+`docs/plans/proof/runtime-engine/bun-jsc/gate-5-sync-host-call.md`
+
 Nimbus revision: `92e75afb` (`Document Bun embed native target design`)
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
@@ -212,7 +215,8 @@ must prove:
 7. teardown and either safe reuse or fresh-VM-per-invocation semantics,
 8. artifact metadata and server routing that keep Bun/JSC explicit.
 
-The next recommended gate is a host-call proof built on the same non-CLI target
-shape. It should export a small C ABI from Nimbus into the Bun/JSC proof,
-install a JS-visible function in the Bun global object, invoke it from guest
-JavaScript, and assert the host receives the expected operation and payload.
+The next recommended gate was a host-call proof built on the same non-CLI
+target shape. Gate 5 completed that sync host-call proof locally. Bun/JSC
+remains proof-only until async host calls, event-loop progress, guest
+bundle/module loading, cancellation, permissions, teardown/reuse, and artifact
+routing gates pass.
