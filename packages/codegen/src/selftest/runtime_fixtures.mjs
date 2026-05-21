@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import vm from "node:vm";
 
+import { generateRuntimeProgramBundle } from "../emit/runtime_bundle.mjs";
 import {
   createAppFixture,
   readConvexFile,
@@ -19,6 +21,8 @@ async function runRuntimeFixtures() {
   await testRuntimeOnlyQueryFixture();
   await testRuntimeOnlyPaginatedQueryFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
+  await testRuntimeProgramBundleCandidateFixture();
+  testRuntimeProgramBundleRejectsNodeRuntimeImports();
   await testImportedServerValidatorsFixture();
   await testUnsupportedPatchWithoutIdValidatorFixture();
 }
@@ -223,6 +227,109 @@ export const sendAndSchedule = mutation({
       globalThis.__nimbusCreateContext = previousCreateContext;
     }
   }
+}
+
+async function testRuntimeProgramBundleCandidateFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { internalMutation, mutation } from "./_generated/server";
+import { internalScheduledFunctions } from "./_generated/scheduled_functions";
+import { v } from "convex/values";
+
+export const sendInternal = internalMutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => await ctx.db.insert("messages", { body }),
+});
+
+export const sendAndSchedule = mutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => {
+    const id = await ctx.db.insert("messages", { body });
+    await ctx.scheduler.runAfter(
+      1_000,
+      internalScheduledFunctions.messages.sendInternal,
+      { body: \`\${body} later\` },
+    );
+    return id;
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  const moduleBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.match(moduleBundle, /^export \{\};$/m);
+
+  const programBundle = generateRuntimeProgramBundle({
+    functions: manifest.functions,
+    routes: [],
+  });
+  assert.doesNotMatch(programBundle, /^import\s/m);
+  assert.doesNotMatch(programBundle, /^export\s/m);
+  assert.match(programBundle, /globalThis\.__nimbusInvoke/);
+  assert.match(programBundle, /materializeRuntimeBindings/);
+
+  let scheduledCall = null;
+  const sandbox = {
+    __nimbusCreateContext: () => ({
+      db: {
+        insert: async (_table, document) =>
+          document.body === "hello" ? "message-id" : "scheduled-id",
+      },
+      scheduler: {
+        runAfter: async (delayMs, mutationRef, args) => {
+          scheduledCall = { delayMs, mutationRef, args };
+          return "job-id";
+        },
+      },
+    }),
+  };
+  vm.runInNewContext(programBundle, sandbox, {
+    filename: "nimbus-runtime-program-bundle.js",
+  });
+
+  assert.equal(typeof sandbox.__nimbusInvoke, "function");
+  const response = await sandbox.__nimbusInvoke({
+    kind: "mutation",
+    function_name: "messages:sendAndSchedule",
+    args: { body: "hello" },
+  });
+  assert.equal(response.status, "ok");
+  assert.equal(response.value, "message-id");
+  assert.equal(scheduledCall?.delayMs, 1_000);
+  assert.equal(scheduledCall?.mutationRef?.name, "messages:sendInternal");
+  assert.equal(scheduledCall?.mutationRef?.visibility, "internal");
+  assert.equal(scheduledCall?.mutationRef?.kind, "mutation");
+  assert.deepEqual(JSON.parse(JSON.stringify(scheduledCall?.args)), {
+    body: "hello later",
+  });
+}
+
+function testRuntimeProgramBundleRejectsNodeRuntimeImports() {
+  assert.throws(
+    () => generateRuntimeProgramBundle({
+      functions: [
+        {
+          name: "actions:read",
+          runtime_bindings: {
+            fs: {
+              type: "node_builtin_namespace",
+              specifier: "node:fs",
+            },
+          },
+        },
+      ],
+      routes: [],
+    }),
+    /runtime program bundle cannot materialize Node runtime imports: node:fs/,
+  );
 }
 
 async function testImportedServerValidatorsFixture() {
