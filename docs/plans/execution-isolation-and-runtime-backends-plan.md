@@ -22,6 +22,7 @@ krun sandbox hardening one shared execution-boundary map.
 - **Architecture references:**
   - `docs/architecture/runtime/engine-seam.md`
   - `docs/architecture/runtime/new-engine-proof-harness.md`
+  - `docs/architecture/runtime/permission-model.md`
   - `docs/architecture/sandbox/microvm-service-baseline.md`
   - `docs/plans/security/sandbox-isolation-audit.md`
 - **Activation gate:** active now because the runtime engine seam work is
@@ -151,6 +152,7 @@ as proof evidence and avoid creating a long-lived maintenance fork.
 | `docs/plans/archive/runtime-engine-seam-plan.md` | Completed Step 0 baseline for runtime backend seams and Bun/JSC gates 1-10. |
 | `docs/architecture/runtime/engine-seam.md` | Stable runtime seam reference. |
 | `docs/architecture/runtime/new-engine-proof-harness.md` | Required evidence table before a runtime backend can become selectable. |
+| `docs/architecture/runtime/permission-model.md` | Shared trust-tier, mode, grant, preset, and compatibility-target policy. |
 | `docs/plans/security/sandbox-isolation-audit.md` | Security findings that must be routed into sandbox hardening or accepted-risk decisions. |
 | `docs/plans/wasmtime-backend-plan.md` | Deferred backend-specific wasmtime execution plan; consumes this plan's trust and capability vocabulary. |
 | `docs/plans/wasi-agent-capabilities-plan.md` | Deferred agent capability plan; consumes this plan's capability and sandbox tiers. |
@@ -226,13 +228,45 @@ Reviewed source and docs:
 | Generated artifact metadata is explicit but currently V8-only. | Codegen emits `runtime_engine`, `runtime_bundle_content_kind`, `runtime_compatibility_target`, and `runtime_package_resolution`; server validation only accepts V8 JavaScript lanes today. | EIB2/EIB3/EIB5 define new legal combinations before routing can select another engine. |
 | Active plan list stays small after archiving the runtime seam plan. | `docs/plans/archive/runtime-engine-seam-plan.md` is the historical baseline; wasmtime, WASI agent, and admission plans remain deferred; this plan is the active routing point. | No additional archive needed in EIB1. Retitle or archive only if EIB5/EIB6 exposes overlap after vocabulary alignment. |
 
+## EIB2 Trust Tier Policy
+
+Status: `done` as of 2026-05-21.
+
+`docs/architecture/runtime/permission-model.md` is now the source of truth for
+the shared policy vocabulary. It defines these execution trust tiers:
+
+- `in_process_untrusted`
+- `in_process_trusted_only`
+- `wasm_capability_sandbox`
+- `microvm_service`
+
+Settled EIB2 decisions:
+
+- engine names do not imply permissions
+- compatibility targets do not imply permissions
+- runtime presets lower to mode plus grants, but do not decide trust by
+  themselves
+- Deno/V8 application JavaScript lanes may run as `in_process_untrusted` only
+  when their grants remain within the accepted untrusted subset
+- Deno/V8 tooling or operator workloads with `run`, `tool`, `identity`, or
+  `Privileged` grants are `in_process_trusted_only`
+- Bun/JSC remains proof-only as `in_process_trusted_only` until permission,
+  memory, package-loading, lifecycle, artifact-metadata, and fork-posture gates
+  pass
+- wasmtime components remain deferred under `wasm_capability_sandbox`
+- WASI agent filesystem/process/HTTP capabilities are additive imported
+  capabilities, not inherited by ordinary WASM functions
+- krun/container-backed services are `microvm_service` or the local-dev
+  container equivalent; runtime code reaches them through declared service
+  bindings rather than direct host authority
+
 ## Phase Status Ledger
 
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
 | EIB0 | `done` | Create this successor control plane and archive the completed runtime engine seam plan. | Documentation diff check. |
 | EIB1 | `done` | Build the execution-boundary ownership map across runtime, sandbox, wasmtime, WASI agent, admission, and security-audit plans. | Source/doc review checklist recorded; `git diff --check`. |
-| EIB2 | `todo` | Define trust tiers and capability policy shared by in-process engines, WASM components, and sandboxed services. | Architecture doc update plus focused policy tests if code changes. |
+| EIB2 | `done` | Define trust tiers and capability policy shared by in-process engines, WASM components, and sandboxed services. | `docs/architecture/runtime/permission-model.md` updated; no code changes; `git diff --check`. |
 | EIB3 | `todo` | Decide Bun/JSC next proof gates and fork posture from permission, memory, package, and lifecycle evidence. | Bun/Nimbus proof transcript or explicit blocked decision. |
 | EIB4 | `todo` | Route sandbox isolation audit findings into implementation, distribution, or accepted-risk owners. | Updated security audit and owning plan links; `git diff --check`. |
 | EIB5 | `todo` | Align wasmtime and WASI agent plans with the shared trust/capability vocabulary. | Plan updates plus any focused schema/policy tests if code changes. |
@@ -283,7 +317,7 @@ Completion notes:
 
 ### EIB2: Trust Tiers And Capability Policy
 
-Status: `todo`
+Status: `done`
 
 Deliverables:
 
@@ -299,6 +333,14 @@ Acceptance criteria:
 - engine names do not imply permissions
 - compatibility targets do not imply permissions
 - unsupported capability/tier combinations are rejected or clearly deferred
+
+Completion notes:
+
+- `docs/architecture/runtime/permission-model.md` now defines the shared trust
+  tiers and capability matrix
+- unsupported future combinations are clearly deferred to EIB3, EIB5, or EIB6
+  before implementation
+- no code changes, so no focused policy tests were required
 
 ### EIB3: Bun/JSC Viability And Fork Decision
 
@@ -403,3 +445,4 @@ Acceptance criteria:
 | --- | --- | --- | --- | --- |
 | 2026-05-21 | EIB0 | `done` | Created this active successor plan after the runtime engine seam plan completed RS0-RS6 and Bun/JSC gates 1-10. Archived the completed runtime seam plan as the historical baseline, made this plan the routing point for future runtime-engine, Bun/JSC, wasmtime, WASI agent, sandbox isolation, and execution-admission work, and added the autonomous `/goal` prompt for this plan. | Documentation-only change; `git diff --check` passed for touched docs. |
 | 2026-05-21 | EIB1 | `done` | Recorded the execution-boundary ownership map across runtime scheduling, backend invocation, bundle metadata, host-call transport, generated artifact metadata, server runtime selection, sandbox lifecycle, krun/OCI hardening, wasmtime, WASI agent capabilities, admission/resource gates, and engine/storage host paths. Confirmed the next implementation gate is EIB2 trust tiers and capability policy, not Bun/JSC or sandbox implementation. | Source/doc review checklist recorded; `git diff --check -- docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
+| 2026-05-21 | EIB2 | `done` | Added the shared execution trust-tier vocabulary and capability matrix to `docs/architecture/runtime/permission-model.md`, then recorded the settled assignments in this plan: Deno/V8 application lanes may be `in_process_untrusted`, privileged/tooling in-process work is `in_process_trusted_only`, Bun/JSC remains proof-only/trusted-only, wasmtime and WASI agent capabilities remain deferred under `wasm_capability_sandbox`, and sandboxed services are `microvm_service`. | Documentation-only change; `git diff --check -- docs/architecture/runtime/permission-model.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |

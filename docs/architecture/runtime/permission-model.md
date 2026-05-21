@@ -12,6 +12,70 @@ Nimbus models runtime execution with separate axes:
 | Compatibility target | `WebStandardIsolate`, `Node20`, `Node22`, `Node24` | JavaScript/API compatibility, not permission. |
 | Runtime preset | `Application`, `Tooling`, `Oracle`, `Operator`, `Code` | Internal workload bundles that lower to mode plus grants. |
 
+## Execution Trust Tiers
+
+Execution trust tiers are the cross-backend policy vocabulary. They are not
+engine names, compatibility targets, runtime presets, or public API modes.
+
+The tier answers "what isolation boundary makes this workload acceptable?"
+before runtime mode and grants answer "which exact resources may it use?"
+
+| Tier | Boundary | Intended workloads | Current status |
+| --- | --- | --- | --- |
+| `in_process_untrusted` | Same Nimbus process, engine-enforced permissions, runtime watchdog, and host-call ABI. | Tenant/application functions whose engine has proven permission enforcement, cancellation, memory policy, and teardown behavior. | Deno/V8 JavaScript lanes may run here when grants stay within the accepted subset below. |
+| `in_process_trusted_only` | Same Nimbus process, but the workload is trusted because the engine or grant set cannot prove the untrusted contract yet. | Operator-owned tooling, Nimbus-owned code, proof harnesses, or future engines with incomplete containment. | Bun/JSC is proof-only here until permission, memory, package, and lifecycle gates pass. Privileged in-process code also belongs here. |
+| `wasm_capability_sandbox` | Same Nimbus process, WASM Component Model boundary, typed WIT imports, Store resource limits, and fuel/epoch interruption. | Future WASM components and tightly scoped agent extensions that receive only imported capabilities. | Deferred until the wasmtime backend proves WIT imports, Store lifecycle, interruption, and resource limits. |
+| `microvm_service` | Separate sandbox lifecycle, usually a krun-backed microVM on Linux, with host exposure controlled through service bindings and endpoint policy. | Services or agents that need broader OS behavior, subprocesses, native dependencies, or crash/security isolation beyond an in-process engine. | Current service-control and sandbox seam. Security audit routing is owned by the execution-isolation plan. |
+
+Tier selection must be explicit in architecture and validation decisions. A
+future implementation may add a Rust enum for these tiers, but the contract
+already applies to plan and review work.
+
+### Tier Admission Rules
+
+- Engine selection does not grant permission. `V8`, future `Bun/JSC`, and
+  future `wasmtime` are implementation choices below the tier.
+- Compatibility target does not grant permission. `Node22` means API shape,
+  not filesystem, network, subprocess, secret, identity, native addon, or tool
+  authority.
+- Runtime preset does not grant trust. `Application`, `Tooling`, and
+  `Operator` lower to mode plus grants, but the trust tier decides whether
+  those grants are acceptable for untrusted in-process code.
+- Unsupported tier/backend/content/target combinations must be rejected during
+  policy construction or registry loading, or be marked deferred in the owning
+  plan before implementation starts.
+- A workload that needs host subprocesses, native addons, unrestricted package
+  loading, broad outbound networking, or unproven engine policy hooks starts as
+  `in_process_trusted_only` or moves out to `microvm_service`.
+
+### Capability Matrix
+
+| Capability family | `in_process_untrusted` | `in_process_trusted_only` | `wasm_capability_sandbox` | `microvm_service` |
+| --- | --- | --- | --- | --- |
+| `HostBridge` database, scheduler, nested runtime, and runtime extension calls | Allowed through the versioned host-call ABI and adapter-owned dispatch. Request principal and session checks still apply. | Allowed for trusted/operator workloads with the same ABI checks. | Allowed only through typed `nimbus:host` WIT imports that project to the same host operations. | Not direct. Services communicate through declared endpoints or future scoped service APIs. |
+| Filesystem read/write | Allowed only through explicit symbolic roots such as `$generated_root`, `$app_root`, `$temp_root`, or `$cache_root` and engine-enforced path policy. | Allowed by explicit grants for trusted workloads. | Allowed only if the component imports a filesystem capability and admission binds it to a scoped provider. | Guest filesystem is inside the sandbox image/rootfs. Host mounts and read-only policy are sandbox-owned. |
+| Network connect/listen | Allowed only by exact `RuntimeGrants` entries and server/operator exposure policy. Broad production exposure should prefer service sandboxes. | Allowed by explicit grants for trusted workloads. | Allowed only through imported HTTP/socket capabilities and admission policy. | Guest networking and published endpoints are sandbox-owned; host reachability is controlled by `SandboxPortBinding` and operator firewall policy. |
+| Environment | `env_read` by exact name only. `env_write` is not allowed for untrusted in-process code. | Explicit `env_read`/`env_write` grants. | Imported environment/config capability only. | Sandbox process environment is declared in `SandboxSpec` or image metadata. |
+| Secrets | No ambient materialization. A future secret API must require explicit grant and audit. | Explicit grant plus secret API audit when that surface exists. | Imported secret capability only, with typed handles rather than ambient globals. | Delivered through sandbox/service secret policy, not runtime globals. |
+| Identity and token minting | Request auth is request-owned. No synthetic identity or token minting from a runtime grant alone. | Explicit identity grant plus server-owned mint/audit path. | Imported identity capability only. | Scoped service or agent sessions only; local admin tokens must not be passed into guests. |
+| Services | Managed service lookup through exact service grants and server registry policy. | Explicit service grants. | Imported service capability only. | The service is the sandboxed endpoint. It does not gain Nimbus host authority by existing. |
+| Subprocess/run | Not allowed for untrusted in-process code. | Explicit `run` grants for trusted tooling/operator paths. | Agent process capability only, if the component imports it and admission allows it. | Natural inside the guest; host impact controlled by sandbox isolation, mounts, and resource limits. |
+| Native FFI/addons | Not allowed. | `Privileged` plus explicit `ffi` grants only. | Not allowed unless represented as a typed imported host capability. | Native code runs inside the guest isolation boundary. |
+| Workers/background execution | Exact `worker` grants only when cancellation, resource accounting, and policy inheritance are proven for the engine. | Explicit grants for trusted workloads. | Component concurrency follows wasmtime/linker policy. | Guest owns its process tree; sandbox lifecycle and resource limits bound it. |
+| Tools/connectors | Not ambient. Future tool access needs explicit grants and audit. | Explicit `tool` grants for trusted workloads. | Imported tool capability only. | Exposed as a declared service or scoped agent capability. |
+
+### Current Assignments
+
+| Workload or backend | Tier assignment | Notes |
+| --- | --- | --- |
+| Deno/V8 `WebStandardIsolate` application functions | `in_process_untrusted` | Production default when policy normalization keeps grants within the untrusted subset. |
+| Deno/V8 `Node20`, `Node22`, and `Node24` application functions | `in_process_untrusted` | Node compatibility target is API shape only. Host-sensitive Node APIs still depend on `RuntimeGrants` and runtime enforcement. |
+| Deno/V8 tooling or operator workloads with `run`, `tool`, `identity`, or `Privileged` grants | `in_process_trusted_only` | These are trusted workload classes even when the engine is V8. |
+| Bun/JSC proof backend | `in_process_trusted_only` | Remains proof-only until permission containment, memory policy, package loading, VM reuse, artifact metadata, and fork posture are resolved. |
+| Future wasmtime components | `wasm_capability_sandbox` | Deferred. Must prove typed imports, interruption, Store resource limits, and bundle metadata before selection. |
+| Future WASI agent capabilities | `wasm_capability_sandbox` with additional imported agent capabilities | Deferred until wasmtime host interfaces are stable. Filesystem/process/HTTP are not inherited by ordinary WASM functions. |
+| krun/container-backed services | `microvm_service` or local-dev container equivalent | Runtime code reaches them through service bindings; sandbox lifecycle and endpoint policy are separate from runtime engine policy. |
+
 ## Modes
 
 `Restricted` is the least-privilege ceiling for explicitly sandboxed,
