@@ -19,6 +19,9 @@ extension, and the phased roadmap for promotion.
   Phase 5 (cooperative worker loop) reaches `done` status, so the cooperative
   scheduling seam is stable before this plan introduces a second backend beneath
   it
+- **Execution trust tier:** `wasm_capability_sandbox`
+- **Shared policy dependency:**
+  `docs/architecture/runtime/permission-model.md`
 
 ## How To Use This Plan
 
@@ -41,6 +44,10 @@ The source of truth is:
    shared runtime invariants
 4. `docs/plans/v8-locker-fork-plan.md` for the current V8 cooperative scheduling
    surface this plan must not break
+5. `docs/architecture/runtime/permission-model.md` for execution trust tiers,
+   mode/grant ceilings, and capability vocabulary
+6. `docs/plans/execution-isolation-and-runtime-backends-plan.md` while it is
+   the active execution-boundary control plane
 
 Do not rely on prior chat transcripts as progress state.
 
@@ -81,6 +88,8 @@ Do not rely on prior chat transcripts as progress state.
 - This plan does **not** reopen the decision to keep scheduling above the
   runtime. That seam is already the right one.
 - This plan does **not** replace the V8 path. Wasmtime is additive.
+- This plan consumes the `wasm_capability_sandbox` trust tier from
+  `docs/architecture/runtime/permission-model.md`.
 
 `ARCHITECTURE.md` already names this direction:
 
@@ -92,6 +101,31 @@ Do not rely on prior chat transcripts as progress state.
 > capability-scoped plugin ABI rather than an untyped general escape hatch."_
 
 The WASI Component Model is that typed, capability-scoped ABI.
+
+## EIB5 Trust And Capability Alignment
+
+As of 2026-05-21, this plan is aligned with
+`docs/plans/execution-isolation-and-runtime-backends-plan.md` EIB5.
+
+Wasmtime is a `wasm_capability_sandbox` execution backend. That means:
+
+- `RuntimeBackendKind::Wasmtime` is not a JavaScript or Node compatibility
+  target.
+- Selecting wasmtime does not grant filesystem, network, process, secret,
+  identity, service, tool, or native authority.
+- `nimbus:host` WIT imports are the typed WASM-side projection of the existing
+  `HostBridge` database, scheduler, runtime, and context operations.
+- `nimbus-function` components import `nimbus:host` only.
+- `nimbus-agent` components and `nimbus:agent/*` imports are downstream
+  additions owned by `docs/plans/wasi-agent-capabilities-plan.md`.
+- Component worlds and imported WIT interfaces are deploy-time admission
+  inputs; unsupported world/capability combinations must be rejected before
+  invocation.
+- Store memory limits map to `RuntimeLimits::max_heap_mb` and
+  `initial_heap_mb`; fuel or epoch interruption maps to
+  `RuntimeLimits::execution_timeout`.
+- Module caches must be keyed by bundle hash plus engine configuration so
+  capability or engine changes cannot reuse stale compiled components.
 
 ## Why Wasmtime As A Separate Backend
 
@@ -463,6 +497,11 @@ When promoted, the wasmtime backend should not be considered viable without:
 
 ## Relationship To Other Plans
 
+- **`docs/plans/execution-isolation-and-runtime-backends-plan.md`**: active
+  parent while execution-boundary work is open. EIB5 aligned this plan with the
+  shared `wasm_capability_sandbox` trust tier and capability vocabulary.
+- **`docs/architecture/runtime/permission-model.md`**: trust-tier and
+  capability vocabulary source. This plan consumes `wasm_capability_sandbox`.
 - **`v8-locker-fork-plan.md`**: hard prerequisite. This plan activates after
   Phase 5 completes. The backend abstraction refactor (W1) must not break the
   landed cooperative Locker scheduling.

@@ -304,6 +304,30 @@ Settled EIB4 decisions:
   lane
 - sandbox hardening remains separate from runtime-engine work
 
+## EIB5 Wasmtime And WASI Agent Alignment
+
+Status: `done` as of 2026-05-21.
+
+Aligned docs:
+
+- `docs/plans/wasmtime-backend-plan.md`
+- `docs/plans/wasi-agent-capabilities-plan.md`
+
+Settled EIB5 decisions:
+
+- wasmtime consumes the `wasm_capability_sandbox` trust tier
+- wasmtime is not a JavaScript or Node compatibility target
+- `nimbus:host` WIT imports are the typed WASM projection of `HostBridge`
+- `nimbus-function` components import `nimbus:host` only
+- WASI agent capabilities extend `wasm_capability_sandbox` through explicit
+  `nimbus:agent/*` imports
+- agent filesystem, process, and HTTP authority is imported and admitted; it is
+  not ambient `RuntimeGrants` authority
+- agent workloads that need broad native OS behavior should move to
+  `microvm_service` through `nimbus-sandbox`
+- both plans remain deferred and do not introduce code or circular
+  dependencies
+
 ## Phase Status Ledger
 
 | Phase | Status | Goal | Verification |
@@ -313,7 +337,7 @@ Settled EIB4 decisions:
 | EIB2 | `done` | Define trust tiers and capability policy shared by in-process engines, WASM components, and sandboxed services. | `docs/architecture/runtime/permission-model.md` updated; no code changes; `git diff --check`. |
 | EIB3 | `done` | Decide Bun/JSC next proof gates and fork posture from permission, memory, package, and lifecycle evidence. | Decision record added; no code changes; `git diff --check`. |
 | EIB4 | `done` | Route sandbox isolation audit findings into implementation, distribution, or accepted-risk owners. | Updated security audit owner routing; `git diff --check`. |
-| EIB5 | `todo` | Align wasmtime and WASI agent plans with the shared trust/capability vocabulary. | Plan updates plus any focused schema/policy tests if code changes. |
+| EIB5 | `done` | Align wasmtime and WASI agent plans with the shared trust/capability vocabulary. | Deferred plan updates; no code changes; `git diff --check`. |
 | EIB6 | `todo` | Define admission/resource gates only where measured execution or sandbox resources need protection. | Experiment or review report with resource, overload behavior, and metrics. |
 | EIB7 | `todo` | Close the unified plan with a go/no-go matrix for runtime backend promotion and sandbox hardening. | All prior phases done and final execution log recorded. |
 
@@ -438,7 +462,7 @@ Completion notes:
 
 ### EIB5: Wasmtime And WASI Agent Alignment
 
-Status: `todo`
+Status: `done`
 
 Deliverables:
 
@@ -453,6 +477,15 @@ Acceptance criteria:
 - WASI agent capabilities remain deferred until wasmtime host interfaces are
   stable
 - plan dependencies are explicit and non-circular
+
+Completion notes:
+
+- `docs/plans/wasmtime-backend-plan.md` now consumes
+  `wasm_capability_sandbox`
+- `docs/plans/wasi-agent-capabilities-plan.md` now describes additive
+  `nimbus:agent/*` imports under the same tier
+- both plans remain deferred and dependency order stays one-way:
+  wasmtime first, WASI agent capabilities after wasmtime W3
 
 ### EIB6: Admission And Resource Boundary Map
 
@@ -507,3 +540,4 @@ Acceptance criteria:
 | 2026-05-21 | EIB2 | `done` | Added the shared execution trust-tier vocabulary and capability matrix to `docs/architecture/runtime/permission-model.md`, then recorded the settled assignments in this plan: Deno/V8 application lanes may be `in_process_untrusted`, privileged/tooling in-process work is `in_process_trusted_only`, Bun/JSC remains proof-only/trusted-only, wasmtime and WASI agent capabilities remain deferred under `wasm_capability_sandbox`, and sandboxed services are `microvm_service`. | Documentation-only change; `git diff --check -- docs/architecture/runtime/permission-model.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB3 | `done` | Recorded the Bun/JSC viability and fork decision after reviewing Bun commit `ea677357e3` and the Gate 10 timeout/cancel proof. Bun/JSC stays proof-only and `in_process_trusted_only`; no Nimbus-maintained Bun fork is recommended yet; the current local patch is proof evidence; the next proof gate is permission-surface containment inventory covering Bun globals, Node modules, dynamic import/package loading, web/network surfaces, workers, subprocess, FFI/native addons, env, and filesystem behavior. | Decision-only documentation update; `git diff --check -- docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB4 | `done` | Routed all sandbox isolation audit findings to concrete owners, statuses, and verification paths. F1/F2/F3 are a `nimbus-sandbox` OCI bundle hardening slice; F4 is a production blocker owned by the `nimbus-crun` / libkrun patch lane plus Rust port-map formatting; F5 is accepted residual v1 risk with operator documentation; F6 belongs to distribution/deploy image admission policy; F7 belongs to patched-crun parser robustness. | Documentation-only change; `git diff --check -- docs/plans/security/sandbox-isolation-audit.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
+| 2026-05-21 | EIB5 | `done` | Aligned the deferred wasmtime and WASI agent plans with the shared trust-tier vocabulary. Wasmtime now explicitly consumes `wasm_capability_sandbox` and keeps `nimbus:host` as the typed WIT projection of `HostBridge`; WASI agent capabilities now extend the same tier through additive `nimbus:agent/*` imports and route broad native OS needs to `microvm_service`. Preserved the pre-existing WASI plan additions about secret-management and horizontal-scaling dependencies while adding the tier alignment. | Documentation-only change; `git diff --check -- docs/plans/wasmtime-backend-plan.md docs/plans/wasi-agent-capabilities-plan.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |

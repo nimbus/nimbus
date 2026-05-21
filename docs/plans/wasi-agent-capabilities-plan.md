@@ -19,6 +19,10 @@ the integration path with external systems like
   Phase W3 (run-to-completion wasmtime backend) reaches `done` status, so the
   WIT linker surface and `nimbus-function` world are stable before this plan
   extends them with agent capabilities
+- **Execution trust tier:** `wasm_capability_sandbox` with additive
+  `nimbus:agent/*` imports
+- **Shared policy dependency:**
+  `docs/architecture/runtime/permission-model.md`
 
 ## How To Use This Plan
 
@@ -41,6 +45,10 @@ workstream. The source of truth is:
 3. `ARCHITECTURE.md` for the landed runtime architecture
 4. `docs/plans/wasmtime-backend-plan.md` for the wasmtime backend surface this
    plan builds on
+5. `docs/architecture/runtime/permission-model.md` for execution trust tiers,
+   mode/grant ceilings, and capability vocabulary
+6. `docs/plans/execution-isolation-and-runtime-backends-plan.md` while it is
+   the active execution-boundary control plane
 
 Do not rely on prior chat transcripts as progress state.
 
@@ -110,6 +118,33 @@ is the enterprise trust property.
 - The V8/deno_core execution path — unchanged by this plan
 - The `HostBridge` trait — this plan adds new backing providers, not new host
   call operations
+
+## EIB5 Trust And Capability Alignment
+
+As of 2026-05-21, this plan is aligned with
+`docs/plans/execution-isolation-and-runtime-backends-plan.md` EIB5.
+
+WASI agent capabilities extend the `wasm_capability_sandbox` tier. They are
+not a new in-process trusted tier and they are not inherited by ordinary WASM
+functions.
+
+Policy rules:
+
+- `nimbus-function` components import `nimbus:host` only and must not see
+  `nimbus:agent/*` interfaces.
+- `nimbus-agent` components import `nimbus:host` plus explicit
+  `nimbus:agent/*` capabilities.
+- Agent filesystem, process, and HTTP authority is represented by imported WIT
+  interfaces plus tenant/session admission, not by ambient `RuntimeGrants`.
+- Agent process execution is not the same as in-process `run` grants. It must
+  flow through `AgentOsProvider` and provider-owned allowlists.
+- Agent HTTP access requires URL policy and, for authenticated real-world
+  workloads, a separate secret-read grant from the secret-management plan.
+- If an agent workload needs broad native OS behavior that cannot be expressed
+  as scoped WIT imports, it should move to `microvm_service` through
+  `nimbus-sandbox` instead of expanding in-process authority.
+- Capability denial should happen at deploy/link time for component worlds
+  whenever possible, not as an invocation-time surprise.
 
 ## Reference Implementations
 
@@ -519,6 +554,12 @@ When promoted, the agent capabilities should not be considered viable without:
 
 ## Relationship To Other Plans
 
+- **`docs/plans/execution-isolation-and-runtime-backends-plan.md`**: active
+  parent while execution-boundary work is open. EIB5 aligned this plan with the
+  shared `wasm_capability_sandbox` tier and capability vocabulary.
+- **`docs/architecture/runtime/permission-model.md`**: trust-tier and
+  capability vocabulary source. This plan consumes `wasm_capability_sandbox`
+  with additive `nimbus:agent/*` imports.
 - **`wasmtime-backend-plan.md`**: hard prerequisite. This plan activates after
   W3 (run-to-completion wasmtime backend) completes. The WIT linker and Store
   lifecycle from the wasmtime plan are the substrate this plan builds on.
@@ -527,5 +568,21 @@ When promoted, the agent capabilities should not be considered viable without:
   agent interfaces.
 - **`docs/plans/archive/raw-v8-warm-backend-plan.md`**: no dependency. Agent capabilities are
   delivered through WASI Component Model, not through V8.
+- **`docs/plans/secret-management-plan.md`**: soft dependency for the
+  `nimbus:agent/http-client` interface. Real-world agent workloads call
+  LLMs and third-party APIs that require credentials; those credentials
+  are read via `ctx.secret.*` and therefore inherit the secret-management
+  plan's cluster semantics (per-tenant per-store gossip topic, openraft-
+  backed metadata, capability-gated reads). The http-client URL allowlist
+  here remains orthogonal to the secret allowlist — both checks must
+  pass independently. Phase A2 can land before secret-management is
+  promoted, but a production agent deployment needs at least Phase S4 +
+  one provider from that plan.
+- **`docs/architecture/horizontal-scaling.md`**: no direct dependency
+  for the WIT surface itself, but agent-OS sidecar lifecycle under
+  multi-node clustering (where the sidecar lives, how it reattaches on
+  node loss) is a future amendment to this plan. Single-node MVP is
+  unaffected. The Consumer Plans section of `horizontal-scaling.md`
+  records this as an indirect consumption via secret-management.
 - **`ARCHITECTURE.md`**: update when each phase lands, documenting the agent
   capability surface and tenant admission model.
