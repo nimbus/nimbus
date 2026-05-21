@@ -280,7 +280,7 @@ numbers are in the valid `u16` range (`1-65535`) before passing to
 ## EIB4 Owner Routing
 
 Status: routed on 2026-05-21 by
-`docs/plans/execution-isolation-and-runtime-backends-plan.md`.
+`docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`.
 
 This routing table is the current owner map for the findings above. It does
 not mean the fixes have landed. Findings marked `implementation_required` or

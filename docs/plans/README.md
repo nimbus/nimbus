@@ -4,12 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/execution-isolation-and-runtime-backends-plan.md`
-  - canonical active plan for execution-boundary work after the runtime engine
-    seam baseline. Owns routing across runtime backend promotion, Bun/JSC
-    proof gates, wasmtime/WASI agent dependencies, sandbox isolation findings,
-    capability trust tiers, and admission/resource boundaries. The completed
-    predecessor is `docs/plans/archive/runtime-engine-seam-plan.md`.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -66,7 +60,16 @@ archived plans only when you need historical execution detail.
     engine/content/compatibility/package metadata explicit, added the new
     engine proof-harness contract, and recorded Bun/JSC proof gates 1-10
     through generated-program timeout/cancel. Future execution-boundary work
-    starts from `docs/plans/execution-isolation-and-runtime-backends-plan.md`.
+    starts from
+    `docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`.
+- `docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`
+  - completed execution-boundary control plane (EIB0-EIB7, closed
+    2026-05-21). Built the ownership map across runtime, sandbox, WASM/WASI,
+    admission, and security-audit plans; defined shared trust tiers; kept
+    Bun/JSC proof-only with no fork yet; routed sandbox audit findings; aligned
+    wasmtime and WASI agent plans; recorded resource/admission promotion rules;
+    and closed with the runtime/backend go/no-go matrix. Future implementation
+    waves should promote focused active plans from this baseline.
 - `docs/plans/archive/cli-daemon-canonicalization-plan.md`
   - completed execution record for the CLI daemon canonicalization wave
     (CD1-CD9, closed 2026-05-19). Removed source-tree walk-up from
@@ -436,9 +439,10 @@ the work is explicitly a historical review.
 - For future execution-boundary work, including runtime engines, Bun/JSC,
   wasmtime, sandbox isolation, WASI agent capabilities, or admission/resource
   boundaries, start with
-  `docs/plans/execution-isolation-and-runtime-backends-plan.md`; then use
-  backend-specific plans such as `wasmtime-backend-plan.md` only when the
-  active plan routes the slice there.
+  `docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`; then
+  promote a focused active plan for the implementation slice or use an existing
+  backend-specific deferred plan such as `wasmtime-backend-plan.md` when its
+  activation gate is met.
 - For future agent OS capabilities via WASI Component Model, start with
   `wasi-agent-capabilities-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes

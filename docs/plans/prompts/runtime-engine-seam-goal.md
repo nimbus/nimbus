@@ -1,7 +1,8 @@
 # Codex Goal Prompt - Runtime Engine Seam Autonomous Completion
 
 Historical prompt for the completed runtime engine seam plan. New work should
-start from `docs/plans/execution-isolation-and-runtime-backends-plan.md`.
+start from
+`docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`.
 
 ---
 

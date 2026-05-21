@@ -15,7 +15,7 @@ It complements:
 - [Runtime Permission Model](permission-model.md)
 - [Node compatibility surface matrix](node-compat-surface-matrix.md)
 - [New runtime engine proof harness](new-engine-proof-harness.md)
-- [Execution isolation and runtime backends plan](../../plans/execution-isolation-and-runtime-backends-plan.md)
+- [Archived execution isolation and runtime backends plan](../../plans/archive/execution-isolation-and-runtime-backends-plan.md)
 - [Archived runtime engine seam plan](../../plans/archive/runtime-engine-seam-plan.md)
 
 ## Why This Seam Exists

@@ -2,7 +2,8 @@
 
 Date: 2026-05-21
 
-Nimbus plan: `docs/plans/execution-isolation-and-runtime-backends-plan.md`
+Nimbus plan:
+`docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
 
@@ -156,5 +157,5 @@ Verification command:
 ```sh
 git diff --check -- \
   docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md \
-  docs/plans/execution-isolation-and-runtime-backends-plan.md
+  docs/plans/archive/execution-isolation-and-runtime-backends-plan.md
 ```

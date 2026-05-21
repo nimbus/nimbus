@@ -1,7 +1,7 @@
 # Plan: Execution Isolation And Runtime Backends
 
-Canonical active control plane for Nimbus execution boundaries after the
-runtime engine seam baseline.
+Archived baseline for Nimbus execution boundaries after the runtime engine
+seam baseline.
 
 This plan owns the next phase where runtime engines, sandbox isolation,
 capability policy, resource limits, admission, and artifact metadata meet. It
@@ -13,8 +13,8 @@ krun sandbox hardening one shared execution-boundary map.
 
 ## Status
 
-- **Status:** `active`
-- **Primary owner:** this plan
+- **Status:** `done`
+- **Primary owner:** archived baseline
 - **Predecessor baseline:**
   `docs/plans/archive/runtime-engine-seam-plan.md`
 - **Autonomous goal prompt:**
@@ -25,13 +25,14 @@ krun sandbox hardening one shared execution-boundary map.
   - `docs/architecture/runtime/permission-model.md`
   - `docs/architecture/sandbox/microvm-service-baseline.md`
   - `docs/plans/security/sandbox-isolation-audit.md`
-- **Activation gate:** active now because the runtime engine seam work is
-  complete and future Bun/JSC, wasmtime, WASI agent, sandbox, and admission
-  work need one shared boundary plan before implementation continues.
+- **Closeout:** EIB0 through EIB7 completed on 2026-05-21. Future Bun/JSC,
+  wasmtime, WASI agent, sandbox, or admission implementation work should
+  promote a focused active plan that cites this archived baseline.
 
 ## Control Plan Rules
 
-Use this plan before starting work that changes any of these surfaces:
+Use this archived baseline before starting work that changes any of these
+surfaces:
 
 - runtime backend selection or promotion
 - in-process runtime engine proof gates
@@ -51,9 +52,9 @@ The source of truth is:
 5. `docs/plans/security/sandbox-isolation-audit.md`
 6. archived baselines only as historical evidence
 
-Do not use prior chat transcripts as progress state. If a phase is
-`in_progress`, resume it before opening a new phase. Record verification before
-marking a phase `done`.
+Do not use prior chat transcripts as progress state. If future work needs more
+than a small focused change, promote a new active plan instead of reopening
+this completed baseline.
 
 ### Autonomous Resume Protocol
 
@@ -226,7 +227,7 @@ Reviewed source and docs:
 | Bun/JSC has proof evidence but no production owner. | Local Bun proof gates reached timeout/cancel recovery, but permission containment, memory policy, package loading, VM reuse, artifact metadata, and fork posture are not production-ready. | EIB3 records the next Bun/JSC proof gate and the fork/upstream/hold decision. No Nimbus-maintained Bun fork yet. |
 | krun sandbox findings need implementation routing. | `docs/plans/security/sandbox-isolation-audit.md` identifies concrete issues, including seccomp, capabilities, `noNewPrivileges`, TSI bind address, root VMM lifetime, image provenance, and crun annotation parsing. | EIB4 routes each finding to implementation, distribution, operator control, or accepted risk. |
 | Generated artifact metadata is explicit but currently V8-only. | Codegen emits `runtime_engine`, `runtime_bundle_content_kind`, `runtime_compatibility_target`, and `runtime_package_resolution`; server validation only accepts V8 JavaScript lanes today. | EIB2/EIB3/EIB5 define new legal combinations before routing can select another engine. |
-| Active plan list stays small after archiving the runtime seam plan. | `docs/plans/archive/runtime-engine-seam-plan.md` is the historical baseline; wasmtime, WASI agent, and admission plans remain deferred; this plan is the active routing point. | No additional archive needed in EIB1. Retitle or archive only if EIB5/EIB6 exposes overlap after vocabulary alignment. |
+| Active plan list stays small after archiving the runtime seam plan. | `docs/plans/archive/runtime-engine-seam-plan.md` is the predecessor baseline; wasmtime, WASI agent, and admission plans remain deferred; this plan closes as the execution-boundary baseline. | EIB7 archives this plan and requires focused successor plans for implementation work. |
 
 ## EIB2 Trust Tier Policy
 
@@ -366,7 +367,7 @@ Settled EIB6 decisions:
 | EIB4 | `done` | Route sandbox isolation audit findings into implementation, distribution, or accepted-risk owners. | Updated security audit owner routing; `git diff --check`. |
 | EIB5 | `done` | Align wasmtime and WASI agent plans with the shared trust/capability vocabulary. | Deferred plan updates; no code changes; `git diff --check`. |
 | EIB6 | `done` | Define admission/resource gates only where measured execution or sandbox resources need protection. | Review report added to the layered admission plan; `git diff --check`. |
-| EIB7 | `todo` | Close the unified plan with a go/no-go matrix for runtime backend promotion and sandbox hardening. | All prior phases done and final execution log recorded. |
+| EIB7 | `done` | Close the unified plan with a go/no-go matrix for runtime backend promotion and sandbox hardening. | Final promotion matrix and archival recommendation recorded; `git diff --check`. |
 
 ## Phase Details
 
@@ -541,7 +542,7 @@ Completion notes:
 
 ### EIB7: Promotion Matrix And Closeout
 
-Status: `todo`
+Status: `done`
 
 Deliverables:
 
@@ -554,6 +555,42 @@ Acceptance criteria:
 
 - active-plan list stays small
 - unresolved implementation work has a clear next owner
+
+Completion notes:
+
+EIB7 closes this plan as a completed baseline. Future work should not keep this
+file active as a catch-all roadmap; it should promote the narrow successor
+that owns the next implementation slice.
+
+### Final Promotion Matrix
+
+| Surface | Trust tier | Go/no-go state | Next owner | Promotion evidence still required |
+| --- | --- | --- | --- | --- |
+| Deno/V8 JavaScript runtime | `in_process_untrusted` for application grants; `in_process_trusted_only` for privileged/tooling grants | Go: remains the production default runtime family. | Current runtime architecture docs plus future focused Node/V8 plans if needed. | Keep existing runtime, registry, codegen, permission, cancellation, and compatibility tests green. |
+| Bun/JSC runtime | `in_process_trusted_only` | No-go for production selection; proof-only. No Nimbus-maintained Bun fork yet. | Future Bun/JSC Gate 11 proof plan under `docs/plans/proof/runtime-engine/bun-jsc/`. | Permission-surface containment, memory policy, package/module loading, VM reuse or fresh lifecycle, artifact metadata, server routing rejection, and fork/upstream hook decision. |
+| Wasmtime backend | `wasm_capability_sandbox` | Deferred; not selectable. | `docs/plans/wasmtime-backend-plan.md` after its activation gate is met. | WIT `nimbus:host` imports, Store resource limits, fuel/epoch interruption, component/module cache metrics, bundle metadata, and mixed-backend regression tests. |
+| WASI agent capabilities | `wasm_capability_sandbox` plus explicit `nimbus:agent/*` imports | Deferred; not selectable. | `docs/plans/wasi-agent-capabilities-plan.md` after wasmtime W3 is done. | Agent capability admission, provider VFS/process/HTTP metrics, sidecar health, policy denial tests, and proof that ordinary components cannot import agent interfaces. |
+| MicroVM service sandbox | `microvm_service` | No-go for broad multi-tenant production exposure until routed security findings are fixed or accepted with operator controls. | `docs/plans/security/sandbox-isolation-audit.md`, `nimbus-sandbox` implementation slices, `nimbus-crun`/libkrun patch lane, and `docs/plans/distribution-plan.md` for image trust. | F1 seccomp, F2 capabilities, F3 `noNewPrivileges`, F4 TSI bind-address blocker, F6 image trust policy, F7 parser robustness, and residual-risk docs for F5. |
+| Admission/resource gates | Existing mutation/runtime gates only | No new gate promoted. | `docs/plans/layered-admission-control-plan.md` after an EO8 experiment report. | Named protected resource, overload behavior, metric proving improvement, and reason adjacent gates are not first. |
+
+### Successor Recommendations
+
+- Archive this plan as the completed execution-boundary baseline.
+- For Bun/JSC, promote a Gate 11 permission-surface proof plan before touching
+  Nimbus production runtime routing.
+- For sandbox hardening, promote a focused `nimbus-sandbox` and
+  `nimbus-crun` implementation plan for EIB4 F1 through F4 and F7.
+- For wasmtime, leave `docs/plans/wasmtime-backend-plan.md` deferred until its
+  activation gate is satisfied.
+- For WASI agent capabilities, leave
+  `docs/plans/wasi-agent-capabilities-plan.md` deferred until wasmtime W3 is
+  done.
+- For admission work, keep `docs/plans/layered-admission-control-plan.md`
+  deferred until a measured EO8 report identifies the binding resource.
+- For image provenance, continue through `docs/plans/distribution-plan.md`
+  rather than runtime-engine work.
+- Do not create another omnibus execution plan unless the trust-tier or
+  capability vocabulary itself changes.
 
 ## Verification Matrix
 
@@ -579,3 +616,4 @@ Acceptance criteria:
 | 2026-05-21 | EIB4 | `done` | Routed all sandbox isolation audit findings to concrete owners, statuses, and verification paths. F1/F2/F3 are a `nimbus-sandbox` OCI bundle hardening slice; F4 is a production blocker owned by the `nimbus-crun` / libkrun patch lane plus Rust port-map formatting; F5 is accepted residual v1 risk with operator documentation; F6 belongs to distribution/deploy image admission policy; F7 belongs to patched-crun parser robustness. | Documentation-only change; `git diff --check -- docs/plans/security/sandbox-isolation-audit.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB5 | `done` | Aligned the deferred wasmtime and WASI agent plans with the shared trust-tier vocabulary. Wasmtime now explicitly consumes `wasm_capability_sandbox` and keeps `nimbus:host` as the typed WIT projection of `HostBridge`; WASI agent capabilities now extend the same tier through additive `nimbus:agent/*` imports and route broad native OS needs to `microvm_service`. Preserved the pre-existing WASI plan additions about secret-management and horizontal-scaling dependencies while adding the tier alignment. | Documentation-only change; `git diff --check -- docs/plans/wasmtime-backend-plan.md docs/plans/wasi-agent-capabilities-plan.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB6 | `done` | Added the execution resource boundary map to the layered admission plan. The review covers mutations, in-process Deno/V8 runtime, Bun/JSC proof runtime, wasmtime, WASI agent capabilities, microVM service activation, storage I/O, queries, and scheduled jobs. No new gate is promoted; each future gate must name the protected resource, overload behavior, and metric before code changes. | Documentation-only change; `git diff --check -- docs/plans/layered-admission-control-plan.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
+| 2026-05-21 | EIB7 | `done` | Closed the control plane with the final go/no-go matrix. Deno/V8 remains the production runtime family; Bun/JSC remains proof-only with no fork yet; wasmtime and WASI agent capabilities remain deferred; microVM service exposure waits on sandbox hardening; new admission gates require measured EO8 evidence. Recommended archiving this plan and promoting focused successor plans for implementation slices. | Documentation-only change; `git diff --cached --check -- docs/plans/archive/execution-isolation-and-runtime-backends-plan.md docs/plans/execution-isolation-and-runtime-backends-plan.md docs/plans/README.md docs/architecture/runtime/engine-seam.md docs/plans/wasmtime-backend-plan.md docs/plans/wasi-agent-capabilities-plan.md docs/plans/layered-admission-control-plan.md docs/plans/security/sandbox-isolation-audit.md docs/plans/prompts/execution-isolation-runtime-backends-goal.md docs/plans/prompts/runtime-engine-seam-goal.md docs/plans/archive/runtime-engine-seam-plan.md docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md` passed. |

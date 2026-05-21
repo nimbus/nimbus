@@ -97,7 +97,7 @@ flowchart LR
 ## EIB6 Execution Resource Boundary Addendum
 
 Reviewed 2026-05-21 under
-`docs/plans/execution-isolation-and-runtime-backends-plan.md` EIB6.
+`docs/plans/archive/execution-isolation-and-runtime-backends-plan.md` EIB6.
 
 This review does not promote a new admission gate. It records the resource
 boundaries that must be named before runtime, WASM, WASI agent, or sandbox

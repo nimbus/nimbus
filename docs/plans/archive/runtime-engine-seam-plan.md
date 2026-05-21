@@ -8,8 +8,8 @@ Cargo dependency. It made the current Deno/V8 path an explicit engine
 implementation and created the proof-gated control plane for future
 runtime-extension work.
 
-Successor active plan:
-`docs/plans/execution-isolation-and-runtime-backends-plan.md`
+Successor baseline:
+`docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`
 
 ---
 
@@ -21,13 +21,14 @@ Successor active plan:
 - **Autonomous goal prompt:** `docs/plans/prompts/runtime-engine-seam-goal.md`
 - **Closed:** 2026-05-21 after RS0-RS6 and Bun/JSC proof gates 1-10 were
   recorded.
-- **Successor:** `docs/plans/execution-isolation-and-runtime-backends-plan.md`
+- **Successor:**
+  `docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`
 
 ## Control Plan Rules
 
 Use this archived plan only for historical runtime-seam detail. Start new
 runtime-engine, Bun/JSC, wasmtime, sandbox, or execution-boundary work from
-`docs/plans/execution-isolation-and-runtime-backends-plan.md`.
+`docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`.
 
 The source of truth is:
 

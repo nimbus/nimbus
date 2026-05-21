@@ -1,8 +1,8 @@
 # Codex Goal Prompt - Execution Isolation And Runtime Backends
 
-Use this prompt to run the execution isolation and runtime backends plan
-autonomously to completion. Copy the full `/goal` block below into a fresh
-Codex session.
+Historical prompt used to run the execution isolation and runtime backends plan
+autonomously to completion. The plan is now archived; future implementation
+work should promote a focused active plan from that baseline.
 
 ---
 
@@ -13,7 +13,7 @@ Codex session.
 
 Source of truth:
 - Current git worktree and local git history
-- docs/plans/execution-isolation-and-runtime-backends-plan.md
+- docs/plans/archive/execution-isolation-and-runtime-backends-plan.md
 - docs/plans/archive/runtime-engine-seam-plan.md
 - docs/architecture/runtime/engine-seam.md
 - docs/architecture/runtime/new-engine-proof-harness.md
@@ -21,14 +21,14 @@ Source of truth:
 - ARCHITECTURE.md
 - docs/plans/README.md
 
-Do not rely on chat history. Resume from the active plan's Phase Status
-Ledger, Execution Log, and the current git worktree. If compaction happens,
-continue from the plan and git state rather than restarting.
+Do not rely on chat history. Resume from the plan's Phase Status Ledger,
+Execution Log, and the current git worktree. If compaction happens, continue
+from the plan and git state rather than restarting.
 
 Startup:
 1. Read AGENTS.md, README.md, ARCHITECTURE.md, docs/README.md,
    docs/plans/README.md,
-   docs/plans/execution-isolation-and-runtime-backends-plan.md,
+   docs/plans/archive/execution-isolation-and-runtime-backends-plan.md,
    docs/architecture/runtime/engine-seam.md,
    docs/architecture/runtime/new-engine-proof-harness.md, and
    docs/plans/security/sandbox-isolation-audit.md.
@@ -70,7 +70,7 @@ Success criteria:
 
 Verification expectations:
 - Use the per-phase Verification Matrix in
-  docs/plans/execution-isolation-and-runtime-backends-plan.md.
+  docs/plans/archive/execution-isolation-and-runtime-backends-plan.md.
 - Prefer documentation/source-review checklists for planning phases.
 - Run git diff --check for touched docs.
 - Run focused cargo/npm tests only when code or generated artifacts change.
@@ -89,8 +89,8 @@ Stop only when:
   needs permissions that have not been granted.
 
 Before stopping:
-- Update docs/plans/execution-isolation-and-runtime-backends-plan.md with the
-  current phase status, verification evidence, and exact next action.
+- Update docs/plans/archive/execution-isolation-and-runtime-backends-plan.md
+  with the current phase status, verification evidence, and exact next action.
 - Leave at most one phase in_progress.
 - Summarize completed phases, verification results, commits, and next action.
 

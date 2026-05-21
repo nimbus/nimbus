@@ -46,8 +46,8 @@ The source of truth is:
    surface this plan must not break
 5. `docs/architecture/runtime/permission-model.md` for execution trust tiers,
    mode/grant ceilings, and capability vocabulary
-6. `docs/plans/execution-isolation-and-runtime-backends-plan.md` while it is
-   the active execution-boundary control plane
+6. `docs/plans/archive/execution-isolation-and-runtime-backends-plan.md` for
+   the completed execution-boundary baseline
 
 Do not rely on prior chat transcripts as progress state.
 
@@ -105,7 +105,7 @@ The WASI Component Model is that typed, capability-scoped ABI.
 ## EIB5 Trust And Capability Alignment
 
 As of 2026-05-21, this plan is aligned with
-`docs/plans/execution-isolation-and-runtime-backends-plan.md` EIB5.
+`docs/plans/archive/execution-isolation-and-runtime-backends-plan.md` EIB5.
 
 Wasmtime is a `wasm_capability_sandbox` execution backend. That means:
 
@@ -497,9 +497,9 @@ When promoted, the wasmtime backend should not be considered viable without:
 
 ## Relationship To Other Plans
 
-- **`docs/plans/execution-isolation-and-runtime-backends-plan.md`**: active
-  parent while execution-boundary work is open. EIB5 aligned this plan with the
-  shared `wasm_capability_sandbox` trust tier and capability vocabulary.
+- **`docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`**:
+  completed execution-boundary baseline. EIB5 aligned this plan with the shared
+  `wasm_capability_sandbox` trust tier and capability vocabulary.
 - **`docs/architecture/runtime/permission-model.md`**: trust-tier and
   capability vocabulary source. This plan consumes `wasm_capability_sandbox`.
 - **`v8-locker-fork-plan.md`**: hard prerequisite. This plan activates after
