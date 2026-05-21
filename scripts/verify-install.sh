@@ -109,6 +109,63 @@ check_shared_lib() {
   fi
 }
 
+check_private_libkrun_stack() {
+  local lib_root="/usr/libexec/nimbus/lib"
+  local release_info="/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
+  local installed_version=""
+
+  if [[ -f "${release_info}" ]]; then
+    installed_version="$(awk -F= '$1 == "nimbus-libkrun" { print $2; exit }' "${release_info}" 2>/dev/null || true)"
+    print_line "nimbus-libkrun" "present path=${lib_root} version=${installed_version:-unknown}"
+  else
+    print_line "nimbus-libkrun" "missing path=${release_info}"
+    mark_failure
+  fi
+
+  if [[ -e "${lib_root}/libkrun.so.1" ]]; then
+    print_line "libkrun.so" "present path=${lib_root}/libkrun.so.1"
+  else
+    print_line "libkrun.so" "missing path=${lib_root}/libkrun.so.1"
+    mark_failure
+  fi
+
+  if [[ -e "${lib_root}/libkrunfw.so.5" ]]; then
+    print_line "libkrunfw.so" "present path=${lib_root}/libkrunfw.so.5"
+  else
+    print_line "libkrunfw.so" "missing path=${lib_root}/libkrunfw.so.5"
+    mark_failure
+  fi
+
+  if command -v nm >/dev/null 2>&1 && [[ -e "${lib_root}/libkrun.so.1" ]]; then
+    local nm_output=""
+    nm_output="$(nm -D "${lib_root}/libkrun.so.1" 2>/dev/null || true)"
+    if [[ "${nm_output}" == *" krun_set_port_map_with_bind_address"* ]]; then
+      print_line "libkrun.symbol" "present krun_set_port_map_with_bind_address"
+    else
+      print_line "libkrun.symbol" "missing krun_set_port_map_with_bind_address"
+      mark_failure
+    fi
+  else
+    print_line "libkrun.symbol" "skipped (nm or libkrun missing)"
+    mark_warning
+  fi
+
+  local crun_path="/usr/libexec/nimbus/crun"
+  if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
+    local dynamic_entries=""
+    dynamic_entries="$(readelf -d "${crun_path}" 2>/dev/null || true)"
+    if [[ "${dynamic_entries}" == *'$ORIGIN/lib'* ]]; then
+      print_line "nimbus-crun.runpath" 'present $ORIGIN/lib'
+    else
+      print_line "nimbus-crun.runpath" 'missing $ORIGIN/lib'
+      mark_failure
+    fi
+  else
+    print_line "nimbus-crun.runpath" "skipped (readelf or crun missing)"
+    mark_warning
+  fi
+}
+
 # --- Platform detection -----------------------------------------------------
 
 os_name="$(uname -s)"
@@ -146,7 +203,7 @@ verify_linux() {
   local crun_path="/usr/libexec/nimbus/crun"
   if [[ -x "${crun_path}" ]]; then
     local crun_version=""
-    crun_version="$("${crun_path}" --version 2>/dev/null | head -1 || true)"
+    crun_version="$("${crun_path}" --version 2>/dev/null || true)"
     if echo "${crun_version}" | grep -q '+LIBKRUN'; then
       print_line "nimbus-crun" "present path=${crun_path} version=$(compact_value "${crun_version}")"
     else
@@ -183,9 +240,8 @@ verify_linux() {
   check_command "newuidmap" "newuidmap" recommended
   check_command "fuse-overlayfs" "fuse-overlayfs" recommended
 
-  # libkrun shared libraries
-  check_shared_lib "libkrun.so" "libkrun.so" required
-  check_shared_lib "libkrunfw.so" "libkrunfw.so" required
+  # Nimbus-private libkrun stack
+  check_private_libkrun_stack
 
   # containers config
   if [[ -d /etc/containers || -d /usr/share/containers ]]; then

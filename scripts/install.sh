@@ -16,6 +16,7 @@ set -eu
 
 NIMBUS_VERSION=""
 NIMBUS_CRUN_VERSION=""
+NIMBUS_LIBKRUN_VERSION=""
 NIMBUS_PREFIX="/usr/local"
 DRY_RUN=""
 SKIP_DEPS=""
@@ -30,10 +31,12 @@ DISTRO_VERSION=""
 # GitHub API endpoints
 NIMBUS_RELEASES_API="https://api.github.com/repos/nimbus/nimbus/releases"
 NIMBUS_CRUN_RELEASES_API="https://api.github.com/repos/nimbus/nimbus-crun/releases"
+NIMBUS_LIBKRUN_RELEASES_API="https://api.github.com/repos/nimbus/nimbus-libkrun/releases"
 
 # Release asset base URLs
 NIMBUS_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus/releases/download"
 NIMBUS_CRUN_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus-crun/releases/download"
+NIMBUS_LIBKRUN_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus-libkrun/releases/download"
 
 # --- Output helpers ---------------------------------------------------------
 
@@ -390,6 +393,35 @@ resolve_crun_version() {
   say_info "Latest nimbus-crun version: $NIMBUS_CRUN_VERSION"
 }
 
+resolve_libkrun_version() {
+  if [ -n "$NIMBUS_LIBKRUN_VERSION" ]; then
+    return 0
+  fi
+
+  if [ "$PLATFORM" != "linux" ]; then
+    return 0
+  fi
+
+  say_info "Resolving latest nimbus-libkrun version..."
+
+  response="$(download "${NIMBUS_LIBKRUN_RELEASES_API}/latest" 2>/dev/null || true)"
+
+  if [ -z "$response" ]; then
+    err "failed to fetch latest nimbus-libkrun release — try --libkrun-version <tag> or set GITHUB_TOKEN"
+  fi
+
+  NIMBUS_LIBKRUN_VERSION="$(echo "$response" | tr ',' '\n' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+
+  if [ -z "$NIMBUS_LIBKRUN_VERSION" ]; then
+    if echo "$response" | grep -qi "rate limit"; then
+      err "GitHub API rate limit reached — try --libkrun-version <tag> or set GITHUB_TOKEN"
+    fi
+    err "failed to parse latest nimbus-libkrun version from GitHub API"
+  fi
+
+  say_info "Latest nimbus-libkrun version: $NIMBUS_LIBKRUN_VERSION"
+}
+
 # --- Asset naming -----------------------------------------------------------
 
 get_nimbus_asset_name() {
@@ -410,6 +442,13 @@ get_crun_asset_name() {
   case "$ARCH" in
     x86_64) echo "nimbus-crun-linux-amd64" ;;
     arm64) echo "nimbus-crun-linux-arm64" ;;
+  esac
+}
+
+get_libkrun_asset_name() {
+  case "$ARCH" in
+    x86_64) echo "nimbus-libkrun-linux-amd64.tar.gz" ;;
+    arm64) echo "nimbus-libkrun-linux-arm64.tar.gz" ;;
   esac
 }
 
@@ -492,6 +531,7 @@ print_install_plan() {
     say "  nimbus:      ${NIMBUS_VERSION:-latest}"
   fi
   if [ "$PLATFORM" = "linux" ]; then
+    say "  nimbus-libkrun: ${NIMBUS_LIBKRUN_VERSION:-latest}"
     say "  nimbus-crun: ${NIMBUS_CRUN_VERSION:-latest}"
   fi
 
@@ -499,6 +539,7 @@ print_install_plan() {
   say "Install paths:"
   if [ "$PLATFORM" = "linux" ]; then
     say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
+    say "  nimbus-libkrun: /usr/libexec/nimbus/lib"
     say "  nimbus-crun: /usr/libexec/nimbus/crun"
   elif [ "$PLATFORM" = "darwin" ]; then
     say "  nimbus:      \$(brew --prefix)/bin/nimbus (via Homebrew cask)"
@@ -513,12 +554,9 @@ print_install_plan() {
     case "$pkg_mgr" in
       apt)
         say "  apt-get install: conmon buildah catatonit passt uidmap fuse-overlayfs"
-        if [ "$DISTRO_ID" = "debian" ] || [ "$DISTRO_ID" = "ubuntu" ]; then
-          say "  libkrun/libkrunfw: manual build required (not in repos)"
-        fi
         ;;
       dnf)
-        say "  dnf install: conmon buildah catatonit passt shadow-utils fuse-overlayfs libkrun libkrunfw"
+        say "  dnf install: conmon buildah catatonit passt shadow-utils fuse-overlayfs"
         ;;
       *)
         say "  (unknown package manager — manual installation required)"
@@ -553,6 +591,9 @@ warn_ignored_args_for_platform() {
   if [ -n "$NIMBUS_CRUN_VERSION" ]; then
     say_warn "--crun-version is ignored on macOS"
   fi
+  if [ -n "$NIMBUS_LIBKRUN_VERSION" ]; then
+    say_warn "--libkrun-version is ignored on macOS"
+  fi
   if [ "$NIMBUS_PREFIX" != "/usr/local" ]; then
     say_warn "--prefix is ignored on macOS — Homebrew manages the install prefix"
   fi
@@ -574,22 +615,6 @@ install_deps_debian() {
   say_info "Installing system dependencies via apt..."
   maybe_sudo apt-get update -qq
   maybe_sudo apt-get install -y conmon buildah catatonit passt uidmap fuse-overlayfs
-
-  say ""
-  say_warn "libkrun and libkrunfw are not yet available as Debian/Ubuntu packages."
-  say ""
-  say "To build from source:"
-  say "  git clone https://github.com/containers/libkrunfw && cd libkrunfw"
-  say "  git checkout v5.3.0 && make && sudo make install"
-  say ""
-  say "  git clone https://github.com/containers/libkrun && cd libkrun"
-  say "  git checkout v1.17.4 && make && sudo make install"
-  say ""
-  say "  echo \"/usr/local/lib64\" | sudo tee /etc/ld.so.conf.d/libkrun.conf"
-  say "  sudo ldconfig"
-  say ""
-  say "On Fedora, these are available from repos: sudo dnf install libkrun libkrunfw"
-  say ""
 }
 
 install_deps_fedora() {
@@ -599,12 +624,12 @@ install_deps_fedora() {
   fi
 
   if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would install: conmon buildah catatonit passt shadow-utils fuse-overlayfs libkrun libkrunfw"
+    say_info "[dry-run] Would install: conmon buildah catatonit passt shadow-utils fuse-overlayfs"
     return 0
   fi
 
   say_info "Installing system dependencies via dnf..."
-  maybe_sudo dnf install -y conmon buildah catatonit passt shadow-utils fuse-overlayfs libkrun libkrunfw
+  maybe_sudo dnf install -y conmon buildah catatonit passt shadow-utils fuse-overlayfs
 }
 
 install_system_deps() {
@@ -618,7 +643,7 @@ install_system_deps() {
       ;;
     *)
       say_warn "Unknown package manager — skipping system dependency installation"
-      say_warn "Please install manually: conmon buildah catatonit passt libkrun libkrunfw"
+      say_warn "Please install manually: conmon buildah catatonit passt uidmap fuse-overlayfs"
       ;;
   esac
 }
@@ -669,6 +694,56 @@ download_and_install_nimbus_linux() {
   say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
 }
 
+get_installed_libkrun_version() {
+  release_info="/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
+  if [ -f "$release_info" ]; then
+    awk -F= '$1 == "nimbus-libkrun" { print $2; exit }' "$release_info" 2>/dev/null || true
+  fi
+}
+
+download_and_install_libkrun() {
+  if [ -n "$DRY_RUN" ]; then
+    say_info "[dry-run] Would download and install nimbus-libkrun $NIMBUS_LIBKRUN_VERSION to /usr/libexec/nimbus/lib"
+    return 0
+  fi
+
+  asset_name="$(get_libkrun_asset_name)"
+  download_url="${NIMBUS_LIBKRUN_RELEASES_DOWNLOAD}/${NIMBUS_LIBKRUN_VERSION}/${asset_name}"
+  checksums_url="${NIMBUS_LIBKRUN_RELEASES_DOWNLOAD}/${NIMBUS_LIBKRUN_VERSION}/checksums.txt"
+
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  say_info "Downloading checksums for nimbus-libkrun ${NIMBUS_LIBKRUN_VERSION}..."
+  download_to_file "$checksums_url" "$tmpdir/checksums.txt"
+
+  installed_version="$(get_installed_libkrun_version)"
+  if [ "$installed_version" = "$NIMBUS_LIBKRUN_VERSION" ] && [ -e /usr/libexec/nimbus/lib/libkrun.so.1 ]; then
+    say_info "nimbus-libkrun $NIMBUS_LIBKRUN_VERSION is already installed — skipping"
+    return 0
+  elif [ -n "$installed_version" ]; then
+    say_info "Upgrading nimbus-libkrun from $installed_version to $NIMBUS_LIBKRUN_VERSION"
+  fi
+
+  say_info "Downloading nimbus-libkrun ${NIMBUS_LIBKRUN_VERSION}..."
+  download_to_file "$download_url" "$tmpdir/$asset_name"
+
+  say_info "Verifying checksum..."
+  verify_file_checksum "$tmpdir/$asset_name" "$tmpdir/checksums.txt" "$asset_name"
+  verify_github_attestation \
+    "$tmpdir/$asset_name" \
+    "nimbus/nimbus-libkrun" \
+    "refs/heads/main" \
+    "nimbus/nimbus-libkrun/.github/workflows/release.yml" \
+    "$asset_name"
+
+  say_info "Installing nimbus-libkrun..."
+  maybe_sudo install -d /usr/libexec/nimbus
+  maybe_sudo tar -xzf "$tmpdir/$asset_name" -C /usr/libexec/nimbus
+
+  say_info "Installed nimbus-libkrun to /usr/libexec/nimbus/lib"
+}
+
 download_and_install_crun() {
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would download and install nimbus-crun $NIMBUS_CRUN_VERSION to /usr/libexec/nimbus/crun"
@@ -688,7 +763,7 @@ download_and_install_crun() {
   # Check if the installed binary already matches the target release.
   crun_path="/usr/libexec/nimbus/crun"
   if [ -x "$crun_path" ]; then
-    crun_version="$("$crun_path" --version 2>/dev/null | head -1 || true)"
+    crun_version="$("$crun_path" --version 2>/dev/null || true)"
     if echo "$crun_version" | grep -q '+LIBKRUN' && file_matches_manifest_checksum "$crun_path" "$tmpdir/checksums.txt" "$asset_name"; then
       say_info "nimbus-crun $NIMBUS_CRUN_VERSION is already installed — skipping"
       return 0
@@ -718,8 +793,10 @@ install_linux() {
   check_kvm_access
   install_system_deps
   resolve_nimbus_version
+  resolve_libkrun_version
   resolve_crun_version
   download_and_install_nimbus_linux
+  download_and_install_libkrun
   download_and_install_crun
   verify_installation
   print_getting_started_linux
@@ -791,6 +868,8 @@ uninstall_linux() {
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
     say_info "[dry-run] Would remove /usr/libexec/nimbus/crun"
+    say_info "[dry-run] Would remove /usr/libexec/nimbus/lib"
+    say_info "[dry-run] Would remove /usr/libexec/nimbus/include"
     return 0
   fi
 
@@ -802,6 +881,21 @@ uninstall_linux() {
   if [ -f "/usr/libexec/nimbus/crun" ]; then
     maybe_sudo rm -f "/usr/libexec/nimbus/crun"
     say_info "Removed /usr/libexec/nimbus/crun"
+  fi
+
+  if [ -d "/usr/libexec/nimbus/lib" ]; then
+    maybe_sudo rm -rf "/usr/libexec/nimbus/lib"
+    say_info "Removed /usr/libexec/nimbus/lib"
+  fi
+
+  if [ -d "/usr/libexec/nimbus/include" ]; then
+    maybe_sudo rm -rf "/usr/libexec/nimbus/include"
+    say_info "Removed /usr/libexec/nimbus/include"
+  fi
+
+  if [ -f "/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt" ]; then
+    maybe_sudo rm -f "/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
+    say_info "Removed /usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
   fi
 
   if [ -d "/usr/libexec/nimbus" ]; then
@@ -926,6 +1020,63 @@ inline_check_linux_shared_lib() {
   fi
 }
 
+inline_check_private_libkrun_stack() {
+  lib_root="/usr/libexec/nimbus/lib"
+  release_info="/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
+
+  if [ -f "$release_info" ]; then
+    installed_libkrun_version="$(awk -F= '$1 == "nimbus-libkrun" { print $2; exit }' "$release_info" 2>/dev/null || true)"
+    inline_print_line "nimbus-libkrun" "present path=$lib_root version=${installed_libkrun_version:-unknown}"
+  else
+    inline_print_line "nimbus-libkrun" "missing path=$release_info"
+    inline_mark_failure
+  fi
+
+  if [ -f "$lib_root/libkrun.so.1" ]; then
+    inline_print_line "libkrun.so" "present path=$lib_root/libkrun.so.1"
+  else
+    inline_print_line "libkrun.so" "missing path=$lib_root/libkrun.so.1"
+    inline_mark_failure
+  fi
+
+  if [ -f "$lib_root/libkrunfw.so.5" ]; then
+    inline_print_line "libkrunfw.so" "present path=$lib_root/libkrunfw.so.5"
+  else
+    inline_print_line "libkrunfw.so" "missing path=$lib_root/libkrunfw.so.5"
+    inline_mark_failure
+  fi
+
+  if check_cmd nm && [ -f "$lib_root/libkrun.so.1" ]; then
+    nm_output="$(nm -D "$lib_root/libkrun.so.1" 2>/dev/null || true)"
+    if echo "$nm_output" | grep -q " krun_set_port_map_with_bind_address"; then
+      inline_print_line "libkrun.symbol" "present krun_set_port_map_with_bind_address"
+    else
+      inline_print_line "libkrun.symbol" "missing krun_set_port_map_with_bind_address"
+      inline_mark_failure
+    fi
+  else
+    inline_print_line "libkrun.symbol" "skipped (nm or libkrun missing)"
+    inline_mark_warning
+  fi
+
+  crun_path="/usr/libexec/nimbus/crun"
+  if check_cmd readelf && [ -x "$crun_path" ]; then
+    dynamic_entries="$(readelf -d "$crun_path" 2>/dev/null || true)"
+    case "$dynamic_entries" in
+      *'$ORIGIN/lib'*)
+        inline_print_line "nimbus-crun.runpath" 'present $ORIGIN/lib'
+        ;;
+      *)
+        inline_print_line "nimbus-crun.runpath" 'missing $ORIGIN/lib'
+        inline_mark_failure
+        ;;
+    esac
+  else
+    inline_print_line "nimbus-crun.runpath" "skipped (readelf or crun missing)"
+    inline_mark_warning
+  fi
+}
+
 verify_linux_inline() {
   if [ -x "${NIMBUS_PREFIX}/bin/nimbus" ]; then
     inline_print_line "nimbus" "present path=${NIMBUS_PREFIX}/bin/nimbus"
@@ -938,9 +1089,9 @@ verify_linux_inline() {
 
   crun_path="/usr/libexec/nimbus/crun"
   if [ -x "$crun_path" ]; then
-    crun_version="$("$crun_path" --version 2>/dev/null | head -1 || true)"
+    crun_version="$("$crun_path" --version 2>/dev/null || true)"
     if echo "$crun_version" | grep -q '+LIBKRUN'; then
-      inline_print_line "nimbus-crun" "present path=$crun_path version=$crun_version"
+      inline_print_line "nimbus-crun" "present path=$crun_path version=$(printf '%s' "$crun_version" | tr '\n' ' ' | sed -e 's/[[:space:]]\+/ /g' -e 's/^ //' -e 's/ $//')"
     else
       inline_print_line "nimbus-crun" "present path=$crun_path (missing +LIBKRUN flag)"
       inline_mark_failure
@@ -956,8 +1107,7 @@ verify_linux_inline() {
   inline_check_command "passt" "passt" recommended
   inline_check_command "newuidmap" "newuidmap" recommended
   inline_check_command "fuse-overlayfs" "fuse-overlayfs" recommended
-  inline_check_linux_shared_lib "libkrun.so" "libkrun.so" required
-  inline_check_linux_shared_lib "libkrunfw.so" "libkrunfw.so" required
+  inline_check_private_libkrun_stack
 }
 
 resolve_macos_gvproxy_path() {
@@ -1045,10 +1195,12 @@ Options:
   --version <tag>       Pin nimbus version (e.g., v0.1.14)
                         Linux only; macOS installs the current Homebrew cask
   --crun-version <tag>  Pin nimbus-crun version (Linux only)
+  --libkrun-version <tag>
+                        Pin nimbus-libkrun version (Linux only)
   --prefix <path>       Install prefix (default: /usr/local, Linux only)
   --skip-deps           Skip system dependency installation
   --dry-run             Print what would happen without executing
-  --uninstall           Remove nimbus and nimbus-crun
+  --uninstall           Remove nimbus, nimbus-libkrun, and nimbus-crun
   -y, --yes             Skip interactive confirmation prompts
   -h, --help            Show this help message
 
@@ -1092,6 +1244,13 @@ parse_args() {
           err "--crun-version requires a value"
         fi
         NIMBUS_CRUN_VERSION="$1"
+        ;;
+      --libkrun-version)
+        shift
+        if [ $# -eq 0 ]; then
+          err "--libkrun-version requires a value"
+        fi
+        NIMBUS_LIBKRUN_VERSION="$1"
         ;;
       --prefix)
         shift
@@ -1149,6 +1308,7 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     if [ "$PLATFORM" = "linux" ]; then
       resolve_nimbus_version
+      resolve_libkrun_version
       resolve_crun_version
     fi
     print_install_plan
