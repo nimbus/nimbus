@@ -157,12 +157,81 @@ as proof evidence and avoid creating a long-lived maintenance fork.
 | `docs/plans/layered-admission-control-plan.md` | Deferred admission-control plan; consumes this plan's resource boundary map before adding gates. |
 | `docs/plans/distribution-plan.md` | Owns packaging and distribution once execution/sandbox artifacts need shipping. |
 
+## EIB1 Ownership Map
+
+Status: `done` as of 2026-05-21.
+
+This map is the Step 0 guardrail for implementation: no runtime, sandbox,
+WASM/WASI, or admission change should start until the boundary it touches has
+an owner below or this map has been updated.
+
+### Source Review Checklist
+
+Reviewed source and docs:
+
+- `README.md`, `ARCHITECTURE.md`, `docs/README.md`,
+  `docs/plans/README.md`
+- `docs/architecture/runtime/engine-seam.md`
+- `docs/architecture/runtime/new-engine-proof-harness.md`
+- `docs/plans/security/sandbox-isolation-audit.md`
+- `docs/plans/wasmtime-backend-plan.md`
+- `docs/plans/wasi-agent-capabilities-plan.md`
+- `docs/plans/layered-admission-control-plan.md`
+- `crates/nimbus-runtime/src/backends/mod.rs`
+- `crates/nimbus-runtime/src/worker_loop/mod.rs`
+- `crates/nimbus-runtime/src/executor/admission/permit.rs`
+- `crates/nimbus-runtime/src/limits.rs`
+- `crates/nimbus-runtime/src/host.rs`
+- `crates/nimbus-runtime/src/runtime/bootstrap/source.rs`
+- `crates/nimbus-runtime/src/runtime/bundle.rs`
+- `crates/nimbus-runtime/src/runtime_capabilities.rs`
+- `crates/nimbus-runtime/src/metrics.rs`
+- `crates/nimbus-sandbox/src/backend.rs`
+- `crates/nimbus-sandbox/src/spec.rs`
+- `crates/nimbus-sandbox/src/backends/krun/bundle.rs`
+- `crates/nimbus-server/src/sandbox.rs`
+- `crates/nimbus-server/src/adapters/convex/manifest.rs`
+- `crates/nimbus-server/src/adapters/convex/registry/resolution/runtime_access.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/contract.rs`
+- `crates/nimbus-server/src/adapters/convex/host_bridge/bridge.rs`
+- `crates/nimbus-engine/src/service/mutations/journal.rs`
+- `crates/nimbus-storage/src/async_storage/traits.rs`
+- `packages/codegen/src/runtime_metadata.mjs`
+- `packages/codegen/src/main.mjs`
+
+### Boundary Inventory
+
+| Boundary | Concrete files and symbols | Owning plan or doc | Hand-off rule |
+| --- | --- | --- | --- |
+| Runtime scheduling and invocation admission | `crates/nimbus-runtime/src/worker_loop/mod.rs`, `worker_loop/run_to_completion.rs`, `worker_loop/cooperative.rs`, `executor.rs`, `executor/admission/permit.rs`; `WorkerLoopFactory`, `WorkerLoop`, `RuntimeExecutionModel`, `SharedInvocationPermit`, `WatchdogTimer`, `RuntimeMetricsSnapshot` | This plan owns cross-boundary routing. `docs/architecture/runtime/engine-seam.md` owns the stable scheduler/backend seam. `docs/plans/layered-admission-control-plan.md` owns new admission gates only after EIB6 names a protected resource. | Do not add or split a runtime gate until EIB6 records the resource, overload behavior, and metric used to prove it. |
+| Runtime backend invocation envelope | `crates/nimbus-runtime/src/backends/mod.rs`, `backends/v8/`, `runtime.rs`, `limits.rs`; `RuntimeBackendFactory`, `RuntimeBackendInvocation`, `RuntimeBackend`, `RuntimeBackendKind`, `RuntimeBundleContentKind`, `RuntimeCompatibilityTarget`, `RuntimePolicy` | This plan owns backend promotion rules. Backend-specific work stays in its owning plan: V8 in the archived seam baseline, Bun/JSC in EIB3 until promoted, wasmtime in `docs/plans/wasmtime-backend-plan.md`. | New backend code must satisfy `docs/architecture/runtime/new-engine-proof-harness.md` before any selectable server/codegen lane exists. |
+| Runtime bundle identity and engine cache keys | `crates/nimbus-runtime/src/runtime/bundle.rs`; `RuntimeBundle`, `RuntimeBundleIdentity`, `RuntimeBundleEngineCacheKey`, `verify_integrity()` | `docs/architecture/runtime/engine-seam.md` owns the artifact rules; this plan owns when new content kinds or evaluation formats become selectable. | Do not overload `javascript` or Node target metadata for Bun/JSC or wasmtime. Add explicit artifact fields first. |
+| Host-call ABI and runtime capability transport | `crates/nimbus-runtime/src/host.rs`, `runtime/bootstrap/source.rs`, `runtime_capabilities.rs`, `crates/nimbus-server/src/adapters/convex/host_bridge/contract.rs`, `host_bridge/bridge.rs`; `HostBridge`, `HostCallOperation`, `HostCallPayload`, `RuntimeExtensionCall`, `RuntimeGrants`, `RuntimePathPolicy`, `RuntimeEnvPolicy`, `RuntimeCapabilityHost`, `ConvexHostBridge` | EIB2 owns shared trust tiers and capability policy. The archived runtime seam plan owns the Deno/V8 transport baseline. Adapter docs own adapter-specific rejection or dispatch semantics. | Engine transports may differ, but they must preserve ABI version rejection, payload mismatch rejection, sync/async behavior, cancellation, permit pause/resume, metrics, and the provider-neutral extension lane. |
+| Generated runtime metadata and server lane selection | `packages/codegen/src/runtime_metadata.mjs`, `packages/codegen/src/main.mjs`, `crates/nimbus-server/src/adapters/convex/manifest.rs`, `registry/resolution/runtime_access.rs`; `runtime_engine`, `runtime_bundle_content_kind`, `runtime_compatibility_target`, `runtime_package_resolution`, `node_runtime_target`, `ConvexRuntimeSelection`, `runtime_lane_for_function()` | This plan owns the cross-boundary rule. EIB2 defines valid policy combinations. EIB3/EIB5 decide whether Bun/JSC or wasmtime are allowed to consume the metadata. | Codegen/server may carry explicit fields, but selectable routing remains V8-only until the relevant backend gate rejects unsupported combinations before invocation. |
+| Sandbox lifecycle and catalog seam | `crates/nimbus-sandbox/src/lib.rs`, `backend.rs`, `instance.rs`, `spec.rs`, `crates/nimbus-server/src/sandbox.rs`; `SandboxBackend`, `SandboxBackendKind`, `SandboxSpec`, `SandboxHandle`, `SandboxCatalog`, `SandboxServiceCatalog`, `SandboxServiceLaunch` | EIB4 owns security-audit routing. Future sandbox implementation work should promote a dedicated implementation phase or use `docs/plans/distribution-plan.md` for packaging and shipped artifacts. | Do not hide service sandbox hardening inside runtime-engine work. Sandbox backends have separate lifecycle, endpoint, and packaging owners. |
+| krun OCI and microVM hardening | `crates/nimbus-sandbox/src/backends/krun/bundle.rs`, `backends/krun/vm/*`, `patches/crun/*`, `docs/plans/security/sandbox-isolation-audit.md`; OCI `process`, `linux`, `krun.port_map`, `SandboxPortBinding::host_address`, `SandboxResourceLimits` | EIB4 routes each audit finding to implementation, distribution, operator controls, or accepted residual risk. The security audit remains the evidence source until then. | Findings such as seccomp, capabilities, `noNewPrivileges`, TSI bind-address, root VMM lifetime, image provenance, and patched-crun parsing need explicit owners before production microVM exposure. |
+| Wasmtime backend | `docs/plans/wasmtime-backend-plan.md`; future `RuntimeBackendKind::Wasmtime`, WIT host imports, fuel or epoch interruption, component/module cache, Store resource limits | Deferred wasmtime plan owns implementation only after activation. EIB5 aligns it to the shared EIB trust/capability vocabulary first. | Wasmtime is a different guest ABI, not a JavaScript target. It must not reuse Node or JavaScript bundle metadata. |
+| WASI agent capabilities | `docs/plans/wasi-agent-capabilities-plan.md`; future `nimbus:agent` WIT package, `AgentOsProvider`, component worlds, filesystem/process/http-client capabilities | Deferred WASI agent plan owns implementation only after wasmtime WIT/linker surfaces are stable. EIB5 owns vocabulary alignment. | Agent OS primitives are additive capabilities. Standard runtime functions must not inherit filesystem, process, or outbound HTTP authority by engine selection. |
+| Execution resource and admission boundaries | `docs/plans/layered-admission-control-plan.md`, `crates/nimbus-runtime/src/metrics.rs`, `crates/nimbus-engine/src/service/mutations/journal.rs`, `crates/nimbus-storage/src/async_storage/traits.rs`; runtime metrics, mutation CoDel/journal admission, storage executor semaphores | EIB6 owns the resource boundary report. The deferred admission plan owns implementation after a concrete measured slice is promoted. | Every new gate needs a named resource, wait/reject/shed/bypass behavior, and an observable metric before code changes. |
+| Engine/storage host paths | `crates/nimbus-server/src/adapters/convex/host_bridge/*`, `crates/nimbus-engine/src/service/mutations/journal.rs`, `service/queries.rs`, `service/scheduler.rs`, `crates/nimbus-storage/src/async_storage/traits.rs`; `ConvexHostBridge`, `MutationExecutionUnit`, `TenantWriteOutcome`, `TenantWriteStorage` | Engine and storage architecture remain the owners of data correctness. This plan only owns execution-boundary routing so new runtimes or sandboxes do not bypass the engine path. | Runtime or sandbox work must route database, scheduler, nested runtime, and service calls through the existing server-to-engine contracts. No alternate mutation/storage path. |
+
+### Overlaps And Gaps
+
+| Issue | Current state | Owner and next action |
+| --- | --- | --- |
+| Capability vocabulary is split across runtime grants, sandbox specs, future WIT imports, and service endpoint policy. | `RuntimeGrants` is Deno/V8-shaped, sandbox policy is lifecycle/endpoint-shaped, and WASI agent capability design is deferred. | EIB2 defines trust tiers and a shared capability table before any backend promotion. |
+| Resource vocabulary is split across runtime limits, sandbox resource limits, wasmtime Store limits, storage executors, and admission plans. | Each layer has a useful local limit, but there is no one resource map for overload decisions. | EIB6 names protected resources and overload semantics before `docs/plans/layered-admission-control-plan.md` can add gates. |
+| Bun/JSC has proof evidence but no production owner. | Local Bun proof gates reached timeout/cancel recovery, but permission containment, memory policy, package loading, VM reuse, artifact metadata, and fork posture are not production-ready. | EIB3 records the next Bun/JSC proof gate and the fork/upstream/hold decision. No Nimbus-maintained Bun fork yet. |
+| krun sandbox findings need implementation routing. | `docs/plans/security/sandbox-isolation-audit.md` identifies concrete issues, including seccomp, capabilities, `noNewPrivileges`, TSI bind address, root VMM lifetime, image provenance, and crun annotation parsing. | EIB4 routes each finding to implementation, distribution, operator control, or accepted risk. |
+| Generated artifact metadata is explicit but currently V8-only. | Codegen emits `runtime_engine`, `runtime_bundle_content_kind`, `runtime_compatibility_target`, and `runtime_package_resolution`; server validation only accepts V8 JavaScript lanes today. | EIB2/EIB3/EIB5 define new legal combinations before routing can select another engine. |
+| Active plan list stays small after archiving the runtime seam plan. | `docs/plans/archive/runtime-engine-seam-plan.md` is the historical baseline; wasmtime, WASI agent, and admission plans remain deferred; this plan is the active routing point. | No additional archive needed in EIB1. Retitle or archive only if EIB5/EIB6 exposes overlap after vocabulary alignment. |
+
 ## Phase Status Ledger
 
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
 | EIB0 | `done` | Create this successor control plane and archive the completed runtime engine seam plan. | Documentation diff check. |
-| EIB1 | `todo` | Build the execution-boundary ownership map across runtime, sandbox, wasmtime, WASI agent, admission, and security-audit plans. | Source/doc review checklist plus `git diff --check`. |
+| EIB1 | `done` | Build the execution-boundary ownership map across runtime, sandbox, wasmtime, WASI agent, admission, and security-audit plans. | Source/doc review checklist recorded; `git diff --check`. |
 | EIB2 | `todo` | Define trust tiers and capability policy shared by in-process engines, WASM components, and sandboxed services. | Architecture doc update plus focused policy tests if code changes. |
 | EIB3 | `todo` | Decide Bun/JSC next proof gates and fork posture from permission, memory, package, and lifecycle evidence. | Bun/Nimbus proof transcript or explicit blocked decision. |
 | EIB4 | `todo` | Route sandbox isolation audit findings into implementation, distribution, or accepted-risk owners. | Updated security audit and owning plan links; `git diff --check`. |
@@ -192,7 +261,7 @@ Acceptance criteria:
 
 ### EIB1: Execution Boundary Ownership Map
 
-Status: `todo`
+Status: `done`
 
 Deliverables:
 
@@ -205,6 +274,12 @@ Acceptance criteria:
 
 - the map names concrete files, symbols, docs, and active/deferred plans
 - no implementation starts from an unowned boundary
+
+Completion notes:
+
+- ownership map recorded above
+- source review checklist recorded above
+- next phase is EIB2 trust tiers and shared capability policy
 
 ### EIB2: Trust Tiers And Capability Policy
 
@@ -327,3 +402,4 @@ Acceptance criteria:
 | Date | Phase | Status | Notes | Verification |
 | --- | --- | --- | --- | --- |
 | 2026-05-21 | EIB0 | `done` | Created this active successor plan after the runtime engine seam plan completed RS0-RS6 and Bun/JSC gates 1-10. Archived the completed runtime seam plan as the historical baseline, made this plan the routing point for future runtime-engine, Bun/JSC, wasmtime, WASI agent, sandbox isolation, and execution-admission work, and added the autonomous `/goal` prompt for this plan. | Documentation-only change; `git diff --check` passed for touched docs. |
+| 2026-05-21 | EIB1 | `done` | Recorded the execution-boundary ownership map across runtime scheduling, backend invocation, bundle metadata, host-call transport, generated artifact metadata, server runtime selection, sandbox lifecycle, krun/OCI hardening, wasmtime, WASI agent capabilities, admission/resource gates, and engine/storage host paths. Confirmed the next implementation gate is EIB2 trust tiers and capability policy, not Bun/JSC or sandbox implementation. | Source/doc review checklist recorded; `git diff --check -- docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
