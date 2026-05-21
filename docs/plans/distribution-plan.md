@@ -129,7 +129,8 @@ The script:
 2. Detects architecture (x86_64, aarch64)
 3. Chooses the supported install channel for that platform
 4. On Linux today: installs distro dependencies via apt/dnf, then installs
-   released `nimbus` + `nimbus-crun` artifacts directly from GitHub Releases
+   released `nimbus` + `nimbus-libkrun` + `nimbus-crun` artifacts directly
+   from GitHub Releases
 5. On macOS today: installs or upgrades `nimbus/tap/nimbus` via
    Homebrew cask, which owns `krunkit` and bundles `libexec/gvproxy`
 6. Later, once D2/D3 are publicly proved, Linux can switch from direct
@@ -160,33 +161,39 @@ Description: Reactive document database with microVM runtime
 
 ```
 Package: nimbus-crun
-Version: 1.27+nimbus1
+Version: 1.27.1+nimbus1
 Architecture: amd64
-Depends: libkrun (>= 1.17), libkrunfw, libcap2, libseccomp2, libyajl2
+Depends: nimbus-libkrun (= 1.17.4+nimbus1), libcap2, libseccomp2, libyajl2
 Description: crun OCI runtime with krun TSI port mapping (patched for nimbus)
 ```
 
-Built from upstream crun release tarball + build-time patch (see
-`docs/plans/archive/vmm-infrastructure-plan.md`). Installs to
+Built from the Nimbus-owned `nimbus/nimbus-crun` release line. The first
+post-hardening release is planned as `v1.27.1-nimbus.1`, based on upstream
+crun `1.27.1` plus the Nimbus krun TSI port-map patch. Installs to
 `/usr/libexec/nimbus/crun`. Does
 NOT conflict with or replace the system `crun` — nimbus invokes it via
 `conmon -r /usr/libexec/nimbus/crun`. System Podman/CRI-O continue using
 the distro `crun` undisturbed.
 
 Version format: `{upstream_version}+nimbus{patch_revision}`. The `+` separator
-follows Debian convention for local modifications. When upstream merges the
-port mapping PR, `nimbus-crun` is dropped and replaced by a dependency on the
-system `crun` (>= the version that includes the patch).
+follows Debian convention for local modifications. GitHub release tags use
+the matching exact upstream version format, for example
+`v1.27.1-nimbus.1`.
 
-**Package: `libkrun` (for Debian/Ubuntu where it's not in repos)**
+**Package: `nimbus-libkrun`**
 
 ```
-Package: libkrun
-Version: 1.17.4
+Package: nimbus-libkrun
+Version: 1.17.4+nimbus1
 Architecture: amd64
 Depends: libc6
-Description: Dynamic library for KVM-based process isolation
+Description: Nimbus-private libkrun stack for KVM-based process isolation
 ```
+
+Built from the Nimbus-owned `nimbus/nimbus-libkrun` release line and installed
+under `/usr/libexec/nimbus/lib`. It may bundle the pinned `libkrunfw` runtime
+library used by Nimbus, but it must not replace the distro/system
+`libkrun` or `libkrunfw`.
 
 **Apt repository:**
 ```
@@ -215,9 +222,10 @@ Recommends: catatonit passt shadow-utils fuse-overlayfs
 
 (Version is illustrative — the actual version tracks the Nimbus release tag.)
 
-On Fedora, libkrun and libkrunfw are already in the repos. The
-`nimbus-crun` package installs to `/usr/libexec/nimbus/crun` alongside
-the system crun (does not replace it).
+On Fedora, Nimbus still uses the private `nimbus-libkrun` package for service
+execution even though distro `libkrun` and `libkrunfw` exist. The
+`nimbus-crun` package installs to `/usr/libexec/nimbus/crun` alongside the
+system crun and resolves libkrun from `/usr/libexec/nimbus/lib`.
 
 **COPR or custom repo:**
 ```
@@ -621,22 +629,25 @@ build {
 
 ### Phase D1: CI Build Pipeline
 
-**Goal:** Automated builds of nimbus and nimbus-crun for Linux x86_64 and
-aarch64.
+**Goal:** Automated builds of nimbus, nimbus-libkrun, and nimbus-crun for
+Linux x86_64 and aarch64.
 
 **Scope:**
 - GitHub Actions workflow: build nimbus (cargo build --release)
-- GitHub Actions workflow: build nimbus-crun (clone upstream crun at pinned
-  tag inside Fedora 43 container with `libkrun-devel` from repos, apply
-  patch, autotools `--with-libkrun`)
+- GitHub Actions workflow: build nimbus-libkrun from the Nimbus-owned
+  `nimbus/nimbus-libkrun` fork and publish private runtime archives
+- GitHub Actions workflow: build nimbus-crun from the Nimbus-owned
+  `nimbus/nimbus-crun` fork against the paired `nimbus-libkrun` headers and
+  libraries, then embed/prove private lib lookup
 - Matrix: amd64 (`ubuntu-latest`) + arm64 (`ubuntu-24.04-arm`)
 - GitHub Releases: upload binaries as release assets with attestation
 - Tarball (Channel 5): nimbus + crun + README
 
-**nimbus-crun release status:** `done` — `nimbus/nimbus-crun`
-publishes the Linux `nimbus-crun-linux-amd64` and `nimbus-crun-linux-arm64`
-artifacts from its own tagged release workflow. This repo now consumes that
-external release contract rather than owning an in-repo `crun/v*` workflow.
+**nimbus libkrun/crun release status:** `active follow-on` —
+`docs/plans/nimbus-libkrun-runtime-stack-plan.md` owns the move from the
+historical `nimbus-crun` `v1.27-nimbus.1/.2` releases to the paired
+`nimbus-libkrun` `v1.17.4-nimbus.1` and `nimbus-crun`
+`v1.27.1-nimbus.1` release contract.
 
 **nimbus binary CI status:** `done` — `.github/workflows/release.yml`
 verifies the tag/version contract, builds and publishes Nimbus release assets
@@ -645,6 +656,8 @@ provenance/checksums, dispatches the matching machine-os publish workflow, and
 updates the Homebrew cask on tagged releases.
 
 **Acceptance criteria:**
+- a tagged `nimbus/nimbus-libkrun` release exists and publishes private
+  runtime archives for amd64 and arm64
 - a tagged `nimbus/nimbus-crun` release exists and publishes
   `nimbus-crun-linux-amd64` + `nimbus-crun-linux-arm64`
 - `git tag v0.1.14 && git push --tags` triggers nimbus build
@@ -662,7 +675,8 @@ updates the Homebrew cask on tagged releases.
   `scripts/build-linux-release-packages.sh`,
   `scripts/verify-build-linux-release-packages-helper.sh`, and
   `.github/workflows/linux-packages.yml` render and build candidate `.deb`
-  artifacts for `nimbus` and `nimbus-crun` from released binaries
+  artifacts for `nimbus`, `nimbus-libkrun`, and `nimbus-crun` from released
+  binaries
 - Shared static apt-repo builder now exists in-repo:
   `scripts/build-apt-repository.sh`,
   `scripts/verify-build-apt-repository-helper.sh`, and
@@ -675,11 +689,11 @@ updates the Homebrew cask on tagged releases.
   `packaging/linux-distribution-contract.env` plus
   `.github/workflows/linux-distribution-release.yml` mirror each published
   Nimbus GitHub release into the Linux package/repo lanes using that single
-  checked-in `nimbus-crun`/channel contract instead of requiring ad hoc
-  operator inputs
+  checked-in `nimbus-libkrun`/`nimbus-crun`/channel contract instead of
+  requiring ad hoc operator inputs
 - Final Debian/Ubuntu channel still needs the hosted apt repository layer:
   final custom-domain publication for that signed static repo bundle
-- Resolve Debian/Ubuntu ownership for `libkrun` / `libkrunfw` before claiming
+- Finish `docs/plans/nimbus-libkrun-runtime-stack-plan.md` before claiming
   `apt install nimbus` as a supported path
 - Host apt repository (GitHub Pages or Cloudflare R2)
 - GPG-sign packages
@@ -698,7 +712,8 @@ updates the Homebrew cask on tagged releases.
   `scripts/build-linux-release-packages.sh`,
   `scripts/verify-build-linux-release-packages-helper.sh`, and
   `.github/workflows/linux-packages.yml` render and build candidate `.rpm`
-  artifacts for `nimbus` and `nimbus-crun` from released binaries
+  artifacts for `nimbus`, `nimbus-libkrun`, and `nimbus-crun` from released
+  binaries
 - Shared Fedora/COPR source-package bridge now exists in-repo:
   `scripts/build-fedora-release-srpms.sh`,
   `scripts/verify-build-fedora-release-srpms-helper.sh`, and
@@ -710,7 +725,8 @@ updates the Homebrew cask on tagged releases.
   `.github/workflows/linux-distribution-release.yml` mirror each published
   Nimbus GitHub release into the Debian/Fedora packaging workflows from the
   same released assets instead of maintaining a separate distro-build stack
-- libkrun/libkrunfw already in Fedora repos — just depend on them
+- Use `nimbus-libkrun` for Nimbus service execution; do not depend on Fedora's
+  distro `libkrun`/`libkrunfw` for the patched service stack
 - Final Fedora channel still needs the live COPR project/publication contract,
   `dnf copr enable ...` install docs, and first real repo proof
 - Publish via COPR (free RPM build service)
@@ -828,9 +844,9 @@ ledger row.
 
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
-| D1: CI build pipeline | `done` | Nimbus compiles | release workflow now publishes Nimbus binary assets plus checksums/provenance on `v*` tags; nimbus-crun is already green on amd64+arm64 |
-| D2: Apt repo (Debian/Ubuntu) | `in_progress` | D1 | shared `nfpm` package builder, signed static apt-repo builder, and release-driven mirror workflow landed; GitHub Pages deploy path exists, but final `nimbus.github.io/apt` cutover and Debian `libkrun` ownership remain |
-| D3: COPR (Fedora) | `in_progress` | D1 | shared `nfpm`-based package builder, deterministic Fedora/COPR SRPM bridge, and release-driven mirror workflow landed; live COPR publication and first `dnf copr enable ...` proof still remain |
+| D1: CI build pipeline | `active follow-on` | Nimbus compiles | Nimbus binary release is done; `docs/plans/nimbus-libkrun-runtime-stack-plan.md` owns the paired `nimbus-libkrun` + `nimbus-crun` release refresh |
+| D2: Apt repo (Debian/Ubuntu) | `in_progress` | D1 | shared `nfpm` package builder, signed static apt-repo builder, and release-driven mirror workflow landed; GitHub Pages deploy path exists, but final `nimbus.github.io/apt` cutover and `nimbus-libkrun` packaging remain |
+| D3: COPR (Fedora) | `in_progress` | D1 | shared `nfpm`-based package builder, deterministic Fedora/COPR SRPM bridge, and release-driven mirror workflow landed; live COPR publication, `nimbus-libkrun` packaging, and first `dnf copr enable ...` proof still remain |
 | D4a: Homebrew + krunkit | `done` | D1 | Apple Silicon, macOS 14+ cask ships bundled `gvproxy`, owns `krunkit`, auto-updates from the release workflow, and now has both isolated release-proof and real `brew upgrade` validation |
 | D4b: Guest VM image | `done` | D4a | current macOS v1 contract is the pinned Podman machine image plus host-managed guest-binary sync; `nimbus/machine-os` remains the future Nimbus-owned bootc supply-side track |
 | D4c: API + port forwarding | `done` | D4b | `nimbus start` now auto-starts an initialized macOS machine for container-backed Compose projects, then proves host `/health`, forwarded machine API, `ctx.services` activation, localhost service reachability, native `/ws` push, and tenant teardown on the real host |

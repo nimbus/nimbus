@@ -28,6 +28,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `/goal` control plane gated on
     `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
     conditions).
+- `docs/plans/nimbus-libkrun-runtime-stack-plan.md`
+  - canonical active plan for shipping the patched Linux krun service stack
+    from Nimbus-owned release artifacts. Owns the new
+    `nimbus/nimbus-libkrun` repo, the paired `nimbus-crun`
+    `v1.27.1-nimbus.1` release line, direct installer updates, and the
+    Debian/Fedora package mirror changes that move Nimbus away from manual or
+    distro `libkrun` for service execution.
 
 ## Current Reference Baselines
 
@@ -426,6 +433,10 @@ the work is explicitly a historical review.
   `docs/plans/archive/install-script-plan.md` and the active parent context
   in `docs/plans/distribution-plan.md`. Promote a new active plan before
   another install-script wave unless one already owns the slice.
+- For Linux krun service stack packaging, `nimbus-libkrun`, or paired
+  `nimbus-crun` release work, start with
+  `docs/plans/nimbus-libkrun-runtime-stack-plan.md`, then cross-check
+  `docs/plans/distribution-plan.md`.
 - For Convex or Nimbus CLI/codegen workflow work (`packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `nimbus start --app-dir`
   contract), start with `docs/adapters/convex/ai-guidelines.md`,
