@@ -80,11 +80,13 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   plan before another install-script wave
 - Local-dev / build-contract / Make-vs-Cargo orchestration:
   `docs/operating/local-dev.md` for the user-facing contract, then
-  `docs/plans/local-dev-canonicalization-plan.md` for the active build-graph
-  cleanup wave (LD0-LD7). The Makefile UI dependency graph at the top of
-  `Makefile` (`UI_PKG`, `UI_DIST_INDEX`, etc.) is the source of truth for
-  cross-toolchain prerequisites; `crates/nimbus-server/build.rs` only
-  asserts that those inputs exist and errors actionably otherwise.
+  `docs/plans/archive/local-dev-canonicalization-plan.md` as the
+  completed baseline (LD0-LD7, closed 2026-05-21). The Makefile UI
+  dependency graph at the top of `Makefile` (`UI_PKG`, `UI_DIST_INDEX`,
+  etc.) is the source of truth for cross-toolchain prerequisites;
+  `crates/nimbus-server/build.rs` only asserts that those inputs exist
+  and errors actionably otherwise. Promote a new active plan before
+  another local-dev / build-graph wave.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,

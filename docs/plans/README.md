@@ -18,16 +18,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
-- `docs/plans/local-dev-canonicalization-plan.md`
-  - canonical plan for making `nimbus-server`'s cross-toolchain
-    dependency on the `nimbus-ui` JS build explicit and self-healing
-    via Make's dependency graph. A fresh-clone `make ci` (or any other
-    Make target) builds the prerequisite UI artifacts on demand;
-    `build.rs` stops emitting a stub HTML and asserts inputs honestly;
-    `.github/workflows/ci.yml` drops all seven inlined `npm run codegen` /
-    `npm run build` steps. Carries a /goal control-plane condition
-    (`bash scripts/verify-local-dev-canonicalization.sh` exits 0) so
-    LD0-LD7 can be driven autonomously to closeout. Created 2026-05-21.
 
 ## Current Reference Baselines
 
@@ -35,6 +25,24 @@ Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/archive/local-dev-canonicalization-plan.md`
+  - completed execution record for the local-dev canonicalization wave
+    (LD0-LD7, closed 2026-05-21). Made `nimbus-server`'s cross-toolchain
+    dependency on the `nimbus-ui` JS build explicit and self-healing
+    via the Makefile's UI dependency graph: `UI_DIST_INDEX` /
+    `UI_CODEGEN_SENTINEL` are prereqs on every workspace lane that
+    compiles `nimbus-server` (`check`, `test`, `clippy`, `ci-required`,
+    `verify-desktop-ui`, `test-rust-workspace`, `test-rust-docs`).
+    `crates/nimbus-server/build.rs` no longer emits a stub HTML and
+    errors actionably when `packages/nimbus-ui/dist/index.html` is
+    absent in any profile. `.github/workflows/ci.yml` dropped all seven
+    inlined `npm run codegen` / `npm run build -w packages/nimbus-ui`
+    steps and routes through the Make targets instead. Build contract
+    documented at `docs/operating/local-dev.md`. Fresh-clone proof at
+    `docs/plans/proof/local-dev-canonicalization/`. `/goal` control
+    plane gated on `bash scripts/verify-local-dev-canonicalization.sh`
+    (ten conditions). Future local-dev / build-graph waves must
+    promote a new active plan.
 - `docs/plans/archive/cli-daemon-canonicalization-plan.md`
   - completed execution record for the CLI daemon canonicalization wave
     (CD1-CD9, closed 2026-05-19). Removed source-tree walk-up from
