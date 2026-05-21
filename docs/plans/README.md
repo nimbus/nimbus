@@ -4,6 +4,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/runtime-engine-seam-plan.md`
+  - canonical Step 0 plan for runtime-extension work. Defines the engine seam
+    below `WorkerLoop` / `RuntimeBackend`, keeps Deno/V8-specific state out of
+    future Bun/JSC or wasmtime backends, and owns the bootstrap/host-call
+    refactor needed before adding another in-process runtime engine.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -13,6 +18,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
+- `docs/plans/local-dev-canonicalization-plan.md`
+  - canonical plan for making `nimbus-server`'s cross-toolchain
+    dependency on the `nimbus-ui` JS build explicit and self-healing
+    via Make's dependency graph. A fresh-clone `make ci` (or any other
+    Make target) builds the prerequisite UI artifacts on demand;
+    `build.rs` stops emitting a stub HTML and asserts inputs honestly;
+    `.github/workflows/ci.yml` drops five inlined `npm run codegen` /
+    `npm run build` steps. Carries a /goal control-plane condition
+    (`bash scripts/verify-local-dev-canonicalization.sh` exits 0) so
+    LD0-LD7 can be driven autonomously to closeout. Created 2026-05-21.
 
 ## Current Reference Baselines
 
@@ -301,7 +316,8 @@ archived plans only when you need historical execution detail.
     existing V8 backend (currently implemented via `deno_core`); covers
     backend abstraction refactor, WIT interface definitions, cooperative
     fuel-based scheduling, module caching, and bundle format extension;
-    activation gate met (Locker fork Phase 5 completed 2026-04-06)
+    activation gate met (Locker fork Phase 5 completed 2026-04-06), but
+    runtime-engine seam hardening now owns the next Step 0 before promotion
 - `docs/plans/wasi-agent-capabilities-plan.md`
   - canonical plan for adding agent OS primitives (virtual filesystem, sandboxed
     process execution, HTTP client) via WASI Component Model interfaces; covers
@@ -385,8 +401,9 @@ the work is explicitly a historical review.
 - For future cleanup or verification-hardening work that is not already owned
   by another active plan, author or promote a new active plan instead of
   reviving an archived one.
-- For future wasmtime WASM backend work, start with
-  `wasmtime-backend-plan.md`.
+- For future runtime-engine work, including Bun/JSC or wasmtime, start with
+  `runtime-engine-seam-plan.md`; then use `wasmtime-backend-plan.md` for
+  wasmtime-specific phases once the seam work is ready.
 - For future agent OS capabilities via WASI Component Model, start with
   `wasi-agent-capabilities-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes
