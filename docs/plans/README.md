@@ -4,12 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/sandbox-microvm-hardening-plan.md`
-  - focused active plan for closing the microVM service exposure blockers from
-    `docs/plans/security/sandbox-isolation-audit.md`: krun OCI seccomp,
-    explicit capabilities, `noNewPrivileges`, TSI bind-address carry-through,
-    and patched-crun port-map parser robustness. Promoted from the archived
-    execution-boundary baseline on 2026-05-21.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -59,6 +53,14 @@ archived plans only when you need historical execution detail.
     plane gated on `bash scripts/verify-local-dev-canonicalization.sh`
     (ten conditions). Future local-dev / build-graph waves must
     promote a new active plan.
+- `docs/plans/archive/sandbox-microvm-hardening-plan.md`
+  - completed execution record for closing the microVM service exposure
+    blockers from `docs/plans/security/sandbox-isolation-audit.md`: krun OCI
+    seccomp, explicit capabilities, `noNewPrivileges`, TSI bind-address
+    carry-through, patched-crun port-map parser robustness, and Debian 13
+    Linux localhost-only proof. Covered SMH0-SMH4, closed 2026-05-21. Future
+    distribution packaging must pin and ship the validated patched
+    crun/libkrun stack or rerun the same smoke proof for a replacement stack.
 - `docs/plans/archive/runtime-engine-seam-plan.md`
   - completed Step 0 runtime-extension baseline (RS0-RS6, closed
     2026-05-21). Defined `WorkerLoop` / `RuntimeBackend` as the execution seam,
@@ -437,7 +439,7 @@ the work is explicitly a historical review.
   `docs/architecture/sandbox/microvm-service-baseline.md`, then promote or author a new
   active plan if the task is larger than a small focused change.
 - For microVM service security hardening, start with
-  `docs/plans/sandbox-microvm-hardening-plan.md` and
+  `docs/plans/archive/sandbox-microvm-hardening-plan.md` and
   `docs/plans/security/sandbox-isolation-audit.md`.
 - For repo-wide reliability-proof posture or CI flake investigation, start
   with `docs/architecture/testing/reliability-posture.md` and

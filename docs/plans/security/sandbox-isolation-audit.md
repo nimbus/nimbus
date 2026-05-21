@@ -68,148 +68,71 @@ bind-mounted read-only at `/.nimbus/nimbus-guest-user-switch`.
 
 ## Findings
 
-### F1: No seccomp profile in OCI spec
+### F1: Explicit seccomp profile in OCI spec
 
-**Severity: Medium | Likelihood: Low**
+**Severity: Medium | Likelihood: Low | Status: Closed on Linux smoke**
 
-The generated `config.json` contains no `linux.seccomp` section. The
-host-side crun process and any pre-VM-boot setup code run without syscall
-filtering.
+The generated krun `config.json` now includes a `linux.seccomp` section with
+`SCMP_ACT_ERRNO` default denial and an explicit krun/libkrun syscall
+allowlist.
 
-This is partially mitigated by KVM isolation (the guest has its own kernel
-and syscall surface), but the host-side crun process itself — running as
-root — has an unrestricted syscall surface during the window between
-`crun create` and VM boot.
+Linux proof on Debian 13 `minicloud` showed the allowlist is active and still
+boots an image-backed BusyBox service. The proof also exposed real libkrun
+rootfs I/O needs, so the allowlist now includes `close_range`, vectored I/O
+syscalls such as `preadv`, and read-only xattr syscalls such as `fgetxattr`.
 
-**Recommendation:** Add an explicit `linux.seccomp` profile to the OCI spec
-that allowlists only the syscalls crun and libkrun need for VM setup. Use
-crun's default seccomp profile as a starting point and tighten from there.
+### F2: Explicit capability dropping
 
-### F2: No explicit capability dropping
+**Severity: Medium | Likelihood: Low | Status: Closed on Linux smoke**
 
-**Severity: Medium | Likelihood: Low**
+The OCI spec now sets explicit `process.capabilities` lists for the host-side
+krun VMM process instead of inheriting all root capabilities. The current
+minimum set is:
 
-The OCI spec does not set `process.capabilities` to restrict the Linux
-capability set. The host-side VMM process retains all capabilities inherited
-from conmon/root.
+- `CAP_NET_ADMIN`
+- `CAP_NET_BIND_SERVICE`
+- `CAP_SYS_ADMIN`
 
-**Recommendation:** Add an explicit capability bounding set. The minimum for
-krun VM launch is likely:
+Linux smoke proved this set is sufficient for the patched crun/libkrun launch
+path while dropping the rest of the inherited root capability surface.
 
-- `CAP_SYS_ADMIN` — mount namespace and KVM device access
-- `CAP_NET_ADMIN` — only if TSI or networking setup requires it
+### F3: `noNewPrivileges` flag
 
-Drop everything else via `process.capabilities.bounding`,
-`process.capabilities.effective`, and `process.capabilities.permitted`.
+**Severity: Low | Likelihood: Low | Status: Closed on Linux smoke**
 
-### F3: No `noNewPrivileges` flag
+The OCI spec now sets `process.noNewPrivileges: true`. Linux smoke proved
+this does not break krun/libkrun VM launch, and it prevents host-side
+privilege escalation via setuid/setgid binaries or file capabilities during
+the crun/libkrun setup window.
 
-**Severity: Low | Likelihood: Low**
+### F4: TSI ports bind only to the configured host address
 
-The OCI spec does not set `process.noNewPrivileges: true`. Combined with the
-root-user VMM process, this means the crun process (or anything it execs on
-the host side) could gain additional privileges via setuid binaries.
-
-**Recommendation:** Add `"noNewPrivileges": true` to the OCI process spec.
-This is a standard OCI hardening step with no expected impact on krun/libkrun
-operation.
-
-**Implementation route:** Single-line addition to the OCI bundle config in
-`crates/nimbus-sandbox/src/backends/krun/bundle.rs`. Add
-`"noNewPrivileges": true` to the `"process"` object in `build_bundle_config()`
-(line 138). The kernel sets `PR_SET_NO_NEW_PRIVS` on the crun process, which
-prevents privilege escalation via setuid/setgid binaries or file capabilities.
-This has no effect on KVM or libkrun operation — the process already has the
-privileges it needs at exec time. No patch to crun or libkrun required.
-
-### F4: TSI ports bind on all host interfaces
-
-**Severity: Medium | Likelihood: Medium**
+**Severity: Medium | Likelihood: Medium | Status: Closed on patched stack**
 
 The krun bundle intentionally omits the network namespace so TSI port
-mappings work — TSI-bound ports appear in the host's network namespace. This
-means ports in the configured range (default 15000-16000) bind on `0.0.0.0`
-and are reachable from any network the host is connected to.
+mappings work; TSI-bound ports appear in the host network namespace. Nimbus
+therefore must carry the configured `SandboxPortBinding::host_address` all
+the way into the libkrun listener bind call.
 
-In a multi-tenant production deployment, this means guest services are
-directly reachable from the host network without any intermediate access
-control.
+This path is now implemented and fail-closed:
 
-**Root cause:** The Rust-side data model already carries a `host_address`
-field on `SandboxPortBinding` (`crates/nimbus-sandbox/src/spec.rs:193`) and
-defaults it to `127.0.0.1` (line 208). However, `format_port_map()` in
-`bundle.rs:300-306` formats only `HOST_PORT:GUEST_PORT` and drops the
-address. This is because upstream libkrun's `krun_set_port_map()` C API only
-accepts `HOST_PORT:GUEST_PORT` pairs — it has no bind-address parameter. TSI
-always calls `bind(0.0.0.0, port)` internally.
+- Nimbus formats `krun.port_map` as `ADDR:HOST_PORT:GUEST_PORT`, with IPv6
+  rendered as `[ADDR]:HOST_PORT:GUEST_PORT`.
+- patched `nimbus-crun` validates legacy and address-bearing annotations and
+  rejects malformed, out-of-range, duplicate, empty, or too-long input before
+  any libkrun call.
+- address-bearing entries require libkrun to export
+  `krun_set_port_map_with_bind_address`; otherwise `nimbus-crun` fails launch
+  instead of silently widening exposure.
+- libkrun branch `nimbus-bind-address` commit `fc13a8e` implements
+  `krun_set_port_map_with_bind_address()` and binds TSI listeners to the
+  requested host address.
 
-**Resolution options:**
-
-**Option A: Patch libkrun to support bind addresses (preferred)**
-
-Nimbus already maintains a patched crun
-(`patches/crun/0001-krun-add-tsi-port-mapping-via-oci-annotation.patch`).
-Applying the same strategy to libkrun is a natural extension. The change
-would be:
-
-1. **Patch libkrun** (~20-30 lines): Extend `krun_set_port_map()` to accept
-   an optional bind address in the port map string. The format would change
-   from `"HOST_PORT:GUEST_PORT"` to `"ADDR:HOST_PORT:GUEST_PORT"`, falling
-   back to `0.0.0.0` when only two components are present (backwards
-   compatible). The TSI socket setup in libkrun's VMM code would pass the
-   parsed address to `bind()` instead of hardcoding `INADDR_ANY`.
-
-2. **Update the crun patch** (~5 lines): Pass the extended format string
-   from the `krun.port_map` OCI annotation through to `krun_set_port_map()`.
-   No new annotation needed — the existing annotation value just grows a
-   prefix (e.g., `"127.0.0.1:18080:8080,127.0.0.1:15432:5432"`).
-
-3. **Update `format_port_map()`** (~3 lines): Include `binding.host_address`
-   in the formatted string. The Rust data model already has the address.
-
-4. **Update CI build chain**: Add a libkrun patch to the build alongside the
-   existing crun patch. The build chain becomes:
-   ```
-   libkrunfw 5.3.0  (unpatched)
-        ↓
-   libkrun 1.17.4 + bind-address patch  (new patch)
-        ↓
-   crun 1.27 + TSI annotation patch     (existing, updated)
-   ```
-
-This approach keeps nimbus on the standard OCI runtime interface while
-getting localhost-only TSI binding. The patch surface is small and the
-format change is backwards compatible (two-component strings still work).
-
-**Option B: Host-side firewall rules (no upstream dependency)**
-
-After VM boot, the krun backend adds iptables/nftables rules to restrict
-each TSI port. The backend already knows the port range and intended
-`host_address` from the spec. After `crun start` succeeds in `vm.rs`:
-
-```
-iptables -I INPUT -p tcp --dport 18080 ! -s 127.0.0.1 -j DROP
-```
-
-Rules would be cleaned up on sandbox stop. This works today without any
-patches but adds host firewall management complexity and a race window
-between VM boot and rule insertion.
-
-**Option C: Document and defer (lowest effort)**
-
-Since `host_address` defaults to `127.0.0.1` and the container backend
-(which uses netavark) already respects it, the gap is krun-specific.
-Document that TSI port exposure is a known property of the krun backend and
-ensure production deployments use host-level firewalling (cloud security
-groups, nftables) to restrict the port range.
-
-**Recommendation:** Option A. The project already maintains a patched crun
-with CI verification (`scripts/verify-crun-patch.sh`,
-`.github/workflows/verify-nimbus-crun-patch.yml`), build scripts
-(`scripts/build-nimbus-crun.sh`), and pinned versions (crun 1.27, libkrun
-1.17.4, libkrunfw 5.3.0). Adding a libkrun patch follows the identical
-pattern. The fix is small, backwards compatible, and eliminates the issue at
-the correct layer rather than papering over it with firewall rules.
+Linux proof on `minicloud` rendered
+`krun.port_map = "127.0.0.1:18081:8081"` and ran the image-backed smoke with
+`NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=192.168.4.29`. The VM answered localhost
+readiness and refused `192.168.4.29:18081`, proving the host bind remained
+loopback-only on the patched stack.
 
 ### F5: Root VMM process lifetime
 
@@ -250,34 +173,36 @@ is worth noting because image content is tenant-controlled.
 
 ### F7: Annotation parsing in patched crun (C code)
 
-**Severity: Low | Likelihood: Low**
+**Severity: Low | Likelihood: Low | Status: Closed with parser harness**
 
 The `krun.port_map` annotation is parsed with C string splitting in the
-patched `handlers/krun.c`. The format is simple (`"18080:8080,15432:5432"`),
-but the parsing runs in the host-side crun process as root.
+patched `handlers/krun.c`. The parser now accepts legacy
+`HOST_PORT:GUEST_PORT`, IPv4 `ADDR:HOST_PORT:GUEST_PORT`, and bracketed IPv6
+`[ADDR]:HOST_PORT:GUEST_PORT` entries.
 
-Potential issues:
+The parser rejects these cases before any libkrun port-map call:
 
 - Integer overflow on port number conversion (e.g., `"999999:8080"`)
 - Missing null-termination edge cases
 - Behavior on malformed input (e.g., `":::,"`, empty string, very long
   strings)
+- Duplicate host bind-address/port pairs
 
-**Recommendation:** Add fuzz tests for the annotation parser. Validate port
-numbers are in the valid `u16` range (`1-65535`) before passing to
-`krun_set_port_map()`.
+Targeted coverage lives in `nimbus-crun/tests/port_map_parser_test.c` and is
+run through `scripts/verify-port-map-parser.sh` and
+`scripts/verify-patch.sh`.
 
 ## Risk Summary
 
 | ID | Finding | Severity | Likelihood | Mitigation | Effort |
 |----|---------|----------|------------|------------|--------|
-| F1 | No seccomp profile | Medium | Low | Add explicit syscall allowlist | Medium |
-| F2 | No capability dropping | Medium | Low | Bound capabilities to minimum set | Medium |
-| F3 | No `noNewPrivileges` | Low | Low | One-line addition to OCI process spec | Trivial |
-| F4 | TSI ports on 0.0.0.0 | Medium | Medium | Patch libkrun bind address (Option A) | Medium |
+| F1 | Explicit seccomp profile | Medium | Low | Closed with Linux-smoked syscall allowlist | Medium |
+| F2 | Explicit capability dropping | Medium | Low | Closed with minimum krun capability set | Medium |
+| F3 | `noNewPrivileges` | Low | Low | Closed in OCI process spec | Trivial |
+| F4 | TSI host-address binding | Medium | Medium | Closed on patched crun/libkrun stack | Medium |
 | F5 | Root VMM lifetime | Low | Low | Investigate non-root KVM access | High |
 | F6 | Buildah image trust | Medium | Low | Pin digests, verify provenance | Low (policy) |
-| F7 | C annotation parsing | Low | Low | Fuzz test the parser | Low |
+| F7 | C annotation parsing | Low | Low | Closed with targeted parser harness | Low |
 
 ## EIB4 Owner Routing
 
@@ -290,37 +215,35 @@ not mean the fixes have landed. Findings marked `implementation_required` or
 
 | ID | Owner | Status | Route | Verification path |
 |----|-------|--------|-------|-------------------|
-| F1 | `docs/plans/sandbox-microvm-hardening-plan.md` SMH1 | `implementation_landed_pending_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` now emits an explicit `linux.seccomp` profile with `SCMP_ACT_ERRNO` default denial and a broad krun/libkrun allowlist. Narrow only after Linux-host proof. | Unit test asserts generated OCI JSON contains the expected seccomp shape; Linux krun smoke still boots; manual host validation records `config.json` excerpt. |
-| F2 | `docs/plans/sandbox-microvm-hardening-plan.md` SMH1 | `implementation_landed_pending_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` now emits explicit `process.capabilities` bounding/effective/permitted sets for the host-side krun VMM process. | Unit test asserts capabilities are present and minimal; Linux krun smoke still boots; host validation records the rendered bundle. |
-| F3 | `docs/plans/sandbox-microvm-hardening-plan.md` SMH1 | `implementation_landed_pending_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` now emits `process.noNewPrivileges: true`. No crun or libkrun patch required. | Unit test asserts `process.noNewPrivileges == true`; Linux krun smoke still boots. |
-| F4 | `nimbus-crun` / future libkrun patch lane plus `nimbus-sandbox` bundle formatting | `nimbus_and_crun_fail_closed_pending_libkrun_hook_and_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` now emits address-bearing `krun.port_map` entries from `SandboxPortBinding::host_address`, using `ADDR:HOST_PORT:GUEST_PORT` and `[IPv6]:HOST_PORT:GUEST_PORT`. `nimbus-crun` now validates those entries and fails closed unless libkrun exports `krun_set_port_map_with_bind_address`. The required libkrun hook shape is `int32_t krun_set_port_map_with_bind_address(uint32_t ctx_id, const char *const port_map[])`, preserving the same entry strings and binding each TSI listener to the requested host address. Host firewall rules remain an emergency mitigation, not the preferred production fix. | Rust unit tests prove address-bearing `krun.port_map`; nimbus-crun patch verification and parser tests pass; a libkrun bind-address implementation and Linux smoke must still prove service reachability only on the intended localhost address. |
+| F1 | `docs/plans/archive/sandbox-microvm-hardening-plan.md` SMH1/SMH4 | `closed_with_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` emits an explicit `linux.seccomp` profile with `SCMP_ACT_ERRNO` default denial and a Linux-smoked krun/libkrun allowlist. | Unit test asserts generated OCI JSON contains the expected seccomp shape; Debian 13 `minicloud` krun smoke boots; rendered `config.json` includes seccomp names such as `close_range`, `preadv`, and `fgetxattr`. |
+| F2 | `docs/plans/archive/sandbox-microvm-hardening-plan.md` SMH1/SMH4 | `closed_with_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` emits explicit `process.capabilities` bounding/effective/permitted sets for the host-side krun VMM process. | Unit test asserts capabilities are present and minimal; Debian 13 `minicloud` krun smoke boots with the explicit capability set. |
+| F3 | `docs/plans/archive/sandbox-microvm-hardening-plan.md` SMH1/SMH4 | `closed_with_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` emits `process.noNewPrivileges: true`. No crun or libkrun patch required. | Unit test asserts `process.noNewPrivileges == true`; Debian 13 `minicloud` krun smoke boots. |
+| F4 | `nimbus-crun`, libkrun branch `nimbus-bind-address`, and `nimbus-sandbox` bundle formatting | `closed_on_patched_stack` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` emits address-bearing `krun.port_map` entries from `SandboxPortBinding::host_address`, using `ADDR:HOST_PORT:GUEST_PORT` and `[IPv6]:HOST_PORT:GUEST_PORT`. `nimbus-crun` validates those entries and fails closed unless libkrun exports `krun_set_port_map_with_bind_address`. libkrun commit `fc13a8e` implements that hook and binds each TSI listener to the requested host address. Host firewall rules remain an emergency mitigation, not the preferred production fix. | Rust unit tests prove address-bearing `krun.port_map`; nimbus-crun patch verification and parser tests pass; libkrun `port_map_tests` pass; Linux smoke proves `127.0.0.1:18081:8081` is reachable on localhost and refused on `192.168.4.29:18081`. |
 | F5 | Sandbox/distribution security posture | `accepted_residual_for_v1_with_tracking` | Document the root VMM process lifetime as residual risk while investigating non-root `/dev/kvm` or post-init privilege drop support. Do not hide it in runtime-engine work. | Operator docs name the residual risk; future investigation records whether libkrun can launch with kvm-group access or drop privileges after initialization. |
 | F6 | Distribution/deploy admission and operator policy | `policy_required` | Production service images should be digest-pinned and provenance-verified before Buildah mounts tenant-controlled content. Tags may remain local-dev convenience only. | Compose/deploy validation or operator documentation requires digest references for production; provenance/signature verification path recorded before tenant-controlled production images are accepted. |
-| F7 | `nimbus-crun` patch robustness lane | `implementation_landed` | `nimbus-crun` now validates `u16` ranges, malformed strings, empty entries, duplicate host bind-address/port pairs, and long input before any libkrun port-map call. Parser coverage lives in `tests/port_map_parser_test.c` and is wired through `scripts/verify-port-map-parser.sh` plus `scripts/verify-patch.sh`. | `bash scripts/verify-patch.sh /Users/jack/src/github.com/containers/crun` passes against local crun `1.27.1` and runs parser malformed-input coverage. |
+| F7 | `nimbus-crun` patch robustness lane | `closed_with_parser_harness` | `nimbus-crun` now validates `u16` ranges, malformed strings, empty entries, duplicate host bind-address/port pairs, and long input before any libkrun port-map call. Parser coverage lives in `tests/port_map_parser_test.c` and is wired through `scripts/verify-port-map-parser.sh` plus `scripts/verify-patch.sh`. | `bash scripts/verify-patch.sh /Users/jack/src/github.com/containers/crun` passes against local crun `1.27.1` and runs parser malformed-input coverage. |
 
 ### Production Exposure Gates
 
 Before Nimbus claims production-safe multi-tenant microVM service exposure:
 
-- F4 must still land the libkrun bind-address hook and Linux localhost-only
-  smoke, or be explicitly replaced with an operator-enforced network control
-  that has the same localhost-only proof.
 - F6 must have a production image-admission policy for tenant-controlled
   images.
-- F1, F2, and F3 should be closed as the OCI bundle hardening baseline.
+- The production runtime package must pin and ship the patched crun/libkrun
+  stack validated here, or rerun the same localhost-only smoke for any
+  replacement stack before exposure is claimed.
+- F1, F2, F3, F4, and F7 are closed for the patched Linux krun stack recorded
+  by `docs/plans/archive/sandbox-microvm-hardening-plan.md`.
 - F5 may remain an accepted residual risk only if it is documented for
   operators and tied to the KVM/libkrun threat model.
-- F7 is locally covered by targeted nimbus-crun malformed-input tests; keep it
-  green in the patched crun verification lane.
+- F7 must stay green in the patched crun verification lane.
 
 Implementation order:
 
-1. F3, because it is local, small, and has low regression risk.
-2. F4, because it is the highest practical exposure risk.
-3. F1 and F2 as the remaining OCI hardening baseline.
-4. F6 as distribution/deploy policy before tenant-controlled production
+1. F6 as distribution/deploy policy before tenant-controlled production
    images.
-5. F7 parser robustness and F5 non-root/root-lifetime investigation.
+2. Runtime packaging pinning for the patched crun/libkrun stack.
+3. F5 non-root/root-lifetime investigation as residual-risk hardening.
 
 ## Patched Component Inventory
 
@@ -330,8 +253,8 @@ specific upstream versions.
 
 | Component | Upstream | Pinned Version | Patch | Purpose |
 |-----------|----------|---------------|-------|---------|
-| crun | containers/crun | 1.27 | `patches/crun/0001-krun-add-tsi-port-mapping-via-oci-annotation.patch` | Read and validate `krun.port_map`, call legacy `krun_set_port_map()` for legacy entries, and fail closed for address-bearing entries unless libkrun has the bind-address hook |
-| libkrun | containers/libkrun | 1.17.4 | None yet (required for F4 closeout) | Add `krun_set_port_map_with_bind_address()` and bind TSI listeners to requested host addresses |
+| crun | containers/crun | 1.27.1 | `nimbus-crun` commit `576e1f9` | Read and validate `krun.port_map`, call legacy `krun_set_port_map()` for legacy entries, and fail closed for address-bearing entries unless libkrun has the bind-address hook |
+| libkrun | containers/libkrun | 1.17.4 | `minicloud` branch `nimbus-bind-address` commit `fc13a8e` | Add `krun_set_port_map_with_bind_address()` and bind TSI listeners to requested host addresses |
 | libkrunfw | containers/libkrunfw | 5.3.0 | None | Linux kernel with TSI patches (upstream) |
 
 Build scripts: `~/src/github.com/nimbus/nimbus-crun/scripts/build.sh`,
@@ -347,16 +270,12 @@ multi-tenant production deployment.
 
 The patched crun remains a single-annotation design with a localized parser.
 The parser now has targeted malformed-input coverage, and address-bearing
-entries fail closed until the libkrun bind-address hook exists.
+entries fail closed unless the paired libkrun bind-address hook is available.
+On the validated Debian 13 proof stack, the hook exists and the Linux smoke
+proves localhost-only TSI exposure.
 
 Priority order for remediation:
 
-1. **F3** (noNewPrivileges) — trivial to fix, no risk of regression, no
-   patch to crun or libkrun required
-2. **F4** (TSI port binding) — most likely to be exploitable in practice;
-   preferred fix is a libkrun patch following the same strategy as the
-   existing crun patch
-3. **F1 + F2** (seccomp + capabilities) — standard OCI hardening, moderate
-   effort, no upstream patches required
-4. **F6** (image trust) — operational policy, not a code change
-5. **F5** (root lifetime) — accepted residual for v1 with tracking
+1. **F6** (image trust) — operational policy, not a code change
+2. **Patched stack packaging** — pin and ship the validated crun/libkrun pair
+3. **F5** (root lifetime) — accepted residual for v1 with tracking

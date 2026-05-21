@@ -86,7 +86,10 @@ Current macOS completion notes:
 
 - **Linux production data plane:** service traffic crosses the service-VM
   boundary through krun/TSI port mappings. Nimbus publishes host-side ports
-  and treats those as the application-facing bindings.
+  and treats those as the application-facing bindings. TSI host bindings must
+  preserve the configured `SandboxPortBinding::host_address`; the default is
+  loopback-only, and address-bearing port maps must fail closed if the
+  patched libkrun bind-address hook is unavailable.
 - **Linux production control/lifecycle plane:** the landed baseline does not
   require a custom guest-side `vsock` control agent. Startup, readiness,
   liveness, restart, logs, and stop behavior are currently driven from the
@@ -124,6 +127,9 @@ Preferred probe hierarchy by platform:
   `"running"`; readiness is gated on actual service reachability.
 - Host-side krun bundles stay root for `/dev/kvm`; image `USER` is preserved
   and applied inside the guest.
+- Host-side krun bundles carry the SMH hardening baseline: explicit
+  `process.noNewPrivileges`, explicit krun VMM capabilities, and an explicit
+  seccomp allowlist validated by Linux krun smoke.
 
 ## Lifecycle Baseline
 

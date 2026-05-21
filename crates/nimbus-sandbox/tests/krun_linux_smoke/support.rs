@@ -69,6 +69,52 @@ pub(super) fn assert_httpish_response(response: &str, context: &str) {
     );
 }
 
+pub(super) fn assert_host_port_not_bound_to_non_loopback(port: u16) {
+    let Some(host_address) = non_loopback_host_address() else {
+        eprintln!("skipping non-loopback bind probe because no host address was discovered");
+        return;
+    };
+    let probe_address = std::net::SocketAddr::new(host_address, port);
+
+    match TcpStream::connect_timeout(&probe_address, Duration::from_secs(2)) {
+        Ok(_) => panic!(
+            "krun host port {port} accepted a connection on non-loopback address {host_address}"
+        ),
+        Err(error) => eprintln!("non-loopback bind probe {probe_address}: {error}"),
+    }
+}
+
+fn non_loopback_host_address() -> Option<std::net::IpAddr> {
+    if let Some(configured_address) = env::var("NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let parsed = configured_address.parse::<std::net::IpAddr>().unwrap_or_else(|error| {
+            panic!(
+                "failed to parse NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST={configured_address:?}: {error}"
+            )
+        });
+        assert!(
+            !parsed.is_loopback() && !parsed.is_unspecified(),
+            "NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST must be a non-loopback host address"
+        );
+        return Some(parsed);
+    }
+
+    let output = std::process::Command::new("hostname")
+        .arg("-I")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .filter_map(|candidate| candidate.parse::<std::net::IpAddr>().ok())
+        .find(|address| !address.is_loopback() && !address.is_unspecified())
+}
+
 pub(super) fn run_host_command(program: &str, args: &[&str], allow_failure: bool) {
     let status = std::process::Command::new(program)
         .args(args)

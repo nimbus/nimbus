@@ -1,7 +1,9 @@
 # Codex Goal Prompt - Sandbox MicroVM Hardening
 
-Use this prompt to complete the remaining sandbox microVM hardening plan
-autonomously. Copy the full `/goal` block below into a fresh Codex session.
+Historical prompt used to complete the sandbox microVM hardening plan. The
+plan is now closed and archived at
+`docs/plans/archive/sandbox-microvm-hardening-plan.md`; keep this prompt only
+as the autonomous-control-plane record.
 
 ---
 
@@ -12,7 +14,7 @@ autonomously. Copy the full `/goal` block below into a fresh Codex session.
 
 Source of truth:
 - Current git worktree and local git history
-- docs/plans/sandbox-microvm-hardening-plan.md
+- docs/plans/archive/sandbox-microvm-hardening-plan.md
 - docs/plans/security/sandbox-isolation-audit.md
 - docs/architecture/sandbox/microvm-service-baseline.md
 - docs/plans/archive/execution-isolation-and-runtime-backends-plan.md
@@ -27,7 +29,7 @@ happens, continue from the plan and git state rather than restarting.
 
 Startup:
 1. Read AGENTS.md, README.md, ARCHITECTURE.md, docs/README.md,
-   docs/plans/README.md, docs/plans/sandbox-microvm-hardening-plan.md,
+   docs/plans/README.md, docs/plans/archive/sandbox-microvm-hardening-plan.md,
    docs/plans/security/sandbox-isolation-audit.md, and
    docs/architecture/sandbox/microvm-service-baseline.md.
 2. Run git status --short in /Users/jack/src/github.com/nimbus/nimbus.
@@ -72,8 +74,8 @@ Success criteria:
 - F7 parser robustness has tests in the patched crun lane.
 - docs/plans/security/sandbox-isolation-audit.md reflects final F1-F4/F7
   status and remaining production exposure blockers.
-- docs/plans/sandbox-microvm-hardening-plan.md records every completed phase,
-  verification command, result, commit, and next action.
+- docs/plans/archive/sandbox-microvm-hardening-plan.md records every completed
+  phase, verification command, result, commit, and next action.
 - Active plans in docs/plans/README.md stay small and non-overlapping.
 
 Verification expectations:
@@ -99,8 +101,8 @@ Stop only when:
   not been granted.
 
 Before stopping:
-- Update docs/plans/sandbox-microvm-hardening-plan.md with current phase
-  status, verification evidence, commits, and exact next action.
+- Update docs/plans/archive/sandbox-microvm-hardening-plan.md with current
+  phase status, verification evidence, commits, and exact next action.
 - Update docs/plans/security/sandbox-isolation-audit.md if any F1-F4/F7 status
   changed.
 - Leave at most one SMH phase in_progress.

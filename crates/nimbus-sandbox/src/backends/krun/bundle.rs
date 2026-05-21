@@ -28,6 +28,7 @@ const KRUN_SECCOMP_ALLOWLIST: &[&str] = &[
     "clone",
     "clone3",
     "close",
+    "close_range",
     "connect",
     "copy_file_range",
     "dup",
@@ -48,6 +49,8 @@ const KRUN_SECCOMP_ALLOWLIST: &[&str] = &[
     "fallocate",
     "fcntl",
     "fdatasync",
+    "fgetxattr",
+    "flistxattr",
     "fstat",
     "fstatfs",
     "fsync",
@@ -69,7 +72,10 @@ const KRUN_SECCOMP_ALLOWLIST: &[&str] = &[
     "gettid",
     "gettimeofday",
     "getuid",
+    "getxattr",
     "ioctl",
+    "lgetxattr",
+    "listxattr",
     "listen",
     "lseek",
     "madvise",
@@ -90,9 +96,14 @@ const KRUN_SECCOMP_ALLOWLIST: &[&str] = &[
     "ppoll",
     "prctl",
     "pread64",
+    "preadv",
+    "preadv2",
     "prlimit64",
     "pwrite64",
+    "pwritev",
+    "pwritev2",
     "read",
+    "readv",
     "readlink",
     "readlinkat",
     "recvfrom",
@@ -656,7 +667,17 @@ mod tests {
         let names = seccomp["syscalls"][0]["names"]
             .as_array()
             .expect("seccomp allowlist should contain syscall names");
-        for syscall in ["execve", "ioctl", "mmap", "openat", "read", "write"] {
+        for syscall in [
+            "close_range",
+            "execve",
+            "ioctl",
+            "fgetxattr",
+            "mmap",
+            "openat",
+            "preadv",
+            "read",
+            "write",
+        ] {
             assert!(
                 names.iter().any(|name| name.as_str() == Some(syscall)),
                 "expected krun seccomp allowlist to include {syscall}"
