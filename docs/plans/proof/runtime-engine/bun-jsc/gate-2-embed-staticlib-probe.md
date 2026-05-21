@@ -181,6 +181,9 @@ root against the same C++/WebKit/JSC inputs.
 
 ## Next Required Evidence
 
+The Bun native target shape needed to execute this archive is recorded in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-3-native-target-design.md`.
+
 1. Add or identify a Bun-side native build target that links a non-CLI Rust
    staticlib root like this probe with Bun's required C++/WebKit/JSC inputs.
 2. The target should produce a runnable VM-construction proof binary or an
