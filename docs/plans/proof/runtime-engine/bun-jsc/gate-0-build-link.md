@@ -55,6 +55,36 @@ Caused by: failed to read `/Users/jack/src/github.com/oven-sh/bun/vendor/lolhtml
 Caused by: No such file or directory
 ```
 
+## Canonical Setup Probe
+
+Bun's build graph has a narrower setup path than a full debug binary build:
+
+```sh
+bun scripts/build.ts --profile=ci-rust-only \
+  --build-dir=/private/tmp/nimbus-bun-rust-only \
+  --cache-dir=/private/tmp/nimbus-bun-cache \
+  --target=clone-lolhtml \
+  --target=codegen
+```
+
+This is the intended next setup slice because `ci-rust-only` wires:
+
+- `clone-lolhtml`, which fetches `vendor/lolhtml/.ref`
+- `codegen`, which creates the `BUN_CODEGEN_DIR` inputs consumed by Rust
+- the same rust-only dependency ordering used for CI's `libbun_rust.a`
+
+The command did not reach vendor fetch or codegen on this machine. Bun's
+configure step failed during toolchain discovery:
+
+```text
+error: Could not find cmake
+  hint: Install cmake (>= 3.24)
+```
+
+`which cmake` returned no result, and a search under `/opt/homebrew`,
+`/usr/local`, and `/Applications` did not find a local `cmake` binary. The
+Bun worktree remained clean after this failed setup probe.
+
 ## Decision
 
 The Bun/JSC backend remains proof-only and not selectable in Nimbus.
@@ -73,9 +103,10 @@ That setup must still avoid:
 
 ## Next Required Evidence
 
-1. Document and run the Bun repository's canonical vendor/codegen setup for
-   `vendor/lolhtml/c-api` and `BUN_CODEGEN_DIR`.
-2. Re-run `cargo check -p bun_jsc --lib` with all generated/vendor inputs
+1. Install or otherwise provide Bun's required `cmake >= 3.24` prerequisite.
+2. Re-run the `ci-rust-only` setup slice above and confirm it creates
+   `vendor/lolhtml/c-api/Cargo.toml` plus the `BUN_CODEGEN_DIR` Rust inputs.
+3. Re-run `cargo check -p bun_jsc --lib` with all generated/vendor inputs
    reproducible from the clean Bun worktree.
-3. Only after that check passes, add a Nimbus-side ignored proof target for
+4. Only after that check passes, add a Nimbus-side ignored proof target for
    VM construction below the Bun CLI path.
