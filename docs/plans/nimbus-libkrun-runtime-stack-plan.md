@@ -99,6 +99,7 @@ Reviewed on 2026-05-21.
 | `scripts/verify-install-helper.sh` | mocked dry-run and latest-release fixtures know only `nimbus-crun` | add `nimbus-libkrun` version, release API, checksums, dry-run, and uninstall assertions |
 | `packaging/linux-distribution-contract.env` | only pins `NIMBUS_CRUN_VERSION=v1.27-nimbus.2` | update to `NIMBUS_CRUN_VERSION=v1.27.1-nimbus.1`; add `NIMBUS_CRUN_UPSTREAM_VERSION=1.27.1`, `NIMBUS_LIBKRUN_VERSION=v1.17.4-nimbus.1`, and `NIMBUS_LIBKRUN_UPSTREAM_VERSION=1.17.4` so tag and upstream source versions are both explicit |
 | `Makefile` | package targets require Nimbus and nimbus-crun artifacts only | add required nimbus-libkrun artifacts/version inputs to Linux package and Fedora SRPM targets |
+| `nimbus-crun` build surface | `scripts/build.sh`, `scripts/verify-fedora-userspace.sh`, `.github/container/Dockerfile.builder`, `.github/workflows/build.yml`, and `README.md` still consume Fedora `libkrun-devel`/repo libkrun and publish only raw crun binaries | consume the released `nimbus-libkrun` archive or source artifact, set pkg-config/lib paths from that private tree, prove RUNPATH/RPATH, update release notes, and publish the exact-base `v1.27.1-nimbus.1` release |
 | `scripts/build-linux-release-packages.sh` | emits `nimbus` and `nimbus-crun`; `nimbus-crun` depends on distro `libkrun` and `libkrunfw` | emit `nimbus-libkrun`; make `nimbus-crun` depend on `nimbus-libkrun`; stage private libs under `/usr/libexec/nimbus/lib` |
 | `scripts/verify-build-linux-release-packages-helper.sh` | asserts `nimbus-crun` depends on `libkrun`/`libkrunfw` | assert `nimbus-crun` depends on `nimbus-libkrun` and package files include private libs |
 | `scripts/build-fedora-release-srpms.sh` | wraps released `nimbus` and `nimbus-crun`; `nimbus-crun` RPM requires distro `libkrun`/`libkrunfw` | wrap `nimbus-libkrun` release assets into an SRPM/RPM; make `nimbus-crun` require `nimbus-libkrun` |
@@ -109,7 +110,8 @@ Reviewed on 2026-05-21.
 | `.github/workflows/copr-srpms.yml` | downloads nimbus/nimbus-crun assets and submits two SRPMs | download nimbus-libkrun assets and submit/build three SRPMs |
 | `scripts/verify-build-apt-repository-helper.sh` | fixture repo includes `nimbus` and `nimbus-crun` only | add `nimbus-libkrun` fixture packages and dependency metadata |
 | `scripts/collect-vmm-package-versions.sh` and `scripts/check-vmm-host.sh` | report system `libkrun`/`libkrunfw` | report Nimbus-private libkrun stack and bind-address symbol when installed |
-| `scripts/prepare-linux-vmm-validation-bundle.sh` | prepares old crun source/build validation flow | update command bundle so Linux validation uses the paired `nimbus-crun` + `nimbus-libkrun` stack |
+| `scripts/prepare-linux-vmm-validation-bundle.sh` and `scripts/verify-linux-vmm-validation-bundle-helper.sh` | prepare and assert the old crun source/build validation flow with `scripts/build-nimbus-crun.sh` | update the bundle so Linux validation can consume released `nimbus-crun` + `nimbus-libkrun` artifacts, while keeping source-build commands only as developer diagnostics |
+| `docs/architecture/sandbox/*` and `docs/plans/security/sandbox-isolation-audit.md` | stable sandbox docs name patched crun/libkrun, old `minicloud` libkrun branch, and source-build runbooks | document the published `nimbus-libkrun` fork/tag as the production stack owner while preserving historical proof context |
 | `README.md`, `docs/plans/distribution-plan.md`, `docs/operating/updates.md` | user-facing docs still describe distro/manual libkrun assumptions in places | document `nimbus-libkrun` as a private runtime package and update Linux install/update expectations |
 
 Archived plans such as `docs/plans/archive/install-script-plan.md` stay
@@ -191,6 +193,8 @@ Deliverables:
 - add build helper(s) in `nimbus/nimbus-libkrun`
 - build patched libkrun for Linux amd64 and arm64
 - build or bundle pinned upstream `libkrunfw` `5.3.0`
+- expose pkg-config metadata that `nimbus-crun` can consume without consulting
+  distro `libkrun-devel`
 - publish release assets on `v*` tags
 - publish checksums and GitHub artifact attestations
 
@@ -220,6 +224,8 @@ Acceptance criteria:
   equivalent repository-local test path
 - `nm -D lib/libkrun.so.1.17.4` shows
   `krun_set_port_map_with_bind_address`
+- `pkg-config --define-prefix --libs libkrun` resolves against the extracted
+  archive's private `lib/pkgconfig/libkrun.pc`
 - release checksums verify for both archives
 - attestation verification works for the release archives
 - README names the private install path and says the package does not replace
@@ -234,6 +240,9 @@ Deliverables:
 - update `nimbus/nimbus-crun` build helpers to consume
   `nimbus-libkrun` headers/pkgconfig/libs instead of Fedora distro
   `libkrun-devel`
+- update `nimbus/nimbus-crun` `.github/container/Dockerfile.builder`,
+  `.github/workflows/build.yml`, `scripts/verify-fedora-userspace.sh`, and
+  `README.md` so CI and local proof use the paired private libkrun stack
 - embed or otherwise prove private library resolution for
   `/usr/libexec/nimbus/crun`
 - update README and release notes to say address-bearing port maps require the
@@ -248,6 +257,8 @@ Acceptance criteria:
 
 - `scripts/verify-patch.sh` still passes against crun `1.27.1`
 - parser malformed-input harness still passes
+- `scripts/verify-fedora-userspace.sh` builds against the extracted
+  `nimbus-libkrun` artifact rather than Fedora `libkrun-devel`
 - `git describe --tags` on the release commit resolves to
   `v1.27.1-nimbus.1`
 - `nimbus-crun --version` shows `+LIBKRUN`
@@ -327,7 +338,10 @@ Status: `todo`
 Deliverables:
 
 - update `README.md`, `docs/plans/distribution-plan.md`,
-  `docs/operating/updates.md`, and relevant sandbox docs
+  `docs/operating/updates.md`, `docs/architecture/sandbox/microvm-service-baseline.md`,
+  `docs/architecture/sandbox/krun-vmm-host-validation.md`,
+  `docs/architecture/sandbox/krun-sandbox-backend-smoke.md`, and
+  `docs/plans/security/sandbox-isolation-audit.md`
 - run fresh Debian 13 proof
 - run fresh Fedora proof
 - rerun the krun localhost-only smoke from installed artifacts
