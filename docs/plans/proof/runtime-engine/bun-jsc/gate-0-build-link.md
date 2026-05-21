@@ -35,18 +35,34 @@ generated/vendor state?
 ## Command
 
 ```sh
-CARGO_TARGET_DIR=/private/tmp/nimbus-bun-proof-target cargo check -p bun_jsc --lib
+brew install cmake
+brew install ninja
+
+bun scripts/build.ts --profile=ci-rust-only \
+  --build-dir=/private/tmp/nimbus-bun-rust-only \
+  --cache-dir=/private/tmp/nimbus-bun-cache \
+  --target=clone-lolhtml \
+  --target=codegen
+
+CARGO_TARGET_DIR=/private/tmp/nimbus-bun-proof-target \
+BUN_CODEGEN_DIR=/private/tmp/nimbus-bun-rust-only/codegen \
+CARGO_ENCODED_RUSTFLAGS= \
+cargo check -p bun_jsc --lib
 ```
 
 The first sandboxed attempt failed because rustup needed to write under
 `~/.rustup`; the command was rerun with approval. rustup installed/synced the
-Bun-pinned nightly toolchain, then Cargo started dependency resolution.
+Bun-pinned nightly toolchain, then Cargo started dependency resolution. The
+final `cargo check` uses `CARGO_ENCODED_RUSTFLAGS=` to clear Bun's generated
+macOS `-fuse-ld=lld` cargo-config flag for this one-off verification. Without
+that override, Homebrew clang rejected the linker flag before checking
+`bun_jsc`.
 
 ## Result
 
-Status: blocked before link/VM proof.
+Status: build/codegen/cargo-check gate passed.
 
-Cargo failed while resolving `bun_lolhtml_sys`:
+The first direct `cargo check` failed while resolving `bun_lolhtml_sys`:
 
 ```text
 error: failed to get `lol_html_c_api` as a dependency of package `bun_lolhtml_sys`
@@ -55,7 +71,37 @@ Caused by: failed to read `/Users/jack/src/github.com/oven-sh/bun/vendor/lolhtml
 Caused by: No such file or directory
 ```
 
-## Canonical Setup Probe
+That failure was expected from a clean Bun worktree because Bun's rust-only
+build graph fetches `vendor/lolhtml` before Cargo runs.
+
+The canonical setup slice passed after installing missing local prerequisites:
+
+```text
+[build] clone-lolhtml, codegen done
+```
+
+It produced:
+
+- `/Users/jack/src/github.com/oven-sh/bun/vendor/lolhtml/c-api/Cargo.toml`
+- `/private/tmp/nimbus-bun-rust-only/codegen/generated_classes.rs`
+- `/private/tmp/nimbus-bun-rust-only/codegen/generated_host_exports.rs`
+- `/private/tmp/nimbus-bun-rust-only/codegen/cpp.rs`
+
+The final cargo check passed:
+
+```text
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 22.04s
+```
+
+Observed upstream warnings:
+
+- `bun_crash_handler`: 3 unnecessary `unsafe` warnings
+- `bun_spawn`: 1 unused-label warning
+- `bun_install`: 1 unused-label warning
+
+Bun worktree status remained clean after the successful setup and check.
+
+## Canonical Setup Notes
 
 Bun's build graph has a narrower setup path than a full debug binary build:
 
@@ -73,26 +119,23 @@ This is the intended next setup slice because `ci-rust-only` wires:
 - `codegen`, which creates the `BUN_CODEGEN_DIR` inputs consumed by Rust
 - the same rust-only dependency ordering used for CI's `libbun_rust.a`
 
-The command did not reach vendor fetch or codegen on this machine. Bun's
-configure step failed during toolchain discovery:
+The first setup attempt did not reach vendor fetch or codegen because `cmake`
+was absent. Installing `cmake 4.3.2` satisfied Bun's `>= 3.24` requirement.
+The next attempt configured the graph but failed because `ninja` was absent.
+Installing `ninja 1.13.2` satisfied the build-driver requirement.
 
-```text
-error: Could not find cmake
-  hint: Install cmake (>= 3.24)
-```
-
-`which cmake` returned no result, and a search under `/opt/homebrew`,
-`/usr/local`, and `/Applications` did not find a local `cmake` binary. The
-Bun worktree remained clean after this failed setup probe.
+The setup command installed Bun's ignored `node_modules` dependencies and
+fetched Bun's ignored `vendor/lolhtml` source as intended by the Bun build
+graph. Those paths are generated inputs, not Nimbus progress state.
 
 ## Decision
 
 The Bun/JSC backend remains proof-only and not selectable in Nimbus.
 
-Gate 0 is not satisfied yet. Before testing VM construction, host calls,
-bundle loading, cancellation, permissions, or teardown, the Bun proof needs a
-documented reproducible setup step for required vendor/generated artifacts.
-That setup must still avoid:
+Gate 0 is satisfied for `bun_jsc` build/codegen/cargo-check reproducibility.
+Before Bun can become a selectable Nimbus backend, the next proof must still
+construct and tear down a VM below Bun's process-owned CLI path. That proof
+must avoid:
 
 - `bun_bin` as the runtime boundary
 - Bun's process entry `main`
@@ -103,10 +146,9 @@ That setup must still avoid:
 
 ## Next Required Evidence
 
-1. Install or otherwise provide Bun's required `cmake >= 3.24` prerequisite.
-2. Re-run the `ci-rust-only` setup slice above and confirm it creates
-   `vendor/lolhtml/c-api/Cargo.toml` plus the `BUN_CODEGEN_DIR` Rust inputs.
-3. Re-run `cargo check -p bun_jsc --lib` with all generated/vendor inputs
-   reproducible from the clean Bun worktree.
-4. Only after that check passes, add a Nimbus-side ignored proof target for
-   VM construction below the Bun CLI path.
+1. Add a Nimbus-side ignored proof target for VM construction below Bun's CLI
+   path.
+2. Identify the smallest Bun/JSC API that can construct a VM without
+   `bun_bin`, `Cli::start()`, global allocator setup, or process exit.
+3. Prove sync host-function installation, guest invocation, promise/event-loop
+   progress, cancellation, and teardown before adding any selectable backend.
