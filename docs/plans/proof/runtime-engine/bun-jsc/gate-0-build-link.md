@@ -101,6 +101,69 @@ Observed upstream warnings:
 
 Bun worktree status remained clean after the successful setup and check.
 
+## Nimbus Proof Target
+
+The build/codegen/cargo-check gate is captured as an ignored Nimbus integration
+test:
+
+```sh
+cargo test -p nimbus-runtime --test engine_proofs \
+  bun_jsc_build_gate_reproduces_from_bun_build_graph \
+  -- --ignored --nocapture
+```
+
+Result:
+
+```text
+test bun_jsc::bun_jsc_build_gate_reproduces_from_bun_build_graph ... ok
+test result: ok. 1 passed; 0 failed
+```
+
+Optional environment overrides:
+
+- `NIMBUS_BUN_REPO`: Bun checkout path; defaults to
+  `$HOME/src/github.com/oven-sh/bun`
+- `NIMBUS_BUN_BUILD_DIR`: Bun rust-only build directory; defaults under
+  `/private/tmp` when available
+- `NIMBUS_BUN_CACHE_DIR`: Bun dependency cache directory; defaults under
+  `/private/tmp` when available
+- `NIMBUS_BUN_CARGO_TARGET_DIR`: Cargo target directory for the Bun check;
+  defaults under `/private/tmp` when available
+
+The test removes Cargo-test toolchain environment variables before spawning
+the nested Bun `cargo check` so Bun's own `rust-toolchain.toml` selects the
+pinned nightly.
+
+This proof target intentionally stops at build/codegen/cargo-check
+reproducibility. VM construction, host functions, invocation, cancellation,
+and teardown remain separate gates.
+
+## VM Construction Scout Notes
+
+The likely next proof surface is below `bun_bin`:
+
+- `src/jsc/VirtualMachine.rs::VirtualMachine::init(InitOptions)` allocates the
+  per-thread VM, installs Bun's TLS VM pointer, initializes event-loop state,
+  and creates the `JSGlobalObject` through `Zig__GlobalObject__create`.
+- `InitOptions::is_main_thread = true` installs Bun's parent-death watchdog.
+  The first Nimbus VM proof should keep this false unless the proof is
+  explicitly testing process ownership behavior.
+- `src/runtime/jsc_hooks.rs` provides `__BUN_RUNTIME_HOOKS`, the high-tier
+  runtime hook table consumed by `bun_jsc`. A proof that needs Bun runtime
+  state, timers, module generation, or preloads must link `bun_runtime`, not
+  only `bun_jsc`.
+- `src/jsc/JSModuleLoader.rs` exposes direct source/module evaluation helpers.
+- `src/jsc/JSFunction.rs::JSFunction::create` is the likely sync host-function
+  installation primitive.
+- `src/jsc/VM.rs` exposes execution-time-limit and termination hooks that
+  should become the timeout/cancel proof surface.
+
+This scout does not prove VM construction yet. `cargo check -p bun_jsc --lib`
+does not link a runnable binary against Bun's C++/WebKit symbols, and
+`VirtualMachine::init` calls externs such as `Zig__GlobalObject__create`.
+The next gate must prove the required C++/WebKit link inputs without falling
+back to `bun_bin` as the runtime boundary.
+
 ## Canonical Setup Notes
 
 Bun's build graph has a narrower setup path than a full debug binary build:
