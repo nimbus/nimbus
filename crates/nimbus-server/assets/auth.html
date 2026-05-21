@@ -287,8 +287,8 @@ form {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* Compensates for the removed h1 spacer — keeps the LOCAL TOKEN label
-     clear of the wordmark without resurrecting a heading. */
+  /* Compensates for the removed h1 spacer — keeps the ENTER AUTH TOKEN
+     label clear of the wordmark without resurrecting a heading. */
   margin-top: 4px;
 }
 
@@ -421,12 +421,10 @@ button[type="submit"]:focus-visible {
 }
 
 /* Eyebrow-titled section block. Used by the URL entries inside the
-   `Other ways to login` disclosure and by the standalone AUTH TOKEN block
-   that sits above the disclosure — same visual treatment in both spots so
-   the recovery paths share a coherent eyebrow language. The eyebrow
-   title sits *above* its body so the body gets the full card width —
-   long token paths fit on one line, and the layout mirrors how the
-   LOCAL TOKEN label sits above its input. */
+   `Other ways to login` disclosure. The eyebrow title sits *above* its
+   body so the body gets the full card width — long URLs fit on one line,
+   and the layout mirrors how the ENTER AUTH TOKEN label sits above its
+   input. */
 .other-section + .other-section {
   margin-top: 16px;
   padding-top: 16px;
@@ -452,19 +450,33 @@ button[type="submit"]:focus-visible {
   margin-bottom: 0;
 }
 
-/* Used when the body holds only a chip (no surrounding prose). Centers the
-   chip so the section reads as a single CTA, contrasting with the inline
-   chip placement used by the URL-based sections inside the disclosure. */
-.other-section-body-center {
+/* Standalone chip block that sits between the form's CONTINUE button and
+   the `Other ways to login` disclosure. No eyebrow title — the chip *is*
+   the recovery CTA, scaled up via `.copyable-hero` so it reads as a
+   primary affordance and not a footnote. Centered so the section stands
+   on its own under the form. */
+.auth-token-section {
+  margin-top: 16px;
   text-align: center;
 }
 
-/* Placement for the standalone AUTH TOKEN section that sits between the
-   form's CONTINUE button and the `Other ways to login` disclosure.
-   Mirrors `.other-ways` top spacing so the two recovery surfaces sit in
-   the same vertical rhythm under the form. */
-.auth-token-section {
-  margin-top: 14px;
+/* Hero variant of `.copyable` — same chrome (mono face, surface-2 fill,
+   hairline border, trailing copy/check glyph) at a larger scale so the
+   `nimbus auth token --copy` recovery path reads as a peer of the form's
+   CONTINUE button rather than a footnote. */
+.copyable-hero {
+  font-size: 15px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+}
+
+.copyable-hero::after {
+  width: 15px;
+  height: 15px;
+  margin-left: 8px;
+  vertical-align: -3px;
+  opacity: 0.6;
 }
 
 .local-only {
@@ -560,18 +572,17 @@ button[type="submit"]:focus-visible {
     </svg>
     <span class="brand-wordmark">nimbus</span>
   </div>
-  <form method="post" action="/ui/auth/session" aria-label="Local token sign in">
+  <form method="post" action="/ui/auth/session" aria-label="Auth token sign in">
     {{ ERROR_BLOCK }}
-    <label for="local-token">
-      <span>Local token</span>
-      <input id="local-token" type="password" name="token" autocomplete="off" autofocus required spellcheck="false"{{ ARIA_INVALID }} />
+    <label for="auth-token">
+      <span>Enter auth token</span>
+      <input id="auth-token" type="password" name="token" autocomplete="off" autofocus required spellcheck="false"{{ ARIA_INVALID }} />
     </label>
     <button type="submit">Continue</button>
   </form>
-  <section class="other-section auth-token-section">
-    <h2 class="other-section-title">Auth Token</h2>
-    <p class="other-section-body other-section-body-center"><button type="button" class="copyable" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button></p>
-  </section>
+  <div class="auth-token-section">
+    <button type="button" class="copyable copyable-hero" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button>
+  </div>
   <details class="other-ways">
     <summary>Other ways to login</summary>
     <div class="other-ways-body">
