@@ -94,6 +94,37 @@ flowchart LR
 | Storage I/O | semaphore or IOPS-style budget | bounded read/write executor capacity | read/write semaphore counts or explicit IOPS slots | storage wait dominates multiple work classes even when upstream gates are healthy |
 | Scheduled jobs | slots returned on completion | scheduler fan-out and scheduled mutation execution concurrency | `max_concurrent_scheduled_jobs` | foreground latency regresses under scheduled-job bursts despite `EO7` bounded fan-out |
 
+## EIB6 Execution Resource Boundary Addendum
+
+Reviewed 2026-05-21 under
+`docs/plans/execution-isolation-and-runtime-backends-plan.md` EIB6.
+
+This review does not promote a new admission gate. It records the resource
+boundaries that must be named before runtime, WASM, WASI agent, or sandbox
+work adds new gates.
+
+| Execution class | Resource that can saturate | Existing control | Overload behavior | Metrics needed before promotion | EIB6 decision |
+| --- | --- | --- | --- | --- | --- |
+| Mutations | outer mutation admission queue, journal worker, durable apply path, storage transaction | CoDel admission gate before journal ownership plus mutation journal queue capacity | stale work may shed before journal handoff; after durable handoff it waits and must not expire | `MutationAdmissionStats`, `MutationJournalStats`, tenant engine diagnostics | no new gate; existing split is the reference model |
+| In-process Deno/V8 runtime | runtime instances, worker occupancy, per-tenant active/in-flight/queued invocations, retained runtime pool pressure | `RuntimeExecutorAdmission`, runtime instance semaphore, per-tenant fairness caps, queue cancellation metrics | dispatch until tenant limits bind; queued work waits; queue overflow rejects with `TenantQueueLimitExceeded`; dropped queued requests cancel cleanly | `/debug/runtime/metrics`, `RuntimeMetricsSnapshot`, per-tenant runtime metrics, queue wait and rejection counters | no new gate unless measurements show spillover despite existing runtime admission |
+| Bun/JSC proof runtime | JavaScriptCore VM memory, Bun global/API permission surface, package loading, VM lifecycle/reuse | proof-only local Bun target; no production lane | no production traffic; failures remain proof evidence and do not enter server routing | EIB3 Gate 11 permission inventory, future memory/reuse/package-loading proof reports | no admission gate; Bun remains `in_process_trusted_only` proof-only |
+| Wasmtime backend | per-Store memory, fuel/epoch CPU budget, component instantiation, compiled module cache | deferred wasmtime plan; expected Store `ResourceLimiter`, fuel/epoch timeout, cache keyed by bundle hash plus engine config | invocation waits or rejects through outer runtime admission; fuel/epoch interrupts execution; cache pressure evicts or recompiles | Store memory traps, fuel/epoch interruption counts, compile duration, cache hit/miss/eviction, module instantiation time | defer gates until W3/W5 metrics identify a bottleneck |
+| WASI agent capabilities | provider VFS capacity, process table, PTY/pipes, sidecar health, outbound HTTP/provider quotas | deferred `AgentOsProvider` and deploy/session capability admission | async provider calls may wait; provider or policy overload rejects at deploy/session/provider boundary; broad native OS needs move to `microvm_service` | provider queue depth, process counts, command/URL rejection counts, sidecar health, per-capability latency | defer gates to the WASI agent plan after wasmtime W3 |
+| MicroVM service activation | host VM count, CPU, memory, host port allocation, TSI port range, buildah/conmon/crun process slots, image mount/build time | `SandboxSpec` resource limits, per-service activation claim, readiness timeout, sandbox backend validation, service catalog | duplicate starts wait on the in-progress activation; backend mismatch or invalid resources reject; readiness timeout returns `ResourceExhausted`; unavailable ports/resources should reject activation | active/starting/ready sandbox counts, activation latency, port allocation failures, backend start failures, requested CPU/memory, build/mount duration | future sandbox-service admission candidate, not a runtime-engine gate |
+| Storage I/O | service-owned executor threads, storage semaphore capacity, transaction apply time | bounded background executors and storage-side semaphore control | waits inside the executor/storage layer; quiescing rejects new executor work | read/write wait distributions, executor queue depth, transaction latency, foreground/background split | no new gate until storage wait dominates mixed-load runs |
+| Queries | read-serving CPU, storage scans, planner/index quality, materialized read surface | no query slot gate today; query planning diagnostics exist | currently bypasses dedicated query admission and relies on downstream resource behavior | query concurrency, wait time, query latency, full-scan/index-backed counts, tenant skew | remains candidate only after query-heavy EO8 measurements |
+| Scheduled jobs | scheduler fan-out, due-job dispatch, mutation execution capacity | bounded concurrent tenant fan-out from `EO7`; scheduled mutations still use mutation path | due work may be delayed; downstream mutations still pass through mutation admission and journal ownership | scheduler lag, scheduled-job concurrency, due-job backlog, foreground latency under scheduled bursts | no new gate until foreground regression is measured |
+
+Promotion rule: a future gate must name the protected resource, show the
+current control is insufficient, choose wait/reject/shed/bypass behavior,
+define the metric that proves improvement, and explain why adjacent gates are
+not the first move.
+
+The first likely future candidates are microVM service activation capacity
+after the sandbox hardening blockers are addressed, and storage read/write
+wait instrumentation if mixed-load reports show storage wait dominating
+multiple work classes.
+
 ## Codebase Architecture Review
 
 The current codebase already tells us where cross-class interference is

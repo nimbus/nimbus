@@ -328,6 +328,33 @@ Settled EIB5 decisions:
 - both plans remain deferred and do not introduce code or circular
   dependencies
 
+## EIB6 Admission And Resource Boundary Map
+
+Status: `done` as of 2026-05-21.
+
+Resource boundary review:
+`docs/plans/layered-admission-control-plan.md#eib6-execution-resource-boundary-addendum`
+
+Settled EIB6 decisions:
+
+- no new admission gate is promoted by this phase
+- mutations keep the existing CoDel plus journal handoff split as the model for
+  explicit shed-before-durable behavior
+- in-process Deno/V8 runtime already has the relevant first-line controls:
+  runtime instance limits, per-tenant active/in-flight/queued admission, queue
+  wait metrics, cancellation metrics, and queue-limit rejection
+- Bun/JSC does not get an admission lane while it remains proof-only and
+  `in_process_trusted_only`
+- wasmtime needs Store memory, fuel/epoch, compile/cache, and instantiation
+  metrics before any backend-specific gate is justified
+- WASI agent capabilities need provider-level VFS, process, HTTP, sidecar, and
+  policy metrics before admission is promoted
+- microVM service activation is the first likely sandbox-side admission
+  candidate once EIB4 hardening blockers are addressed, but it belongs to
+  sandbox-service activation rather than runtime-engine routing
+- storage, query, and scheduled-job gates remain EO8 candidates only after
+  mixed-load evidence identifies them as the binding resource
+
 ## Phase Status Ledger
 
 | Phase | Status | Goal | Verification |
@@ -338,7 +365,7 @@ Settled EIB5 decisions:
 | EIB3 | `done` | Decide Bun/JSC next proof gates and fork posture from permission, memory, package, and lifecycle evidence. | Decision record added; no code changes; `git diff --check`. |
 | EIB4 | `done` | Route sandbox isolation audit findings into implementation, distribution, or accepted-risk owners. | Updated security audit owner routing; `git diff --check`. |
 | EIB5 | `done` | Align wasmtime and WASI agent plans with the shared trust/capability vocabulary. | Deferred plan updates; no code changes; `git diff --check`. |
-| EIB6 | `todo` | Define admission/resource gates only where measured execution or sandbox resources need protection. | Experiment or review report with resource, overload behavior, and metrics. |
+| EIB6 | `done` | Define admission/resource gates only where measured execution or sandbox resources need protection. | Review report added to the layered admission plan; `git diff --check`. |
 | EIB7 | `todo` | Close the unified plan with a go/no-go matrix for runtime backend promotion and sandbox hardening. | All prior phases done and final execution log recorded. |
 
 ## Phase Details
@@ -489,7 +516,7 @@ Completion notes:
 
 ### EIB6: Admission And Resource Boundary Map
 
-Status: `todo`
+Status: `done`
 
 Deliverables:
 
@@ -501,6 +528,16 @@ Acceptance criteria:
 
 - no new admission gate is added without a named protected resource
 - overload behavior is explicit before code changes
+
+Completion notes:
+
+- EIB6 addendum recorded in `docs/plans/layered-admission-control-plan.md`
+- each execution class now names the saturating resource, existing control,
+  overload behavior, metrics needed before promotion, and current gate decision
+- the phase explicitly keeps new gates deferred until a measured report names
+  the binding resource
+- first likely future candidates are sandbox-service activation capacity and
+  storage read/write wait instrumentation, each under its owning plan
 
 ### EIB7: Promotion Matrix And Closeout
 
@@ -541,3 +578,4 @@ Acceptance criteria:
 | 2026-05-21 | EIB3 | `done` | Recorded the Bun/JSC viability and fork decision after reviewing Bun commit `ea677357e3` and the Gate 10 timeout/cancel proof. Bun/JSC stays proof-only and `in_process_trusted_only`; no Nimbus-maintained Bun fork is recommended yet; the current local patch is proof evidence; the next proof gate is permission-surface containment inventory covering Bun globals, Node modules, dynamic import/package loading, web/network surfaces, workers, subprocess, FFI/native addons, env, and filesystem behavior. | Decision-only documentation update; `git diff --check -- docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB4 | `done` | Routed all sandbox isolation audit findings to concrete owners, statuses, and verification paths. F1/F2/F3 are a `nimbus-sandbox` OCI bundle hardening slice; F4 is a production blocker owned by the `nimbus-crun` / libkrun patch lane plus Rust port-map formatting; F5 is accepted residual v1 risk with operator documentation; F6 belongs to distribution/deploy image admission policy; F7 belongs to patched-crun parser robustness. | Documentation-only change; `git diff --check -- docs/plans/security/sandbox-isolation-audit.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB5 | `done` | Aligned the deferred wasmtime and WASI agent plans with the shared trust-tier vocabulary. Wasmtime now explicitly consumes `wasm_capability_sandbox` and keeps `nimbus:host` as the typed WIT projection of `HostBridge`; WASI agent capabilities now extend the same tier through additive `nimbus:agent/*` imports and route broad native OS needs to `microvm_service`. Preserved the pre-existing WASI plan additions about secret-management and horizontal-scaling dependencies while adding the tier alignment. | Documentation-only change; `git diff --check -- docs/plans/wasmtime-backend-plan.md docs/plans/wasi-agent-capabilities-plan.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
+| 2026-05-21 | EIB6 | `done` | Added the execution resource boundary map to the layered admission plan. The review covers mutations, in-process Deno/V8 runtime, Bun/JSC proof runtime, wasmtime, WASI agent capabilities, microVM service activation, storage I/O, queries, and scheduled jobs. No new gate is promoted; each future gate must name the protected resource, overload behavior, and metric before code changes. | Documentation-only change; `git diff --check -- docs/plans/layered-admission-control-plan.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
