@@ -17,6 +17,8 @@ krun sandbox hardening one shared execution-boundary map.
 - **Primary owner:** this plan
 - **Predecessor baseline:**
   `docs/plans/archive/runtime-engine-seam-plan.md`
+- **Autonomous goal prompt:**
+  `docs/plans/prompts/execution-isolation-runtime-backends-goal.md`
 - **Architecture references:**
   - `docs/architecture/runtime/engine-seam.md`
   - `docs/architecture/runtime/new-engine-proof-harness.md`
@@ -324,4 +326,4 @@ Acceptance criteria:
 
 | Date | Phase | Status | Notes | Verification |
 | --- | --- | --- | --- | --- |
-| 2026-05-21 | EIB0 | `done` | Created this active successor plan after the runtime engine seam plan completed RS0-RS6 and Bun/JSC gates 1-10. Archived the completed runtime seam plan as the historical baseline and made this plan the routing point for future runtime-engine, Bun/JSC, wasmtime, WASI agent, sandbox isolation, and execution-admission work. | Documentation-only change; `git diff --check` passed for touched docs. |
+| 2026-05-21 | EIB0 | `done` | Created this active successor plan after the runtime engine seam plan completed RS0-RS6 and Bun/JSC gates 1-10. Archived the completed runtime seam plan as the historical baseline, made this plan the routing point for future runtime-engine, Bun/JSC, wasmtime, WASI agent, sandbox isolation, and execution-admission work, and added the autonomous `/goal` prompt for this plan. | Documentation-only change; `git diff --check` passed for touched docs. |
