@@ -2,6 +2,9 @@
 
 Date: 2026-05-21
 
+Superseded by:
+`docs/plans/proof/runtime-engine/bun-jsc/gate-4-native-vm-run.md`
+
 Nimbus revision: `e2cd715f` (`Record Bun embed staticlib probe`)
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
@@ -177,10 +180,12 @@ Expected failure value:
 
 ## Decision
 
-Status: target design identified; implementation not started in Bun.
+Status: target design implemented and verified locally in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-4-native-vm-run.md`.
 
 The next proof should be a Bun-side patch, not a Nimbus production backend.
 The key design constraint is separating process-neutral native link roots from
-`bun_bin` before using the normal Bun C++/WebKit/JSC link graph. If that patch
-cannot final-link and execute `VirtualMachine::init` without `bun_bin`, Bun/JSC
-should remain blocked as an in-process Nimbus backend.
+`bun_bin` before using the normal Bun C++/WebKit/JSC link graph. Gate 4 proved
+that this condition can be satisfied locally. Bun/JSC remains proof-only until
+host-call transport, async progress, guest invocation, cancellation,
+permissions, teardown/reuse, and artifact routing gates pass.
