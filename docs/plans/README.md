@@ -24,7 +24,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     via Make's dependency graph. A fresh-clone `make ci` (or any other
     Make target) builds the prerequisite UI artifacts on demand;
     `build.rs` stops emitting a stub HTML and asserts inputs honestly;
-    `.github/workflows/ci.yml` drops five inlined `npm run codegen` /
+    `.github/workflows/ci.yml` drops all seven inlined `npm run codegen` /
     `npm run build` steps. Carries a /goal control-plane condition
     (`bash scripts/verify-local-dev-canonicalization.sh` exits 0) so
     LD0-LD7 can be driven autonomously to closeout. Created 2026-05-21.

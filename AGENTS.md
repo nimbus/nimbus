@@ -78,6 +78,13 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/plans/archive/install-script-plan.md` as the completed baseline and
   `docs/plans/distribution-plan.md` as parent context; promote a new active
   plan before another install-script wave
+- Local-dev / build-contract / Make-vs-Cargo orchestration:
+  `docs/operating/local-dev.md` for the user-facing contract, then
+  `docs/plans/local-dev-canonicalization-plan.md` for the active build-graph
+  cleanup wave (LD0-LD7). The Makefile UI dependency graph at the top of
+  `Makefile` (`UI_PKG`, `UI_DIST_INDEX`, etc.) is the source of truth for
+  cross-toolchain prerequisites; `crates/nimbus-server/build.rs` only
+  asserts that those inputs exist and errors actionably otherwise.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,
@@ -245,6 +252,9 @@ A table without a schema accepts any document. Setting a schema adds constraints
 - **JS tests:** `npm run test`
 - **JS build:** `npm run build`
 - **All at once:** `make ci`
+
+See `docs/operating/local-dev.md` for the build contract; Node is a dev
+build dependency for any Rust target that touches `nimbus-server`.
 
 Prefer the `make` entrypoints above for long-running workspace-wide verification:
 they are wrapped with the repo's single-flight guard so an accidental duplicate
