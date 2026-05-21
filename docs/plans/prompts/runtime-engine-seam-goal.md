@@ -1,7 +1,7 @@
 # Codex Goal Prompt - Runtime Engine Seam Autonomous Completion
 
-Use this prompt to run the runtime engine seam plan autonomously to completion.
-Copy the full `/goal` block below into a fresh Codex session.
+Historical prompt for the completed runtime engine seam plan. New work should
+start from `docs/plans/execution-isolation-and-runtime-backends-plan.md`.
 
 ---
 
@@ -12,7 +12,7 @@ Copy the full `/goal` block below into a fresh Codex session.
 
 Source of truth:
 - Current git worktree and local git history
-- docs/plans/runtime-engine-seam-plan.md
+- docs/plans/archive/runtime-engine-seam-plan.md
 - docs/architecture/runtime/engine-seam.md
 - ARCHITECTURE.md
 - docs/plans/README.md
@@ -24,7 +24,7 @@ from the plan and git state rather than restarting.
 Startup:
 1. Read AGENTS.md, README.md, ARCHITECTURE.md, docs/README.md,
    docs/plans/README.md, docs/architecture/runtime/engine-seam.md, and
-   docs/plans/runtime-engine-seam-plan.md.
+   docs/plans/archive/runtime-engine-seam-plan.md.
 2. Run git status --short.
 3. Inspect any dirty files before editing. Treat existing changes as user or
    prior-agent work. Do not revert unrelated changes.
@@ -63,7 +63,8 @@ Success criteria:
   or split phase.
 
 Verification expectations:
-- Use the per-phase Verification Matrix in docs/plans/runtime-engine-seam-plan.md.
+- Use the per-phase Verification Matrix in
+  docs/plans/archive/runtime-engine-seam-plan.md.
 - Prefer focused cargo/npm tests first.
 - Run cargo fmt --all --check after Rust changes.
 - Run npm run test --workspace @nimbus/codegen after codegen changes.
@@ -80,8 +81,8 @@ Stop only when:
 - or continuing would require splitting the plan first.
 
 Before stopping:
-- Update docs/plans/runtime-engine-seam-plan.md with the current phase status,
-  verification evidence, and exact next action.
+- Update docs/plans/archive/runtime-engine-seam-plan.md with the current phase
+  status, verification evidence, and exact next action.
 - Leave at most one phase in_progress.
 - Summarize completed phases, verification results, and next action.
 

@@ -4,11 +4,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/runtime-engine-seam-plan.md`
-  - canonical Step 0 plan for runtime-extension work. Defines the engine seam
-    below `WorkerLoop` / `RuntimeBackend`, keeps Deno/V8-specific state out of
-    future Bun/JSC or wasmtime backends, and owns the bootstrap/host-call
-    refactor needed before adding another in-process runtime engine.
+- `docs/plans/execution-isolation-and-runtime-backends-plan.md`
+  - canonical active plan for execution-boundary work after the runtime engine
+    seam baseline. Owns routing across runtime backend promotion, Bun/JSC
+    proof gates, wasmtime/WASI agent dependencies, sandbox isolation findings,
+    capability trust tiers, and admission/resource boundaries. The completed
+    predecessor is `docs/plans/archive/runtime-engine-seam-plan.md`.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -58,6 +59,14 @@ archived plans only when you need historical execution detail.
     plane gated on `bash scripts/verify-local-dev-canonicalization.sh`
     (ten conditions). Future local-dev / build-graph waves must
     promote a new active plan.
+- `docs/plans/archive/runtime-engine-seam-plan.md`
+  - completed Step 0 runtime-extension baseline (RS0-RS6, closed
+    2026-05-21). Defined `WorkerLoop` / `RuntimeBackend` as the execution seam,
+    split the JavaScript Nimbus context contract from Deno-op transport, made
+    engine/content/compatibility/package metadata explicit, added the new
+    engine proof-harness contract, and recorded Bun/JSC proof gates 1-10
+    through generated-program timeout/cancel. Future execution-boundary work
+    starts from `docs/plans/execution-isolation-and-runtime-backends-plan.md`.
 - `docs/plans/archive/cli-daemon-canonicalization-plan.md`
   - completed execution record for the CLI daemon canonicalization wave
     (CD1-CD9, closed 2026-05-19). Removed source-tree walk-up from
@@ -424,9 +433,12 @@ the work is explicitly a historical review.
 - For future cleanup or verification-hardening work that is not already owned
   by another active plan, author or promote a new active plan instead of
   reviving an archived one.
-- For future runtime-engine work, including Bun/JSC or wasmtime, start with
-  `runtime-engine-seam-plan.md`; then use `wasmtime-backend-plan.md` for
-  wasmtime-specific phases once the seam work is ready.
+- For future execution-boundary work, including runtime engines, Bun/JSC,
+  wasmtime, sandbox isolation, WASI agent capabilities, or admission/resource
+  boundaries, start with
+  `docs/plans/execution-isolation-and-runtime-backends-plan.md`; then use
+  backend-specific plans such as `wasmtime-backend-plan.md` only when the
+  active plan routes the slice there.
 - For future agent OS capabilities via WASI Component Model, start with
   `wasi-agent-capabilities-plan.md`.
 - Resume any existing `in_progress` item and reconcile dirty worktree changes

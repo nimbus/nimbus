@@ -1,29 +1,33 @@
 # Plan: Runtime Engine Seam
 
-Canonical active plan for defining and hardening the runtime extension seam
-before adding new in-process runtime engines such as Bun/JSC or wasmtime.
+Completed historical baseline for defining and hardening the runtime extension
+seam before adding new in-process runtime engines such as Bun/JSC or wasmtime.
 
-This plan is intentionally Step 0. It does not add Bun, JSC, wasmtime, or a new
-Cargo dependency. It makes the current Deno/V8 path an explicit engine
-implementation and creates the control plane for future runtime-extension work.
+This plan was intentionally Step 0. It did not add Bun, JSC, wasmtime, or a new
+Cargo dependency. It made the current Deno/V8 path an explicit engine
+implementation and created the proof-gated control plane for future
+runtime-extension work.
+
+Successor active plan:
+`docs/plans/execution-isolation-and-runtime-backends-plan.md`
 
 ---
 
 ## Status
 
-- **Status:** `active`
-- **Primary owner:** this plan
+- **Status:** `completed`
+- **Primary owner:** historical baseline
 - **Architecture reference:** `docs/architecture/runtime/engine-seam.md`
 - **Autonomous goal prompt:** `docs/plans/prompts/runtime-engine-seam-goal.md`
-- **Activation gate:** active now because future Node-compatible runtime,
-  Bun/JSC, and wasmtime work all need a backend-neutral seam before
-  implementation starts.
+- **Closed:** 2026-05-21 after RS0-RS6 and Bun/JSC proof gates 1-10 were
+  recorded.
+- **Successor:** `docs/plans/execution-isolation-and-runtime-backends-plan.md`
 
 ## Control Plan Rules
 
-Use this plan before starting work that changes runtime engine ownership,
-runtime backend selection, JavaScript bootstrap transport, or new runtime
-engine proofs.
+Use this archived plan only for historical runtime-seam detail. Start new
+runtime-engine, Bun/JSC, wasmtime, sandbox, or execution-boundary work from
+`docs/plans/execution-isolation-and-runtime-backends-plan.md`.
 
 The source of truth is:
 
