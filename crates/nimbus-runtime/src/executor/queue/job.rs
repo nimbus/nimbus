@@ -6,12 +6,12 @@ use tokio::sync::oneshot;
 use crate::context::RuntimeInvocationContext;
 use crate::error::Result;
 use crate::host::HostCallCancellation;
-use crate::runtime::{InvocationRequest, NimbusRuntime, RuntimeBundle};
+use crate::runtime::{InvocationRequest, RuntimeBundle, RuntimeHost};
 
 use crate::executor::admission::RuntimeInvocationDispatchHandle;
 
 pub(crate) struct RuntimeWorkerJob {
-    pub(crate) runtime: NimbusRuntime,
+    pub(crate) host: RuntimeHost,
     pub(crate) bundle: RuntimeBundle,
     pub(crate) request: InvocationRequest,
     pub(crate) context: RuntimeInvocationContext,

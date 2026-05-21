@@ -7,6 +7,10 @@ import {
   readGeneratedFile,
   runCli,
 } from "./helpers.mjs";
+import {
+  assertNodeRuntimeMetadata,
+  assertRuntimeLanes,
+} from "./runtime_metadata_assertions.mjs";
 
 async function runActionFixtures() {
   await testHttpActionFixture();
@@ -66,6 +70,11 @@ export const read = action({
   const manifest = await readConvexJson(appDir, "functions.json");
   assert.deepEqual(manifest.node, {
     externalPackages: ["sharp", "@scope/pkg"],
+    nodeVersion: "20",
+    runtimeTarget: "node20",
+  });
+  assertRuntimeLanes(manifest, "node20");
+  assertNodeRuntimeMetadata(manifest.functions[0], {
     nodeVersion: "20",
     runtimeTarget: "node20",
   });
@@ -516,9 +525,11 @@ export const readFile = action({
     nodeVersion: "24",
     runtimeTarget: "node24",
   });
-  assert.equal(manifest.functions[0].runtime_environment, "node");
-  assert.equal(manifest.functions[0].node_version, "24");
-  assert.equal(manifest.functions[0].node_runtime_target, "node24");
+  assertRuntimeLanes(manifest, "node24");
+  assertNodeRuntimeMetadata(manifest.functions[0], {
+    nodeVersion: "24",
+    runtimeTarget: "node24",
+  });
 }
 
 async function testUseNodeActionFixture() {
@@ -547,9 +558,11 @@ export const runInternal = internalAction({
     nodeVersion: "22",
     runtimeTarget: "node22",
   });
-  assert.equal(manifest.functions[0].runtime_environment, "node");
-  assert.equal(manifest.functions[0].node_version, "22");
-  assert.equal(manifest.functions[0].node_runtime_target, "node22");
+  assertRuntimeLanes(manifest, "node22");
+  assertNodeRuntimeMetadata(manifest.functions[0], {
+    nodeVersion: "22",
+    runtimeTarget: "node22",
+  });
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
   assert.match(runtimeBundle, /from "node:fs"/);

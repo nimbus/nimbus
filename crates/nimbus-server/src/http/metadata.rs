@@ -35,6 +35,7 @@ pub(crate) async fn runtime_diagnostics(
     Ok(Json(RuntimeDiagnosticsResponse {
         limits: Some(RuntimeLimitsResponse {
             runtime_backend: limits.backend_kind,
+            bundle_content_kind: limits.bundle_content_kind,
             compatibility_target: limits.compatibility_target,
             execution_model: limits.execution_model,
             runtime_mode: limits.mode,

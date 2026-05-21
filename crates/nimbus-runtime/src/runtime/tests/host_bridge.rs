@@ -844,6 +844,62 @@ export {};
 }
 
 #[tokio::test]
+async fn runtime_extension_call_uses_async_host_bridge_path() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  return await globalThis.__nimbusAsyncHostValue(
+    "op_nimbus_runtime_extension_call",
+    {
+      namespace: "cloud_functions",
+      operation: "firebase_admin.firestore.get",
+      payload: { path: "messages/doc-1" },
+    },
+  );
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(AsyncEchoHost),
+        run_to_completion_snapshot_runtime_test_policy(),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Action,
+                function_name: "extensions:call".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("async host bridge should satisfy runtime extension calls");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "operation": "runtime_extension_call",
+            "payload": {
+                "namespace": "cloud_functions",
+                "operation": "firebase_admin.firestore.get",
+                "payload": { "path": "messages/doc-1" },
+            }
+        })
+    );
+}
+
+#[tokio::test]
 async fn runtime_query_paginate_uses_async_host_bridge_and_returns_official_shape() {
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");

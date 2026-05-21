@@ -44,6 +44,25 @@ pub struct NimbusRuntime {
     owned_executor: Arc<OnceLock<RuntimeExecutor>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct RuntimeHost {
+    bridge: Arc<dyn HostBridge>,
+}
+
+impl RuntimeHost {
+    pub(crate) fn new(bridge: Arc<dyn HostBridge>) -> Self {
+        Self { bridge }
+    }
+
+    pub(crate) fn from_runtime(runtime: &NimbusRuntime) -> Self {
+        Self::new(runtime.host.clone())
+    }
+
+    pub(crate) fn runtime_with_policy(&self, policy: Arc<RuntimePolicy>) -> NimbusRuntime {
+        NimbusRuntime::with_policy(self.bridge.clone(), policy)
+    }
+}
+
 pub(crate) use self::cooperative::{
     CooperativeLockerRuntimeSlot, CooperativeRuntimeSlotPoll, CooperativeRuntimeSlotStart,
     RuntimeInvocationExecution,

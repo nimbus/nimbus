@@ -498,6 +498,10 @@ storage types directly.
 - `runtime/bootstrap/state.rs` — installation of host bridge, cancellation
   state, and shared permit state into V8 `OpState`, plus runtime
   timeout-controller ownership.
+- `docs/architecture/runtime/engine-seam.md` — active architecture reference
+  for keeping Deno/V8-specific VM state below the runtime backend boundary and
+  for adding future engines such as Bun/JSC or wasmtime without making their
+  setup rules part of the generic runtime contract.
 - `executor.rs` — `RuntimeExecutor`: the executor composition root and inline
   executor regression surface. `executor/facade.rs` owns the public executor
   type, worker-thread startup and shutdown, and executor test-state scaffolds;

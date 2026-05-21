@@ -122,7 +122,7 @@ impl NimbusRuntime {
             module_loader: Some(Rc::new(RestrictedModuleLoader::new(
                 path_policy.clone(),
                 self.policy.limits().compatibility_target,
-                bundle.module_code_cache(),
+                bundle.module_code_cache(self.policy.limits()),
             ))),
             extensions,
             extension_transpiler: extension_transpiler_for_target(

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::Value;
@@ -7,7 +8,10 @@ use tokio::sync::oneshot;
 use crate::context::RuntimeInvocationContext;
 use crate::error::{NimbusRuntimeError, Result};
 use crate::host::HostCallCancellation;
-use crate::runtime::{InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeInvocationExecution};
+use crate::limits::RuntimePolicy;
+use crate::runtime::{
+    InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeHost, RuntimeInvocationExecution,
+};
 use crate::watchdog::WatchdogTimer;
 
 use super::admission::{RuntimeExecutorAdmissionDecision, SharedInvocationPermit};
@@ -49,14 +53,14 @@ impl RuntimeExecutor {
 
     async fn invoke_job(
         watchdog: WatchdogTimer,
-        runtime: NimbusRuntime,
+        host: RuntimeHost,
+        policy: Arc<RuntimePolicy>,
         bundle: RuntimeBundle,
         request: InvocationRequest,
         context: RuntimeInvocationContext,
         cancellation: Option<HostCallCancellation>,
         queue_started_at: Instant,
     ) -> Result<Value> {
-        let policy = runtime.policy();
         let permit = SharedInvocationPermit::new(
             policy.clone(),
             context.tenant_label.clone(),
@@ -64,6 +68,7 @@ impl RuntimeExecutor {
             context.bypasses_concurrency_limit(),
             cancellation.clone(),
         );
+        let runtime = host.runtime_with_policy(policy.clone());
         let (result, _ready_jobs) = run_invocation_lifecycle(
             permit,
             policy,
@@ -116,7 +121,8 @@ impl RuntimeExecutor {
             .record_request_correlation(&context);
         Self::invoke_job(
             self.inner.watchdog.clone(),
-            runtime.into_policy(self.inner.policy.clone()),
+            runtime.invocation_host(),
+            self.inner.policy.clone(),
             bundle,
             request,
             context,
@@ -154,7 +160,7 @@ impl RuntimeExecutor {
 
         let (result_tx, result_rx) = oneshot::channel();
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
-            runtime,
+            host: runtime.invocation_host(),
             bundle,
             request,
             context,
@@ -240,7 +246,7 @@ impl RuntimeExecutor {
 
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
         let admission = self.inner.admission.admit_job(RuntimeWorkerJob {
-            runtime,
+            host: runtime.invocation_host(),
             bundle,
             request,
             context,

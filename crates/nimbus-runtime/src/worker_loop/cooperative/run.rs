@@ -90,7 +90,7 @@ impl WorkerLoop for CooperativeWorkerLoop {
                         self.worker_runtime.block_on(slot.finish_with_runtime());
                     if let Some(runtime) = reusable_runtime {
                         self.retain_or_defer_runtime_drop(
-                            &job.runtime,
+                            &job.host,
                             &job.bundle,
                             &job.context,
                             runtime,
@@ -123,7 +123,7 @@ impl WorkerLoop for CooperativeWorkerLoop {
                         .block_on(slot.finish_with_result_and_runtime(Err(error)));
                     if let Some(runtime) = reusable_runtime {
                         self.retain_or_defer_runtime_drop(
-                            &job.runtime,
+                            &job.host,
                             &job.bundle,
                             &job.context,
                             runtime,

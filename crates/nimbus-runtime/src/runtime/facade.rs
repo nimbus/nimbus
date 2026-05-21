@@ -8,7 +8,7 @@ use crate::executor::RuntimeExecutor;
 use crate::host::{HostBridge, HostCallCancellation};
 use crate::limits::{RuntimeLimits, RuntimePolicy};
 
-use super::{InvocationRequest, NimbusRuntime, RuntimeBundle};
+use super::{InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeHost};
 
 impl NimbusRuntime {
     pub fn new(host: Arc<dyn HostBridge>) -> Self {
@@ -27,12 +27,8 @@ impl NimbusRuntime {
         }
     }
 
-    pub(crate) fn into_policy(self, policy: Arc<RuntimePolicy>) -> Self {
-        Self {
-            policy,
-            owned_executor: Arc::default(),
-            ..self
-        }
+    pub(crate) fn invocation_host(&self) -> RuntimeHost {
+        RuntimeHost::from_runtime(self)
     }
 
     /// Returns the stable executor handle that powers this runtime's public

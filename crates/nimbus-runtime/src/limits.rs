@@ -7,14 +7,24 @@ use tokio::sync::Semaphore;
 
 use crate::metrics::{RuntimeMetrics, RuntimeMetricsSnapshot};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeBackendKind {
+    #[default]
     #[serde(rename = "v8")]
     V8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBundleContentKind {
+    #[serde(rename = "javascript")]
+    #[default]
+    JavaScript,
+    WasmComponent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeCompatibilityTarget {
     WebStandardIsolate,
@@ -244,6 +254,7 @@ pub struct RuntimeResetCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeLimits {
     pub backend_kind: RuntimeBackendKind,
+    pub bundle_content_kind: RuntimeBundleContentKind,
     pub compatibility_target: RuntimeCompatibilityTarget,
     pub execution_model: RuntimeExecutionModel,
     pub mode: RuntimeMode,
@@ -356,6 +367,8 @@ impl RuntimeLimits {
     }
 
     pub fn normalized(&self) -> Self {
+        validate_backend_policy_axes(self);
+
         if matches!(self.preset, RuntimePreset::Tooling)
             && !matches!(
                 self.compatibility_target,
@@ -435,6 +448,7 @@ impl RuntimeLimits {
             .min(worker_threads);
         Self {
             backend_kind: self.backend_kind,
+            bundle_content_kind: self.bundle_content_kind,
             compatibility_target: self.compatibility_target,
             execution_model: self.execution_model,
             mode: self.mode,
@@ -456,6 +470,28 @@ impl RuntimeLimits {
             max_queued_top_level_invocations_per_tenant: self
                 .max_queued_top_level_invocations_per_tenant,
             max_nested_runtime_invocations: self.max_nested_runtime_invocations,
+        }
+    }
+}
+
+fn validate_backend_policy_axes(limits: &RuntimeLimits) {
+    match limits.backend_kind {
+        RuntimeBackendKind::V8 => {
+            if !matches!(limits.language, RuntimeLanguage::JavaScript) {
+                panic!(
+                    "V8 runtime backend requires JavaScript runtime language, got {:?}",
+                    limits.language
+                );
+            }
+            if !matches!(
+                limits.bundle_content_kind,
+                RuntimeBundleContentKind::JavaScript
+            ) {
+                panic!(
+                    "V8 runtime backend requires JavaScript bundle content, got {:?}",
+                    limits.bundle_content_kind
+                );
+            }
         }
     }
 }
@@ -500,6 +536,7 @@ impl Default for RuntimeLimits {
         let routing_affinity_max_entries = worker_threads.saturating_mul(256).max(1024);
         Self {
             backend_kind: RuntimeBackendKind::V8,
+            bundle_content_kind: RuntimeBundleContentKind::JavaScript,
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
             execution_model: RuntimeExecutionModel::CooperativeLocker,
             mode: RuntimeMode::Standard,
@@ -546,6 +583,19 @@ impl RuntimePolicy {
 
     pub fn limits(&self) -> &RuntimeLimits {
         &self.limits
+    }
+
+    pub(crate) fn validate_bundle_content_kind(
+        &self,
+        content_kind: RuntimeBundleContentKind,
+    ) -> crate::Result<()> {
+        if self.limits.bundle_content_kind == content_kind {
+            return Ok(());
+        }
+        Err(crate::NimbusRuntimeError::Contract(format!(
+            "runtime bundle content kind {:?} does not match policy content kind {:?}",
+            content_kind, self.limits.bundle_content_kind
+        )))
     }
 
     pub(crate) fn runtime_instance_semaphore(&self) -> Arc<Semaphore> {
@@ -766,6 +816,112 @@ mod tests {
         assert_eq!(
             cooperative.execution_model,
             RuntimeExecutionModel::CooperativeLocker
+        );
+    }
+
+    #[test]
+    fn runtime_policy_accepts_current_v8_javascript_axis_combinations() {
+        for compatibility_target in [
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+        ] {
+            let run_to_completion = RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::V8,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                compatibility_target,
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            });
+            assert_eq!(
+                run_to_completion.limits().backend_kind,
+                RuntimeBackendKind::V8
+            );
+            assert_eq!(
+                run_to_completion.limits().bundle_content_kind,
+                RuntimeBundleContentKind::JavaScript
+            );
+
+            let cooperative_snapshot = RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::V8,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                compatibility_target,
+                execution_model: RuntimeExecutionModel::CooperativeLocker,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            });
+            assert_eq!(
+                cooperative_snapshot.limits().execution_model,
+                RuntimeExecutionModel::CooperativeLocker
+            );
+        }
+
+        let cooperative_warm_pool = RuntimePolicy::new(RuntimeLimits {
+            backend_kind: RuntimeBackendKind::V8,
+            bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+            compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+            execution_model: RuntimeExecutionModel::CooperativeLocker,
+            runtime_pool_kind: RuntimePoolKind::WarmPool,
+            ..RuntimeLimits::default()
+        });
+        assert_eq!(
+            cooperative_warm_pool.limits().runtime_pool_kind,
+            RuntimePoolKind::WarmPool
+        );
+    }
+
+    #[test]
+    fn runtime_policy_rejects_unsupported_engine_axis_combinations() {
+        let run_to_completion_warm_pool = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::V8,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::WarmPool,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            run_to_completion_warm_pool.is_err(),
+            "WarmPool must not be accepted with RunToCompletion"
+        );
+
+        let wasm_on_v8 = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::V8,
+                bundle_content_kind: RuntimeBundleContentKind::WasmComponent,
+                compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+                execution_model: RuntimeExecutionModel::CooperativeLocker,
+                runtime_pool_kind: RuntimePoolKind::WarmPool,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            wasm_on_v8.is_err(),
+            "V8 must reject non-JavaScript bundle content"
+        );
+    }
+
+    #[test]
+    fn runtime_policy_rejects_bundle_content_kind_mismatches() {
+        let policy = RuntimePolicy::new(RuntimeLimits::default());
+        assert!(
+            policy
+                .validate_bundle_content_kind(RuntimeBundleContentKind::JavaScript)
+                .is_ok()
+        );
+
+        let error = policy
+            .validate_bundle_content_kind(RuntimeBundleContentKind::WasmComponent)
+            .expect_err("V8 JavaScript policy should reject Wasm content");
+        assert!(
+            error
+                .to_string()
+                .contains("runtime bundle content kind WasmComponent does not match"),
+            "unexpected content-kind mismatch error: {error}"
         );
     }
 }

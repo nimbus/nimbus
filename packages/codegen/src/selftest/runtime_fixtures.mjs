@@ -9,6 +9,10 @@ import {
   readGeneratedFile,
   runCli,
 } from "./helpers.mjs";
+import {
+  assertDefaultRuntimeMetadata,
+  assertRuntimeLanes,
+} from "./runtime_metadata_assertions.mjs";
 
 async function runRuntimeFixtures() {
   await testUnsupportedMultiOperationFixture();
@@ -46,6 +50,8 @@ export const sendAndSchedule = mutation({
 
   const manifest = await readConvexJson(appDir, "functions.json");
   assert.equal(manifest.functions[0].plan, null);
+  assertDefaultRuntimeMetadata(manifest.functions[0]);
+  assertRuntimeLanes(manifest, "node22");
   assert.match(manifest.functions[0].runtime_handler, /ctx\.db\.insert/);
   assert.match(manifest.functions[0].runtime_handler, /ctx\.scheduler\.runAfter/);
 

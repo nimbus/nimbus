@@ -40,6 +40,8 @@ Internal docs mirroring the crate tree. See
 
 - [server/](architecture/server/) -- adapter contracts, auth/runtime trust
 - [runtime/](architecture/runtime/) -- V8 host capabilities, adapter boundary,
+  [runtime engine seam](architecture/runtime/engine-seam.md),
+  [new engine proof harness](architecture/runtime/new-engine-proof-harness.md),
   [generated Node LTS compatibility baseline](architecture/runtime/node-lts-compat/node-lts-compat-summary.md),
   and [runtime surface matrix](architecture/runtime/node-compat-surface-matrix.md)
 - [storage/](architecture/storage/) -- encryption design, persistence engine, provider topologies

@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -7,7 +8,8 @@ use crate::RuntimeInvocationContext;
 use crate::error::Result;
 use crate::executor::SharedInvocationPermit;
 use crate::host::HostCallCancellation;
-use crate::runtime::{InvocationRequest, NimbusRuntime, RuntimeBundle};
+use crate::limits::RuntimePolicy;
+use crate::runtime::{InvocationRequest, RuntimeBundle, RuntimeHost};
 use crate::watchdog::WatchdogTimer;
 
 pub(crate) mod v8;
@@ -18,7 +20,8 @@ pub(crate) trait RuntimeBackendFactory: Send + Sync + 'static {
 
 pub(crate) struct RuntimeBackendInvocation {
     pub(crate) watchdog: WatchdogTimer,
-    pub(crate) runtime: NimbusRuntime,
+    pub(crate) host: RuntimeHost,
+    pub(crate) policy: Arc<RuntimePolicy>,
     pub(crate) bundle: RuntimeBundle,
     pub(crate) request: InvocationRequest,
     pub(crate) context: RuntimeInvocationContext,

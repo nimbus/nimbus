@@ -116,6 +116,14 @@ impl ConvexRegistry {
                 path.display()
             ))
         })?;
+        for function in &manifest.functions {
+            function.validate_runtime_selection().map_err(|message| {
+                Error::InvalidInput(format!(
+                    "invalid Convex runtime selection in {}: {message}",
+                    path.display()
+                ))
+            })?;
+        }
 
         let functions = manifest
             .functions

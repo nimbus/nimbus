@@ -1,7 +1,7 @@
 use crate::backends::v8::embedder::JsRuntime;
 use crate::error::{NimbusRuntimeError, Result};
 
-const BOOTSTRAP_SOURCE: &str = r#"
+const DENO_HOST_CALL_TRANSPORT_SOURCE: &str = r#"
 const __nimbusCoreOps = Deno.core.ops;
 globalThis.__nimbusSyncHostValue = function(opName, payload) {
   const operation = __nimbusCoreOps[opName];
@@ -48,7 +48,9 @@ globalThis.__nimbusAsyncHostValue = async function(opName, payload) {
   }
   return response.value;
 };
+"#;
 
+const NIMBUS_CONTEXT_CONTRACT_SOURCE: &str = r#"
 function __nimbusNormalizeFieldName(field) {
   if (typeof field === "string" && field.length > 0) {
     return field;
@@ -607,7 +609,9 @@ globalThis.__nimbusCreateContext = function(options = {}) {
 Object.freeze(globalThis.__nimbusSyncHostValue);
 Object.freeze(globalThis.__nimbusAsyncHostValue);
 Object.freeze(globalThis.__nimbusCreateContext);
+"#;
 
+const DENO_RUNTIME_GLOBALS_SOURCE: &str = r#"
 const __nimbusRuntimeEnvOverlaySymbol = Symbol.for("nimbus.runtimeEnvOverlay");
 const __nimbusRuntimeEnvDeletedMarker = Symbol.for("nimbus.runtimeEnvDeleted");
 if (globalThis[__nimbusRuntimeEnvOverlaySymbol] === undefined) {
@@ -790,14 +794,14 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
 Object.freeze(__nimbusInstallRuntimeContractGlobals);
 "#;
 
-// Keep Deno cleanup out of BOOTSTRAP_SOURCE. That source is executed during
-// startup-snapshot creation, and moving `delete globalThis.Deno` into it has
-// already regressed snapshot-backed Locker runtime startup in the repaired
-// deno_core fork. The cleanup must remain a separate post-bootstrap step until
-// the fork exposes an explicit snapshot-safe alternative. Node22 now binds its
-// internal substrate against `__bootstrap.ext_node_denoGlobals`, so ordinary
-// bundles should not observe the public `globalThis.Deno` contract after
-// finalize_bootstrap() completes.
+// Keep Deno cleanup out of the bootstrap sources. Those sources are executed
+// during startup-snapshot creation, and moving `delete globalThis.Deno` into
+// them has already regressed snapshot-backed Locker runtime startup in the
+// repaired deno_core fork. The cleanup must remain a separate post-bootstrap
+// step until the fork exposes an explicit snapshot-safe alternative. Node22
+// now binds its internal substrate against `__bootstrap.ext_node_denoGlobals`,
+// so ordinary bundles should not observe the public `globalThis.Deno` contract
+// after finalize_bootstrap() completes.
 const POST_BOOTSTRAP_SOURCE: &str = r#"
 const __nimbusRuntimeContract =
   __nimbusCoreOps.op_nimbus_runtime_contract();
@@ -812,7 +816,22 @@ const RESET_BOOTSTRAP_INVOCATION_STATE_SOURCE: &str =
 
 pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     runtime
-        .execute_script("<nimbus-runtime:bootstrap>", BOOTSTRAP_SOURCE)
+        .execute_script(
+            "<nimbus-runtime:bootstrap:deno-host-call-transport>",
+            DENO_HOST_CALL_TRANSPORT_SOURCE,
+        )
+        .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
+    runtime
+        .execute_script(
+            "<nimbus-runtime:bootstrap:context-contract>",
+            NIMBUS_CONTEXT_CONTRACT_SOURCE,
+        )
+        .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
+    runtime
+        .execute_script(
+            "<nimbus-runtime:bootstrap:deno-runtime-globals>",
+            DENO_RUNTIME_GLOBALS_SOURCE,
+        )
         .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
     Ok(())
 }
@@ -820,7 +839,7 @@ pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
 pub(crate) fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     // This stays as an intentional second step instead of being folded into
     // install_bootstrap(), because the snapshot path also executes
-    // BOOTSTRAP_SOURCE during snapshot creation.
+    // the bootstrap sources during snapshot creation.
     runtime
         .execute_script("<nimbus-runtime:bootstrap:finalize>", POST_BOOTSTRAP_SOURCE)
         .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
@@ -835,4 +854,38 @@ pub(crate) fn reset_bootstrap_invocation_state(runtime: &mut JsRuntime) -> Resul
         )
         .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DENO_HOST_CALL_TRANSPORT_SOURCE, DENO_RUNTIME_GLOBALS_SOURCE,
+        NIMBUS_CONTEXT_CONTRACT_SOURCE,
+    };
+
+    #[test]
+    fn context_contract_source_does_not_bind_deno_ops() {
+        assert!(NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("__nimbusCreateContext"));
+        assert!(NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("__nimbusSyncHostValue"));
+        assert!(NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("__nimbusAsyncHostValue"));
+        assert!(!NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("Deno.core.ops"));
+        assert!(!NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("__nimbusCoreOps"));
+    }
+
+    #[test]
+    fn deno_transport_source_injects_host_call_primitives_only() {
+        assert!(DENO_HOST_CALL_TRANSPORT_SOURCE.contains("Deno.core.ops"));
+        assert!(DENO_HOST_CALL_TRANSPORT_SOURCE.contains("__nimbusSyncHostValue"));
+        assert!(DENO_HOST_CALL_TRANSPORT_SOURCE.contains("__nimbusAsyncHostValue"));
+        assert!(!DENO_HOST_CALL_TRANSPORT_SOURCE.contains("__nimbusCreateContext"));
+        assert!(!DENO_HOST_CALL_TRANSPORT_SOURCE.contains("__nimbusInstallRuntimeContractGlobals"));
+    }
+
+    #[test]
+    fn deno_runtime_globals_source_stays_outside_context_contract() {
+        assert!(DENO_RUNTIME_GLOBALS_SOURCE.contains("__nimbusInstallRuntimeContractGlobals"));
+        assert!(DENO_RUNTIME_GLOBALS_SOURCE.contains("op_nimbus_runtime_env_snapshot"));
+        assert!(!NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("__nimbusInstallRuntimeContractGlobals"));
+        assert!(!NIMBUS_CONTEXT_CONTRACT_SOURCE.contains("op_nimbus_runtime_env_snapshot"));
+    }
 }

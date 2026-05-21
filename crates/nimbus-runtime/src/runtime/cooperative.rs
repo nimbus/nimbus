@@ -213,6 +213,8 @@ impl NimbusRuntime {
             activity_signal,
         } = start;
         bundle.verify_integrity()?;
+        self.policy
+            .validate_bundle_content_kind(bundle.content_kind())?;
         let runtime = v8_runtime_pool.take_runtime_with_options_for_invocation(
             self,
             &bundle,
