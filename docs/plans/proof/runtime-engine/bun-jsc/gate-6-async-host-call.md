@@ -2,6 +2,9 @@
 
 Date: 2026-05-21
 
+Superseded by:
+`docs/plans/proof/runtime-engine/bun-jsc/gate-7-program-bundle-load.md`
+
 Nimbus revision: `a168cb77` (`Record Bun sync host-call proof`)
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
@@ -219,7 +222,9 @@ bundle/module loading without CLI module state assumptions, timeout/cancel
 behavior, permission containment, teardown/reuse semantics, and artifact/server
 routing integration.
 
-The immediate next recommended gate is a bundle/module-loading proof. It should
-load a Nimbus-shaped JavaScript bundle without relying on Bun's CLI runner or
-the `JSModuleLoader::evaluate` path that failed in Gate 5, then prove the
-loaded function can use both sync and async host-call transport.
+The immediate next recommended gate was a bundle-loading proof. Gate 7
+completed a program-bundle load/invoke proof locally: a loaded bundle installed
+sync and async exports on `globalThis`, the sync export used the Rust sync host
+transport, and the async export used the Rust async host transport through a
+bundle-level promise chain. Bun/JSC remains proof-only until artifact-shape,
+timeout/cancel, permission, teardown/reuse, and routing gates pass.
