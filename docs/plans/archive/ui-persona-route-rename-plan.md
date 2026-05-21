@@ -11,7 +11,7 @@ This is mechanical, pre-launch, no migration shims. Single landing.
 
 ## Status
 
-- **Status:** `todo` (ready to start, no dependencies)
+- **Status:** `done` (closed 2026-05-20, archived 2026-05-21)
 - **Primary owner:** this plan
 - **Activation gate:** none — the DU-redesign CS10 baseline already
   established the canonical persona names; this is the matching URL
@@ -292,16 +292,34 @@ These were spot-checked during inventory and confirmed clean:
 
 | Phase | Status |
 | --- | --- |
-| 1. Route directory rename + codegen | `todo` |
-| 2. UI shell logic | `todo` |
-| 3. Route page components | `todo` |
-| 4. Spec / story updates | `todo` |
-| 5. Root redirect + gate script | `todo` |
-| 6. DESIGN.md update | `todo` |
-| 7. Token label tweak (optional) | `todo` (skip by default) |
-| 8. Plan README update | `todo` |
-| 9. CLI banner cleanup (out of scope) | `deferred` (capture follow-up only if user wants) |
+| 1. Route directory rename + codegen | `done` |
+| 2. UI shell logic | `done` |
+| 3. Route page components | `done` |
+| 4. Spec / story updates | `done` |
+| 5. Root redirect + gate script | `done` |
+| 6. DESIGN.md update | `done` |
+| 7. Token label tweak (optional) | `skipped` (default — "Local admin token" stays) |
+| 8. Plan README update | `skipped` (tight-edit option — archived plan summaries describe what shipped at the time) |
+| 9. CLI banner cleanup (out of scope) | `deferred` (no follow-up plan promoted) |
 
 ## Execution Log
 
-(populate as phases land)
+- **2026-05-20** — Single landing in commit `223cdf2a` ("ui: rename
+  persona URL prefixes /app→/developer, /admin→/operator"). All phases
+  1–6 landed together as a mechanical rename. Verification recorded in
+  the commit message: `npm run typecheck` clean, `npm run test`
+  277/277, `npm run build`, `cargo build`, `cargo fmt --all --check`,
+  and `scripts/verify-desktop-ui-shell-gates.sh` all green. Browser
+  proof captured at
+  `docs/plans/proof/ui-persona-route-rename/after/` (developer +
+  operator console roots in both themes). `viewFromPathname` collapsed
+  to `pathname.startsWith("/operator") ? "operator" : "developer"`
+  and the `VIEW_DEFAULT` indirection in `view-switcher.tsx` was
+  deleted in favor of a `/${target}` template that also drives
+  last-route restore.
+- **2026-05-21** — Plan archived. No work needed in
+  `~/src/github.com/nimbus/desktop`: the Electron shell loads the
+  daemon-served UI bundle and owns no route prefixes; the lone
+  `/admin token` reference in `tests/e2e/critical-path.spec.ts` is
+  the unrelated auth-page field label that Phase 7 intentionally
+  left alone.
