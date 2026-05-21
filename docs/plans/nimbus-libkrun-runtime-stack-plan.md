@@ -124,8 +124,8 @@ manual libkrun builds as a supported install path.
 | --- | --- | --- | --- |
 | NLS0 | `done` | Audit current repo impact and choose the Nimbus libkrun naming/distribution shape. | This plan records the reviewed files and naming decision. |
 | NLS1 | `done` | Create and tag the Nimbus-owned `nimbus/nimbus-libkrun` source repo. | `git ls-remote` shows `main` and `v1.17.4-nimbus.1`; tag contains the validated bind-address hook commit. |
-| NLS2 | `in_progress` | Add `nimbus-libkrun` CI/release artifacts for Linux amd64/arm64. | Release has runtime archives, checksums, provenance, symbol proof, and libkrunfw version proof. |
-| NLS3 | `todo` | Rebuild `nimbus-crun` against the Nimbus-private libkrun stack. | `v1.27.1-nimbus.1` resolves private libkrun, has `+LIBKRUN`, and fails if the bind-address symbol is absent. |
+| NLS2 | `done` | Add `nimbus-libkrun` CI/release artifacts for Linux amd64/arm64. | Release has runtime archives, checksums, provenance, symbol proof, and libkrunfw version proof. |
+| NLS3 | `in_progress` | Rebuild `nimbus-crun` against the Nimbus-private libkrun stack. | `v1.27.1-nimbus.1` resolves private libkrun, has `+LIBKRUN`, and fails if the bind-address symbol is absent. |
 | NLS4 | `todo` | Update direct install/uninstall/verify flows. | Install helper dry-runs and real Linux proof install `nimbus`, `nimbus-libkrun`, and `nimbus-crun` together. |
 | NLS5 | `todo` | Update deb/rpm, apt, and COPR builders/workflows. | Package helper tests produce three packages/SRPMs and dependency metadata uses `nimbus-libkrun`. |
 | NLS6 | `todo` | Capture fresh Linux service smoke from installed artifacts and close docs. | Debian 13 and Fedora proof show localhost-only krun smoke plus private library resolution. |
@@ -205,7 +205,7 @@ Closeout evidence:
 
 ### NLS2: Libkrun Release Artifacts
 
-Status: `in_progress`
+Status: `done`
 
 Deliverables:
 
@@ -250,9 +250,49 @@ Acceptance criteria:
 - README names the private install path and says the package does not replace
   system `libkrun`
 
+Closeout evidence:
+
+- release URL:
+  `https://github.com/nimbus/nimbus-libkrun/releases/tag/v1.17.4-nimbus.1`
+- release workflow:
+  `https://github.com/nimbus/nimbus-libkrun/actions/runs/26258037658`
+- published assets:
+  - `nimbus-libkrun-linux-amd64.tar.gz`
+  - `nimbus-libkrun-linux-arm64.tar.gz`
+  - `checksums.txt`
+- checksums:
+  - `nimbus-libkrun-linux-amd64.tar.gz`:
+    `cce21c5d7fe9cd6d245e114a41e5680df3c8b88fdb982c7e05a3356d1f5c8f48`
+  - `nimbus-libkrun-linux-arm64.tar.gz`:
+    `56f9c851365d9a0b661a597fb385b71555d9bd9cb5adee300d357c7848198c47`
+- GitHub release metadata:
+  - `isDraft=false`
+  - `isPrerelease=false`
+  - asset digest for `checksums.txt`:
+    `sha256:2c799dd7f1ee294d7c802f26f97529483932815101727759984a401ab4bc7ba7`
+- provenance:
+  - `gh attestation verify ... --repo nimbus/nimbus-libkrun` succeeded for
+    both release archives
+  - attested subjects include both archives and `checksums.txt`
+  - signer identity:
+    `https://github.com/nimbus/nimbus-libkrun/.github/workflows/release.yml@refs/heads/main`
+- macOS download proof:
+  - `shasum -a 256 -c checksums.txt` returned `OK` for both release archives
+  - `tar -tzf` for both archives showed the expected `lib/`, `include/`,
+    `lib/pkgconfig/libkrun.pc`, `NIMBUS_LIBKRUN_RELEASE.txt`,
+    `libkrun.so.1.17.4`, and `libkrunfw.so.5.3.0` layout
+- minicloud Linux verifier proof:
+  - Debian 13 host: `minicloud`, `Linux 6.12.88+deb13-amd64`
+  - `sha256sum -c checksums.txt` returned `OK` for both release archives
+  - `scripts/verify-release-archive.sh --archive ...amd64.tar.gz` succeeded
+  - `scripts/verify-release-archive.sh --archive ...arm64.tar.gz` succeeded
+  - verifier reported `verified.libkrun=.../lib/libkrun.so.1.17.4`,
+    `verified.libkrunfw=.../lib/libkrunfw.so.5.3.0`, and
+    `verified.pkg_config=-L.../lib -lkrun`
+
 ### NLS3: Paired `nimbus-crun` Build
 
-Status: `todo`
+Status: `in_progress`
 
 Deliverables:
 
