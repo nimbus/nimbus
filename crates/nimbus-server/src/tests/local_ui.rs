@@ -510,31 +510,55 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
     assert!(
         body.contains("<button type=\"button\" class=\"shell-block\"")
             && body.contains("data-copy=\"nimbus auth token --copy\"")
-            && body.contains("<span class=\"shell-block-lang\">shell</span>")
+            && body.contains("<span class=\"shell-block-lang\">terminal</span>")
             && body.contains("<span class=\"shell-block-prompt\"")
             && body.contains(
                 "<span class=\"shell-block-cmd\">nimbus auth token --copy</span>",
             ),
-        "auth page should expose a full-width `.shell-block` with a `shell` language label, `$` prompt, and `nimbus auth token --copy` body"
+        "auth page should expose a full-width `.shell-block` with a `terminal` chrome label, `$` prompt, and `nimbus auth token --copy` body"
     );
     assert!(
-        body.contains("<h2 class=\"other-section-title\">Token</h2>")
-            && body.contains("<h2 class=\"other-section-title\">Auto Login</h2>")
+        body.contains("<h2 class=\"other-section-title\">Copy Token</h2>")
+            && body.contains("<h2 class=\"other-section-title\">Open URL</h2>")
             && body.contains("<h2 class=\"other-section-title\">Copy URL</h2>"),
-        "`How to login` disclosure should contain Token, Auto Login, and Copy URL entries"
+        "`How to login` disclosure should contain Copy Token, Open URL, and Copy URL entries"
     );
-    let token_pos = body
-        .find("<h2 class=\"other-section-title\">Token</h2>")
-        .expect("Token section must render inside the disclosure");
-    let auto_login_pos = body
-        .find("<h2 class=\"other-section-title\">Auto Login</h2>")
-        .expect("Auto Login section must render inside the disclosure");
+    assert!(
+        !body.contains("<h2 class=\"other-section-title\">Token</h2>")
+            && !body.contains("<h2 class=\"other-section-title\">Auto Login</h2>"),
+        "auth page should not retain prior `Token` / `Auto Login` titles"
+    );
+    let copy_token_pos = body
+        .find("<h2 class=\"other-section-title\">Copy Token</h2>")
+        .expect("Copy Token section must render inside the disclosure");
+    let open_url_pos = body
+        .find("<h2 class=\"other-section-title\">Open URL</h2>")
+        .expect("Open URL section must render inside the disclosure");
     let copy_url_pos = body
         .find("<h2 class=\"other-section-title\">Copy URL</h2>")
         .expect("Copy URL section must render inside the disclosure");
     assert!(
-        token_pos < auto_login_pos && auto_login_pos < copy_url_pos,
-        "`Token` must be the first option inside the `How to login` disclosure"
+        copy_token_pos < open_url_pos && open_url_pos < copy_url_pos,
+        "disclosure ordering must be Copy Token → Open URL → Copy URL"
+    );
+    // Body copy follows two unified templates: copy flows use
+    // "Run <chip>, then paste the <thing> into <destination>"; the
+    // one-shot flow uses "Run <chip> to open a single-use sign-in URL
+    // in your browser". Asserting the load-bearing phrases catches both
+    // accidental drift in tone and accidental cross-pollination between
+    // the two URL entries.
+    assert!(
+        body.contains(", then paste the token into the field above.")
+            && body.contains("to open a single-use sign-in URL in your browser.")
+            && body.contains(", then paste the URL into your browser's address bar."),
+        "disclosure bodies must use the unified copy templates"
+    );
+    assert!(
+        !body.contains("Auto Login")
+            && !body.contains("single-use launch URL")
+            && !body.contains("paste the printed URL")
+            && !body.contains("to copy your local admin token to the clipboard"),
+        "auth page should drop prior inconsistent copy variants"
     );
     let shell_block_pos = body
         .find("<button type=\"button\" class=\"shell-block\"")
