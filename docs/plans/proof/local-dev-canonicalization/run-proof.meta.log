@@ -1,0 +1,58 @@
+=== LD5 fresh-clone proof — meta log ===
+Started: 2026-05-21T06:10:37Z
+Worktree: /tmp/nimbus-ld5-proof
+HEAD: a4c52f5e0d62eeb34df616179d3065e7dce18d4a
+git status (should be clean):
+?? run-proof.sh
+
+Verifying fresh-clone state:
+  packages/nimbus-ui/dist/index.html exists?       no
+  packages/nimbus-ui/.nimbus/convex/* exists?      no
+  node_modules exists?                              no
+  target/ exists?                                   no
+
+=== Phase 1: npm ci  (started 2026-05-21T06:10:37Z) ===
+(node:15147) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+
+added 512 packages, and audited 525 packages in 6s
+
+125 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+Phase 1: npm ci exit=0 duration=5s
+=== Phase 2: cargo check -p nimbus-server (expect actionable error)  (started 2026-05-21T06:10:42Z) ===
+Phase 2: cargo check exit=101 duration=47s
+=== Phase 3: make ci-required (expect green; UI graph self-heals)  (started 2026-05-21T06:11:29Z) ===
+Phase 3: make ci-required exit=2 duration=337s
+Finished: 2026-05-21T06:17:06Z
+
+=== Phase 3 re-run (after clearing stale local-server discovery record) ===
+The initial Phase 3 failed in `cargo-test-workspace-ci` because a stale
+$TMPDIR/nimbus/server.json discovery record (left behind by an unrelated
+debug daemon) caused nimbus-bin machine tests to route 'Init' calls through
+the long-running daemon, triggering HTTP 409 "machine already initialized".
+This was test-isolation noise, not a build-graph issue.
+
+Recovery: removed $TMPDIR/nimbus/server.json, cleaned UI artifacts
+(packages/nimbus-ui/dist, packages/nimbus-ui/.nimbus, demos/*/dist) to
+re-simulate the clean-tree state, then re-ran `make ci-required`. Output
+captured to clean-tree-make-ci-required.log.
+
+Phase 3 (re-run): make ci-required exit=0 duration=205s
+  Post-state:
+    packages/nimbus-ui/dist/index.html exists?       yes
+    packages/nimbus-ui/.nimbus/convex/bundle.sha256? yes
+  Cargo phases: fmt-check + clippy + deny + test-rust-runtime
+                + test-rust-workspace + test-rust-docs + verify-harness all green
+                (1906 tests passed, 13 skipped, doc tests green).
+  JS lane: npm run build --workspaces --if-present green;
+           npm run test --workspaces --if-present green.
+  Proof helpers: install-script self-test 27 assertions green.
+
+The build-graph claim of LD5 is satisfied: from a clean tree with no UI
+artifacts and no convex codegen output, `make ci-required` self-heals
+both inputs via the Makefile UI dependency graph (LD1) before invoking
+the cargo lanes that consume them.
