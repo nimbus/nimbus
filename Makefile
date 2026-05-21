@@ -12,7 +12,7 @@ SINGLE_FLIGHT = bash scripts/single-flight.sh
 # recipes make the dependency explicit so a fresh clone running
 # `make check` / `make test` / `make verify-desktop-ui` / `make ci-required`
 # walks the graph and builds UI prerequisites on demand.
-# See docs/plans/local-dev-canonicalization-plan.md for the design.
+# See docs/plans/archive/local-dev-canonicalization-plan.md for the design.
 
 UI_PKG := packages/nimbus-ui
 

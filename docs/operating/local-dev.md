@@ -76,9 +76,8 @@ hot path.
 Instead, the build contract uses the pattern Tauri / Tabby / Meilisearch
 use: Make owns the cross-toolchain orchestration, `build.rs` honestly
 asserts inputs exist (and errors actionably if they don't). See
-`docs/plans/archive/local-dev-canonicalization-plan.md` (post-closeout)
-or its active form at `docs/plans/local-dev-canonicalization-plan.md` for
-the full discussion of alternatives and the rationale.
+`docs/plans/archive/local-dev-canonicalization-plan.md` (closed
+2026-05-21) for the full discussion of alternatives and the rationale.
 
 ## Cargo-direct builds
 
