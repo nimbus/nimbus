@@ -111,8 +111,10 @@ Future runtime-extension work must separate:
 
 - bundle identity: tenant label, canonical entrypoint, expected SHA-256, and
   engine-relevant cache keys
-- bundle content kind: JavaScript module, Bun/JSC JavaScript module, WASM
-  component, or another explicit future kind
+- bundle content kind: JavaScript, WASM component, or another explicit future
+  kind
+- JavaScript evaluation format: ESM module, self-contained program wrapper, or
+  another loader contract required by the selected engine
 - engine-owned derived state: V8 module specifiers and code cache, Bun module
   loader state, wasmtime component cache entries, and engine configuration hash
 - deploy/codegen metadata: compatibility target, engine selection, external
@@ -120,6 +122,9 @@ Future runtime-extension work must separate:
 
 Bundle integrity remains mandatory for every content kind. Engine caches must
 be invalidated by content hash plus engine configuration, not by path alone.
+If two JavaScript engines consume different evaluation formats, generated
+artifacts must name that format explicitly instead of letting a generic
+`javascript` content kind imply both ESM module loading and program evaluation.
 
 Do not overload the existing Node fields in generated artifacts to select a new
 engine. A Bun-backed target needs explicit artifact metadata; a wasmtime

@@ -1,4 +1,5 @@
-function runtimeBundleDispatchGlobalInvoke() {
+function runtimeBundleDispatchGlobalInvoke({ module = true } = {}) {
+  const moduleSentinel = module ? "\n\nexport {};" : "";
   return `globalThis.__nimbusInvoke = async function (request) {
   try {
     const definition = functionsByName.get(request.function_name);
@@ -28,9 +29,7 @@ function runtimeBundleDispatchGlobalInvoke() {
   }
 };
 
-globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;
-
-export {};`;
+globalThis.__nimbusInvokeNamedLocal = invokeNamedDefinitionLocally;${moduleSentinel}`;
 }
 
 export { runtimeBundleDispatchGlobalInvoke };

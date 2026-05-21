@@ -2,7 +2,21 @@ import { buildRuntimeBundleSource } from "./runtime_bundle_parts.mjs";
 
 function generateRuntimeBundle(manifest) {
   const { importPreamble } = collectNodeRuntimeImports(manifest);
-  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), importPreamble);
+  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), importPreamble, {
+    module: true,
+  });
+}
+
+function generateRuntimeProgramBundle(manifest) {
+  const { importSpecifiers } = collectNodeRuntimeImports(manifest);
+  if (importSpecifiers.length > 0) {
+    throw new Error(
+      `runtime program bundle cannot materialize Node runtime imports: ${importSpecifiers.join(", ")}`,
+    );
+  }
+  return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), "", {
+    module: false,
+  });
 }
 
 function collectNodeRuntimeImports(manifest) {
@@ -15,6 +29,10 @@ function collectNodeRuntimeImports(manifest) {
     });
   }
   return {
+    importSpecifiers: [
+      ...[...builtinSpecifiers].sort(),
+      ...[...externalPackageSpecifiers].sort(),
+    ],
     importPreamble: [
       ...createImportMapPreamble({
         importNamePrefix: "__nimbusNodeBuiltin",
@@ -72,4 +90,4 @@ function collectNodeRuntimeDescriptors(value, { builtinSpecifiers, externalPacka
   }
 }
 
-export { generateRuntimeBundle };
+export { generateRuntimeBundle, generateRuntimeProgramBundle };

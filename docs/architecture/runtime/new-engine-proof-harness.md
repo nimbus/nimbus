@@ -49,13 +49,13 @@ each check below.
 | VM construction | Nimbus constructs the engine below the CLI/process entrypoint and can create and drop a VM without taking process-global ownership. |
 | Sync host call | Guest code calls a sync host function backed by `HostBridge`, including ABI version validation and operation/payload mismatch rejection. |
 | Async host call | Guest code awaits an async host function backed by `HostBridge`; the proof records cancellation behavior and `SharedInvocationPermit` pause/resume behavior or a documented equivalent. |
-| Bundle load | The engine loads a Nimbus bundle by explicit content kind and engine config, invokes the entrypoint, settles promises or guest calls, and returns a JSON-compatible value. |
+| Bundle load | The engine loads a Nimbus bundle by explicit content kind, JavaScript evaluation format where applicable, and engine config, invokes the entrypoint, settles promises or guest calls, and returns a JSON-compatible value. |
 | Runtime extension call | The provider-neutral runtime-extension lane is transported without hard-coding adapter namespaces into `nimbus-runtime`. |
 | Timeout and cancel | Timeouts and external cancellation interrupt guest execution. The proof states whether the VM remains reusable after termination. |
 | Memory behavior | The proof records the engine memory limit mechanism, or states that the first safe policy is discard-on-pressure/fresh-per-invocation. |
 | Permission policy | Every host-sensitive builtin exposed by the compatibility target is denied, wrapped by Nimbus grants, or the backend is marked trusted/sandbox-only. |
 | Reuse and teardown | The proof runs create/invoke/cancel/drop loops and records whether retained VM reuse is safe. If reuse is not proven, the backend must start fresh-per-invocation. |
-| Artifact metadata | Generated artifact fields name the engine, bundle content kind, compatibility target, and package resolver explicitly. |
+| Artifact metadata | Generated artifact fields name the engine, bundle content kind, JavaScript evaluation format where applicable, compatibility target, and package resolver explicitly. |
 | Server routing | Registry loading rejects unsupported engine/content/target combinations before invocation. |
 
 Passing only build, link, and simple JavaScript evaluation is not enough.
