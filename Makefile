@@ -96,8 +96,10 @@ clippy: $(UI_DIST_INDEX)
 test: $(UI_DIST_INDEX)
 	$(SINGLE_FLIGHT) --key cargo-test-workspace -- cargo test --workspace
 
-# Run the CI runtime Rust test bucket
-test-rust-runtime: $(UI_DIST_INDEX)
+# Run the CI runtime Rust test bucket. No UI prereq: nimbus-runtime has
+# zero workspace deps (per CLAUDE.md), so cargo test -p nimbus-runtime
+# doesn't compile nimbus-server and doesn't need the UI artifacts.
+test-rust-runtime:
 	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::
 
 # Run the CI workspace Rust test bucket

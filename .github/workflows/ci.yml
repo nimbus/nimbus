@@ -75,10 +75,10 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
 
-      # nimbus-server's loading.rs `include_str!`s files under
-      # packages/nimbus-ui/.nimbus/convex/ which are gitignored build
-      # artifacts produced by `convex codegen`. Without this step the
-      # workspace fails to compile in CI.
+      # `make clippy` triggers the UI dependency graph (codegen + SPA build)
+      # before invoking cargo, so nimbus-server's `include_str!`s of the
+      # gitignored `.nimbus/convex/` outputs resolve. Node is therefore a
+      # build prerequisite for any Rust target that touches nimbus-server.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -88,11 +88,8 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Generate nimbus-ui convex codegen artifacts
-        run: npm run codegen -w packages/nimbus-ui
-
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: make clippy
 
   deny:
     name: Rust Dependency Audit
@@ -167,8 +164,9 @@ jobs:
         # single-thread workaround. The official Node compatibility corpus is a
         # conformance signal with its own dedicated workflow; keep required
         # runtime tests focused on product runtime behavior and lightweight
-        # manifest/unit checks.
-        run: "cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::"
+        # manifest/unit checks. nimbus-runtime has zero workspace deps (per
+        # CLAUDE.md) so this lane intentionally has no Node/UI prerequisites.
+        run: make test-rust-runtime
 
   rust-workspace-tests:
     name: Rust Workspace Tests
@@ -209,8 +207,10 @@ jobs:
           tool: nextest
           fallback: none
 
-      # See rust-clippy's codegen step — nimbus-server include_str!s the
-      # convex codegen output, so generate it before any cargo invocation.
+      # `make test-rust-workspace` and `make test-rust-docs` both depend on the
+      # nimbus-ui dist target, so Make's graph runs codegen + SPA build before
+      # invoking cargo. Node is therefore a build prerequisite for any Rust
+      # lane that touches nimbus-server.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -220,26 +220,16 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Generate nimbus-ui convex codegen artifacts
-        run: npm run codegen -w packages/nimbus-ui
-
-      # http::ui::tests::inline_fouc_script_hash_matches_csp verifies the
-      # FOUC-script SHA-256 in dist/index.html matches the CSP pin, and the
-      # nimbus-server build.rs only writes a hash-less stub when dist is
-      # missing. Build the real SPA so that test sees production output.
-      - name: Build nimbus-ui SPA
-        run: npm run build -w packages/nimbus-ui
-
       - name: Run workspace test lane
         # Verification-harness corpus tests are ignored by default and run in
         # the dedicated harness matrix below, so this lane stays focused on the
         # main workspace suite outside the runtime crate.
-        run: cargo nextest run --workspace --exclude nimbus-runtime
+        run: make test-rust-workspace
 
       - name: Run workspace doctests
         # nextest intentionally does not run doctests, so keep this explicit
         # libtest pass to preserve the coverage of the previous cargo test lane.
-        run: cargo test --workspace --exclude nimbus-runtime --doc
+        run: make test-rust-docs
 
   external-provider-tests:
     name: External Provider Integration Tests
@@ -412,9 +402,10 @@ jobs:
           cache-bin: "false"
 
       # The server harness surface compiles nimbus-server, which include_str!s
-      # the convex codegen output from packages/nimbus-ui/.nimbus/convex/.
-      # The other surfaces don't strictly need it but generating it
-      # unconditionally is cheap and keeps the matrix uniform.
+      # the convex codegen output and rust-embeds the SPA dist. `make build-ui`
+      # runs both steps via the Makefile dependency graph. The other surfaces
+      # don't strictly need it, but building unconditionally keeps the matrix
+      # uniform and stays cheap on warm caches (Make no-ops when dist is fresh).
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -424,8 +415,8 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Generate nimbus-ui convex codegen artifacts
-        run: npm run codegen -w packages/nimbus-ui
+      - name: Build nimbus-ui artifacts
+        run: make build-ui
 
       - name: Run required verification harness corpus
         run: bash scripts/verification-harness.sh required ${{ matrix.surface }}
@@ -473,6 +464,8 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
 
+      # `make build-ui` runs codegen + SPA build via the Makefile dependency
+      # graph so the nimbus-server crate compiles regardless of matrix surface.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -482,8 +475,8 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Generate nimbus-ui convex codegen artifacts
-        run: npm run codegen -w packages/nimbus-ui
+      - name: Build nimbus-ui artifacts
+        run: make build-ui
 
       - name: Run nightly verification harness corpus
         run: bash scripts/verification-harness.sh nightly ${{ matrix.surface }}
@@ -632,7 +625,10 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # Coverage instruments the full workspace including nimbus-server.
+      # Coverage instruments the full workspace including nimbus-server, which
+      # include_str!s the convex codegen output and rust-embeds the SPA dist.
+      # `make build-ui` runs both steps via the Makefile dependency graph so
+      # the coverage cargo-llvm-cov invocation below sees real artifacts.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -642,14 +638,8 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Generate nimbus-ui convex codegen artifacts
-        run: npm run codegen -w packages/nimbus-ui
-
-      # Coverage runs the workspace test lane (including the FOUC inline
-      # script CSP-pin check), so dist/index.html must contain the real
-      # SPA output rather than the build.rs stub.
-      - name: Build nimbus-ui SPA
-        run: npm run build -w packages/nimbus-ui
+      - name: Build nimbus-ui artifacts
+        run: make build-ui
 
       - name: Start libsql provider fixture
         run: |
