@@ -166,8 +166,9 @@ fn plan_start_writes_bundle_and_manifest_under_backend_roots() {
     let rendered_bundle =
         fs::read_to_string(bundle_path).expect("bundle config should be readable");
     assert!(
-        rendered_bundle.contains("\"krun.port_map\": \"15432:5432,18080:8080\""),
-        "bundle config should preserve the host:guest TSI mapping"
+        rendered_bundle
+            .contains("\"krun.port_map\": \"127.0.0.1:15432:5432,127.0.0.1:18080:8080\""),
+        "bundle config should preserve the address:host:guest TSI mapping"
     );
 }
 
@@ -550,7 +551,7 @@ fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_por
     )
     .expect("third bundle config should be readable");
     assert!(
-        third_bundle.contains("\"krun.port_map\": \"15000:8080\""),
+        third_bundle.contains("\"krun.port_map\": \"127.0.0.1:15000:8080\""),
         "auto-assigned bindings should rewrite the krun port map annotation"
     );
 }

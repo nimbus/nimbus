@@ -41,11 +41,13 @@ compromise does not escape the VM boundary — the attack surface is the KVM
 hypervisor and virtio device model, which is significantly smaller than a
 container namespace boundary.
 
-### Small patch surface
+### Localized patch surface
 
-The crun patch is ~50 lines in `src/libcrun/handlers/krun.c`. It reads one
-OCI annotation (`krun.port_map`) and calls a single stable libkrun API
-(`krun_set_port_map`). No new syscall paths, no new IPC channels.
+The crun patch is localized to `src/libcrun/handlers/krun.c`. It reads one
+OCI annotation (`krun.port_map`), validates the annotation before side
+effects, and calls either legacy `krun_set_port_map()` for
+`HOST_PORT:GUEST_PORT` entries or a bind-address-capable libkrun hook for
+address-bearing entries. No new syscall paths or IPC channels are added.
 
 ### Validated OCI bundle generation
 
@@ -291,25 +293,25 @@ not mean the fixes have landed. Findings marked `implementation_required` or
 | F1 | `docs/plans/sandbox-microvm-hardening-plan.md` SMH1 | `implementation_landed_pending_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` now emits an explicit `linux.seccomp` profile with `SCMP_ACT_ERRNO` default denial and a broad krun/libkrun allowlist. Narrow only after Linux-host proof. | Unit test asserts generated OCI JSON contains the expected seccomp shape; Linux krun smoke still boots; manual host validation records `config.json` excerpt. |
 | F2 | `docs/plans/sandbox-microvm-hardening-plan.md` SMH1 | `implementation_landed_pending_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` now emits explicit `process.capabilities` bounding/effective/permitted sets for the host-side krun VMM process. | Unit test asserts capabilities are present and minimal; Linux krun smoke still boots; host validation records the rendered bundle. |
 | F3 | `docs/plans/sandbox-microvm-hardening-plan.md` SMH1 | `implementation_landed_pending_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` now emits `process.noNewPrivileges: true`. No crun or libkrun patch required. | Unit test asserts `process.noNewPrivileges == true`; Linux krun smoke still boots. |
-| F4 | `nimbus-crun` / future libkrun patch lane plus `nimbus-sandbox` bundle formatting | `production_blocker` | Preferred path is a libkrun bind-address patch, crun pass-through update, and Rust `format_port_map()` update to include `SandboxPortBinding::host_address`. Host firewall rules are an emergency mitigation, not the preferred production fix. | libkrun/crun patch verification; Rust unit test proves address-bearing `krun.port_map`; Linux smoke proves service is reachable on intended localhost address and not exposed on all host interfaces. |
+| F4 | `nimbus-crun` / future libkrun patch lane plus `nimbus-sandbox` bundle formatting | `nimbus_and_crun_fail_closed_pending_libkrun_hook_and_linux_smoke` | `crates/nimbus-sandbox/src/backends/krun/bundle.rs` now emits address-bearing `krun.port_map` entries from `SandboxPortBinding::host_address`, using `ADDR:HOST_PORT:GUEST_PORT` and `[IPv6]:HOST_PORT:GUEST_PORT`. `nimbus-crun` now validates those entries and fails closed unless libkrun exports `krun_set_port_map_with_bind_address`. The required libkrun hook shape is `int32_t krun_set_port_map_with_bind_address(uint32_t ctx_id, const char *const port_map[])`, preserving the same entry strings and binding each TSI listener to the requested host address. Host firewall rules remain an emergency mitigation, not the preferred production fix. | Rust unit tests prove address-bearing `krun.port_map`; nimbus-crun patch verification and parser tests pass; a libkrun bind-address implementation and Linux smoke must still prove service reachability only on the intended localhost address. |
 | F5 | Sandbox/distribution security posture | `accepted_residual_for_v1_with_tracking` | Document the root VMM process lifetime as residual risk while investigating non-root `/dev/kvm` or post-init privilege drop support. Do not hide it in runtime-engine work. | Operator docs name the residual risk; future investigation records whether libkrun can launch with kvm-group access or drop privileges after initialization. |
 | F6 | Distribution/deploy admission and operator policy | `policy_required` | Production service images should be digest-pinned and provenance-verified before Buildah mounts tenant-controlled content. Tags may remain local-dev convenience only. | Compose/deploy validation or operator documentation requires digest references for production; provenance/signature verification path recorded before tenant-controlled production images are accepted. |
-| F7 | `nimbus-crun` patch robustness lane | `implementation_required` | Add parser tests or fuzzing for `krun.port_map` in the patched crun code. Validate `u16` ranges, malformed strings, empty entries, and long input before `krun_set_port_map()`. | Patch CI exercises parser cases; `scripts/verify-crun-patch.sh` remains green against the pinned crun source. |
+| F7 | `nimbus-crun` patch robustness lane | `implementation_landed` | `nimbus-crun` now validates `u16` ranges, malformed strings, empty entries, duplicate host bind-address/port pairs, and long input before any libkrun port-map call. Parser coverage lives in `tests/port_map_parser_test.c` and is wired through `scripts/verify-port-map-parser.sh` plus `scripts/verify-patch.sh`. | `bash scripts/verify-patch.sh /Users/jack/src/github.com/containers/crun` passes against local crun `1.27.1` and runs parser malformed-input coverage. |
 
 ### Production Exposure Gates
 
 Before Nimbus claims production-safe multi-tenant microVM service exposure:
 
-- F4 must be fixed or explicitly replaced with an operator-enforced network
-  control that has the same localhost-only proof.
+- F4 must still land the libkrun bind-address hook and Linux localhost-only
+  smoke, or be explicitly replaced with an operator-enforced network control
+  that has the same localhost-only proof.
 - F6 must have a production image-admission policy for tenant-controlled
   images.
 - F1, F2, and F3 should be closed as the OCI bundle hardening baseline.
 - F5 may remain an accepted residual risk only if it is documented for
   operators and tied to the KVM/libkrun threat model.
-- F7 may remain lower priority only if Rust-side port binding validation stays
-  strict and the patched crun parser has at least targeted malformed-input
-  tests.
+- F7 is locally covered by targeted nimbus-crun malformed-input tests; keep it
+  green in the patched crun verification lane.
 
 Implementation order:
 
@@ -328,12 +330,13 @@ specific upstream versions.
 
 | Component | Upstream | Pinned Version | Patch | Purpose |
 |-----------|----------|---------------|-------|---------|
-| crun | containers/crun | 1.27 | `patches/crun/0001-krun-add-tsi-port-mapping-via-oci-annotation.patch` | Read `krun.port_map` OCI annotation, call `krun_set_port_map()` |
-| libkrun | containers/libkrun | 1.17.4 | None yet (proposed for F4) | Bind-address support in `krun_set_port_map()` |
+| crun | containers/crun | 1.27 | `patches/crun/0001-krun-add-tsi-port-mapping-via-oci-annotation.patch` | Read and validate `krun.port_map`, call legacy `krun_set_port_map()` for legacy entries, and fail closed for address-bearing entries unless libkrun has the bind-address hook |
+| libkrun | containers/libkrun | 1.17.4 | None yet (required for F4 closeout) | Add `krun_set_port_map_with_bind_address()` and bind TSI listeners to requested host addresses |
 | libkrunfw | containers/libkrunfw | 5.3.0 | None | Linux kernel with TSI patches (upstream) |
 
-Build scripts: `scripts/build-nimbus-crun.sh`, `scripts/verify-crun-patch.sh`
-CI: `.github/workflows/verify-nimbus-crun-patch.yml`
+Build scripts: `~/src/github.com/nimbus/nimbus-crun/scripts/build.sh`,
+`~/src/github.com/nimbus/nimbus-crun/scripts/verify-patch.sh`
+CI: `~/src/github.com/nimbus/nimbus-crun/.github/workflows/build.yml`
 
 ## Overall Assessment
 
@@ -342,8 +345,9 @@ the findings above represent a critical vulnerability today. They are
 hardening gaps that become increasingly relevant as the project moves toward
 multi-tenant production deployment.
 
-The patched crun introduces minimal new attack surface. The single-annotation,
-single-API-call design keeps the patch auditable and low-risk.
+The patched crun remains a single-annotation design with a localized parser.
+The parser now has targeted malformed-input coverage, and address-bearing
+entries fail closed until the libkrun bind-address hook exists.
 
 Priority order for remediation:
 
@@ -355,5 +359,4 @@ Priority order for remediation:
 3. **F1 + F2** (seccomp + capabilities) — standard OCI hardening, moderate
    effort, no upstream patches required
 4. **F6** (image trust) — operational policy, not a code change
-5. **F5 + F7** (root lifetime, C parsing) — lower priority, may require
-   upstream coordination
+5. **F5** (root lifetime) — accepted residual for v1 with tracking
