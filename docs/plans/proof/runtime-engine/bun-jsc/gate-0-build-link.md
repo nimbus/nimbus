@@ -2,7 +2,7 @@
 
 Date: 2026-05-21
 
-Nimbus revision: `d7cdf9f2` (`Define runtime engine seam gates`)
+Nimbus revision: `41d88f6b` (`Add Bun JSC ignored build proof`)
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
 
@@ -207,7 +207,10 @@ must avoid:
 - `Cli::start()` and `Global::exit(0)`
 - untracked local generated directories
 
-## Next Required Evidence
+## Follow-Up Evidence
+
+The next VM-construction investigation is recorded in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-1-vm-construction.md`.
 
 1. Add a Nimbus-side ignored proof target for VM construction below Bun's CLI
    path.
