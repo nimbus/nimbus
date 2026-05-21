@@ -6,12 +6,67 @@ export
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
+# === UI build dependency graph =============================================
+# nimbus-server `include_str!`s artifacts produced by the nimbus-ui JS
+# toolchain (`npm run codegen` + `npm run build`). These variables and
+# recipes make the dependency explicit so a fresh clone running
+# `make check` / `make test` / `make verify-desktop-ui` / `make ci-required`
+# walks the graph and builds UI prerequisites on demand.
+# See docs/plans/local-dev-canonicalization-plan.md for the design.
+
+UI_PKG := packages/nimbus-ui
+
+# Files whose change should trigger `convex codegen` re-run.
+UI_CODEGEN_SOURCES := \
+  $(shell find $(UI_PKG)/convex -type f -name '*.ts' -not -path '*/_generated/*' 2>/dev/null) \
+  $(UI_PKG)/scripts/generate-routes.mjs \
+  $(UI_PKG)/scripts/route-ignore-pattern.mjs \
+  $(UI_PKG)/package.json
+
+# Files produced by `npm run codegen` (consumed by nimbus-server via
+# include_str!). Documented for clarity; the Make target is the stamp below.
+UI_CODEGEN_OUTPUTS := \
+  $(UI_PKG)/.nimbus/convex/auth.config.json \
+  $(UI_PKG)/.nimbus/convex/bundle.mjs \
+  $(UI_PKG)/.nimbus/convex/bundle.sha256 \
+  $(UI_PKG)/.nimbus/convex/functions.json \
+  $(UI_PKG)/.nimbus/convex/http_routes.json \
+  $(UI_PKG)/.nimbus/convex/node_external_packages.json \
+  $(UI_PKG)/.nimbus/convex/schema.json
+
+# Track codegen freshness via bundle.sha256 — `convex codegen` writes it
+# at the end of its bundle step, so its mtime is a faithful sentinel for
+# the whole UI_CODEGEN_OUTPUTS set. (Edge case: if you manually delete
+# one of the other six outputs but leave bundle.sha256, Make won't notice
+# — `rm $(UI_CODEGEN_SENTINEL) && make` recovers.)
+UI_CODEGEN_SENTINEL := $(UI_PKG)/.nimbus/convex/bundle.sha256
+
+$(UI_CODEGEN_SENTINEL): $(UI_CODEGEN_SOURCES)
+	npm run codegen -w $(UI_PKG)
+
+# Files whose change should trigger SPA rebuild.
+UI_SPA_SOURCES := \
+  $(shell find $(UI_PKG)/src -type f 2>/dev/null) \
+  $(UI_PKG)/index.html \
+  $(UI_PKG)/vite.config.ts \
+  $(UI_PKG)/tsconfig.json \
+  $(UI_PKG)/package.json
+
+# Sentinel for the whole dist tree — consumed by nimbus-server's rust-embed
+# at compile time via `#[folder = "$CARGO_MANIFEST_DIR/../../packages/nimbus-ui/dist/"]`.
+UI_DIST_INDEX := $(UI_PKG)/dist/index.html
+
+$(UI_DIST_INDEX): $(UI_CODEGEN_SENTINEL) $(UI_SPA_SOURCES)
+	npm run build -w $(UI_PKG)
+# ===========================================================================
+
 # Default target
 all: check
 
 # Build the embedded operator UI bundle that nimbus-server serves at /ui/*.
-build-ui:
-	npm run build -w packages/nimbus-ui
+# Now a thin alias for the file-target above so `make build-ui` becomes
+# a no-op when dist/ is already fresh relative to UI sources.
+build-ui: $(UI_DIST_INDEX)
 
 # Debug build
 build: build-ui
@@ -22,7 +77,7 @@ release: build-ui
 	cargo build --release -p nimbus-bin
 
 # Check compilation without producing artifacts
-check:
+check: $(UI_DIST_INDEX)
 	$(SINGLE_FLIGHT) --key cargo-check-workspace -- cargo check --workspace
 
 # Format all Rust code
@@ -34,23 +89,23 @@ fmt-check:
 	cargo fmt --all --check
 
 # Run clippy lints
-clippy:
+clippy: $(UI_DIST_INDEX)
 	$(SINGLE_FLIGHT) --key cargo-clippy-workspace -- cargo clippy --workspace --all-targets -- -D warnings
 
 # Run Rust tests
-test:
+test: $(UI_DIST_INDEX)
 	$(SINGLE_FLIGHT) --key cargo-test-workspace -- cargo test --workspace
 
 # Run the CI runtime Rust test bucket
-test-rust-runtime:
+test-rust-runtime: $(UI_DIST_INDEX)
 	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::
 
 # Run the CI workspace Rust test bucket
-test-rust-workspace:
+test-rust-workspace: $(UI_DIST_INDEX)
 	NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 $(SINGLE_FLIGHT) --key cargo-nextest-workspace-ci -- cargo nextest run --workspace --exclude nimbus-runtime
 
 # Run the CI workspace doctest bucket
-test-rust-docs:
+test-rust-docs: $(UI_DIST_INDEX)
 	$(SINGLE_FLIGHT) --key cargo-doc-tests-workspace-ci -- cargo test --workspace --exclude nimbus-runtime --doc
 
 # Run explicit service-backed storage/engine provider integration tests
@@ -122,12 +177,11 @@ verify-release-archive-layout-helper:
 
 # Desktop UI browser-smoke harness. Builds the nimbus binary the
 # disposable-server fixture spawns, then runs the deterministic walk.
-# Convex codegen must run first because nimbus-server `include_str!`s
-# the artifacts it produces under packages/nimbus-ui/.nimbus/convex/.
-verify-desktop-ui:
-	npm run codegen -w packages/nimbus-ui
+# `$(UI_DIST_INDEX)` brings in both the convex codegen outputs (consumed
+# by nimbus-server via include_str!) and the SPA dist (consumed via
+# rust-embed); see the UI build dependency graph at the top of this file.
+verify-desktop-ui: $(UI_DIST_INDEX)
 	cargo build -p nimbus-bin
-	npm run build -w packages/nimbus-ui
 	npm run test:e2e:smoke -w packages/nimbus-ui
 
 # Focused verification harness slice
@@ -451,7 +505,7 @@ convex-demo-stop:
 
 # Required local CI-shaped check. Hosted CI still owns coverage upload and the
 # scheduled/manual Node compatibility evidence workflow.
-ci-required: fmt-check clippy deny test-rust-runtime test-rust-workspace test-rust-docs verify-harness build-js test-js proof-helpers
+ci-required: $(UI_DIST_INDEX) fmt-check clippy deny test-rust-runtime test-rust-workspace test-rust-docs verify-harness build-js test-js proof-helpers
 
 ci: ci-required
 
