@@ -374,8 +374,11 @@ button[type="submit"]:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-blue) 35%, transparent);
 }
 
-/* M3 — token-file disclosure. Demoted to a collapsed details/summary so
-   the recommended `nimbus auth url` path stays the primary CTA. */
+/* `How to login` disclosure. Catalogs every recovery path (Token + the
+   two URL flows) behind a collapsed details/summary so the form's
+   CONTINUE button and the hero `.shell-block` recovery surface stay the
+   primary CTAs. Class name kept as `.other-ways` so the existing
+   summary/body chrome rules don't need to fork. */
 .other-ways {
   margin: 14px 0 0;
   font-size: 14px;
@@ -420,11 +423,11 @@ button[type="submit"]:focus-visible {
   line-height: 1.5;
 }
 
-/* Eyebrow-titled section block. Used by the URL entries inside the
-   `Other ways to login` disclosure. The eyebrow title sits *above* its
-   body so the body gets the full card width — long URLs fit on one line,
-   and the layout mirrors how the ENTER AUTH TOKEN label sits above its
-   input. */
+/* Eyebrow-titled section block. Used by the entries inside the
+   `How to login` disclosure (Token + the two URL flows). The eyebrow
+   title sits *above* its body so the body gets the full card width —
+   long shell snippets and URLs fit on one line, and the layout mirrors
+   how the ENTER AUTH TOKEN label sits above its input. */
 .other-section + .other-section {
   margin-top: 16px;
   padding-top: 16px;
@@ -450,33 +453,114 @@ button[type="submit"]:focus-visible {
   margin-bottom: 0;
 }
 
-/* Standalone chip block that sits between the form's CONTINUE button and
-   the `Other ways to login` disclosure. No eyebrow title — the chip *is*
-   the recovery CTA, scaled up via `.copyable-hero` so it reads as a
-   primary affordance and not a footnote. Centered so the section stands
-   on its own under the form. */
-.auth-token-section {
-  margin-top: 16px;
-  text-align: center;
+/* Shell-snippet block — full-width recovery surface that sits between
+   the form's CONTINUE button and the `How to login` disclosure. Mirrors
+   DESIGN.md §Code Block (surface-2 fill, hairline border, 12px padding,
+   header strip with language label on the left and the copy affordance
+   on the right) and specializes it for a single shell command. The
+   entire block is a button so a click anywhere copies the value,
+   matching Stripe / Vercel / Convex prior art for shell-snippet copy
+   blocks. Full-width so the recovery surface reads as a peer of the
+   CONTINUE button above. */
+.shell-block {
+  display: block;
+  width: 100%;
+  margin: 16px 0 0;
+  padding: 0;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  text-align: left;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-text);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 120ms ease, color 120ms ease;
 }
 
-/* Hero variant of `.copyable` — same chrome (mono face, surface-2 fill,
-   hairline border, trailing copy/check glyph) at a larger scale so the
-   `nimbus auth token --copy` recovery path reads as a peer of the form's
-   CONTINUE button rather than a footnote. */
-.copyable-hero {
-  font-size: 15px;
-  padding: 8px 14px;
-  border-radius: 6px;
-  letter-spacing: 0.02em;
+.shell-block:hover {
+  border-color: color-mix(in oklch, var(--brand-blue) 55%, var(--color-border));
 }
 
-.copyable-hero::after {
-  width: 15px;
-  height: 15px;
-  margin-left: 8px;
-  vertical-align: -3px;
-  opacity: 0.6;
+.shell-block:focus-visible {
+  outline: none;
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-blue) 22%, transparent);
+}
+
+.shell-block[data-copied="true"] {
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+.shell-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: color-mix(in oklch, var(--color-surface-2) 55%, var(--color-bg));
+  border-bottom: 1px solid var(--color-border);
+}
+
+.shell-block-lang {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* Trailing copy/check glyph — pinned to the header strip's right edge so
+   the affordance sits in the canonical Code-Block position from DESIGN.md
+   §Code Block. Currentcolor-driven via mask so hover and data-copied
+   state stay in sync without a per-state SVG swap. */
+.shell-block-head::after {
+  content: "";
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  background-color: var(--color-muted);
+  -webkit-mask: var(--icon-copy) center/contain no-repeat;
+          mask: var(--icon-copy) center/contain no-repeat;
+  opacity: 0.75;
+  transition: opacity 120ms ease, background-color 120ms ease,
+              -webkit-mask-image 120ms ease, mask-image 120ms ease;
+}
+
+.shell-block:hover .shell-block-head::after,
+.shell-block:focus-visible .shell-block-head::after {
+  opacity: 1;
+  background-color: var(--color-text);
+}
+
+.shell-block[data-copied="true"] .shell-block-head::after {
+  -webkit-mask-image: var(--icon-check);
+          mask-image: var(--icon-check);
+  background-color: var(--brand-blue);
+  opacity: 1;
+}
+
+.shell-block-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.shell-block-prompt {
+  color: var(--brand-blue);
+  user-select: none;
+}
+
+.shell-block-cmd {
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.shell-block[data-copied="true"] .shell-block-cmd {
+  color: var(--brand-blue);
 }
 
 .local-only {
@@ -580,12 +664,19 @@ button[type="submit"]:focus-visible {
     </label>
     <button type="submit">Continue</button>
   </form>
-  <div class="auth-token-section">
-    <button type="button" class="copyable copyable-hero" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button>
-  </div>
+  <button type="button" class="shell-block" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">
+    <span class="shell-block-head">
+      <span class="shell-block-lang">shell</span>
+    </span>
+    <span class="shell-block-body"><span class="shell-block-prompt" aria-hidden="true">$</span><span class="shell-block-cmd">nimbus auth token --copy</span></span>
+  </button>
   <details class="other-ways">
-    <summary>Other ways to login</summary>
+    <summary>How to login</summary>
     <div class="other-ways-body">
+      <section class="other-section">
+        <h2 class="other-section-title">Token</h2>
+        <p class="other-section-body">Run <button type="button" class="copyable" data-copy="nimbus auth token --copy" aria-label="Copy: nimbus auth token --copy">nimbus auth token --copy</button> to copy your local admin token to the clipboard, then paste it into the field above.</p>
+      </section>
       <section class="other-section">
         <h2 class="other-section-title">Auto Login</h2>
         <p class="other-section-body">Run <button type="button" class="copyable" data-copy="nimbus auth url --open" aria-label="Copy: nimbus auth url --open">nimbus auth url --open</button> to open a single-use launch URL in your browser.</p>
