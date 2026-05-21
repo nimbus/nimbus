@@ -486,46 +486,72 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
             && !body.contains("id=\"local-token\""),
         "auth page should not retain prior `Local admin token` / `Local token` labels or their ids"
     );
-    // The `.hint` block is gone. The token recovery chip lives standalone
-    // (no eyebrow title) between the CONTINUE button and the `Other ways
-    // to login` disclosure, scaled up via `.copyable-hero` so it reads as
-    // a peer of the form rather than a footnote.
+    // The `.hint` block is gone. The token recovery surface is a
+    // full-width `.shell-block` (DESIGN.md §Code Block treatment —
+    // surface-2 fill, hairline border, header strip with `shell`
+    // language label + copy affordance, `$` prompt body) that sits
+    // between the CONTINUE button and the `How to login` disclosure.
+    // The disclosure now catalogs every recovery path (Token first, then
+    // the two URL flows) so it reads as the complete how-to-login menu.
     assert!(
         !body.contains("class=\"hint\""),
         "auth page should no longer render the standalone `.hint` block"
     );
     assert!(
+        !body.contains("auth-token-section") && !body.contains("copyable-hero"),
+        "auth page should no longer render the legacy `.auth-token-section` / `.copyable-hero` chrome"
+    );
+    assert!(
         body.contains("<details class=\"other-ways\"")
-            && body.contains("<summary>Other ways to login</summary>"),
-        "auth page should wrap the URL recovery flows inside an `Other ways to login` disclosure"
+            && body.contains("<summary>How to login</summary>")
+            && !body.contains("Other ways to login"),
+        "auth page should wrap the recovery catalog inside a `How to login` disclosure"
     );
     assert!(
-        body.contains("class=\"auth-token-section\"")
-            && body.contains("class=\"copyable copyable-hero\"")
-            && body.contains("data-copy=\"nimbus auth token --copy\""),
-        "auth page should expose a standalone, untitled `nimbus auth token --copy` chip scaled via `.copyable-hero`"
+        body.contains("<button type=\"button\" class=\"shell-block\"")
+            && body.contains("data-copy=\"nimbus auth token --copy\"")
+            && body.contains("<span class=\"shell-block-lang\">shell</span>")
+            && body.contains("<span class=\"shell-block-prompt\"")
+            && body.contains(
+                "<span class=\"shell-block-cmd\">nimbus auth token --copy</span>",
+            ),
+        "auth page should expose a full-width `.shell-block` with a `shell` language label, `$` prompt, and `nimbus auth token --copy` body"
     );
     assert!(
-        !body.contains("auth-token-section\">\n    <h2")
-            && !body.contains(">Auth Token</h2>"),
-        "auth page should not render an `Auth Token` eyebrow title above the standalone chip"
+        body.contains("<h2 class=\"other-section-title\">Token</h2>")
+            && body.contains("<h2 class=\"other-section-title\">Auto Login</h2>")
+            && body.contains("<h2 class=\"other-section-title\">Copy URL</h2>"),
+        "`How to login` disclosure should contain Token, Auto Login, and Copy URL entries"
     );
-    let auth_token_pos = body
-        .find("<div class=\"auth-token-section\">")
-        .expect("auth-token-section must render on the unauthenticated page");
+    let token_pos = body
+        .find("<h2 class=\"other-section-title\">Token</h2>")
+        .expect("Token section must render inside the disclosure");
+    let auto_login_pos = body
+        .find("<h2 class=\"other-section-title\">Auto Login</h2>")
+        .expect("Auto Login section must render inside the disclosure");
+    let copy_url_pos = body
+        .find("<h2 class=\"other-section-title\">Copy URL</h2>")
+        .expect("Copy URL section must render inside the disclosure");
+    assert!(
+        token_pos < auto_login_pos && auto_login_pos < copy_url_pos,
+        "`Token` must be the first option inside the `How to login` disclosure"
+    );
+    let shell_block_pos = body
+        .find("<button type=\"button\" class=\"shell-block\"")
+        .expect(".shell-block must render on the unauthenticated page");
     let disclosure_pos = body
         .find("<details class=\"other-ways\"")
-        .expect("`Other ways to login` disclosure must render on the unauthenticated page");
+        .expect("`How to login` disclosure must render on the unauthenticated page");
     let continue_pos = body
         .find("<button type=\"submit\">Continue</button>")
         .expect("`Continue` submit button must render on the unauthenticated page");
     assert!(
-        continue_pos < auth_token_pos && auth_token_pos < disclosure_pos,
-        "standalone token chip must sit between the CONTINUE button and the `Other ways to login` disclosure"
+        continue_pos < shell_block_pos && shell_block_pos < disclosure_pos,
+        "`.shell-block` must sit between the CONTINUE button and the `How to login` disclosure"
     );
     assert!(
-        !body.contains("<div class=\"other-ways-body\">\n      <button type=\"button\" class=\"copyable copyable-hero\""),
-        "standalone token chip must not be nested back inside `.other-ways-body`"
+        !body.contains("<div class=\"other-ways-body\">\n      <button type=\"button\" class=\"shell-block\""),
+        "`.shell-block` must not be nested back inside `.other-ways-body`"
     );
     // CL3: the auth-page chrome should no longer *use* the
     // operator-console `--color-brand` token; the page is brand-tier only.
