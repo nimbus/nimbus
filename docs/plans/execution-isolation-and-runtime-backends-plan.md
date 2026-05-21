@@ -260,6 +260,28 @@ Settled EIB2 decisions:
   container equivalent; runtime code reaches them through declared service
   bindings rather than direct host authority
 
+## EIB3 Bun/JSC Viability And Fork Decision
+
+Status: `done` as of 2026-05-21.
+
+Decision record:
+`docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md`
+
+Settled EIB3 decisions:
+
+- Bun/JSC remains proof-only and maps to `in_process_trusted_only`
+- do not create a Nimbus-maintained Bun fork yet
+- hold the current local Bun patch as proof evidence, not as a production
+  dependency
+- do not upstream the local patch shape yet because the exact production policy
+  hooks are not known until the permission and memory gates run
+- the next Bun/JSC proof gate is Gate 11: permission-surface containment
+  inventory
+- a fork becomes justified only if Nimbus chooses to ship Bun/JSC, upstream
+  cannot accept the required embeddable/runtime-policy hooks, and the remaining
+  delta is small enough to carry across Bun, WebKit/JSC, native build, and
+  security-update churn
+
 ## Phase Status Ledger
 
 | Phase | Status | Goal | Verification |
@@ -267,7 +289,7 @@ Settled EIB2 decisions:
 | EIB0 | `done` | Create this successor control plane and archive the completed runtime engine seam plan. | Documentation diff check. |
 | EIB1 | `done` | Build the execution-boundary ownership map across runtime, sandbox, wasmtime, WASI agent, admission, and security-audit plans. | Source/doc review checklist recorded; `git diff --check`. |
 | EIB2 | `done` | Define trust tiers and capability policy shared by in-process engines, WASM components, and sandboxed services. | `docs/architecture/runtime/permission-model.md` updated; no code changes; `git diff --check`. |
-| EIB3 | `todo` | Decide Bun/JSC next proof gates and fork posture from permission, memory, package, and lifecycle evidence. | Bun/Nimbus proof transcript or explicit blocked decision. |
+| EIB3 | `done` | Decide Bun/JSC next proof gates and fork posture from permission, memory, package, and lifecycle evidence. | Decision record added; no code changes; `git diff --check`. |
 | EIB4 | `todo` | Route sandbox isolation audit findings into implementation, distribution, or accepted-risk owners. | Updated security audit and owning plan links; `git diff --check`. |
 | EIB5 | `todo` | Align wasmtime and WASI agent plans with the shared trust/capability vocabulary. | Plan updates plus any focused schema/policy tests if code changes. |
 | EIB6 | `todo` | Define admission/resource gates only where measured execution or sandbox resources need protection. | Experiment or review report with resource, overload behavior, and metrics. |
@@ -344,7 +366,7 @@ Completion notes:
 
 ### EIB3: Bun/JSC Viability And Fork Decision
 
-Status: `todo`
+Status: `done`
 
 Deliverables:
 
@@ -359,6 +381,14 @@ Acceptance criteria:
 - Bun/JSC remains proof-only unless all required evidence exists
 - any fork recommendation lists maintenance cost, upstream delta, and exact
   APIs/hooks Nimbus needs
+
+Completion notes:
+
+- decision record added at
+  `docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md`
+- Bun/JSC remains proof-only and `in_process_trusted_only`
+- next proof gate is permission-surface containment inventory
+- no fork recommended yet; required fork evidence and hook list are recorded
 
 ### EIB4: Sandbox Isolation Audit Routing
 
@@ -446,3 +476,4 @@ Acceptance criteria:
 | 2026-05-21 | EIB0 | `done` | Created this active successor plan after the runtime engine seam plan completed RS0-RS6 and Bun/JSC gates 1-10. Archived the completed runtime seam plan as the historical baseline, made this plan the routing point for future runtime-engine, Bun/JSC, wasmtime, WASI agent, sandbox isolation, and execution-admission work, and added the autonomous `/goal` prompt for this plan. | Documentation-only change; `git diff --check` passed for touched docs. |
 | 2026-05-21 | EIB1 | `done` | Recorded the execution-boundary ownership map across runtime scheduling, backend invocation, bundle metadata, host-call transport, generated artifact metadata, server runtime selection, sandbox lifecycle, krun/OCI hardening, wasmtime, WASI agent capabilities, admission/resource gates, and engine/storage host paths. Confirmed the next implementation gate is EIB2 trust tiers and capability policy, not Bun/JSC or sandbox implementation. | Source/doc review checklist recorded; `git diff --check -- docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB2 | `done` | Added the shared execution trust-tier vocabulary and capability matrix to `docs/architecture/runtime/permission-model.md`, then recorded the settled assignments in this plan: Deno/V8 application lanes may be `in_process_untrusted`, privileged/tooling in-process work is `in_process_trusted_only`, Bun/JSC remains proof-only/trusted-only, wasmtime and WASI agent capabilities remain deferred under `wasm_capability_sandbox`, and sandboxed services are `microvm_service`. | Documentation-only change; `git diff --check -- docs/architecture/runtime/permission-model.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
+| 2026-05-21 | EIB3 | `done` | Recorded the Bun/JSC viability and fork decision after reviewing Bun commit `ea677357e3` and the Gate 10 timeout/cancel proof. Bun/JSC stays proof-only and `in_process_trusted_only`; no Nimbus-maintained Bun fork is recommended yet; the current local patch is proof evidence; the next proof gate is permission-surface containment inventory covering Bun globals, Node modules, dynamic import/package loading, web/network surfaces, workers, subprocess, FFI/native addons, env, and filesystem behavior. | Decision-only documentation update; `git diff --check -- docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
