@@ -12,6 +12,8 @@ This plan starts from the completed execution-boundary baseline:
 
 - **Status:** `active`
 - **Primary owner:** this plan
+- **Autonomous goal prompt:**
+  `docs/plans/prompts/sandbox-microvm-hardening-goal.md`
 - **Source audit:**
   `docs/plans/security/sandbox-isolation-audit.md`
 - **Architecture baseline:**
