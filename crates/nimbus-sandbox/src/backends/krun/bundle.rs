@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -439,6 +440,22 @@ fn validate_port_bindings(port_bindings: &[SandboxPortBinding]) -> Result<()> {
                 message: format!("duplicate sandbox port binding name: {}", port_binding.name),
             });
         }
+        if port_binding.host_port == 0 {
+            return Err(SandboxError::InvalidSpec {
+                message: format!(
+                    "krun sandbox host_port must be greater than zero for binding {}",
+                    port_binding.name
+                ),
+            });
+        }
+        if port_binding.guest_port == 0 {
+            return Err(SandboxError::InvalidSpec {
+                message: format!(
+                    "krun sandbox guest_port must be greater than zero for binding {}",
+                    port_binding.name
+                ),
+            });
+        }
         if !host_ports.insert((port_binding.host_address, port_binding.host_port)) {
             return Err(SandboxError::InvalidSpec {
                 message: format!(
@@ -455,14 +472,29 @@ fn validate_port_bindings(port_bindings: &[SandboxPortBinding]) -> Result<()> {
 pub(crate) fn format_port_map(port_bindings: &[SandboxPortBinding]) -> String {
     port_bindings
         .iter()
-        .map(|binding| format!("{}:{}", binding.host_port, binding.guest_port))
+        .map(|binding| {
+            format!(
+                "{}:{}:{}",
+                format_port_map_host_address(binding.host_address),
+                binding.host_port,
+                binding.guest_port
+            )
+        })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn format_port_map_host_address(host_address: IpAddr) -> String {
+    match host_address {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => format!("[{address}]"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::path::Path;
 
     use serde_json::json;
@@ -471,7 +503,7 @@ mod tests {
     use nimbus_core::TenantId;
 
     use super::{
-        KrunBundleLayout, KrunBundleMount, KrunBundleOptions, build_bundle_config,
+        KrunBundleLayout, KrunBundleMount, KrunBundleOptions, build_bundle_config, format_port_map,
         write_bundle_config,
     };
     use crate::backend::SandboxBackendKind;
@@ -490,7 +522,7 @@ mod tests {
         assert_eq!(config["annotations"]["run.oci.handler"], "krun");
         assert_eq!(
             config["annotations"]["krun.port_map"],
-            "15432:5432,18080:8080"
+            "127.0.0.1:15432:5432,127.0.0.1:18080:8080"
         );
         assert_eq!(config["process"]["terminal"], false);
         assert_eq!(
@@ -530,9 +562,32 @@ mod tests {
 
         let rendered = fs::read_to_string(&layout.config_path).expect("config should be readable");
         assert!(
-            rendered.contains("\"krun.port_map\": \"15432:5432,18080:8080\""),
+            rendered.contains("\"krun.port_map\": \"127.0.0.1:15432:5432,127.0.0.1:18080:8080\""),
             "rendered config should include the expected krun port map annotation"
         );
+    }
+
+    #[test]
+    fn format_port_map_carries_configured_host_addresses() {
+        let port_bindings = [
+            SandboxPortBinding::tcp("loopback", 18080, 8080)
+                .with_host_address(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2))),
+            SandboxPortBinding::tcp("external", 18443, 8443)
+                .with_host_address(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))),
+        ];
+
+        assert_eq!(
+            format_port_map(&port_bindings),
+            "127.0.0.2:18080:8080,10.0.0.5:18443:8443"
+        );
+    }
+
+    #[test]
+    fn format_port_map_brackets_ipv6_host_addresses() {
+        let port_bindings = [SandboxPortBinding::tcp("ipv6", 18080, 8080)
+            .with_host_address(IpAddr::V6(Ipv6Addr::LOCALHOST))];
+
+        assert_eq!(format_port_map(&port_bindings), "[::1]:18080:8080");
     }
 
     #[test]
@@ -697,6 +752,38 @@ mod tests {
                 .to_string()
                 .contains("cpu_count requires memory_limit_bytes"),
             "expected actionable validation error, got: {error}"
+        );
+    }
+
+    #[test]
+    fn bundle_config_rejects_zero_host_port() {
+        let spec = sample_spec_with_rootfs(Path::new("/srv/rootfs"))
+            .with_port_binding(SandboxPortBinding::tcp("invalid-host", 0, 8080));
+
+        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect_err("zero host ports should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("host_port must be greater than zero"),
+            "expected actionable host port validation error, got: {error}"
+        );
+    }
+
+    #[test]
+    fn bundle_config_rejects_zero_guest_port() {
+        let spec = sample_spec_with_rootfs(Path::new("/srv/rootfs"))
+            .with_port_binding(SandboxPortBinding::tcp("invalid-guest", 18080, 0));
+
+        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect_err("zero guest ports should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("guest_port must be greater than zero"),
+            "expected actionable guest port validation error, got: {error}"
         );
     }
 
