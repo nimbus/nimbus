@@ -93,7 +93,7 @@ Reviewed on 2026-05-21.
 
 | Area | Current state | Required change |
 | --- | --- | --- |
-| `nimbus-crun` repo | local `main` is ahead of `origin/main` by parser hardening commit `576e1f9`; `origin/main` has `7f7eab0` refreshing to upstream crun `1.27.1`; published releases are `v1.27-nimbus.1` and `v1.27-nimbus.2`, both before `7f7eab0`; stale local `v1.27-neovex.1` tag was removed from this worktree | build against `nimbus-libkrun`, embed private lib lookup, verify bind-address symbol, tag and publish `v1.27.1-nimbus.1` |
+| `nimbus-crun` repo | `main` and tag `v1.27.1-nimbus.1` now point at `0c584de`; release includes upstream crun `1.27.1`, parser hardening commit `576e1f9`, paired nimbus-libkrun build commit `acf9b05`, and include-path fix `0c584de`; historical published releases `v1.27-nimbus.1` and `v1.27-nimbus.2` remain unchanged | done for NLS3; package/install paths must now consume `v1.27.1-nimbus.1` |
 | `scripts/install.sh` | downloads `nimbus` and `nimbus-crun`; Debian prints manual upstream libkrun/libkrunfw build instructions; Fedora installs distro `libkrun`/`libkrunfw` | resolve/download/install `nimbus-libkrun`; stop telling users to build upstream libkrun; stop using distro libkrun for Nimbus service execution |
 | `scripts/verify-install.sh` and inline verifier | check `+LIBKRUN` and generic shared-library presence | verify private lib path plus `krun_set_port_map_with_bind_address` symbol |
 | `scripts/verify-install-helper.sh` | mocked dry-run and latest-release fixtures know only `nimbus-crun` | add `nimbus-libkrun` version, release API, checksums, dry-run, and uninstall assertions |
@@ -125,8 +125,8 @@ manual libkrun builds as a supported install path.
 | NLS0 | `done` | Audit current repo impact and choose the Nimbus libkrun naming/distribution shape. | This plan records the reviewed files and naming decision. |
 | NLS1 | `done` | Create and tag the Nimbus-owned `nimbus/nimbus-libkrun` source repo. | `git ls-remote` shows `main` and `v1.17.4-nimbus.1`; tag contains the validated bind-address hook commit. |
 | NLS2 | `done` | Add `nimbus-libkrun` CI/release artifacts for Linux amd64/arm64. | Release has runtime archives, checksums, provenance, symbol proof, and libkrunfw version proof. |
-| NLS3 | `in_progress` | Rebuild `nimbus-crun` against the Nimbus-private libkrun stack. | `v1.27.1-nimbus.1` resolves private libkrun, has `+LIBKRUN`, and fails if the bind-address symbol is absent. |
-| NLS4 | `todo` | Update direct install/uninstall/verify flows. | Install helper dry-runs and real Linux proof install `nimbus`, `nimbus-libkrun`, and `nimbus-crun` together. |
+| NLS3 | `done` | Rebuild `nimbus-crun` against the Nimbus-private libkrun stack. | `v1.27.1-nimbus.1` has `$ORIGIN/lib` RUNPATH, `+LIBKRUN`, release provenance, and fail-closed missing-symbol build gating. |
+| NLS4 | `in_progress` | Update direct install/uninstall/verify flows. | Install helper dry-runs and real Linux proof install `nimbus`, `nimbus-libkrun`, and `nimbus-crun` together. |
 | NLS5 | `todo` | Update deb/rpm, apt, and COPR builders/workflows. | Package helper tests produce three packages/SRPMs and dependency metadata uses `nimbus-libkrun`. |
 | NLS6 | `todo` | Capture fresh Linux service smoke from installed artifacts and close docs. | Debian 13 and Fedora proof show localhost-only krun smoke plus private library resolution. |
 
@@ -292,7 +292,7 @@ Closeout evidence:
 
 ### NLS3: Paired `nimbus-crun` Build
 
-Status: `in_progress`
+Status: `done`
 
 Deliverables:
 
@@ -323,16 +323,70 @@ Acceptance criteria:
 - `nimbus-crun --version` shows `+LIBKRUN`
 - `readelf -d nimbus-crun-linux-amd64` or equivalent proof shows private
   RUNPATH/RPATH when used
-- `ldd /usr/libexec/nimbus/crun` on a proof host resolves `libkrun` to
-  `/usr/libexec/nimbus/lib/...`
+- crun's krun handler loads `libkrun` with `dlopen`; therefore `ldd` is not
+  expected to list `libkrun`, and `readelf` RUNPATH plus the NLS6 service smoke
+  prove private runtime resolution
 - missing `krun_set_port_map_with_bind_address` remains fail-closed
 - `gh release view v1.27.1-nimbus.1 --repo nimbus/nimbus-crun` shows release
   notes naming upstream crun `1.27.1` and paired `nimbus-libkrun`
   `v1.17.4-nimbus.1`
 
+Closeout evidence:
+
+- release URL:
+  `https://github.com/nimbus/nimbus-crun/releases/tag/v1.27.1-nimbus.1`
+- release workflow:
+  `https://github.com/nimbus/nimbus-crun/actions/runs/26259058355`
+- green main workflow before tagging:
+  `https://github.com/nimbus/nimbus-crun/actions/runs/26258974164`
+- release commit/tag:
+  - `git describe --tags --always` -> `v1.27.1-nimbus.1`
+  - `v1.27.1-nimbus.1` points at `0c584de`
+  - `0c584de` includes `7f7eab0`, `576e1f9`, and `acf9b05`
+- published assets:
+  - `nimbus-crun-linux-amd64`
+  - `nimbus-crun-linux-arm64`
+  - `checksums.txt`
+- checksums:
+  - `nimbus-crun-linux-amd64`:
+    `401ff1076ff0f34d7c0d367bbe72669b0df937a904be5102707838e0a0deca43`
+  - `nimbus-crun-linux-arm64`:
+    `fbc3aad6c2b79dc4345272a887dd2bedee820f22e35219ff59238ae8b130eb1a`
+- GitHub release metadata:
+  - `isDraft=false`
+  - `isPrerelease=false`
+  - asset digest for `checksums.txt`:
+    `sha256:c6a304ad8f67978996e9307148dc973002db9e373b3449d66a8939f46516c5e0`
+- provenance:
+  - `gh attestation verify ... --repo nimbus/nimbus-crun` succeeded
+  - attested subjects include both binaries and `checksums.txt`
+  - signer identity:
+    `https://github.com/nimbus/nimbus-crun/.github/workflows/build.yml@refs/tags/v1.27.1-nimbus.1`
+- minicloud Linux build proof:
+  - build helper consumed extracted
+    `nimbus-libkrun-linux-amd64.tar.gz` from `v1.17.4-nimbus.1`
+  - build helper reported
+    `build.libkrun.root=/tmp/nimbus-crun-build-proof-libkrun`
+  - build helper reported
+    `build.libkrun.shared_object=.../lib/libkrun.so.1.17.4`
+  - build helper reported
+    `build.libkrun.pkg_config=-L.../lib -lkrun`
+  - build helper reported `build.libkrun.linkage=dlopen`
+  - output version showed `+LIBKRUN`
+  - `readelf -d` showed `RUNPATH` of `$ORIGIN/lib`
+- minicloud missing-symbol proof:
+  - fake libkrun root without `krun_set_port_map_with_bind_address` failed
+    before build with exit code `69`
+- published binary proof:
+  - minicloud `sha256sum -c checksums.txt` returned `OK` for both release
+    binaries
+  - published amd64 binary `--version` showed `+LIBKRUN`
+  - `readelf -d` for both published amd64 and arm64 binaries showed
+    `Library runpath: [$ORIGIN/lib]`
+
 ### NLS4: Direct Install Script
 
-Status: `todo`
+Status: `in_progress`
 
 Deliverables:
 
