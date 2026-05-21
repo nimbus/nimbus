@@ -112,7 +112,7 @@ the host side) could gain additional privileges via setuid binaries.
 This is a standard OCI hardening step with no expected impact on krun/libkrun
 operation.
 
-**Resolution:** Single-line addition to the OCI bundle config in
+**Implementation route:** Single-line addition to the OCI bundle config in
 `crates/nimbus-sandbox/src/backends/krun/bundle.rs`. Add
 `"noNewPrivileges": true` to the `"process"` object in `build_bundle_config()`
 (line 138). The kernel sets `PR_SET_NO_NEW_PRIVS` on the crun process, which
@@ -276,6 +276,49 @@ numbers are in the valid `u16` range (`1-65535`) before passing to
 | F5 | Root VMM lifetime | Low | Low | Investigate non-root KVM access | High |
 | F6 | Buildah image trust | Medium | Low | Pin digests, verify provenance | Low (policy) |
 | F7 | C annotation parsing | Low | Low | Fuzz test the parser | Low |
+
+## EIB4 Owner Routing
+
+Status: routed on 2026-05-21 by
+`docs/plans/execution-isolation-and-runtime-backends-plan.md`.
+
+This routing table is the current owner map for the findings above. It does
+not mean the fixes have landed. Findings marked `implementation_required` or
+`policy_required` remain open until their verification path is recorded.
+
+| ID | Owner | Status | Route | Verification path |
+|----|-------|--------|-------|-------------------|
+| F1 | `nimbus-sandbox` OCI bundle hardening slice | `implementation_required` | Add an explicit `linux.seccomp` profile in `crates/nimbus-sandbox/src/backends/krun/bundle.rs`. Start from crun's default profile, then narrow only after Linux-host proof. | Unit test asserts generated OCI JSON contains the expected seccomp shape; Linux krun smoke still boots; manual host validation records `config.json` excerpt. |
+| F2 | `nimbus-sandbox` OCI bundle hardening slice | `implementation_required` | Add explicit `process.capabilities` bounding/effective/permitted sets in the generated OCI process config. Keep the minimum set tied to krun/libkrun launch requirements. | Unit test asserts capabilities are present and minimal; Linux krun smoke still boots; host validation records the rendered bundle. |
+| F3 | `nimbus-sandbox` OCI bundle hardening slice | `implementation_ready` | Add `process.noNewPrivileges: true` in `build_bundle_config()`. No crun or libkrun patch required. | Unit test asserts `process.noNewPrivileges == true`; Linux krun smoke still boots. |
+| F4 | `nimbus-crun` / future libkrun patch lane plus `nimbus-sandbox` bundle formatting | `production_blocker` | Preferred path is a libkrun bind-address patch, crun pass-through update, and Rust `format_port_map()` update to include `SandboxPortBinding::host_address`. Host firewall rules are an emergency mitigation, not the preferred production fix. | libkrun/crun patch verification; Rust unit test proves address-bearing `krun.port_map`; Linux smoke proves service is reachable on intended localhost address and not exposed on all host interfaces. |
+| F5 | Sandbox/distribution security posture | `accepted_residual_for_v1_with_tracking` | Document the root VMM process lifetime as residual risk while investigating non-root `/dev/kvm` or post-init privilege drop support. Do not hide it in runtime-engine work. | Operator docs name the residual risk; future investigation records whether libkrun can launch with kvm-group access or drop privileges after initialization. |
+| F6 | Distribution/deploy admission and operator policy | `policy_required` | Production service images should be digest-pinned and provenance-verified before Buildah mounts tenant-controlled content. Tags may remain local-dev convenience only. | Compose/deploy validation or operator documentation requires digest references for production; provenance/signature verification path recorded before tenant-controlled production images are accepted. |
+| F7 | `nimbus-crun` patch robustness lane | `implementation_required` | Add parser tests or fuzzing for `krun.port_map` in the patched crun code. Validate `u16` ranges, malformed strings, empty entries, and long input before `krun_set_port_map()`. | Patch CI exercises parser cases; `scripts/verify-crun-patch.sh` remains green against the pinned crun source. |
+
+### Production Exposure Gates
+
+Before Nimbus claims production-safe multi-tenant microVM service exposure:
+
+- F4 must be fixed or explicitly replaced with an operator-enforced network
+  control that has the same localhost-only proof.
+- F6 must have a production image-admission policy for tenant-controlled
+  images.
+- F1, F2, and F3 should be closed as the OCI bundle hardening baseline.
+- F5 may remain an accepted residual risk only if it is documented for
+  operators and tied to the KVM/libkrun threat model.
+- F7 may remain lower priority only if Rust-side port binding validation stays
+  strict and the patched crun parser has at least targeted malformed-input
+  tests.
+
+Implementation order:
+
+1. F3, because it is local, small, and has low regression risk.
+2. F4, because it is the highest practical exposure risk.
+3. F1 and F2 as the remaining OCI hardening baseline.
+4. F6 as distribution/deploy policy before tenant-controlled production
+   images.
+5. F7 parser robustness and F5 non-root/root-lifetime investigation.
 
 ## Patched Component Inventory
 

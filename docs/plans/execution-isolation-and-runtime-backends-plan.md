@@ -282,6 +282,28 @@ Settled EIB3 decisions:
   delta is small enough to carry across Bun, WebKit/JSC, native build, and
   security-update churn
 
+## EIB4 Sandbox Isolation Audit Routing
+
+Status: `done` as of 2026-05-21.
+
+Owner routing is recorded in
+`docs/plans/security/sandbox-isolation-audit.md#eib4-owner-routing`.
+
+Settled EIB4 decisions:
+
+- F1 seccomp, F2 capabilities, and F3 `noNewPrivileges` belong to a
+  `nimbus-sandbox` OCI bundle hardening slice
+- F4 TSI bind-address exposure is a production blocker for multi-tenant
+  microVM service exposure and belongs to the `nimbus-crun` / libkrun patch
+  lane plus Rust `format_port_map()` carry-through
+- F5 root VMM lifetime is accepted residual risk for v1 only with operator
+  documentation and continued non-root/drop-privilege investigation
+- F6 Buildah image trust belongs to distribution/deploy admission and operator
+  policy; tenant-controlled production images need digest/provenance policy
+- F7 crun annotation parsing belongs to the `nimbus-crun` parser robustness
+  lane
+- sandbox hardening remains separate from runtime-engine work
+
 ## Phase Status Ledger
 
 | Phase | Status | Goal | Verification |
@@ -290,7 +312,7 @@ Settled EIB3 decisions:
 | EIB1 | `done` | Build the execution-boundary ownership map across runtime, sandbox, wasmtime, WASI agent, admission, and security-audit plans. | Source/doc review checklist recorded; `git diff --check`. |
 | EIB2 | `done` | Define trust tiers and capability policy shared by in-process engines, WASM components, and sandboxed services. | `docs/architecture/runtime/permission-model.md` updated; no code changes; `git diff --check`. |
 | EIB3 | `done` | Decide Bun/JSC next proof gates and fork posture from permission, memory, package, and lifecycle evidence. | Decision record added; no code changes; `git diff --check`. |
-| EIB4 | `todo` | Route sandbox isolation audit findings into implementation, distribution, or accepted-risk owners. | Updated security audit and owning plan links; `git diff --check`. |
+| EIB4 | `done` | Route sandbox isolation audit findings into implementation, distribution, or accepted-risk owners. | Updated security audit owner routing; `git diff --check`. |
 | EIB5 | `todo` | Align wasmtime and WASI agent plans with the shared trust/capability vocabulary. | Plan updates plus any focused schema/policy tests if code changes. |
 | EIB6 | `todo` | Define admission/resource gates only where measured execution or sandbox resources need protection. | Experiment or review report with resource, overload behavior, and metrics. |
 | EIB7 | `todo` | Close the unified plan with a go/no-go matrix for runtime backend promotion and sandbox hardening. | All prior phases done and final execution log recorded. |
@@ -392,7 +414,7 @@ Completion notes:
 
 ### EIB4: Sandbox Isolation Audit Routing
 
-Status: `todo`
+Status: `done`
 
 Deliverables:
 
@@ -406,6 +428,13 @@ Acceptance criteria:
 
 - every audit finding has an owner, status, and verification path
 - sandbox-hardening work does not get hidden inside runtime-engine work
+
+Completion notes:
+
+- owner routing recorded in
+  `docs/plans/security/sandbox-isolation-audit.md#eib4-owner-routing`
+- production exposure gates recorded for multi-tenant microVM services
+- no code changes, so no sandbox tests were required
 
 ### EIB5: Wasmtime And WASI Agent Alignment
 
@@ -477,3 +506,4 @@ Acceptance criteria:
 | 2026-05-21 | EIB1 | `done` | Recorded the execution-boundary ownership map across runtime scheduling, backend invocation, bundle metadata, host-call transport, generated artifact metadata, server runtime selection, sandbox lifecycle, krun/OCI hardening, wasmtime, WASI agent capabilities, admission/resource gates, and engine/storage host paths. Confirmed the next implementation gate is EIB2 trust tiers and capability policy, not Bun/JSC or sandbox implementation. | Source/doc review checklist recorded; `git diff --check -- docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB2 | `done` | Added the shared execution trust-tier vocabulary and capability matrix to `docs/architecture/runtime/permission-model.md`, then recorded the settled assignments in this plan: Deno/V8 application lanes may be `in_process_untrusted`, privileged/tooling in-process work is `in_process_trusted_only`, Bun/JSC remains proof-only/trusted-only, wasmtime and WASI agent capabilities remain deferred under `wasm_capability_sandbox`, and sandboxed services are `microvm_service`. | Documentation-only change; `git diff --check -- docs/architecture/runtime/permission-model.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
 | 2026-05-21 | EIB3 | `done` | Recorded the Bun/JSC viability and fork decision after reviewing Bun commit `ea677357e3` and the Gate 10 timeout/cancel proof. Bun/JSC stays proof-only and `in_process_trusted_only`; no Nimbus-maintained Bun fork is recommended yet; the current local patch is proof evidence; the next proof gate is permission-surface containment inventory covering Bun globals, Node modules, dynamic import/package loading, web/network surfaces, workers, subprocess, FFI/native addons, env, and filesystem behavior. | Decision-only documentation update; `git diff --check -- docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
+| 2026-05-21 | EIB4 | `done` | Routed all sandbox isolation audit findings to concrete owners, statuses, and verification paths. F1/F2/F3 are a `nimbus-sandbox` OCI bundle hardening slice; F4 is a production blocker owned by the `nimbus-crun` / libkrun patch lane plus Rust port-map formatting; F5 is accepted residual v1 risk with operator documentation; F6 belongs to distribution/deploy image admission policy; F7 belongs to patched-crun parser robustness. | Documentation-only change; `git diff --check -- docs/plans/security/sandbox-isolation-audit.md docs/plans/execution-isolation-and-runtime-backends-plan.md` passed. |
