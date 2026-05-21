@@ -123,8 +123,8 @@ manual libkrun builds as a supported install path.
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
 | NLS0 | `done` | Audit current repo impact and choose the Nimbus libkrun naming/distribution shape. | This plan records the reviewed files and naming decision. |
-| NLS1 | `todo` | Create and tag the Nimbus-owned `nimbus/nimbus-libkrun` source repo. | `git ls-remote` shows `main` and `v1.17.4-nimbus.1`; tag contains the validated bind-address hook commit. |
-| NLS2 | `todo` | Add `nimbus-libkrun` CI/release artifacts for Linux amd64/arm64. | Release has runtime archives, checksums, provenance, symbol proof, and libkrunfw version proof. |
+| NLS1 | `done` | Create and tag the Nimbus-owned `nimbus/nimbus-libkrun` source repo. | `git ls-remote` shows `main` and `v1.17.4-nimbus.1`; tag contains the validated bind-address hook commit. |
+| NLS2 | `in_progress` | Add `nimbus-libkrun` CI/release artifacts for Linux amd64/arm64. | Release has runtime archives, checksums, provenance, symbol proof, and libkrunfw version proof. |
 | NLS3 | `todo` | Rebuild `nimbus-crun` against the Nimbus-private libkrun stack. | `v1.27.1-nimbus.1` resolves private libkrun, has `+LIBKRUN`, and fails if the bind-address symbol is absent. |
 | NLS4 | `todo` | Update direct install/uninstall/verify flows. | Install helper dry-runs and real Linux proof install `nimbus`, `nimbus-libkrun`, and `nimbus-crun` together. |
 | NLS5 | `todo` | Update deb/rpm, apt, and COPR builders/workflows. | Package helper tests produce three packages/SRPMs and dependency metadata uses `nimbus-libkrun`. |
@@ -150,7 +150,7 @@ Acceptance criteria:
 
 ### NLS1: Source Repo Bootstrap
 
-Status: `todo`
+Status: `done`
 
 Deliverables:
 
@@ -184,9 +184,28 @@ git tag -a v1.17.4-nimbus.1 -m "nimbus-libkrun v1.17.4-nimbus.1"
 git push origin main v1.17.4-nimbus.1
 ```
 
+Closeout evidence:
+
+- GitHub repo: `https://github.com/nimbus/nimbus-libkrun`
+- Visibility/shape: public, non-fork, default branch `main`
+- `main`: `555972548245c7df12930dd837baef05ce529578`
+- tag: `v1.17.4-nimbus.1`
+- source base: upstream `v1.17.4`
+- Nimbus patch commit: `5559725 Add krun TSI bind address hook`
+- proof source: minicloud `nimbus-bind-address` commit `fc13a8e`
+- remote tag cleanup: accidental upstream `v0.2.0` tag was deleted from
+  `origin`; local `push.followTags=false` prevents future incidental upstream
+  tag publication from this worktree
+- verification:
+  - `git describe --tags --always` -> `v1.17.4-nimbus.1`
+  - `git diff --stat v1.17.4..v1.17.4-nimbus.1` shows only the validated
+    bind-address hook delta
+  - `git ls-remote --heads origin main` returns `5559725...`
+  - `git ls-remote --tags origin` returns only `v1.17.4-nimbus.1`
+
 ### NLS2: Libkrun Release Artifacts
 
-Status: `todo`
+Status: `in_progress`
 
 Deliverables:
 
