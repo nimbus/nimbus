@@ -1,12 +1,13 @@
 use crate::backends::v8::ReusableV8Runtime;
 use crate::limits::RuntimePoolKind;
+use crate::runtime::RuntimeHost;
 
 use super::CooperativeWorkerLoop;
 
 impl CooperativeWorkerLoop {
     pub(super) fn retain_or_defer_runtime_drop(
         &mut self,
-        runtime_owner: &crate::runtime::NimbusRuntime,
+        host: &RuntimeHost,
         bundle: &crate::runtime::RuntimeBundle,
         context: &crate::RuntimeInvocationContext,
         mut runtime: ReusableV8Runtime,
@@ -18,8 +19,9 @@ impl CooperativeWorkerLoop {
                     return;
                 }
                 runtime.warm_reuse_count = runtime.warm_reuse_count.saturating_add(1);
+                let runtime_owner = host.runtime_with_policy(self.policy.clone());
                 self.v8_runtime_pool.return_runtime_for_invocation(
-                    runtime_owner,
+                    &runtime_owner,
                     bundle,
                     Some(context),
                     runtime,

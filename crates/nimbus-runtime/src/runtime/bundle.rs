@@ -1,15 +1,20 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
 use crate::backends::v8::embedder::ModuleSpecifier;
 use crate::error::{NimbusRuntimeError, Result};
+use crate::limits::{
+    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget, RuntimeLimits,
+};
 use crate::module_loader::BundleModuleCodeCache;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RuntimeBundleIdentity {
     tenant_label: Option<String>,
+    content_kind: RuntimeBundleContentKind,
     entrypoint: PathBuf,
     expected_sha256: Option<String>,
 }
@@ -17,6 +22,10 @@ pub struct RuntimeBundleIdentity {
 impl RuntimeBundleIdentity {
     pub fn tenant_label(&self) -> Option<&str> {
         self.tenant_label.as_deref()
+    }
+
+    pub fn content_kind(&self) -> RuntimeBundleContentKind {
+        self.content_kind
     }
 
     pub fn entrypoint(&self) -> &Path {
@@ -30,13 +39,31 @@ impl RuntimeBundleIdentity {
 
 #[derive(Debug)]
 struct RuntimeBundleShared {
+    content_kind: RuntimeBundleContentKind,
     entrypoint: PathBuf,
     canonical_entrypoint: Option<PathBuf>,
     canonical_module_root: Option<PathBuf>,
     module_specifier: std::result::Result<ModuleSpecifier, String>,
     expected_sha256: Option<String>,
     identity: RuntimeBundleIdentity,
-    module_code_cache: Arc<BundleModuleCodeCache>,
+    module_code_caches: Mutex<HashMap<RuntimeBundleEngineCacheKey, Arc<BundleModuleCodeCache>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RuntimeBundleEngineCacheKey {
+    backend_kind: RuntimeBackendKind,
+    content_kind: RuntimeBundleContentKind,
+    compatibility_target: RuntimeCompatibilityTarget,
+}
+
+impl RuntimeBundleEngineCacheKey {
+    fn for_limits(limits: &RuntimeLimits) -> Self {
+        Self {
+            backend_kind: limits.backend_kind,
+            content_kind: limits.bundle_content_kind,
+            compatibility_target: limits.compatibility_target,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +81,13 @@ impl Eq for RuntimeBundle {}
 
 impl RuntimeBundle {
     pub fn new(entrypoint: impl AsRef<Path>) -> Self {
-        Self::from_parts(entrypoint.as_ref().to_path_buf(), None, None, None)
+        Self::from_parts(
+            entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContentKind::JavaScript,
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn with_expected_sha256(
@@ -63,6 +96,7 @@ impl RuntimeBundle {
     ) -> Result<Self> {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContentKind::JavaScript,
             Some(normalize_sha256(expected_sha256.as_ref())?),
             None,
             None,
@@ -76,6 +110,7 @@ impl RuntimeBundle {
     ) -> Result<Self> {
         Ok(Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContentKind::JavaScript,
             Some(normalize_sha256(expected_sha256.as_ref())?),
             Some(tenant_label.into()),
             None,
@@ -88,6 +123,7 @@ impl RuntimeBundle {
     ) -> Self {
         Self::from_parts(
             entrypoint.as_ref().to_path_buf(),
+            RuntimeBundleContentKind::JavaScript,
             None,
             None,
             Some(module_root.as_ref().to_path_buf()),
@@ -96,6 +132,10 @@ impl RuntimeBundle {
 
     pub fn entrypoint(&self) -> &Path {
         &self.shared.entrypoint
+    }
+
+    pub fn content_kind(&self) -> RuntimeBundleContentKind {
+        self.shared.content_kind
     }
 
     pub fn canonical_entrypoint(&self) -> Option<&Path> {
@@ -154,6 +194,7 @@ impl RuntimeBundle {
 
     fn from_parts(
         entrypoint: PathBuf,
+        content_kind: RuntimeBundleContentKind,
         expected_sha256: Option<String>,
         tenant_label: Option<String>,
         explicit_module_root: Option<PathBuf>,
@@ -183,6 +224,7 @@ impl RuntimeBundle {
             });
         let identity = RuntimeBundleIdentity {
             tenant_label,
+            content_kind,
             entrypoint: canonical_entrypoint
                 .clone()
                 .unwrap_or_else(|| entrypoint.clone()),
@@ -190,19 +232,29 @@ impl RuntimeBundle {
         };
         Self {
             shared: Arc::new(RuntimeBundleShared {
+                content_kind,
                 entrypoint,
                 canonical_entrypoint,
                 canonical_module_root,
                 module_specifier,
                 expected_sha256,
                 identity,
-                module_code_cache: Arc::new(BundleModuleCodeCache::new()),
+                module_code_caches: Mutex::new(HashMap::new()),
             }),
         }
     }
 
-    pub(crate) fn module_code_cache(&self) -> Arc<BundleModuleCodeCache> {
-        self.shared.module_code_cache.clone()
+    pub(crate) fn module_code_cache(&self, limits: &RuntimeLimits) -> Arc<BundleModuleCodeCache> {
+        let key = RuntimeBundleEngineCacheKey::for_limits(limits);
+        let mut caches = self
+            .shared
+            .module_code_caches
+            .lock()
+            .expect("bundle module code cache lock should not be poisoned");
+        caches
+            .entry(key)
+            .or_insert_with(|| Arc::new(BundleModuleCodeCache::new()))
+            .clone()
     }
 
     #[cfg(test)]
@@ -212,12 +264,33 @@ impl RuntimeBundle {
 
     #[cfg(test)]
     pub(crate) fn module_code_cache_entry_count(&self) -> usize {
-        self.shared.module_code_cache.entry_count()
+        self.shared
+            .module_code_caches
+            .lock()
+            .expect("bundle module code cache lock should not be poisoned")
+            .values()
+            .map(|cache| cache.entry_count())
+            .sum()
     }
 
     #[cfg(test)]
     pub(crate) fn module_code_cache_write_count(&self) -> usize {
-        self.shared.module_code_cache.write_count()
+        self.shared
+            .module_code_caches
+            .lock()
+            .expect("bundle module code cache lock should not be poisoned")
+            .values()
+            .map(|cache| cache.write_count())
+            .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn module_code_cache_partition_count(&self) -> usize {
+        self.shared
+            .module_code_caches
+            .lock()
+            .expect("bundle module code cache lock should not be poisoned")
+            .len()
     }
 }
 

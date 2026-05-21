@@ -58,10 +58,10 @@ pub(crate) fn create_v8_startup_snapshot(
     #[cfg(test)]
     V8_BOOTSTRAP_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);
 
-    // BOOTSTRAP_SOURCE runs here too, so keep it snapshot-safe. In particular,
-    // post-bootstrap cleanup like `delete globalThis.Deno` must stay in the
-    // separate finalize step for ordinary runtimes until the fork offers an
-    // explicit snapshot-safe replacement.
+    // The bootstrap sources run here too, so keep them snapshot-safe. In
+    // particular, post-bootstrap cleanup like `delete globalThis.Deno` must
+    // stay in the separate finalize step for ordinary runtimes until the fork
+    // offers an explicit snapshot-safe replacement.
     let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
         extensions: snapshot_extensions(compatibility_target),
         extension_transpiler: extension_transpiler_for_target(compatibility_target),

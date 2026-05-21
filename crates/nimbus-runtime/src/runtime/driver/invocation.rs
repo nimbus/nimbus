@@ -91,6 +91,8 @@ impl NimbusRuntime {
             permit,
         } = invocation;
         bundle.verify_integrity()?;
+        self.policy
+            .validate_bundle_content_kind(bundle.content_kind())?;
         let mut v8_runtime_pool = v8_runtime_pool;
         let runtime = match v8_runtime_pool.as_deref_mut() {
             Some(pool) => pool.take_runtime_for_invocation(self, &bundle, Some(&context))?,

@@ -42,23 +42,38 @@ impl ConvexRegistry {
         match self
             .functions
             .get(function_name)
-            .and_then(ConvexFunctionDefinition::runtime_compatibility_target)
+            .map(ConvexFunctionDefinition::runtime_selection)
         {
-            Some(RuntimeCompatibilityTarget::Node20) => (
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::V8,
+                compatibility_target: RuntimeCompatibilityTarget::Node20,
+                ..
+            }) => (
                 self.node20_runtime_executor.clone(),
                 self.node20_runtime_policy.clone(),
             ),
-            Some(RuntimeCompatibilityTarget::Node22) => (
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::V8,
+                compatibility_target: RuntimeCompatibilityTarget::Node22,
+                ..
+            }) => (
                 self.node22_runtime_executor.clone(),
                 self.node22_runtime_policy.clone(),
             ),
-            Some(RuntimeCompatibilityTarget::Node24) => (
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::V8,
+                compatibility_target: RuntimeCompatibilityTarget::Node24,
+                ..
+            }) => (
                 self.node24_runtime_executor.clone(),
                 self.node24_runtime_policy.clone(),
             ),
-            Some(RuntimeCompatibilityTarget::WebStandardIsolate) | None => {
-                (self.runtime_executor(), self.runtime_policy())
-            }
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::V8,
+                compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+                ..
+            })
+            | None => (self.runtime_executor(), self.runtime_policy()),
         }
     }
 

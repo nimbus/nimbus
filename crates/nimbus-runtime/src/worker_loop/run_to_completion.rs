@@ -144,7 +144,8 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
                 |permit| {
                     self.backend.invoke(RuntimeBackendInvocation {
                         watchdog: self.watchdog.clone(),
-                        runtime: job.runtime.clone().into_policy(self.policy.clone()),
+                        host: job.host.clone(),
+                        policy: self.policy.clone(),
                         bundle: job.bundle.clone(),
                         request: job.request.clone(),
                         context: job.context.clone(),

@@ -337,7 +337,7 @@ mod tests {
     use crate::executor::queue::RuntimeWorkerResultSender;
     use crate::host::{HostBridge, HostCallRequest};
     use crate::metrics::RuntimeMetrics;
-    use crate::runtime::{InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle};
+    use crate::runtime::{InvocationKind, InvocationRequest, RuntimeBundle, RuntimeHost};
 
     struct NoopHost;
 
@@ -361,7 +361,7 @@ mod tests {
             services: Default::default(),
         };
         RuntimeWorkerJob {
-            runtime: NimbusRuntime::new(Arc::new(NoopHost)),
+            host: RuntimeHost::new(Arc::new(NoopHost)),
             bundle: RuntimeBundle::new(&bundle_path),
             request: request.clone(),
             context: RuntimeInvocationContext::top_level(&request),

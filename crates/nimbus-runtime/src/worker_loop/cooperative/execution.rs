@@ -118,7 +118,7 @@ impl CooperativeWorkerLoop {
         }
 
         self.policy.metrics().record_worker_dispatch();
-        let runtime = job.runtime.clone().into_policy(self.policy.clone());
+        let runtime = job.host.runtime_with_policy(self.policy.clone());
         let worker_runtime = &self.worker_runtime;
         let v8_runtime_pool = &mut self.v8_runtime_pool;
         let watchdog = self.watchdog.clone();

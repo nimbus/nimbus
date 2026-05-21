@@ -219,6 +219,7 @@ export {};
 
     assert_eq!(bundle.module_code_cache_entry_count(), 0);
     assert_eq!(bundle.module_code_cache_write_count(), 0);
+    assert_eq!(bundle.module_code_cache_partition_count(), 0);
 
     let first = runtime
         .invoke_bundle(&bundle, &request)
@@ -228,6 +229,7 @@ export {};
 
     let first_entry_count = bundle.module_code_cache_entry_count();
     let first_write_count = bundle.module_code_cache_write_count();
+    assert_eq!(bundle.module_code_cache_partition_count(), 1);
     assert!(
         first_entry_count >= 2,
         "expected main module and dependency to populate cache"
@@ -251,6 +253,21 @@ export {};
     assert!(metrics.bundle_module_load_nanos_total > 0);
     assert_eq!(metrics.bundle_evaluations, 2);
     assert!(metrics.bundle_evaluation_nanos_total > 0);
+}
+
+#[test]
+fn runtime_bundle_module_code_cache_is_partitioned_by_engine_config() {
+    let bundle = RuntimeBundle::new("unused.mjs");
+    let web_limits = crate::RuntimeLimits::application_web_standard();
+    let node_limits = crate::RuntimeLimits::application_node22();
+
+    let web_cache = bundle.module_code_cache(&web_limits);
+    let second_web_cache = bundle.module_code_cache(&web_limits);
+    let node_cache = bundle.module_code_cache(&node_limits);
+
+    assert!(Arc::ptr_eq(&web_cache, &second_web_cache));
+    assert!(!Arc::ptr_eq(&web_cache, &node_cache));
+    assert_eq!(bundle.module_code_cache_partition_count(), 2);
 }
 
 #[test]

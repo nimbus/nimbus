@@ -2,7 +2,7 @@ use super::*;
 use std::collections::HashMap;
 
 use nimbus_core::{FieldSchema, FieldType, IndexDefinition, Schema, TableName, TableSchema};
-use nimbus_runtime::RuntimeCompatibilityTarget;
+use nimbus_runtime::{RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget};
 
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct ConvexManifest {
@@ -65,6 +65,14 @@ pub(super) struct ConvexFunctionDefinition {
     #[serde(default)]
     pub(super) runtime_environment: ConvexRuntimeEnvironment,
     #[serde(default)]
+    pub(super) runtime_engine: RuntimeBackendKind,
+    #[serde(default)]
+    pub(super) runtime_bundle_content_kind: RuntimeBundleContentKind,
+    #[serde(default)]
+    pub(super) runtime_compatibility_target: Option<RuntimeCompatibilityTarget>,
+    #[serde(default)]
+    pub(super) runtime_package_resolution: Option<ConvexRuntimePackageResolution>,
+    #[serde(default)]
     pub(super) node_runtime_target: Option<RuntimeCompatibilityTarget>,
     #[serde(default)]
     pub(super) runtime_handler: Option<String>,
@@ -72,15 +80,106 @@ pub(super) struct ConvexFunctionDefinition {
 }
 
 impl ConvexFunctionDefinition {
-    pub(super) fn runtime_compatibility_target(&self) -> Option<RuntimeCompatibilityTarget> {
-        match self.runtime_environment {
-            ConvexRuntimeEnvironment::Default => None,
-            ConvexRuntimeEnvironment::Node => Some(
-                self.node_runtime_target
-                    .unwrap_or(RuntimeCompatibilityTarget::Node22),
-            ),
+    pub(super) fn runtime_selection(&self) -> ConvexRuntimeSelection {
+        let compatibility_target = self
+            .runtime_compatibility_target
+            .or(self.node_runtime_target)
+            .unwrap_or_else(|| match self.runtime_environment {
+                ConvexRuntimeEnvironment::Default => RuntimeCompatibilityTarget::WebStandardIsolate,
+                ConvexRuntimeEnvironment::Node => RuntimeCompatibilityTarget::Node22,
+            });
+        let package_resolution =
+            self.runtime_package_resolution
+                .unwrap_or_else(|| match self.runtime_environment {
+                    ConvexRuntimeEnvironment::Default => ConvexRuntimePackageResolution::Bundled,
+                    ConvexRuntimeEnvironment::Node => {
+                        ConvexRuntimePackageResolution::NodeExternalPackages
+                    }
+                });
+        ConvexRuntimeSelection {
+            engine: self.runtime_engine,
+            bundle_content_kind: self.runtime_bundle_content_kind,
+            compatibility_target,
+            package_resolution,
         }
     }
+
+    pub(super) fn validate_runtime_selection(&self) -> Result<(), String> {
+        if let (Some(runtime_target), Some(node_target)) =
+            (self.runtime_compatibility_target, self.node_runtime_target)
+        {
+            if runtime_target != node_target {
+                return Err(format!(
+                    "function {} has conflicting runtime_compatibility_target {:?} and node_runtime_target {:?}",
+                    self.name, runtime_target, node_target
+                ));
+            }
+        }
+
+        let selection = self.runtime_selection();
+        match selection.engine {
+            RuntimeBackendKind::V8 => {
+                if !matches!(
+                    selection.bundle_content_kind,
+                    RuntimeBundleContentKind::JavaScript
+                ) {
+                    return Err(format!(
+                        "function {} selects V8 with {:?} bundle content; V8 supports only JavaScript bundles",
+                        self.name, selection.bundle_content_kind
+                    ));
+                }
+            }
+        }
+
+        match self.runtime_environment {
+            ConvexRuntimeEnvironment::Default => {
+                if !matches!(
+                    selection.compatibility_target,
+                    RuntimeCompatibilityTarget::WebStandardIsolate
+                ) {
+                    return Err(format!(
+                        "function {} uses the default runtime but selects {:?}; default runtime functions must use WebStandardIsolate",
+                        self.name, selection.compatibility_target
+                    ));
+                }
+                if !matches!(
+                    selection.package_resolution,
+                    ConvexRuntimePackageResolution::Bundled
+                ) {
+                    return Err(format!(
+                        "function {} uses the default runtime but selects {:?} package resolution; default runtime functions must use bundled package resolution",
+                        self.name, selection.package_resolution
+                    ));
+                }
+            }
+            ConvexRuntimeEnvironment::Node => {
+                if !selection.compatibility_target.is_node() {
+                    return Err(format!(
+                        "function {} uses the Node runtime but selects {:?}; Node runtime functions must use a Node compatibility target",
+                        self.name, selection.compatibility_target
+                    ));
+                }
+                if !matches!(
+                    selection.package_resolution,
+                    ConvexRuntimePackageResolution::NodeExternalPackages
+                ) {
+                    return Err(format!(
+                        "function {} uses the Node runtime but selects {:?} package resolution; Node runtime functions must use node_external_packages",
+                        self.name, selection.package_resolution
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ConvexRuntimeSelection {
+    pub(super) engine: RuntimeBackendKind,
+    pub(super) bundle_content_kind: RuntimeBundleContentKind,
+    pub(super) compatibility_target: RuntimeCompatibilityTarget,
+    pub(super) package_resolution: ConvexRuntimePackageResolution,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -155,6 +254,13 @@ pub(super) enum ConvexRuntimeEnvironment {
     #[serde(rename = "default")]
     Default,
     Node,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ConvexRuntimePackageResolution {
+    Bundled,
+    NodeExternalPackages,
 }
 
 #[derive(Debug, Clone, Deserialize)]

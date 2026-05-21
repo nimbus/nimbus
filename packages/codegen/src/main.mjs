@@ -22,6 +22,10 @@ import {
 } from "./node_external_packages.mjs";
 import { parseHttpRoutes, parseModule } from "./parser.mjs";
 import { loadProjectConfig } from "./project_config.mjs";
+import {
+  runtimeLaneMetadata,
+  runtimeMetadataForFunction,
+} from "./runtime_metadata.mjs";
 import { loadSchemaDefinition } from "./schema.mjs";
 
 async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = false, onInfo } = {}) {
@@ -45,6 +49,10 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
       if (fn.kind === "http_action") {
         continue;
       }
+      const runtimeMetadata = runtimeMetadataForFunction({
+        runtimeEnvironment: fn.runtimeEnvironment,
+        projectConfig,
+      });
       manifest.push({
         name: fn.name,
         export: fn.exportName,
@@ -53,6 +61,7 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
         visibility: fn.visibility,
         schedulable: fn.kind === "mutation",
         runtime_environment: fn.runtimeEnvironment,
+        ...runtimeMetadata,
         node_version:
           fn.runtimeEnvironment === "node" ? projectConfig.node.nodeVersion : null,
         node_runtime_target:
@@ -102,7 +111,11 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
   );
   await fs.writeFile(
     path.join(internalDir, "functions.json"),
-    `${JSON.stringify({ node: projectConfig.node, functions: manifest }, null, 2)}\n`,
+    `${JSON.stringify({
+      node: projectConfig.node,
+      runtime_lanes: runtimeLaneMetadata(projectConfig),
+      functions: manifest,
+    }, null, 2)}\n`,
     "utf8",
   );
   await fs.writeFile(

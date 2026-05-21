@@ -17,6 +17,13 @@ Runtime compatibility and runtime permissions are separate axes. A Node target
 does not imply ambient host access, and a broader permission mode does not
 change the JavaScript compatibility target.
 
+Runtime compatibility is also separate from the internal engine that executes
+the code. The current JavaScript runtime family is implemented through
+Deno/V8. Future engines such as Bun/JSC or wasmtime must land behind the
+internal [runtime engine seam](../architecture/runtime/engine-seam.md) and earn
+their own compatibility evidence before they appear as supported runtime
+families here.
+
 Nimbus uses three permission modes:
 
 | Mode | Meaning |

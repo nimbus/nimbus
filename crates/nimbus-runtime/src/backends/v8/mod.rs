@@ -40,7 +40,8 @@ impl RuntimeBackend for V8RuntimeBackend {
     ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value>> + 'a>> {
         let RuntimeBackendInvocation {
             watchdog,
-            runtime,
+            host,
+            policy,
             bundle,
             request,
             context,
@@ -48,6 +49,7 @@ impl RuntimeBackend for V8RuntimeBackend {
             permit,
         } = invocation;
         Box::pin(async move {
+            let runtime = host.runtime_with_policy(policy);
             runtime
                 .invoke_bundle_unmanaged(
                     Some(&mut self.v8_runtime_pool),
