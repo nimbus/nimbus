@@ -126,8 +126,8 @@ manual libkrun builds as a supported install path.
 | NLS1 | `done` | Create and tag the Nimbus-owned `nimbus/nimbus-libkrun` source repo. | `git ls-remote` shows `main` and `v1.17.4-nimbus.1`; tag contains the validated bind-address hook commit. |
 | NLS2 | `done` | Add `nimbus-libkrun` CI/release artifacts for Linux amd64/arm64. | Release has runtime archives, checksums, provenance, symbol proof, and libkrunfw version proof. |
 | NLS3 | `done` | Rebuild `nimbus-crun` against the Nimbus-private libkrun stack. | `v1.27.1-nimbus.1` has `$ORIGIN/lib` RUNPATH, `+LIBKRUN`, release provenance, and fail-closed missing-symbol build gating. |
-| NLS4 | `in_progress` | Update direct install/uninstall/verify flows. | Install helper dry-runs and real Linux proof install `nimbus`, `nimbus-libkrun`, and `nimbus-crun` together. |
-| NLS5 | `todo` | Update deb/rpm, apt, and COPR builders/workflows. | Package helper tests produce three packages/SRPMs and dependency metadata uses `nimbus-libkrun`. |
+| NLS4 | `done` | Update direct install/uninstall/verify flows. | Install helper dry-runs and real Linux proof install `nimbus`, `nimbus-libkrun`, and `nimbus-crun` together. |
+| NLS5 | `in_progress` | Update deb/rpm, apt, and COPR builders/workflows. | Package helper tests produce three packages/SRPMs and dependency metadata uses `nimbus-libkrun`. |
 | NLS6 | `todo` | Capture fresh Linux service smoke from installed artifacts and close docs. | Debian 13 and Fedora proof show localhost-only krun smoke plus private library resolution. |
 
 ## Phase Details
@@ -386,7 +386,7 @@ Closeout evidence:
 
 ### NLS4: Direct Install Script
 
-Status: `in_progress`
+Status: `done`
 
 Deliverables:
 
@@ -411,9 +411,34 @@ Acceptance criteria:
   Nimbus service execution
 - verifier fails if `krun_set_port_map_with_bind_address` is missing
 
+Closeout evidence, 2026-05-21:
+
+- local syntax gates passed:
+  `bash -n scripts/install.sh`, `dash -n scripts/install.sh`,
+  `bash -n scripts/verify-install.sh`, and
+  `bash -n scripts/verify-install-helper.sh`
+- local helper gate passed:
+  `bash scripts/verify-install-helper.sh` reported
+  `verified: install script helper passed 29 tests`
+- Debian 13 `minicloud` helper gate passed:
+  `bash /home/nimbus/src/github.com/nimbus/nimbus/scripts/verify-install-helper.sh`
+  reported `verified: install script helper passed 31 tests`
+- Debian 13 `minicloud` installed-stack verifier passed:
+  `bash /home/nimbus/src/github.com/nimbus/nimbus/scripts/verify-install.sh`
+  reported `result supported (0 failures)` with `nimbus 0.1.31`,
+  `nimbus-libkrun v1.17.4-nimbus.1`, private
+  `/usr/libexec/nimbus/lib/libkrun.so.1`,
+  `/usr/libexec/nimbus/lib/libkrunfw.so.5`,
+  `krun_set_port_map_with_bind_address`, `+LIBKRUN`, and
+  `$ORIGIN/lib` RUNPATH
+- Debian 13 `minicloud` idempotence proof passed:
+  `/home/nimbus/src/github.com/nimbus/nimbus/scripts/install.sh --skip-deps --yes --version v0.1.31 --libkrun-version v1.17.4-nimbus.1 --crun-version v1.27.1-nimbus.1`
+  skipped already installed `nimbus`, `nimbus-libkrun`, and `nimbus-crun`,
+  then reported `Verification passed`
+
 ### NLS5: Linux Packages And Release Mirror
 
-Status: `todo`
+Status: `in_progress`
 
 Deliverables:
 
@@ -467,7 +492,7 @@ Acceptance criteria:
 - fresh Fedora proof does not use distro `libkrun` for Nimbus service
   execution
 - `/usr/libexec/nimbus/crun --version` shows `+LIBKRUN`
-- `ldd /usr/libexec/nimbus/crun` resolves private libkrun
+- `readelf -d /usr/libexec/nimbus/crun` shows private `$ORIGIN/lib` RUNPATH
 - `nm -D /usr/libexec/nimbus/lib/libkrun.so.1.17.4` shows
   `krun_set_port_map_with_bind_address`
 - `NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=<host-ip> cargo test -p
@@ -515,7 +540,7 @@ git diff --check
 Linux host proof:
 
 ```bash
-ldd /usr/libexec/nimbus/crun | grep /usr/libexec/nimbus/lib/libkrun
+readelf -d /usr/libexec/nimbus/crun | grep '$ORIGIN/lib'
 nm -D /usr/libexec/nimbus/lib/libkrun.so.1.17.4 | grep krun_set_port_map_with_bind_address
 NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=<host-ip> cargo test -p nimbus-sandbox --test krun_linux_smoke krun_backend_image_backed_smoke_pulls_and_boots_busybox -- --ignored --nocapture
 ```

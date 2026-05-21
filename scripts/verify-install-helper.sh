@@ -95,6 +95,12 @@ if sh "${repo_root}/scripts/install.sh" --help > "${output_dir}/help.txt" 2>&1; 
     fail "install.sh --help documents --uninstall"
   fi
 
+  if grep -q "\-\-libkrun-version" "${output_dir}/help.txt"; then
+    pass "install.sh --help documents --libkrun-version"
+  else
+    fail "install.sh --help documents --libkrun-version"
+  fi
+
   if grep -q "NIMBUS_REQUIRE_ATTESTATIONS" "${output_dir}/help.txt"; then
     pass "install.sh --help documents attestation enforcement"
   else
@@ -128,6 +134,17 @@ else
     pass "install.sh --version requires value"
   else
     fail "install.sh --version requires value with message"
+  fi
+fi
+
+# --libkrun-version without value should fail
+if sh "${repo_root}/scripts/install.sh" --libkrun-version 2>"${output_dir}/libkrun-version-missing.txt"; then
+  fail "install.sh --libkrun-version requires value"
+else
+  if grep -q "requires" "${output_dir}/libkrun-version-missing.txt"; then
+    pass "install.sh --libkrun-version requires value"
+  else
+    fail "install.sh --libkrun-version requires value with message"
   fi
 fi
 
@@ -191,7 +208,10 @@ case "\$last_arg" in
     printf '{"tag_name":"v0.1.14"}'
     ;;
   https://api.github.com/repos/nimbus/nimbus-crun/releases/latest)
-    printf '{"tag_name":"v1.27-nimbus.2"}'
+    printf '{"tag_name":"v1.27.1-nimbus.1"}'
+    ;;
+  https://api.github.com/repos/nimbus/nimbus-libkrun/releases/latest)
+    printf '{"tag_name":"v1.17.4-nimbus.1"}'
     ;;
   *)
     exit 97
@@ -243,7 +263,7 @@ EOF
 chmod +x "${mock_macos_bin}/curl"
 
 if PATH="${mock_macos_bin}:$PATH" \
-    sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --prefix /tmp/custom \
+    sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --libkrun-version v1.17.4-nimbus.1 --prefix /tmp/custom \
     > "${output_dir}/macos-dry-run.txt" 2>&1; then
   if [ ! -s "${macos_curl_log}" ]; then
     pass "macOS dry-run avoids GitHub API lookup"
@@ -266,7 +286,7 @@ echo ""
 echo "Checking dry-run output..."
 
 # Use a mock version to avoid GitHub API calls
-if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.27-nimbus.2 \
+if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.27.1-nimbus.1 --libkrun-version v1.17.4-nimbus.1 \
     > "${output_dir}/dry-run.txt" 2>&1; then
 
   if grep -q "Install Plan" "${output_dir}/dry-run.txt"; then
@@ -311,10 +331,28 @@ case "${os_name}" in
       fail "Linux dry-run shows nimbus-crun"
     fi
 
+    if grep -q "nimbus-libkrun:" "${output_dir}/dry-run.txt"; then
+      pass "Linux dry-run shows nimbus-libkrun"
+    else
+      fail "Linux dry-run shows nimbus-libkrun"
+    fi
+
     if grep -q "/usr/libexec/nimbus/crun" "${output_dir}/dry-run.txt"; then
       pass "Linux dry-run shows crun install path"
     else
       fail "Linux dry-run shows crun install path"
+    fi
+
+    if grep -q "/usr/libexec/nimbus/lib" "${output_dir}/dry-run.txt"; then
+      pass "Linux dry-run shows private libkrun path"
+    else
+      fail "Linux dry-run shows private libkrun path"
+    fi
+
+    if grep -q "manual build required" "${output_dir}/dry-run.txt"; then
+      fail "Linux dry-run omits manual upstream libkrun instructions"
+    else
+      pass "Linux dry-run omits manual upstream libkrun instructions"
     fi
     ;;
 
