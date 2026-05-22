@@ -1,5 +1,6 @@
+use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,7 @@ use crate::endpoint::PublishedEndpointProtocol;
 
 const DEFAULT_SANDBOX_PATH: &str =
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+pub const DEFAULT_MAX_MOUNTS_PER_SANDBOX: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxFilesystemSpec {
@@ -247,6 +249,132 @@ impl SandboxResourceLimits {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SandboxMountSource {
+    TenantVolume { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxMountSpec {
+    pub source: SandboxMountSource,
+    pub destination: PathBuf,
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+impl SandboxMountSpec {
+    pub fn tenant_volume(name: impl Into<String>, destination: impl Into<PathBuf>) -> Self {
+        Self {
+            source: SandboxMountSource::TenantVolume { name: name.into() },
+            destination: destination.into(),
+            read_only: false,
+        }
+    }
+
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    pub fn tenant_volume_name(&self) -> Option<&str> {
+        match &self.source {
+            SandboxMountSource::TenantVolume { name } => Some(name.as_str()),
+        }
+    }
+
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        match &self.source {
+            SandboxMountSource::TenantVolume { name } => validate_tenant_volume_name(name)?,
+        }
+        validate_mount_destination(&self.destination)
+    }
+}
+
+pub fn validate_tenant_volume_name(name: &str) -> std::result::Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("tenant volume names cannot be empty".to_owned());
+    }
+    if trimmed != name {
+        return Err(format!(
+            "tenant volume name {name:?} must not contain surrounding whitespace"
+        ));
+    }
+    if trimmed == "." || trimmed == ".." {
+        return Err(format!("tenant volume name {name:?} is reserved"));
+    }
+    if trimmed.len() > 128 {
+        return Err(format!(
+            "tenant volume name {name:?} exceeds the 128 byte limit"
+        ));
+    }
+    if !trimmed
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+    {
+        return Err(format!(
+            "tenant volume name {name:?} must contain only ASCII letters, digits, '.', '_' or '-'"
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_sandbox_mounts(mounts: &[SandboxMountSpec]) -> std::result::Result<(), String> {
+    if mounts.len() > DEFAULT_MAX_MOUNTS_PER_SANDBOX {
+        return Err(format!(
+            "sandbox mount quota exceeded: {} mounts requested, limit {}",
+            mounts.len(),
+            DEFAULT_MAX_MOUNTS_PER_SANDBOX
+        ));
+    }
+
+    let mut destinations = BTreeSet::new();
+    for mount in mounts {
+        mount.validate()?;
+        let destination = mount.destination.to_string_lossy().into_owned();
+        if !destinations.insert(destination.clone()) {
+            return Err(format!(
+                "duplicate sandbox mount destination: {destination}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_mount_destination(destination: &Path) -> std::result::Result<(), String> {
+    if !destination.is_absolute() {
+        return Err(format!(
+            "sandbox mount destination {} must be an absolute guest path",
+            destination.display()
+        ));
+    }
+    if destination == Path::new("/") {
+        return Err("sandbox mount destination must not be the guest root".to_owned());
+    }
+
+    for component in destination.components() {
+        if matches!(component, Component::ParentDir | Component::CurDir) {
+            return Err(format!(
+                "sandbox mount destination {} must not contain '.' or '..'",
+                destination.display()
+            ));
+        }
+    }
+
+    for reserved in ["/proc", "/sys", "/dev", "/.nimbus"] {
+        let reserved_path = Path::new(reserved);
+        if destination == reserved_path || destination.starts_with(reserved_path) {
+            return Err(format!(
+                "sandbox mount destination {} overlaps reserved guest path {reserved}",
+                destination.display()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxRestartPolicy {
@@ -290,6 +418,8 @@ pub struct SandboxSpec {
     #[serde(default)]
     pub lifecycle: SandboxLifecycleSpec,
     pub port_bindings: Vec<SandboxPortBinding>,
+    #[serde(default)]
+    pub mounts: Vec<SandboxMountSpec>,
 }
 
 impl SandboxSpec {
@@ -309,6 +439,7 @@ impl SandboxSpec {
             resources: SandboxResourceLimits::default(),
             lifecycle: SandboxLifecycleSpec::default(),
             port_bindings: Vec::new(),
+            mounts: Vec::new(),
         }
     }
 
@@ -354,6 +485,16 @@ impl SandboxSpec {
         self.port_bindings.extend(port_bindings);
         self
     }
+
+    pub fn with_mount(mut self, mount: SandboxMountSpec) -> Self {
+        self.mounts.push(mount);
+        self
+    }
+
+    pub fn with_mounts(mut self, mounts: impl IntoIterator<Item = SandboxMountSpec>) -> Self {
+        self.mounts.extend(mounts);
+        self
+    }
 }
 
 mod duration_millis_option {
@@ -389,7 +530,40 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{SandboxLifecycleSpec, SandboxRestartPolicy};
+    use super::{
+        DEFAULT_MAX_MOUNTS_PER_SANDBOX, SandboxLifecycleSpec, SandboxMountSpec,
+        SandboxRestartPolicy, validate_sandbox_mounts,
+    };
+
+    #[test]
+    fn sandbox_mount_validation_rejects_duplicate_destinations() {
+        let mounts = vec![
+            SandboxMountSpec::tenant_volume("cache-a", "/cache"),
+            SandboxMountSpec::tenant_volume("cache-b", "/cache"),
+        ];
+
+        let error =
+            validate_sandbox_mounts(&mounts).expect_err("duplicate destination should fail");
+        assert!(
+            error.contains("duplicate sandbox mount destination"),
+            "expected duplicate destination error, got: {error}"
+        );
+    }
+
+    #[test]
+    fn sandbox_mount_validation_enforces_per_sandbox_quota() {
+        let mounts = (0..=DEFAULT_MAX_MOUNTS_PER_SANDBOX)
+            .map(|index| {
+                SandboxMountSpec::tenant_volume(format!("cache-{index}"), format!("/cache/{index}"))
+            })
+            .collect::<Vec<_>>();
+
+        let error = validate_sandbox_mounts(&mounts).expect_err("mount quota should fail");
+        assert!(
+            error.contains("sandbox mount quota exceeded"),
+            "expected mount quota error, got: {error}"
+        );
+    }
 
     #[test]
     fn sandbox_lifecycle_spec_serializes_stop_timeout_as_millis() {

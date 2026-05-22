@@ -1,6 +1,6 @@
 use super::parse::compose_lifecycle_spec;
 use super::*;
-use crate::compose::discovery::resolve_compose_selection;
+use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
 
 fn write_compose_fixture(tempdir: &tempfile::TempDir, name: &str, contents: &str) -> PathBuf {
     let path = tempdir.path().join(name);
@@ -544,6 +544,287 @@ services:
             .to_string()
             .contains("operator network exposure policy"),
         "expected operator-policy guidance, got: {error}"
+    );
+}
+
+#[test]
+fn compose_project_rejects_host_bind_mounts_without_policy() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: busybox:latest
+    volumes:
+      - ./data:/data
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose).expect_err("bind mount should fail closed");
+    assert!(
+        error.to_string().contains("host bind mounts are denied"),
+        "expected bind-mount policy error, got: {error}"
+    );
+    assert!(
+        error.to_string().contains("tenant-owned storage"),
+        "expected tenant-owned storage guidance, got: {error}"
+    );
+}
+
+#[test]
+fn compose_project_rejects_anonymous_volume_mounts_without_policy() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: busybox:latest
+    volumes:
+      - /cache
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose).expect_err("anonymous mount should fail closed");
+    assert!(
+        error
+            .to_string()
+            .contains("anonymous volumes are not admitted"),
+        "expected anonymous volume policy error, got: {error}"
+    );
+}
+
+#[test]
+fn compose_project_lowers_named_volumes_into_sandbox_mounts() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+name: Demo App
+services:
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - type: volume
+        source: logs
+        target: /var/log/postgres
+        read_only: true
+volumes:
+  pgdata: {}
+  logs: {}
+"#,
+    );
+
+    let tenant_id = TenantId::new("tenant-a").expect("tenant id should be valid");
+    let catalog = ComposeProjectPlan::load(&compose)
+        .expect("compose file should resolve")
+        .into_service_catalog()
+        .expect("compose project should lower into a service catalog");
+    let db = catalog
+        .sandbox_service_for_tenant(&tenant_id, "db")
+        .expect("db launch should exist");
+    let launch = match db {
+        SandboxServiceLaunch::Image(launch) => launch,
+        SandboxServiceLaunch::Build(_) => panic!("db should lower as an image-backed launch"),
+    };
+
+    assert_eq!(launch.spec.mounts.len(), 2);
+    assert_eq!(launch.spec.mounts[0].tenant_volume_name(), Some("pgdata"));
+    assert_eq!(
+        launch.spec.mounts[0].destination,
+        PathBuf::from("/var/lib/postgresql/data")
+    );
+    assert!(!launch.spec.mounts[0].read_only);
+    assert_eq!(launch.spec.mounts[1].tenant_volume_name(), Some("logs"));
+    assert_eq!(
+        launch.spec.mounts[1].destination,
+        PathBuf::from("/var/log/postgres")
+    );
+    assert!(launch.spec.mounts[1].read_only);
+}
+
+#[test]
+fn compose_project_rejects_undeclared_named_volume_mounts() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: busybox:latest
+    volumes:
+      - cache:/cache
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose).expect_err("undeclared volume should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("must be declared at top-level volumes"),
+        "expected declared-volume policy error, got: {error}"
+    );
+}
+
+#[test]
+fn compose_project_rejects_unsupported_top_level_volume_options() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: busybox:latest
+volumes:
+  cache:
+    driver: local
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose).expect_err("volume driver should fail closed");
+    assert!(
+        error.to_string().contains("unsupported volume options"),
+        "expected top-level volume option error, got: {error}"
+    );
+}
+
+#[test]
+fn production_compose_admission_rejects_tag_only_images() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: busybox:latest
+"#,
+    );
+
+    let error = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(compose),
+        ComposeAdmissionMode::Production,
+    )
+    .expect_err("tag-only image should fail production admission");
+    assert!(
+        error.to_string().contains("digest-pinned OCI image"),
+        "expected digest-pinned image guidance, got: {error}"
+    );
+}
+
+#[test]
+fn production_compose_admission_accepts_digest_pinned_images() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let digest = "1111111111111111111111111111111111111111111111111111111111111111";
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        &format!(
+            r#"
+services:
+  api:
+    image: docker.io/library/busybox@sha256:{digest}
+"#
+        ),
+    );
+
+    let project = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(compose),
+        ComposeAdmissionMode::Production,
+    )
+    .expect("digest-pinned image should pass production admission");
+    let api = project.services.get("api").expect("api should load");
+    assert_eq!(
+        api.source,
+        ComposeLaunchPlan::Image {
+            image_reference: format!("docker.io/library/busybox@sha256:{digest}"),
+        }
+    );
+}
+
+#[test]
+fn production_compose_admission_rejects_local_builds_without_provenance_policy() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    build:
+      context: .
+"#,
+    );
+
+    let error = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(compose),
+        ComposeAdmissionMode::Production,
+    )
+    .expect_err("production build should fail without operator provenance policy");
+    assert!(
+        error
+            .to_string()
+            .contains("image provenance/signature policy"),
+        "expected provenance/signature guidance, got: {error}"
+    );
+}
+
+#[test]
+fn production_compose_admission_rejects_raw_compose_secrets() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let top_level = write_compose_fixture(
+        &tempdir,
+        "compose-top.yaml",
+        r#"
+services:
+  api:
+    image: docker.io/library/busybox@sha256:1111111111111111111111111111111111111111111111111111111111111111
+secrets:
+  db_password:
+    file: ./db_password.txt
+"#,
+    );
+    let service_level = write_compose_fixture(
+        &tempdir,
+        "compose-service.yaml",
+        r#"
+services:
+  api:
+    image: docker.io/library/busybox@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    secrets:
+      - db_password
+"#,
+    );
+
+    let top_error = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(top_level),
+        ComposeAdmissionMode::Production,
+    )
+    .expect_err("top-level raw secret should fail production admission");
+    assert!(
+        top_error
+            .to_string()
+            .contains("secret handles/capabilities"),
+        "expected secret handles guidance, got: {top_error}"
+    );
+
+    let service_error = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(service_level),
+        ComposeAdmissionMode::Production,
+    )
+    .expect_err("service raw secret should fail production admission");
+    assert!(
+        service_error
+            .to_string()
+            .contains("secret handles/capabilities"),
+        "expected secret handles guidance, got: {service_error}"
     );
 }
 

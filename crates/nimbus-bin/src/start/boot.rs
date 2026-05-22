@@ -20,7 +20,7 @@ use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_compose_selection,
 };
-use crate::compose::load_host_backed_sandbox_service_manager_for_selection;
+use crate::compose::load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode;
 use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
 
@@ -69,8 +69,11 @@ pub(crate) async fn run_start_command(
     let cloud_functions_registry =
         load_cloud_functions_registry(&command, resolved_app_dir.as_ref(), &runtime_limits)?;
     let compose_selection = resolve_optional_compose_selection(&command)?;
-    let sandbox_service_manager =
-        load_sandbox_service_manager(compose_selection.as_ref(), &compose_control_data_dir)?;
+    let sandbox_service_manager = load_sandbox_service_manager(
+        compose_selection.as_ref(),
+        &compose_control_data_dir,
+        command.tenant_isolation_mode,
+    )?;
     let machine_lifecycle_manager = crate::machine::host_machine_lifecycle_manager()?;
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
@@ -230,12 +233,14 @@ pub(crate) fn resolve_optional_compose_selection(
 pub(super) fn load_sandbox_service_manager(
     compose_selection: Option<&ResolvedComposeSelection>,
     compose_control_data_dir: &std::path::Path,
+    tenant_isolation_mode: nimbus_server::TenantIsolationMode,
 ) -> Result<Option<Arc<nimbus::SandboxServiceManager>>, Error> {
     compose_selection
         .map(|selection| {
-            load_host_backed_sandbox_service_manager_for_selection(
+            load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode(
                 selection,
                 compose_control_data_dir,
+                tenant_isolation_mode,
             )
         })
         .transpose()

@@ -22,6 +22,7 @@ pub use error::{Result, SandboxError};
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
 pub use spec::{
     SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxImageLaunchSpec,
-    SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxPortBinding, SandboxProcessSpec,
-    SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec,
+    SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec,
+    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy,
+    SandboxSpec, validate_sandbox_mounts, validate_tenant_volume_name,
 };

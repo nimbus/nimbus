@@ -7,8 +7,9 @@ use std::time::Duration;
 use nimbus::{
     Error, PublishedEndpointProtocol, SandboxBackendKind, SandboxBuildLaunchSpec,
     SandboxFilesystemSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
-    SandboxLifecycleSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRestartPolicy,
-    SandboxServiceCatalog, SandboxServiceLaunch, SandboxSpec, TenantId,
+    SandboxLifecycleSpec, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxRestartPolicy, SandboxServiceCatalog, SandboxServiceLaunch, SandboxSpec, TenantId,
+    validate_tenant_volume_name,
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -27,6 +28,18 @@ pub(crate) use self::render::render_compose_project_selection;
 
 pub(crate) const DEFAULT_COMPOSE_FILE: &str = "compose.yaml";
 const CONFIG_VALIDATION_TENANT_ID: &str = "compose-config";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ComposeAdmissionMode {
+    LocalDevelopment,
+    Production,
+}
+
+impl ComposeAdmissionMode {
+    fn is_production(self) -> bool {
+        matches!(self, Self::Production)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RenderedComposeProject {

@@ -32,8 +32,8 @@ use crate::endpoint::PublishedEndpointProtocol;
 use crate::instance::{SandboxId, SandboxStatus};
 use crate::spec::{
     SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxImageLaunchSpec,
-    SandboxImageProcessOverrides, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
-    SandboxRestartPolicy, SandboxSpec,
+    SandboxImageProcessOverrides, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec,
 };
 
 #[test]
@@ -198,6 +198,81 @@ fn plan_start_scopes_artifacts_by_tenant_for_same_service_name() {
         fs::read_to_string(&manifest_b).expect("tenant-b manifest should be readable");
     assert!(tenant_a_manifest.contains("\"tenant_id\": \"tenant-a\""));
     assert!(tenant_b_manifest.contains("\"tenant_id\": \"tenant-b\""));
+}
+
+#[test]
+fn plan_start_lowers_tenant_volume_mounts_under_tenant_state_root() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    ));
+    let tenant_a = sample_spec_for_tenant("tenant-a", "api")
+        .with_mount(SandboxMountSpec::tenant_volume("shared", "/var/lib/app").read_only(false));
+    let tenant_b = sample_spec_for_tenant("tenant-b", "api")
+        .with_mount(SandboxMountSpec::tenant_volume("shared", "/var/lib/app").read_only(true));
+
+    let handle_a =
+        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
+    let handle_b =
+        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+
+    let volume_a = temp_dir
+        .path()
+        .join("state")
+        .join("tenants")
+        .join("tenant-a")
+        .join("volumes")
+        .join("shared");
+    let volume_b = temp_dir
+        .path()
+        .join("state")
+        .join("tenants")
+        .join("tenant-b")
+        .join("volumes")
+        .join("shared");
+    assert!(volume_a.is_dir(), "tenant-a volume directory should exist");
+    assert!(volume_b.is_dir(), "tenant-b volume directory should exist");
+    assert_ne!(
+        volume_a, volume_b,
+        "same named volume in different tenants must not share host storage"
+    );
+
+    let bundle_a = fs::read_to_string(bundle_config_path(temp_dir.path(), &tenant_a, &handle_a.id))
+        .expect("tenant-a bundle should be readable");
+    let bundle_b = fs::read_to_string(bundle_config_path(temp_dir.path(), &tenant_b, &handle_b.id))
+        .expect("tenant-b bundle should be readable");
+    assert!(
+        bundle_a.contains(&volume_a.to_string_lossy().to_string()),
+        "tenant-a bundle should bind only the tenant-a volume path: {bundle_a}"
+    );
+    assert!(
+        bundle_b.contains(&volume_b.to_string_lossy().to_string()),
+        "tenant-b bundle should bind only the tenant-b volume path: {bundle_b}"
+    );
+    assert!(
+        bundle_a.contains("\"rw\""),
+        "tenant-a writable mount should render rw options: {bundle_a}"
+    );
+    assert!(
+        bundle_b.contains("\"ro\""),
+        "tenant-b read-only mount should render ro options: {bundle_b}"
+    );
+
+    block_on(SandboxBackend::remove_tenant_artifacts(
+        &backend,
+        tenant_a.tenant_id.clone(),
+    ))
+    .expect("tenant-a artifacts should be removed");
+
+    assert!(
+        !volume_a.exists(),
+        "tenant-a volume should be removed by tenant cleanup"
+    );
+    assert!(
+        volume_b.exists(),
+        "tenant-b volume should remain after tenant-a cleanup"
+    );
 }
 
 #[test]

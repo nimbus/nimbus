@@ -11,6 +11,7 @@ const SANDBOXES_DIR: &str = "sandboxes";
 const BUNDLE_DIR: &str = "bundle";
 const ROOTFS_DIR: &str = "rootfs";
 const STATE_DIR: &str = "state";
+const VOLUMES_DIR: &str = "volumes";
 const CONTAINERS_DIR: &str = "containers";
 const MANIFEST_FILE: &str = "manifest.json";
 
@@ -38,6 +39,12 @@ pub(crate) fn state_root(root: &Path, tenant_id: &TenantId, sandbox_id: &Sandbox
 
 pub(crate) fn rootfs_root(root: &Path, tenant_id: &TenantId, sandbox_id: &SandboxId) -> PathBuf {
     tenant_sandbox_root(root, tenant_id, sandbox_id).join(ROOTFS_DIR)
+}
+
+pub(crate) fn tenant_volume_dir(root: &Path, tenant_id: &TenantId, volume_name: &str) -> PathBuf {
+    tenant_root(root, tenant_id)
+        .join(VOLUMES_DIR)
+        .join(volume_name)
 }
 
 pub(crate) fn remove_tenant_root(root: &Path, tenant_id: &TenantId) -> io::Result<()> {

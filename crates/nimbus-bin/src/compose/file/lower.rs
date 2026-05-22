@@ -3,6 +3,7 @@ use super::raw::*;
 use super::warnings::*;
 use super::*;
 use crate::compose::discovery::ResolvedComposeSelection;
+use std::collections::BTreeSet;
 
 impl ComposeProjectPlan {
     #[cfg(test)]
@@ -11,6 +12,13 @@ impl ComposeProjectPlan {
     }
 
     pub(crate) fn load_selection(selection: &ResolvedComposeSelection) -> Result<Self, Error> {
+        Self::load_selection_with_admission(selection, ComposeAdmissionMode::LocalDevelopment)
+    }
+
+    pub(crate) fn load_selection_with_admission(
+        selection: &ResolvedComposeSelection,
+        admission_mode: ComposeAdmissionMode,
+    ) -> Result<Self, Error> {
         if selection.files.is_empty() {
             return Err(Error::InvalidInput(
                 "resolved compose selection did not include any files".to_owned(),
@@ -25,10 +33,14 @@ impl ComposeProjectPlan {
         for path in documents {
             raw.merge_from(read_raw_compose_document(path)?);
         }
-        Self::from_raw(selection.primary_file(), raw)
+        Self::from_raw(selection.primary_file(), raw, admission_mode)
     }
 
-    fn from_raw(path: &Path, raw: RawComposeDocument) -> Result<Self, Error> {
+    fn from_raw(
+        path: &Path,
+        raw: RawComposeDocument,
+        admission_mode: ComposeAdmissionMode,
+    ) -> Result<Self, Error> {
         if raw.services.is_empty() {
             return Err(Error::InvalidInput(format!(
                 "{}: missing top-level services map",
@@ -58,6 +70,12 @@ impl ComposeProjectPlan {
             ));
         }
         if !raw.secrets.is_empty() {
+            if admission_mode.is_production() {
+                return Err(Error::InvalidInput(format!(
+                    "{}: top-level secrets require Nimbus secret handles/capabilities in production tenant isolation; raw Compose secrets are not admitted",
+                    path.display()
+                )));
+            }
             warnings.push(format!(
                 "{}: top-level secrets: ignored (not yet supported by nimbus compose config)",
                 path.display()
@@ -68,17 +86,26 @@ impl ComposeProjectPlan {
             raw.extra,
         ));
 
+        let volumes = admit_top_level_volumes(path, raw.volumes)?;
+        let declared_volumes = volumes.iter().map(String::as_str).collect::<BTreeSet<_>>();
+
         let mut services = BTreeMap::new();
         for (service_name, service) in raw.services {
-            let resolved =
-                ComposeServicePlan::from_raw(&service_name, &project_name, compose_dir, service)?;
+            let resolved = ComposeServicePlan::from_raw(
+                &service_name,
+                &project_name,
+                compose_dir,
+                service,
+                admission_mode,
+            )?;
+            ensure_service_volumes_declared(&service_name, &resolved, &declared_volumes)?;
             services.insert(service_name, resolved);
         }
 
         Ok(Self {
             source_file: path.to_path_buf(),
             project_name,
-            volumes: raw.volumes.into_keys().collect(),
+            volumes,
             services,
             warnings,
         })
@@ -116,6 +143,48 @@ impl ComposeProjectPlan {
         Ok(ComposeServiceCatalog { project: self })
     }
 }
+fn admit_top_level_volumes(
+    path: &Path,
+    volumes: BTreeMap<String, Value>,
+) -> Result<Vec<String>, Error> {
+    let mut admitted = Vec::with_capacity(volumes.len());
+    for (name, value) in volumes {
+        validate_tenant_volume_name(&name).map_err(|message| {
+            Error::InvalidInput(format!("{}.volumes.{name}: {message}", path.display()))
+        })?;
+        match value {
+            Value::Null => {}
+            Value::Mapping(mapping) if mapping.is_empty() => {}
+            other => {
+                return Err(Error::InvalidInput(format!(
+                    "{}.volumes.{name}: unsupported volume options {other:?}; Nimbus currently admits only default tenant-owned named volumes",
+                    path.display()
+                )));
+            }
+        }
+        admitted.push(name);
+    }
+    Ok(admitted)
+}
+
+fn ensure_service_volumes_declared(
+    service_name: &str,
+    service: &ComposeServicePlan,
+    declared_volumes: &BTreeSet<&str>,
+) -> Result<(), Error> {
+    for (index, mount) in service.volumes.iter().enumerate() {
+        let Some(source) = mount.source.as_deref() else {
+            continue;
+        };
+        if !declared_volumes.contains(source) {
+            return Err(Error::InvalidInput(format!(
+                "services.{service_name}.volumes[{index}]: named volume {source:?} must be declared at top-level volumes so Nimbus can allocate tenant-owned storage"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl SandboxServiceCatalog for ComposeServiceCatalog {
     fn sandbox_service_for_tenant(
         &self,
@@ -151,8 +220,14 @@ impl ComposeServicePlan {
         project_name: &str,
         compose_dir: &Path,
         raw: RawComposeService,
+        admission_mode: ComposeAdmissionMode,
     ) -> Result<Self, Error> {
         let mut warnings = Vec::new();
+        if raw.secrets.is_some() && admission_mode.is_production() {
+            return Err(Error::InvalidInput(format!(
+                "services.{service_name}.secrets: raw Compose secrets require Nimbus secret handles/capabilities in production tenant isolation"
+            )));
+        }
         warnings.extend(warnings_for_known_ignored_service_fields(&raw));
         warnings.extend(warnings_for_unknown_fields(
             &format!("services.{service_name}"),
@@ -165,6 +240,7 @@ impl ComposeServicePlan {
             compose_dir,
             raw.image.as_deref(),
             raw.build,
+            admission_mode,
         )?;
         let process = ComposeProcessPlan::from_raw(
             compose_dir,
@@ -190,7 +266,7 @@ impl ComposeServicePlan {
             .map(ComposeHealthcheckPlan::from_raw)
             .transpose()?;
         let labels = parse_string_map(raw.labels, &format!("services.{service_name}.labels"))?;
-        let volumes = resolve_volume_mounts(raw.volumes);
+        let volumes = resolve_volume_mounts(service_name, raw.volumes)?;
         let backend = raw
             .x_nimbus
             .as_ref()
@@ -264,6 +340,11 @@ impl ComposeServicePlan {
                 .iter()
                 .cloned()
                 .map(ComposePortBindingPlan::into_binding),
+        )
+        .with_mounts(
+            self.volumes
+                .iter()
+                .map(ComposeVolumeMountPlan::to_mount_spec),
         );
 
         if let Some(cpu_count) = self.resources.cpu_count {
@@ -282,12 +363,21 @@ impl ComposeLaunchPlan {
         compose_dir: &Path,
         image: Option<&str>,
         build: Option<RawComposeBuild>,
+        admission_mode: ComposeAdmissionMode,
     ) -> Result<Self, Error> {
         match (image, build) {
-            (Some(image_reference), None) => Ok(Self::Image {
-                image_reference: image_reference.to_owned(),
-            }),
+            (Some(image_reference), None) => {
+                admit_image_reference(service_name, image_reference, admission_mode)?;
+                Ok(Self::Image {
+                    image_reference: image_reference.to_owned(),
+                })
+            }
             (image_name, Some(build)) => {
+                if admission_mode.is_production() {
+                    return Err(Error::InvalidInput(format!(
+                        "services.{service_name}.build: build-backed services are not admitted in production tenant isolation until an operator-owned image provenance/signature policy is configured; publish a digest-pinned image reference instead"
+                    )));
+                }
                 let (context_path, dockerfile_path) = build.resolve_paths(compose_dir)?;
                 Ok(Self::Build {
                     image_name: image_name
@@ -303,6 +393,29 @@ impl ComposeLaunchPlan {
         }
     }
 }
+fn admit_image_reference(
+    service_name: &str,
+    image_reference: &str,
+    admission_mode: ComposeAdmissionMode,
+) -> Result<(), Error> {
+    if !admission_mode.is_production() || is_digest_pinned_image_reference(image_reference) {
+        return Ok(());
+    }
+    Err(Error::InvalidInput(format!(
+        "services.{service_name}.image: production tenant isolation requires a digest-pinned OCI image reference with provenance anchor (`name@sha256:<64 hex>`); got {image_reference:?}"
+    )))
+}
+
+fn is_digest_pinned_image_reference(image_reference: &str) -> bool {
+    let Some((_, digest)) = image_reference.rsplit_once("@sha256:") else {
+        return false;
+    };
+    digest.len() == 64
+        && digest
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+}
+
 impl ComposeProcessPlan {
     fn from_raw(
         compose_dir: &Path,
@@ -372,6 +485,17 @@ impl ComposePortBindingPlan {
     fn into_binding(self) -> SandboxPortBinding {
         SandboxPortBinding::new(self.name, self.protocol, self.host_port, self.guest_port)
             .with_host_address(self.host_address)
+    }
+}
+impl ComposeVolumeMountPlan {
+    fn to_mount_spec(&self) -> SandboxMountSpec {
+        SandboxMountSpec::tenant_volume(
+            self.source
+                .as_deref()
+                .expect("admitted compose volume mounts must be named"),
+            PathBuf::from(&self.target),
+        )
+        .read_only(self.read_only)
     }
 }
 impl ComposeResourcePlan {

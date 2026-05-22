@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use super::bundle::{ContainerBundleLayout, write_bundle_config};
+use super::bundle::{
+    ContainerBundleLayout, ContainerBundleMount, ContainerBundleOptions, write_bundle_config,
+};
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use crate::backends::oci::buildah::{
     BuildahCli, ImageHealthcheck, MountedRootfsSession, OciExposedPort, OciImageLaunchDefaults,
@@ -335,6 +337,12 @@ impl ContainerSandboxBackend {
             &resolved_spec,
             resolved_launch.image_metadata.user.as_deref(),
             Some(network_layout.netns_path.as_path()),
+            &ContainerBundleOptions {
+                additional_mounts: container_tenant_volume_mounts(
+                    &self.config.state_root,
+                    &resolved_spec,
+                )?,
+            },
         )?;
 
         let conmon_layout = OciConmonLayout::new_for_tenant(
@@ -684,6 +692,48 @@ impl ContainerSandboxBackend {
             }
         })
     }
+}
+
+fn container_tenant_volume_mounts(
+    state_root: &Path,
+    spec: &SandboxSpec,
+) -> Result<Vec<ContainerBundleMount>> {
+    crate::spec::validate_sandbox_mounts(&spec.mounts)
+        .map_err(|message| SandboxError::InvalidSpec { message })?;
+    let mut mounts = Vec::new();
+    for mount in &spec.mounts {
+        let destination = mount.destination.to_string_lossy().into_owned();
+        let volume_name = mount
+            .tenant_volume_name()
+            .ok_or_else(|| SandboxError::InvalidSpec {
+                message: "unsupported container sandbox mount source".to_owned(),
+            })?;
+        let source =
+            crate::artifact_paths::tenant_volume_dir(state_root, &spec.tenant_id, volume_name);
+        std::fs::create_dir_all(&source).map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to create tenant volume {} for sandbox {} under {}: {error}",
+                volume_name,
+                spec.name,
+                source.display()
+            ),
+        })?;
+        mounts.push(ContainerBundleMount {
+            destination,
+            source,
+            options: tenant_volume_mount_options(mount.read_only),
+        });
+    }
+    Ok(mounts)
+}
+
+fn tenant_volume_mount_options(read_only: bool) -> Vec<String> {
+    vec![
+        "rbind".to_owned(),
+        if read_only { "ro" } else { "rw" }.to_owned(),
+        "nosuid".to_owned(),
+        "nodev".to_owned(),
+    ]
 }
 
 impl SandboxBackend for ContainerSandboxBackend {
