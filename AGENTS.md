@@ -90,15 +90,30 @@ If you find yourself writing compatibility code, stop and make the breaking chan
 - CI caching / sccache / Swatinem orchestration:
   `docs/operating/ci-caching.md` for the canonical caching contract,
   then `docs/plans/archive/ci-caching-canonicalization-plan.md` as the
-  completed baseline (CC0-CC8, closed 2026-05-22). The baseline
+  completed baseline (CC0-CC9, closed 2026-05-22). The baseline
   covers sccache rollout across every Rust job in
   `.github/workflows/*.yml`, Swatinem `shared-key` rotation v1→v2,
-  `save-always: true` plus `save-if: refs/heads/main` for rerun-safe
-  saves and PR-cannot-poison-main, the `ui-artifacts` leader job that
-  deduplicates the UI build for harness + coverage, and the
-  `warm-sccache` leader job that converts parallel-cold-start to
-  serial-cold-then-parallel-warm. Promote a new active plan before
-  another CI caching / sccache / Swatinem wave.
+  `save-if: refs/heads/main` for PR-cannot-poison-main saves,
+  the `ui-artifacts` leader job that deduplicates the UI build for
+  harness + coverage, the `warm-sccache` leader job that converts
+  parallel-cold-start to serial-cold-then-parallel-warm, and the
+  CC9 pin-floor + save-always retraction sweep that fixed the GHA
+  cache v1 → v2 migration breakage on `mozilla-actions/sccache-action
+  @v0.0.6`. Promote a new active plan before another CI caching /
+  sccache / Swatinem wave.
+- CI infrastructure modernization (composite actions, SHA pinning,
+  runner determinism, job summaries, SAST):
+  `docs/plans/ci-modernization-plan.md` as the active execution plan
+  (CM0..CM8). Covers the cross-workflow Rust+sccache+Swatinem
+  composite action extraction (`.github/actions/setup-rust-cached/`),
+  SHA-pinning every third-party action with a version-name comment,
+  pinning `runs-on: ubuntu-latest` → `ubuntu-24.04`, fixing the
+  `create-github-app-token@v3.2.0` patch over-pin, emitting
+  `$GITHUB_STEP_SUMMARY` markdown from high-value jobs, and adding
+  a CodeQL workflow. `/goal` control plane gated on
+  `bash scripts/verify-ci-modernization.sh` (12 conditions). Once
+  the plan closes, `docs/operating/ci-modernization.md` becomes the
+  canonical infrastructure contract alongside `ci-caching.md`.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,
