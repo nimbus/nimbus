@@ -28,6 +28,14 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `/goal` control plane gated on
     `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
     conditions).
+- `docs/plans/tenant-isolation-enterprise-hardening-plan.md`
+  - canonical follow-on plan for turning the completed tenant-isolation
+    control-plane baseline into an enterprise-grade trust surface: typed
+    admission decision records, PDP/PEP separation, reusable conformance,
+    drift/audit scanning, hard quota proof, workload identity, image
+    provenance/signature policy, observability, and customer-facing readiness
+    evidence. Prior-art research lives at
+    `docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md`.
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -449,8 +457,10 @@ the work is explicitly a historical review.
   `docs/plans/distribution-plan.md`.
 - For production tenant isolation across microVM services, in-process runtime
   grants, HostBridge access, storage namespaces, service networking, volumes,
-  images, secrets, quotas, or cleanup, start with
-  `docs/plans/archive/tenant-isolation-control-plane-plan.md`, then cross-check
+  images, secrets, quotas, cleanup, enterprise auditability, admission
+  decisions, conformance, or workload identity, start with
+  `docs/plans/tenant-isolation-enterprise-hardening-plan.md`, then cross-check
+  `docs/plans/archive/tenant-isolation-control-plane-plan.md`,
   `docs/plans/security/sandbox-isolation-audit.md`,
   `docs/architecture/sandbox/microvm-service-baseline.md`,
   `docs/architecture/runtime/permission-model.md`, and
