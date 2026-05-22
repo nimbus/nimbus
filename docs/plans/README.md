@@ -439,6 +439,14 @@ archived plans only when you need historical execution detail.
     owns policy evaluation and evidence normalization, not cryptographic
     verification. Dependency review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
+- `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
+  - canonical deferred plan for OpenShell-informed enterprise trust work:
+    typed operator policy artifacts, built-in Rust policy evaluation,
+    optional external policy backends such as OPA/Rego or Cedar, sandbox-local
+    egress enforcement for process-capable microVM/browser/agent guests,
+    dynamic versus recreate-required policy lifecycle, OCSF/OpenTelemetry
+    security-event export, and future policy advisor/prover lanes. Research at
+    `docs/plans/research/openshell-competitor-analysis.md`.
 
 ## Archive Policy
 

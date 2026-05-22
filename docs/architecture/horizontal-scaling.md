@@ -74,9 +74,10 @@ This means:
 - One binary handles dev laptop, 3-node cluster, and 50-node fleet
 
 This thesis drives the library choices below. We prefer transformative
-architectural bets over conservative stability when the upside reshapes what
-the product can be. Nimbus is pre-stable — we can absorb API churn in
-dependencies.
+architectural bets when the upside reshapes what the product can be, but the
+production cluster substrate should promote on stable Iroh 1.0-compatible
+lines. Pre-1.0 Iroh release candidates are acceptable for isolated proof lanes;
+they are not the baseline for product-facing cluster implementation.
 
 ---
 
@@ -1580,6 +1581,7 @@ either invisible or explicitly accepted.
 | `docs/plans/secret-management-plan.md` | openraft (`_nimbus.secret_stores` metadata + `_nimbus.secrets` rows for the Nimbus-native provider, via the redb+openraft pattern from §7), iroh-gossip (rotation invalidation — payload is `(path, new_version)`, never plaintext) | `topic:<tenant_id>:secrets:<store_name>` |
 | `docs/plans/service-identity-provider-auth-plan.md` | node/machine identity, openraft membership metadata, tenant-scoped workload placement, and stable workload identity for provider-auth minting | `topic:cluster:state` for membership/liveness; tenant-scoped provider topics only when a concrete adapter needs them |
 | `docs/plans/artifact-provenance-verification-plan.md` | iroh-blobs and content-addressed artifact distribution for signed runtime bundles, machine images, and service image evidence | artifact metadata is durable state; gossip carries invalidation only, never verifier secrets or raw credentials |
+| `docs/plans/enterprise-policy-and-sandbox-egress-plan.md` | openraft for policy revision metadata and cluster-visible policy status; iroh-gossip for policy revision invalidation; iroh-blobs only if future signed policy/prover bundles become large enough to justify content-addressed distribution | `topic:<tenant_id>:policy:<scope>` for invalidation/status only; `topic:cluster:state` for node policy-engine capability summaries |
 | `docs/plans/wasi-agent-capabilities-plan.md` | indirectly — `nimbus:agent/http-client` reads API keys via `ctx.secret.*`, inheriting the secret-management plan's cluster semantics. The agent-OS sidecar lifecycle is single-node in MVP; cluster-aware sidecar placement is a future amendment to that plan. | none directly |
 
 **Shared invariants the consumer plans rely on:**

@@ -156,6 +156,21 @@ explicit, separately tested surface, and provider-auth credentials must be
 minted from admitted workload identity through
 `docs/plans/service-identity-provider-auth-plan.md`.
 
+## Policy Engine Boundary
+
+Runtime grants are compiled by Nimbus-owned typed policy code. They are not
+currently delegated to an external policy language or runtime. Future
+operator-authored policy, external PDP integration, sandbox egress policy,
+OCSF/OpenTelemetry export, policy advisor, and policy prover work is owned by
+`docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+
+OPA/Rego and Cedar are credible future policy backends when customers need
+user-authored policy-as-code or analyzable authorization policy. They must
+remain optional adapters behind Nimbus's built-in fail-closed evaluator, and
+must not override hard built-in denies for tenant mismatch, forged identity,
+unsafe secrets, unsafe host binds, broad loopback/wildcard grants, or SSRF
+hardening.
+
 ## Presets
 
 Presets are an internal ergonomics layer. They must not be used as permission

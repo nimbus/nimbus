@@ -118,6 +118,14 @@ Accepted for the current baseline:
   `TenantImageVerificationProvider` seam. Production deployments that require
   signatures, attestations, or SBOMs must wire battle-tested tooling behind it
   through `docs/plans/artifact-provenance-verification-plan.md`.
+- Arbitrary guest egress from process-capable microVM, browser, or agent
+  sandboxes is not yet L7/SSRF mediated by a sandbox-local proxy. Current
+  production controls are private-by-default service exposure, tenant-scoped
+  service grants, and broad runtime-network rejection. The follow-on owner is
+  `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+- `TenantIsolationEvent` is the canonical internal event schema. OCSF and
+  OpenTelemetry export mappings are deferred to
+  `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
 - Secret provider authentication is not complete until
   `docs/plans/service-identity-provider-auth-plan.md` can mint short-lived,
   tenant-scoped credentials from admitted `TenantWorkloadStableIdentity`
@@ -163,3 +171,5 @@ Prioritize external security review in this order:
 - [Verification architecture](architecture/testing/verification-architecture.md)
 - [Completed tenant-isolation control-plane plan](plans/archive/tenant-isolation-control-plane-plan.md)
 - [Enterprise hardening prior-art research](plans/research/tenant-isolation-enterprise-hardening-prior-art.md)
+- [OpenShell competitor analysis](plans/research/openshell-competitor-analysis.md)
+- [Enterprise policy and sandbox egress plan](plans/enterprise-policy-and-sandbox-egress-plan.md)

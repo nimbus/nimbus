@@ -134,6 +134,11 @@ records the redacted field path and serializes the value as `redacted`
 instead. Callers may add more redacted attributes, but they must not bypass
 the schema by attaching raw secrets to another telemetry channel.
 
+`TenantIsolationEvent` is the internal canonical schema. Enterprise export
+formats such as OCSF JSONL or OpenTelemetry log records are mappings from this
+schema, not replacements for it. The export, retention, and conformance owner
+is `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+
 ## Agent Auth Contract
 
 This is a forward-looking contract for the `nimbus agent` workload class.
