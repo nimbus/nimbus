@@ -1,5 +1,10 @@
 use nimbus_core::{Error, PrincipalContext, Result, TenantId};
-use nimbus_runtime::RuntimeBundle;
+use std::net::IpAddr;
+
+use nimbus_runtime::{
+    RuntimeBackendKind, RuntimeBundle, RuntimeBundleContentKind, RuntimeGrants, RuntimeMode,
+    RuntimePolicy, RuntimePreset,
+};
 use nimbus_sandbox::{SandboxBackendKind, SandboxSpec};
 
 use crate::sandbox::SandboxServiceLaunch;
@@ -20,6 +25,31 @@ impl TenantIsolationAuthority {
                 "application(authenticated)".to_string()
             }
             Self::Application { .. } => "application(anonymous)".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TenantIsolationMode {
+    LocalDevelopment,
+    Production,
+}
+
+impl Default for TenantIsolationMode {
+    fn default() -> Self {
+        Self::LocalDevelopment
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeIsolationTier {
+    InProcessUntrusted,
+}
+
+impl RuntimeIsolationTier {
+    fn label(self) -> &'static str {
+        match self {
+            Self::InProcessUntrusted => "in_process_untrusted",
         }
     }
 }
@@ -139,6 +169,141 @@ impl TenantIsolationContext {
             actual_generation
         )))
     }
+
+    pub(crate) fn ensure_runtime_policy_admitted(
+        &self,
+        policy: &RuntimePolicy,
+        tier: RuntimeIsolationTier,
+        mode: TenantIsolationMode,
+        context: &str,
+    ) -> Result<()> {
+        if !matches!(mode, TenantIsolationMode::Production) {
+            return Ok(());
+        }
+        validate_production_in_process_untrusted_policy(policy.limits()).map_err(|reason| {
+            Error::InvalidInput(format!(
+                "tenant isolation context for {} on {} rejected {context}: production {} runtime policy {reason}",
+                self.authority.describe(),
+                self.surface,
+                tier.label()
+            ))
+        })
+    }
+}
+
+fn validate_production_in_process_untrusted_policy(
+    limits: &nimbus_runtime::RuntimeLimits,
+) -> std::result::Result<(), String> {
+    match limits.backend_kind {
+        RuntimeBackendKind::V8 => {}
+    }
+    if !matches!(
+        limits.bundle_content_kind,
+        RuntimeBundleContentKind::JavaScript
+    ) {
+        return Err(format!(
+            "uses unsupported bundle content kind {:?}",
+            limits.bundle_content_kind
+        ));
+    }
+    if matches!(limits.mode, RuntimeMode::Privileged) {
+        return Err("uses privileged runtime mode".to_string());
+    }
+    if !matches!(
+        limits.preset,
+        RuntimePreset::Application | RuntimePreset::Code
+    ) {
+        return Err(format!(
+            "uses {:?} preset, which is not an untrusted application preset",
+            limits.preset
+        ));
+    }
+
+    let grants = &limits.grants;
+    reject_grant_family("run", &grants.run)?;
+    reject_grant_family("ffi", &grants.ffi)?;
+    reject_grant_family("env_write", &grants.env_write)?;
+    reject_grant_family("identity", &grants.identity)?;
+    reject_grant_family("tool", &grants.tool)?;
+    if let Some(grant) = grants
+        .net_connect
+        .iter()
+        .find(|grant| is_loopback_or_wildcard_network_grant(grant))
+    {
+        return Err(format!(
+            "includes generic localhost or wildcard network authority `{grant}`"
+        ));
+    }
+    if !grants.net_listen.is_empty() {
+        return Err(format!(
+            "includes network listen grants {}; production tenant services must expose endpoints through Nimbus service policy",
+            format_grants(&grants.net_listen)
+        ));
+    }
+    reject_grant_family("worker", &grants.worker)?;
+    if grants.sys.iter().any(|grant| grant == "inspector") {
+        return Err("includes inspector sys grant".to_string());
+    }
+    if let Some(grant) = broad_filesystem_grant(grants) {
+        return Err(format!(
+            "includes broad filesystem/package-loading grant `{grant}`"
+        ));
+    }
+    Ok(())
+}
+
+fn reject_grant_family(family: &str, grants: &[String]) -> std::result::Result<(), String> {
+    if grants.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "includes {family} grants {}",
+        format_grants(grants)
+    ))
+}
+
+fn format_grants(grants: &[String]) -> String {
+    grants
+        .iter()
+        .map(|grant| format!("`{grant}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn broad_filesystem_grant(grants: &RuntimeGrants) -> Option<&str> {
+    grants
+        .read
+        .iter()
+        .chain(grants.write.iter())
+        .map(String::as_str)
+        .find(|grant| {
+            matches!(
+                grant.trim(),
+                "/" | "*" | "$app_root" | "$cache_root" | "$temp_root"
+            )
+        })
+}
+
+fn is_loopback_or_wildcard_network_grant(grant: &str) -> bool {
+    let host = network_grant_host(grant);
+    if matches!(host, "*" | "localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified())
+}
+
+fn network_grant_host(grant: &str) -> &str {
+    let grant = grant.trim();
+    if let Some(rest) = grant.strip_prefix('[') {
+        if let Some((host, _)) = rest.split_once(']') {
+            return host;
+        }
+    }
+    if grant.matches(':').count() == 1 {
+        return grant.split_once(':').map_or(grant, |(host, _)| host);
+    }
+    grant
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +353,7 @@ impl TenantServiceIsolationContext {
 
 #[cfg(test)]
 mod tests {
+    use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
     use nimbus_sandbox::{
         SandboxBackendKind, SandboxFilesystemSpec, SandboxImageLaunchSpec, SandboxProcessSpec,
     };
@@ -211,6 +377,14 @@ mod tests {
             tenant,
         )
         .expect("test runtime bundle should build")
+    }
+
+    fn test_application_context() -> TenantIsolationContext {
+        TenantIsolationContext::application(
+            TenantId::new("tenant-a").expect("tenant id should parse"),
+            PrincipalContext::anonymous(),
+            "test",
+        )
     }
 
     #[test]
@@ -360,5 +534,58 @@ mod tests {
                 .contains("authorized deployment generation 42"),
             "error should name the preserved deployment generation: {error}"
         );
+    }
+
+    #[test]
+    fn production_untrusted_runtime_admission_allows_web_standard_application_policy() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+
+        context
+            .ensure_runtime_policy_admitted(
+                &policy,
+                RuntimeIsolationTier::InProcessUntrusted,
+                TenantIsolationMode::Production,
+                "runtime invocation",
+            )
+            .expect("web-standard application grants should be production-admissible");
+    }
+
+    #[test]
+    fn production_untrusted_runtime_admission_rejects_generic_node_loopback_grants() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
+
+        let error = context
+            .ensure_runtime_policy_admitted(
+                &policy,
+                RuntimeIsolationTier::InProcessUntrusted,
+                TenantIsolationMode::Production,
+                "runtime invocation",
+            )
+            .expect_err("node loopback grants must not enter production untrusted runtime");
+        assert!(
+            error.to_string().contains("generic localhost"),
+            "error should explain loopback authority: {error}"
+        );
+        assert!(
+            error.to_string().contains("in_process_untrusted"),
+            "error should name the runtime tier: {error}"
+        );
+    }
+
+    #[test]
+    fn local_development_runtime_admission_preserves_node_compatibility_policy() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
+
+        context
+            .ensure_runtime_policy_admitted(
+                &policy,
+                RuntimeIsolationTier::InProcessUntrusted,
+                TenantIsolationMode::LocalDevelopment,
+                "runtime invocation",
+            )
+            .expect("local development mode should preserve Node compatibility localhost grants");
     }
 }

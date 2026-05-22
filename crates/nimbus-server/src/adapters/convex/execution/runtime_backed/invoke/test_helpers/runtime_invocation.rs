@@ -116,6 +116,7 @@ async fn invoke_named_convex_function_with_trace_async(
             normalize_principal_context(request.auth.as_ref()),
             "convex_test_runtime",
         ),
+        crate::tenant_isolation::TenantIsolationMode::LocalDevelopment,
     );
     invoke_named_convex_function_with_trace_async_cancellable(
         &context,

@@ -28,6 +28,7 @@ use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServi
 use crate::state::{AppState, AppStateConfig};
 use crate::system::VersionCheck;
 use crate::system::version_check::VersionCheckConfig;
+use crate::tenant_isolation::TenantIsolationMode;
 use crate::{http, ws};
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
@@ -81,6 +82,7 @@ pub(crate) struct RouterBuildConfig {
     machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     deploy_admin_token: Option<String>,
     local_server_security: Option<Arc<LocalServerSecurityState>>,
+    tenant_isolation_mode: TenantIsolationMode,
     listen_addr: Option<SocketAddr>,
     server_shutdown: Option<watch::Sender<bool>>,
 }
@@ -101,6 +103,7 @@ impl RouterBuildConfig {
             machine_lifecycle_manager: None,
             deploy_admin_token: std::env::var("NIMBUS_DEPLOY_TOKEN").ok(),
             local_server_security: None,
+            tenant_isolation_mode: TenantIsolationMode::default(),
             listen_addr: None,
             server_shutdown: None,
         }
@@ -160,6 +163,11 @@ impl RouterBuildConfig {
         local_server_security: Arc<LocalServerSecurityState>,
     ) -> Self {
         self.local_server_security = Some(local_server_security);
+        self
+    }
+
+    pub(crate) fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
+        self.tenant_isolation_mode = mode;
         self
     }
 
@@ -279,6 +287,7 @@ impl RouterBuildConfig {
             machine_lifecycle_manager: self.machine_lifecycle_manager,
             deploy_admin_token: self.deploy_admin_token,
             local_server_security: self.local_server_security,
+            tenant_isolation_mode: self.tenant_isolation_mode,
             listen_addr: self.listen_addr,
             server_shutdown: self.server_shutdown,
             version_check,

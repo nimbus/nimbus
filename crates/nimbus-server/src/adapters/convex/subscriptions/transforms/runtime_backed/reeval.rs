@@ -16,7 +16,7 @@ use crate::adapters::convex::execution::{
 use crate::adapters::convex::subscriptions::next_runtime_subscription_server_request_id;
 use crate::execution::read_tracking::{RuntimeReadSet, commit_intersects_runtime_read_set};
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant_isolation::{TenantIsolationContext, TenantIsolationMode};
 
 pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a> {
     pub(super) service: &'a Arc<nimbus_engine::Service>,
@@ -25,6 +25,7 @@ pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a
     pub(super) tenant_context: &'a TenantIsolationContext,
     pub(super) transforms: &'a RwLock<ConvexSubscriptionTransforms>,
     pub(super) runtime_cancellation: &'a HostCallCancellation,
+    pub(super) tenant_isolation_mode: TenantIsolationMode,
     pub(super) event: ConvexSubscriptionEvent<'a>,
 }
 
@@ -36,6 +37,7 @@ impl<'a> RuntimeTransformContext<'a> {
         tenant_context: &'a TenantIsolationContext,
         transforms: &'a RwLock<ConvexSubscriptionTransforms>,
         runtime_cancellation: &'a HostCallCancellation,
+        tenant_isolation_mode: TenantIsolationMode,
         event: ConvexSubscriptionEvent<'a>,
     ) -> Self {
         Self {
@@ -45,6 +47,7 @@ impl<'a> RuntimeTransformContext<'a> {
             tenant_context,
             transforms,
             runtime_cancellation,
+            tenant_isolation_mode,
             event,
         }
     }
@@ -58,6 +61,7 @@ impl<'a> RuntimeTransformContext<'a> {
                 nimbus_core::PrincipalContext::anonymous(),
                 "convex_subscription_runtime",
             ),
+            self.tenant_isolation_mode,
         )
     }
 }

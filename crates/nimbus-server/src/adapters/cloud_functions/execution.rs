@@ -13,13 +13,14 @@ use crate::execution::invocations::{
 };
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant_isolation::{RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode};
 
 pub(crate) struct CloudFunctionsTriggerExecutor {
     service: Arc<Service>,
     registry: Arc<CloudFunctionsRegistry>,
     deployment_generation: u64,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    tenant_isolation_mode: TenantIsolationMode,
 }
 
 impl CloudFunctionsTriggerExecutor {
@@ -28,12 +29,14 @@ impl CloudFunctionsTriggerExecutor {
         registry: Arc<CloudFunctionsRegistry>,
         deployment_generation: u64,
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+        tenant_isolation_mode: TenantIsolationMode,
     ) -> Self {
         Self {
             service,
             registry,
             deployment_generation,
             runtime_service_registry,
+            tenant_isolation_mode,
         }
     }
 }
@@ -73,6 +76,12 @@ impl CloudFunctionsTriggerExecutor {
         let bundle = self.registry.runtime_bundle();
         isolation
             .ensure_runtime_bundle_matches(&bundle, "cloud functions trigger runtime bundle")?;
+        isolation.ensure_runtime_policy_admitted(
+            &self.registry.runtime_policy(),
+            RuntimeIsolationTier::InProcessUntrusted,
+            self.tenant_isolation_mode,
+            "cloud functions trigger runtime invocation",
+        )?;
         let services = self
             .runtime_service_registry
             .snapshot_for_tenant(isolation.tenant_id());
@@ -243,6 +252,7 @@ export {};
             registry,
             1,
             runtime_service_registry,
+            TenantIsolationMode::LocalDevelopment,
         );
 
         assert_eq!(
@@ -330,6 +340,7 @@ export {};
             registry,
             1,
             runtime_service_registry,
+            TenantIsolationMode::LocalDevelopment,
         );
 
         assert_eq!(
@@ -421,6 +432,7 @@ export {};
             registry,
             1,
             runtime_service_registry,
+            TenantIsolationMode::LocalDevelopment,
         );
 
         let users = TableName::new("users").expect("users table should parse");
@@ -916,8 +928,13 @@ export {};
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
             SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
         );
-        let executor =
-            CloudFunctionsTriggerExecutor::new(service, registry, 1, runtime_service_registry);
+        let executor = CloudFunctionsTriggerExecutor::new(
+            service,
+            registry,
+            1,
+            runtime_service_registry,
+            TenantIsolationMode::LocalDevelopment,
+        );
 
         let outcome = executor.execute_invocation(
             &tenant_id,

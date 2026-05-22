@@ -65,6 +65,7 @@ pub use sandbox::{
     SandboxServiceLaunch,
 };
 pub use service_manager::SandboxServiceManager;
+pub use tenant_isolation::TenantIsolationMode;
 
 /// Optional server runtime surfaces layered on top of the core service.
 pub struct ServeOptions {
@@ -79,6 +80,7 @@ pub struct ServeOptions {
     machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     deploy_admin_token: Option<String>,
     local_server_security: Option<Arc<LocalServerSecurityState>>,
+    tenant_isolation_mode: TenantIsolationMode,
 }
 
 impl Default for ServeOptions {
@@ -95,6 +97,7 @@ impl Default for ServeOptions {
             machine_lifecycle_manager: None,
             deploy_admin_token: None,
             local_server_security: None,
+            tenant_isolation_mode: TenantIsolationMode::default(),
         }
     }
 }
@@ -166,6 +169,11 @@ impl ServeOptions {
         local_server_security: Arc<LocalServerSecurityState>,
     ) -> Self {
         self.local_server_security = Some(local_server_security);
+        self
+    }
+
+    pub fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
+        self.tenant_isolation_mode = mode;
         self
     }
 }
@@ -279,6 +287,7 @@ pub async fn serve_with_options(
     if let Some(local_server_security) = options.local_server_security {
         config = config.with_local_server_security(local_server_security);
     }
+    config = config.with_tenant_isolation_mode(options.tenant_isolation_mode);
     if let Some(sandbox_service_manager) = options.sandbox_service_manager {
         config = config.with_sandbox_service_manager(sandbox_service_manager);
     } else if let Some(sandbox_catalog) = options.sandbox_catalog {

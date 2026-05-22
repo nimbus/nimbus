@@ -2,7 +2,7 @@ use super::invoke::invoke_named_convex_function_with_trace_async_cancellable;
 use super::*;
 use crate::application_auth::normalize_principal_context;
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant_isolation::{TenantIsolationContext, TenantIsolationMode};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_async(
@@ -17,6 +17,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
     auth: Option<InvocationAuth>,
     cancellation: HostCallCancellation,
     server_request_id: Option<String>,
+    tenant_isolation_mode: TenantIsolationMode,
 ) -> Result<ConvexRuntimeSubscriptionSetup, Error> {
     let context = RuntimeInvocationContext::new(
         service,
@@ -26,6 +27,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
             normalize_principal_context(auth.as_ref()),
             "convex_subscription_runtime",
         ),
+        tenant_isolation_mode,
     );
     let kind = if page_size.is_some() {
         InvocationKind::PaginatedQuery

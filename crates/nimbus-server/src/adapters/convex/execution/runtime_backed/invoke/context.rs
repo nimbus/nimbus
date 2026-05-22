@@ -16,7 +16,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_on_worker_with_host_state,
 };
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant_isolation::{RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode};
 
 use super::super::super::runtime_error_to_core;
 
@@ -25,6 +25,7 @@ pub(in crate::adapters::convex) struct RuntimeInvocationContext<'a> {
     registry: &'a Arc<ConvexRegistry>,
     runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
     isolation: TenantIsolationContext,
+    tenant_isolation_mode: TenantIsolationMode,
 }
 
 impl<'a> RuntimeInvocationContext<'a> {
@@ -33,12 +34,14 @@ impl<'a> RuntimeInvocationContext<'a> {
         registry: &'a Arc<ConvexRegistry>,
         runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
         isolation: TenantIsolationContext,
+        tenant_isolation_mode: TenantIsolationMode,
     ) -> Self {
         Self {
             service,
             registry,
             runtime_service_registry,
             isolation,
+            tenant_isolation_mode,
         }
     }
 
@@ -64,6 +67,15 @@ impl<'a> RuntimeInvocationContext<'a> {
     ) -> Result<(Value, RuntimeReadSet), Error> {
         let bundle = self.required_runtime_bundle()?;
         let invocation_kind = request.kind.clone();
+        let (runtime_executor, runtime_policy) = self
+            .registry
+            .runtime_lane_for_function(&request.function_name);
+        self.isolation.ensure_runtime_policy_admitted(
+            &runtime_policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            self.tenant_isolation_mode,
+            "convex runtime invocation",
+        )?;
         let bridge = Arc::new(ConvexHostBridge::build(
             ConvexHostBridgeScope::new(
                 self.service.clone(),
@@ -79,9 +91,6 @@ impl<'a> RuntimeInvocationContext<'a> {
                 invocation_kind.clone(),
             ),
         )?);
-        let (runtime_executor, runtime_policy) = self
-            .registry
-            .runtime_lane_for_function(&request.function_name);
         let (response, read_set) = invoke_runtime_bundle_on_worker_with_host_state(
             &runtime_executor,
             runtime_policy,

@@ -31,6 +31,7 @@ pub(crate) async fn action(
                 &registry,
                 &runtime_service_registry,
                 tenant_context.clone(),
+                state.tenant_isolation_mode,
             );
             invoke_named_convex_function_async_cancellable(
                 &context,
