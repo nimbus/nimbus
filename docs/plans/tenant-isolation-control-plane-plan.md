@@ -73,7 +73,7 @@ Reviewed on 2026-05-22.
 | Tenant identity | `TenantIsolationContext` now carries tenant, authority, surface, runtime bundle tenant labels, deployment generation, and service launch validation across native HTTP, native WebSocket, Convex, Firebase/Firestore, Cloud Functions, MongoDB compatibility commands, runtime HostBridge, and sandbox service launch. `SandboxServiceManager` keys active handles by `(tenant_id, service_name)` and rejects launch specs whose tenant/service/backend differ from the admitted request. | Later phases must extend the context/admission artifact with admitted network, storage, volume, image, secret, runtime grant, and quota policy instead of passing those as independent ad hoc arguments. |
 | Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not a global tenant-membership gate today. The path tenant ID is validated but not bound to a verified principal before all data paths. |
 | Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, and materialized rootfs roots now lower under tenant-owned `tenants/<tenant_id>/sandboxes/<sandbox_id>/...` paths. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots while leaving shared content-addressed image cache and other tenants intact. | Named volume admission/paths are still not lowered into service bundles and remain TIC6. Container network/IPAM ownership and non-loopback exposure policy remain TIC3. |
-| Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding. Runtime service lookup is tenant-scoped. Compose service lowering now rejects non-loopback host addresses unless a future operator network exposure policy is added. System port records now carry explicit tenant, service, and endpoint ownership fields. krun/container port allocation now enforces a default per-tenant published-port quota while keeping host-port reservation global. `TenantIsolationMode::Production` now rejects generic loopback/wildcard in-process runtime network grants before Convex or Cloud Functions runtime invocation. | The Linux krun/libkrun localhost-only TSI proof still needs to be rerun or retained after the quota changes. Future admitted tenant-owned endpoint grants need an explicit policy object instead of generic localhost authority. |
+| Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding on the rootful Linux service path after the quota changes. Runtime service lookup is tenant-scoped. Compose service lowering now rejects non-loopback host addresses unless a future operator network exposure policy is added. System port records now carry explicit tenant, service, and endpoint ownership fields. krun/container port allocation now enforces a default per-tenant published-port quota while keeping host-port reservation global. `TenantIsolationMode::Production` now rejects generic loopback/wildcard in-process runtime network grants before Convex or Cloud Functions runtime invocation. | Container backend network namespace/IPAM state still roots under the backend-wide state root and needs tenant-owned layout. Future admitted tenant-owned endpoint grants need an explicit policy object instead of generic localhost authority. |
 | In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::ensure_runtime_policy_admitted(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. | TIC4 still needs production-mode wiring at every final serve/deploy entrypoint, a trusted-only/microVM routing story for rejected workloads, native-addon/package-manager proof beyond grant shape, and tenant-accounted CPU/memory/time/worker budgets rather than only current concurrency limits. |
 | MicroVM service compute | krun launches one service sandbox as one microVM; service manager does not intentionally share a VM across tenants. Runtime permission model separates `in_process_untrusted` from `microvm_service`. | Need hard admission tests that prevent multiple tenants sharing a guest, enforce per-tenant/per-sandbox quotas, and prove workloads with broad OS needs move to `microvm_service` or a trusted tier. |
 | Volumes/files | Compose volumes are parsed/rendered but not admitted into the krun bundle; current bundle only adds Nimbus-owned read-only helper mounts. | Bind mounts must be rejected by default. Named volumes need Nimbus-owned paths under the tenant root, explicit read/write policy, quota, cleanup, and no cross-tenant reuse unless a future shared-read-only artifact policy is added. |
@@ -683,8 +683,9 @@ Verification evidence:
 
 Remaining before TIC3 is done:
 
-- The Linux krun/libkrun localhost-only TSI proof must be rerun or retained as
-  evidence after the port quota changes.
+- Container backend network namespace and IPAM state must move under
+  tenant-owned artifact roots and prove same sandbox/service names across
+  tenants cannot share mutable network state.
 
 Remaining after this checkpoint:
 
@@ -694,6 +695,56 @@ Remaining after this checkpoint:
 - Dirty worktree caveat: this checkpoint remains mixed into an already-dirty
   workspace that includes unrelated generated Convex/demo artifacts,
   `package-lock.json`, desktop-auth proof images/plans, and prior docs edits.
+
+### 2026-05-22 TIC3 Rootful Linux Localhost-Only Proof
+
+Reran the krun/libkrun localhost-only smoke after the port quota changes on
+the Debian 13 `minicloud` Linux host.
+
+Completed in this checkpoint:
+
+- Synced the committed Nimbus source snapshot from local `main` commit
+  `f5acd4aa` to `~/src/github.com/nimbus/nimbus` on `minicloud` for proof
+  execution. The remote source tree is a copied checkout, not a git worktree.
+- Confirmed host readiness with KVM, buildah, conmon, private
+  `/usr/libexec/nimbus/crun`, private `/usr/libexec/nimbus/lib/libkrun.so.1`,
+  private `/usr/libexec/nimbus/lib/libkrunfw.so.5`, and exported
+  `krun_set_port_map_with_bind_address`.
+- Installed a per-user rustup stable toolchain for the `nimbus` user because
+  Debian 13 currently provides `rustc 1.85.0`, while the current Nimbus
+  lockfile requires at least `rustc 1.86` through ICU dependencies.
+- Ran the ignored Linux smoke under `sudo` with an isolated target directory so
+  root-owned build artifacts stay outside the repo. The test booted
+  BusyBox through the private crun/libkrun stack, reached Ready, proved
+  loopback HTTP, and proved the same port refused the concrete non-loopback
+  address `192.168.4.29`.
+
+Verification evidence:
+
+- `ssh nimbus@192.168.4.29 'cd ~/src/github.com/nimbus/nimbus && bash scripts/check-vmm-host.sh'`
+  - result: pass; `result supported`; `/dev/kvm access=ok`;
+    private crun `1.27.1-dirty` reports `+LIBKRUN`; private libkrun release
+    `v1.17.4-nimbus.1`; `krun_set_port_map_with_bind_address` present;
+    private crun runpath has `$ORIGIN/lib`.
+- `ssh nimbus@192.168.4.29 'cd ~/src/github.com/nimbus/nimbus && sudo env PATH=/home/nimbus/.cargo/bin:... CARGO_HOME=/home/nimbus/.cargo CARGO_TARGET_DIR=/tmp/nimbus-root-cargo-target NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-tic3-root-krun-smoke NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=192.168.4.29 cargo test -p nimbus-sandbox krun_backend_image_backed_smoke_pulls_and_boots_busybox --test krun_linux_smoke -- --ignored --nocapture'`
+  - result: pass; 1 passed, 0 failed, 10 filtered out; output included
+    `non-loopback bind probe 192.168.4.29:18081: Connection refused`.
+
+Diagnostic caveat:
+
+- The same smoke as non-root did not pass on `minicloud`: after rustup fixed
+  compilation, the test timed out waiting for Ready and the exit file recorded
+  `139`; `dmesg` showed `libkrun VM` general-protection faults. A direct
+  rootless diagnostic also hit `/dev/kvm` permission denial from inside
+  `buildah unshare`. The supported rootful service path passed, but rootless
+  minicloud libkrun execution should be tracked separately from TIC3's
+  production localhost-only proof.
+
+Remaining before TIC3 is done:
+
+- Container backend network namespace and IPAM state must move under
+  tenant-owned artifact roots and prove same sandbox/service names across
+  tenants cannot share mutable network state.
 
 ## Execution Notes
 
