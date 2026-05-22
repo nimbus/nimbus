@@ -89,6 +89,84 @@ fn plan_only_backend_scopes_container_artifacts_by_tenant_for_same_service_name(
 }
 
 #[test]
+fn plan_only_backend_lowers_tenant_volume_mounts_under_tenant_state_root() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend = sample_plan_only_backend(temp_dir.path());
+    let tenant_a = sample_spec_for_tenant("tenant-a", "api")
+        .with_mount(SandboxMountSpec::tenant_volume("shared", "/var/lib/app").read_only(false));
+    let tenant_b = sample_spec_for_tenant("tenant-b", "api")
+        .with_mount(SandboxMountSpec::tenant_volume("shared", "/var/lib/app").read_only(true));
+
+    let handle_a = backend
+        .start_sync(tenant_a.clone())
+        .expect("tenant-a container plan should start");
+    let handle_b = backend
+        .start_sync(tenant_b.clone())
+        .expect("tenant-b container plan should start");
+
+    let volume_a = temp_dir
+        .path()
+        .join("state")
+        .join("tenants")
+        .join("tenant-a")
+        .join("volumes")
+        .join("shared");
+    let volume_b = temp_dir
+        .path()
+        .join("state")
+        .join("tenants")
+        .join("tenant-b")
+        .join("volumes")
+        .join("shared");
+    assert!(volume_a.is_dir(), "tenant-a volume directory should exist");
+    assert!(volume_b.is_dir(), "tenant-b volume directory should exist");
+    assert_ne!(
+        volume_a, volume_b,
+        "same named volume in different tenants must not share host storage"
+    );
+
+    let bundle_a = crate::artifact_paths::bundle_dir(
+        &temp_dir.path().join("bundles"),
+        &tenant_a.tenant_id,
+        &handle_a.id,
+    )
+    .join("config.json");
+    let bundle_b = crate::artifact_paths::bundle_dir(
+        &temp_dir.path().join("bundles"),
+        &tenant_b.tenant_id,
+        &handle_b.id,
+    )
+    .join("config.json");
+    let rendered_a =
+        std::fs::read_to_string(&bundle_a).expect("tenant-a bundle should be readable");
+    let rendered_b =
+        std::fs::read_to_string(&bundle_b).expect("tenant-b bundle should be readable");
+    assert!(
+        rendered_a.contains(&volume_a.to_string_lossy().to_string()),
+        "tenant-a bundle should bind only the tenant-a volume path: {rendered_a}"
+    );
+    assert!(
+        rendered_b.contains(&volume_b.to_string_lossy().to_string()),
+        "tenant-b bundle should bind only the tenant-b volume path: {rendered_b}"
+    );
+
+    futures::executor::block_on(crate::backend::SandboxBackend::remove_tenant_artifacts(
+        &backend,
+        tenant_a.tenant_id.clone(),
+    ))
+    .expect("tenant-a artifacts should be removed");
+
+    assert!(
+        !volume_a.exists(),
+        "tenant-a volume should be removed by tenant cleanup"
+    );
+    assert!(
+        volume_b.exists(),
+        "tenant-b volume should remain after tenant-a cleanup"
+    );
+}
+
+#[test]
 fn plan_only_backend_scopes_network_state_by_tenant_for_same_sandbox_id() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let backend = sample_plan_only_backend(temp_dir.path());

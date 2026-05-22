@@ -91,10 +91,11 @@ impl KrunSandboxBackend {
             &hostname_for(&resolved_launch.spec),
             &resolved_launch.spec,
             &KrunBundleOptions {
-                additional_mounts: guest_user_switch_mounts(
+                additional_mounts: krun_additional_mounts(
                     &self.config,
+                    &resolved_launch.spec,
                     &resolved_launch.image_metadata,
-                ),
+                )?,
             },
         )?;
 
@@ -264,7 +265,11 @@ impl KrunSandboxBackend {
             &hostname_for(&manifest.spec),
             &manifest.spec,
             &KrunBundleOptions {
-                additional_mounts: guest_user_switch_mounts(&self.config, &manifest.image_metadata),
+                additional_mounts: krun_additional_mounts(
+                    &self.config,
+                    &manifest.spec,
+                    &manifest.image_metadata,
+                )?,
             },
         )
     }
@@ -520,6 +525,55 @@ fn guest_user_switch_mounts(
         source: config.guest_user_helper_root.clone(),
         options: vec!["rbind".to_owned(), "ro".to_owned()],
     }]
+}
+
+fn krun_additional_mounts(
+    config: &KrunSandboxBackendConfig,
+    spec: &SandboxSpec,
+    image_metadata: &KrunImageMetadata,
+) -> Result<Vec<KrunBundleMount>> {
+    let mut mounts = tenant_volume_mounts(&config.state_root, spec)?;
+    mounts.extend(guest_user_switch_mounts(config, image_metadata));
+    Ok(mounts)
+}
+
+fn tenant_volume_mounts(state_root: &Path, spec: &SandboxSpec) -> Result<Vec<KrunBundleMount>> {
+    crate::spec::validate_sandbox_mounts(&spec.mounts)
+        .map_err(|message| SandboxError::InvalidSpec { message })?;
+    let mut mounts = Vec::new();
+    for mount in &spec.mounts {
+        let destination = mount.destination.to_string_lossy().into_owned();
+        let volume_name = mount
+            .tenant_volume_name()
+            .ok_or_else(|| SandboxError::InvalidSpec {
+                message: "unsupported krun sandbox mount source".to_owned(),
+            })?;
+        let source =
+            crate::artifact_paths::tenant_volume_dir(state_root, &spec.tenant_id, volume_name);
+        std::fs::create_dir_all(&source).map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to create tenant volume {} for sandbox {} under {}: {error}",
+                volume_name,
+                spec.name,
+                source.display()
+            ),
+        })?;
+        mounts.push(KrunBundleMount {
+            destination,
+            source,
+            options: tenant_volume_mount_options(mount.read_only),
+        });
+    }
+    Ok(mounts)
+}
+
+fn tenant_volume_mount_options(read_only: bool) -> Vec<String> {
+    vec![
+        "rbind".to_owned(),
+        if read_only { "ro" } else { "rw" }.to_owned(),
+        "nosuid".to_owned(),
+        "nodev".to_owned(),
+    ]
 }
 
 fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {

@@ -31,8 +31,10 @@ pub use nimbus_runtime::{
 pub use nimbus_sandbox::{
     PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
     SandboxBuildLaunchSpec, SandboxError, SandboxFilesystemSpec, SandboxHandle, SandboxId,
-    SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxPortBinding,
-    SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec, SandboxStatus,
+    SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSource,
+    SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
+    SandboxRestartPolicy, SandboxSpec, SandboxStatus, validate_sandbox_mounts,
+    validate_tenant_volume_name,
 };
 // Server integration and transport construction helpers.
 pub use nimbus_server::{

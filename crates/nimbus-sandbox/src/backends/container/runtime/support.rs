@@ -14,7 +14,7 @@ use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::backends::oci::network::OciMachinePortForwarderConfig;
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
 pub(super) use crate::spec::{
-    SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec,
+    SandboxFilesystemSpec, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec,
 };
 
 pub(super) fn sample_spec() -> SandboxSpec {

@@ -31,7 +31,7 @@ use self::commands::{
 use self::commands::{ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat};
 use self::execution::{
     ServiceExecutionSurface, ServiceHostPlatform,
-    load_host_backed_sandbox_service_manager_for_platform_selection,
+    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission,
     load_sandbox_service_catalog_for_execution_platform, lookup_current_remote_service_details,
     machine_api_operation_error, missing_persisted_service_error, render_state_lookup_error,
     requested_service_names, require_krun_backend_for_service_operation,
@@ -132,16 +132,56 @@ pub(crate) fn load_compose_project_context_for_selection(
     ComposeProjectContext::load_selection(selection, control_data_dir)
 }
 
+#[allow(dead_code)]
 pub(crate) fn load_host_backed_sandbox_service_manager_for_selection(
     selection: &ResolvedComposeSelection,
     control_data_dir: &std::path::Path,
 ) -> Result<SandboxServiceManager, Error> {
-    load_host_backed_sandbox_service_manager_for_platform_selection(
+    load_host_backed_sandbox_service_manager_for_selection_with_admission(
+        selection,
+        control_data_dir,
+        file::ComposeAdmissionMode::LocalDevelopment,
+    )
+}
+
+#[allow(dead_code)]
+pub(crate) fn load_host_backed_sandbox_service_manager_for_selection_with_admission(
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &std::path::Path,
+    admission_mode: file::ComposeAdmissionMode,
+) -> Result<SandboxServiceManager, Error> {
+    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
         selection,
         control_data_dir,
         ServiceHostPlatform::current(),
         None,
+        admission_mode,
     )
+}
+
+pub(crate) fn load_host_backed_sandbox_service_manager_for_selection_with_isolation_mode(
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &std::path::Path,
+    tenant_isolation_mode: nimbus_server::TenantIsolationMode,
+) -> Result<SandboxServiceManager, Error> {
+    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
+        selection,
+        control_data_dir,
+        ServiceHostPlatform::current(),
+        None,
+        compose_admission_mode_for_tenant_isolation(tenant_isolation_mode),
+    )
+}
+
+fn compose_admission_mode_for_tenant_isolation(
+    tenant_isolation_mode: nimbus_server::TenantIsolationMode,
+) -> file::ComposeAdmissionMode {
+    match tenant_isolation_mode {
+        nimbus_server::TenantIsolationMode::LocalDevelopment => {
+            file::ComposeAdmissionMode::LocalDevelopment
+        }
+        nimbus_server::TenantIsolationMode::Production => file::ComposeAdmissionMode::Production,
+    }
 }
 
 fn run_compose_config(command: ComposeConfigCommand) -> Result<(), Error> {

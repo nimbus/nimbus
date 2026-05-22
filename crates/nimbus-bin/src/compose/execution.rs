@@ -61,13 +61,35 @@ pub(super) fn load_host_backed_sandbox_service_manager_for_platform(
     )
 }
 
+#[allow(dead_code)]
 pub(super) fn load_host_backed_sandbox_service_manager_for_platform_selection(
     selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
 ) -> Result<SandboxServiceManager, Error> {
+    load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
+        selection,
+        control_data_dir,
+        host_platform,
+        machine_api_client,
+        file::ComposeAdmissionMode::LocalDevelopment,
+    )
+}
+
+pub(super) fn load_host_backed_sandbox_service_manager_for_platform_selection_with_admission(
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+    host_platform: ServiceHostPlatform,
+    machine_api_client: Option<MachineApiClient>,
+    admission_mode: file::ComposeAdmissionMode,
+) -> Result<SandboxServiceManager, Error> {
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
+    let catalog = load_sandbox_service_catalog_for_execution_platform_with_admission(
+        selection,
+        host_platform,
+        admission_mode,
+    )?;
     let machine_api_client = match machine_api_client {
         Some(client) => Some(client),
         None if should_auto_start_default_machine_for_host_loader(&context, host_platform)? => {
@@ -76,10 +98,7 @@ pub(super) fn load_host_backed_sandbox_service_manager_for_platform_selection(
         None => None,
     };
     let backend = load_host_backed_project_backend(&context, host_platform, machine_api_client)?;
-    Ok(SandboxServiceManager::new(
-        load_sandbox_service_catalog_for_execution_platform(selection, host_platform)?,
-        backend,
-    ))
+    Ok(SandboxServiceManager::new(catalog, backend))
 }
 
 pub(super) fn should_auto_start_default_machine_for_host_loader(
@@ -294,7 +313,20 @@ pub(super) fn load_sandbox_service_catalog_for_execution_platform(
     selection: &ResolvedComposeSelection,
     host_platform: ServiceHostPlatform,
 ) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
-    let mut plan = file::ComposeProjectPlan::load_selection(selection)?;
+    load_sandbox_service_catalog_for_execution_platform_with_admission(
+        selection,
+        host_platform,
+        file::ComposeAdmissionMode::LocalDevelopment,
+    )
+}
+
+pub(super) fn load_sandbox_service_catalog_for_execution_platform_with_admission(
+    selection: &ResolvedComposeSelection,
+    host_platform: ServiceHostPlatform,
+    admission_mode: file::ComposeAdmissionMode,
+) -> Result<Arc<dyn SandboxServiceCatalog>, Error> {
+    let mut plan =
+        file::ComposeProjectPlan::load_selection_with_admission(selection, admission_mode)?;
     apply_platform_backend_defaults(&mut plan, host_platform);
     Ok(Arc::new(plan.into_service_catalog()?))
 }

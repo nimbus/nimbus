@@ -16,6 +16,18 @@ pub(crate) struct ContainerBundleLayout {
     pub config_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ContainerBundleOptions {
+    pub additional_mounts: Vec<ContainerBundleMount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContainerBundleMount {
+    pub destination: String,
+    pub source: PathBuf,
+    pub options: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ProcessUser {
     uid: u32,
@@ -42,6 +54,7 @@ pub(crate) fn write_bundle_config(
     spec: &SandboxSpec,
     image_user: Option<&str>,
     network_namespace_path: Option<&Path>,
+    options: &ContainerBundleOptions,
 ) -> Result<()> {
     std::fs::create_dir_all(&layout.bundle_dir).map_err(|error| SandboxError::OperationFailed {
         message: format!(
@@ -50,7 +63,7 @@ pub(crate) fn write_bundle_config(
         ),
     })?;
 
-    let config = build_bundle_config(hostname, spec, image_user, network_namespace_path)?;
+    let config = build_bundle_config(hostname, spec, image_user, network_namespace_path, options)?;
     let rendered =
         serde_json::to_vec_pretty(&config).map_err(|error| SandboxError::OperationFailed {
             message: format!("failed to serialize container bundle config: {error}"),
@@ -71,6 +84,7 @@ pub(crate) fn build_bundle_config(
     spec: &SandboxSpec,
     image_user: Option<&str>,
     network_namespace_path: Option<&Path>,
+    options: &ContainerBundleOptions,
 ) -> Result<Value> {
     if spec.process.args.is_empty() {
         return Err(SandboxError::InvalidSpec {
@@ -105,6 +119,9 @@ pub(crate) fn build_bundle_config(
         linux.insert("resources".to_owned(), resources);
     }
 
+    let mut mounts = default_linux_mounts();
+    mounts.extend(options.additional_mounts.iter().map(bundle_mount_json));
+
     Ok(json!({
         "ociVersion": "1.0.2",
         "process": {
@@ -122,9 +139,18 @@ pub(crate) fn build_bundle_config(
             "readonly": spec.filesystem.readonly,
         },
         "hostname": hostname,
-        "mounts": default_linux_mounts(),
+        "mounts": mounts,
         "linux": Value::Object(linux),
     }))
+}
+
+fn bundle_mount_json(mount: &ContainerBundleMount) -> Value {
+    json!({
+        "destination": mount.destination,
+        "type": "bind",
+        "source": mount.source,
+        "options": mount.options,
+    })
 }
 
 fn parse_process_user(image_user: Option<&str>) -> Result<ProcessUser> {
@@ -306,8 +332,14 @@ mod tests {
 
     #[test]
     fn bundle_config_uses_numeric_image_user_when_present() {
-        let config = build_bundle_config("db", &sample_spec(), Some("33:33"), None)
-            .expect("bundle should render");
+        let config = build_bundle_config(
+            "db",
+            &sample_spec(),
+            Some("33:33"),
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect("bundle should render");
 
         assert_eq!(config["process"]["user"]["uid"], 33);
         assert_eq!(config["process"]["user"]["gid"], 33);
@@ -318,8 +350,14 @@ mod tests {
         let spec = sample_spec().with_port_binding(SandboxPortBinding::tcp("http", 18080, 8080));
         let netns_path = PathBuf::from("/run/nimbus/netns/db-01");
 
-        let config = build_bundle_config("db", &spec, None, Some(netns_path.as_path()))
-            .expect("bundle should render");
+        let config = build_bundle_config(
+            "db",
+            &spec,
+            None,
+            Some(netns_path.as_path()),
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect("bundle should render");
 
         let namespaces = config["linux"]["namespaces"]
             .as_array()

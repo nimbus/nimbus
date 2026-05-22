@@ -316,18 +316,29 @@ pub(super) fn resolve_depends_on(
 }
 
 pub(super) fn resolve_volume_mounts(
+    service_name: &str,
     volumes: Vec<RawComposeVolumeMount>,
-) -> Vec<ComposeVolumeMountPlan> {
+) -> Result<Vec<ComposeVolumeMountPlan>, Error> {
     volumes
         .into_iter()
-        .filter_map(|volume| match volume {
-            RawComposeVolumeMount::Short(raw) => parse_short_volume_mount(&raw),
-            RawComposeVolumeMount::Long(detail) => Some(ComposeVolumeMountPlan {
-                source: detail.source,
-                target: detail.target,
-                kind: detail.kind.unwrap_or_else(|| "volume".to_owned()),
-                read_only: detail.read_only.unwrap_or(false),
-            }),
+        .enumerate()
+        .map(|(index, volume)| {
+            let mount = match volume {
+                RawComposeVolumeMount::Short(raw) => {
+                    parse_short_volume_mount(&raw).ok_or_else(|| {
+                        Error::InvalidInput(format!(
+                            "services.{service_name}.volumes[{index}]: unsupported volume mount {raw:?}"
+                        ))
+                    })?
+                }
+                RawComposeVolumeMount::Long(detail) => ComposeVolumeMountPlan {
+                    source: detail.source,
+                    target: detail.target,
+                    kind: detail.kind.unwrap_or_else(|| "volume".to_owned()),
+                    read_only: detail.read_only.unwrap_or(false),
+                },
+            };
+            admit_volume_mount(service_name, index, mount)
         })
         .collect()
 }
@@ -367,6 +378,51 @@ pub(super) fn classify_volume_source(source: &str) -> String {
     } else {
         "volume".to_owned()
     }
+}
+
+fn admit_volume_mount(
+    service_name: &str,
+    index: usize,
+    mount: ComposeVolumeMountPlan,
+) -> Result<ComposeVolumeMountPlan, Error> {
+    if mount.kind == "bind" {
+        return Err(Error::InvalidInput(format!(
+            "services.{service_name}.volumes[{index}]: host bind mounts are denied by default; use a named volume so Nimbus can allocate tenant-owned storage"
+        )));
+    }
+    if mount.kind == "anonymous" {
+        return Err(Error::InvalidInput(format!(
+            "services.{service_name}.volumes[{index}]: anonymous volumes are not admitted; declare and use a named volume"
+        )));
+    }
+    if mount.kind != "volume" {
+        return Err(Error::InvalidInput(format!(
+            "services.{service_name}.volumes[{index}]: unsupported mount type {:?}; Nimbus currently admits named volumes only",
+            mount.kind
+        )));
+    }
+    let Some(source) = mount.source.as_deref() else {
+        return Err(Error::InvalidInput(format!(
+            "services.{service_name}.volumes[{index}]: anonymous volumes are not admitted; declare and use a named volume"
+        )));
+    };
+    validate_tenant_volume_name(source).map_err(|message| {
+        Error::InvalidInput(format!(
+            "services.{service_name}.volumes[{index}]: {message}"
+        ))
+    })?;
+    validate_volume_target(service_name, index, &mount.target)?;
+    Ok(mount)
+}
+
+fn validate_volume_target(service_name: &str, index: usize, target: &str) -> Result<(), Error> {
+    let path = Path::new(target);
+    let mount = SandboxMountSpec::tenant_volume("validation", path);
+    mount.validate().map_err(|message| {
+        Error::InvalidInput(format!(
+            "services.{service_name}.volumes[{index}]: {message}"
+        ))
+    })
 }
 
 pub(super) fn parse_environment_map(
