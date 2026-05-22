@@ -43,7 +43,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -53,7 +53,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       - name: Run Rust Node compatibility corpus
         run: "cargo test -p nimbus-runtime runtime::tests::node_compat:: -- --nocapture --test-threads=1"
@@ -81,7 +80,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -91,7 +90,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       - name: Set up Node.js 22 for seeded slices and canaries
         uses: actions/setup-node@v6
@@ -153,7 +151,7 @@ jobs:
           make node-compat-publish-evidence PUBLISH_ROOT=target/node-compat/published
 
       - name: Upload node-compat artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: node-compat-evidence
           path: target/node-compat

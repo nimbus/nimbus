@@ -6,7 +6,9 @@
 # This script is the single-shell-exit-code stop condition for the
 # `/goal` control plane that drives the plan to done. It ships in CC0 so
 # /goal is verifiable from day one; CC1-CC7 progressively flip
-# conditions from FAIL to PASS, and CC8 archives the plan.
+# conditions from FAIL to PASS, CC8 archives the plan, and CC9 corrects
+# the sccache-action pin (v0.0.6 → v0.0.10) and retracts the wrong-headed
+# `save-always: true` Swatinem input from CC3.
 #
 # Run from the repo root.
 
@@ -118,22 +120,42 @@ else
   fail "${CI_YML} missing"
 fi
 
-# 4. Rerun-safe save policy on every Swatinem invocation.
-step 4 "Swatinem invocations set save-always: true"
-if [ -f "${CI_YML}" ]; then
-  RUST_CACHE_HITS=$(grep -cE 'Swatinem/rust-cache' "${CI_YML}" || true)
-  SAVE_ALWAYS_HITS=$(grep -cE 'save-always:\s*true' "${CI_YML}" || true)
-  RUST_CACHE_HITS=${RUST_CACHE_HITS// /}
-  SAVE_ALWAYS_HITS=${SAVE_ALWAYS_HITS// /}
-  if [ "${RUST_CACHE_HITS}" = "0" ]; then
-    fail "No Swatinem/rust-cache invocations found in ${CI_YML}" "Expected at least one after CC3"
-  elif [ "${SAVE_ALWAYS_HITS}" -ge "${RUST_CACHE_HITS}" ] 2>/dev/null; then
-    pass "save-always: true matches Swatinem invocation count (${SAVE_ALWAYS_HITS}/${RUST_CACHE_HITS})"
-  else
-    fail "Not every Swatinem invocation has save-always: true" "swatinem=${RUST_CACHE_HITS} save_always=${SAVE_ALWAYS_HITS}"
+# 4. sccache-action pinned to v0.0.10 or newer in every Rust workflow.
+# Background: v0.0.6 (Sep 2024) predated GitHub's actions cache v1 → v2
+# migration. v0.0.8 (Mar 2025) was the breaking fix ("Please update
+# quickly!") and v0.0.9 (Jun 2025) switched to node24. Pinning v0.0.7
+# or older makes every Rust job fail with HTTP 400 from the deprecated
+# `_apis/artifactcache/cache` endpoint. CC9 set the floor to v0.0.10.
+# Also asserts Swatinem `save-always: true` is *not* present — it is
+# not a valid input for `Swatinem/rust-cache@v2` and produces warnings
+# on every job. CC3's original use of it was wrong-headed; CC9 retracted
+# it. Rerun-safety here means "the pinned action versions actually
+# talk to GitHub's current cache backend", not a save-on-failure knob
+# that Swatinem v2 doesn't expose.
+step 4 "sccache-action pinned >= v0.0.10 and save-always retracted"
+PIN_FLOOR_OK=1
+PIN_DETAIL=()
+for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}"; do
+  [ -f "${wf}" ] || continue
+  BAD_PINS=$(grep -E 'mozilla-actions/sccache-action@v0\.0\.(0|1|2|3|4|5|6|7|8|9)([^0-9]|$)' "${wf}" || true)
+  if [ -n "${BAD_PINS}" ]; then
+    PIN_FLOOR_OK=0
+    PIN_DETAIL+=("${wf} has pin(s) below v0.0.10")
   fi
+done
+SAVE_ALWAYS_HITS=0
+for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}"; do
+  [ -f "${wf}" ] || continue
+  hits=$(grep -cE 'save-always:\s*true' "${wf}" || true)
+  hits=${hits// /}
+  SAVE_ALWAYS_HITS=$((SAVE_ALWAYS_HITS + hits))
+done
+if [ "${PIN_FLOOR_OK}" = "1" ] && [ "${SAVE_ALWAYS_HITS}" = "0" ]; then
+  pass "sccache-action >= v0.0.10 everywhere; save-always: true absent (0 occurrences)"
+elif [ "${PIN_FLOOR_OK}" = "0" ]; then
+  fail "sccache-action pinned below v0.0.10" "$(printf '%s; ' "${PIN_DETAIL[@]}")"
 else
-  fail "${CI_YML} missing"
+  fail "save-always: true still present in workflows" "found ${SAVE_ALWAYS_HITS} occurrence(s); Swatinem v2 does not accept this input"
 fi
 
 # 5. ui-artifacts leader job exists and is consumed by downstream Rust jobs.
