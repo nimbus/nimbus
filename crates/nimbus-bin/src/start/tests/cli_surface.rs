@@ -25,6 +25,16 @@ fn start_command_default_has_no_auto_tenant() {
 }
 
 #[test]
+fn start_command_default_uses_production_tenant_isolation() {
+    let command = StartCommand::default();
+    assert_eq!(
+        command.tenant_isolation_mode,
+        nimbus_server::TenantIsolationMode::Production,
+        "start is the production-oriented server entrypoint; dev opts out explicitly"
+    );
+}
+
+#[test]
 fn cli_requires_explicit_start_subcommand_for_server_flags() {
     assert!(Cli::try_parse_from(["nimbus"]).is_err());
     assert!(Cli::try_parse_from(["nimbus", "--compose-file", "./compose.dev.yaml"]).is_err());
@@ -127,6 +137,42 @@ fn cli_parses_start_command_with_skip_codegen() {
 }
 
 #[test]
+fn cli_parses_per_tenant_runtime_budget_flags() {
+    let cli = parse_start([
+        "nimbus",
+        "start",
+        "--runtime-max-active-per-tenant",
+        "2",
+        "--runtime-max-in-flight-per-tenant",
+        "4",
+        "--runtime-max-queued-per-tenant",
+        "8",
+    ]);
+
+    assert_eq!(cli.runtime_max_active_per_tenant, 2);
+    assert_eq!(cli.runtime_max_in_flight_per_tenant, 4);
+    assert_eq!(cli.runtime_max_queued_per_tenant, 8);
+}
+
+#[test]
+fn runtime_limits_from_command_applies_per_tenant_runtime_budgets() {
+    let command = StartCommand {
+        runtime_max_instances: 8,
+        runtime_worker_threads: 16,
+        runtime_max_active_per_tenant: 3,
+        runtime_max_in_flight_per_tenant: 5,
+        runtime_max_queued_per_tenant: 7,
+        ..StartCommand::default()
+    };
+
+    let limits = super::super::runtime_limits::runtime_limits_from_command(&command).normalized();
+
+    assert_eq!(limits.max_active_top_level_invocations_per_tenant, 3);
+    assert_eq!(limits.max_in_flight_top_level_invocations_per_tenant, 5);
+    assert_eq!(limits.max_queued_top_level_invocations_per_tenant, 7);
+}
+
+#[test]
 fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
     let command = StartCommand {
         port: 0,
@@ -161,6 +207,11 @@ fn start_startup_summary_mentions_url_app_codegen_and_deploy_api() {
         lines
             .iter()
             .any(|line| line == "codegen preflight: skipped by --skip-codegen")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "tenant isolation:\tproduction")
     );
     assert!(
         lines

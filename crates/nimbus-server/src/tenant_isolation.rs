@@ -35,6 +35,15 @@ pub enum TenantIsolationMode {
     Production,
 }
 
+impl TenantIsolationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalDevelopment => "local-development",
+            Self::Production => "production",
+        }
+    }
+}
+
 impl Default for TenantIsolationMode {
     fn default() -> Self {
         Self::LocalDevelopment

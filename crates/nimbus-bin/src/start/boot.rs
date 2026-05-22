@@ -141,6 +141,7 @@ pub(crate) async fn run_start_command(
         serve_options = serve_options.with_deploy_admin_token(token);
     }
     serve_options = serve_options.with_local_server_security(local_server_security);
+    serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
 
     let server_result = serve_with_options(listener, service, serve_options).await;
     drop(discovery_lease);
@@ -280,6 +281,10 @@ pub(super) fn start_startup_summary_lines(
             operator_console_url_from_base(&base_url)
         ),
         "server process owns HTTP, WebSocket, scheduler, and runtime startup".to_string(),
+        format!(
+            "tenant isolation:\t{}",
+            command.tenant_isolation_mode.as_str()
+        ),
     ];
     match resolved_app_dir {
         Some(ResolvedStartAppDir::Explicit(app_dir)) => {
