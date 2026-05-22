@@ -6,7 +6,7 @@ use nimbus_core::{
     IndexDefinition, OrderBy, OrderDirection, PrincipalClaimSource, Query, TableAccessPolicy,
     TableName, TableSchema,
 };
-use nimbus_runtime::{InvocationAuth, InvocationKind, RuntimeUserIdentity};
+use nimbus_runtime::{InvocationAuth, InvocationKind, NimbusRuntimeError, RuntimeUserIdentity};
 use serde_json::{Map, Value, json};
 
 use super::super::execution::execute_query_result_cancellable_with_auth;
@@ -106,6 +106,18 @@ fn decode_runtime_result(value: Value) -> Result<Value, Error> {
     envelope.into_core_result()
 }
 
+fn assert_unknown_tenant_payload_rejected(error: NimbusRuntimeError) {
+    assert!(
+        matches!(error, NimbusRuntimeError::Json(_)),
+        "tenant payload smuggling should fail during host-call payload decoding: {error}"
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("unknown field `tenant_id`"),
+        "tenant payload smuggling error should name the rejected field: {message}"
+    );
+}
+
 fn mutation_bridge(
     service: Arc<Service>,
     registry: Arc<ConvexRegistry>,
@@ -173,6 +185,93 @@ fn registry_with_scheduled_mutation() -> Arc<ConvexRegistry> {
         ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
     std::mem::forget(tempdir);
     Arc::new(registry)
+}
+
+#[test]
+fn runtime_host_bridge_rejects_payload_tenant_for_db_insert() {
+    let (_tempdir, service, tenant_id, _bridge) = host_bridge_fixture();
+    let tenant_b = TenantId::new("tenant-b").expect("tenant-b id should be valid");
+    service
+        .create_tenant(tenant_b.clone())
+        .expect("tenant-b should be created");
+    let table = messages_table();
+    let bridge = mutation_bridge(
+        service.clone(),
+        Arc::new(ConvexRegistry::empty()),
+        tenant_id.clone(),
+        nimbus_core::PrincipalContext::anonymous(),
+    );
+
+    let error = bridge
+        .invoke_ctx_db_insert(json!({
+            "tenant_id": "tenant-b",
+            "table": table,
+            "fields": {
+                "owner": "user-123",
+                "body": "tenant payload smuggling"
+            }
+        }))
+        .expect_err("host-call db insert payload must reject tenant_id");
+    assert_unknown_tenant_payload_rejected(error);
+
+    for target_tenant in [&tenant_id, &tenant_b] {
+        let documents = service
+            .query_documents(
+                target_tenant,
+                &Query {
+                    table: table.clone(),
+                    filters: Vec::new(),
+                    order: None,
+                    limit: None,
+                },
+            )
+            .expect("tenant table query should succeed");
+        assert!(
+            documents.is_empty(),
+            "rejected host-call payload should not write to tenant {target_tenant}"
+        );
+    }
+}
+
+#[test]
+fn runtime_host_bridge_rejects_payload_tenant_for_scheduler() {
+    let (_tempdir, service, tenant_id, _bridge) = host_bridge_fixture();
+    let tenant_b = TenantId::new("tenant-b").expect("tenant-b id should be valid");
+    service
+        .create_tenant(tenant_b.clone())
+        .expect("tenant-b should be created");
+    let bridge = mutation_bridge(
+        service.clone(),
+        registry_with_scheduled_mutation(),
+        tenant_id.clone(),
+        nimbus_core::PrincipalContext::anonymous(),
+    );
+
+    let error = bridge
+        .invoke_ctx_scheduler_run_after(json!({
+            "tenant_id": "tenant-b",
+            "delay_ms": 0,
+            "name": "messages:sendInternal",
+            "visibility": "internal",
+            "args": {
+                "body": "tenant payload smuggling"
+            }
+        }))
+        .expect_err("host-call scheduler payload must reject tenant_id");
+    assert_unknown_tenant_payload_rejected(error);
+
+    assert!(
+        service
+            .list_scheduled_jobs(&tenant_id)
+            .expect("tenant-a scheduled jobs should load")
+            .is_empty()
+    );
+    assert!(
+        service
+            .list_scheduled_jobs(&tenant_b)
+            .expect("tenant-b scheduled jobs should load")
+            .is_empty()
+    );
 }
 
 #[test]

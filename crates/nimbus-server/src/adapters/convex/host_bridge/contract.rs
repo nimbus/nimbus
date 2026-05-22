@@ -210,6 +210,7 @@ impl From<ConvexHostCallOperation> for HostCallOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexHostCallRequest {
     #[serde(default = "default_convex_host_call_abi_version")]
     pub(in crate::adapters::convex) abi_version: u16,

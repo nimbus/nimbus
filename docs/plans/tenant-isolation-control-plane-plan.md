@@ -71,7 +71,7 @@ Reviewed on 2026-05-22.
 | Layer | Current evidence | Gap before production tenant isolation |
 | --- | --- | --- |
 | Tenant identity | `TenantIsolationContext` now carries tenant, authority, surface, runtime bundle tenant labels, deployment generation, and service launch validation across native HTTP, native WebSocket, Convex, Firebase/Firestore, Cloud Functions, MongoDB compatibility commands, runtime HostBridge, and sandbox service launch. `SandboxServiceManager` keys active handles by `(tenant_id, service_name)` and rejects launch specs whose tenant/service/backend differ from the admitted request. | Later phases must extend the context/admission artifact with admitted network, storage, volume, image, secret, runtime grant, and quota policy instead of passing those as independent ad hoc arguments. |
-| Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. Application principals carrying tenant claims are now checked by `TenantIsolationContext` before Convex, Convex HTTP actions, Cloud Functions HTTP, and Firebase/Firestore database contexts reach storage/runtime. Convex function routes, Convex HTTP actions, Firebase REST `batchGet`, Firebase gRPC `GetDocument`, Firebase Listen/WebSocket, and Cloud Functions callable transport tests now prove same-tenant access succeeds while a `tenant_id=tenant-b` bearer targeting tenant `tenant-a` returns `403`, gRPC `PermissionDenied`, or a policy websocket close before provider access. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not yet a full tenant-membership/session gate for every non-operator surface. Anonymous/public app requests remain allowed when the app exposes them, and principal-less native HTTP remains local-operator scoped. |
+| Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. Application principals carrying tenant claims are now checked by `TenantIsolationContext` before Convex, Convex HTTP actions, Cloud Functions HTTP, and Firebase/Firestore database contexts reach storage/runtime. Convex function routes, Convex HTTP actions, Firebase REST `batchGet`, Firebase gRPC `GetDocument`, Firebase Listen/WebSocket, and Cloud Functions callable transport tests now prove same-tenant access succeeds while a `tenant_id=tenant-b` bearer targeting tenant `tenant-a` returns `403`, gRPC `PermissionDenied`, or a policy websocket close before provider access. Convex runtime HostBridge payloads now reject unknown fields, and direct DB/scheduler HostBridge tests prove an injected `tenant_id` payload is rejected before either tenant receives storage or scheduled-job side effects. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not yet a full tenant-membership/session gate for every non-operator surface. Anonymous/public app requests remain allowed when the app exposes them, and principal-less native HTTP remains local-operator scoped. |
 | Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, materialized rootfs roots, and container network namespace/status/IPAM state now lower under tenant-owned roots. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots while leaving shared content-addressed image cache and other tenants intact. | Named volume admission/paths are still not lowered into service bundles and remain TIC6. |
 | Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding on the rootful Linux service path after the quota changes. Runtime service lookup is tenant-scoped. Compose service lowering now rejects non-loopback host addresses unless a future operator network exposure policy is added. System port records now carry explicit tenant, service, and endpoint ownership fields. krun/container port allocation now enforces a default per-tenant published-port quota while keeping host-port reservation global. Container network/IPAM mutable state is tenant-rooted. `TenantIsolationMode::Production` now rejects generic loopback/wildcard in-process runtime network grants before Convex or Cloud Functions runtime invocation. | Future admitted tenant-owned endpoint grants need an explicit policy object instead of generic localhost authority. |
 | In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::ensure_runtime_policy_admitted(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. `TenantIsolationMode::default()` is production, so public `serve*`, router builders, and CLI `nimbus start` enter production tenant isolation unless they explicitly opt out; `nimbus dev` opts into local-development mode. Active/in-flight/queued per-tenant runtime budgets are first-class start flags. Production rejections now name the canonical fallback tier: `in_process_trusted_only`, `microvm_service`, or future `wasm_capability_sandbox`. | TIC4 still needs actual lowering/routing for rejected workloads, native-addon/package-manager proof beyond grant shape, and tenant-accounted CPU/memory/time/worker budgets beyond top-level invocation accounting. |
@@ -1142,7 +1142,55 @@ Remaining before TIC5 is done:
   principal authority today.
 - Native HTTP/local operator routes need the scoped session and tenant
   membership model noted above.
-- Scheduler/runtime HostBridge and `_nimbus` visibility proof remain open.
+- `_nimbus` visibility proof remains open.
+
+### 2026-05-22 TIC5 Runtime HostBridge Tenant-Payload Rejection
+
+Hardened the in-process Convex runtime HostBridge ABI so JavaScript payloads
+cannot smuggle tenant identity into DB, scheduler, query, function, service,
+or HTTP-route host calls.
+
+Completed in this checkpoint:
+
+- Added `serde(deny_unknown_fields)` to the Convex host-call request envelope
+  and runtime payload structs for DB operations, scheduler operations,
+  function calls, query builders, service lookup, and HTTP route invocation.
+- Added direct HostBridge authorization tests for `ctx.db.insert` and
+  `ctx.scheduler.runAfter` payloads that include a forged top-level
+  `tenant_id=tenant-b` while the bridge isolation context belongs to the
+  original tenant.
+- Proved both forged payloads fail during payload decoding with an
+  `unknown field \`tenant_id\`` runtime JSON error before either the original
+  tenant or tenant B receives a document write or scheduled-job side effect.
+
+Verification evidence:
+
+- `cargo test -p nimbus-server runtime_host_bridge_rejects_payload_tenant -- --nocapture`
+  - result: pass; 2 passed, 0 failed, 729 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+- `cargo test -p nimbus-server adapters::convex::tests::authorization -- --nocapture`
+  - result: pass; 8 passed, 0 failed, 723 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+- `cargo test -p nimbus-server convex_functions::runtime_writes -- --nocapture`
+  - result: pass; 7 passed, 0 failed, 724 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+- `cargo test -p nimbus-server convex_functions::runtime_queries -- --nocapture`
+  - result: pass; 13 passed, 0 failed, 1 ignored, 717 filtered out in
+    `src/lib.rs`; MongoDB spec and reactive-loop integration targets had 0
+    matching tests.
+- `cargo test -p nimbus-server convex_runtime::http_routes -- --nocapture`
+  - result: pass; 9 passed, 0 failed, 4 ignored, 718 filtered out in
+    `src/lib.rs`; MongoDB spec and reactive-loop integration targets had 0
+    matching tests.
+
+Remaining before TIC5 is done:
+
+- Cloud Functions public unauthenticated HTTP exposure needs an explicit note or
+  policy decision separate from callable auth, because it does not carry bearer
+  principal authority today.
+- Native HTTP/local operator routes need the scoped session and tenant
+  membership model noted above.
+- `_nimbus` visibility proof remains open.
 
 ### 2026-05-22 TIC3 Rootful Linux Localhost-Only Proof
 

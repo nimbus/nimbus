@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeDbGetPayload {
     pub(in crate::adapters::convex) table: TableName,
     pub(in crate::adapters::convex) id: DocumentId,
@@ -9,6 +10,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeDbGetPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeDbInsertPayload {
     pub(in crate::adapters::convex) table: TableName,
     pub(in crate::adapters::convex) fields: serde_json::Map<String, Value>,
@@ -17,6 +19,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeDbInsertPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeDbPatchPayload {
     pub(in crate::adapters::convex) table: TableName,
     pub(in crate::adapters::convex) id: DocumentId,
@@ -26,6 +29,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeDbPatchPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeDbDeletePayload {
     pub(in crate::adapters::convex) table: TableName,
     pub(in crate::adapters::convex) id: DocumentId,
