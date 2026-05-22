@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use futures::stream;
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Error, FieldTransform,
-    FieldTransformOperation, NumericValue, PrincipalContext, SpecialDouble, StoredValue, TenantId,
-    Timestamp, TypedScalarValue, WritePrecondition, WriteSetMode,
+    FieldTransformOperation, NumericValue, PrincipalContext, SpecialDouble, StoredValue, Timestamp,
+    TypedScalarValue, WritePrecondition, WriteSetMode,
 };
 use prost_types::Timestamp as ProstTimestamp;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -32,13 +32,15 @@ use crate::adapters::firebase::serializer::{
     FirestoreDouble, FirestoreProtoJsonError, FirestoreValue, firestore_value_from_typed_scalar,
 };
 use crate::adapters::firebase::{
-    firestore_grpc_code, resolve_write_key, resource_name_error_to_core, tenant_id_for_database,
+    firestore_grpc_code, resolve_write_key, resource_name_error_to_core,
+    tenant_context_for_database,
 };
 use crate::application_auth::{
     extract_bearer_token_from_metadata, grpc_status_from_app_error,
     resolve_application_auth_from_bearer,
 };
 use crate::state::{AppState, record_authenticated_usage};
+use crate::tenant_isolation::TenantIsolationContext;
 
 const WRITE_STREAM_TTL_MS: u64 = 60_000;
 const MAX_ACTIVE_WRITE_STREAMS: usize = 256;
@@ -61,7 +63,7 @@ impl WriteStreamRegistry {
     fn create_stream(
         &self,
         database: FirestoreDatabaseName,
-        tenant_id: TenantId,
+        isolation: TenantIsolationContext,
     ) -> Result<(String, Arc<AsyncMutex<StoredWriteStream>>, WriteResponse), Status> {
         let mut streams = self
             .streams
@@ -78,7 +80,7 @@ impl WriteStreamRegistry {
             "{WRITE_STREAM_ID_PREFIX}{}",
             self.next_stream_id.fetch_add(1, Ordering::Relaxed)
         );
-        let mut stream = StoredWriteStream::new(database, tenant_id);
+        let mut stream = StoredWriteStream::new(database, isolation);
         let response = stream.new_stream_handshake(&stream_id);
         let stream = Arc::new(AsyncMutex::new(stream));
         streams.insert(stream_id.clone(), stream.clone());
@@ -105,7 +107,7 @@ struct StoredReplayResponse {
 
 struct StoredWriteStream {
     database: FirestoreDatabaseName,
-    tenant_id: TenantId,
+    isolation: TenantIsolationContext,
     latest_token: u64,
     acknowledged_token: u64,
     replayable_responses: VecDeque<StoredReplayResponse>,
@@ -113,10 +115,10 @@ struct StoredWriteStream {
 }
 
 impl StoredWriteStream {
-    fn new(database: FirestoreDatabaseName, tenant_id: TenantId) -> Self {
+    fn new(database: FirestoreDatabaseName, isolation: TenantIsolationContext) -> Self {
         Self {
             database,
-            tenant_id,
+            isolation,
             latest_token: 0,
             acknowledged_token: 0,
             replayable_responses: VecDeque::new(),
@@ -128,8 +130,8 @@ impl StoredWriteStream {
         &self.database == database
     }
 
-    fn tenant_id(&self) -> &TenantId {
-        &self.tenant_id
+    fn tenant_context(&self) -> &TenantIsolationContext {
+        &self.isolation
     }
 
     fn latest_token(&self) -> u64 {
@@ -252,6 +254,7 @@ fn expiry_timestamp() -> Timestamp {
 #[derive(Clone)]
 struct ActiveWriteStream {
     database: FirestoreDatabaseName,
+    isolation: TenantIsolationContext,
     stored: Arc<AsyncMutex<StoredWriteStream>>,
 }
 
@@ -333,10 +336,20 @@ impl ActiveWriteRequestStream {
                 ));
             }
 
-            let tenant_id = tenant_id_for_database(&database).map_err(firebase_grpc_status)?;
-            let (_stream_id, stored, handshake) =
-                self.registry.create_stream(database.clone(), tenant_id)?;
-            self.active_stream = Some(ActiveWriteStream { database, stored });
+            let tenant_context = tenant_context_for_database(
+                &database,
+                &self.principal,
+                "firestore.grpc.write_stream",
+            )
+            .map_err(firebase_grpc_status)?;
+            let (_stream_id, stored, handshake) = self
+                .registry
+                .create_stream(database.clone(), tenant_context.clone())?;
+            self.active_stream = Some(ActiveWriteStream {
+                database,
+                isolation: tenant_context,
+                stored,
+            });
             return Ok(vec![handshake]);
         }
 
@@ -359,10 +372,15 @@ impl ActiveWriteRequestStream {
                 "write stream database does not match the active stream",
             ));
         }
+        let tenant_context = stream.tenant_context().clone();
         let responses = stream.resume_from(token)?;
         drop(stream);
 
-        self.active_stream = Some(ActiveWriteStream { database, stored });
+        self.active_stream = Some(ActiveWriteStream {
+            database,
+            isolation: tenant_context,
+            stored,
+        });
         Ok(responses)
     }
 
@@ -407,10 +425,14 @@ impl ActiveWriteRequestStream {
             return Ok(Vec::new());
         }
 
-        let tenant_id = stream.tenant_id().clone();
         stream.acknowledge_only(token)?;
         let batch = lower_write_batch(&request.writes, &active_stream.database)?;
-        let outcome = execute_write_batch(&self.state, &tenant_id, &self.principal, batch)?;
+        let outcome = execute_write_batch(
+            &self.state,
+            &active_stream.isolation,
+            &self.principal,
+            batch,
+        )?;
         let response = stream.push_commit_outcome(outcome)?;
         Ok(vec![response])
     }
@@ -442,13 +464,13 @@ pub(super) async fn handle_write(
 
 fn execute_write_batch(
     state: &Arc<AppState>,
-    tenant_id: &TenantId,
+    isolation: &TenantIsolationContext,
     principal: &PrincipalContext,
     batch: AtomicWriteBatch,
 ) -> Result<AtomicWriteBatchOutcome, Status> {
     state
         .service
-        .begin_mutation_execution_unit(tenant_id.clone(), principal.clone())
+        .begin_mutation_execution_unit(isolation.tenant_id().clone(), principal.clone())
         .and_then(|execution_unit| execution_unit.execute_atomic_write_batch(batch))
         .map_err(firebase_grpc_status)
 }

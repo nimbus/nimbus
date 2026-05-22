@@ -134,12 +134,14 @@ impl AppState {
         &self,
         registry: Arc<CloudFunctionsRegistry>,
     ) -> std::result::Result<(), AppError> {
+        let deployment_generation = self.current_deployment().generation;
         self.service
             .install_trigger_registrations(registry.trigger_registrations()?)?;
         self.service.install_trigger_invocation_executor(Arc::new(
             crate::adapters::cloud_functions::CloudFunctionsTriggerExecutor::new(
                 self.service.clone(),
                 registry,
+                deployment_generation,
                 self.runtime_service_registry(),
             ),
         ))?;

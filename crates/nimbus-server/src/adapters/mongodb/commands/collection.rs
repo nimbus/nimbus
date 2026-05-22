@@ -4,7 +4,7 @@ use nimbus_core::{TableName, TableSchema};
 use nimbus_engine::Service;
 
 use super::super::error::{BAD_VALUE, MongoError};
-use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant};
+use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 
 pub fn create(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Document, MongoError> {
     let collection = body.get_str("create").map_err(|_| MongoError::Command {
@@ -14,10 +14,11 @@ pub fn create(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Doc
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb create collection")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let schema = service.get_schema(&tenant_id).map_err(MongoError::from)?;
     if schema.tables.contains_key(&table) {
@@ -52,10 +53,11 @@ pub fn drop_collection(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb drop collection")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let schema = service.get_schema(&tenant_id).map_err(MongoError::from)?;
     if !schema.tables.contains_key(&table) {
@@ -89,11 +91,12 @@ pub fn list_collections(
     service: &Arc<Service>,
 ) -> Result<bson::Document, MongoError> {
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb list collections")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let name_only = body.get_bool("nameOnly").unwrap_or(false);
     let filter = body.get_document("filter").ok();
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let schema = service.get_schema(&tenant_id).map_err(MongoError::from)?;
 

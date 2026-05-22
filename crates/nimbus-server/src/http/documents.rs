@@ -6,7 +6,7 @@ pub(crate) async fn insert_document(
     Path(tenant_id): Path<String>,
     Json(request): Json<InsertDocumentRequest>,
 ) -> Result<(StatusCode, Json<DocumentResponse>), AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.insert")?;
     let table = TableName::new(request.table)?;
     let service = state.service.clone();
     let request_cancellation = RequestCancellationGuard::new();
@@ -20,7 +20,7 @@ pub(crate) async fn insert_document(
     };
     let document_id = service
         .insert_document_async_with(
-            tenant_id.clone(),
+            tenant.tenant_id().clone(),
             table.clone(),
             None,
             request.fields,
@@ -49,7 +49,7 @@ pub(crate) async fn update_document(
     Json(request): Json<UpdateDocumentRequest>,
 ) -> Result<Json<DocumentResponse>, AppError> {
     let document_id = parse_document_id(&document_id)?;
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.update")?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
     let request_cancellation = RequestCancellationGuard::new();
@@ -63,7 +63,7 @@ pub(crate) async fn update_document(
     };
     let document_id = service
         .update_document_async_with(
-            tenant_id.clone(),
+            tenant.tenant_id().clone(),
             table.clone(),
             document_id,
             request.patch,
@@ -87,7 +87,7 @@ pub(crate) async fn delete_document(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, table, document_id)): Path<(String, String, String)>,
 ) -> Result<StatusCode, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.delete")?;
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
     let service = state.service.clone();
@@ -102,7 +102,7 @@ pub(crate) async fn delete_document(
     };
     service
         .delete_document_async_with(
-            tenant_id.clone(),
+            tenant.tenant_id().clone(),
             table.clone(),
             document_id,
             nimbus_engine::AsyncMutationContext::anonymous(cancel_wait, move || {
@@ -122,20 +122,25 @@ pub(crate) async fn list_documents(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, table)): Path<(String, String)>,
 ) -> Result<Json<DataResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.list")?;
     let table = TableName::new(table)?;
     let service = state.service.clone();
     let request_cancellation = RequestCancellationGuard::new();
     let cancellation = request_cancellation.token();
     let cancellation_check = cancellation.clone();
     let documents = service
-        .list_documents_async_cancellable(tenant_id, table, cancellation.cancelled(), move || {
-            if cancellation_check.is_cancelled() {
-                Err(Error::Cancelled)
-            } else {
-                Ok(())
-            }
-        })
+        .list_documents_async_cancellable(
+            tenant.tenant_id().clone(),
+            table,
+            cancellation.cancelled(),
+            move || {
+                if cancellation_check.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        )
         .await?;
     Ok(Json(DataResponse {
         data: documents
@@ -150,7 +155,7 @@ pub(crate) async fn get_document(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, table, document_id)): Path<(String, String, String)>,
 ) -> Result<Json<DocumentDataResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.documents.get")?;
     let table = TableName::new(table)?;
     let document_id = parse_document_id(&document_id)?;
     let service = state.service.clone();
@@ -159,7 +164,7 @@ pub(crate) async fn get_document(
     let cancellation_check = cancellation.clone();
     let document = service
         .get_document_async_cancellable(
-            tenant_id,
+            tenant.tenant_id().clone(),
             table,
             document_id,
             cancellation.cancelled(),

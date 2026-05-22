@@ -14,7 +14,11 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
         ConvexHostBridgeScope::new(
             service.clone(),
             registry,
-            tenant_id.clone(),
+            crate::tenant_isolation::TenantIsolationContext::application(
+                tenant_id.clone(),
+                nimbus_core::PrincipalContext::anonymous(),
+                "convex_fixture",
+            ),
             Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
                 crate::EmptySandboxCatalog,
             ))),

@@ -7,6 +7,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 
 use crate::state::{AppError, AppState};
+use crate::tenant_isolation::TenantIsolationContext;
 
 mod negotiation;
 mod socket;
@@ -25,11 +26,15 @@ pub(crate) async fn ws_handler(
     Query(params): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
-    let tenant_id = extract_tenant_id(&headers, params.get("tenant_id").cloned())?;
+    let tenant_context = TenantIsolationContext::operator(
+        extract_tenant_id(&headers, params.get("tenant_id").cloned())?,
+        "native_websocket",
+    );
     let negotiated_protocol = negotiate(&headers)?;
     let service = state.service.clone();
-    let tenant_check = tenant_id.clone();
+    let tenant_check = tenant_context.tenant_id().clone();
     service.ensure_tenant_exists_async(tenant_check).await?;
+    let tenant_id = tenant_context.tenant_id().clone();
 
     Ok(configure_upgrade(ws).on_upgrade(move |socket| {
         complete_upgraded_socket(socket, state, tenant_id, negotiated_protocol)

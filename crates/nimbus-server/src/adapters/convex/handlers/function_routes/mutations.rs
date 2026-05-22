@@ -8,16 +8,16 @@ pub(crate) async fn mutation(
     headers: HeaderMap,
     Json(request): Json<ConvexMutationRequest>,
 ) -> Result<Json<Value>, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let (registry, auth) = registry_and_auth(
+    let (registry, auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,
-        &tenant_id,
+        tenant_id,
         &headers,
         "convex mutation route requires Convex support state",
     )
     .await?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let trace = match &request {
         ConvexMutationRequest::Named(request) => RunTrace::new(request.name.clone(), "mutation"),
         ConvexMutationRequest::Raw { .. } => RunTrace::new("<raw-mutation>", "mutation"),
@@ -30,7 +30,7 @@ pub(crate) async fn mutation(
                 &service,
                 &registry,
                 &runtime_service_registry,
-                &tenant_id,
+                tenant_context.clone(),
             );
             invoke_named_convex_function_async_cancellable(
                 &context,

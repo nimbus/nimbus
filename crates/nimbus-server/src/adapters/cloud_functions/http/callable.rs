@@ -82,7 +82,15 @@ pub(super) async fn handle_callable_target(
             ));
         }
     };
-    match execute_http_target(state, registry, tenant_id, function_name, args, auth) {
+    match execute_http_target(
+        state,
+        registry,
+        deployment.generation,
+        tenant_id,
+        function_name,
+        args,
+        auth,
+    ) {
         Ok(mut response) => {
             apply_callable_cors_headers(request.headers, &mut response);
             Ok(response)

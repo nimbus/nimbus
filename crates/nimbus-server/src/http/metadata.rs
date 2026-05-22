@@ -74,14 +74,14 @@ pub(crate) async fn tenant_engine_diagnostics(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<TenantEngineDiagnosticsResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.metadata.engine")?;
     let diagnostics = state
         .service
         .clone()
-        .tenant_engine_diagnostics_async(tenant_id.clone())
+        .tenant_engine_diagnostics_async(tenant.tenant_id().clone())
         .await?;
     Ok(Json(TenantEngineDiagnosticsResponse {
-        tenant_id: tenant_id.to_string(),
+        tenant_id: tenant.tenant_id().to_string(),
         diagnostics,
     }))
 }
@@ -91,11 +91,11 @@ pub(crate) async fn tenant_consistency_report(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<nimbus_engine::ConsistencyVerificationReport>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.metadata.consistency")?;
     let report = state
         .service
         .clone()
-        .verify_consistency_async(tenant_id)
+        .verify_consistency_async(tenant.tenant_id().clone())
         .await?;
     Ok(Json(report))
 }

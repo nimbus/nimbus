@@ -11,7 +11,7 @@ use super::super::bson_bridge;
 use super::super::connection::ConnectionState;
 use super::super::error::{BAD_VALUE, MongoError};
 use super::crud::apply_projection;
-use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant};
+use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 
 pub fn aggregate(
     body: &bson::Document,
@@ -25,7 +25,8 @@ pub fn aggregate(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb aggregate")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let pipeline = body
@@ -46,7 +47,7 @@ pub fn aggregate(
         _ => None,
     };
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     if is_change_stream_pipeline(pipeline) {
         let resume_token = get_change_stream_options(pipeline)

@@ -19,6 +19,7 @@ mod service_registry;
 mod state;
 mod system;
 mod system_tenant;
+mod tenant_isolation;
 mod ws;
 
 use std::sync::Arc;

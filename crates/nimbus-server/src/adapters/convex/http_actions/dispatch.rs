@@ -1,5 +1,8 @@
 use super::*;
-use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
+use crate::application_auth::{
+    normalize_principal_context, verify_optional_application_auth_from_headers_in_deployment,
+};
+use crate::tenant_isolation::TenantIsolationContext;
 
 pub(in crate::adapters::convex) async fn dispatch_http_route(
     state: Arc<AppState>,
@@ -51,6 +54,16 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
         }
     };
     crate::state::record_authenticated_usage(&state, request_auth.as_ref()).await;
+    let tenant_context = TenantIsolationContext::application(
+        tenant_id.clone(),
+        normalize_principal_context(request_auth.as_ref()),
+        "convex.http_action",
+    )
+    .with_deployment_generation(deployment.generation);
+    tenant_context.ensure_deployment_generation_matches(
+        deployment.generation,
+        "convex http action active deployment",
+    )?;
     let route = registry
         .resolve_http_route(&route_request.method, &route_request.request_path)
         .cloned();
@@ -79,7 +92,7 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
     execution::execute_http_action_async(
         &service,
         &registry,
-        &tenant_id,
+        &tenant_context,
         &route.plan,
         &request_context,
         request_auth.as_ref(),

@@ -2,13 +2,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, PrincipalContext, TenantId, TransactionSessionMode,
+    AtomicWrite, AtomicWriteBatch, PrincipalContext, TransactionSessionMode,
     TransactionSessionToken,
 };
 use nimbus_engine::Service;
 
 use super::super::connection::ConnectionState;
 use super::super::error::{BAD_VALUE, MongoError, WRITE_CONFLICT};
+use super::tenant::{default_tenant_context, resolve_tenant_context};
+use crate::tenant_isolation::TenantIsolationContext;
 
 const NO_SUCH_TRANSACTION: i32 = 251;
 const NO_SUCH_TRANSACTION_NAME: &str = "NoSuchTransaction";
@@ -87,7 +89,11 @@ pub fn commit_transaction(
         .take()
         .ok_or_else(no_such_transaction)?;
     session.transaction_started = false;
-    let tenant_id = session.tenant_id.clone().unwrap_or_else(default_tenant_id);
+    let tenant_context = session
+        .tenant_context
+        .clone()
+        .unwrap_or_else(|| default_tenant_context("mongodb transaction commit"));
+    let tenant_id = tenant_context.tenant_id().clone();
     let buffered = std::mem::take(&mut session.buffered_writes);
 
     let batch = if buffered.is_empty() {
@@ -132,7 +138,11 @@ pub fn abort_transaction(
         .ok_or_else(no_such_transaction)?;
     session.transaction_started = false;
     session.buffered_writes.clear();
-    let tenant_id = session.tenant_id.clone().unwrap_or_else(default_tenant_id);
+    let tenant_context = session
+        .tenant_context
+        .clone()
+        .unwrap_or_else(|| default_tenant_context("mongodb transaction abort"));
+    let tenant_id = tenant_context.tenant_id().clone();
 
     let _ = service.rollback_transaction_session(&tenant_id, &token, &PrincipalContext::system());
 
@@ -155,7 +165,8 @@ pub fn handle_start_transaction(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or("default");
-    let tenant_id = TenantId::new(db_name).map_err(MongoError::from)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb transaction start")?;
+    let tenant_id = tenant_context.tenant_id().clone();
 
     let session = conn
         .session_store
@@ -178,7 +189,7 @@ pub fn handle_start_transaction(
 
     session.transaction_token = Some(txn_session.token);
     session.transaction_started = true;
-    session.tenant_id = Some(tenant_id);
+    session.tenant_context = Some(tenant_context);
 
     Ok(())
 }
@@ -198,10 +209,6 @@ fn no_such_transaction() -> MongoError {
     }
 }
 
-fn default_tenant_id() -> TenantId {
-    TenantId::new("default").expect("default tenant id should be valid")
-}
-
 #[derive(Default)]
 pub struct SessionStore {
     sessions: HashMap<Vec<u8>, SessionState>,
@@ -210,7 +217,7 @@ pub struct SessionStore {
 pub struct SessionState {
     pub transaction_token: Option<TransactionSessionToken>,
     pub transaction_started: bool,
-    pub tenant_id: Option<TenantId>,
+    pub tenant_context: Option<TenantIsolationContext>,
     pub buffered_writes: Vec<AtomicWrite>,
 }
 
@@ -222,7 +229,7 @@ impl SessionStore {
             SessionState {
                 transaction_token: None,
                 transaction_started: false,
-                tenant_id: None,
+                tenant_context: None,
                 buffered_writes: Vec::new(),
             },
         );
@@ -241,7 +248,10 @@ impl SessionStore {
     pub fn end_session(&mut self, uuid: &[u8], service: &Arc<Service>) {
         if let Some(session) = self.sessions.remove(uuid) {
             if let Some(token) = session.transaction_token {
-                let tenant_id = session.tenant_id.unwrap_or_else(default_tenant_id);
+                let tenant_context = session
+                    .tenant_context
+                    .unwrap_or_else(|| default_tenant_context("mongodb end session rollback"));
+                let tenant_id = tenant_context.tenant_id().clone();
                 let _ = service.rollback_transaction_session(
                     &tenant_id,
                     &token,
@@ -291,6 +301,7 @@ fn generate_uuid_v4() -> Vec<u8> {
 mod tests {
     use super::super::super::connection::ConnectionState;
     use super::*;
+    use nimbus_core::TenantId;
 
     fn test_conn() -> ConnectionState {
         ConnectionState::new(([127, 0, 0, 1], 12345).into())

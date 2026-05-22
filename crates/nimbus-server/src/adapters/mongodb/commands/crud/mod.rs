@@ -9,7 +9,7 @@ use nimbus_engine::Service;
 use super::super::bson_bridge;
 use super::super::connection::ConnectionState;
 use super::super::error::{BAD_VALUE, MongoError};
-use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant};
+use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 
 mod filter;
 mod update;
@@ -61,7 +61,8 @@ pub fn insert(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb insert")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let documents = body
@@ -74,7 +75,7 @@ pub fn insert(
 
     let ordered = body.get_bool("ordered").unwrap_or(true);
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
     ensure_table_schema(service, &tenant_id, &table)?;
 
     if ordered {
@@ -96,7 +97,8 @@ pub fn find(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb find")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let filter_doc = body.get_document("filter").ok();
@@ -123,7 +125,7 @@ pub fn find(
 
     let projection = body.get_document("projection").ok();
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
@@ -213,7 +215,8 @@ pub fn update(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb update")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let updates = body.get_array("updates").map_err(|_| MongoError::Command {
@@ -224,7 +227,7 @@ pub fn update(
 
     let ordered = body.get_bool("ordered").unwrap_or(true);
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let mut n: i32 = 0;
     let mut n_modified: i32 = 0;
@@ -463,7 +466,8 @@ pub fn delete(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb delete")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let deletes = body.get_array("deletes").map_err(|_| MongoError::Command {
@@ -474,7 +478,7 @@ pub fn delete(
 
     let ordered = body.get_bool("ordered").unwrap_or(true);
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let mut n: i32 = 0;
     let mut write_errors: Vec<bson::Document> = Vec::new();
@@ -585,7 +589,8 @@ pub fn find_and_modify(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb findAndModify")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let filter_doc = body.get_document("query").ok();
@@ -595,7 +600,7 @@ pub fn find_and_modify(
     let upsert = body.get_bool("upsert").unwrap_or(false);
     let fields = body.get_document("fields").ok();
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
@@ -807,7 +812,8 @@ pub fn count(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Docu
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb count")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let filter_doc = body.get_document("query").ok();
@@ -824,7 +830,7 @@ pub fn count(body: &bson::Document, service: &Arc<Service>) -> Result<bson::Docu
         _ => None,
     };
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);
@@ -872,12 +878,13 @@ pub fn distinct(
     })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb distinct")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let filter_doc = body.get_document("query").ok();
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let empty_filter = bson::Document::new();
     let effective_filter = filter_doc.unwrap_or(&empty_filter);

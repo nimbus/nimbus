@@ -36,6 +36,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
     state: Arc<AppState>,
     convex_registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
+    tenant_context: crate::tenant_isolation::TenantIsolationContext,
     initial_auth: Option<InvocationAuth>,
     protocol: crate::ws::NegotiatedWebSocketProtocol,
 ) {
@@ -44,6 +45,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
         state,
         convex_registry,
         tenant_id,
+        tenant_context,
         initial_auth,
         protocol,
     )

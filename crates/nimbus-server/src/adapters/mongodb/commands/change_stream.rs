@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use super::super::bson_bridge;
 use super::super::error::MongoError;
 use super::cursor::next_cursor_id;
+use super::tenant::resolve_tenant_context;
 
 const DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY: usize = 64;
 
@@ -100,7 +101,8 @@ pub fn open_change_stream(
     service: &Arc<Service>,
     resume_after: Option<ResumeToken>,
 ) -> Result<(i64, ChangeStreamCursor), MongoError> {
-    let tenant_id = TenantId::new(db_name).map_err(MongoError::from)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb change stream")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let query = Query {

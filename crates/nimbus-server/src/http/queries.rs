@@ -6,19 +6,24 @@ pub(crate) async fn query_documents(
     Path(tenant_id): Path<String>,
     Json(query): Json<Query>,
 ) -> Result<Json<DataResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.query")?;
     let service = state.service.clone();
     let guard = RequestCancellationGuard::new();
     let cancellation = guard.token();
     let cancellation_check = cancellation.clone();
     let documents = service
-        .query_documents_async_cancellable(tenant_id, query, cancellation.cancelled(), move || {
-            if cancellation_check.is_cancelled() {
-                Err(Error::Cancelled)
-            } else {
-                Ok(())
-            }
-        })
+        .query_documents_async_cancellable(
+            tenant.tenant_id().clone(),
+            query,
+            cancellation.cancelled(),
+            move || {
+                if cancellation_check.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        )
         .await?;
     Ok(Json(DataResponse {
         data: documents
@@ -34,14 +39,14 @@ pub(crate) async fn query_documents_paginated(
     Path(tenant_id): Path<String>,
     Json(query): Json<PaginatedQuery>,
 ) -> Result<Json<Page>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.query_paginated")?;
     let service = state.service.clone();
     let guard = RequestCancellationGuard::new();
     let cancellation = guard.token();
     let cancellation_check = cancellation.clone();
     let page = service
         .paginate_documents_async_cancellable(
-            tenant_id,
+            tenant.tenant_id().clone(),
             query,
             cancellation.cancelled(),
             move || {
@@ -62,7 +67,7 @@ pub(crate) async fn read_journal(
     Path(tenant_id): Path<String>,
     QueryParams(request): QueryParams<JournalStreamRequest>,
 ) -> Result<Json<JournalStreamResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.journal.read")?;
     let after = SequenceNumber(request.after.unwrap_or(0));
     let limit = request
         .limit
@@ -70,7 +75,7 @@ pub(crate) async fn read_journal(
     let page = state
         .service
         .clone()
-        .stream_durable_journal_async(tenant_id, after, limit)
+        .stream_durable_journal_async(tenant.tenant_id().clone(), after, limit)
         .await?;
 
     Ok(Json(JournalStreamResponse {
@@ -87,11 +92,11 @@ pub(crate) async fn bootstrap_journal(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<JournalBootstrapResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.journal.bootstrap")?;
     let bootstrap = state
         .service
         .clone()
-        .export_durable_journal_bootstrap_async(tenant_id)
+        .export_durable_journal_bootstrap_async(tenant.tenant_id().clone())
         .await?;
 
     Ok(Json(JournalBootstrapResponse {

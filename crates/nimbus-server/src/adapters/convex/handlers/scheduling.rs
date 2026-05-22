@@ -1,4 +1,4 @@
-use super::common::registry_and_auth;
+use super::common::registry_and_auth_for_path;
 use super::*;
 
 /// Schedules a public convex mutation by relative delay.
@@ -8,16 +8,16 @@ pub(crate) async fn schedule_after(
     headers: HeaderMap,
     Json(request): Json<ConvexScheduleAfterRequest>,
 ) -> Result<(StatusCode, Json<ScheduleResponse>), AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let (registry, _) = registry_and_auth(
+    let (registry, _auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,
-        &tenant_id,
+        tenant_id,
         &headers,
         "convex schedule-after route requires Convex support state",
     )
     .await?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let request = match request {
         ConvexScheduleAfterRequest::Named(request) => ScheduleRequest {
             run_after_ms: request.run_after_ms,
@@ -51,16 +51,16 @@ pub(crate) async fn schedule_at(
     headers: HeaderMap,
     Json(request): Json<ConvexScheduleAtRequest>,
 ) -> Result<(StatusCode, Json<ScheduleResponse>), AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
     let service = state.service.clone();
-    let (registry, _) = registry_and_auth(
+    let (registry, _auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,
-        &tenant_id,
+        tenant_id,
         &headers,
         "convex schedule-at route requires Convex support state",
     )
     .await?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let (run_at_ms, mutation) = match request {
         ConvexScheduleAtRequest::Named(request) => (
             request.run_at_ms,
@@ -95,17 +95,17 @@ pub(crate) async fn cancel_scheduled_job(
     AxumPath((tenant_id, job_id)): AxumPath<(String, String)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
-    let tenant_id = TenantId::new(tenant_id)?;
     let job_id = parse_job_id(&job_id)?;
     let service = state.service.clone();
-    let _ = registry_and_auth(
+    let (_registry, _auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,
-        &tenant_id,
+        tenant_id,
         &headers,
         "convex scheduled job cancel route requires Convex support state",
     )
     .await?;
+    let tenant_id = tenant_context.tenant_id().clone();
     service
         .cancel_scheduled_job_async(tenant_id.clone(), job_id.clone())
         .await?;

@@ -14,6 +14,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
 };
 use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
+use crate::tenant_isolation::TenantIsolationContext;
 
 use super::super::super::runtime_error_to_core;
 use super::super::{
@@ -62,7 +63,11 @@ fn invoke_named_convex_function_with_trace_cancellable(
         ConvexHostBridgeScope::new(
             service.clone(),
             registry.clone(),
-            tenant_id.clone(),
+            TenantIsolationContext::application(
+                tenant_id.clone(),
+                normalize_principal_context(request.auth.as_ref()),
+                "convex_test_runtime",
+            ),
             runtime_service_registry,
         ),
         ConvexHostBridgeInvocation::new(
@@ -102,8 +107,16 @@ async fn invoke_named_convex_function_with_trace_async(
     let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
         SandboxCatalogRuntimeServiceRegistry::new(Arc::new(crate::EmptySandboxCatalog)),
     );
-    let context =
-        RuntimeInvocationContext::new(service, registry, &runtime_service_registry, tenant_id);
+    let context = RuntimeInvocationContext::new(
+        service,
+        registry,
+        &runtime_service_registry,
+        TenantIsolationContext::application(
+            tenant_id.clone(),
+            normalize_principal_context(request.auth.as_ref()),
+            "convex_test_runtime",
+        ),
+    );
     invoke_named_convex_function_with_trace_async_cancellable(
         &context,
         request,
