@@ -28,7 +28,7 @@ use crate::backends::oci::network::{
     remove_persistent_network_namespace, setup_container_network, teardown_container_network,
     unexpose_machine_ports,
 };
-use crate::backends::oci::port_manager::PortManager;
+use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
@@ -64,6 +64,7 @@ pub struct ContainerSandboxBackendConfig {
     pub aardvark_dns_path: PathBuf,
     pub use_buildah_unshare: bool,
     pub published_port_range: RangeInclusive<u16>,
+    pub max_published_ports_per_tenant: Option<usize>,
     pub network_name: String,
     pub network_interface: String,
     pub network_subnet: String,
@@ -106,6 +107,7 @@ impl Default for ContainerSandboxBackendConfig {
             aardvark_dns_path: PathBuf::from(DEFAULT_AARDVARK_DNS_BINARY),
             use_buildah_unshare: true,
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
+            max_published_ports_per_tenant: Some(DEFAULT_MAX_PORTS_PER_TENANT),
             network_name: crate::backends::oci::network::DEFAULT_NETWORK_NAME.to_owned(),
             network_interface: crate::backends::oci::network::DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: crate::backends::oci::network::DEFAULT_NETWORK_SUBNET.to_owned(),
@@ -148,6 +150,7 @@ impl ContainerSandboxBackend {
             &self.config.state_root,
             self.config.published_port_range.clone(),
         )
+        .with_max_ports_per_tenant(self.config.max_published_ports_per_tenant)
     }
 
     fn network_config(&self) -> OciNetworkConfig {
@@ -309,12 +312,13 @@ impl ContainerSandboxBackend {
 
         let resolved_launch = resolve_launch_spec(spec, launch_defaults);
         let mut resolved_spec = resolved_launch.spec.clone();
-        resolved_spec
-            .port_bindings
-            .extend(self.port_manager().allocate_missing_bindings(
+        resolved_spec.port_bindings.extend(
+            self.port_manager().allocate_missing_bindings_for_tenant(
+                &resolved_spec.tenant_id,
                 &resolved_spec.port_bindings,
                 &resolved_launch.image_metadata.exposed_ports,
-            )?);
+            )?,
+        );
         let network_layout = OciNetworkLayout::new(&self.config.state_root, sandbox_id);
         let bundle_layout = ContainerBundleLayout::new(crate::artifact_paths::bundle_dir(
             &self.config.bundle_root,

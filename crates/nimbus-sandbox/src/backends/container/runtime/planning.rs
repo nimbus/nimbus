@@ -113,6 +113,36 @@ fn plan_only_backend_auto_assigns_exposed_ports_from_published_range() {
 }
 
 #[test]
+fn plan_only_backend_rejects_same_tenant_port_quota_for_image_exposed_ports() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    config.launch_mode = ContainerLaunchMode::PlanOnly;
+    config.published_port_range = 15000..=15005;
+    config.max_published_ports_per_tenant = Some(1);
+    let backend = ContainerSandboxBackend::new(config);
+
+    backend
+        .start_sync(sample_spec().with_port_binding(SandboxPortBinding::tcp("db", 15432, 5432)))
+        .expect("first same-tenant service should consume the single tenant port");
+
+    let error = backend
+        .plan_start_with_id(
+            &sample_spec(),
+            &SandboxId::new("api-01"),
+            Some(&exposed_port_launch_defaults(PathBuf::from("/tmp/rootfs"))),
+            None,
+        )
+        .expect_err("image-exposed port should exceed the tenant port quota");
+
+    assert!(
+        error.to_string().contains("published port quota exceeded")
+            && error.to_string().contains("svc-demo")
+            && error.to_string().contains("limit 1"),
+        "expected tenant port quota error, got: {error}"
+    );
+}
+
+#[test]
 fn image_backed_plan_uses_direct_conmon_launch_for_materialized_rootfs() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let backend =
