@@ -1,9 +1,7 @@
 use nimbus_core::{Error, Result};
-use nimbus_runtime::RuntimePolicy;
 
 use crate::tenant_isolation::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantIsolationPolicyInput,
-    TenantRuntimePolicyAdmission, TenantWorkloadIdentity,
+    RuntimeIsolationTier, TenantIsolationDecision, TenantRuntimePolicyAdmission,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,28 +14,7 @@ pub(crate) enum RuntimeExecutionAdmission {
 }
 
 impl RuntimeExecutionAdmission {
-    pub(crate) fn for_policy(
-        isolation: &TenantIsolationContext,
-        policy: &RuntimePolicy,
-        tier: RuntimeIsolationTier,
-        mode: TenantIsolationMode,
-    ) -> Self {
-        let decision = isolation.admit_decision(
-            TenantIsolationPolicyInput::new(TenantWorkloadIdentity::runtime_function(
-                "runtime_execution",
-                tier,
-            ))
-            .with_runtime_policy(isolation, policy, tier, mode),
-        );
-        let decision = match decision {
-            Ok(decision) => decision,
-            Err(error) => {
-                return Self::FallbackUnavailable {
-                    tier: RuntimeIsolationTier::InProcessTrustedOnly,
-                    reason: format!("tenant isolation decision rejected runtime policy: {error}"),
-                };
-            }
-        };
+    pub(crate) fn for_decision(decision: &TenantIsolationDecision) -> Self {
         match decision.runtime().admission().clone() {
             TenantRuntimePolicyAdmission::AdmitInProcess => Self::InProcess,
             TenantRuntimePolicyAdmission::Route {
@@ -67,6 +44,9 @@ mod tests {
     use nimbus_runtime::{RuntimeGrants, RuntimeLimits, RuntimePolicy};
 
     use super::*;
+    use crate::tenant_isolation::{
+        TenantIsolationContext, TenantIsolationMode, admit_runtime_invocation_decision,
+    };
 
     fn test_context() -> TenantIsolationContext {
         TenantIsolationContext::application(
@@ -78,12 +58,19 @@ mod tests {
 
     #[test]
     fn runtime_execution_admission_allows_production_web_standard_policy() {
-        let admission = RuntimeExecutionAdmission::for_policy(
-            &test_context(),
-            &RuntimePolicy::new(RuntimeLimits::application_web_standard()),
+        let context = test_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = admit_runtime_invocation_decision(
+            &context,
+            "runtime_execution",
+            None,
+            &policy,
             RuntimeIsolationTier::InProcessUntrusted,
             TenantIsolationMode::Production,
-        );
+            std::iter::empty::<String>(),
+        )
+        .expect("runtime admission decision should build");
+        let admission = RuntimeExecutionAdmission::for_decision(&decision);
 
         assert_eq!(admission, RuntimeExecutionAdmission::InProcess);
         admission
@@ -100,12 +87,18 @@ mod tests {
             },
             ..RuntimeLimits::application_node22()
         });
-        let admission = RuntimeExecutionAdmission::for_policy(
-            &test_context(),
+        let context = test_context();
+        let decision = admit_runtime_invocation_decision(
+            &context,
+            "runtime_execution",
+            None,
             &policy,
             RuntimeIsolationTier::InProcessUntrusted,
             TenantIsolationMode::Production,
-        );
+            std::iter::empty::<String>(),
+        )
+        .expect("runtime admission decision should build");
+        let admission = RuntimeExecutionAdmission::for_decision(&decision);
 
         assert!(matches!(
             admission,

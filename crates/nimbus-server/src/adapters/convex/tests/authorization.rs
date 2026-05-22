@@ -118,21 +118,56 @@ fn assert_unknown_tenant_payload_rejected(error: NimbusRuntimeError) {
     );
 }
 
+#[test]
+fn host_bridge_service_lookup_rejects_service_missing_from_decision_grants() {
+    let (_tempdir, _service, _tenant_id, bridge) = host_bridge_fixture();
+
+    let value = bridge
+        .invoke_ctx_service_lookup(json!({
+            "service_name": "db",
+            "session_id": bridge.session_id(),
+        }))
+        .expect("service lookup should return a runtime envelope");
+    let error = decode_runtime_result(value).expect_err(
+        "HostBridge service lookup must reject a service missing from the decision grant set",
+    );
+
+    assert!(
+        matches!(error, Error::PermissionDenied(_)),
+        "missing service decision grant should be permission denied: {error}"
+    );
+    assert!(
+        error.to_string().contains("did not authorize service `db`"),
+        "error should name the rejected service: {error}"
+    );
+}
+
 fn mutation_bridge(
     service: Arc<Service>,
     registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
     principal: nimbus_core::PrincipalContext,
 ) -> ConvexHostBridge {
+    let isolation = crate::tenant_isolation::TenantIsolationContext::application(
+        tenant_id,
+        principal.clone(),
+        "convex_authorization_test",
+    );
+    let decision = crate::tenant_isolation::admit_runtime_invocation_decision(
+        &isolation,
+        "convex_authorization_test",
+        None,
+        &registry.runtime_policy(),
+        crate::tenant_isolation::RuntimeIsolationTier::InProcessUntrusted,
+        crate::tenant_isolation::TenantIsolationMode::LocalDevelopment,
+        std::iter::empty::<String>(),
+    )
+    .expect("authorization test tenant isolation decision should build");
     ConvexHostBridge::build(
         ConvexHostBridgeScope::new(
             service,
             registry,
-            crate::tenant_isolation::TenantIsolationContext::application(
-                tenant_id,
-                principal.clone(),
-                "convex_authorization_test",
-            ),
+            decision,
             Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
                 crate::EmptySandboxCatalog,
             ))),
@@ -377,15 +412,27 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
             .map(|document| document.to_json())
             .collect(),
     );
+    let registry = Arc::new(ConvexRegistry::empty());
+    let isolation = crate::tenant_isolation::TenantIsolationContext::application(
+        tenant_id.clone(),
+        normalize_principal_context(Some(&auth)),
+        "convex_authorization_test",
+    );
+    let decision = crate::tenant_isolation::admit_runtime_invocation_decision(
+        &isolation,
+        "convex_authorization_test",
+        None,
+        &registry.runtime_policy(),
+        crate::tenant_isolation::RuntimeIsolationTier::InProcessUntrusted,
+        crate::tenant_isolation::TenantIsolationMode::LocalDevelopment,
+        std::iter::empty::<String>(),
+    )
+    .expect("authorization query tenant isolation decision should build");
     let bridge = ConvexHostBridge::new(
         ConvexHostBridgeScope::new(
             service.clone(),
-            Arc::new(ConvexRegistry::empty()),
-            crate::tenant_isolation::TenantIsolationContext::application(
-                tenant_id.clone(),
-                normalize_principal_context(Some(&auth)),
-                "convex_authorization_test",
-            ),
+            registry,
+            decision,
             Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
                 crate::EmptySandboxCatalog,
             ))),

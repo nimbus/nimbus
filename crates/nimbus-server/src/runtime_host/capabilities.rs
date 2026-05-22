@@ -2,13 +2,14 @@ use std::sync::Arc;
 
 use nimbus_core::{
     AtomicWriteBatch, AtomicWriteBatchOutcome, Document, DocumentLocator, Error, PrincipalContext,
-    Result, TableName, TenantId,
+    Result, TableName,
 };
 use nimbus_engine::{MutationExecutionUnit, Service};
 use nimbus_runtime::{HostCallCancellation, NimbusRuntimeError};
 use serde_json::{Map, Value};
 
 use crate::execution::errors::{check_host_cancellation, ensure_runtime_host_not_cancelled};
+use crate::tenant_isolation::TenantStorageAccessDecision;
 
 pub(crate) trait RuntimeCapabilityHost {
     fn validate_session(
@@ -20,7 +21,7 @@ pub(crate) trait RuntimeCapabilityHost {
 
     fn service(&self) -> &Arc<Service>;
 
-    fn tenant_id(&self) -> &TenantId;
+    fn storage_access(&self) -> &TenantStorageAccessDecision;
 
     fn principal(&self) -> &PrincipalContext;
 
@@ -48,7 +49,7 @@ where
             || {
                 host.service()
                     .get_document_with_principal(
-                        host.tenant_id(),
+                        host.storage_access().tenant_id(),
                         &locator.table,
                         locator.id.clone(),
                         host.principal(),
@@ -89,7 +90,7 @@ where
     let check_cancellation = cancellation.clone();
     host.service()
         .get_document_async_cancellable_with_principal(
-            host.tenant_id().clone(),
+            host.storage_access().tenant_id().clone(),
             locator.table.clone(),
             locator.id.clone(),
             host.principal().clone(),
@@ -120,7 +121,10 @@ where
         execution_unit.stage_atomic_write_batch(batch)
     } else {
         host.service()
-            .begin_mutation_execution_unit(host.tenant_id().clone(), host.principal().clone())?
+            .begin_mutation_execution_unit(
+                host.storage_access().tenant_id().clone(),
+                host.principal().clone(),
+            )?
             .execute_atomic_write_batch(batch)
     }
 }
@@ -154,7 +158,7 @@ where
         execution_unit.insert_document(table, fields)
     } else {
         host.service().insert_document_with(
-            host.tenant_id(),
+            host.storage_access().tenant_id(),
             table,
             None,
             fields,
@@ -185,7 +189,7 @@ where
     };
     host.service()
         .insert_document_async_with(
-            host.tenant_id().clone(),
+            host.storage_access().tenant_id().clone(),
             table,
             None,
             fields,
@@ -211,7 +215,7 @@ where
         execution_unit.update_document(table, document_id, patch)
     } else {
         host.service().update_document_with(
-            host.tenant_id(),
+            host.storage_access().tenant_id(),
             table,
             document_id,
             patch,
@@ -243,7 +247,7 @@ where
     };
     host.service()
         .update_document_async_with(
-            host.tenant_id().clone(),
+            host.storage_access().tenant_id().clone(),
             table,
             document_id,
             patch,
@@ -268,7 +272,7 @@ where
         execution_unit.delete_document(table, document_id)
     } else {
         host.service().delete_document_with(
-            host.tenant_id(),
+            host.storage_access().tenant_id(),
             table,
             document_id,
             nimbus_engine::MutationActor::with_principal(host.principal()),
@@ -298,7 +302,7 @@ where
     };
     host.service()
         .delete_document_async_with(
-            host.tenant_id().clone(),
+            host.storage_access().tenant_id().clone(),
             table,
             document_id,
             nimbus_engine::AsyncMutationContext::with_principal(

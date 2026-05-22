@@ -14,7 +14,10 @@ use crate::sandbox::{SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch
 use crate::service_registry::{
     RuntimeServiceBindingFuture, RuntimeServiceRegistry, service_binding_from_handle,
 };
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant_isolation::{
+    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
+    TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
+};
 
 const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_ACTIVATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -195,12 +198,13 @@ impl SandboxServiceManager {
     async fn start_launch_async(
         &self,
         key: &TenantServiceKey,
-        isolation: &TenantIsolationContext,
+        decision: &TenantIsolationDecision,
         launch: SandboxServiceLaunch,
     ) -> Result<SandboxHandle, Error> {
         let actual_backend = self.sandbox_backend.kind();
-        let service_isolation = isolation.for_service(key.service_name.clone());
-        service_isolation.ensure_sandbox_launch_matches(&launch, actual_backend)?;
+        let service_access =
+            decision.service_access(&key.service_name, "sandbox service launch")?;
+        service_access.ensure_sandbox_launch_matches(&launch, actual_backend)?;
 
         let handle = match launch {
             SandboxServiceLaunch::Image(launch) => {
@@ -288,7 +292,19 @@ impl SandboxServiceManager {
         service_name: &str,
         cancellation: HostCallCancellation,
     ) -> Result<Option<SandboxHandle>, Error> {
-        let tenant_id = isolation.tenant_id();
+        let decision = service_activation_decision(isolation, service_name)?;
+        self.start_service_for_decision_async(&decision, service_name, cancellation)
+            .await
+    }
+
+    pub(crate) async fn start_service_for_decision_async(
+        &self,
+        decision: &TenantIsolationDecision,
+        service_name: &str,
+        cancellation: HostCallCancellation,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        let tenant_id = decision.tenant_id();
+        decision.service_access(service_name, "sandbox service activation")?;
         let key = TenantServiceKey::new(tenant_id, service_name);
         if let Some(handle) = self.refresh_handle_async(&key).await?
             && !matches!(
@@ -311,7 +327,7 @@ impl SandboxServiceManager {
                     self.release_activation(&key);
                     return Ok(None);
                 };
-                let start_result = self.start_launch_async(&key, isolation, launch).await;
+                let start_result = self.start_launch_async(&key, decision, launch).await;
                 self.release_activation(&key);
                 start_result?;
                 self.wait_for_ready_handle_async(&key, &cancellation).await
@@ -519,6 +535,19 @@ fn sandbox_backend_error(key: &TenantServiceKey, operation: &str, error: &Sandbo
     ))
 }
 
+fn service_activation_decision(
+    isolation: &TenantIsolationContext,
+    service_name: &str,
+) -> Result<TenantIsolationDecision, Error> {
+    isolation.admit_decision(
+        TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+            service_name,
+            "activation",
+        ))
+        .with_services(TenantServiceGrantPolicyDecision::new([service_name])),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -695,6 +724,49 @@ mod tests {
             SandboxFilesystemSpec::new(""),
             SandboxProcessSpec::new(Vec::<String>::new()),
         )
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_rejects_unadmitted_service_before_launch() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "cache".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("cache"),
+                        "redis:7",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        );
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = service_activation_decision(&isolation, "db")
+            .expect("db service activation decision should build");
+
+        let error = manager
+            .start_service_for_decision_async(&decision, "cache", HostCallCancellation::default())
+            .await
+            .expect_err("decision must reject a forged lower-seam service name");
+
+        assert!(
+            error.to_string().contains("permission denied"),
+            "error should map to permission denial: {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("did not authorize service `cache`"),
+            "error should name the rejected service: {error}"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            0,
+            "unadmitted service should fail before the sandbox backend is called"
+        );
     }
 
     #[tokio::test]

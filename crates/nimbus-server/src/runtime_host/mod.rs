@@ -9,7 +9,7 @@ pub(crate) mod capabilities;
 pub(crate) mod responses;
 
 use crate::execution::host_state::RuntimeHostState;
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant_isolation::{TenantIsolationDecision, TenantStorageAccessDecision};
 
 pub(crate) struct RuntimeHostBootstrap {
     pub(crate) principal: PrincipalContext,
@@ -73,19 +73,19 @@ pub(crate) fn commit_runtime_mutation_execution_unit(
 pub(crate) struct RuntimeHostScope {
     service: Arc<Service>,
     runtime_policy: Arc<RuntimePolicy>,
-    isolation: TenantIsolationContext,
+    decision: TenantIsolationDecision,
 }
 
 impl RuntimeHostScope {
     pub(crate) fn new(
         service: Arc<Service>,
         runtime_policy: Arc<RuntimePolicy>,
-        isolation: TenantIsolationContext,
+        decision: TenantIsolationDecision,
     ) -> Self {
         Self {
             service,
             runtime_policy,
-            isolation,
+            decision,
         }
     }
 
@@ -126,6 +126,7 @@ impl RuntimeHostInvocation {
 pub(crate) struct RuntimeHostContext {
     service: Arc<Service>,
     tenant_id: TenantId,
+    storage_access: TenantStorageAccessDecision,
     principal: nimbus_core::PrincipalContext,
     execution_unit: Option<Arc<nimbus_engine::MutationExecutionUnit>>,
     state: Arc<RuntimeHostState>,
@@ -139,7 +140,7 @@ impl RuntimeHostContext {
     ) -> Result<Self> {
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             service: &scope.service,
-            tenant_id: scope.isolation.tenant_id(),
+            tenant_id: scope.decision.tenant_id(),
             principal: invocation.principal,
             server_request_id: invocation.server_request_id,
             invocation_kind: invocation.invocation_kind,
@@ -152,7 +153,8 @@ impl RuntimeHostContext {
         })?;
         Ok(Self {
             service: scope.service,
-            tenant_id: scope.isolation.tenant_id().clone(),
+            tenant_id: scope.decision.tenant_id().clone(),
+            storage_access: scope.decision.storage_access(),
             principal: bootstrap.principal,
             execution_unit: bootstrap.execution_unit,
             state: bootstrap.state,
@@ -173,6 +175,10 @@ impl RuntimeHostContext {
 
     pub(crate) fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
+    }
+
+    pub(crate) fn storage_access(&self) -> &TenantStorageAccessDecision {
+        &self.storage_access
     }
 
     pub(crate) fn validate_session(
@@ -199,8 +205,8 @@ impl capabilities::RuntimeCapabilityHost for RuntimeHostContext {
         &self.service
     }
 
-    fn tenant_id(&self) -> &TenantId {
-        &self.tenant_id
+    fn storage_access(&self) -> &TenantStorageAccessDecision {
+        RuntimeHostContext::storage_access(self)
     }
 
     fn principal(&self) -> &nimbus_core::PrincipalContext {

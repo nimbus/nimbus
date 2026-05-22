@@ -17,7 +17,10 @@ use crate::execution::invocations::{
 };
 use crate::execution::runtime_admission::RuntimeExecutionAdmission;
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::{RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode};
+use crate::tenant_isolation::{
+    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
+    admit_runtime_invocation_decision,
+};
 
 use super::super::super::runtime_error_to_core;
 
@@ -71,18 +74,28 @@ impl<'a> RuntimeInvocationContext<'a> {
         let (runtime_executor, runtime_policy) = self
             .registry
             .runtime_lane_for_function(&request.function_name);
-        RuntimeExecutionAdmission::for_policy(
+        let decision = admit_runtime_invocation_decision(
             &self.isolation,
+            &request.function_name,
+            server_request_id.as_deref(),
             &runtime_policy,
             RuntimeIsolationTier::InProcessUntrusted,
             self.tenant_isolation_mode,
+            request.services.keys().cloned(),
         )
-        .ensure_in_process_available("convex runtime invocation")?;
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "tenant isolation decision rejected convex runtime invocation: {error}"
+            ))
+        })?;
+        decision.ensure_runtime_bundle_matches(&bundle, "convex runtime bundle")?;
+        RuntimeExecutionAdmission::for_decision(&decision)
+            .ensure_in_process_available("convex runtime invocation")?;
         let bridge = Arc::new(ConvexHostBridge::build(
             ConvexHostBridgeScope::new(
                 self.service.clone(),
                 self.registry.clone(),
-                self.isolation.clone(),
+                decision.clone(),
                 self.runtime_service_registry.clone(),
             ),
             ConvexHostBridgeInvocation::new(
@@ -100,7 +113,7 @@ impl<'a> RuntimeInvocationContext<'a> {
             bundle,
             request,
             RuntimeBundleInvocationOptions::enforcing_policy_limit(
-                self.isolation.tenant_id(),
+                decision.tenant_id(),
                 server_request_id.as_deref(),
                 Some(cancellation),
             ),

@@ -25,7 +25,9 @@ use crate::execution::invocations::{
 use crate::execution::runtime_admission::RuntimeExecutionAdmission;
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::state::{AppError, AppState};
-use crate::tenant_isolation::{RuntimeIsolationTier, TenantIsolationContext};
+use crate::tenant_isolation::{
+    RuntimeIsolationTier, TenantIsolationContext, admit_runtime_invocation_decision,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -232,16 +234,22 @@ fn execute_http_target(
     isolation.ensure_application_principal_tenant_access("cloud functions http tenant")?;
     let bundle = registry.runtime_bundle();
     isolation.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
-    RuntimeExecutionAdmission::for_policy(
-        &isolation,
-        &registry.runtime_policy(),
-        RuntimeIsolationTier::InProcessUntrusted,
-        state.tenant_isolation_mode,
-    )
-    .ensure_in_process_available("cloud functions http runtime invocation")?;
     let services = state
         .runtime_service_registry()
         .snapshot_for_tenant(isolation.tenant_id());
+    let runtime_policy = registry.runtime_policy();
+    let decision = admit_runtime_invocation_decision(
+        &isolation,
+        &function_name,
+        Some(server_request_id.as_str()),
+        &runtime_policy,
+        RuntimeIsolationTier::InProcessUntrusted,
+        state.tenant_isolation_mode,
+        services.keys().cloned(),
+    )?;
+    decision.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
+    RuntimeExecutionAdmission::for_decision(&decision)
+        .ensure_in_process_available("cloud functions http runtime invocation")?;
     let request = InvocationRequest {
         kind: InvocationKind::Mutation,
         function_name,
@@ -252,7 +260,11 @@ fn execute_http_target(
         services: services.clone(),
     };
     let bridge = Arc::new(CloudFunctionsHostBridge::build(
-        RuntimeHostScope::new(state.service.clone(), registry.runtime_policy(), isolation),
+        RuntimeHostScope::new(
+            state.service.clone(),
+            registry.runtime_policy(),
+            decision.clone(),
+        ),
         RuntimeHostInvocation::new(
             normalize_principal_context(auth.as_ref()),
             Some(server_request_id.clone()),
@@ -267,7 +279,7 @@ fn execute_http_target(
         bundle,
         request,
         RuntimeBundleInvocationOptions::enforcing_policy_limit(
-            &tenant_id,
+            decision.tenant_id(),
             Some(server_request_id.as_str()),
             None,
         ),

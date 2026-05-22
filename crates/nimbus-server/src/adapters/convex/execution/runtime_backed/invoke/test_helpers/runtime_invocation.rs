@@ -14,7 +14,10 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
 };
 use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant_isolation::{
+    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
+    admit_runtime_invocation_decision,
+};
 
 use super::super::super::runtime_error_to_core;
 use super::super::{
@@ -59,15 +62,25 @@ fn invoke_named_convex_function_with_trace_cancellable(
     );
     let bundle = registry.required_runtime_bundle()?;
     let invocation_kind = request.kind.clone();
+    let isolation = TenantIsolationContext::application(
+        tenant_id.clone(),
+        normalize_principal_context(request.auth.as_ref()),
+        "convex_test_runtime",
+    );
+    let decision = admit_runtime_invocation_decision(
+        &isolation,
+        &request.function_name,
+        None,
+        &registry.runtime_policy(),
+        RuntimeIsolationTier::InProcessUntrusted,
+        TenantIsolationMode::LocalDevelopment,
+        request.services.keys().cloned(),
+    )?;
     let bridge = Arc::new(ConvexHostBridge::build(
         ConvexHostBridgeScope::new(
             service.clone(),
             registry.clone(),
-            TenantIsolationContext::application(
-                tenant_id.clone(),
-                normalize_principal_context(request.auth.as_ref()),
-                "convex_test_runtime",
-            ),
+            decision,
             runtime_service_registry,
         ),
         ConvexHostBridgeInvocation::new(
