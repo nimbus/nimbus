@@ -19,6 +19,11 @@ env:
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
+  # CC2: route rustc through sccache on every Rust job. CARGO_INCREMENTAL=0
+  # is required by sccache (already set above). Jobs without rustc invocations
+  # (rust-format, js, proof-helpers, rust-gate-summary) ignore these vars.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
 
 permissions:
   contents: read
@@ -67,10 +72,13 @@ jobs:
         with:
           components: clippy
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-clippy-no-bin-v1
+          shared-key: ci-ubuntu-stable-clippy-no-bin-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
@@ -113,10 +121,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-deny-no-bin-v1
+          shared-key: ci-ubuntu-stable-deny-no-bin-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
@@ -150,10 +161,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-runtime-no-bin-v1
+          shared-key: ci-ubuntu-stable-runtime-no-bin-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
@@ -193,10 +207,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-workspace-no-bin-v1
+          shared-key: ci-ubuntu-stable-workspace-no-bin-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
@@ -285,10 +302,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-external-providers-no-bin-v1
+          shared-key: ci-ubuntu-stable-external-providers-no-bin-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
@@ -393,10 +413,13 @@ jobs:
         with:
           components: llvm-tools-preview
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}-no-bin-v1
+          shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}-no-bin-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
@@ -456,10 +479,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-harness-nightly-${{ matrix.surface }}-no-bin-v1
+          shared-key: ci-ubuntu-stable-harness-nightly-${{ matrix.surface }}-no-bin-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
@@ -571,11 +597,6 @@ jobs:
       NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
       NIMBUS_LIBSQL_URL: http://127.0.0.1:18080
       NIMBUS_LIBSQL_ADMIN_URL: http://127.0.0.1:18081
-      # CC1: route rustc through sccache. CARGO_INCREMENTAL is already 0 at
-      # the workflow level (sccache requires it). Swatinem (below) still
-      # caches target/ as the floor; sccache handles per-rustc-call hits.
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
     services:
       postgres:
         image: postgres:16
@@ -620,17 +641,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        # CC1: pilot — wire sccache into the Coverage job only. RUSTC_WRAPPER
-        # + SCCACHE_GHA_ENABLED are set at the job env block; this action
-        # installs the binary and configures the GitHub Actions cache backend.
-        # CC2 expands to the rest of the Rust jobs once we've observed
-        # 5-10 runs of Coverage hit-rate trends.
+        # CC2: sccache wired into every Rust job. RUSTC_WRAPPER and
+        # SCCACHE_GHA_ENABLED are set workflow-wide; this action installs the
+        # binary and configures the GitHub Actions cache backend.
         uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-coverage-no-bin-v1
+          shared-key: ci-ubuntu-stable-coverage-no-bin-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"

@@ -37,6 +37,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
+  # CC2: route rustc through sccache. CARGO_INCREMENTAL=0 (above) is required.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
 
 permissions:
   contents: read
@@ -64,10 +67,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-ubuntu-stable-desktop-ui-v1
+          shared-key: ci-ubuntu-stable-desktop-ui-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
 
