@@ -220,7 +220,7 @@ Push N+1 hit rate: ~95% (sccache cross-push)
 | CC5 | Introduce the `warm-sccache` leader job in `ci.yml`. Runs a single-job sccache + Swatinem restore + `cargo check --workspace --tests --no-default-features` to populate the shared sccache. Add `needs: [warm-sccache]` to all downstream Rust jobs that consume Rust compilation. Document the full caching architecture in `docs/operating/ci-caching.md`: how sccache and Swatinem layer; what every job depends on; how to triage cache misses; how to force a fresh cache rotation; how `gh run rerun` interacts with cache saves. Verify: on a fresh first push (after a sccache cache rotation), the warm-sccache job populates the cache and downstream jobs hit ~80% sccache rate on the same push. | done |
 | CC6 | Re-test the `cargo-llvm-cov -j 1` constraint. Run Coverage with `-j 2`, `-j 4` on a side branch 5-10 times each. If no rust-lld bus errors recur across the runs, relax the constraint to `-j 2` (or higher) in `ci.yml`. Capture the test branch run IDs in `docs/plans/proof/ci-caching-canonicalization/cc6-link-parallelism.md`. If bus errors recur, keep `-j 1` and add a note linking the test runs to the existing comment in `ci.yml:680-682`. | done |
 | CC7 | Coverage scope optimization. Add `--no-doc-tests` to the cargo-llvm-cov invocation to skip doc-test instrumentation (which rebuilds crates as `--test` harnesses, doubling link work). Verify coverage line-count delta is <2% across all covered crates (acceptable signal loss for the wallclock savings). Capture the before/after lcov diff at `docs/plans/proof/ci-caching-canonicalization/cc7-no-doctests.md`. | done |
-| CC8 | Plan closeout. Flip every ledger row to `done`; append the Execution Log with the actual commit SHAs. Move this file to `docs/plans/archive/ci-caching-canonicalization-plan.md`. Update `docs/plans/README.md`: remove the active entry, add a paragraph under "Current Reference Baselines" naming the CC scope and closeout date. Update the routing entry in `AGENTS.md` to point at the archived path. Verify CI green on main. The verifier script (shipped in CC0) is amended in its plan-file regex to also accept the archived path. | not started |
+| CC8 | Plan closeout. Flip every ledger row to `done`; append the Execution Log with the actual commit SHAs. Move this file to `docs/plans/archive/ci-caching-canonicalization-plan.md`. Update `docs/plans/README.md`: remove the active entry, add a paragraph under "Current Reference Baselines" naming the CC scope and closeout date. Update the routing entry in `AGENTS.md` to point at the archived path. Verify CI green on main. The verifier script (shipped in CC0) is amended in its plan-file regex to also accept the archived path. | done |
 
 ## Completion Gate
 
@@ -357,12 +357,11 @@ Will be appended as each CC lands on main.
 
 | CC  | Commit(s) | Subject |
 |-----|-----------|---------|
-| CC0 | _pending_ | _pending_ |
-| CC1 | _pending_ | _pending_ |
-| CC2 | _pending_ | _pending_ |
-| CC3 | _pending_ | _pending_ |
-| CC4 | _pending_ | _pending_ |
-| CC5 | _pending_ | _pending_ |
-| CC6 | _pending_ | _pending_ |
-| CC7 | _pending_ | _pending_ |
-| CC8 | _pending_ | _pending_ |
+| CC0 | `61c14481` | CC0: scaffold ci-caching-canonicalization plan + verifier + baseline proof |
+| CC1 | `bbfe6c70` | CC1: wire sccache into Coverage job (pilot before full rollout) |
+| CC2 | `b2bd42ff` | CC2: expand sccache across every Rust job + rotate Swatinem v1→v2 |
+| CC3 | `4090c599` | CC3: rerun-safe Swatinem saves + main-branch save gate |
+| CC4 | `85313da2` | CC4: ui-artifacts leader job + harness/coverage consumers |
+| CC5 | `83defc2a` | CC5: warm-sccache leader job + ci-caching contract doc |
+| CC6 + CC7 | `4ed1fd80` | CC6 + CC7 + CC1 proofs: link-parallelism, --no-doc-tests, sccache stats |
+| CC8 | (this commit) | CC8: closeout — archive plan, update routing, mark gate complete |

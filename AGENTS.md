@@ -88,16 +88,17 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   and errors actionably otherwise. Promote a new active plan before
   another local-dev / build-graph wave.
 - CI caching / sccache / Swatinem orchestration:
-  `docs/plans/ci-caching-canonicalization-plan.md` as the active
-  execution plan (CC0..CC8). Covers sccache rollout across every Rust
-  job in `.github/workflows/*.yml`, Swatinem `shared-key` rotation
-  v1→v2, `save-always: true` for rerun-safety, the `ui-artifacts`
-  leader job that deduplicates the UI build, and the `warm-sccache`
-  leader job that converts parallel-cold-start to
-  serial-cold-then-parallel-warm. `/goal` control plane gated on
-  `bash scripts/verify-ci-caching-canonicalization.sh`. Once the plan
-  closes, `docs/operating/ci-caching.md` becomes the canonical
-  caching contract.
+  `docs/operating/ci-caching.md` for the canonical caching contract,
+  then `docs/plans/archive/ci-caching-canonicalization-plan.md` as the
+  completed baseline (CC0-CC8, closed 2026-05-22). The baseline
+  covers sccache rollout across every Rust job in
+  `.github/workflows/*.yml`, Swatinem `shared-key` rotation v1→v2,
+  `save-always: true` plus `save-if: refs/heads/main` for rerun-safe
+  saves and PR-cannot-poison-main, the `ui-artifacts` leader job that
+  deduplicates the UI build for harness + coverage, and the
+  `warm-sccache` leader job that converts parallel-cold-start to
+  serial-cold-then-parallel-warm. Promote a new active plan before
+  another CI caching / sccache / Swatinem wave.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,

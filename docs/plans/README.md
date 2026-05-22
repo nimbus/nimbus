@@ -13,21 +13,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
-- `docs/plans/ci-caching-canonicalization-plan.md`
-  - canonical plan for canonicalizing the Rust + JS + Playwright caching
-    architecture across all nine `.github/workflows/*.yml`. Lands sccache
-    as the primary Rust compilation cache, uses Swatinem as a secondary
-    `target/` floor, fixes Swatinem rerun save-suppression
-    (`save-always: true`), introduces a `ui-artifacts` leader job to
-    deduplicate the UI build across six Rust followers, introduces a
-    `warm-sccache` leader job to convert parallel-cold to
-    serial-cold-then-parallel-warm, and re-tests the
-    `cargo-llvm-cov -j 1` linker-parallelism constraint. Activation gate
-    met 2026-05-21 (Coverage cache silently dropped after rerun; 27 GB
-    of duplicated dep content across 9 cache slots). Ledger CC0..CC8.
-    `/goal` control plane gated on
-    `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
-    conditions).
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -72,6 +57,31 @@ archived plans only when you need historical execution detail.
     plane gated on `bash scripts/verify-local-dev-canonicalization.sh`
     (ten conditions). Future local-dev / build-graph waves must
     promote a new active plan.
+- `docs/plans/archive/ci-caching-canonicalization-plan.md`
+  - completed execution record for the CI caching canonicalization wave
+    (CC0-CC8, closed 2026-05-22). Layered sccache (per-rustc-call
+    content-addressed cache via `mozilla-actions/sccache-action`) on
+    top of the existing Swatinem floor across every Rust job in
+    `.github/workflows/ci.yml`, `.github/workflows/desktop-ui.yml`, and
+    `.github/workflows/node-compat-nightly.yml`. Rotated all Swatinem
+    `shared-key` values `-v1 → -v2` to force a clean dep tree, added
+    `save-always: true` for rerun-safe saves, and gated `save-if` on
+    `refs/heads/main` so PRs cannot poison the main-branch pool.
+    Inserted two leader jobs: `ui-artifacts` (one canonical SPA build
+    consumed by harness + coverage via `actions/download-artifact@v7`)
+    and `warm-sccache` (serial cold-start that populates the sccache
+    pool before harness/coverage fan out). Kept the `cargo llvm-cov
+    -j 1` constraint from LD7 unchanged (sccache shortens compile
+    time, not link time; rust-lld bus-error risk unchanged) and added
+    `--no-doc-tests` to the Coverage `cargo llvm-cov` invocation
+    (doc-tests still execute via `make test-rust-docs` in
+    `rust-workspace-tests`; CC7 only drops coverage measurement).
+    Canonical caching contract is `docs/operating/ci-caching.md`.
+    `/goal` control plane gated on
+    `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
+    conditions). Proof bundle at
+    `docs/plans/proof/ci-caching-canonicalization/`. Future CI caching
+    / sccache / Swatinem waves must promote a new active plan.
 - `docs/plans/archive/sandbox-microvm-hardening-plan.md`
   - completed execution record for closing the microVM service exposure
     blockers from `docs/plans/security/sandbox-isolation-audit.md`: krun OCI
