@@ -45,15 +45,19 @@ This plan owns:
 
 - promotion of the `identity` grant from declaration/audit placeholder to an
   enforced capability
-- local and enterprise trust-domain configuration
+- local and enterprise trust-domain configuration, including a local-dev
+  fallback that does not require SPIRE
 - OIDC/JWT minting for workload identity
 - SPIFFE-compatible SVID paths and future SPIRE registration shape
-- mTLS client certificates and service-account token exchange
+- workload selectors, node attestation inputs, SVID rotation, mTLS client
+  certificates, and service-account token exchange
 - node/machine identity source, rotation, compromise recovery, and membership
   binding
-- provider-auth adapters for Vault, Kubernetes, AWS, GCP, and Azure
+- provider-auth adapters for Vault, Kubernetes, AWS, GCP, and Azure, including
+  provider-specific subject/audience claim mapping
 - runtime and sandbox propagation of scoped identity projections
-- audit events for mint, renew, revoke, deny, and provider exchange
+- audit events for mint, renew, revoke, deny, provider exchange, and
+  downstream secret-read correlation
 
 This plan does not own:
 
@@ -92,24 +96,41 @@ spiffe://<trust-domain>/nimbus/workload/v1/tenant/.../invocation/...
 Provider adapters must use this subject or a signed projection of it. They
 must not reconstruct identity from caller inputs.
 
+## Topic Coverage
+
+This plan is expected to cover the follow-up topics below when promoted:
+
+| Topic | Required coverage |
+| --- | --- |
+| Service identity | Workload identity issuance; short-lived credential forms; OIDC/JWT, SPIFFE SVID, mTLS certificate, and service-account token outputs; TTL, renewal, revocation, and redaction behavior. |
+| Identity grants vs secret grants | `identity` grants authorize identity projection or credential minting; `secret` grants authorize secret handle reads. A workload with one grant does not implicitly receive the other. |
+| SPIFFE/SPIRE | Trust-domain shape, SPIFFE ID path convention, workload selectors, node attestation, SVID rotation, and local-dev fallback without SPIRE. |
+| Secret-provider auth | Vault Kubernetes/JWT/OIDC auth; AWS/GCP/Azure workload identity mapping; provider-specific subject/audience claims; per-tenant secret-store routing from the secret-management plan; audit correlation between credential mint and secret read. |
+| Node and machine identity | Canonical `node_id` and `machine_id`; identity source for local machines, Linux hosts, microVM guests, and future cluster nodes; key rotation and compromised-node recovery. |
+| Runtime identity propagation | V8/Deno/Node, future Bun/JSC, and Wasm receive only scoped identity context; `HostBridge` rechecks the admitted identity projection on every host operation; raw service tokens do not enter guests or runtimes unless explicitly minted by this plan. |
+| Sandbox identity propagation | Server-owned OCI annotations/labels, microVM metadata, cgroup or sandbox audit labels, and denial of tenant-controlled identity fields. |
+| Audit and observability | Stable workload identity and decision ID in admission, runtime, sandbox, storage, HostBridge, mint, exchange, and secret-read events; redaction rules and enterprise evidence trail. |
+| Policy admission | Matrix of which identities can request secret, service, network, and storage grants; deny-by-default behavior; conformance tests for forged tenant/workload/node identities. |
+
 ## Phase Ledger
 
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
-| SI0 | `todo` | Define provider-auth policy input and audit schema. | Tests prove identity mint requests without an admitted decision fail closed. |
+| SI0 | `todo` | Define provider-auth policy input and audit schema. | Tests prove identity mint requests without an admitted decision fail closed and forged tenant/workload/node identities are denied. |
 | SI1 | `todo` | Promote `identity` grant to enforced capability. | Runtime and sandbox tests prove identity APIs deny without explicit grants. |
-| SI2 | `todo` | Add local trust-domain and signing-key management. | Key rotation and stale-key denial tests pass without exposing private key material. |
+| SI2 | `todo` | Add canonical node/machine identity, local-dev trust-domain fallback, and signing-key management. | Key rotation, stale-key denial, canonical `node_id`/`machine_id`, and local-dev fallback tests pass without exposing private key material. |
 | SI3 | `todo` | Implement short-lived OIDC/JWT minting. | Tokens carry tenant/workload subject, audience, expiry, and decision ID; wrong audience/provider denies. |
-| SI4 | `todo` | Define SPIFFE/SVID integration path. | SPIFFE IDs render from `TenantWorkloadStableIdentity`; registration entries bind node/machine selectors. |
-| SI5 | `todo` | Add provider-auth adapters. | Vault, Kubernetes, AWS, GCP, and Azure adapters are either implemented or gated by precise provider blockers. |
-| SI6 | `todo` | Propagate identity projections to runtime and sandbox seams. | V8/Deno, future Bun/JSC, wasmtime, HostBridge, OCI annotations, and microVM metadata consume scoped projections only after admission. |
+| SI4 | `todo` | Define SPIFFE/SVID integration path. | SPIFFE IDs render from `TenantWorkloadStableIdentity`; registration entries bind workload selectors, node attestation inputs, and node/machine selectors; SVID rotation is tested. |
+| SI5 | `todo` | Add provider-auth adapters and per-tenant secret-store routing hooks. | Vault, Kubernetes, AWS, GCP, and Azure adapters are either implemented or gated by precise provider blockers; subject/audience mapping and mint-to-secret-read audit correlation are tested. |
+| SI6 | `todo` | Propagate identity projections to runtime and sandbox seams. | V8/Deno/Node, future Bun/JSC, wasmtime, HostBridge, OCI annotations/labels, microVM metadata, and cgroup/sandbox audit labels consume server-owned scoped projections only after admission. |
 | SI7 | `todo` | Add lifecycle and revocation. | Mint, renew, revoke, expiry, node compromise, and tenant cleanup paths are tested. |
-| SI8 | `todo` | Publish operator runbook and conformance gate. | One command proves mint/deny/exchange/revoke and redaction behavior. |
+| SI8 | `todo` | Publish operator runbook and conformance gate. | One command proves mint/deny/exchange/revoke, forged-identity denial, secret-read correlation, and redaction behavior. |
 
 ## Consumer Rules
 
 - Secret management may use provider-auth credentials to fetch secret values,
-  but secret values remain owned by the secret-management plan.
+  but secret values and per-tenant secret-store routing remain owned by the
+  secret-management plan.
 - WASI agent HTTP/client credentials require service identity for production
   provider exchange; agent workloads must not invent identity from session IDs.
 - Browser session credentials remain secret references or provider-auth
@@ -117,6 +138,9 @@ must not reconstruct identity from caller inputs.
   identity.
 - Wasmtime WIT host state carries workload identity internally; guest access to
   identity requires an explicit imported capability.
+- HostBridge implementations must recheck tenant, workload, grant, and
+  provider policy on every identity-sensitive host operation instead of trusting
+  identity context echoed back by guest/runtime code.
 - Layered admission and metrics may carry decision IDs and low-cardinality
   identity classes, but must not use full workload IDs as metric labels.
 - Horizontal scaling must bind node/machine identity to cluster membership
