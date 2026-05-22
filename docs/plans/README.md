@@ -421,6 +421,21 @@ archived plans only when you need historical execution detail.
     stronger-than-env-var credentials. Prior-art research at
     `docs/plans/research/secret-management-prior-art.md`. Supersedes
     the gap note `docs/plans/research/secret-management-shape.md`.
+- `docs/plans/service-identity-provider-auth-plan.md`
+  - canonical deferred plan for promoting stable workload identity into
+    short-lived provider-auth credentials: enforced `identity` grants,
+    OIDC/JWT minting, SPIFFE/SVID shape, mTLS/service-account tokens,
+    node/machine identity binding, Vault/Kubernetes/AWS/GCP/Azure
+    provider-auth adapters, lifecycle/revocation, and audit. Consumes
+    `TenantWorkloadStableIdentity`; does not own secret values.
+- `docs/plans/artifact-provenance-verification-plan.md`
+  - canonical deferred plan for production artifact verification behind
+    the landed `TenantImageVerificationProvider` seam: maintained OCI
+    reference parsing, Cosign verification, SLSA provenance verification,
+    SBOM evidence, offline/private-root verification, and extension from
+    service images to runtime/function bundles and machine images. Nimbus
+    owns policy evaluation and evidence normalization, not cryptographic
+    verification.
 
 ## Archive Policy
 
@@ -469,6 +484,15 @@ the work is explicitly a historical review.
   `docs/architecture/sandbox/microvm-service-baseline.md`,
   `docs/architecture/runtime/permission-model.md`, and
   `docs/architecture/storage/provider-topologies.md`.
+- For image signatures, SLSA provenance, SBOMs, OCI reference/referrer parsing,
+  runtime bundle provenance, machine-image provenance, or any artifact
+  verification code, start with
+  `docs/plans/artifact-provenance-verification-plan.md`. Do not hand-roll
+  cryptographic verification in Nimbus.
+- For service identity, provider-auth exchange, OIDC/JWT minting,
+  SPIFFE/SVIDs, mTLS certificates, service-account tokens, or promotion of the
+  `identity` grant, start with
+  `docs/plans/service-identity-provider-auth-plan.md`.
 - For Convex or Nimbus CLI/codegen workflow work (`packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `nimbus start --app-dir`
   contract), start with `docs/adapters/convex/ai-guidelines.md`,

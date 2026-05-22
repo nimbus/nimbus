@@ -77,8 +77,8 @@ audit redactions, and a deterministic decision ID.
 | Network exposure is private by default. | Service grants, loopback default, patched krun/libkrun TSI bind address. | Conformance localhost denial and Linux localhost-only proof from the sandbox hardening baseline. | Public exposure policy is intentionally not admitted yet. |
 | Storage/API calls cannot cross tenants by caller-supplied tenant IDs. | Server/adapters/runtime HostBridge consume admitted tenant context. | Conformance runtime storage and bearer-swap scenarios. | External storage providers still require correct provider namespace configuration. |
 | Named volumes are tenant-owned and host binds are denied by default. | Compose admission and sandbox mount materialization. | Conformance same-named-volume scenario. | Shared read-only artifact policy is future work. |
-| Images are immutable at the production floor. | Image admission policy and provider seam. | Image admission unit tests plus production Compose admission tests. | Full Sigstore/Cosign verification is behind `TenantImageVerificationProvider` and not wired to a concrete provider yet. |
-| Secrets do not materialize ambiently. | Secret policy records handles/counts, not raw values; raw Compose secrets fail closed. | Tenant audit record and production Compose tests. | Dedicated secret provider integration is tracked separately and must use stable workload identity. |
+| Images are immutable at the production floor. | Image admission policy and provider seam. | Image admission unit tests plus production Compose admission tests. | Full Sigstore/Cosign/SLSA/SBOM verification is owned by `docs/plans/artifact-provenance-verification-plan.md` and not wired to a concrete provider yet. |
+| Secrets do not materialize ambiently. | Secret policy records handles/counts, not raw values; raw Compose secrets fail closed. | Tenant audit record and production Compose tests. | Dedicated secret provider integration is tracked separately; provider-auth credentials must consume `docs/plans/service-identity-provider-auth-plan.md`. |
 | Per-tenant resource reservation exists before launch. | Runtime budgets, sandbox quota policy, OCI resource quota manager. | EIH5 minicloud cgroup memory proof and sandbox quota tests. | Hard disk write caps require filesystem/project-quota support. |
 | Cleanup cannot delete another tenant's artifacts. | Tenant-rooted sandbox state, volumes, and storage deletion path. | Conformance cleanup scenarios. | Manual host edits outside Nimbus remain an operator responsibility. |
 | Audit and drift evidence is tenant-safe. | `TenantIsolationEvent` schema and drift scanner. | Audit event and drift scanner tests. | Event transport/export backend is intentionally separate from the schema. |
@@ -116,7 +116,12 @@ Accepted for the current baseline:
   equivalent platform primitive.
 - Full cryptographic image verification is represented by the
   `TenantImageVerificationProvider` seam. Production deployments that require
-  signatures, attestations, or SBOMs must wire a concrete provider behind it.
+  signatures, attestations, or SBOMs must wire battle-tested tooling behind it
+  through `docs/plans/artifact-provenance-verification-plan.md`.
+- Secret provider authentication is not complete until
+  `docs/plans/service-identity-provider-auth-plan.md` can mint short-lived,
+  tenant-scoped credentials from admitted `TenantWorkloadStableIdentity`
+  subjects.
 - Native HTTP tenant membership is not a general customer auth model yet. The
   current native API is a local-operator surface guarded by local admin auth.
 - Audit event schema is stable, but export routing and retention policy are
@@ -133,9 +138,15 @@ Prioritize external security review in this order:
    `crates/nimbus-server/src/runtime_host/` and adapter HostBridge code.
 3. Sandbox launch and OCI materialization:
    `crates/nimbus-sandbox/`, `nimbus-crun`, and `nimbus-libkrun`.
-4. Storage provider namespace isolation:
+4. Artifact provenance verification:
+   `TenantImageVerificationProvider` plus concrete Cosign/SLSA/SBOM backends
+   from `docs/plans/artifact-provenance-verification-plan.md`.
+5. Service identity and provider auth:
+   `TenantWorkloadStableIdentity` plus short-lived credential minting from
+   `docs/plans/service-identity-provider-auth-plan.md`.
+6. Storage provider namespace isolation:
    `crates/nimbus-storage/` plus provider topology docs.
-5. Conformance and drift evidence:
+7. Conformance and drift evidence:
    `scripts/verify-tenant-isolation-conformance.sh`,
    `crates/nimbus-server/src/tenant_isolation_drift.rs`, and the minicloud
    cgroup proof.
@@ -145,6 +156,8 @@ Prioritize external security review in this order:
 - [Tenant isolation runbook](operating/tenant-isolation.md)
 - [Server auth and runtime trust](architecture/server/auth-runtime-trust.md)
 - [MicroVM service baseline](architecture/sandbox/microvm-service-baseline.md)
+- [Artifact provenance verification plan](plans/artifact-provenance-verification-plan.md)
+- [Service identity and provider auth plan](plans/service-identity-provider-auth-plan.md)
 - [Verification architecture](architecture/testing/verification-architecture.md)
 - [Completed tenant-isolation control-plane plan](plans/archive/tenant-isolation-control-plane-plan.md)
 - [Enterprise hardening prior-art research](plans/research/tenant-isolation-enterprise-hardening-prior-art.md)

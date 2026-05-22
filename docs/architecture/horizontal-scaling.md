@@ -1351,12 +1351,12 @@ flowchart TD
         direction TB
 
         subgraph network["Network Layer"]
-            NET["Same Iroh mesh, same QUIC connections\nTenant routing is application-level, not network-level\nNo per-tenant network isolation (unnecessary overhead)"]
+            NET["Cluster mesh is shared infrastructure\nTenant traffic is scoped by admitted topics, streams, and service policies\nService exposure defaults to loopback/proxy mediation"]
         end
 
         subgraph compute_iso["Compute Layer"]
             V8_ISO["V8: separate isolate per invocation\nSeparate bundle per tenant\nHostBridge scoped to tenant context\nPer-tenant active/in-flight/queued caps"]
-            VM_ISO["MicroVM: separate VM per service\nHardware isolation via libkrun\nSeparate cgroup (systemd)"]
+            VM_ISO["MicroVM: separate VM per tenant service sandbox\nHardware isolation via libkrun\nTenant/sandbox-scoped resource policy"]
         end
 
         subgraph storage_iso["Storage Layer"]
@@ -1381,12 +1381,12 @@ flowchart TD
 
 | Layer | Isolation mechanism | Cross-tenant leakage? |
 |-------|--------------------|-----------------------|
-| **Storage** | Separate DB file or schema per tenant | Impossible — no shared namespace |
-| **V8 runtime** | Separate isolate per invocation, separate bundle | Impossible — different V8 contexts |
-| **MicroVM** | Separate VM, separate cgroup | Impossible — hardware isolation |
-| **Subscriptions** | Per-tenant gossip topics | Impossible — topic namespaced by tenant ID |
+| **Storage** | Separate DB file or schema per tenant plus tenant-bound access checks | Must be proven at API and provider boundaries |
+| **V8 runtime** | Separate isolate per invocation, separate bundle, HostBridge scoped to the invocation tenant | Depends on runtime grant enforcement; see `docs/architecture/runtime/permission-model.md` |
+| **MicroVM** | Separate VM per tenant service sandbox plus tenant-scoped state/artifact roots | Depends on sandbox admission and cleanup; see `docs/plans/archive/tenant-isolation-control-plane-plan.md` |
+| **Subscriptions** | Per-tenant gossip topics | Must remain namespaced by tenant ID |
 | **Scheduling** | Per-tenant job queues + admission caps | One slow tenant cannot stall others |
-| **Network** | Shared Iroh mesh | Tenant routing is app-level, not network-level |
+| **Network** | Shared cluster mesh, tenant-scoped topics/streams, loopback service exposure by default | Requires explicit tenant network policy; no blanket "shared network is safe" claim |
 
 ### Gossip topic model for tenants
 
@@ -1556,7 +1556,46 @@ A single tenant's components can span the cluster:
 
 ---
 
-## 16. Open Questions
+## 16. Consumer Plans
+
+This architecture is the substrate; the plans below are the stateful
+workloads that ride it. When changing primitives or topic conventions
+in this document, walk each consumer plan to confirm the change is
+either invisible or explicitly accepted.
+
+| Plan | What it consumes | Topic + Raft usage |
+|---|---|---|
+| `docs/plans/agent-browser-service-plan.md` | openraft (session-registry mapping), iroh-blobs (Playwright storage-state blobs), iroh full-mesh QUIC streams (cross-node CDP, *not* wrapped in another framed RPC), iroh-gossip (session-registry change signals, cluster-state) | `topic:<tenant_id>:browser_sessions`, `topic:cluster:state` |
+| `docs/plans/secret-management-plan.md` | openraft (`_nimbus.secret_stores` metadata + `_nimbus.secrets` rows for the Nimbus-native provider, via the redb+openraft pattern from §7), iroh-gossip (rotation invalidation — payload is `(path, new_version)`, never plaintext) | `topic:<tenant_id>:secrets:<store_name>` |
+| `docs/plans/service-identity-provider-auth-plan.md` | node/machine identity, openraft membership metadata, tenant-scoped workload placement, and stable workload identity for provider-auth minting | `topic:cluster:state` for membership/liveness; tenant-scoped provider topics only when a concrete adapter needs them |
+| `docs/plans/artifact-provenance-verification-plan.md` | iroh-blobs and content-addressed artifact distribution for signed runtime bundles, machine images, and service image evidence | artifact metadata is durable state; gossip carries invalidation only, never verifier secrets or raw credentials |
+| `docs/plans/wasi-agent-capabilities-plan.md` | indirectly — `nimbus:agent/http-client` reads API keys via `ctx.secret.*`, inheriting the secret-management plan's cluster semantics. The agent-OS sidecar lifecycle is single-node in MVP; cluster-aware sidecar placement is a future amendment to that plan. | none directly |
+
+**Shared invariants the consumer plans rely on:**
+
+- The canonical topic naming is `topic:<tenant_id>:<table_name>` (per-
+  tenant per-resource) and `topic:cluster:state` (engine-wide). Plans
+  extending this with sub-categories use `topic:<tenant_id>:<table>:
+  <sub>` — see the secret-management plan's `:secrets:<store_name>`
+  extension.
+- Durable state lives in openraft (small metadata) or iroh-blobs
+  (large content-addressed payloads). Gossip carries invalidation and
+  liveness only — never the canonical value of any stateful resource.
+- Tenant identifier is the first segment of every topic and the first
+  column of every replicated row. Multi-Raft tenant partitioning
+  (Open Question 1 below) can therefore be enabled mechanically; no
+  consumer-plan code change is required when it lands.
+- Provider-auth credentials are minted from admitted stable workload
+  identity, not from gossip topics, node-local sessions, or tenant-supplied
+  metadata. Cluster membership and node identity are prerequisites for
+  trusting a node to mint or exchange those credentials.
+- Cross-node multiplexed protocol traffic (CDP for browser sessions,
+  future analogues) rides its own iroh QUIC stream, not a framed
+  wrapper inside another RPC channel — see the routing-over-proxying
+  rule in the browser plan, motivated by Cloudflare's SASE-mode QUIC
+  retrospective.
+
+## 17. Open Questions
 
 1. **Multi-Raft granularity** — one Raft group per tenant? Per storage volume?
    Start with one global group, partition when write contention or node count

@@ -118,7 +118,10 @@ work adds new gates.
 Promotion rule: a future gate must name the protected resource, show the
 current control is insufficient, choose wait/reject/shed/bypass behavior,
 define the metric that proves improvement, and explain why adjacent gates are
-not the first move.
+not the first move. Admission, audit, and traces may carry decision IDs and
+stable workload identity for correlation, but exported metrics should prefer
+low-cardinality tenant/work-class/result labels and must not use full workload
+identity strings as labels.
 
 The first likely future candidates are microVM service activation capacity
 after the sandbox hardening blockers are addressed, and storage read/write

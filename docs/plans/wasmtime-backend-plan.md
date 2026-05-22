@@ -384,6 +384,12 @@ Each WIT import in the `nimbus:host` package maps to a `HostCallRequest` →
 `HostBridge::call()` or `HostBridge::call_async()` invocation. The adapter is
 built once in the `component::Linker` at engine creation time.
 
+The host state carries admitted workload identity internally for audit,
+provider-auth, and trace correlation. A guest receives only the scoped context
+projection allowed by its world and grants; future service-identity credentials
+are owned by `docs/plans/service-identity-provider-auth-plan.md`, not minted
+directly by the wasmtime backend.
+
 ### `Send + Sync` advantage
 
 wasmtime `Store<T>` is `Send` when `T: Send`. This permits cross-thread Store
@@ -502,6 +508,10 @@ When promoted, the wasmtime backend should not be considered viable without:
   `wasm_capability_sandbox` trust tier and capability vocabulary.
 - **`docs/architecture/runtime/permission-model.md`**: trust-tier and
   capability vocabulary source. This plan consumes `wasm_capability_sandbox`.
+- **`docs/plans/service-identity-provider-auth-plan.md`**: downstream identity
+  owner. The wasmtime WIT host state carries admitted workload identity
+  internally, but guest access to identity-bearing credentials remains an
+  explicit capability handled by the service-identity plan.
 - **`v8-locker-fork-plan.md`**: hard prerequisite. This plan activates after
   Phase 5 completes. The backend abstraction refactor (W1) must not break the
   landed cooperative Locker scheduling.

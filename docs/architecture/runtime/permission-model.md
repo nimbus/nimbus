@@ -147,12 +147,14 @@ explicitly when they need Node-compatible localhost grants. The completed
 cross-layer baseline is
 `docs/plans/archive/tenant-isolation-control-plane-plan.md`.
 
-Secret and identity grants are declaration and audit inputs until a future
-secret-store or service-identity API exists. Declaring a `secret` grant does not
-place secret material in `process.env` or globals, and declaring an `identity`
-grant does not synthesize `ctx.auth` identity. Request auth remains
-request-owned; secret materialization must be introduced as an explicit,
-separately tested surface.
+Secret and identity grants are declaration and audit inputs until the dedicated
+secret-management and service-identity plans promote concrete APIs. Declaring a
+`secret` grant does not place secret material in `process.env` or globals, and
+declaring an `identity` grant does not synthesize `ctx.auth` identity. Request
+auth remains request-owned; secret materialization must be introduced as an
+explicit, separately tested surface, and provider-auth credentials must be
+minted from admitted workload identity through
+`docs/plans/service-identity-provider-auth-plan.md`.
 
 ## Presets
 

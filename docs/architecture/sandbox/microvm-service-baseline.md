@@ -160,8 +160,10 @@ Production tenant isolation requires these additional boundaries:
   optional allowed registries, optional signature issuer/subject, optional
   SLSA-style provenance builder and predicate requirements, optional SBOM
   evidence, and explicit local-build allowance. Sigstore/Cosign should plug in
-  behind `TenantImageVerificationProvider`; Nimbus does not hard-code a
-  concrete verifier into the tenant-isolation decision shape.
+  behind `TenantImageVerificationProvider` through
+  `docs/plans/artifact-provenance-verification-plan.md`; Nimbus owns policy and
+  evidence normalization, not hand-rolled cryptographic verification or OCI
+  reference/referrer parsing.
 - **Networking:** service ports are loopback-only by default and mediated
   through tenant-scoped service bindings. Non-loopback exposure requires an
   explicit operator policy record.
