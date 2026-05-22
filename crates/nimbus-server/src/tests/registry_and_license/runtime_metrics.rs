@@ -72,6 +72,20 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert!(body["limits"]["max_in_flight_top_level_invocations_per_tenant"].is_u64());
     assert!(body["limits"]["max_queued_top_level_invocations_per_tenant"].is_u64());
     assert_eq!(body["limits"]["max_nested_runtime_invocations"], json!(64));
+    assert_eq!(
+        body["limits"]["tenant_budget"]["max_heap_mb_per_runtime"],
+        json!(128)
+    );
+    assert!(body["limits"]["tenant_budget"]["max_active_runtime_slots"].is_u64());
+    assert!(body["limits"]["tenant_budget"]["max_worker_thread_slots"].is_u64());
+    assert_eq!(
+        body["limits"]["tenant_budget"]["execution_timeout_ms"],
+        json!(30_000)
+    );
+    assert_eq!(
+        body["limits"]["tenant_budget"]["max_nested_runtime_invocations_per_top_level"],
+        json!(64)
+    );
     assert_eq!(body["metrics"]["worker_dispatched_invocations"], json!(0));
     assert_eq!(
         body["metrics"]["worker_affinity_routed_invocations"],

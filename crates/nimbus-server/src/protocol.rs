@@ -124,6 +124,19 @@ pub(crate) struct RuntimeLimitsResponse {
     pub max_in_flight_top_level_invocations_per_tenant: usize,
     pub max_queued_top_level_invocations_per_tenant: usize,
     pub max_nested_runtime_invocations: usize,
+    pub tenant_budget: RuntimeTenantBudgetResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeTenantBudgetResponse {
+    pub max_active_runtime_slots: usize,
+    pub max_in_flight_top_level_invocations: usize,
+    pub max_queued_top_level_invocations: usize,
+    pub max_worker_thread_slots: usize,
+    pub max_heap_mb_per_runtime: usize,
+    pub max_active_heap_mb: usize,
+    pub execution_timeout_ms: u64,
+    pub max_nested_runtime_invocations_per_top_level: usize,
 }
 
 #[derive(Debug, Deserialize, Default)]

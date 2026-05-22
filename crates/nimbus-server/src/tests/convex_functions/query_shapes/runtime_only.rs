@@ -134,6 +134,35 @@ export {};
     let metrics = registry.runtime_metrics_snapshot();
     assert_eq!(metrics.fallback_cross_runtime_dispatches, 1);
     assert_eq!(metrics.worker_dispatched_invocations, 2);
+    let server_request_id = metrics
+        .recent_request_correlations
+        .iter()
+        .find(|correlation| correlation.function_name == "messages:outer")
+        .expect("outer runtime request correlation should be present")
+        .server_request_id
+        .clone();
+    let outer_correlation = metrics
+        .recent_request_correlations
+        .iter()
+        .find(|correlation| {
+            correlation.server_request_id == server_request_id
+                && correlation.function_name == "messages:outer"
+        })
+        .expect("outer runtime request correlation should remain visible");
+    assert_eq!(outer_correlation.tenant_label.as_deref(), Some("demo"));
+    assert!(outer_correlation.is_top_level);
+    assert!(!outer_correlation.bypasses_concurrency_limit);
+    let nested_correlation = metrics
+        .recent_request_correlations
+        .iter()
+        .find(|correlation| {
+            correlation.server_request_id == server_request_id
+                && correlation.function_name == "messages:inner"
+        })
+        .expect("nested runtime request correlation should be present");
+    assert_eq!(nested_correlation.tenant_label.as_deref(), Some("demo"));
+    assert!(!nested_correlation.is_top_level);
+    assert!(nested_correlation.bypasses_concurrency_limit);
 }
 
 #[tokio::test]

@@ -13,7 +13,13 @@ mod worker;
 #[derive(Clone, Copy)]
 pub(crate) enum RuntimeConcurrencyMode {
     EnforcePolicyLimit,
-    BypassPolicyLimit,
+    BudgetedNestedInvocationBypass,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum RuntimeInvocationScope {
+    TopLevel,
+    Nested,
 }
 
 pub(crate) struct RuntimeBundleInvocationOptions<'a> {
@@ -21,6 +27,7 @@ pub(crate) struct RuntimeBundleInvocationOptions<'a> {
     pub(crate) server_request_id: Option<&'a str>,
     pub(crate) cancellation: Option<HostCallCancellation>,
     pub(crate) concurrency_mode: RuntimeConcurrencyMode,
+    pub(crate) scope: RuntimeInvocationScope,
 }
 
 impl<'a> RuntimeBundleInvocationOptions<'a> {
@@ -34,10 +41,11 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
             server_request_id,
             cancellation,
             concurrency_mode: RuntimeConcurrencyMode::EnforcePolicyLimit,
+            scope: RuntimeInvocationScope::TopLevel,
         }
     }
 
-    pub(crate) fn bypassing_policy_limit(
+    pub(crate) fn budgeted_nested_invocation_bypass(
         tenant_id: &'a TenantId,
         server_request_id: Option<&'a str>,
         cancellation: Option<HostCallCancellation>,
@@ -46,7 +54,8 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
             tenant_id,
             server_request_id,
             cancellation,
-            concurrency_mode: RuntimeConcurrencyMode::BypassPolicyLimit,
+            concurrency_mode: RuntimeConcurrencyMode::BudgetedNestedInvocationBypass,
+            scope: RuntimeInvocationScope::Nested,
         }
     }
 }
@@ -59,23 +68,41 @@ pub(crate) fn next_runtime_server_request_id(prefix: &str) -> String {
     )
 }
 
-pub(crate) fn top_level_runtime_invocation_context(
+pub(crate) fn runtime_invocation_context(
     request: &InvocationRequest,
     tenant_id: &TenantId,
     server_request_id: Option<&str>,
     concurrency_mode: RuntimeConcurrencyMode,
+    scope: RuntimeInvocationScope,
 ) -> RuntimeInvocationContext {
-    let context = match server_request_id {
-        Some(server_request_id) => RuntimeInvocationContext::top_level_for_tenant_and_request(
-            request,
-            tenant_id.to_string(),
-            server_request_id,
-        ),
-        None => RuntimeInvocationContext::top_level_for_tenant(request, tenant_id.to_string()),
+    let tenant_label = tenant_id.to_string();
+    let context = match (scope, server_request_id) {
+        (RuntimeInvocationScope::TopLevel, Some(server_request_id)) => {
+            RuntimeInvocationContext::top_level_for_tenant_and_request(
+                request,
+                tenant_label,
+                server_request_id,
+            )
+        }
+        (RuntimeInvocationScope::TopLevel, None) => {
+            RuntimeInvocationContext::top_level_for_tenant(request, tenant_label)
+        }
+        (RuntimeInvocationScope::Nested, Some(server_request_id)) => {
+            RuntimeInvocationContext::nested_for_tenant_and_request(
+                request,
+                tenant_label,
+                server_request_id,
+            )
+        }
+        (RuntimeInvocationScope::Nested, None) => {
+            RuntimeInvocationContext::nested_for_tenant(request, tenant_label)
+        }
     };
     match concurrency_mode {
         RuntimeConcurrencyMode::EnforcePolicyLimit => context,
-        RuntimeConcurrencyMode::BypassPolicyLimit => context.with_bypassed_concurrency_limit(),
+        RuntimeConcurrencyMode::BudgetedNestedInvocationBypass => {
+            context.with_bypassed_concurrency_limit()
+        }
     }
 }
 

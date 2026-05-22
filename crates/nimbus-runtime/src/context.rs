@@ -15,14 +15,14 @@ pub struct RuntimeInvocationContext {
 
 impl RuntimeInvocationContext {
     pub fn top_level(request: &InvocationRequest) -> Self {
-        Self::new(request, None, None)
+        Self::new(request, None, None, true)
     }
 
     pub fn top_level_for_tenant(
         request: &InvocationRequest,
         tenant_label: impl Into<String>,
     ) -> Self {
-        Self::new(request, Some(tenant_label.into()), None)
+        Self::new(request, Some(tenant_label.into()), None, true)
     }
 
     pub fn top_level_for_tenant_and_request(
@@ -34,6 +34,24 @@ impl RuntimeInvocationContext {
             request,
             Some(tenant_label.into()),
             Some(server_request_id.into()),
+            true,
+        )
+    }
+
+    pub fn nested_for_tenant(request: &InvocationRequest, tenant_label: impl Into<String>) -> Self {
+        Self::new(request, Some(tenant_label.into()), None, false)
+    }
+
+    pub fn nested_for_tenant_and_request(
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+        server_request_id: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            request,
+            Some(tenant_label.into()),
+            Some(server_request_id.into()),
+            false,
         )
     }
 
@@ -41,13 +59,14 @@ impl RuntimeInvocationContext {
         request: &InvocationRequest,
         tenant_label: Option<String>,
         server_request_id: Option<String>,
+        is_top_level: bool,
     ) -> Self {
         static NEXT_INVOCATION_ID: AtomicU64 = AtomicU64::new(1);
         Self {
             invocation_id: NEXT_INVOCATION_ID.fetch_add(1, Ordering::Relaxed),
             function_name: request.function_name.clone(),
             kind: request.kind.as_str(),
-            is_top_level: true,
+            is_top_level,
             bypasses_concurrency_limit: false,
             tenant_label,
             server_request_id,
