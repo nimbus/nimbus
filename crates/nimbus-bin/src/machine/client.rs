@@ -968,7 +968,13 @@ mod tests {
         service_name: &str,
         status: SandboxStatus,
     ) -> std::path::PathBuf {
-        let container_dir = state_root.join("containers").join(sandbox_id);
+        let sandbox_state_root = state_root
+            .join("tenants")
+            .join(tenant_id)
+            .join("sandboxes")
+            .join(sandbox_id)
+            .join("state");
+        let container_dir = sandbox_state_root.join("containers").join(sandbox_id);
         let exit_dir = state_root.join("exits");
         let persist_dir = state_root.join("persist").join(sandbox_id);
         let bundle_dir = state_root.join("bundles").join(sandbox_id);

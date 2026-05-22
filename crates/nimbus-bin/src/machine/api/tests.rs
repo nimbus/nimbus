@@ -569,7 +569,14 @@ fn write_container_manifest(
     status: SandboxStatus,
     published_endpoints: Vec<PublishedEndpoint>,
 ) {
-    let container_dir = state_root.join("containers").join(sandbox_id);
+    let container_dir = state_root
+        .join("tenants")
+        .join(tenant_id)
+        .join("sandboxes")
+        .join(sandbox_id)
+        .join("state")
+        .join("containers")
+        .join(sandbox_id);
     fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
 
     let handle = SandboxHandle::new(
