@@ -152,7 +152,7 @@ impl ConvexHostBridge {
             Arc::new(self.clone()),
             bundle,
             request,
-            RuntimeBundleInvocationOptions::bypassing_policy_limit(
+            RuntimeBundleInvocationOptions::budgeted_nested_invocation_bypass(
                 self.tenant_id(),
                 self.server_request_id(),
                 Some(cancellation.clone()),
@@ -182,7 +182,7 @@ impl ConvexHostBridge {
             Arc::new(self.clone()),
             bundle,
             request,
-            RuntimeBundleInvocationOptions::bypassing_policy_limit(
+            RuntimeBundleInvocationOptions::budgeted_nested_invocation_bypass(
                 self.tenant_id(),
                 self.server_request_id(),
                 Some(cancellation.clone()),

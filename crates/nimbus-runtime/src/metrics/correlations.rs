@@ -12,6 +12,8 @@ pub struct RuntimeRequestCorrelationSnapshot {
     pub tenant_label: Option<String>,
     pub function_name: String,
     pub kind: String,
+    pub is_top_level: bool,
+    pub bypasses_concurrency_limit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +23,8 @@ struct RuntimeRequestCorrelation {
     tenant_label: Option<String>,
     function_name: String,
     kind: &'static str,
+    is_top_level: bool,
+    bypasses_concurrency_limit: bool,
 }
 
 #[derive(Debug, Default)]
@@ -48,6 +52,8 @@ impl RuntimeRequestCorrelationLog {
             tenant_label: context.tenant_label.clone(),
             function_name: context.function_name.clone(),
             kind: context.kind,
+            is_top_level: context.is_top_level,
+            bypasses_concurrency_limit: context.bypasses_concurrency_limit,
         });
     }
 
@@ -62,6 +68,8 @@ impl RuntimeRequestCorrelationLog {
                 tenant_label: correlation.tenant_label.clone(),
                 function_name: correlation.function_name.clone(),
                 kind: correlation.kind.to_string(),
+                is_top_level: correlation.is_top_level,
+                bypasses_concurrency_limit: correlation.bypasses_concurrency_limit,
             })
             .collect()
     }

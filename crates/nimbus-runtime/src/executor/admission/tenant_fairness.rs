@@ -36,7 +36,7 @@ impl RuntimeExecutorTenantAdmissionState {
 }
 
 pub(super) fn fairness_tenant_label(job: &RuntimeWorkerJob) -> Option<&str> {
-    (!job.context.bypasses_concurrency_limit())
+    (job.context.is_top_level && !job.context.bypasses_concurrency_limit())
         .then_some(job.context.tenant_label.as_deref())
         .flatten()
 }

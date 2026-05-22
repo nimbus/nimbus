@@ -450,6 +450,8 @@ mod tests {
                 tenant_label: Some("demo".to_string()),
                 function_name: "messages:list".to_string(),
                 kind: "query".to_string(),
+                is_top_level: true,
+                bypasses_concurrency_limit: false,
             }]
         );
     }

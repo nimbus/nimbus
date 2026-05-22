@@ -11,11 +11,12 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_cancellation(
         runtime,
         bundle,
         request.clone(),
-        top_level_runtime_invocation_context(
+        runtime_invocation_context(
             &request,
             options.tenant_id,
             options.server_request_id,
             options.concurrency_mode,
+            options.scope,
         ),
         options.cancellation,
     )

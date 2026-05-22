@@ -12,11 +12,12 @@ pub(crate) async fn invoke_runtime_bundle_on_worker(
             runtime,
             bundle,
             request.clone(),
-            top_level_runtime_invocation_context(
+            runtime_invocation_context(
                 &request,
                 options.tenant_id,
                 options.server_request_id,
                 options.concurrency_mode,
+                options.scope,
             ),
             options.cancellation,
         )

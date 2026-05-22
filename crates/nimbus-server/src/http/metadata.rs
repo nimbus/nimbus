@@ -32,6 +32,7 @@ pub(crate) async fn runtime_diagnostics(
         }));
     };
     let limits = registry.runtime_limits();
+    let tenant_budget = limits.tenant_budget();
     Ok(Json(RuntimeDiagnosticsResponse {
         limits: Some(RuntimeLimitsResponse {
             runtime_backend: limits.backend_kind,
@@ -63,6 +64,21 @@ pub(crate) async fn runtime_diagnostics(
             max_queued_top_level_invocations_per_tenant: limits
                 .max_queued_top_level_invocations_per_tenant,
             max_nested_runtime_invocations: limits.max_nested_runtime_invocations,
+            tenant_budget: RuntimeTenantBudgetResponse {
+                max_active_runtime_slots: tenant_budget.max_active_runtime_slots,
+                max_in_flight_top_level_invocations: tenant_budget
+                    .max_in_flight_top_level_invocations,
+                max_queued_top_level_invocations: tenant_budget.max_queued_top_level_invocations,
+                max_worker_thread_slots: tenant_budget.max_worker_thread_slots,
+                max_heap_mb_per_runtime: tenant_budget.max_heap_mb_per_runtime,
+                max_active_heap_mb: tenant_budget.max_active_heap_mb,
+                execution_timeout_ms: tenant_budget
+                    .execution_timeout
+                    .as_millis()
+                    .min(u128::from(u64::MAX)) as u64,
+                max_nested_runtime_invocations_per_top_level: tenant_budget
+                    .max_nested_runtime_invocations_per_top_level,
+            },
         }),
         reset_capabilities: Some(limits.reset_capabilities()),
         metrics: Some(registry.runtime_metrics_snapshot()),

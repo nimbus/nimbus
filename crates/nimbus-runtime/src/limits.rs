@@ -277,6 +277,19 @@ pub struct RuntimeLimits {
     pub max_nested_runtime_invocations: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeTenantBudget {
+    pub max_active_runtime_slots: usize,
+    pub max_in_flight_top_level_invocations: usize,
+    pub max_queued_top_level_invocations: usize,
+    pub max_worker_thread_slots: usize,
+    pub max_heap_mb_per_runtime: usize,
+    pub max_active_heap_mb: usize,
+    pub execution_timeout: Duration,
+    pub max_nested_runtime_invocations_per_top_level: usize,
+}
+
 impl RuntimeLimits {
     pub fn restricted_code() -> Self {
         Self {
@@ -363,6 +376,28 @@ impl RuntimeLimits {
                 bootstrap_state_per_invocation: true,
                 user_module_state_per_invocation: true,
             },
+        }
+    }
+
+    pub fn tenant_budget(&self) -> RuntimeTenantBudget {
+        self.normalized().tenant_budget_from_normalized()
+    }
+
+    fn tenant_budget_from_normalized(&self) -> RuntimeTenantBudget {
+        RuntimeTenantBudget {
+            max_active_runtime_slots: self.max_active_top_level_invocations_per_tenant,
+            max_in_flight_top_level_invocations: self
+                .max_in_flight_top_level_invocations_per_tenant,
+            max_queued_top_level_invocations: self.max_queued_top_level_invocations_per_tenant,
+            max_worker_thread_slots: self
+                .worker_threads
+                .min(self.max_active_top_level_invocations_per_tenant),
+            max_heap_mb_per_runtime: self.max_heap_mb,
+            max_active_heap_mb: self
+                .max_heap_mb
+                .saturating_mul(self.max_active_top_level_invocations_per_tenant),
+            execution_timeout: self.execution_timeout,
+            max_nested_runtime_invocations_per_top_level: self.max_nested_runtime_invocations,
         }
     }
 
@@ -608,6 +643,10 @@ impl RuntimePolicy {
 
     pub fn metrics_snapshot(&self) -> RuntimeMetricsSnapshot {
         self.metrics.snapshot()
+    }
+
+    pub fn tenant_budget(&self) -> RuntimeTenantBudget {
+        self.limits.tenant_budget_from_normalized()
     }
 }
 
@@ -870,6 +909,31 @@ mod tests {
             cooperative_warm_pool.limits().runtime_pool_kind,
             RuntimePoolKind::WarmPool
         );
+    }
+
+    #[test]
+    fn runtime_limits_expose_tenant_budget_from_normalized_limits() {
+        let mut limits = RuntimeLimits::application_web_standard();
+        limits.max_concurrent_runtime_instances = 8;
+        limits.worker_threads = 16;
+        limits.max_active_top_level_invocations_per_tenant = 3;
+        limits.max_in_flight_top_level_invocations_per_tenant = 5;
+        limits.max_queued_top_level_invocations_per_tenant = 7;
+        limits.max_heap_mb = 256;
+        limits.execution_timeout = Duration::from_secs(9);
+        limits.max_nested_runtime_invocations = 11;
+
+        let budget = limits.tenant_budget();
+
+        assert_eq!(budget.max_active_runtime_slots, 3);
+        assert_eq!(budget.max_in_flight_top_level_invocations, 5);
+        assert_eq!(budget.max_queued_top_level_invocations, 7);
+        assert_eq!(budget.max_worker_thread_slots, 3);
+        assert_eq!(budget.max_heap_mb_per_runtime, 256);
+        assert_eq!(budget.max_active_heap_mb, 768);
+        assert_eq!(budget.execution_timeout, Duration::from_secs(9));
+        assert_eq!(budget.max_nested_runtime_invocations_per_top_level, 11);
+        assert_eq!(RuntimePolicy::new(limits).tenant_budget(), budget);
     }
 
     #[test]

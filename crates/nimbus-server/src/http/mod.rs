@@ -13,9 +13,9 @@ use crate::protocol::{
     CreateTenantRequest, CronJobsResponse, DataResponse, DocumentDataResponse, DocumentResponse,
     HealthResponse, InsertDocumentRequest, JournalBootstrapResponse, JournalStreamRequest,
     JournalStreamResponse, MaterializedJournalSnapshotResponse, RuntimeDiagnosticsResponse,
-    RuntimeLimitsResponse, ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
-    TenantEngineDiagnosticsResponse, TenantListResponse, TenantResponse, UpdateDocumentRequest,
-    VersionInfoResponse,
+    RuntimeLimitsResponse, RuntimeTenantBudgetResponse, ScheduleResponse,
+    ScheduledJobResultResponse, ScheduledJobsResponse, TenantEngineDiagnosticsResponse,
+    TenantListResponse, TenantResponse, UpdateDocumentRequest, VersionInfoResponse,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
 use crate::tenant_isolation::TenantIsolationContext;
