@@ -23,6 +23,7 @@ pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
 pub use spec::{
     SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxImageLaunchSpec,
     SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy,
-    SandboxSpec, validate_sandbox_mounts, validate_tenant_volume_name,
+    SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
+    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec, validate_sandbox_mounts,
+    validate_tenant_volume_name,
 };

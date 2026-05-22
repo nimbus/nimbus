@@ -84,6 +84,7 @@ pub(super) fn write_container_machine_manifest(
     fs::create_dir_all(&container_network_dir).expect("container network directory should build");
 
     let handle = nimbus::SandboxHandle::new(
+        nimbus::TenantId::new(tenant_id).expect("tenant id should parse"),
         nimbus::SandboxId::new(sandbox_id),
         service_name,
         nimbus::SandboxBackendKind::Container,
@@ -186,6 +187,7 @@ pub(super) fn write_manifest(
     fs::create_dir_all(&container_dir).expect("container directory should build");
 
     let handle = nimbus::SandboxHandle::new(
+        nimbus::TenantId::new(tenant_id).expect("tenant id should parse"),
         nimbus::SandboxId::new(sandbox_id),
         service_name,
         nimbus::SandboxBackendKind::Krun,
@@ -251,6 +253,7 @@ pub(super) fn stub_handle(
     status: SandboxStatus,
 ) -> SandboxHandle {
     SandboxHandle::new(
+        nimbus::TenantId::new("tenant").expect("tenant id should parse"),
         id.clone(),
         service_name,
         SandboxBackendKind::Krun,
@@ -290,6 +293,7 @@ impl SandboxBackend for StubMachineApiSandboxBackend {
 
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
         let handle = SandboxHandle::new(
+            spec.tenant_id.clone(),
             SandboxId::new(format!("{}-01stub", spec.name)),
             &spec.name,
             SandboxBackendKind::Container,

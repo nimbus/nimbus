@@ -273,6 +273,64 @@ fn plan_only_backend_rejects_same_tenant_port_quota_for_image_exposed_ports() {
 }
 
 #[test]
+fn plan_only_backend_rejects_same_tenant_resource_quota_exhaustion() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let mut config = ContainerSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    );
+    config.resource_quota_policy = SandboxResourceQuotaPolicy::default()
+        .with_max_active_sandboxes_per_tenant(Some(2))
+        .with_max_vcpus_per_tenant(Some(2))
+        .with_max_memory_bytes_per_tenant(Some(1024))
+        .with_max_disk_bytes_per_tenant(Some(2048))
+        .with_max_log_bytes_per_tenant(Some(512));
+    let backend = ContainerSandboxBackend::new(config);
+
+    backend
+        .start_sync(
+            sample_spec_for_tenant("tenant-a", "db").with_resource_limits(
+                SandboxResourceLimits::default()
+                    .with_cpu_count(1)
+                    .with_memory_limit_bytes(512)
+                    .with_disk_limit_bytes(1024)
+                    .with_log_limit_bytes(256),
+            ),
+        )
+        .expect("first sandbox should fit within tenant quota");
+
+    let error = backend
+        .start_sync(
+            sample_spec_for_tenant("tenant-a", "api").with_resource_limits(
+                SandboxResourceLimits::default()
+                    .with_cpu_count(2)
+                    .with_memory_limit_bytes(512)
+                    .with_disk_limit_bytes(1024)
+                    .with_log_limit_bytes(256),
+            ),
+        )
+        .expect_err("second sandbox should exceed same-tenant vCPU quota");
+
+    assert!(
+        error.to_string().contains("sandbox vCPU quota exceeded")
+            && error.to_string().contains("tenant-a"),
+        "expected tenant vCPU quota error, got: {error}"
+    );
+
+    backend
+        .start_sync(
+            sample_spec_for_tenant("tenant-b", "api").with_resource_limits(
+                SandboxResourceLimits::default()
+                    .with_cpu_count(2)
+                    .with_memory_limit_bytes(512)
+                    .with_disk_limit_bytes(1024)
+                    .with_log_limit_bytes(256),
+            ),
+        )
+        .expect("other tenant should have an independent quota bucket");
+}
+
+#[test]
 fn image_backed_plan_uses_direct_conmon_launch_for_materialized_rootfs() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let backend =

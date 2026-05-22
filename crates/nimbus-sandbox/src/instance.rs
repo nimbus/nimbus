@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use nimbus_core::TenantId;
+
 use crate::backend::SandboxBackendKind;
 use crate::endpoint::PublishedEndpoint;
 
@@ -35,6 +37,7 @@ pub enum SandboxStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxHandle {
+    pub tenant_id: TenantId,
     pub id: SandboxId,
     pub name: String,
     pub backend: SandboxBackendKind,
@@ -44,6 +47,7 @@ pub struct SandboxHandle {
 
 impl SandboxHandle {
     pub fn new(
+        tenant_id: TenantId,
         id: SandboxId,
         name: impl Into<String>,
         backend: SandboxBackendKind,
@@ -51,6 +55,7 @@ impl SandboxHandle {
         published_endpoints: Vec<PublishedEndpoint>,
     ) -> Self {
         Self {
+            tenant_id,
             id,
             name: name.into(),
             backend,

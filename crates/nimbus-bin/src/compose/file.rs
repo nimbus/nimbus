@@ -141,6 +141,14 @@ pub(crate) struct ComposeResourcePlan {
     pub(crate) requested_memory: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) memory_limit_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) requested_disk: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) disk_limit_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) requested_log: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) log_limit_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -191,4 +199,8 @@ pub(crate) struct ComposeNimbusPlan {
     pub(crate) idle_timeout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) snapshot: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) disk_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) log_limit: Option<String>,
 }

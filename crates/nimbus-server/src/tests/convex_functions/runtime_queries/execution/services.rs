@@ -136,9 +136,10 @@ impl ManagedSandboxBackend {
         }
     }
 
-    fn starting_handle(&self, service_name: &str) -> SandboxHandle {
+    fn starting_handle(&self, tenant_id: &TenantId, service_name: &str) -> SandboxHandle {
         SandboxHandle::new(
-            SandboxId::new(format!("sandbox-{service_name}")),
+            tenant_id.clone(),
+            SandboxId::new(format!("sandbox-{tenant_id}-{service_name}")),
             service_name,
             SandboxBackendKind::Krun,
             SandboxStatus::Starting,
@@ -146,9 +147,10 @@ impl ManagedSandboxBackend {
         )
     }
 
-    fn ready_handle(&self, service_name: &str) -> SandboxHandle {
+    fn ready_handle(&self, tenant_id: &TenantId, service_name: &str) -> SandboxHandle {
         SandboxHandle::new(
-            SandboxId::new(format!("sandbox-{service_name}")),
+            tenant_id.clone(),
+            SandboxId::new(format!("sandbox-{tenant_id}-{service_name}")),
             service_name,
             SandboxBackendKind::Krun,
             SandboxStatus::Ready,
@@ -176,7 +178,7 @@ impl SandboxBackend for ManagedSandboxBackend {
 
     fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
         self.start_calls.fetch_add(1, Ordering::SeqCst);
-        let handle = self.starting_handle(&launch.spec.name);
+        let handle = self.starting_handle(&launch.spec.tenant_id, &launch.spec.name);
         self.handles
             .lock()
             .expect("backend lock should not be poisoned")
@@ -192,7 +194,7 @@ impl SandboxBackend for ManagedSandboxBackend {
             .expect("backend lock should not be poisoned");
         let handle = handles.get(id.as_str()).cloned().map(|mut handle| {
             if inspect_call >= self.ready_after_inspects {
-                handle = self.ready_handle(&handle.name);
+                handle = self.ready_handle(&handle.tenant_id, &handle.name);
                 handles.insert(id.as_str().to_owned(), handle.clone());
             }
             handle
@@ -289,6 +291,7 @@ export {};
         sandboxes: BTreeMap::from([(
             "db".to_string(),
             SandboxHandle::new(
+                TenantId::new("demo").expect("tenant id should parse"),
                 SandboxId::new("sandbox-db"),
                 "db",
                 SandboxBackendKind::Krun,

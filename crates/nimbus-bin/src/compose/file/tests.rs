@@ -251,6 +251,45 @@ services:
 }
 
 #[test]
+fn compose_project_lowers_x_nimbus_disk_and_log_limits_into_sandbox_resources() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  db:
+    image: postgres:16
+    x-nimbus:
+      disk_limit: 2G
+      log_limit: 32M
+"#,
+    );
+
+    let tenant_id = TenantId::new("tenant-a").expect("tenant id should be valid");
+    let catalog = ComposeProjectPlan::load(&compose)
+        .expect("compose file should resolve")
+        .into_service_catalog()
+        .expect("compose project should lower into a service catalog");
+    let launch = match catalog
+        .sandbox_service_for_tenant(&tenant_id, "db")
+        .expect("db launch should exist")
+    {
+        SandboxServiceLaunch::Image(launch) => launch,
+        SandboxServiceLaunch::Build(_) => panic!("db should lower as an image-backed launch"),
+    };
+
+    assert_eq!(
+        launch.spec.resources.disk_limit_bytes,
+        Some(2 * 1024 * 1024 * 1024)
+    );
+    assert_eq!(
+        launch.spec.resources.log_limit_bytes,
+        Some(32 * 1024 * 1024)
+    );
+}
+
+#[test]
 fn render_compose_project_services_lists_names_and_warnings() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(

@@ -985,6 +985,7 @@ mod tests {
         fs::create_dir_all(&container_network_dir)
             .expect("container network directory should exist");
         let handle = SandboxHandle::new(
+            nimbus::TenantId::new(tenant_id).expect("tenant id should parse"),
             SandboxId::new(sandbox_id),
             service_name,
             SandboxBackendKind::Container,
@@ -1101,6 +1102,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             let handle = SandboxHandle::new(
+                spec.tenant_id.clone(),
                 sandbox_id.clone(),
                 spec.name.clone(),
                 SandboxBackendKind::Container,

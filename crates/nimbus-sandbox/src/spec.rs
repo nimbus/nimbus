@@ -13,6 +13,17 @@ use crate::endpoint::PublishedEndpointProtocol;
 const DEFAULT_SANDBOX_PATH: &str =
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 pub const DEFAULT_MAX_MOUNTS_PER_SANDBOX: usize = 32;
+const BYTES_PER_MIB: u64 = 1024 * 1024;
+const BYTES_PER_GIB: u64 = 1024 * BYTES_PER_MIB;
+pub const DEFAULT_MAX_ACTIVE_SANDBOXES_PER_TENANT: usize = 64;
+pub const DEFAULT_MAX_SANDBOX_VCPUS_PER_TENANT: u64 = 128;
+pub const DEFAULT_MAX_SANDBOX_MEMORY_BYTES_PER_TENANT: u64 = 256 * BYTES_PER_GIB;
+pub const DEFAULT_MAX_SANDBOX_DISK_BYTES_PER_TENANT: u64 = 2 * 1024 * BYTES_PER_GIB;
+pub const DEFAULT_MAX_SANDBOX_LOG_BYTES_PER_TENANT: u64 = 64 * BYTES_PER_GIB;
+pub const DEFAULT_ACCOUNTED_SANDBOX_VCPUS: u64 = 1;
+pub const DEFAULT_ACCOUNTED_SANDBOX_MEMORY_BYTES: u64 = 512 * BYTES_PER_MIB;
+pub const DEFAULT_ACCOUNTED_SANDBOX_DISK_BYTES: u64 = 10 * BYTES_PER_GIB;
+pub const DEFAULT_ACCOUNTED_SANDBOX_LOG_BYTES: u64 = 64 * BYTES_PER_MIB;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxFilesystemSpec {
@@ -229,8 +240,14 @@ impl SandboxPortBinding {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxResourceLimits {
+    #[serde(default)]
     pub cpu_count: Option<u8>,
+    #[serde(default)]
     pub memory_limit_bytes: Option<u64>,
+    #[serde(default)]
+    pub disk_limit_bytes: Option<u64>,
+    #[serde(default)]
+    pub log_limit_bytes: Option<u64>,
 }
 
 impl SandboxResourceLimits {
@@ -244,8 +261,128 @@ impl SandboxResourceLimits {
         self
     }
 
+    pub fn with_disk_limit_bytes(mut self, disk_limit_bytes: u64) -> Self {
+        self.disk_limit_bytes = Some(disk_limit_bytes);
+        self
+    }
+
+    pub fn with_log_limit_bytes(mut self, log_limit_bytes: u64) -> Self {
+        self.log_limit_bytes = Some(log_limit_bytes);
+        self
+    }
+
     pub fn is_unspecified(&self) -> bool {
-        self.cpu_count.is_none() && self.memory_limit_bytes.is_none()
+        self.cpu_count.is_none()
+            && self.memory_limit_bytes.is_none()
+            && self.disk_limit_bytes.is_none()
+            && self.log_limit_bytes.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxResourceCharge {
+    pub active_sandboxes: usize,
+    pub vcpus: u64,
+    pub memory_bytes: u64,
+    pub disk_bytes: u64,
+    pub log_bytes: u64,
+}
+
+impl SandboxResourceCharge {
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            active_sandboxes: self.active_sandboxes.saturating_add(other.active_sandboxes),
+            vcpus: self.vcpus.saturating_add(other.vcpus),
+            memory_bytes: self.memory_bytes.saturating_add(other.memory_bytes),
+            disk_bytes: self.disk_bytes.saturating_add(other.disk_bytes),
+            log_bytes: self.log_bytes.saturating_add(other.log_bytes),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxResourceQuotaPolicy {
+    pub max_active_sandboxes_per_tenant: Option<usize>,
+    pub max_vcpus_per_tenant: Option<u64>,
+    pub max_memory_bytes_per_tenant: Option<u64>,
+    pub max_disk_bytes_per_tenant: Option<u64>,
+    pub max_log_bytes_per_tenant: Option<u64>,
+    pub default_vcpus_per_sandbox: u64,
+    pub default_memory_bytes_per_sandbox: u64,
+    pub default_disk_bytes_per_sandbox: u64,
+    pub default_log_bytes_per_sandbox: u64,
+}
+
+impl SandboxResourceQuotaPolicy {
+    pub fn unlimited() -> Self {
+        Self {
+            max_active_sandboxes_per_tenant: None,
+            max_vcpus_per_tenant: None,
+            max_memory_bytes_per_tenant: None,
+            max_disk_bytes_per_tenant: None,
+            max_log_bytes_per_tenant: None,
+            ..Self::default()
+        }
+    }
+
+    pub fn with_max_active_sandboxes_per_tenant(mut self, limit: Option<usize>) -> Self {
+        self.max_active_sandboxes_per_tenant = limit;
+        self
+    }
+
+    pub fn with_max_vcpus_per_tenant(mut self, limit: Option<u64>) -> Self {
+        self.max_vcpus_per_tenant = limit;
+        self
+    }
+
+    pub fn with_max_memory_bytes_per_tenant(mut self, limit: Option<u64>) -> Self {
+        self.max_memory_bytes_per_tenant = limit;
+        self
+    }
+
+    pub fn with_max_disk_bytes_per_tenant(mut self, limit: Option<u64>) -> Self {
+        self.max_disk_bytes_per_tenant = limit;
+        self
+    }
+
+    pub fn with_max_log_bytes_per_tenant(mut self, limit: Option<u64>) -> Self {
+        self.max_log_bytes_per_tenant = limit;
+        self
+    }
+
+    pub fn charge_for(&self, resources: &SandboxResourceLimits) -> SandboxResourceCharge {
+        SandboxResourceCharge {
+            active_sandboxes: 1,
+            vcpus: resources
+                .cpu_count
+                .map(u64::from)
+                .unwrap_or(self.default_vcpus_per_sandbox),
+            memory_bytes: resources
+                .memory_limit_bytes
+                .unwrap_or(self.default_memory_bytes_per_sandbox),
+            disk_bytes: resources
+                .disk_limit_bytes
+                .unwrap_or(self.default_disk_bytes_per_sandbox),
+            log_bytes: resources
+                .log_limit_bytes
+                .unwrap_or(self.default_log_bytes_per_sandbox),
+        }
+    }
+}
+
+impl Default for SandboxResourceQuotaPolicy {
+    fn default() -> Self {
+        Self {
+            max_active_sandboxes_per_tenant: Some(DEFAULT_MAX_ACTIVE_SANDBOXES_PER_TENANT),
+            max_vcpus_per_tenant: Some(DEFAULT_MAX_SANDBOX_VCPUS_PER_TENANT),
+            max_memory_bytes_per_tenant: Some(DEFAULT_MAX_SANDBOX_MEMORY_BYTES_PER_TENANT),
+            max_disk_bytes_per_tenant: Some(DEFAULT_MAX_SANDBOX_DISK_BYTES_PER_TENANT),
+            max_log_bytes_per_tenant: Some(DEFAULT_MAX_SANDBOX_LOG_BYTES_PER_TENANT),
+            default_vcpus_per_sandbox: DEFAULT_ACCOUNTED_SANDBOX_VCPUS,
+            default_memory_bytes_per_sandbox: DEFAULT_ACCOUNTED_SANDBOX_MEMORY_BYTES,
+            default_disk_bytes_per_sandbox: DEFAULT_ACCOUNTED_SANDBOX_DISK_BYTES,
+            default_log_bytes_per_sandbox: DEFAULT_ACCOUNTED_SANDBOX_LOG_BYTES,
+        }
     }
 }
 
@@ -470,6 +607,16 @@ impl SandboxSpec {
 
     pub fn with_memory_limit_bytes(mut self, memory_limit_bytes: u64) -> Self {
         self.resources.memory_limit_bytes = Some(memory_limit_bytes);
+        self
+    }
+
+    pub fn with_disk_limit_bytes(mut self, disk_limit_bytes: u64) -> Self {
+        self.resources.disk_limit_bytes = Some(disk_limit_bytes);
+        self
+    }
+
+    pub fn with_log_limit_bytes(mut self, log_limit_bytes: u64) -> Self {
+        self.resources.log_limit_bytes = Some(log_limit_bytes);
         self
     }
 

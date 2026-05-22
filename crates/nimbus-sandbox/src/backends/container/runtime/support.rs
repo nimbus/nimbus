@@ -16,6 +16,7 @@ pub(super) use crate::instance::{SandboxId, SandboxStatus};
 pub(super) use crate::spec::{
     SandboxFilesystemSpec, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec,
 };
+pub(super) use crate::spec::{SandboxResourceLimits, SandboxResourceQuotaPolicy};
 
 pub(super) fn sample_spec() -> SandboxSpec {
     SandboxSpec::new(

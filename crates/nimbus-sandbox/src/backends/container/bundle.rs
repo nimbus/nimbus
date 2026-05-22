@@ -219,6 +219,16 @@ fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
             message: "container sandbox memory_limit_bytes must be greater than zero".to_owned(),
         });
     }
+    if matches!(resources.disk_limit_bytes, Some(0)) {
+        return Err(SandboxError::InvalidSpec {
+            message: "container sandbox disk_limit_bytes must be greater than zero".to_owned(),
+        });
+    }
+    if matches!(resources.log_limit_bytes, Some(0)) {
+        return Err(SandboxError::InvalidSpec {
+            message: "container sandbox log_limit_bytes must be greater than zero".to_owned(),
+        });
+    }
     Ok(())
 }
 

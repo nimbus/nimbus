@@ -69,7 +69,7 @@ pub(super) struct RawComposeService {
     pub(super) labels: Option<RawComposeStringMap>,
     #[serde(default)]
     pub(super) healthcheck: Option<RawComposeHealthcheck>,
-    #[serde(default)]
+    #[serde(default, alias = "x-nimbus")]
     pub(super) x_nimbus: Option<ComposeNimbusPlan>,
     #[serde(default)]
     pub(super) networks: Option<Value>,
@@ -444,6 +444,8 @@ fn merge_optional_nimbus_plan(
             replace_if_some(&mut base.backend, overlay.backend);
             replace_if_some(&mut base.idle_timeout, overlay.idle_timeout);
             replace_if_some(&mut base.snapshot, overlay.snapshot);
+            replace_if_some(&mut base.disk_limit, overlay.disk_limit);
+            replace_if_some(&mut base.log_limit, overlay.log_limit);
         }
         (None, Some(overlay)) => *base = Some(overlay),
         _ => {}

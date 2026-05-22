@@ -253,7 +253,12 @@ impl ComposeServicePlan {
         )?;
         let _ = process.to_image_process_overrides()?;
         let ports = resolve_ports(service_name, raw.ports, &mut warnings)?;
-        let resources = ComposeResourcePlan::from_raw(service_name, raw.deploy, &mut warnings)?;
+        let resources = ComposeResourcePlan::from_raw(
+            service_name,
+            raw.deploy,
+            raw.x_nimbus.as_ref(),
+            &mut warnings,
+        )?;
         let restart = ComposeRestartPlan::from_raw(raw.restart.as_deref(), &mut warnings)?;
         let _ = compose_lifecycle_spec(
             &restart,
@@ -352,6 +357,12 @@ impl ComposeServicePlan {
         }
         if let Some(memory_limit_bytes) = self.resources.memory_limit_bytes {
             spec = spec.with_memory_limit_bytes(memory_limit_bytes);
+        }
+        if let Some(disk_limit_bytes) = self.resources.disk_limit_bytes {
+            spec = spec.with_disk_limit_bytes(disk_limit_bytes);
+        }
+        if let Some(log_limit_bytes) = self.resources.log_limit_bytes {
+            spec = spec.with_log_limit_bytes(log_limit_bytes);
         }
         Ok(spec)
     }
@@ -502,14 +513,40 @@ impl ComposeResourcePlan {
     fn from_raw(
         service_name: &str,
         deploy: Option<RawComposeDeploy>,
+        x_nimbus: Option<&ComposeNimbusPlan>,
         warnings: &mut Vec<String>,
     ) -> Result<Self, Error> {
+        let requested_disk = x_nimbus.and_then(|plan| plan.disk_limit.clone());
+        let requested_log = x_nimbus.and_then(|plan| plan.log_limit.clone());
+        let disk_limit_bytes = requested_disk
+            .as_deref()
+            .map(|value| {
+                parse_byte_limit(
+                    &format!("services.{service_name}.x-nimbus.disk_limit"),
+                    value,
+                )
+            })
+            .transpose()?;
+        let log_limit_bytes = requested_log
+            .as_deref()
+            .map(|value| {
+                parse_byte_limit(
+                    &format!("services.{service_name}.x-nimbus.log_limit"),
+                    value,
+                )
+            })
+            .transpose()?;
+
         let Some(deploy) = deploy else {
             return Ok(Self {
                 requested_cpus: None,
                 cpu_count: None,
                 requested_memory: None,
                 memory_limit_bytes: None,
+                requested_disk,
+                disk_limit_bytes,
+                requested_log,
+                log_limit_bytes,
             });
         };
 
@@ -541,6 +578,10 @@ impl ComposeResourcePlan {
             cpu_count,
             requested_memory,
             memory_limit_bytes,
+            requested_disk,
+            disk_limit_bytes,
+            requested_log,
+            log_limit_bytes,
         })
     }
 }
