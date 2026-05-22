@@ -51,7 +51,19 @@ impl KrunSandboxStateView {
     }
 
     pub fn inspect(&self, sandbox_id: &SandboxId) -> Result<Option<KrunSandboxDetails>> {
-        self.read_record(&self.manifest_path(sandbox_id))
+        let Some(manifest_path) =
+            crate::artifact_paths::manifest_path_for_sandbox_id(&self.state_root, sandbox_id)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to find krun sandbox manifest for {} under {}: {error}",
+                        sandbox_id,
+                        self.state_root.display()
+                    ),
+                })?
+        else {
+            return Ok(None);
+        };
+        self.read_record(&manifest_path)
             .map(|record| record.map(KrunPersistedSandboxRecord::into_details))
     }
 
@@ -78,27 +90,17 @@ impl KrunSandboxStateView {
     }
 
     fn read_all_records(&self) -> Result<Vec<KrunPersistedSandboxRecord>> {
-        let containers_root = self.state_root.join("containers");
-        if !containers_root.exists() {
-            return Ok(Vec::new());
-        }
-
         let mut records = Vec::new();
-        for entry in
-            std::fs::read_dir(&containers_root).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to read krun state directory {}: {error}",
-                    containers_root.display()
-                ),
+        for manifest_path in
+            crate::artifact_paths::all_manifest_paths(&self.state_root).map_err(|error| {
+                SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to read krun tenant state directory {}: {error}",
+                        self.state_root.display()
+                    ),
+                }
             })?
         {
-            let entry = entry.map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to iterate krun state directory {}: {error}",
-                    containers_root.display()
-                ),
-            })?;
-            let manifest_path = entry.path().join("manifest.json");
             let Some(record) = self.read_record(&manifest_path)? else {
                 continue;
             };
@@ -134,13 +136,6 @@ impl KrunSandboxStateView {
             manifest,
             manifest_path: manifest_path.to_path_buf(),
         }))
-    }
-
-    fn manifest_path(&self, sandbox_id: &SandboxId) -> PathBuf {
-        self.state_root
-            .join("containers")
-            .join(sandbox_id.as_str())
-            .join("manifest.json")
     }
 }
 
@@ -305,8 +300,18 @@ mod tests {
             SandboxStatus::Stopped,
             Some(0),
         );
-        fs::create_dir_all(temp_dir.path().join("containers").join("missing-only-dir"))
-            .expect("missing-only-dir should build");
+        fs::create_dir_all(
+            temp_dir
+                .path()
+                .join("tenants")
+                .join("svc-demo")
+                .join("sandboxes")
+                .join("missing-only-dir")
+                .join("state")
+                .join("containers")
+                .join("missing-only-dir"),
+        )
+        .expect("missing-only-dir should build");
 
         let view = KrunSandboxStateView::new(temp_dir.path());
         let summaries = view.list().expect("manifest list should load");
@@ -435,11 +440,17 @@ mod tests {
         status: SandboxStatus,
         last_exit_code: Option<i32>,
     ) {
-        let container_dir = state_root.join("containers").join(sandbox_id);
+        let tenant_id = TenantId::new(tenant_id).expect("tenant id should parse");
+        let sandbox_id = SandboxId::new(sandbox_id);
+        let manifest_path =
+            crate::artifact_paths::manifest_path(state_root, &tenant_id, &sandbox_id);
+        let container_dir = manifest_path
+            .parent()
+            .expect("manifest path should have a parent directory");
         fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
 
         let handle = SandboxHandle::new(
-            SandboxId::new(sandbox_id),
+            sandbox_id,
             service_name,
             crate::backend::SandboxBackendKind::Krun,
             status,
@@ -483,7 +494,7 @@ mod tests {
         });
 
         fs::write(
-            container_dir.join("manifest.json"),
+            manifest_path,
             serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
         )
         .expect("manifest should write");

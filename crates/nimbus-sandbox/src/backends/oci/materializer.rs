@@ -19,9 +19,11 @@ use ulid::Ulid;
 use super::buildah::{
     OciImageConfig, OciImageLaunchDefaults, parse_image_config_blob, resolve_image_user_from_rootfs,
 };
+use crate::artifact_paths;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxImageProcessOverrides;
+use nimbus_core::TenantId;
 
 const OCI_IMAGE_OS: &str = "linux";
 
@@ -50,11 +52,24 @@ pub struct OciImageMaterializer {
 }
 
 impl OciImageMaterializer {
+    #[cfg(test)]
     pub fn under_state_root(state_root: impl Into<PathBuf>) -> Self {
         let state_root = state_root.into();
         Self {
             blob_cache_dir: state_root.join("image-cache").join("oci"),
             rootfs_root_dir: state_root.join("materialized-rootfs"),
+        }
+    }
+
+    pub(crate) fn for_tenant_sandbox(
+        state_root: impl Into<PathBuf>,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+    ) -> Self {
+        let state_root = state_root.into();
+        Self {
+            blob_cache_dir: state_root.join("image-cache").join("oci"),
+            rootfs_root_dir: artifact_paths::rootfs_root(&state_root, tenant_id, sandbox_id),
         }
     }
 

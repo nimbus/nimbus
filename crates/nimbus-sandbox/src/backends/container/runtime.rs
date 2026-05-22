@@ -128,6 +128,21 @@ impl ContainerSandboxBackend {
         Self { config }
     }
 
+    fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {
+        for root in [&self.config.bundle_root, &self.config.state_root] {
+            crate::artifact_paths::remove_tenant_root(root, tenant_id).map_err(|error| {
+                SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to remove container sandbox tenant artifacts for {} under {}: {error}",
+                        tenant_id,
+                        root.display()
+                    ),
+                }
+            })?;
+        }
+        Ok(())
+    }
+
     fn port_manager(&self) -> PortManager {
         PortManager::new(
             &self.config.state_root,
@@ -237,7 +252,8 @@ impl ContainerSandboxBackend {
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<ContainerLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
-        let prepared_launch = self.prepare_image_launch(&sandbox_id, image_reference, overrides)?;
+        let prepared_launch =
+            self.prepare_image_launch(spec, &sandbox_id, image_reference, overrides)?;
         self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
     }
 
@@ -251,6 +267,7 @@ impl ContainerSandboxBackend {
     ) -> Result<ContainerLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
         let prepared_launch = self.prepare_built_image_launch(
+            spec,
             &sandbox_id,
             image_name,
             dockerfile_path,
@@ -299,8 +316,11 @@ impl ContainerSandboxBackend {
                 &resolved_launch.image_metadata.exposed_ports,
             )?);
         let network_layout = OciNetworkLayout::new(&self.config.state_root, sandbox_id);
-        let bundle_layout =
-            ContainerBundleLayout::new(self.config.bundle_root.join(sandbox_id.as_str()));
+        let bundle_layout = ContainerBundleLayout::new(crate::artifact_paths::bundle_dir(
+            &self.config.bundle_root,
+            &resolved_launch.spec.tenant_id,
+            sandbox_id,
+        ));
         write_bundle_config(
             &bundle_layout,
             &hostname_for(&resolved_spec),
@@ -309,7 +329,11 @@ impl ContainerSandboxBackend {
             Some(network_layout.netns_path.as_path()),
         )?;
 
-        let conmon_layout = OciConmonLayout::new(&self.config.state_root, sandbox_id);
+        let conmon_layout = OciConmonLayout::new_for_tenant(
+            &self.config.state_root,
+            &resolved_launch.spec.tenant_id,
+            sandbox_id,
+        );
         conmon_layout
             .ensure_directories()
             .map_err(|error| SandboxError::OperationFailed {
@@ -467,26 +491,34 @@ impl ContainerSandboxBackend {
 
     fn prepare_image_launch(
         &self,
+        spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         image_reference: &str,
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
-        OciImageMaterializer::under_state_root(&self.config.state_root).prepare_image_launch(
+        OciImageMaterializer::for_tenant_sandbox(
+            &self.config.state_root,
+            &spec.tenant_id,
             sandbox_id,
-            image_reference,
-            overrides,
         )
+        .prepare_image_launch(sandbox_id, image_reference, overrides)
     }
 
     fn prepare_built_image_launch(
         &self,
+        spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         image_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
-        OciDockerfileBuilder::under_state_root(&self.config.state_root).prepare_built_image_launch(
+        OciDockerfileBuilder::for_tenant_sandbox(
+            &self.config.state_root,
+            &spec.tenant_id,
+            sandbox_id,
+        )
+        .prepare_built_image_launch(
             sandbox_id,
             image_name,
             dockerfile_path,
@@ -589,12 +621,18 @@ impl ContainerSandboxBackend {
     }
 
     fn read_manifest(&self, id: &SandboxId) -> Result<Option<ContainerSandboxManifest>> {
-        let manifest_path = self
-            .config
-            .state_root
-            .join("containers")
-            .join(id.as_str())
-            .join("manifest.json");
+        let Some(manifest_path) =
+            crate::artifact_paths::manifest_path_for_sandbox_id(&self.config.state_root, id)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to find container sandbox manifest for {} under {}: {error}",
+                        id,
+                        self.config.state_root.display()
+                    ),
+                })?
+        else {
+            return Ok(None);
+        };
         if !manifest_path.exists() {
             return Ok(None);
         }
@@ -670,6 +708,11 @@ impl SandboxBackend for ContainerSandboxBackend {
         let backend = self.clone();
         let sandbox_id = id.clone();
         Box::pin(async move { backend.stop_sync(&sandbox_id) })
+    }
+
+    fn remove_tenant_artifacts(&self, tenant_id: nimbus_core::TenantId) -> SandboxFuture<()> {
+        let backend = self.clone();
+        Box::pin(async move { backend.remove_tenant_artifacts_sync(&tenant_id) })
     }
 }
 

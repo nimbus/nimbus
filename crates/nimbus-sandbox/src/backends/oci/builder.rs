@@ -7,6 +7,7 @@ use super::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch}
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxImageProcessOverrides;
+use nimbus_core::TenantId;
 
 const SCRATCH_IMAGE_REFERENCE: &str = "scratch";
 const DEFAULT_SHELL: &[&str] = &["/bin/sh", "-c"];
@@ -17,9 +18,22 @@ pub(crate) struct OciDockerfileBuilder {
 }
 
 impl OciDockerfileBuilder {
+    #[cfg(test)]
     pub(crate) fn under_state_root(state_root: impl Into<PathBuf>) -> Self {
         Self {
             materializer: OciImageMaterializer::under_state_root(state_root),
+        }
+    }
+
+    pub(crate) fn for_tenant_sandbox(
+        state_root: impl Into<PathBuf>,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+    ) -> Self {
+        Self {
+            materializer: OciImageMaterializer::for_tenant_sandbox(
+                state_root, tenant_id, sandbox_id,
+            ),
         }
     }
 

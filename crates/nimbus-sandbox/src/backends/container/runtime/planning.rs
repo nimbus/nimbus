@@ -12,13 +12,80 @@ fn plan_only_backend_persists_a_container_manifest() {
         .expect("container plan should start");
 
     assert_eq!(handle.backend, SandboxBackendKind::Container);
-    let manifest_path = temp_dir
-        .path()
-        .join("state")
-        .join("containers")
-        .join(handle.id.as_str())
-        .join("manifest.json");
+    let manifest_path = crate::artifact_paths::manifest_path(
+        &temp_dir.path().join("state"),
+        &sample_spec().tenant_id,
+        &handle.id,
+    );
     assert!(manifest_path.is_file(), "manifest should be written");
+}
+
+#[test]
+fn plan_only_backend_scopes_container_artifacts_by_tenant_for_same_service_name() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend = sample_plan_only_backend(temp_dir.path());
+    let tenant_a = sample_spec_for_tenant("tenant-a", "api");
+    let tenant_b = sample_spec_for_tenant("tenant-b", "api");
+
+    let handle_a = backend
+        .start_sync(tenant_a.clone())
+        .expect("tenant-a container plan should start");
+    let handle_b = backend
+        .start_sync(tenant_b.clone())
+        .expect("tenant-b container plan should start");
+
+    let manifest_a = crate::artifact_paths::manifest_path(
+        &temp_dir.path().join("state"),
+        &tenant_a.tenant_id,
+        &handle_a.id,
+    );
+    let manifest_b = crate::artifact_paths::manifest_path(
+        &temp_dir.path().join("state"),
+        &tenant_b.tenant_id,
+        &handle_b.id,
+    );
+    let bundle_a = crate::artifact_paths::bundle_dir(
+        &temp_dir.path().join("bundles"),
+        &tenant_a.tenant_id,
+        &handle_a.id,
+    )
+    .join("config.json");
+    let bundle_b = crate::artifact_paths::bundle_dir(
+        &temp_dir.path().join("bundles"),
+        &tenant_b.tenant_id,
+        &handle_b.id,
+    )
+    .join("config.json");
+
+    assert_ne!(
+        manifest_a, manifest_b,
+        "tenant-scoped container manifests must not collide for the same service name"
+    );
+    assert_ne!(
+        bundle_a, bundle_b,
+        "tenant-scoped container bundles must not collide for the same service name"
+    );
+    assert!(manifest_a.is_file(), "tenant-a manifest should be written");
+    assert!(manifest_b.is_file(), "tenant-b manifest should be written");
+    assert!(bundle_a.is_file(), "tenant-a bundle should be written");
+    assert!(bundle_b.is_file(), "tenant-b bundle should be written");
+
+    futures::executor::block_on(crate::backend::SandboxBackend::remove_tenant_artifacts(
+        &backend,
+        tenant_a.tenant_id.clone(),
+    ))
+    .expect("tenant-a artifacts should be removed");
+
+    assert!(
+        !manifest_a.exists(),
+        "tenant-a manifest should be removed by tenant cleanup"
+    );
+    assert!(
+        !bundle_a.exists(),
+        "tenant-a bundle should be removed by tenant cleanup"
+    );
+    assert!(manifest_b.exists(), "tenant-b manifest should remain");
+    assert!(bundle_b.exists(), "tenant-b bundle should remain");
 }
 
 #[test]

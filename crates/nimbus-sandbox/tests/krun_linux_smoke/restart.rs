@@ -15,8 +15,9 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
     let config = smoke_backend_config(bundle_root, state_root.clone());
     let backend = KrunSandboxBackend::new(config.clone());
     let guest_port_str = guest_port.to_string();
+    let tenant_id = sandbox_tenant();
     let spec = SandboxSpec::new(
-        sandbox_tenant(),
+        tenant_id.clone(),
         "http-smoke",
         SandboxBackendKind::Krun,
         SandboxFilesystemSpec::new(rootfs),
@@ -50,7 +51,7 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
         "expected an HTTP response from the guest service",
     );
 
-    let container_state_dir = state_root.join("containers").join(handle.id.as_str());
+    let container_state_dir = container_state_dir(&state_root, &tenant_id, &handle.id);
     assert!(
         container_state_dir.join("ctr.log").exists(),
         "conmon stdout/stderr log path should exist"
@@ -99,8 +100,9 @@ fn krun_backend_m3_restart_policy_restarts_failed_vm() {
          if [ \"$COUNT\" -eq 1 ]; then exit 42; fi; \
          exec /bin/busybox httpd -f -p {guest_port}"
     );
+    let tenant_id = sandbox_tenant();
     let spec = SandboxSpec::new(
-        sandbox_tenant(),
+        tenant_id.clone(),
         "m3-restart-policy",
         SandboxBackendKind::Krun,
         SandboxFilesystemSpec::new(rootfs),
@@ -134,10 +136,7 @@ fn krun_backend_m3_restart_policy_restarts_failed_vm() {
         "guest should have booted twice: initial failure, then restarted success"
     );
 
-    let manifest_path = state_root
-        .join("containers")
-        .join(handle.id.as_str())
-        .join("manifest.json");
+    let manifest_path = manifest_path(&state_root, &tenant_id, &handle.id);
     let manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("manifest should be readable after restart"),
     )
@@ -176,8 +175,9 @@ fn krun_backend_m3_restart_backoff_delays_repeated_restarts() {
          if [ \"$COUNT\" -lt 3 ]; then exit 42; fi; \
          exec /bin/busybox httpd -f -p {guest_port}"
     );
+    let tenant_id = sandbox_tenant();
     let spec = SandboxSpec::new(
-        sandbox_tenant(),
+        tenant_id.clone(),
         "m3-restart-backoff",
         SandboxBackendKind::Krun,
         SandboxFilesystemSpec::new(rootfs),
@@ -218,10 +218,7 @@ fn krun_backend_m3_restart_backoff_delays_repeated_restarts() {
         "guest should have booted three times: two failures, then restarted success"
     );
 
-    let manifest_path = state_root
-        .join("containers")
-        .join(handle.id.as_str())
-        .join("manifest.json");
+    let manifest_path = manifest_path(&state_root, &tenant_id, &handle.id);
     let manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("manifest should be readable after restart"),
     )

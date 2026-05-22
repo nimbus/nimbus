@@ -144,6 +144,21 @@ impl KrunSandboxBackend {
         Self { config }
     }
 
+    fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {
+        for root in [&self.config.bundle_root, &self.config.state_root] {
+            crate::artifact_paths::remove_tenant_root(root, tenant_id).map_err(|error| {
+                SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to remove krun sandbox tenant artifacts for {} under {}: {error}",
+                        tenant_id,
+                        root.display()
+                    ),
+                }
+            })?;
+        }
+        Ok(())
+    }
+
     fn start_sync(&self, spec: SandboxSpec) -> Result<SandboxHandle> {
         let launch_plan = self.plan_start(&spec)?;
         self.finish_start(launch_plan)
@@ -230,6 +245,11 @@ impl SandboxBackend for KrunSandboxBackend {
         let backend = self.clone();
         let sandbox_id = id.clone();
         Box::pin(async move { backend.stop_sync(&sandbox_id) })
+    }
+
+    fn remove_tenant_artifacts(&self, tenant_id: nimbus_core::TenantId) -> SandboxFuture<()> {
+        let backend = self.clone();
+        Box::pin(async move { backend.remove_tenant_artifacts_sync(&tenant_id) })
     }
 }
 

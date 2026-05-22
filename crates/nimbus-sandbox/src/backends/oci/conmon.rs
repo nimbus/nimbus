@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::buildah::BuildahCli;
 use super::command::CommandSpec;
+use crate::artifact_paths;
 use crate::instance::SandboxId;
+use nimbus_core::TenantId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OciConmonLayout {
@@ -38,6 +40,17 @@ impl OciConmonLayout {
             exit_dir,
             persist_dir,
         }
+    }
+
+    pub(crate) fn new_for_tenant(
+        state_root: impl AsRef<Path>,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+    ) -> Self {
+        Self::new(
+            artifact_paths::state_root(state_root.as_ref(), tenant_id, sandbox_id),
+            sandbox_id,
+        )
     }
 
     pub(crate) fn ensure_directories(&self) -> std::io::Result<()> {
