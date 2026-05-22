@@ -412,6 +412,114 @@ async fn convex_routes_keep_application_auth_and_reject_local_admin_bearers() {
 }
 
 #[tokio::test]
+async fn convex_route_rejects_application_bearer_for_different_tenant() {
+    let _guard = super::auth::auth_test_guard().await;
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, local_admin_token) = local_server_security(temp.path());
+    let issuer = "https://issuer.example.com";
+    let application_id = "nimbus-test";
+    let (tenant_b_jwt, jwks_data_url) = super::auth::issue_es256_test_token(
+        issuer,
+        application_id,
+        "user-123",
+        json!({ "tenant_id": "tenant-b", "email": "ada@example.com" }),
+    );
+    let registry = convex_registry_with_routes_and_bundle_and_auth(
+        json!([
+            {
+                "name": "auth:whoami",
+                "kind": "query",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async (ctx) => ({ user: await ctx.auth.getUserIdentity() })"
+            }
+        ]),
+        json!([]),
+        Some(super::auth::runtime_auth_bundle_source()),
+        Some(json!({
+            "providers": [
+                {
+                    "type": "customJwt",
+                    "issuer": issuer,
+                    "jwks": jwks_data_url,
+                    "algorithm": "ES256",
+                    "applicationID": application_id
+                }
+            ]
+        })),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.service())
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
+            .with_convex(registry)
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    for tenant in ["tenant-a", "tenant-b"] {
+        let response = server
+            .client()
+            .post(server.http_url("/api/tenants"))
+            .bearer_auth(&local_admin_token.token)
+            .json(&json!({ "id": tenant }))
+            .send()
+            .await
+            .expect("tenant create request should send");
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    let authorized = server
+        .client()
+        .post(server.http_url("/convex/tenant-b/query"))
+        .header("Authorization", format!("Bearer {tenant_b_jwt}"))
+        .json(&json!({ "name": "auth:whoami", "args": {} }))
+        .send()
+        .await
+        .expect("same-tenant application auth query should send");
+    let authorized_status = authorized.status();
+    let authorized_body = authorized
+        .text()
+        .await
+        .expect("same-tenant application auth body should read");
+    assert_eq!(
+        authorized_status,
+        StatusCode::OK,
+        "same-tenant query body: {authorized_body}"
+    );
+
+    let rejected = server
+        .client()
+        .post(server.http_url("/convex/tenant-a/query"))
+        .header("Authorization", format!("Bearer {tenant_b_jwt}"))
+        .json(&json!({ "name": "auth:whoami", "args": {} }))
+        .send()
+        .await
+        .expect("swapped-tenant application auth query should send");
+    let rejected_status = rejected.status();
+    let rejected_body = rejected
+        .text()
+        .await
+        .expect("swapped-tenant application auth body should read");
+    assert_eq!(
+        rejected_status,
+        StatusCode::FORBIDDEN,
+        "swapped-tenant query body: {rejected_body}"
+    );
+    assert!(
+        rejected_body.contains("authorizes tenant `tenant-b`"),
+        "swapped-tenant error should name the verified tenant claim: {rejected_body}"
+    );
+    assert!(
+        rejected_body.contains("targeted tenant `tenant-a`"),
+        "swapped-tenant error should name the rejected target tenant: {rejected_body}"
+    );
+}
+
+#[tokio::test]
 async fn system_tenant_convex_routes_use_system_registry_not_application_registry() {
     let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
     let application_registry = convex_registry(json!([query_function("notes:list", "notes")]));
