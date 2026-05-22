@@ -71,8 +71,9 @@ pub use tenant_isolation::{
     TenantIsolationDecisionId, TenantIsolationMode, TenantIsolationPolicyInput,
     TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,
     TenantRuntimePolicyAdmission, TenantRuntimePolicyDecision, TenantSecretPolicyDecision,
-    TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, TenantVolumePolicyDecision,
-    TenantWorkloadIdentity, TenantWorkloadKind,
+    TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
+    TenantStoragePolicyDecision, TenantVolumePolicyDecision, TenantWorkloadIdentity,
+    TenantWorkloadKind,
 };
 
 /// Optional server runtime surfaces layered on top of the core service.

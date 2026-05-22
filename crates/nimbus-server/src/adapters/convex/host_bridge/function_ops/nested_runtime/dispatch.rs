@@ -231,7 +231,7 @@ impl ConvexHostBridge {
             .runtime_bundle()
             .cloned()
             .ok_or_else(|| Error::Internal("convex runtime bundle not loaded".to_string()))?;
-        self.isolation()
+        self.decision()
             .ensure_runtime_bundle_matches(&bundle, "convex nested runtime bundle")?;
         Ok(NestedRuntimeInvocationPlan {
             bundle,

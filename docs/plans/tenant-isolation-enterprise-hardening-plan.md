@@ -141,7 +141,7 @@ This plan is complete when:
 | --- | --- | --- | --- |
 | EIH0 | `done` | Prior-art and codebase research. | Research doc records primary/code-source evidence, Nimbus decisions, rejected options, and follow-up code-reading targets. |
 | EIH1 | `done` | Define `TenantIsolationDecision` or equivalent typed admission artifact. | `cargo test -p nimbus-server tenant_isolation -- --nocapture`, `cargo test -p nimbus-server runtime_execution_admission -- --nocapture`, `cargo fmt --all --check`, and `cargo clippy -p nimbus-server --all-targets` passed. |
-| EIH2 | `todo` | Separate policy decision point from policy enforcement points. | Runtime, sandbox, storage/API, service lookup, and HostBridge seams consume the decision in focused tests. |
+| EIH2 | `done` | Separate policy decision point from policy enforcement points. | Runtime, sandbox, storage/API, service lookup, and HostBridge seams consume the decision in focused tests. |
 | EIH3 | `todo` | Promote TIC8 into tenant-isolation conformance suite. | One command runs allowed/denied scenario fixtures with counts and failure messages. |
 | EIH4 | `todo` | Add drift/audit scanner for existing state. | Tests inject malformed manifests/handles/ports/volumes/routes and assert violations are reported without mutating state. |
 | EIH5 | `todo` | Prove hard quota enforcement below launch reservation. | Linux-focused tests or minicloud proof show cgroup/project-quota/log/disk enforcement, or a precise platform blocker is recorded. |
@@ -369,9 +369,63 @@ Dirty-worktree caveat:
   other untracked plan/research docs were already present and intentionally
   left untouched.
 
+### 2026-05-22 EIH2 PDP/PEP Separation
+
+Completed in this checkpoint:
+
+- Added narrow decision-derived access projections for tenant storage and
+  tenant services, including decision ID, tenant binding, service/namespace
+  binding, and lower-seam validation helpers for runtime bundle and sandbox
+  launch checks.
+- Moved runtime invocation admission for Convex and Cloud Functions from the
+  raw context/policy pair to a single admitted `TenantIsolationDecision`; the
+  runtime gate now consumes `RuntimeExecutionAdmission::for_decision`.
+- Changed Convex `HostBridge` scopes to carry the admitted decision and
+  decision-derived storage access. `ctx.services.get(...)` now requires a
+  decision-derived service grant before touching the runtime service registry.
+- Changed generic runtime host storage operations to consume
+  `TenantStorageAccessDecision` rather than raw tenant IDs at the storage/API
+  capability seam.
+- Changed sandbox service activation to create and consume a service
+  activation decision before catalog materialization or backend launch, with
+  tests proving an unadmitted service name fails before the backend is called.
+- Removed the product-path `TenantServiceIsolationContext` helper because
+  sandbox service launch enforcement now flows through
+  `TenantServiceAccessDecision`.
+
+Verification evidence:
+
+- `cargo check -p nimbus-server`
+  - result: pass; finished dev profile in 11.56s.
+- `cargo test -p nimbus-server tenant_isolation -- --nocapture`
+  - result: pass; 23 passed, 0 failed, 0 ignored, 725 filtered out.
+- `cargo test -p nimbus-server service_manager -- --nocapture`
+  - result: pass; 9 passed, 0 failed, 0 ignored, 739 filtered out.
+- `cargo test -p nimbus-server runtime_execution_admission -- --nocapture`
+  - result: pass; 2 passed, 0 failed, 0 ignored, 746 filtered out.
+- `cargo test -p nimbus-server host_bridge_service_lookup_rejects_service_missing_from_decision_grants -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 0 ignored, 747 filtered out.
+- `cargo test -p nimbus-server convex_runtime_query_resolves_missing_service_bindings_via_services_get -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 0 ignored, 747 filtered out.
+- `cargo fmt --all --check`
+  - result: pass.
+- `cargo clippy -p nimbus-server --all-targets`
+  - result: pass; finished dev profile in 1.34s after the final test/doc
+    checkpoint.
+- `git diff --check`
+  - result: pass.
+
+Dirty-worktree caveat:
+
+- Unrelated generated Convex files, `package-lock.json`,
+  `docs/architecture/horizontal-scaling.md`, desktop-auth proof images, and
+  other untracked plan/research docs remain present and intentionally
+  untouched.
+
 ## Execution Log
 
 | Date | Phase | Status | Files | Summary | Verification |
 | --- | --- | --- | --- | --- | --- |
 | 2026-05-22 | EIH0 | `done` | `docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md`, `docs/plans/README.md` | Started the follow-on enterprise hardening plan, then closed EIH0 by mapping Kubernetes/Gatekeeper, Firecracker/Kata/gVisor, SPIFFE/SPIRE/Vault, Sigstore/SLSA, and OpenTelemetry primary/code-source patterns to Nimbus decisions and rejected options. Next phase is EIH1 typed admission decision. | `git diff --check` passed; `rg -n "tenant-isolation-enterprise-hardening|tenant-isolation-control-plane" docs/plans/README.md docs/plans/tenant-isolation-enterprise-hardening-plan.md docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md` passed; `rg -n "Primary And Code-Source|Nimbus Decisions And Rejections|EIH0 |tenant-isolation-enterprise-hardening" docs/plans/tenant-isolation-enterprise-hardening-plan.md docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md docs/plans/README.md` passed. |
 | 2026-05-22 | EIH1 | `done` | `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/execution/runtime_admission.rs`, `crates/nimbus-server/src/lib.rs`, `crates/nimbus-runtime/src/lib.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added the typed immutable tenant-isolation decision artifact, deterministic decision IDs, workload/policy/quota/audit projections, audit-safe redaction projection, unit coverage for immutability and mismatched authority, and routed runtime execution admission through the decision snapshot. Next phase is EIH2 broader PDP/PEP consumption across sandbox, storage/API, service lookup, and HostBridge seams. | `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 20 passed, 0 failed, 0 ignored, 723 filtered out; `cargo test -p nimbus-server runtime_execution_admission -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 741 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed. |
+| 2026-05-22 | EIH2 | `done` | `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/execution/runtime_admission.rs`, `crates/nimbus-server/src/service_registry.rs`, `crates/nimbus-server/src/service_manager.rs`, `crates/nimbus-server/src/runtime_host/*`, `crates/nimbus-server/src/adapters/convex/**`, `crates/nimbus-server/src/adapters/cloud_functions/**`, `crates/nimbus-server/src/lib.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Separated the policy decision point from runtime/sandbox/storage/service/HostBridge policy enforcement points. Runtime invocations now admit one decision, HostBridge and runtime storage consume decision-derived projections, service lookup requires service grants, and sandbox launch consumes a service activation decision. Next phase is EIH3 tenant-isolation conformance suite promotion. | `cargo check -p nimbus-server` passed; `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 23 passed, 0 failed, 0 ignored, 725 filtered out; `cargo test -p nimbus-server service_manager -- --nocapture` passed: 9 passed, 0 failed, 0 ignored, 739 filtered out; `cargo test -p nimbus-server runtime_execution_admission -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 746 filtered out; `cargo test -p nimbus-server host_bridge_service_lookup_rejects_service_missing_from_decision_grants -- --nocapture` passed: 1 passed, 0 failed, 0 ignored, 747 filtered out; `cargo test -p nimbus-server convex_runtime_query_resolves_missing_service_bindings_via_services_get -- --nocapture` passed: 1 passed, 0 failed, 0 ignored, 747 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |

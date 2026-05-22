@@ -14,7 +14,10 @@ use crate::execution::invocations::{
 use crate::execution::runtime_admission::RuntimeExecutionAdmission;
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::{RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode};
+use crate::tenant_isolation::{
+    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
+    admit_runtime_invocation_decision,
+};
 
 pub(crate) struct CloudFunctionsTriggerExecutor {
     service: Arc<Service>,
@@ -77,16 +80,23 @@ impl CloudFunctionsTriggerExecutor {
         let bundle = self.registry.runtime_bundle();
         isolation
             .ensure_runtime_bundle_matches(&bundle, "cloud functions trigger runtime bundle")?;
-        RuntimeExecutionAdmission::for_policy(
-            &isolation,
-            &self.registry.runtime_policy(),
-            RuntimeIsolationTier::InProcessUntrusted,
-            self.tenant_isolation_mode,
-        )
-        .ensure_in_process_available("cloud functions trigger runtime invocation")?;
         let services = self
             .runtime_service_registry
             .snapshot_for_tenant(isolation.tenant_id());
+        let runtime_policy = self.registry.runtime_policy();
+        let decision = admit_runtime_invocation_decision(
+            &isolation,
+            &target.entrypoint,
+            Some(server_request_id.as_str()),
+            &runtime_policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            self.tenant_isolation_mode,
+            services.keys().cloned(),
+        )?;
+        decision
+            .ensure_runtime_bundle_matches(&bundle, "cloud functions trigger runtime bundle")?;
+        RuntimeExecutionAdmission::for_decision(&decision)
+            .ensure_in_process_available("cloud functions trigger runtime invocation")?;
         let request = InvocationRequest {
             kind: InvocationKind::Mutation,
             function_name: target.entrypoint.clone(),
@@ -100,7 +110,7 @@ impl CloudFunctionsTriggerExecutor {
             RuntimeHostScope::new(
                 self.service.clone(),
                 self.registry.runtime_policy(),
-                isolation,
+                decision.clone(),
             ),
             RuntimeHostInvocation::new(
                 record.event.execution.principal().clone(),
@@ -120,7 +130,7 @@ impl CloudFunctionsTriggerExecutor {
             bundle,
             request,
             RuntimeBundleInvocationOptions::enforcing_policy_limit(
-                tenant_id,
+                decision.tenant_id(),
                 Some(server_request_id.as_str()),
                 None,
             ),

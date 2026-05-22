@@ -2,6 +2,7 @@ use nimbus_core::{Error, PrincipalContext, Result, TenantId};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::net::IpAddr;
 
 use nimbus_runtime::{
@@ -667,12 +668,44 @@ impl TenantIsolationDecision {
         &self.storage
     }
 
+    pub fn storage_access(&self) -> TenantStorageAccessDecision {
+        TenantStorageAccessDecision {
+            decision_id: self.id.clone(),
+            tenant_id: self.tenant_id.clone(),
+            namespace: self.storage.namespace.clone(),
+        }
+    }
+
     pub fn volumes(&self) -> &TenantVolumePolicyDecision {
         &self.volumes
     }
 
     pub fn audit_redactions(&self) -> &TenantAuditRedactionPolicy {
         &self.audit_redactions
+    }
+
+    pub fn service_access(
+        &self,
+        service_name: &str,
+        context: &str,
+    ) -> Result<TenantServiceAccessDecision> {
+        if self
+            .services
+            .services()
+            .iter()
+            .any(|admitted_service| admitted_service == service_name)
+        {
+            return Ok(TenantServiceAccessDecision {
+                decision_id: self.id.clone(),
+                tenant_id: self.tenant_id.clone(),
+                service_name: service_name.to_owned(),
+            });
+        }
+        Err(Error::PermissionDenied(format!(
+            "tenant isolation decision {} for tenant {} did not authorize service `{service_name}` for {context}",
+            self.id.as_str(),
+            self.tenant_id
+        )))
     }
 
     pub fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
@@ -706,6 +739,18 @@ impl TenantIsolationDecision {
         )))
     }
 
+    pub fn ensure_runtime_bundle_matches(
+        &self,
+        bundle: &RuntimeBundle,
+        context: &str,
+    ) -> Result<()> {
+        let Some(tenant_label) = bundle.identity().tenant_label() else {
+            return Ok(());
+        };
+        let actual = TenantId::new(tenant_label.to_string())?;
+        self.ensure_tenant_matches(&actual, context)
+    }
+
     pub fn to_audit_record(&self) -> TenantIsolationAuditRecord {
         TenantIsolationAuditRecord {
             decision_id: self.id.as_str().to_string(),
@@ -724,6 +769,106 @@ impl TenantIsolationDecision {
             quotas: self.quotas.clone(),
             redacted_fields: self.audit_redactions.redacted_fields.clone(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantStorageAccessDecision {
+    decision_id: TenantIsolationDecisionId,
+    tenant_id: TenantId,
+    namespace: String,
+}
+
+impl TenantStorageAccessDecision {
+    pub fn decision_id(&self) -> &TenantIsolationDecisionId {
+        &self.decision_id
+    }
+
+    pub fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    pub fn namespace_name(&self) -> &str {
+        &self.namespace
+    }
+
+    pub fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
+        if actual == &self.tenant_id {
+            return Ok(());
+        }
+        Err(Error::InvalidInput(format!(
+            "tenant storage access decision {} authorized tenant {}, but {context} referenced tenant {}",
+            self.decision_id.as_str(),
+            self.tenant_id,
+            actual
+        )))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantServiceAccessDecision {
+    decision_id: TenantIsolationDecisionId,
+    tenant_id: TenantId,
+    service_name: String,
+}
+
+impl TenantServiceAccessDecision {
+    pub fn decision_id(&self) -> &TenantIsolationDecisionId {
+        &self.decision_id
+    }
+
+    pub fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    pub fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
+        if actual == &self.tenant_id {
+            return Ok(());
+        }
+        Err(Error::InvalidInput(format!(
+            "tenant service access decision {} authorized tenant {}, but {context} referenced tenant {}",
+            self.decision_id.as_str(),
+            self.tenant_id,
+            actual
+        )))
+    }
+
+    pub(crate) fn ensure_sandbox_launch_matches(
+        &self,
+        launch: &SandboxServiceLaunch,
+        actual_backend: SandboxBackendKind,
+    ) -> Result<()> {
+        let spec = launch.spec();
+        self.ensure_sandbox_spec_matches(spec, actual_backend)
+    }
+
+    pub(crate) fn ensure_sandbox_spec_matches(
+        &self,
+        spec: &SandboxSpec,
+        actual_backend: SandboxBackendKind,
+    ) -> Result<()> {
+        if spec.backend != actual_backend {
+            return Err(Error::InvalidInput(format!(
+                "tenant service access decision {} for service {} requested backend {:?}, but the configured manager backend is {:?}",
+                self.decision_id.as_str(),
+                self.service_name,
+                spec.backend,
+                actual_backend
+            )));
+        }
+        if spec.name != self.service_name {
+            return Err(Error::InvalidInput(format!(
+                "tenant service access decision {} authorized service {}, but sandbox service catalog returned launch spec name {}",
+                self.decision_id.as_str(),
+                self.service_name,
+                spec.name
+            )));
+        }
+        self.ensure_tenant_matches(&spec.tenant_id, "sandbox service launch spec")
     }
 }
 
@@ -805,16 +950,6 @@ impl TenantIsolationContext {
     pub(crate) fn with_deployment_generation(mut self, generation: u64) -> Self {
         self.deployment_generation = Some(generation);
         self
-    }
-
-    pub(crate) fn for_service(
-        &self,
-        service_name: impl Into<String>,
-    ) -> TenantServiceIsolationContext {
-        TenantServiceIsolationContext {
-            tenant: self.clone(),
-            service_name: service_name.into(),
-        }
     }
 
     pub(crate) fn admit_decision(
@@ -923,6 +1058,32 @@ fn principal_tenant_claim(principal: &PrincipalContext) -> Option<TenantPrincipa
         }
     }
     None
+}
+
+pub(crate) fn admit_runtime_invocation_decision(
+    context: &TenantIsolationContext,
+    function_name: &str,
+    invocation_id: Option<&str>,
+    policy: &RuntimePolicy,
+    tier: RuntimeIsolationTier,
+    mode: TenantIsolationMode,
+    service_names: impl IntoIterator<Item = String>,
+) -> Result<TenantIsolationDecision> {
+    let mut admitted_services = BTreeSet::new();
+    admitted_services.extend(policy.limits().grants.service.iter().cloned());
+    admitted_services.extend(service_names);
+    let mut workload = TenantWorkloadIdentity::runtime_function(function_name, tier);
+    if let Some(invocation_id) = invocation_id {
+        workload = workload.with_invocation_id(invocation_id);
+    }
+    context.admit_decision(
+        TenantIsolationPolicyInput::new(workload)
+            .with_runtime_policy(context, policy, tier, mode)
+            .with_services(TenantServiceGrantPolicyDecision::new(admitted_services))
+            .with_storage(TenantStoragePolicyDecision::namespace(
+                context.tenant_id.as_str(),
+            )),
+    )
 }
 
 fn tenant_claim_from_map<'a>(
@@ -1105,51 +1266,6 @@ fn network_grant_host(grant: &str) -> &str {
         return grant.split_once(':').map_or(grant, |(host, _)| host);
     }
     grant
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TenantServiceIsolationContext {
-    tenant: TenantIsolationContext,
-    service_name: String,
-}
-
-impl TenantServiceIsolationContext {
-    pub(crate) fn tenant_id(&self) -> &TenantId {
-        self.tenant.tenant_id()
-    }
-
-    pub(crate) fn ensure_sandbox_launch_matches(
-        &self,
-        launch: &SandboxServiceLaunch,
-        actual_backend: SandboxBackendKind,
-    ) -> Result<()> {
-        let spec = launch.spec();
-        self.ensure_sandbox_spec_matches(spec, actual_backend)
-    }
-
-    pub(crate) fn ensure_sandbox_spec_matches(
-        &self,
-        spec: &SandboxSpec,
-        actual_backend: SandboxBackendKind,
-    ) -> Result<()> {
-        if spec.backend != actual_backend {
-            return Err(Error::InvalidInput(format!(
-                "sandbox service {} for tenant {} requested backend {:?}, but the configured manager backend is {:?}",
-                self.service_name,
-                self.tenant_id(),
-                spec.backend,
-                actual_backend
-            )));
-        }
-        if spec.name != self.service_name {
-            return Err(Error::InvalidInput(format!(
-                "sandbox service catalog returned launch spec name {} for requested service {}",
-                spec.name, self.service_name
-            )));
-        }
-        self.tenant
-            .ensure_tenant_matches(&spec.tenant_id, "sandbox service launch spec")
-    }
 }
 
 #[cfg(test)]
@@ -1431,6 +1547,59 @@ mod tests {
     }
 
     #[test]
+    fn tenant_isolation_decision_issues_narrow_service_and_storage_access() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = context
+            .admit_decision(tenant_decision_input(&context, &policy))
+            .expect("decision should admit");
+
+        let service = decision
+            .service_access("db", "host bridge service lookup")
+            .expect("admitted service should receive a narrow access decision");
+        assert_eq!(service.decision_id(), decision.id());
+        assert_eq!(service.tenant_id().as_str(), "tenant-a");
+        assert_eq!(service.service_name(), "db");
+
+        let storage = decision.storage_access();
+        assert_eq!(storage.decision_id(), decision.id());
+        assert_eq!(storage.tenant_id().as_str(), "tenant-a");
+        assert_eq!(storage.namespace_name(), "tenant-a");
+
+        let tenant_b = TenantId::new("tenant-b").expect("tenant id should parse");
+        let error = storage
+            .ensure_tenant_matches(&tenant_b, "runtime storage host operation")
+            .expect_err("storage projection must reject a forged lower-seam tenant");
+        assert!(
+            error.to_string().contains("authorized tenant tenant-a"),
+            "error should name the admitted tenant: {error}"
+        );
+    }
+
+    #[test]
+    fn tenant_isolation_decision_rejects_unadmitted_service_grants() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = context
+            .admit_decision(tenant_decision_input(&context, &policy))
+            .expect("decision should admit");
+
+        let error = decision
+            .service_access("other-tenant-db", "host bridge service lookup")
+            .expect_err("service access must be limited to the admitted grant set");
+        assert!(
+            error.to_string().contains("permission denied"),
+            "error should map to permission denial: {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("did not authorize service `other-tenant-db`"),
+            "error should name the rejected service: {error}"
+        );
+    }
+
+    #[test]
     fn tenant_isolation_decision_rejects_mismatched_application_claims() {
         let context = TenantIsolationContext::application(
             TenantId::new("tenant-a").expect("tenant id should parse"),
@@ -1463,20 +1632,45 @@ mod tests {
     }
 
     #[test]
-    fn tenant_context_rejects_mismatched_tenant_before_launch() {
-        let context = TenantIsolationContext::operator(
-            TenantId::new("tenant-a").expect("tenant id should parse"),
-            "test",
-        )
-        .for_service("db");
+    fn tenant_isolation_decision_rejects_mismatched_sandbox_launch() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = context
+            .admit_decision(tenant_decision_input(&context, &policy))
+            .expect("decision should admit");
+        let service = decision
+            .service_access("db", "sandbox service launch")
+            .expect("db service should be admitted");
         let launch = SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
             sparse_spec("tenant-b", "db", SandboxBackendKind::Krun),
             "postgres:16",
         ));
 
-        let error = context
+        let error = service
             .ensure_sandbox_launch_matches(&launch, SandboxBackendKind::Krun)
-            .expect_err("mismatched tenant must be rejected before sandbox launch");
+            .expect_err("service projection must reject a forged launch tenant");
+        assert!(
+            error.to_string().contains("authorized tenant tenant-a"),
+            "error should name the admitted tenant: {error}"
+        );
+        assert!(
+            error.to_string().contains("referenced tenant tenant-b"),
+            "error should name the forged tenant: {error}"
+        );
+    }
+
+    #[test]
+    fn tenant_isolation_decision_rejects_mismatched_runtime_bundle_before_invocation() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = context
+            .admit_decision(tenant_decision_input(&context, &policy))
+            .expect("decision should admit");
+        let bundle = tenant_labeled_bundle("tenant-b");
+
+        let error = decision
+            .ensure_runtime_bundle_matches(&bundle, "runtime bundle")
+            .expect_err("decision must reject a forged runtime bundle tenant");
         assert!(
             error.to_string().contains("authorized tenant tenant-a"),
             "error should name the authorized tenant: {error}"
@@ -1488,41 +1682,45 @@ mod tests {
     }
 
     #[test]
-    fn tenant_context_rejects_mismatched_service_before_launch() {
-        let context = TenantIsolationContext::operator(
-            TenantId::new("tenant-a").expect("tenant id should parse"),
-            "test",
-        )
-        .for_service("db");
+    fn tenant_isolation_decision_rejects_mismatched_service_before_launch() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = context
+            .admit_decision(tenant_decision_input(&context, &policy))
+            .expect("decision should admit");
+        let service = decision
+            .service_access("db", "sandbox service launch")
+            .expect("db service should be admitted");
         let launch = SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
             sparse_spec("tenant-a", "cache", SandboxBackendKind::Krun),
             "redis:7",
         ));
 
-        let error = context
+        let error = service
             .ensure_sandbox_launch_matches(&launch, SandboxBackendKind::Krun)
             .expect_err("mismatched service name must be rejected before sandbox launch");
         assert!(
-            error
-                .to_string()
-                .contains("returned launch spec name cache"),
+            error.to_string().contains("authorized service db"),
             "error should name the rejected service: {error}"
         );
     }
 
     #[test]
-    fn tenant_context_rejects_mismatched_backend_before_launch() {
-        let context = TenantIsolationContext::operator(
-            TenantId::new("tenant-a").expect("tenant id should parse"),
-            "test",
-        )
-        .for_service("db");
+    fn tenant_isolation_decision_rejects_mismatched_backend_before_launch() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = context
+            .admit_decision(tenant_decision_input(&context, &policy))
+            .expect("decision should admit");
+        let service = decision
+            .service_access("db", "sandbox service launch")
+            .expect("db service should be admitted");
         let launch = SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
             sparse_spec("tenant-a", "db", SandboxBackendKind::Container),
             "postgres:16",
         ));
 
-        let error = context
+        let error = service
             .ensure_sandbox_launch_matches(&launch, SandboxBackendKind::Krun)
             .expect_err("mismatched backend must be rejected before sandbox launch");
         assert!(

@@ -11,6 +11,7 @@ use nimbus_runtime::{
 use nimbus_sandbox::{PublishedEndpoint, PublishedEndpointProtocol, SandboxHandle, SandboxStatus};
 
 use crate::sandbox::SandboxCatalog;
+use crate::tenant_isolation::TenantServiceAccessDecision;
 
 pub(crate) type RuntimeServiceBindingFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<InvocationServiceBinding>, Error>> + Send + 'a>>;
@@ -24,6 +25,13 @@ pub(crate) trait RuntimeServiceRegistry: Send + Sync + 'static {
         service_name: &str,
     ) -> Result<Option<InvocationServiceBinding>, Error>;
 
+    fn resolve_service_binding_for_decision(
+        &self,
+        service_access: &TenantServiceAccessDecision,
+    ) -> Result<Option<InvocationServiceBinding>, Error> {
+        self.resolve_service_binding(service_access.tenant_id(), service_access.service_name())
+    }
+
     fn ensure_service_binding_async<'a>(
         &'a self,
         tenant_id: &'a TenantId,
@@ -35,6 +43,24 @@ pub(crate) trait RuntimeServiceRegistry: Send + Sync + 'static {
                 return Err(Error::Cancelled);
             }
             self.resolve_service_binding(tenant_id, service_name)
+        })
+    }
+
+    fn ensure_service_binding_for_decision_async<'a>(
+        &'a self,
+        service_access: &'a TenantServiceAccessDecision,
+        cancellation: HostCallCancellation,
+    ) -> RuntimeServiceBindingFuture<'a> {
+        Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            self.ensure_service_binding_async(
+                service_access.tenant_id(),
+                service_access.service_name(),
+                cancellation,
+            )
+            .await
         })
     }
 
