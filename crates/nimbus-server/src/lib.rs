@@ -65,7 +65,15 @@ pub use sandbox::{
     SandboxServiceLaunch,
 };
 pub use service_manager::SandboxServiceManager;
-pub use tenant_isolation::TenantIsolationMode;
+pub use tenant_isolation::{
+    RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantImagePolicyDecision,
+    TenantIsolationAuditRecord, TenantIsolationAuthorityDecision, TenantIsolationDecision,
+    TenantIsolationDecisionId, TenantIsolationMode, TenantIsolationPolicyInput,
+    TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,
+    TenantRuntimePolicyAdmission, TenantRuntimePolicyDecision, TenantSecretPolicyDecision,
+    TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, TenantVolumePolicyDecision,
+    TenantWorkloadIdentity, TenantWorkloadKind,
+};
 
 /// Optional server runtime surfaces layered on top of the core service.
 pub struct ServeOptions {

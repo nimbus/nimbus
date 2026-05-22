@@ -1,12 +1,16 @@
 use nimbus_core::{Error, PrincipalContext, Result, TenantId};
+use serde::Serialize;
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use std::net::IpAddr;
 
 use nimbus_runtime::{
-    RuntimeBackendKind, RuntimeBundle, RuntimeBundleContentKind, RuntimeGrants, RuntimeMode,
-    RuntimePolicy, RuntimePreset,
+    RuntimeBackendKind, RuntimeBundle, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeGrants, RuntimeMode, RuntimePolicy, RuntimePreset, RuntimeTenantBudget,
 };
-use nimbus_sandbox::{SandboxBackendKind, SandboxSpec};
+use nimbus_sandbox::{
+    PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge, SandboxSpec,
+};
 
 use crate::sandbox::SandboxServiceLaunch;
 
@@ -30,7 +34,8 @@ impl TenantIsolationAuthority {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TenantIsolationMode {
     LocalDevelopment,
     #[default]
@@ -46,8 +51,9 @@ impl TenantIsolationMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuntimeIsolationTier {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeIsolationTier {
     InProcessUntrusted,
     InProcessTrustedOnly,
     WasmCapabilitySandbox,
@@ -55,7 +61,7 @@ pub(crate) enum RuntimeIsolationTier {
 }
 
 impl RuntimeIsolationTier {
-    pub(crate) fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::InProcessUntrusted => "in_process_untrusted",
             Self::InProcessTrustedOnly => "in_process_trusted_only",
@@ -92,6 +98,652 @@ impl RuntimeIsolationRoute {
     pub(crate) fn recommended_tier(&self) -> RuntimeIsolationTier {
         self.recommended_tier
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub struct TenantIsolationDecisionId(String);
+
+impl TenantIsolationDecisionId {
+    fn for_fingerprint(fingerprint: &TenantIsolationDecisionFingerprint<'_>) -> Result<Self> {
+        let bytes = serde_json::to_vec(fingerprint)
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        let digest = Sha256::digest(bytes);
+        Ok(Self(format!("tid_{digest:x}")))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum TenantIsolationAuthorityDecision {
+    Operator,
+    Application {
+        authenticated: bool,
+        principal_snapshot_digest: String,
+        tenant_claim_name: Option<&'static str>,
+    },
+    System,
+}
+
+impl TenantIsolationAuthorityDecision {
+    fn from_context(context: &TenantIsolationContext) -> Result<Self> {
+        match &context.authority {
+            TenantIsolationAuthority::Operator => Ok(Self::Operator),
+            TenantIsolationAuthority::System => Ok(Self::System),
+            TenantIsolationAuthority::Application { principal } => {
+                let snapshot = principal.snapshot()?;
+                Ok(Self::Application {
+                    authenticated: principal.authenticated,
+                    principal_snapshot_digest: snapshot.digest,
+                    tenant_claim_name: principal_tenant_claim(principal).map(|claim| claim.name),
+                })
+            }
+        }
+    }
+
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Operator => "operator",
+            Self::Application { .. } => "application",
+            Self::System => "system",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TenantWorkloadKind {
+    RuntimeFunction,
+    SandboxService,
+    HttpRequest,
+    SystemTask,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantWorkloadIdentity {
+    kind: TenantWorkloadKind,
+    name: String,
+    runtime_tier: Option<RuntimeIsolationTier>,
+    sandbox_id: Option<String>,
+    invocation_id: Option<String>,
+}
+
+impl TenantWorkloadIdentity {
+    pub fn new(kind: TenantWorkloadKind, name: impl Into<String>) -> Self {
+        Self {
+            kind,
+            name: name.into(),
+            runtime_tier: None,
+            sandbox_id: None,
+            invocation_id: None,
+        }
+    }
+
+    pub fn runtime_function(name: impl Into<String>, tier: RuntimeIsolationTier) -> Self {
+        Self::new(TenantWorkloadKind::RuntimeFunction, name).with_runtime_tier(tier)
+    }
+
+    pub fn sandbox_service(name: impl Into<String>, sandbox_id: impl Into<String>) -> Self {
+        Self::new(TenantWorkloadKind::SandboxService, name).with_sandbox_id(sandbox_id)
+    }
+
+    pub fn with_runtime_tier(mut self, tier: RuntimeIsolationTier) -> Self {
+        self.runtime_tier = Some(tier);
+        self
+    }
+
+    pub fn with_sandbox_id(mut self, sandbox_id: impl Into<String>) -> Self {
+        self.sandbox_id = Some(sandbox_id.into());
+        self
+    }
+
+    pub fn with_invocation_id(mut self, invocation_id: impl Into<String>) -> Self {
+        self.invocation_id = Some(invocation_id.into());
+        self
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+pub enum TenantRuntimePolicyAdmission {
+    AdmitInProcess,
+    Route {
+        recommended_tier: RuntimeIsolationTier,
+        reason: String,
+    },
+}
+
+impl From<RuntimePolicyAdmission> for TenantRuntimePolicyAdmission {
+    fn from(admission: RuntimePolicyAdmission) -> Self {
+        match admission {
+            RuntimePolicyAdmission::AdmitInProcess => Self::AdmitInProcess,
+            RuntimePolicyAdmission::Route(route) => Self::Route {
+                recommended_tier: route.recommended_tier(),
+                reason: route.reason().to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantRuntimePolicyDecision {
+    tier: RuntimeIsolationTier,
+    tenant_isolation_mode: TenantIsolationMode,
+    backend_kind: RuntimeBackendKind,
+    bundle_content_kind: RuntimeBundleContentKind,
+    compatibility_target: RuntimeCompatibilityTarget,
+    runtime_mode: RuntimeMode,
+    preset: RuntimePreset,
+    grants: RuntimeGrants,
+    tenant_budget: RuntimeTenantBudget,
+    admission: TenantRuntimePolicyAdmission,
+}
+
+impl TenantRuntimePolicyDecision {
+    fn not_applicable() -> Self {
+        let policy = RuntimePolicy::default();
+        Self::from_runtime_policy(
+            &policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            TenantIsolationMode::Production,
+            RuntimePolicyAdmission::AdmitInProcess,
+        )
+    }
+
+    pub(crate) fn from_runtime_policy(
+        policy: &RuntimePolicy,
+        tier: RuntimeIsolationTier,
+        tenant_isolation_mode: TenantIsolationMode,
+        admission: RuntimePolicyAdmission,
+    ) -> Self {
+        let limits = policy.limits();
+        Self {
+            tier,
+            tenant_isolation_mode,
+            backend_kind: limits.backend_kind,
+            bundle_content_kind: limits.bundle_content_kind,
+            compatibility_target: limits.compatibility_target,
+            runtime_mode: limits.mode,
+            preset: limits.preset,
+            grants: limits.grants.clone(),
+            tenant_budget: policy.tenant_budget(),
+            admission: admission.into(),
+        }
+    }
+
+    pub fn grants(&self) -> &RuntimeGrants {
+        &self.grants
+    }
+
+    pub fn admission(&self) -> &TenantRuntimePolicyAdmission {
+        &self.admission
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TenantServiceGrantPolicyDecision {
+    services: Vec<String>,
+}
+
+impl TenantServiceGrantPolicyDecision {
+    pub fn new(services: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            services: services.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn services(&self) -> &[String] {
+        &self.services
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantNetworkEndpointDecision {
+    service_name: String,
+    endpoint_name: String,
+    protocol: PublishedEndpointProtocol,
+    host: String,
+    host_port: u16,
+    guest_port: Option<u16>,
+}
+
+impl TenantNetworkEndpointDecision {
+    pub fn new(
+        service_name: impl Into<String>,
+        endpoint_name: impl Into<String>,
+        protocol: PublishedEndpointProtocol,
+        host: impl Into<String>,
+        host_port: u16,
+    ) -> Self {
+        Self {
+            service_name: service_name.into(),
+            endpoint_name: endpoint_name.into(),
+            protocol,
+            host: host.into(),
+            host_port,
+            guest_port: None,
+        }
+    }
+
+    pub fn with_guest_port(mut self, guest_port: u16) -> Self {
+        self.guest_port = Some(guest_port);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TenantNetworkPolicyDecision {
+    endpoints: Vec<TenantNetworkEndpointDecision>,
+    public_exposure_allowed: bool,
+    generic_loopback_allowed: bool,
+}
+
+impl TenantNetworkPolicyDecision {
+    pub fn new(endpoints: impl IntoIterator<Item = TenantNetworkEndpointDecision>) -> Self {
+        Self {
+            endpoints: endpoints.into_iter().collect(),
+            public_exposure_allowed: false,
+            generic_loopback_allowed: false,
+        }
+    }
+
+    pub fn endpoints(&self) -> &[TenantNetworkEndpointDecision] {
+        &self.endpoints
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantStoragePolicyDecision {
+    namespace: String,
+}
+
+impl TenantStoragePolicyDecision {
+    pub fn namespace(namespace: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+        }
+    }
+
+    pub fn namespace_name(&self) -> &str {
+        &self.namespace
+    }
+}
+
+impl Default for TenantStoragePolicyDecision {
+    fn default() -> Self {
+        Self::namespace("tenant")
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TenantVolumePolicyDecision {
+    named_volumes: Vec<String>,
+    host_binds_allowed: bool,
+}
+
+impl TenantVolumePolicyDecision {
+    pub fn new(named_volumes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            named_volumes: named_volumes.into_iter().map(Into::into).collect(),
+            host_binds_allowed: false,
+        }
+    }
+
+    pub fn named_volumes(&self) -> &[String] {
+        &self.named_volumes
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TenantImagePolicyDecision {
+    image_reference: Option<String>,
+    digest_required: bool,
+    signature_required: bool,
+    provenance_required: bool,
+    local_build_allowed: bool,
+}
+
+impl TenantImagePolicyDecision {
+    pub fn digest_pinned(image_reference: impl Into<String>) -> Self {
+        Self {
+            image_reference: Some(image_reference.into()),
+            digest_required: true,
+            signature_required: false,
+            provenance_required: false,
+            local_build_allowed: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TenantSecretPolicyDecision {
+    handles: Vec<String>,
+    ambient_materialization_allowed: bool,
+}
+
+impl TenantSecretPolicyDecision {
+    pub fn handles(handles: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            handles: handles.into_iter().map(Into::into).collect(),
+            ambient_materialization_allowed: false,
+        }
+    }
+
+    fn handle_count(&self) -> usize {
+        self.handles.len()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TenantQuotaPolicyDecision {
+    runtime_budget: Option<RuntimeTenantBudget>,
+    sandbox_charge: Option<SandboxResourceCharge>,
+}
+
+impl TenantQuotaPolicyDecision {
+    pub fn with_runtime_budget(mut self, budget: RuntimeTenantBudget) -> Self {
+        self.runtime_budget = Some(budget);
+        self
+    }
+
+    pub fn with_sandbox_charge(mut self, charge: SandboxResourceCharge) -> Self {
+        self.sandbox_charge = Some(charge);
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantAuditRedactionPolicy {
+    redacted_fields: Vec<String>,
+}
+
+impl TenantAuditRedactionPolicy {
+    pub fn redacted_fields(&self) -> &[String] {
+        &self.redacted_fields
+    }
+}
+
+impl Default for TenantAuditRedactionPolicy {
+    fn default() -> Self {
+        Self {
+            redacted_fields: vec![
+                "principal_claims".to_string(),
+                "bearer_claims".to_string(),
+                "secret_handles".to_string(),
+                "raw_credentials".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantIsolationPolicyInput {
+    workload: TenantWorkloadIdentity,
+    runtime: TenantRuntimePolicyDecision,
+    services: TenantServiceGrantPolicyDecision,
+    network: TenantNetworkPolicyDecision,
+    storage: TenantStoragePolicyDecision,
+    volumes: TenantVolumePolicyDecision,
+    image: TenantImagePolicyDecision,
+    secrets: TenantSecretPolicyDecision,
+    quotas: TenantQuotaPolicyDecision,
+    audit_redactions: TenantAuditRedactionPolicy,
+}
+
+impl TenantIsolationPolicyInput {
+    pub fn new(workload: TenantWorkloadIdentity) -> Self {
+        Self {
+            workload,
+            runtime: TenantRuntimePolicyDecision::not_applicable(),
+            services: TenantServiceGrantPolicyDecision::default(),
+            network: TenantNetworkPolicyDecision::default(),
+            storage: TenantStoragePolicyDecision::default(),
+            volumes: TenantVolumePolicyDecision::default(),
+            image: TenantImagePolicyDecision::default(),
+            secrets: TenantSecretPolicyDecision::default(),
+            quotas: TenantQuotaPolicyDecision::default(),
+            audit_redactions: TenantAuditRedactionPolicy::default(),
+        }
+    }
+
+    pub(crate) fn with_runtime_policy(
+        mut self,
+        context: &TenantIsolationContext,
+        policy: &RuntimePolicy,
+        tier: RuntimeIsolationTier,
+        mode: TenantIsolationMode,
+    ) -> Self {
+        let admission = context.admit_runtime_policy(policy, tier, mode);
+        self.runtime =
+            TenantRuntimePolicyDecision::from_runtime_policy(policy, tier, mode, admission);
+        self
+    }
+
+    pub fn with_services(mut self, services: TenantServiceGrantPolicyDecision) -> Self {
+        self.services = services;
+        self
+    }
+
+    pub fn with_network(mut self, network: TenantNetworkPolicyDecision) -> Self {
+        self.network = network;
+        self
+    }
+
+    pub fn with_storage(mut self, storage: TenantStoragePolicyDecision) -> Self {
+        self.storage = storage;
+        self
+    }
+
+    pub fn with_volumes(mut self, volumes: TenantVolumePolicyDecision) -> Self {
+        self.volumes = volumes;
+        self
+    }
+
+    pub fn with_image(mut self, image: TenantImagePolicyDecision) -> Self {
+        self.image = image;
+        self
+    }
+
+    pub fn with_secrets(mut self, secrets: TenantSecretPolicyDecision) -> Self {
+        self.secrets = secrets;
+        self
+    }
+
+    pub fn with_quotas(mut self, quotas: TenantQuotaPolicyDecision) -> Self {
+        self.quotas = quotas;
+        self
+    }
+}
+
+#[derive(Serialize)]
+struct TenantIsolationDecisionFingerprint<'a> {
+    tenant_id: &'a str,
+    surface: &'a str,
+    authority: &'a TenantIsolationAuthorityDecision,
+    deployment_generation: Option<u64>,
+    workload: &'a TenantWorkloadIdentity,
+    runtime: &'a TenantRuntimePolicyDecision,
+    services: &'a TenantServiceGrantPolicyDecision,
+    network: &'a TenantNetworkPolicyDecision,
+    storage: &'a TenantStoragePolicyDecision,
+    volumes: &'a TenantVolumePolicyDecision,
+    image: &'a TenantImagePolicyDecision,
+    secrets: &'a TenantSecretPolicyDecision,
+    quotas: &'a TenantQuotaPolicyDecision,
+    audit_redactions: &'a TenantAuditRedactionPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantIsolationDecision {
+    id: TenantIsolationDecisionId,
+    tenant_id: TenantId,
+    surface: &'static str,
+    authority: TenantIsolationAuthorityDecision,
+    deployment_generation: Option<u64>,
+    workload: TenantWorkloadIdentity,
+    runtime: TenantRuntimePolicyDecision,
+    services: TenantServiceGrantPolicyDecision,
+    network: TenantNetworkPolicyDecision,
+    storage: TenantStoragePolicyDecision,
+    volumes: TenantVolumePolicyDecision,
+    image: TenantImagePolicyDecision,
+    secrets: TenantSecretPolicyDecision,
+    quotas: TenantQuotaPolicyDecision,
+    audit_redactions: TenantAuditRedactionPolicy,
+}
+
+impl TenantIsolationDecision {
+    fn admit(context: &TenantIsolationContext, input: TenantIsolationPolicyInput) -> Result<Self> {
+        context.ensure_application_principal_tenant_access("tenant isolation decision")?;
+        let authority = TenantIsolationAuthorityDecision::from_context(context)?;
+        let fingerprint = TenantIsolationDecisionFingerprint {
+            tenant_id: context.tenant_id.as_str(),
+            surface: context.surface,
+            authority: &authority,
+            deployment_generation: context.deployment_generation,
+            workload: &input.workload,
+            runtime: &input.runtime,
+            services: &input.services,
+            network: &input.network,
+            storage: &input.storage,
+            volumes: &input.volumes,
+            image: &input.image,
+            secrets: &input.secrets,
+            quotas: &input.quotas,
+            audit_redactions: &input.audit_redactions,
+        };
+        let id = TenantIsolationDecisionId::for_fingerprint(&fingerprint)?;
+        Ok(Self {
+            id,
+            tenant_id: context.tenant_id.clone(),
+            surface: context.surface,
+            authority,
+            deployment_generation: context.deployment_generation,
+            workload: input.workload,
+            runtime: input.runtime,
+            services: input.services,
+            network: input.network,
+            storage: input.storage,
+            volumes: input.volumes,
+            image: input.image,
+            secrets: input.secrets,
+            quotas: input.quotas,
+            audit_redactions: input.audit_redactions,
+        })
+    }
+
+    pub fn id(&self) -> &TenantIsolationDecisionId {
+        &self.id
+    }
+
+    pub fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    pub fn workload(&self) -> &TenantWorkloadIdentity {
+        &self.workload
+    }
+
+    pub fn runtime(&self) -> &TenantRuntimePolicyDecision {
+        &self.runtime
+    }
+
+    pub fn services(&self) -> &TenantServiceGrantPolicyDecision {
+        &self.services
+    }
+
+    pub fn network(&self) -> &TenantNetworkPolicyDecision {
+        &self.network
+    }
+
+    pub fn storage(&self) -> &TenantStoragePolicyDecision {
+        &self.storage
+    }
+
+    pub fn volumes(&self) -> &TenantVolumePolicyDecision {
+        &self.volumes
+    }
+
+    pub fn audit_redactions(&self) -> &TenantAuditRedactionPolicy {
+        &self.audit_redactions
+    }
+
+    pub fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
+        if actual == &self.tenant_id {
+            return Ok(());
+        }
+        Err(Error::InvalidInput(format!(
+            "tenant isolation decision {} authorized tenant {}, but {context} referenced tenant {}",
+            self.id.as_str(),
+            self.tenant_id,
+            actual
+        )))
+    }
+
+    pub fn ensure_deployment_generation_matches(
+        &self,
+        actual_generation: u64,
+        context: &str,
+    ) -> Result<()> {
+        let Some(expected_generation) = self.deployment_generation else {
+            return Ok(());
+        };
+        if expected_generation == actual_generation {
+            return Ok(());
+        }
+        Err(Error::InvalidInput(format!(
+            "tenant isolation decision {} authorized deployment generation {}, but {context} referenced deployment generation {}",
+            self.id.as_str(),
+            expected_generation,
+            actual_generation
+        )))
+    }
+
+    pub fn to_audit_record(&self) -> TenantIsolationAuditRecord {
+        TenantIsolationAuditRecord {
+            decision_id: self.id.as_str().to_string(),
+            tenant_id: self.tenant_id.as_str().to_string(),
+            surface: self.surface.to_string(),
+            authority_class: self.authority.class().to_string(),
+            deployment_generation: self.deployment_generation,
+            workload: self.workload.clone(),
+            runtime: self.runtime.clone(),
+            services: self.services.clone(),
+            network: self.network.clone(),
+            storage: self.storage.clone(),
+            volumes: self.volumes.clone(),
+            image: self.image.clone(),
+            secret_handle_count: self.secrets.handle_count(),
+            quotas: self.quotas.clone(),
+            redacted_fields: self.audit_redactions.redacted_fields.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantIsolationAuditRecord {
+    decision_id: String,
+    tenant_id: String,
+    surface: String,
+    authority_class: String,
+    deployment_generation: Option<u64>,
+    workload: TenantWorkloadIdentity,
+    runtime: TenantRuntimePolicyDecision,
+    services: TenantServiceGrantPolicyDecision,
+    network: TenantNetworkPolicyDecision,
+    storage: TenantStoragePolicyDecision,
+    volumes: TenantVolumePolicyDecision,
+    image: TenantImagePolicyDecision,
+    secret_handle_count: usize,
+    quotas: TenantQuotaPolicyDecision,
+    redacted_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +815,13 @@ impl TenantIsolationContext {
             tenant: self.clone(),
             service_name: service_name.into(),
         }
+    }
+
+    pub(crate) fn admit_decision(
+        &self,
+        input: TenantIsolationPolicyInput,
+    ) -> Result<TenantIsolationDecision> {
+        TenantIsolationDecision::admit(self, input)
     }
 
     pub(crate) fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
@@ -529,6 +1188,53 @@ mod tests {
         )
     }
 
+    fn tenant_decision_input(
+        context: &TenantIsolationContext,
+        policy: &RuntimePolicy,
+    ) -> TenantIsolationPolicyInput {
+        TenantIsolationPolicyInput::new(
+            TenantWorkloadIdentity::runtime_function(
+                "messages:send",
+                RuntimeIsolationTier::InProcessUntrusted,
+            )
+            .with_invocation_id("invoke-1"),
+        )
+        .with_runtime_policy(
+            context,
+            policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            TenantIsolationMode::Production,
+        )
+        .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
+        .with_network(TenantNetworkPolicyDecision::new([
+            TenantNetworkEndpointDecision::new(
+                "db",
+                "postgres",
+                PublishedEndpointProtocol::Tcp,
+                "127.0.0.1",
+                15432,
+            )
+            .with_guest_port(5432),
+        ]))
+        .with_storage(TenantStoragePolicyDecision::namespace("tenant-a"))
+        .with_volumes(TenantVolumePolicyDecision::new(["cache"]))
+        .with_image(TenantImagePolicyDecision::digest_pinned(
+            "registry.example.com/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ))
+        .with_secrets(TenantSecretPolicyDecision::handles(["prod/db/password"]))
+        .with_quotas(
+            TenantQuotaPolicyDecision::default()
+                .with_runtime_budget(policy.tenant_budget())
+                .with_sandbox_charge(SandboxResourceCharge {
+                    active_sandboxes: 1,
+                    vcpus: 1,
+                    memory_bytes: 512 * 1024 * 1024,
+                    disk_bytes: 10 * 1024 * 1024 * 1024,
+                    log_bytes: 64 * 1024 * 1024,
+                }),
+        )
+    }
+
     fn principal_with_tenant_claim(claim: &'static str, tenant: &str) -> PrincipalContext {
         PrincipalContext {
             authenticated: true,
@@ -552,6 +1258,200 @@ mod tests {
                 panic!("policy should have produced a runtime isolation route")
             }
         }
+    }
+
+    #[test]
+    fn tenant_isolation_decision_has_stable_id_and_audit_safe_redaction() {
+        let principal = PrincipalContext {
+            authenticated: true,
+            claims: serde_json::Map::from_iter([
+                (
+                    "tenant_id".to_string(),
+                    serde_json::Value::String("tenant-a".to_string()),
+                ),
+                (
+                    "email".to_string(),
+                    serde_json::Value::String("operator@example.com".to_string()),
+                ),
+            ]),
+            verified_claims: serde_json::Map::new(),
+        };
+        let context = TenantIsolationContext::application(
+            TenantId::new("tenant-a").expect("tenant id should parse"),
+            principal,
+            "convex.runtime",
+        )
+        .with_deployment_generation(7);
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let input = tenant_decision_input(&context, &policy);
+
+        let decision = context
+            .admit_decision(input.clone())
+            .expect("decision should admit matching tenant authority");
+        let same_decision = context
+            .admit_decision(input)
+            .expect("same decision inputs should admit again");
+
+        assert_eq!(
+            decision.id(),
+            same_decision.id(),
+            "decision IDs must be stable for identical admitted inputs"
+        );
+        assert_eq!(decision.tenant_id().as_str(), "tenant-a");
+        assert_eq!(decision.workload().name(), "messages:send");
+        assert_eq!(decision.storage().namespace_name(), "tenant-a");
+        assert_eq!(decision.network().endpoints().len(), 1);
+        assert!(matches!(
+            decision.runtime().admission(),
+            TenantRuntimePolicyAdmission::AdmitInProcess
+        ));
+
+        let audit = decision.to_audit_record();
+        let serialized =
+            serde_json::to_string(&audit).expect("audit record should serialize to JSON");
+        assert!(
+            serialized.contains(decision.id().as_str()),
+            "audit record should carry the decision ID: {serialized}"
+        );
+        assert!(
+            serialized.contains("\"secret_handle_count\":1"),
+            "audit record should expose secret counts without handles: {serialized}"
+        );
+        assert!(
+            !serialized.contains("prod/db/password"),
+            "audit record must not leak raw secret handles: {serialized}"
+        );
+        assert!(
+            !serialized.contains("operator@example.com"),
+            "audit record must not leak principal claims: {serialized}"
+        );
+        assert!(
+            decision
+                .audit_redactions()
+                .redacted_fields()
+                .contains(&"secret_handles".to_string()),
+            "decision should advertise secret-handle redaction"
+        );
+        assert!(
+            decision
+                .audit_redactions()
+                .redacted_fields()
+                .contains(&"principal_claims".to_string()),
+            "decision should advertise principal-claim redaction"
+        );
+
+        let changed_workload = TenantIsolationPolicyInput::new(
+            TenantWorkloadIdentity::runtime_function(
+                "messages:list",
+                RuntimeIsolationTier::InProcessUntrusted,
+            )
+            .with_invocation_id("invoke-1"),
+        )
+        .with_runtime_policy(
+            &context,
+            &policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            TenantIsolationMode::Production,
+        );
+        let changed_decision = context
+            .admit_decision(changed_workload)
+            .expect("changed workload should still admit");
+        assert_ne!(
+            decision.id(),
+            changed_decision.id(),
+            "decision ID must change when workload identity changes"
+        );
+    }
+
+    #[test]
+    fn tenant_isolation_decision_clones_inputs_so_policy_cannot_widen_after_admission() {
+        let context = test_application_context().with_deployment_generation(11);
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let mut input = tenant_decision_input(&context, &policy);
+
+        let decision = context
+            .admit_decision(input.clone())
+            .expect("decision should admit initial policy input");
+
+        input.services.services.push("other-tenant-db".to_string());
+        input
+            .network
+            .endpoints
+            .push(TenantNetworkEndpointDecision::new(
+                "other-tenant-db",
+                "postgres",
+                PublishedEndpointProtocol::Tcp,
+                "127.0.0.1",
+                25432,
+            ));
+        input
+            .volumes
+            .named_volumes
+            .push("other-tenant-cache".to_string());
+        input.runtime.grants.run.push("npm".to_string());
+
+        assert_eq!(
+            decision.services().services(),
+            &["db".to_string()],
+            "admitted service grants should be immutable snapshots"
+        );
+        assert_eq!(
+            decision.network().endpoints().len(),
+            1,
+            "admitted endpoint grants should be immutable snapshots"
+        );
+        assert_eq!(
+            decision.volumes().named_volumes(),
+            &["cache".to_string()],
+            "admitted volume grants should be immutable snapshots"
+        );
+        assert!(
+            decision.runtime().grants().run.is_empty(),
+            "admitted runtime grants should not widen after input mutation"
+        );
+
+        let tenant_b = TenantId::new("tenant-b").expect("tenant id should parse");
+        let error = decision
+            .ensure_tenant_matches(&tenant_b, "lower seam forged tenant")
+            .expect_err("decision must remain tenant-bound");
+        assert!(
+            error.to_string().contains("authorized tenant tenant-a"),
+            "error should name the admitted tenant: {error}"
+        );
+
+        let error = decision
+            .ensure_deployment_generation_matches(12, "stale runtime invocation")
+            .expect_err("decision must remain deployment-bound");
+        assert!(
+            error
+                .to_string()
+                .contains("authorized deployment generation 11"),
+            "error should name the admitted deployment generation: {error}"
+        );
+    }
+
+    #[test]
+    fn tenant_isolation_decision_rejects_mismatched_application_claims() {
+        let context = TenantIsolationContext::application(
+            TenantId::new("tenant-a").expect("tenant id should parse"),
+            principal_with_tenant_claim("tenant_id", "tenant-b"),
+            "convex.runtime",
+        );
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let input = tenant_decision_input(&context, &policy);
+
+        let error = context
+            .admit_decision(input)
+            .expect_err("mismatched application claims must not receive a decision");
+
+        assert!(
+            error.to_string().contains("permission denied"),
+            "error should map to permission denial: {error}"
+        );
+        assert!(
+            error.to_string().contains("tenant `tenant-b`"),
+            "error should name the claimed tenant: {error}"
+        );
     }
 
     #[test]
