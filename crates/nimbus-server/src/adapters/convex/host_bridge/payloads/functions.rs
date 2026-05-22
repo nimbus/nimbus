@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeQueryPayload {
     pub(in crate::adapters::convex) query: ConvexExecutableQuery,
     #[serde(default)]
@@ -8,6 +9,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeQueryPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimePaginatedQueryPayload {
     pub(in crate::adapters::convex) query: Query,
     pub(in crate::adapters::convex) page_size: usize,
@@ -18,6 +20,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimePaginatedQueryPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeMutationPayload {
     pub(in crate::adapters::convex) mutation: ConvexExecutableMutation,
     #[serde(default)]
@@ -25,6 +28,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeMutationPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeActionPayload {
     pub(in crate::adapters::convex) action: ConvexExecutableAction,
     #[serde(default)]
@@ -32,6 +36,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeActionPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeFunctionCallPayload {
     pub(in crate::adapters::convex) name: String,
     #[serde(default)]
@@ -45,6 +50,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeFunctionCallPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeServiceLookupPayload {
     pub(in crate::adapters::convex) service_name: String,
     #[serde(default)]

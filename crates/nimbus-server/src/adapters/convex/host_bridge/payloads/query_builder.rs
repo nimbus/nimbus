@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeQueryStartPayload {
     pub(in crate::adapters::convex) table: TableName,
     #[serde(default)]
@@ -8,6 +9,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeQueryStartPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeQueryWithIndexPayload {
     pub(in crate::adapters::convex) builder_id: String,
     pub(in crate::adapters::convex) index_name: String,
@@ -18,6 +20,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeQueryWithIndexPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeQueryFilterPayload {
     pub(in crate::adapters::convex) builder_id: String,
     #[serde(default)]
@@ -27,6 +30,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeQueryFilterPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeQueryOrderPayload {
     pub(in crate::adapters::convex) builder_id: String,
     pub(in crate::adapters::convex) direction: OrderDirection,
@@ -35,6 +39,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeQueryOrderPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeQueryTerminalPayload {
     pub(in crate::adapters::convex) builder_id: String,
     #[serde(default)]
@@ -42,6 +47,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeQueryTerminalPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeQueryTakePayload {
     pub(in crate::adapters::convex) builder_id: String,
     pub(in crate::adapters::convex) limit: usize,
@@ -50,6 +56,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeQueryTakePayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeQueryPaginatePayload {
     pub(in crate::adapters::convex) builder_id: String,
     pub(in crate::adapters::convex) page_size: usize,

@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeSchedulerRunAfterPayload {
     pub(in crate::adapters::convex) delay_ms: u64,
     pub(in crate::adapters::convex) name: String,
@@ -13,6 +14,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeSchedulerRunAfterPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeSchedulerRunAtPayload {
     pub(in crate::adapters::convex) timestamp_ms: u64,
     pub(in crate::adapters::convex) name: String,
@@ -25,6 +27,7 @@ pub(in crate::adapters::convex) struct ConvexRuntimeSchedulerRunAtPayload {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeSchedulerCancelPayload {
     pub(in crate::adapters::convex) job_id: String,
     #[serde(default)]

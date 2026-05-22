@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::adapters::convex) struct ConvexRuntimeHttpRouteInvokePayload {
     pub(in crate::adapters::convex) request: InvocationRequest,
     pub(in crate::adapters::convex) route: ConvexHttpRouteDefinition,
