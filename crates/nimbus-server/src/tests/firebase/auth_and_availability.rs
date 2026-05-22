@@ -353,6 +353,94 @@ async fn firebase_grpc_get_document_respects_bearer_principal() {
 }
 
 #[tokio::test]
+async fn firebase_grpc_get_document_rejects_application_bearer_for_different_tenant() {
+    let _guard = auth::auth_test_guard().await;
+    let issuer = "https://firebase-auth.example.com";
+    let application_id = "nimbus-firebase-test";
+    let (tenant_b_token, jwks_data_url) = auth::issue_es256_test_token(
+        issuer,
+        application_id,
+        "user-123",
+        json!({ "tenant_id": "tenant-b" }),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    fixture.create_tenant("tenant-a", Service::create_tenant);
+    let tenant_b = fixture.create_tenant("tenant-b", Service::create_tenant);
+    let service = fixture.service();
+    seed_firebase_document(
+        &service,
+        &tenant_b,
+        &["cities", "SF"],
+        [("name", json!("San Francisco"))],
+    );
+    let registry = convex_registry_with_routes_and_bundle_and_auth(
+        json!([]),
+        json!([]),
+        None,
+        Some(firebase_test_auth_config(
+            issuer,
+            application_id,
+            &jwks_data_url,
+        )),
+    );
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(service)
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
+            .with_convex(registry)
+            .with_firebase(FirebaseConfig::new())
+            .build(),
+    )
+    .await;
+    let mut client = firestore_grpc_client(&server).await;
+
+    let mut authorized_request = tonic::Request::new(GrpcGetDocumentRequest {
+        name: "projects/tenant-b/databases/(default)/documents/cities/SF".to_string(),
+        mask: None,
+        consistency_selector: None,
+    });
+    authorized_request.metadata_mut().insert(
+        "authorization",
+        MetadataValue::try_from(format!("Bearer {tenant_b_token}"))
+            .expect("grpc authorization metadata should build"),
+    );
+    let authorized = client
+        .get_document(authorized_request)
+        .await
+        .expect("same-tenant gRPC GetDocument should succeed")
+        .into_inner();
+    assert_eq!(
+        authorized.fields["name"],
+        grpc_string_value("San Francisco")
+    );
+
+    let mut rejected_request = tonic::Request::new(GrpcGetDocumentRequest {
+        name: "projects/tenant-a/databases/(default)/documents/cities/SF".to_string(),
+        mask: None,
+        consistency_selector: None,
+    });
+    rejected_request.metadata_mut().insert(
+        "authorization",
+        MetadataValue::try_from(format!("Bearer {tenant_b_token}"))
+            .expect("grpc authorization metadata should build"),
+    );
+    let rejected = client
+        .get_document(rejected_request)
+        .await
+        .expect_err("swapped-tenant gRPC GetDocument should be rejected");
+    assert_eq!(rejected.code(), Code::PermissionDenied);
+    assert!(
+        rejected.message().contains("authorizes tenant `tenant-b`"),
+        "swapped-tenant gRPC error should name the verified tenant claim: {rejected}"
+    );
+    assert!(
+        rejected.message().contains("targeted tenant `tenant-a`"),
+        "swapped-tenant gRPC error should name the rejected target tenant: {rejected}"
+    );
+}
+
+#[tokio::test]
 async fn firebase_grpc_write_stream_respects_bearer_principal() {
     let _guard = auth::auth_test_guard().await;
     let issuer = "https://firebase-auth.example.com";
