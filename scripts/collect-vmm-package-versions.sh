@@ -93,6 +93,62 @@ check_package_rpm() {
   fi
 }
 
+check_private_libkrun_stack() {
+  local lib_root="/usr/libexec/nimbus/lib"
+  local release_info="/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
+  local crun_path="/usr/libexec/nimbus/crun"
+  local installed_version=""
+  local crun_version=""
+
+  if [[ -f "${release_info}" ]]; then
+    installed_version="$(awk -F= '$1 == "nimbus-libkrun" { print $2; exit }' "${release_info}" 2>/dev/null || true)"
+    print_line "nimbus.libkrun" "present path=${lib_root} version=${installed_version:-unknown}"
+  else
+    print_line "nimbus.libkrun" "missing path=${release_info}"
+  fi
+
+  if [[ -e "${lib_root}/libkrun.so.1" ]]; then
+    print_line "nimbus.libkrun.so" "present path=${lib_root}/libkrun.so.1"
+  else
+    print_line "nimbus.libkrun.so" "missing path=${lib_root}/libkrun.so.1"
+  fi
+
+  if [[ -e "${lib_root}/libkrunfw.so.5" ]]; then
+    print_line "nimbus.libkrunfw.so" "present path=${lib_root}/libkrunfw.so.5"
+  else
+    print_line "nimbus.libkrunfw.so" "missing path=${lib_root}/libkrunfw.so.5"
+  fi
+
+  if command -v nm >/dev/null 2>&1 && [[ -e "${lib_root}/libkrun.so.1" ]]; then
+    local nm_output=""
+    nm_output="$(nm -D "${lib_root}/libkrun.so.1" 2>/dev/null || true)"
+    if [[ "${nm_output}" == *" krun_set_port_map_with_bind_address"* ]]; then
+      print_line "nimbus.libkrun.symbol" "present krun_set_port_map_with_bind_address"
+    else
+      print_line "nimbus.libkrun.symbol" "missing krun_set_port_map_with_bind_address"
+    fi
+  else
+    print_line "nimbus.libkrun.symbol" "skipped (nm or libkrun missing)"
+  fi
+
+  if [[ -x "${crun_path}" ]]; then
+    crun_version="$("${crun_path}" --version 2>/dev/null || true)"
+    print_line "nimbus.crun.version" "$(compact_value "${crun_version}")"
+  else
+    print_line "nimbus.crun.version" "missing path=${crun_path}"
+  fi
+
+  if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
+    if readelf -d "${crun_path}" 2>/dev/null | grep -q '\$ORIGIN/lib'; then
+      print_line "nimbus.crun.runpath" 'present $ORIGIN/lib'
+    else
+      print_line "nimbus.crun.runpath" 'missing $ORIGIN/lib'
+    fi
+  else
+    print_line "nimbus.crun.runpath" "skipped (readelf or crun missing)"
+  fi
+}
+
 os_name="$(uname -s)"
 arch_name="$(uname -m)"
 kernel_name="$(uname -r)"
@@ -110,10 +166,11 @@ fi
 
 if command -v dpkg-query >/dev/null 2>&1; then
   print_line "host.packages" "dpkg-query"
+  check_package_dpkg "nimbus"
+  check_package_dpkg "nimbus-crun"
+  check_package_dpkg "nimbus-libkrun"
   check_package_dpkg "conmon"
   check_package_dpkg "buildah"
-  check_package_dpkg "libkrun"
-  check_package_dpkg "libkrunfw"
   check_package_dpkg "catatonit"
   check_package_dpkg "tini"
   check_package_dpkg "dumb-init"
@@ -121,10 +178,11 @@ if command -v dpkg-query >/dev/null 2>&1; then
   check_package_dpkg "podman"
 elif command -v rpm >/dev/null 2>&1; then
   print_line "host.packages" "rpm"
+  check_package_rpm "nimbus"
+  check_package_rpm "nimbus-crun"
+  check_package_rpm "nimbus-libkrun"
   check_package_rpm "conmon"
   check_package_rpm "buildah"
-  check_package_rpm "libkrun"
-  check_package_rpm "libkrunfw"
   check_package_rpm "catatonit"
   check_package_rpm "tini"
   check_package_rpm "dumb-init"
@@ -140,6 +198,7 @@ check_command "tool.crun" "crun"
 check_command "tool.private_crun" "/usr/libexec/nimbus/crun"
 check_command "tool.podman" "podman"
 check_any_command "tool.init" "catatonit" "tini" "dumb-init"
+check_private_libkrun_stack
 
 if command -v podman >/dev/null 2>&1; then
   podman_runtime="$(podman info --format '{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Path}}' 2>/dev/null || true)"

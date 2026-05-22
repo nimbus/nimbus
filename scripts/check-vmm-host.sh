@@ -96,6 +96,75 @@ check_any_command() {
   mark_failure
 }
 
+check_private_libkrun_stack() {
+  local lib_root="/usr/libexec/nimbus/lib"
+  local release_info="/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
+  local crun_path="/usr/libexec/nimbus/crun"
+  local installed_version=""
+  local crun_version=""
+
+  if [[ -f "${release_info}" ]]; then
+    installed_version="$(awk -F= '$1 == "nimbus-libkrun" { print $2; exit }' "${release_info}" 2>/dev/null || true)"
+    print_line "nimbus.libkrun" "present path=${lib_root} version=${installed_version:-unknown}"
+  else
+    print_line "nimbus.libkrun" "missing path=${release_info}"
+    mark_failure
+  fi
+
+  if [[ -e "${lib_root}/libkrun.so.1" ]]; then
+    print_line "nimbus.libkrun.so" "present path=${lib_root}/libkrun.so.1"
+  else
+    print_line "nimbus.libkrun.so" "missing path=${lib_root}/libkrun.so.1"
+    mark_failure
+  fi
+
+  if [[ -e "${lib_root}/libkrunfw.so.5" ]]; then
+    print_line "nimbus.libkrunfw.so" "present path=${lib_root}/libkrunfw.so.5"
+  else
+    print_line "nimbus.libkrunfw.so" "missing path=${lib_root}/libkrunfw.so.5"
+    mark_failure
+  fi
+
+  if command -v nm >/dev/null 2>&1 && [[ -e "${lib_root}/libkrun.so.1" ]]; then
+    local nm_output=""
+    nm_output="$(nm -D "${lib_root}/libkrun.so.1" 2>/dev/null || true)"
+    if [[ "${nm_output}" == *" krun_set_port_map_with_bind_address"* ]]; then
+      print_line "nimbus.libkrun.symbol" "present krun_set_port_map_with_bind_address"
+    else
+      print_line "nimbus.libkrun.symbol" "missing krun_set_port_map_with_bind_address"
+      mark_failure
+    fi
+  else
+    print_line "nimbus.libkrun.symbol" "missing (nm or libkrun unavailable)"
+    mark_failure
+  fi
+
+  if [[ -x "${crun_path}" ]]; then
+    crun_version="$("${crun_path}" --version 2>/dev/null || true)"
+    if echo "${crun_version}" | grep -q '+LIBKRUN'; then
+      print_line "nimbus.crun.version" "$(compact_value "${crun_version}")"
+    else
+      print_line "nimbus.crun.version" "missing +LIBKRUN path=${crun_path}"
+      mark_failure
+    fi
+  else
+    print_line "nimbus.crun.version" "missing path=${crun_path}"
+    mark_failure
+  fi
+
+  if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
+    if readelf -d "${crun_path}" 2>/dev/null | grep -q '\$ORIGIN/lib'; then
+      print_line "nimbus.crun.runpath" 'present $ORIGIN/lib'
+    else
+      print_line "nimbus.crun.runpath" 'missing $ORIGIN/lib'
+      mark_failure
+    fi
+  else
+    print_line "nimbus.crun.runpath" "missing (readelf or crun unavailable)"
+    mark_failure
+  fi
+}
+
 os_name="$(uname -s)"
 arch_name="$(uname -m)"
 kernel_name="$(uname -r)"
@@ -141,25 +210,27 @@ check_any_command "tool.cc" "cc" "gcc" "clang"
 check_command "runtime.conmon" "conmon"
 check_command "runtime.buildah" "buildah"
 check_command "runtime.system_crun" "crun"
-check_command "runtime.private_crun" "/usr/libexec/nimbus/crun" optional
+check_command "runtime.private_crun" "/usr/libexec/nimbus/crun"
 check_command "runtime.podman" "podman" optional
 check_any_command "runtime.init" "catatonit" "tini" "dumb-init"
 
 if command -v dpkg-query >/dev/null 2>&1; then
   print_line "host.packages" "dpkg-query"
+  check_package_dpkg "nimbus" optional
+  check_package_dpkg "nimbus-crun" optional
+  check_package_dpkg "nimbus-libkrun" optional
   check_package_dpkg "conmon"
   check_package_dpkg "buildah"
-  check_package_dpkg "libkrun" optional
-  check_package_dpkg "libkrunfw" optional
   check_package_dpkg "uidmap" optional
   check_package_dpkg "passt" optional
   check_package_dpkg "fuse-overlayfs" optional
 elif command -v rpm >/dev/null 2>&1; then
   print_line "host.packages" "rpm"
+  check_package_rpm "nimbus" optional
+  check_package_rpm "nimbus-crun" optional
+  check_package_rpm "nimbus-libkrun" optional
   check_package_rpm "conmon"
   check_package_rpm "buildah"
-  check_package_rpm "libkrun" optional
-  check_package_rpm "libkrunfw" optional
   check_package_rpm "shadow-utils" optional
   check_package_rpm "passt" optional
   check_package_rpm "fuse-overlayfs" optional
@@ -167,40 +238,10 @@ else
   print_line "host.packages" "unavailable (dpkg-query/rpm not found)"
 fi
 
-# Check for libkrun/libkrunfw shared libraries regardless of how they were
-# installed (distro package or source build).  The package checks above only
-# cover the distro path; these library checks cover source-built installs at
-# /usr/local/lib64 or any other ldconfig-visible path.
-check_shared_lib() {
-  local label="$1"
-  local soname="$2"
-  local required="${3:-required}"
-  local path=""
+check_private_libkrun_stack
 
-  path="$(ldconfig -p 2>/dev/null | grep -m1 "${soname}" | sed 's/.*=> //' || true)"
-  if [[ -n "${path}" ]]; then
-    print_line "${label}" "present path=${path}"
-    return 0
-  fi
-
-  # Also check common non-standard paths directly
-  for candidate in /usr/local/lib64/${soname}* /usr/local/lib/${soname}* /usr/lib64/${soname}* /usr/lib/${soname}*; do
-    if [[ -f "${candidate}" ]]; then
-      print_line "${label}" "present path=${candidate} (not in ldconfig cache — run sudo ldconfig)"
-      return 0
-    fi
-  done
-
-  print_line "${label}" "missing"
-  if [[ "${required}" == "required" ]]; then
-    mark_failure
-  fi
-}
-
-check_shared_lib "lib.libkrun" "libkrun.so"
-check_shared_lib "lib.libkrunfw" "libkrunfw.so"
-
-# Check that pkg-config can find libkrun (needed for building patched crun)
+# Report source-build pkg-config visibility as an optional diagnostic. Nimbus
+# service execution uses the installed private stack above, not distro libkrun.
 if pkg-config --exists libkrun 2>/dev/null; then
   libkrun_pc_path="$(pkg-config --variable=libdir libkrun 2>/dev/null || true)"
   print_line "pkgconfig.libkrun" "present libdir=${libkrun_pc_path}"
@@ -213,8 +254,7 @@ else
     fi
   done
   if ! [[ -f /usr/local/lib64/pkgconfig/libkrun.pc || -f /usr/local/lib/pkgconfig/libkrun.pc ]]; then
-    print_line "pkgconfig.libkrun" "missing (build-nimbus-crun.sh will fail)"
-    mark_failure
+    print_line "pkgconfig.libkrun" "missing (source-build diagnostics only)"
   fi
 fi
 
