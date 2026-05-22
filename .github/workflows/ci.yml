@@ -31,7 +31,7 @@ permissions:
 jobs:
   rust-format:
     name: Rust Format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: github.event_name != 'schedule'
 
@@ -49,7 +49,7 @@ jobs:
 
   rust-clippy:
     name: Rust Clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
 
@@ -82,7 +82,7 @@ jobs:
 
   deny:
     name: Rust Dependency Audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -105,7 +105,7 @@ jobs:
 
   rust-runtime-tests:
     name: Rust Runtime Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
 
@@ -131,7 +131,7 @@ jobs:
 
   rust-workspace-tests:
     name: Rust Workspace Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
     env:
@@ -179,7 +179,7 @@ jobs:
 
   external-provider-tests:
     name: External Provider Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
     env:
@@ -253,7 +253,7 @@ jobs:
 
   rust-gate-summary:
     name: Rust Gate Summary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: always() && github.event_name != 'schedule'
     needs:
@@ -293,7 +293,7 @@ jobs:
     # consume the result via actions/download-artifact instead of running
     # npm ci + make build-ui themselves.
     name: UI Artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     if: github.event_name != 'schedule'
 
@@ -332,7 +332,7 @@ jobs:
     # include_str!s of the convex codegen output and rust-embed of the SPA
     # dist must be present for the workspace to type-check.
     name: Warm sccache
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: github.event_name != 'schedule'
     needs: [ui-artifacts]
@@ -365,7 +365,7 @@ jobs:
 
   harness:
     name: ${{ matrix.surface-label }} Verification Harness
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: github.event_name != 'schedule'
     needs: [ui-artifacts, warm-sccache]
@@ -412,7 +412,7 @@ jobs:
 
   harness-nightly:
     name: Nightly ${{ matrix.surface-label }} Verification Harness
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name == 'schedule'
     strategy:
@@ -457,7 +457,7 @@ jobs:
 
   js:
     name: JavaScript Build and Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     if: github.event_name != 'schedule'
 
@@ -482,7 +482,7 @@ jobs:
 
   proof-helpers:
     name: Proof Helper Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     if: github.event_name != 'schedule'
 
@@ -536,7 +536,7 @@ jobs:
 
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
     needs: [ui-artifacts, warm-sccache]

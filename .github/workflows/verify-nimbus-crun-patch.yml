@@ -51,7 +51,7 @@ permissions:
 jobs:
   verify:
     name: Verify krun infrastructure helpers
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:

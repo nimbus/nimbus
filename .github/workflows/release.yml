@@ -36,7 +36,7 @@ permissions:
 jobs:
   verify-release-contract:
     name: Verify release contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
@@ -543,7 +543,7 @@ jobs:
 
   release:
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: [build-linux-arm64, build, publish-machine-os]
     permissions:
