@@ -89,6 +89,58 @@ fn plan_only_backend_scopes_container_artifacts_by_tenant_for_same_service_name(
 }
 
 #[test]
+fn plan_only_backend_scopes_network_state_by_tenant_for_same_sandbox_id() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend = sample_plan_only_backend(temp_dir.path());
+    let sandbox_id = SandboxId::new("api-01");
+
+    let tenant_a_plan = backend
+        .plan_start_with_id(
+            &sample_spec_for_tenant("tenant-a", "api"),
+            &sandbox_id,
+            None,
+            None,
+        )
+        .expect("tenant-a plan should lower");
+    let tenant_b_plan = backend
+        .plan_start_with_id(
+            &sample_spec_for_tenant("tenant-b", "api"),
+            &sandbox_id,
+            None,
+            None,
+        )
+        .expect("tenant-b plan should lower");
+
+    assert_ne!(
+        tenant_a_plan.manifest.network_layout.netns_path,
+        tenant_b_plan.manifest.network_layout.netns_path,
+        "same sandbox id in different tenants must not share network namespaces"
+    );
+    assert_eq!(
+        tenant_a_plan.manifest.network_layout.ipam_state_path,
+        temp_dir
+            .path()
+            .join("state")
+            .join("tenants")
+            .join("tenant-a")
+            .join("networks")
+            .join("run")
+            .join("ipam-state.json")
+    );
+    assert_eq!(
+        tenant_b_plan.manifest.network_layout.ipam_state_path,
+        temp_dir
+            .path()
+            .join("state")
+            .join("tenants")
+            .join("tenant-b")
+            .join("networks")
+            .join("run")
+            .join("ipam-state.json")
+    );
+}
+
+#[test]
 fn plan_only_backend_auto_assigns_exposed_ports_from_published_range() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());

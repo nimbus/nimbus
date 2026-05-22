@@ -319,7 +319,11 @@ impl ContainerSandboxBackend {
                 &resolved_launch.image_metadata.exposed_ports,
             )?,
         );
-        let network_layout = OciNetworkLayout::new(&self.config.state_root, sandbox_id);
+        let network_layout = OciNetworkLayout::new(
+            &self.config.state_root,
+            &resolved_spec.tenant_id,
+            sandbox_id,
+        );
         let bundle_layout = ContainerBundleLayout::new(crate::artifact_paths::bundle_dir(
             &self.config.bundle_root,
             &resolved_launch.spec.tenant_id,
