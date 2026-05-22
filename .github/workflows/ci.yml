@@ -101,7 +101,30 @@ jobs:
           tool: cargo-deny
 
       - name: Run cargo deny
-        run: cargo deny check
+        id: deny
+        run: |
+          set +e
+          cargo deny check 2>&1 | tee /tmp/deny.out
+          status=$?
+          set -e
+          {
+            echo "## cargo deny"
+            echo
+            if [ "${status}" -eq 0 ]; then
+              echo "**Status:** :white_check_mark: passed"
+            else
+              echo "**Status:** :x: failed (exit ${status})"
+            fi
+            echo
+            echo "<details><summary>Output (last 60 lines)</summary>"
+            echo
+            echo '```'
+            tail -n 60 /tmp/deny.out
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
 
   rust-runtime-tests:
     name: Rust Runtime Tests
@@ -280,6 +303,27 @@ jobs:
           printf 'runtime-test=%s\n' "${RUNTIME_TEST_RESULT}"
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
           printf 'external-provider-test=%s\n' "${EXTERNAL_PROVIDER_TEST_RESULT}"
+          icon() {
+            case "$1" in
+              success) echo ":white_check_mark:" ;;
+              failure) echo ":x:" ;;
+              cancelled) echo ":no_entry:" ;;
+              skipped) echo ":fast_forward:" ;;
+              *) echo ":question:" ;;
+            esac
+          }
+          {
+            echo "## Rust gate"
+            echo
+            echo "| lane | result |"
+            echo "|---|---|"
+            echo "| rust-format | $(icon "${FORMAT_RESULT}") ${FORMAT_RESULT} |"
+            echo "| rust-clippy | $(icon "${CLIPPY_RESULT}") ${CLIPPY_RESULT} |"
+            echo "| deny | $(icon "${DEPENDENCY_AUDIT_RESULT}") ${DEPENDENCY_AUDIT_RESULT} |"
+            echo "| rust-runtime-tests | $(icon "${RUNTIME_TEST_RESULT}") ${RUNTIME_TEST_RESULT} |"
+            echo "| rust-workspace-tests | $(icon "${WORKSPACE_TEST_RESULT}") ${WORKSPACE_TEST_RESULT} |"
+            echo "| external-provider-tests | $(icon "${EXTERNAL_PROVIDER_TEST_RESULT}") ${EXTERNAL_PROVIDER_TEST_RESULT} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
           test "${FORMAT_RESULT}" = success
           test "${CLIPPY_RESULT}" = success
           test "${DEPENDENCY_AUDIT_RESULT}" = success
@@ -661,6 +705,36 @@ jobs:
         with:
           name: coverage-lcov
           path: lcov.info
+
+      - name: Summarize coverage
+        if: always()
+        run: |
+          if [ ! -f lcov.info ]; then
+            echo "## Coverage" >> "${GITHUB_STEP_SUMMARY}"
+            echo "" >> "${GITHUB_STEP_SUMMARY}"
+            echo ":warning: lcov.info not produced (coverage step failed before report)." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          covered=$(awk -F: '/^LH:/ {sum += $2} END {print sum+0}' lcov.info)
+          total=$(awk -F: '/^LF:/ {sum += $2} END {print sum+0}' lcov.info)
+          if [ "${total}" -eq 0 ]; then
+            pct="n/a"
+          else
+            pct=$(awk -v c="${covered}" -v t="${total}" 'BEGIN {printf "%.2f%%", (c/t)*100}')
+          fi
+          files=$(grep -c '^SF:' lcov.info || echo 0)
+          {
+            echo "## Coverage"
+            echo
+            echo "| metric | value |"
+            echo "|---|---|"
+            echo "| files instrumented | ${files} |"
+            echo "| lines hit | ${covered} |"
+            echo "| lines total | ${total} |"
+            echo "| line coverage | ${pct} |"
+            echo
+            echo "_Codecov upload is best-effort; see the Codecov tab for trend graphs._"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
