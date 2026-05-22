@@ -76,6 +76,8 @@ jobs:
           shared-key: ci-ubuntu-stable-desktop-ui-v2
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       - name: Set up Node.js
         uses: actions/setup-node@v6

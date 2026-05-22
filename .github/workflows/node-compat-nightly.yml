@@ -52,6 +52,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       - name: Run Rust Node compatibility corpus
         run: "cargo test -p nimbus-runtime runtime::tests::node_compat:: -- --nocapture --test-threads=1"
@@ -88,6 +90,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       - name: Set up Node.js 22 for seeded slices and canaries
         uses: actions/setup-node@v6
