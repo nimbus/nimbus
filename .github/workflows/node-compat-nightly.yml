@@ -29,30 +29,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: node-compat-rust-corpus-ubuntu-stable-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Run Rust Node compatibility corpus
         run: "cargo test -p nimbus-runtime runtime::tests::node_compat:: -- --nocapture --test-threads=1"
@@ -66,30 +47,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: node-compat-nightly-ubuntu-stable-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js 22 for seeded slices and canaries
         uses: actions/setup-node@v6

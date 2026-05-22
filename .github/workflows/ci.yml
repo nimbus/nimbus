@@ -57,32 +57,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-clippy-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          toolchain-components: clippy
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # `make clippy` triggers the UI dependency graph (codegen + SPA build)
       # before invoking cargo, so nimbus-server's `include_str!`s of the
@@ -109,30 +89,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-deny-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
@@ -150,30 +111,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-runtime-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Run isolated runtime test lane
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
@@ -197,30 +139,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-workspace-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -293,30 +216,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-external-providers-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Start libsql provider fixture
         run: |
@@ -435,20 +339,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-warm-sccache-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
@@ -489,32 +384,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-harness-${{ matrix.surface }}-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          toolchain-components: llvm-tools-preview
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # CC4: nimbus-ui artifacts (convex codegen + SPA dist) are produced by
       # the ui-artifacts leader job and consumed here. Touching the files
@@ -555,30 +430,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-harness-nightly-${{ matrix.surface }}-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       # `make build-ui` runs codegen + SPA build via the Makefile dependency
       # graph so the nimbus-server crate compiles regardless of matrix surface.
@@ -718,33 +574,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        # CC2: sccache wired into every Rust job. RUSTC_WRAPPER and
-        # SCCACHE_GHA_ENABLED are set workflow-wide; this action installs the
-        # binary and configures the GitHub Actions cache backend.
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      # CC2/CM1: sccache is wired into every Rust job through the
+      # setup-rust-cached composite. RUSTC_WRAPPER and SCCACHE_GHA_ENABLED
+      # are set workflow-wide; the composite installs the binary and
+      # configures the GitHub Actions cache backend.
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-coverage-no-bin-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
