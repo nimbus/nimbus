@@ -362,9 +362,12 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::process::Command;
+    use std::sync::Arc;
 
+    use futures::future::BoxFuture;
     use nimbus_core::{Query, TableName};
     use nimbus_engine::Service;
+    use nimbus_runtime::{RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind};
     use nimbus_testing::{ServerFixture, ServiceFixture};
     use reqwest::StatusCode;
     use tempfile::tempdir;
@@ -377,6 +380,93 @@ mod tests {
         CloudFunctionsSignatureType, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
         CloudFunctionsTargetsManifest,
     };
+
+    struct TenantClaimApplicationAuthVerifier;
+
+    impl crate::application_auth::ApplicationAuthVerifier for TenantClaimApplicationAuthVerifier {
+        fn verify_bearer_token<'a>(
+            &'a self,
+            token: &'a str,
+        ) -> BoxFuture<'a, std::result::Result<InvocationAuth, AppError>> {
+            let token = token.to_string();
+            Box::pin(async move {
+                let Some(tenant_id) = token.strip_prefix("tenant:") else {
+                    return Err(AppError::unauthorized(
+                        "test bearer token must use tenant:<tenant_id>",
+                    ));
+                };
+                Ok(invocation_auth_with_tenant_claim(tenant_id))
+            })
+        }
+    }
+
+    fn invocation_auth_with_tenant_claim(tenant_id: &str) -> InvocationAuth {
+        InvocationAuth::with_identities(
+            runtime_identity_with_tenant_claim(tenant_id),
+            verified_identity_with_tenant_claim(tenant_id),
+            false,
+        )
+    }
+
+    fn runtime_identity_with_tenant_claim(tenant_id: &str) -> RuntimeUserIdentity {
+        RuntimeUserIdentity {
+            token_identifier: format!("test|user-123|{tenant_id}"),
+            subject: "user-123".to_string(),
+            issuer: "https://cloud-functions-auth.example.com".to_string(),
+            name: None,
+            given_name: None,
+            family_name: None,
+            nickname: None,
+            preferred_username: None,
+            profile_url: None,
+            picture_url: None,
+            email: None,
+            email_verified: None,
+            gender: None,
+            birthday: None,
+            timezone: None,
+            language: None,
+            phone_number: None,
+            phone_number_verified: None,
+            address: None,
+            updated_at: None,
+            custom_claims: tenant_claims(tenant_id),
+        }
+    }
+
+    fn verified_identity_with_tenant_claim(tenant_id: &str) -> VerifiedUserIdentity {
+        VerifiedUserIdentity {
+            kind: VerifiedUserIdentityKind::CustomJwt,
+            token_identifier: format!("test|user-123|{tenant_id}"),
+            subject: "user-123".to_string(),
+            issuer: "https://cloud-functions-auth.example.com".to_string(),
+            name: None,
+            given_name: None,
+            family_name: None,
+            nickname: None,
+            preferred_username: None,
+            profile_url: None,
+            picture_url: None,
+            email: None,
+            email_verified: None,
+            gender: None,
+            birthday: None,
+            timezone: None,
+            language: None,
+            phone_number: None,
+            phone_number_verified: None,
+            address: None,
+            updated_at: None,
+            custom_claims: tenant_claims(tenant_id),
+        }
+    }
+
+    fn tenant_claims(tenant_id: &str) -> serde_json::Map<String, Value> {
+        serde_json::Map::from_iter([(
+            "tenant_id".to_string(),
+            Value::String(tenant_id.to_string()),
+        )])
+    }
 
     #[tokio::test]
     async fn cloud_functions_http_handler_dispatches_exact_path_and_commits_writes() {
@@ -890,6 +980,107 @@ export {};
                     "message": "no application auth providers are configured for the active deployment",
                 },
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_functions_callable_rejects_application_bearer_for_different_tenant() {
+        let fixture = ServiceFixture::new(|path| Service::new(path));
+        let service = fixture.service();
+        service
+            .create_tenant(TenantId::new("tenant-a").expect("tenant id should parse"))
+            .expect("tenant should create");
+        let app_dir = tempdir().expect("app tempdir should build");
+        write_cloud_functions_artifact(
+            app_dir.path(),
+            &[CloudFunctionsTargetDefinition {
+                name: "hello".to_string(),
+                entrypoint: "exports.hello".to_string(),
+                authoring_surface: CloudFunctionsAuthoringSurface::FirebaseV2,
+                signature_type: CloudFunctionsSignatureType::Http,
+                binding: CloudFunctionsTargetBinding::Https {
+                    exposure: CloudFunctionsHttpExposure::Callable,
+                    path: "/hello".to_string(),
+                    execution: CloudFunctionsExecutionBinding::Request,
+                },
+            }],
+            r#"
+globalThis.__nimbusInvoke = async function () {
+  return {
+    status: 200,
+    body_kind: "json",
+    body: {
+      data: {
+        ok: true,
+      },
+    },
+  };
+};
+
+export {};
+"#,
+        );
+        let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
+            .expect("cloud functions registry should load");
+        let server = ServerFixture::start(
+            crate::router::RouterBuildConfig::core(service)
+                .with_application_auth_verifier(Arc::new(TenantClaimApplicationAuthVerifier))
+                .with_cloud_functions(registry)
+                .build(),
+        )
+        .await;
+        let allowed_origin = server.http_url("").trim_end_matches('/').to_string();
+
+        let authorized = server
+            .client()
+            .post(server.http_url("/hello"))
+            .header("origin", &allowed_origin)
+            .header("authorization", "Bearer tenant:tenant-a")
+            .json(&serde_json::json!({ "data": { "hello": "world" } }))
+            .send()
+            .await
+            .expect("same-tenant callable request should send");
+        let authorized_status = authorized.status();
+        let authorized_body = authorized
+            .text()
+            .await
+            .expect("same-tenant callable body should read");
+        assert_eq!(
+            authorized_status,
+            StatusCode::OK,
+            "same-tenant callable body: {authorized_body}"
+        );
+
+        let rejected = server
+            .client()
+            .post(server.http_url("/hello"))
+            .header("origin", &allowed_origin)
+            .header("authorization", "Bearer tenant:tenant-b")
+            .json(&serde_json::json!({ "data": { "hello": "world" } }))
+            .send()
+            .await
+            .expect("swapped-tenant callable request should send");
+        let rejected_status = rejected.status();
+        let rejected_body = rejected
+            .text()
+            .await
+            .expect("swapped-tenant callable body should read");
+        assert_eq!(
+            rejected_status,
+            StatusCode::FORBIDDEN,
+            "swapped-tenant callable body: {rejected_body}"
+        );
+        assert!(
+            rejected_body.contains("PERMISSION_DENIED"),
+            "callable response should use Firebase permission denial status: {rejected_body}"
+        );
+        assert!(
+            rejected_body.contains("authorizes tenant `tenant-b`"),
+            "swapped-tenant callable error should name the verified tenant claim: {rejected_body}"
+        );
+        assert!(
+            rejected_body.contains("targeted tenant `tenant-a`"),
+            "swapped-tenant callable error should name the implicit target tenant: {rejected_body}"
         );
     }
 
