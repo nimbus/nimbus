@@ -15,6 +15,13 @@ use nimbus_sandbox::{
 
 use crate::sandbox::SandboxServiceLaunch;
 
+mod image_admission;
+
+pub use image_admission::{
+    TenantImageAdmission, TenantImageAdmissionSource, TenantImageAttestationEvidence,
+    TenantImageSignatureEvidence, TenantImageVerificationEvidence, TenantImageVerificationProvider,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TenantIsolationAuthority {
     Operator,
@@ -594,9 +601,15 @@ impl TenantVolumePolicyDecision {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct TenantImagePolicyDecision {
     image_reference: Option<String>,
+    allowed_registries: Vec<String>,
     digest_required: bool,
     signature_required: bool,
+    allowed_signature_issuer: Option<String>,
+    allowed_signature_subject: Option<String>,
     provenance_required: bool,
+    allowed_builder_id: Option<String>,
+    required_attestation_predicates: Vec<String>,
+    sbom_required: bool,
     local_build_allowed: bool,
 }
 
@@ -604,9 +617,15 @@ impl TenantImagePolicyDecision {
     pub fn digest_pinned(image_reference: impl Into<String>) -> Self {
         Self {
             image_reference: Some(image_reference.into()),
+            allowed_registries: Vec::new(),
             digest_required: true,
             signature_required: false,
+            allowed_signature_issuer: None,
+            allowed_signature_subject: None,
             provenance_required: false,
+            allowed_builder_id: None,
+            required_attestation_predicates: Vec::new(),
+            sbom_required: false,
             local_build_allowed: false,
         }
     }
