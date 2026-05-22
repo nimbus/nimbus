@@ -71,7 +71,7 @@ Reviewed on 2026-05-22.
 | Layer | Current evidence | Gap before production tenant isolation |
 | --- | --- | --- |
 | Tenant identity | `TenantIsolationContext` now carries tenant, authority, surface, runtime bundle tenant labels, deployment generation, and service launch validation across native HTTP, native WebSocket, Convex, Firebase/Firestore, Cloud Functions, MongoDB compatibility commands, runtime HostBridge, and sandbox service launch. `SandboxServiceManager` keys active handles by `(tenant_id, service_name)` and rejects launch specs whose tenant/service/backend differ from the admitted request. | Later phases must extend the context/admission artifact with admitted network, storage, volume, image, secret, runtime grant, and quota policy instead of passing those as independent ad hoc arguments. |
-| Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. Application principals carrying tenant claims are now checked by `TenantIsolationContext` before Convex, Convex HTTP actions, Cloud Functions HTTP, and Firebase/Firestore database contexts reach storage/runtime. A real Convex HTTP query with a signed `tenant_id=tenant-b` JWT now proves same-tenant access succeeds and swapped path tenant `tenant-a` returns `403`. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not yet a full tenant-membership/session gate for every non-operator surface. Anonymous/public app requests remain allowed when the app exposes them, and principal-less native HTTP remains local-operator scoped. |
+| Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. Application principals carrying tenant claims are now checked by `TenantIsolationContext` before Convex, Convex HTTP actions, Cloud Functions HTTP, and Firebase/Firestore database contexts reach storage/runtime. A real Convex HTTP query and Firebase REST `batchGet` with signed `tenant_id=tenant-b` JWTs now prove same-tenant access succeeds and swapped path tenant `tenant-a` returns `403`. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not yet a full tenant-membership/session gate for every non-operator surface. Anonymous/public app requests remain allowed when the app exposes them, and principal-less native HTTP remains local-operator scoped. |
 | Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, materialized rootfs roots, and container network namespace/status/IPAM state now lower under tenant-owned roots. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots while leaving shared content-addressed image cache and other tenants intact. | Named volume admission/paths are still not lowered into service bundles and remain TIC6. |
 | Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding on the rootful Linux service path after the quota changes. Runtime service lookup is tenant-scoped. Compose service lowering now rejects non-loopback host addresses unless a future operator network exposure policy is added. System port records now carry explicit tenant, service, and endpoint ownership fields. krun/container port allocation now enforces a default per-tenant published-port quota while keeping host-port reservation global. Container network/IPAM mutable state is tenant-rooted. `TenantIsolationMode::Production` now rejects generic loopback/wildcard in-process runtime network grants before Convex or Cloud Functions runtime invocation. | Future admitted tenant-owned endpoint grants need an explicit policy object instead of generic localhost authority. |
 | In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::ensure_runtime_policy_admitted(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. `TenantIsolationMode::default()` is production, so public `serve*`, router builders, and CLI `nimbus start` enter production tenant isolation unless they explicitly opt out; `nimbus dev` opts into local-development mode. Active/in-flight/queued per-tenant runtime budgets are first-class start flags. Production rejections now name the canonical fallback tier: `in_process_trusted_only`, `microvm_service`, or future `wasm_capability_sandbox`. | TIC4 still needs actual lowering/routing for rejected workloads, native-addon/package-manager proof beyond grant shape, and tenant-accounted CPU/memory/time/worker budgets beyond top-level invocation accounting. |
@@ -945,10 +945,46 @@ Verification evidence:
 Remaining before TIC5 is done:
 
 - Convex HTTP actions still need a route-level swapped-tenant proof.
-- Firebase/Firestore REST/gRPC and Cloud Functions HTTP need equivalent
+- Firebase/Firestore gRPC/listen and Cloud Functions HTTP need equivalent
   transport-level swapped-tenant proofs.
 - WebSocket/subscription auth needs an explicit scoped-session or bearer
   renewal proof before it can be marked covered.
+- Native HTTP/local operator routes need the scoped session and tenant
+  membership model noted above.
+- Scheduler/runtime HostBridge and `_nimbus` visibility proof remain open.
+
+### 2026-05-22 TIC5 Firebase REST Swapped-Tenant Proof
+
+Added the Firestore REST counterpart to the Convex swapped-tenant HTTP proof.
+
+Completed in this checkpoint:
+
+- Added a Firebase auth/availability test that configures the real application
+  custom-JWT verifier, creates `tenant-a` and `tenant-b`, and issues a signed
+  token whose verified custom claim is `tenant_id=tenant-b`.
+- Proved `/v1/projects/tenant-b/databases/(default)/documents:batchGet`
+  succeeds with that token while the same request shape targeting
+  `/v1/projects/tenant-a/databases/(default)/documents:batchGet` returns
+  `403 Forbidden`.
+- Asserted the Firebase error response names both the authorized claim tenant
+  and the rejected Firestore project tenant.
+
+Verification evidence:
+
+- `cargo test -p nimbus-server firebase_rest_batch_get_rejects_application_bearer_for_different_tenant -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 722 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+- `cargo test -p nimbus-server firebase_auth_and_availability -- --nocapture`
+  - result: pass; 10 passed, 0 failed, 713 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+- `cargo fmt --all --check`
+  - result: pass
+
+Remaining before TIC5 is done:
+
+- Convex HTTP actions still need a route-level swapped-tenant proof.
+- Firebase/Firestore gRPC and listen/WebSocket auth need scoped-tenant proofs.
+- Cloud Functions HTTP needs the equivalent swapped-tenant proof.
 - Native HTTP/local operator routes need the scoped session and tenant
   membership model noted above.
 - Scheduler/runtime HostBridge and `_nimbus` visibility proof remain open.

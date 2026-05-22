@@ -171,6 +171,106 @@ async fn firebase_rest_commit_and_batch_get_respect_bearer_principal() {
         json!({ "stringValue": "authenticated write" })
     );
 }
+
+#[tokio::test]
+async fn firebase_rest_batch_get_rejects_application_bearer_for_different_tenant() {
+    let _guard = auth::auth_test_guard().await;
+    let issuer = "https://firebase-auth.example.com";
+    let application_id = "nimbus-firebase-test";
+    let (tenant_b_token, jwks_data_url) = auth::issue_es256_test_token(
+        issuer,
+        application_id,
+        "user-123",
+        json!({ "tenant_id": "tenant-b" }),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    fixture.create_tenant("tenant-a", Service::create_tenant);
+    fixture.create_tenant("tenant-b", Service::create_tenant);
+    let service = fixture.service();
+    let registry = convex_registry_with_routes_and_bundle_and_auth(
+        json!([]),
+        json!([]),
+        None,
+        Some(firebase_test_auth_config(
+            issuer,
+            application_id,
+            &jwks_data_url,
+        )),
+    );
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(service)
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
+            .with_convex(registry)
+            .with_firebase(FirebaseConfig::new())
+            .build(),
+    )
+    .await;
+
+    let authorized = server
+        .client()
+        .post(server.http_url("/v1/projects/tenant-b/databases/(default)/documents:batchGet"))
+        .header(header::AUTHORIZATION, format!("Bearer {tenant_b_token}"))
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(
+            json!({
+                "documents": [
+                    "projects/tenant-b/databases/(default)/documents/cities/SF"
+                ]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .expect("same-tenant firebase batchGet should send");
+    let authorized_status = authorized.status();
+    let authorized_body = authorized
+        .text()
+        .await
+        .expect("same-tenant firebase batchGet body should read");
+    assert_eq!(
+        authorized_status,
+        StatusCode::OK,
+        "same-tenant firebase batchGet body: {authorized_body}"
+    );
+
+    let rejected = server
+        .client()
+        .post(server.http_url("/v1/projects/tenant-a/databases/(default)/documents:batchGet"))
+        .header(header::AUTHORIZATION, format!("Bearer {tenant_b_token}"))
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(
+            json!({
+                "documents": [
+                    "projects/tenant-a/databases/(default)/documents/cities/SF"
+                ]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .expect("swapped-tenant firebase batchGet should send");
+    let rejected_status = rejected.status();
+    let rejected_body = rejected
+        .text()
+        .await
+        .expect("swapped-tenant firebase batchGet body should read");
+    assert_eq!(
+        rejected_status,
+        StatusCode::FORBIDDEN,
+        "swapped-tenant firebase batchGet body: {rejected_body}"
+    );
+    assert!(
+        rejected_body.contains("authorizes tenant `tenant-b`"),
+        "swapped-tenant Firebase error should name the verified tenant claim: {rejected_body}"
+    );
+    assert!(
+        rejected_body.contains("targeted tenant `tenant-a`"),
+        "swapped-tenant Firebase error should name the rejected target tenant: {rejected_body}"
+    );
+}
+
 #[tokio::test]
 async fn firebase_grpc_get_document_respects_bearer_principal() {
     let _guard = auth::auth_test_guard().await;
