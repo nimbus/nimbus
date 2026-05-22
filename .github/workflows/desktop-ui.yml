@@ -86,7 +86,30 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run desktop UI smoke walk
-        run: make verify-desktop-ui
+        id: smoke
+        run: |
+          set +e
+          make verify-desktop-ui 2>&1 | tee /tmp/desktop-ui-smoke.out
+          status=$?
+          set -e
+          {
+            echo "## Desktop UI smoke walk"
+            echo
+            if [ "${status}" -eq 0 ]; then
+              echo "**Status:** :white_check_mark: passed"
+            else
+              echo "**Status:** :x: failed (exit ${status})"
+            fi
+            echo
+            echo "<details><summary>Output (last 80 lines)</summary>"
+            echo
+            echo '```'
+            tail -n 80 /tmp/desktop-ui-smoke.out
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
 
       - name: Upload Playwright traces on failure
         if: failure()
