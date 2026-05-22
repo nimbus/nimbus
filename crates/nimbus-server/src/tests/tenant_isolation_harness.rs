@@ -47,6 +47,7 @@ impl crate::SandboxServiceCatalog for HarnessSandboxServiceCatalog {
 #[derive(Debug, Clone)]
 struct HarnessSandboxRecord {
     handle: SandboxHandle,
+    image_reference: String,
     bundle_path: PathBuf,
     rootfs_path: PathBuf,
     state_dir: PathBuf,
@@ -87,7 +88,11 @@ impl HarnessSandboxBackend {
         self.root.join(kind).join("tenants").join(tenant_id)
     }
 
-    fn materialize_record(&self, spec: &SandboxSpec) -> Result<SandboxHandle, SandboxError> {
+    fn materialize_record(
+        &self,
+        spec: &SandboxSpec,
+        image_reference: &str,
+    ) -> Result<SandboxHandle, SandboxError> {
         let tenant = spec.tenant_id.as_str();
         let service = spec.name.as_str();
         let sandbox_id = SandboxId::new(format!("sandbox-{tenant}-{service}"));
@@ -166,6 +171,7 @@ impl HarnessSandboxBackend {
                 (tenant.to_owned(), service.to_owned()),
                 HarnessSandboxRecord {
                     handle: handle.clone(),
+                    image_reference: image_reference.to_owned(),
                     bundle_path,
                     rootfs_path,
                     state_dir,
@@ -192,7 +198,7 @@ impl SandboxBackend for HarnessSandboxBackend {
 
     fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
         self.start_calls.fetch_add(1, Ordering::SeqCst);
-        let result = self.materialize_record(&launch.spec);
+        let result = self.materialize_record(&launch.spec, &launch.image_reference);
         Box::pin(async move { result })
     }
 
@@ -240,8 +246,87 @@ impl SandboxBackend for HarnessSandboxBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConformanceExpectation {
+    Allowed,
+    Denied,
+}
+
+#[derive(Debug)]
+struct ConformanceScenario {
+    id: &'static str,
+    expectation: ConformanceExpectation,
+    evidence: String,
+}
+
+#[derive(Debug, Default)]
+struct TenantIsolationConformanceReport {
+    scenarios: Vec<ConformanceScenario>,
+}
+
+impl TenantIsolationConformanceReport {
+    fn allowed(&mut self, id: &'static str, evidence: impl Into<String>) {
+        self.record(id, ConformanceExpectation::Allowed, evidence);
+    }
+
+    fn denied(&mut self, id: &'static str, evidence: impl Into<String>) {
+        self.record(id, ConformanceExpectation::Denied, evidence);
+    }
+
+    fn record(
+        &mut self,
+        id: &'static str,
+        expectation: ConformanceExpectation,
+        evidence: impl Into<String>,
+    ) {
+        assert!(
+            self.scenarios.iter().all(|scenario| scenario.id != id),
+            "tenant isolation conformance scenario {id} recorded twice"
+        );
+        self.scenarios.push(ConformanceScenario {
+            id,
+            expectation,
+            evidence: evidence.into(),
+        });
+    }
+
+    fn assert_counts(&self, allowed: usize, denied: usize) {
+        let actual_allowed = self
+            .scenarios
+            .iter()
+            .filter(|scenario| scenario.expectation == ConformanceExpectation::Allowed)
+            .count();
+        let actual_denied = self
+            .scenarios
+            .iter()
+            .filter(|scenario| scenario.expectation == ConformanceExpectation::Denied)
+            .count();
+        println!(
+            "tenant isolation conformance: {} scenarios, {} allowed, {} denied",
+            self.scenarios.len(),
+            actual_allowed,
+            actual_denied
+        );
+        for scenario in &self.scenarios {
+            println!(
+                "  PASS {:?} {} - {}",
+                scenario.expectation, scenario.id, scenario.evidence
+            );
+        }
+        assert_eq!(
+            actual_allowed, allowed,
+            "allowed conformance scenario count changed"
+        );
+        assert_eq!(
+            actual_denied, denied,
+            "denied conformance scenario count changed"
+        );
+    }
+}
+
 #[tokio::test]
-async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system_control() {
+async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_system_control() {
+    let mut conformance = TenantIsolationConformanceReport::default();
     let _guard = auth::auth_test_guard().await;
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, local_admin_token) = local_server_security(temp.path());
@@ -364,15 +449,29 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
         .await
         .expect("unauthenticated native list should send");
     assert_eq!(native_without_operator.status(), StatusCode::UNAUTHORIZED);
+    conformance.denied(
+        "native.path_without_operator_denied",
+        "tenant document path rejects missing operator bearer",
+    );
+    let tenant_a_native =
+        list_documents_with_admin(&server, &local_admin_token.token, "tenant-a", "messages").await;
     assert_eq!(
-        list_documents_with_admin(&server, &local_admin_token.token, "tenant-a", "messages").await
-            ["data"][0]["body"],
+        tenant_a_native["data"][0]["body"],
         json!("tenant-a message")
     );
+    conformance.allowed(
+        "native.storage.tenant_a_admin_read_allowed",
+        "operator bearer reads tenant-a document path",
+    );
+    let tenant_b_native =
+        list_documents_with_admin(&server, &local_admin_token.token, "tenant-b", "messages").await;
     assert_eq!(
-        list_documents_with_admin(&server, &local_admin_token.token, "tenant-b", "messages").await
-            ["data"][0]["body"],
+        tenant_b_native["data"][0]["body"],
         json!("tenant-b message")
+    );
+    conformance.allowed(
+        "native.storage.tenant_b_admin_read_allowed",
+        "operator bearer reads tenant-b document path",
     );
 
     let tenant_a_services = convex_query_json(
@@ -392,10 +491,38 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
     )
     .await;
     assert_service_proof(&tenant_a_services, tenant_service_port("tenant-a"));
+    conformance.allowed(
+        "runtime.service.tenant_a_db_binding_allowed",
+        "tenant-a resolves db service through decision/service grant",
+    );
+    conformance.denied(
+        "runtime.service.tenant_a_ungranted_service_denied",
+        "tenant-a cannot resolve ungranted service `other`",
+    );
+    conformance.denied(
+        "runtime.network.tenant_a_generic_localhost_denied",
+        "tenant-a service grant does not imply generic localhost fetch",
+    );
     assert_service_proof(&tenant_b_services, tenant_service_port("tenant-b"));
+    conformance.allowed(
+        "runtime.service.tenant_b_db_binding_allowed",
+        "tenant-b resolves db service through decision/service grant",
+    );
+    conformance.denied(
+        "runtime.service.tenant_b_ungranted_service_denied",
+        "tenant-b cannot resolve ungranted service `other`",
+    );
+    conformance.denied(
+        "runtime.network.tenant_b_generic_localhost_denied",
+        "tenant-b service grant does not imply generic localhost fetch",
+    );
     assert_ne!(
         tenant_a_services["binding"]["port"], tenant_b_services["binding"]["port"],
         "same service name must resolve to each tenant's own sandbox binding"
+    );
+    conformance.allowed(
+        "runtime.service.same_service_name_is_tenant_scoped",
+        "tenant-a/db and tenant-b/db resolve to distinct tenant-scoped ports",
     );
 
     let tenant_a_record = sandbox_backend.record_for("tenant-a", "db");
@@ -406,11 +533,25 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
         "each tenant should start exactly one sandbox for the shared service name"
     );
     assert_ne!(tenant_a_record.handle.id, tenant_b_record.handle.id);
+    conformance.allowed(
+        "sandbox.handle.same_service_name_is_tenant_scoped",
+        "same service name materializes distinct sandbox handles per tenant",
+    );
     assert_distinct_tenant_path_pair(&tenant_a_record.bundle_path, &tenant_b_record.bundle_path);
     assert_distinct_tenant_path_pair(&tenant_a_record.rootfs_path, &tenant_b_record.rootfs_path);
     assert_distinct_tenant_path_pair(&tenant_a_record.state_dir, &tenant_b_record.state_dir);
     assert_distinct_tenant_path_pair(&tenant_a_record.log_path, &tenant_b_record.log_path);
     assert_distinct_tenant_path_pair(&tenant_a_record.volume_path, &tenant_b_record.volume_path);
+    conformance.allowed(
+        "sandbox.volume.same_named_volume_is_tenant_scoped",
+        "same named volume data materializes under distinct tenant roots",
+    );
+    assert!(tenant_a_record.image_reference.contains("@sha256:"));
+    assert!(tenant_b_record.image_reference.contains("@sha256:"));
+    conformance.allowed(
+        "sandbox.image.digest_pinned_service_launch_allowed",
+        "service catalog uses digest-pinned image references for production provenance floor",
+    );
 
     let tenant_b_messages = convex_query_json(
         &server,
@@ -421,6 +562,10 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
     )
     .await;
     assert_eq!(tenant_b_messages[0]["body"], json!("tenant-b message"));
+    conformance.allowed(
+        "runtime.storage.tenant_b_messages_allowed",
+        "tenant-b runtime HostBridge reads only tenant-b messages",
+    );
     let swapped = post_convex_query(
         &server,
         "tenant-a",
@@ -441,6 +586,10 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
     );
     assert!(swapped_body.contains("authorizes tenant `tenant-b`"));
     assert!(swapped_body.contains("targeted tenant `tenant-a`"));
+    conformance.denied(
+        "runtime.auth.bearer_tenant_claim_swap_denied",
+        "tenant-b bearer cannot target tenant-a path",
+    );
 
     let application_system_routes =
         convex_query_json(&server, "tenant-a", None, "system:routes", json!({})).await;
@@ -449,9 +598,17 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
         json!([]),
         "application runtime HostBridge reads must stay in the application tenant, not _nimbus"
     );
+    conformance.denied(
+        "runtime.system.application_nimbus_access_denied",
+        "application runtime sees no _nimbus system routes through HostBridge storage",
+    );
     let missing_system_auth =
         post_convex_query(&server, "_nimbus", None, "routes:list", json!({})).await;
     assert_eq!(missing_system_auth.status(), StatusCode::UNAUTHORIZED);
+    conformance.denied(
+        "system.missing_operator_nimbus_access_denied",
+        "_nimbus query requires operator bearer",
+    );
     let operator_system_routes = post_convex_query(
         &server,
         "_nimbus",
@@ -470,6 +627,10 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
             .iter()
             .any(|route| route["path"] == "/health" && route["adapter"] == "native")),
         "operator-authenticated _nimbus query should see system route inventory: {routes}"
+    );
+    conformance.allowed(
+        "system.operator_nimbus_routes_allowed",
+        "operator bearer can read _nimbus route inventory",
     );
 
     let delete_tenant_a = server
@@ -501,11 +662,19 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
             .exists(),
         "tenant-a state artifacts should be removed"
     );
+    conformance.denied(
+        "cleanup.tenant_a_sandbox_artifacts_removed",
+        "tenant-a deletion removes tenant-a sandbox artifacts",
+    );
     assert!(
         sandbox_backend
             .tenant_artifact_root("state", "tenant-b")
             .exists(),
         "tenant-b state artifacts should remain"
+    );
+    conformance.allowed(
+        "cleanup.tenant_b_sandbox_artifacts_survive_tenant_a_delete",
+        "tenant-a deletion leaves tenant-b sandbox artifacts",
     );
     let tenant_b_after_delete = convex_query_json(
         &server,
@@ -516,6 +685,12 @@ async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system
     )
     .await;
     assert_eq!(tenant_b_after_delete[0]["body"], json!("tenant-b message"));
+    conformance.allowed(
+        "cleanup.tenant_b_runtime_storage_survives_tenant_a_delete",
+        "tenant-b runtime storage remains readable after tenant-a cleanup",
+    );
+
+    conformance.assert_counts(12, 9);
 }
 
 const HARNESS_RUNTIME_BUNDLE: &str = r#"

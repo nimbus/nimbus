@@ -62,6 +62,10 @@ harder to diagnose:
   deterministic surface: storage, engine, server, or runtime. The script mode
   and visible CI label both use `required` because this lane runs on pushes as
   well as pull requests.
+- `Tenant Isolation Conformance` is the focused gate for runtime, sandbox,
+  storage, HostBridge, service lookup, and production image-admission changes
+  that could widen tenant authority. Run
+  `make verify-tenant-isolation-conformance` before landing those changes.
 - `Nightly <Surface> Verification Harness` runs the heavier scheduled corpus
   for the same deterministic surfaces.
 - `Rust Node Compatibility Corpus` and `Node Compatibility Evidence` live in
@@ -192,6 +196,12 @@ to the generated-history replay corpus: websocket disconnect cleanup,
 auth-change resubscribe semantics, scheduler history publication, and runtime
 fairness rejection paths all run through the same named `required` / `nightly` /
 `repro` entrypoints instead of remaining isolated to ordinary unit-test names.
+
+Tenant isolation conformance is a separate, product-facing gate rather than a
+generated-hardship corpus. `scripts/verify-tenant-isolation-conformance.sh`
+runs the reusable two-tenant allowed/denied scenario report plus production
+Compose image-admission fixtures, and prints the scenario counts that should
+be carried into plan evidence for runtime/sandbox/storage isolation work.
 
 Those harness corpus tests are ignored by default inside the ordinary workspace
 suite and only run through the dedicated verification-harness lanes. The
