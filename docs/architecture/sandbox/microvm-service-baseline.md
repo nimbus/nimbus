@@ -132,6 +132,42 @@ Preferred probe hierarchy by platform:
 - Host-side krun bundles carry the SMH hardening baseline: explicit
   `process.noNewPrivileges`, explicit krun VMM capabilities, and an explicit
   seccomp allowlist validated by Linux krun smoke.
+- Tenant isolation is a control-plane contract above the VM boundary. A
+  production service sandbox must be admitted with tenant-owned identity,
+  bundle/state/rootfs/log/volume roots, network exposure policy, resource
+  quotas, image provenance policy, and HostBridge/runtime grants before OCI
+  bundle generation. The active owner for that cross-layer work is
+  `docs/plans/tenant-isolation-control-plane-plan.md`.
+
+## Tenant Isolation Boundary
+
+The current krun stack gives Nimbus the compute isolation primitive: one
+service sandbox launches one microVM, and the server-owned service manager
+keys active handles by tenant plus service name. That is not the whole
+tenant-isolation story.
+
+Production tenant isolation requires these additional boundaries:
+
+- **Admission:** Compose and programmatic service declarations lower into a
+  tenant-scoped sandbox spec. Unsafe mounts, devices, privileged container
+  controls, public ports, images, secrets, and broad resource requests are
+  rejected or rewritten before `config.json` exists.
+- **Filesystem and storage:** mutable sandbox artifacts live under
+  tenant-owned roots. Shared image/blob caches are content-addressed,
+  immutable after verification, and never shared writable state.
+- **Networking:** service ports are loopback-only by default and mediated
+  through tenant-scoped service bindings. Non-loopback exposure requires an
+  explicit operator policy record.
+- **HostBridge and runtime grants:** in-process runtime code receives only the
+  invocation tenant and exact grants. It cannot request another tenant's
+  service binding, and network grants must not let it bypass `ctx.services` by
+  scanning localhost ports.
+- **Cleanup:** tenant deletion stops tenant-owned services, releases ports,
+  removes tenant-owned sandbox artifacts and volumes, and does not touch other
+  tenants.
+
+Do not cite this baseline alone as proof of production multi-tenant isolation;
+pair it with the active tenant-isolation plan and its two-tenant harness.
 
 ## Lifecycle Baseline
 

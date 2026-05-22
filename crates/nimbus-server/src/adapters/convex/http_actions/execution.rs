@@ -15,14 +15,21 @@ pub(super) fn execute_http_action(
 pub(super) async fn execute_http_action_async(
     service: &Arc<nimbus_engine::Service>,
     registry: &Arc<ConvexRegistry>,
-    tenant_id: &TenantId,
+    tenant_context: &crate::tenant_isolation::TenantIsolationContext,
     plan: &ConvexHttpActionPlan,
     request: &ConvexHttpRequestContext,
     auth: Option<&InvocationAuth>,
 ) -> Result<Response, Error> {
-    let response =
-        prepare_http_action_response_async(service, registry, tenant_id, plan, request, auth, None)
-            .await?;
+    let response = prepare_http_action_response_async(
+        service,
+        registry,
+        tenant_context.tenant_id(),
+        plan,
+        request,
+        auth,
+        None,
+    )
+    .await?;
     response::build_http_response_parts(response)
 }
 

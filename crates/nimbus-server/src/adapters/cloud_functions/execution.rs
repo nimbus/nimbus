@@ -13,10 +13,12 @@ use crate::execution::invocations::{
 };
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::service_registry::RuntimeServiceRegistry;
+use crate::tenant_isolation::TenantIsolationContext;
 
 pub(crate) struct CloudFunctionsTriggerExecutor {
     service: Arc<Service>,
     registry: Arc<CloudFunctionsRegistry>,
+    deployment_generation: u64,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
 }
 
@@ -24,11 +26,13 @@ impl CloudFunctionsTriggerExecutor {
     pub(crate) fn new(
         service: Arc<Service>,
         registry: Arc<CloudFunctionsRegistry>,
+        deployment_generation: u64,
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     ) -> Self {
         Self {
             service,
             registry,
+            deployment_generation,
             runtime_service_registry,
         }
     }
@@ -59,7 +63,19 @@ impl CloudFunctionsTriggerExecutor {
         let args = serde_json::to_value(&record.event)
             .map_err(|error| Error::Serialization(error.to_string()))?;
         let server_request_id = next_runtime_server_request_id("cloud-functions-trigger");
-        let services = self.runtime_service_registry.snapshot_for_tenant(tenant_id);
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "cloud_functions.trigger_runtime")
+                .with_deployment_generation(self.deployment_generation);
+        isolation.ensure_deployment_generation_matches(
+            self.deployment_generation,
+            "cloud functions trigger runtime deployment",
+        )?;
+        let bundle = self.registry.runtime_bundle();
+        isolation
+            .ensure_runtime_bundle_matches(&bundle, "cloud functions trigger runtime bundle")?;
+        let services = self
+            .runtime_service_registry
+            .snapshot_for_tenant(isolation.tenant_id());
         let request = InvocationRequest {
             kind: InvocationKind::Mutation,
             function_name: target.entrypoint.clone(),
@@ -73,7 +89,7 @@ impl CloudFunctionsTriggerExecutor {
             RuntimeHostScope::new(
                 self.service.clone(),
                 self.registry.runtime_policy(),
-                tenant_id.clone(),
+                isolation,
             ),
             RuntimeHostInvocation::new(
                 record.event.execution.principal().clone(),
@@ -90,7 +106,7 @@ impl CloudFunctionsTriggerExecutor {
             &self.registry.runtime_executor(),
             self.registry.runtime_policy(),
             bridge.clone(),
-            self.registry.runtime_bundle(),
+            bundle,
             request,
             RuntimeBundleInvocationOptions::enforcing_policy_limit(
                 tenant_id,
@@ -222,8 +238,12 @@ export {};
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
             SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
         );
-        let executor =
-            CloudFunctionsTriggerExecutor::new(service.clone(), registry, runtime_service_registry);
+        let executor = CloudFunctionsTriggerExecutor::new(
+            service.clone(),
+            registry,
+            1,
+            runtime_service_registry,
+        );
 
         assert_eq!(
             executor.execute_invocation(
@@ -305,8 +325,12 @@ export {};
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
             SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
         );
-        let executor =
-            CloudFunctionsTriggerExecutor::new(service.clone(), registry, runtime_service_registry);
+        let executor = CloudFunctionsTriggerExecutor::new(
+            service.clone(),
+            registry,
+            1,
+            runtime_service_registry,
+        );
 
         assert_eq!(
             executor.execute_invocation(
@@ -392,8 +416,12 @@ export {};
         let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
             SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
         );
-        let executor =
-            CloudFunctionsTriggerExecutor::new(service.clone(), registry, runtime_service_registry);
+        let executor = CloudFunctionsTriggerExecutor::new(
+            service.clone(),
+            registry,
+            1,
+            runtime_service_registry,
+        );
 
         let users = TableName::new("users").expect("users table should parse");
         let user_id = nimbus_core::DocumentId::from_key("alice").expect("user id should parse");
@@ -889,7 +917,7 @@ export {};
             SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
         );
         let executor =
-            CloudFunctionsTriggerExecutor::new(service, registry, runtime_service_registry);
+            CloudFunctionsTriggerExecutor::new(service, registry, 1, runtime_service_registry);
 
         let outcome = executor.execute_invocation(
             &tenant_id,

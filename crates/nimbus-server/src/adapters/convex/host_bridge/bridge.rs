@@ -6,12 +6,13 @@ use crate::runtime_host::{
     commit_runtime_mutation_execution_unit,
 };
 use crate::service_registry::RuntimeServiceRegistry;
+use crate::tenant_isolation::TenantIsolationContext;
 
 #[derive(Clone)]
 pub(crate) struct ConvexHostBridgeScope {
     service: Arc<nimbus_engine::Service>,
     registry: Arc<ConvexRegistry>,
-    tenant_id: TenantId,
+    isolation: TenantIsolationContext,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
 }
 
@@ -19,13 +20,13 @@ impl ConvexHostBridgeScope {
     pub(crate) fn new(
         service: Arc<nimbus_engine::Service>,
         registry: Arc<ConvexRegistry>,
-        tenant_id: TenantId,
+        isolation: TenantIsolationContext,
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     ) -> Self {
         Self {
             service,
             registry,
-            tenant_id,
+            isolation,
             runtime_service_registry,
         }
     }
@@ -65,6 +66,7 @@ pub(crate) struct ConvexHostBridge {
     service: Arc<nimbus_engine::Service>,
     registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
+    isolation: TenantIsolationContext,
     auth: Option<InvocationAuth>,
     services: nimbus_runtime::InvocationServices,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
@@ -89,7 +91,7 @@ impl ConvexHostBridge {
     ) -> Result<Self, Error> {
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             service: &scope.service,
-            tenant_id: &scope.tenant_id,
+            tenant_id: scope.isolation.tenant_id(),
             principal: invocation.principal,
             server_request_id: invocation.server_request_id,
             invocation_kind: invocation.invocation_kind,
@@ -104,7 +106,8 @@ impl ConvexHostBridge {
         Ok(Self {
             service: scope.service,
             registry: scope.registry,
-            tenant_id: scope.tenant_id,
+            tenant_id: scope.isolation.tenant_id().clone(),
+            isolation: scope.isolation,
             auth: invocation.auth,
             services: invocation.services,
             runtime_service_registry: scope.runtime_service_registry,
@@ -139,6 +142,10 @@ impl ConvexHostBridge {
 
     pub(crate) fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
+    }
+
+    pub(in crate::adapters::convex) fn isolation(&self) -> &TenantIsolationContext {
+        &self.isolation
     }
 
     pub(crate) fn principal(&self) -> &nimbus_core::PrincipalContext {

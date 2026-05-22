@@ -23,7 +23,8 @@ pub(crate) use self::operations::{
     batch_get_documents_for_database, batch_write_for_database,
     begin_transaction_session_for_database, commit_batch_for_database, get_document_for_database,
     list_collection_ids_for_database, resolve_write_key, rollback_transaction_session_for_database,
-    run_aggregation_query_for_database, run_query_documents_for_database, tenant_id_for_database,
+    run_aggregation_query_for_database, run_query_documents_for_database,
+    tenant_context_for_database,
 };
 pub(crate) use self::response::{
     batch_get_entry_json, batch_write_response_json, commit_response_json, firestore_document_name,
@@ -141,6 +142,9 @@ pub(crate) async fn commit(
         resource_names::decode_rest_database(&params.project_id, &params.database_id)
             .map_err(resource_name_error_to_core)
             .map_err(firebase_error_to_app)?;
+    let tenant_context =
+        tenant_context_for_database(&route_database, &auth.principal, "firestore.rest.commit")
+            .map_err(firebase_error_to_app)?;
     let parsed_commit =
         commit_request::parse_commit_request_with_resolver(&request_json, resolve_write_key)
             .map_err(commit_request_error_to_core)
@@ -154,6 +158,7 @@ pub(crate) async fn commit(
 
     let outcome = commit_batch_for_database(
         &state,
+        &tenant_context,
         &parsed_commit.database,
         &auth.principal,
         parsed_commit.batch,
@@ -204,9 +209,18 @@ pub(crate) async fn batch_write(
             params.project_id, params.database_id, parsed_request.database.project_id
         ))));
     }
+    let tenant_context = match tenant_context_for_database(
+        &route_database,
+        &auth.principal,
+        "firestore.rest.batch_write",
+    ) {
+        Ok(context) => context,
+        Err(error) => return Ok(firebase_error_response(error)),
+    };
 
     match batch_write_for_database(
         &state,
+        &tenant_context,
         &parsed_request.database,
         &auth.principal,
         parsed_request.writes,
@@ -237,6 +251,14 @@ pub(crate) async fn batch_get_documents(
                 );
             }
         };
+    let tenant_context = match tenant_context_for_database(
+        &route_database,
+        &auth.principal,
+        "firestore.rest.batch_get",
+    ) {
+        Ok(context) => context,
+        Err(error) => return Ok(firebase_error_response(error).into_response()),
+    };
     let request_json = match parse_json_body(&body) {
         Ok(json) => json,
         Err(error) => return Ok(firebase_error_response(error).into_response()),
@@ -252,6 +274,7 @@ pub(crate) async fn batch_get_documents(
         };
     let outcome = match batch_get_documents_for_database(
         &state,
+        &tenant_context,
         &route_database,
         &auth.principal,
         &parsed_request,
@@ -306,6 +329,14 @@ pub(crate) async fn begin_transaction(
             Ok(database) => database,
             Err(error) => return Ok(firebase_error_response(resource_name_error_to_core(error))),
         };
+    let tenant_context = match tenant_context_for_database(
+        &route_database,
+        &auth.principal,
+        "firestore.rest.begin_transaction",
+    ) {
+        Ok(context) => context,
+        Err(error) => return Ok(firebase_error_response(error)),
+    };
     let request_json = match parse_json_body(&body) {
         Ok(json) => json,
         Err(error) => return Ok(firebase_error_response(error)),
@@ -323,6 +354,7 @@ pub(crate) async fn begin_transaction(
     };
     let session = match begin_transaction_session_for_database(
         &state,
+        &tenant_context,
         &parsed_request.database,
         &auth.principal,
         parsed_request.mode,
@@ -353,6 +385,14 @@ pub(crate) async fn rollback(
             Ok(database) => database,
             Err(error) => return Ok(firebase_error_response(resource_name_error_to_core(error))),
         };
+    let tenant_context = match tenant_context_for_database(
+        &route_database,
+        &auth.principal,
+        "firestore.rest.rollback",
+    ) {
+        Ok(context) => context,
+        Err(error) => return Ok(firebase_error_response(error)),
+    };
     let request_json = match parse_json_body(&body) {
         Ok(json) => json,
         Err(error) => return Ok(firebase_error_response(error)),
@@ -368,6 +408,7 @@ pub(crate) async fn rollback(
         };
     match rollback_transaction_session_for_database(
         &state,
+        &tenant_context,
         &parsed_request.database,
         &auth.principal,
         &parsed_request.transaction,
@@ -380,6 +421,7 @@ pub(crate) async fn rollback(
 pub(crate) async fn list_collection_ids(
     Path(params): Path<FirestoreRouteParams>,
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> std::result::Result<(StatusCode, Json<Value>), AppError> {
     list_collection_ids_for_parent_document(
@@ -387,6 +429,7 @@ pub(crate) async fn list_collection_ids(
         &params.database_id,
         None,
         state,
+        &headers,
         body,
     )
     .await
@@ -461,6 +504,7 @@ pub(crate) async fn run_document_action_under_parent_document(
             &params.database_id,
             Some(parent_document_path),
             state,
+            &headers,
             body,
         )
         .await
@@ -474,12 +518,23 @@ async fn list_collection_ids_for_parent_document(
     database_id: &str,
     parent_document_path: Option<&str>,
     state: Arc<AppState>,
+    headers: &HeaderMap,
     body: Bytes,
 ) -> std::result::Result<(StatusCode, Json<Value>), AppError> {
     ensure_firebase_enabled(&state)?;
+    let auth = resolve_application_auth_from_headers(&state, headers).await?;
+    record_authenticated_usage(&state, auth.auth.as_ref()).await;
     let route_database = match resource_names::decode_rest_database(project_id, database_id) {
         Ok(database) => database,
         Err(error) => return Ok(firebase_error_response(resource_name_error_to_core(error))),
+    };
+    let tenant_context = match tenant_context_for_database(
+        &route_database,
+        &auth.principal,
+        "firestore.rest.list_collection_ids",
+    ) {
+        Ok(context) => context,
+        Err(error) => return Ok(firebase_error_response(error)),
     };
     let parent_document_path = match parent_document_path {
         Some(parent_document_path) => {
@@ -507,6 +562,7 @@ async fn list_collection_ids_for_parent_document(
         };
     let page = match list_collection_ids_for_database(
         &state,
+        &tenant_context,
         &route_database,
         parent_document_path.as_ref(),
         &parsed_request,
@@ -541,6 +597,14 @@ async fn run_query_for_parent_document(
             return Ok(firebase_error_response(resource_name_error_to_core(error)).into_response());
         }
     };
+    let tenant_context = match tenant_context_for_database(
+        &route_database,
+        &auth.principal,
+        "firestore.rest.run_query",
+    ) {
+        Ok(context) => context,
+        Err(error) => return Ok(firebase_error_response(error).into_response()),
+    };
     let parent_document_path = match parent_document_path {
         Some(parent_document_path) => {
             match resource_names::decode_rest_document_path(parent_document_path) {
@@ -568,6 +632,7 @@ async fn run_query_for_parent_document(
     };
     let outcome = match run_query_documents_for_database(
         &state,
+        &tenant_context,
         &route_database,
         &auth.principal,
         parent_document_path.as_ref(),
@@ -616,6 +681,14 @@ async fn run_aggregation_query_for_parent_document(
             return Ok(firebase_error_response(resource_name_error_to_core(error)).into_response());
         }
     };
+    let tenant_context = match tenant_context_for_database(
+        &route_database,
+        &auth.principal,
+        "firestore.rest.run_aggregation_query",
+    ) {
+        Ok(context) => context,
+        Err(error) => return Ok(firebase_error_response(error).into_response()),
+    };
     let parent_document_path = match parent_document_path {
         Some(parent_document_path) => {
             match resource_names::decode_rest_document_path(parent_document_path) {
@@ -645,6 +718,7 @@ async fn run_aggregation_query_for_parent_document(
         };
     let outcome = match run_aggregation_query_for_database(
         &state,
+        &tenant_context,
         &route_database,
         &auth.principal,
         parent_document_path.as_ref(),

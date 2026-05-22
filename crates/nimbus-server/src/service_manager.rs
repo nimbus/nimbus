@@ -14,6 +14,7 @@ use crate::sandbox::{SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch
 use crate::service_registry::{
     RuntimeServiceBindingFuture, RuntimeServiceRegistry, service_binding_from_handle,
 };
+use crate::tenant_isolation::TenantIsolationContext;
 
 const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_ACTIVATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -194,30 +195,12 @@ impl SandboxServiceManager {
     async fn start_launch_async(
         &self,
         key: &TenantServiceKey,
+        isolation: &TenantIsolationContext,
         launch: SandboxServiceLaunch,
     ) -> Result<SandboxHandle, Error> {
-        let requested_backend = launch.spec().backend;
         let actual_backend = self.sandbox_backend.kind();
-        if requested_backend != actual_backend {
-            return Err(Error::InvalidInput(format!(
-                "sandbox service {} for tenant {} requested backend {:?}, but the configured manager backend is {:?}",
-                key.service_name, key.tenant_id, requested_backend, actual_backend
-            )));
-        }
-        if launch.spec().name != key.service_name {
-            return Err(Error::InvalidInput(format!(
-                "sandbox service catalog returned launch spec name {} for requested service {}",
-                launch.spec().name,
-                key.service_name
-            )));
-        }
-        if launch.spec().tenant_id != key.tenant_id {
-            return Err(Error::InvalidInput(format!(
-                "sandbox service catalog returned tenant {} for requested tenant {}",
-                launch.spec().tenant_id,
-                key.tenant_id
-            )));
-        }
+        let service_isolation = isolation.for_service(key.service_name.clone());
+        service_isolation.ensure_sandbox_launch_matches(&launch, actual_backend)?;
 
         let handle = match launch {
             SandboxServiceLaunch::Image(launch) => {
@@ -281,6 +264,19 @@ impl SandboxServiceManager {
         service_name: &str,
         cancellation: HostCallCancellation,
     ) -> Result<Option<SandboxHandle>, Error> {
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        self.start_service_for_context_async(&isolation, service_name, cancellation)
+            .await
+    }
+
+    pub(crate) async fn start_service_for_context_async(
+        &self,
+        isolation: &TenantIsolationContext,
+        service_name: &str,
+        cancellation: HostCallCancellation,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        let tenant_id = isolation.tenant_id();
         let key = TenantServiceKey::new(tenant_id, service_name);
         if let Some(handle) = self.refresh_handle_async(&key).await?
             && !matches!(
@@ -303,7 +299,7 @@ impl SandboxServiceManager {
                     self.release_activation(&key);
                     return Ok(None);
                 };
-                let start_result = self.start_launch_async(&key, launch).await;
+                let start_result = self.start_launch_async(&key, isolation, launch).await;
                 self.release_activation(&key);
                 start_result?;
                 self.wait_for_ready_handle_async(&key, &cancellation).await
@@ -311,11 +307,12 @@ impl SandboxServiceManager {
         }
     }
 
-    pub(crate) async fn stop_service_async(
+    pub(crate) async fn stop_service_for_context_async(
         &self,
-        tenant_id: &TenantId,
+        isolation: &TenantIsolationContext,
         service_name: &str,
     ) -> Result<Option<SandboxHandle>, Error> {
+        let tenant_id = isolation.tenant_id();
         let key = TenantServiceKey::new(tenant_id, service_name);
         let previous_handle = self.current_handle(&key);
         let refreshed_handle = self.refresh_handle_async(&key).await?;
@@ -354,14 +351,15 @@ impl SandboxServiceManager {
         Ok(Some(stopped_handle))
     }
 
-    pub(crate) async fn restart_service_async(
+    pub(crate) async fn restart_service_for_context_async(
         &self,
-        tenant_id: &TenantId,
+        isolation: &TenantIsolationContext,
         service_name: &str,
         cancellation: HostCallCancellation,
     ) -> Result<Option<SandboxHandle>, Error> {
-        self.stop_service_async(tenant_id, service_name).await?;
-        self.start_service_async(tenant_id, service_name, cancellation)
+        self.stop_service_for_context_async(isolation, service_name)
+            .await?;
+        self.start_service_for_context_async(isolation, service_name, cancellation)
             .await
     }
 

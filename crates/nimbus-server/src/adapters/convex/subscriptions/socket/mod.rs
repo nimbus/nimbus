@@ -73,6 +73,7 @@ pub(super) type SubscriptionStatuses = Arc<RwLock<HashMap<u64, SubscriptionStatu
 pub(super) struct SocketSessionCtx<'a> {
     pub(super) state: &'a Arc<AppState>,
     pub(super) tenant_id: &'a TenantId,
+    pub(super) tenant_context: &'a crate::tenant_isolation::TenantIsolationContext,
     pub(super) convex_registry: &'a Arc<ConvexRegistry>,
     pub(super) subscription_tx: &'a mpsc::Sender<SubscriptionUpdate>,
     pub(super) outbound_tx: &'a mpsc::Sender<ServerMessage>,
@@ -94,6 +95,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
     state: Arc<AppState>,
     convex_registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
+    tenant_context: crate::tenant_isolation::TenantIsolationContext,
     initial_auth: Option<InvocationAuth>,
     protocol: NegotiatedWebSocketProtocol,
 ) {
@@ -115,7 +117,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
         state.service.clone(),
         convex_registry.clone(),
         state.runtime_service_registry(),
-        tenant_id.clone(),
+        tenant_context.clone(),
         subscription_statuses.clone(),
         runtime_cancellation.clone(),
     ));
@@ -127,6 +129,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
     let session_ctx = SocketSessionCtx {
         state: &state,
         tenant_id: &tenant_id,
+        tenant_context: &tenant_context,
         convex_registry: &convex_registry,
         subscription_tx: &subscription_tx,
         outbound_tx: &outbound_tx,

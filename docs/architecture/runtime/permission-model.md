@@ -130,6 +130,15 @@ managed service lookups require an exact `service` grant, worker-thread
 creation requires `worker = ["thread"]`, subprocess execution requires a
 matching `run` grant, and FFI descriptors require `ffi` grants.
 
+For production tenant isolation, runtime network grants and service grants must
+also compose safely. A tenant runtime that lacks a service grant must not be
+able to discover or use that service by scanning localhost ports through a
+generic network grant. Granting loopback network access is therefore a
+cross-service authority decision: it must be constrained to admitted
+tenant-owned endpoints or treated as incompatible with production
+multi-tenant isolation. The active owner for that cross-layer policy is
+`docs/plans/tenant-isolation-control-plane-plan.md`.
+
 Secret and identity grants are declaration and audit inputs until a future
 secret-store or service-identity API exists. Declaring a `secret` grant does not
 place secret material in `process.env` or globals, and declaring an `identity`

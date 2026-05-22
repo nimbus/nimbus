@@ -28,6 +28,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `/goal` control plane gated on
     `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
     conditions).
+- `docs/plans/tenant-isolation-control-plane-plan.md`
+  - canonical active plan for making production tenant isolation explicit
+    across compute, networking, storage, HostBridge/runtime grants, sandbox
+    artifacts, volumes, images, secrets, and resource quotas. Starts from the
+    completed krun microVM hardening and libkrun runtime-stack baselines, but
+    does not allow those VM proofs to stand in for full tenant isolation.
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -437,6 +443,14 @@ the work is explicitly a historical review.
   `nimbus-crun` release work, start with
   `docs/plans/archive/nimbus-libkrun-runtime-stack-plan.md`, then cross-check
   `docs/plans/distribution-plan.md`.
+- For production tenant isolation across microVM services, in-process runtime
+  grants, HostBridge access, storage namespaces, service networking, volumes,
+  images, secrets, quotas, or cleanup, start with
+  `docs/plans/tenant-isolation-control-plane-plan.md`, then cross-check
+  `docs/plans/security/sandbox-isolation-audit.md`,
+  `docs/architecture/sandbox/microvm-service-baseline.md`,
+  `docs/architecture/runtime/permission-model.md`, and
+  `docs/architecture/storage/provider-topologies.md`.
 - For Convex or Nimbus CLI/codegen workflow work (`packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `nimbus start --app-dir`
   contract), start with `docs/adapters/convex/ai-guidelines.md`,

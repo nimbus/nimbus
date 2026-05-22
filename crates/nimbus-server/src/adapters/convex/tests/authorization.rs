@@ -116,7 +116,11 @@ fn mutation_bridge(
         ConvexHostBridgeScope::new(
             service,
             registry,
-            tenant_id,
+            crate::tenant_isolation::TenantIsolationContext::application(
+                tenant_id,
+                principal.clone(),
+                "convex_authorization_test",
+            ),
             Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
                 crate::EmptySandboxCatalog,
             ))),
@@ -278,7 +282,11 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
         ConvexHostBridgeScope::new(
             service.clone(),
             Arc::new(ConvexRegistry::empty()),
-            tenant_id.clone(),
+            crate::tenant_isolation::TenantIsolationContext::application(
+                tenant_id.clone(),
+                normalize_principal_context(Some(&auth)),
+                "convex_authorization_test",
+            ),
             Arc::new(SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
                 crate::EmptySandboxCatalog,
             ))),

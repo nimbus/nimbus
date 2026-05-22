@@ -5,7 +5,8 @@ pub(crate) async fn create_tenant(
     State(state): State<Arc<AppState>>,
     Json(request): Json<CreateTenantRequest>,
 ) -> Result<(StatusCode, Json<TenantResponse>), AppError> {
-    let tenant_id = parse_user_tenant_id(request.id)?;
+    let tenant = parse_operator_tenant_context(request.id, "native_http.tenants.create")?;
+    let tenant_id = tenant.tenant_id().clone();
     let service = state.service.clone();
     service.create_tenant_async(tenant_id.clone()).await?;
     if let Some(registry) = state.current_deployment().convex_registry() {
@@ -37,11 +38,13 @@ pub(crate) async fn delete_tenant(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.tenants.delete")?;
     let service = state.service.clone();
     state
         .runtime_service_registry()
-        .teardown_tenant(&tenant_id)?;
-    service.delete_tenant_async(tenant_id).await?;
+        .teardown_tenant(tenant.tenant_id())?;
+    service
+        .delete_tenant_async(tenant.tenant_id().clone())
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }

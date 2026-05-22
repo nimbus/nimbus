@@ -4,7 +4,7 @@ use nimbus_core::{IndexDefinition, TableName, TableSchema, TenantId};
 use nimbus_engine::Service;
 
 use super::super::error::{BAD_VALUE, MongoError};
-use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant};
+use super::tenant::{DEFAULT_TENANT, ensure_tenant, resolve_tenant_context};
 
 pub fn create_indexes(
     body: &bson::Document,
@@ -19,7 +19,8 @@ pub fn create_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb create indexes")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
     let indexes = body.get_array("indexes").map_err(|_| MongoError::Command {
@@ -28,7 +29,7 @@ pub fn create_indexes(
         message: "missing indexes array in createIndexes command".into(),
     })?;
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let mut table_schema = get_or_create_schema(service, &tenant_id, &table)?;
     let num_before = table_schema.indexes.len();
@@ -95,10 +96,11 @@ pub fn drop_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb drop indexes")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let mut table_schema = match service.get_table_schema(&tenant_id, &table) {
         Ok(schema) => schema,
@@ -162,10 +164,11 @@ pub fn list_indexes(
         })?;
 
     let db_name = body.get_str("$db").unwrap_or(DEFAULT_TENANT);
-    let tenant_id = resolve_tenant(db_name)?;
+    let tenant_context = resolve_tenant_context(db_name, "mongodb list indexes")?;
+    let tenant_id = tenant_context.tenant_id().clone();
     let table = TableName::new(collection).map_err(MongoError::from)?;
 
-    ensure_tenant(service, &tenant_id)?;
+    ensure_tenant(service, &tenant_context)?;
 
     let table_schema = match service.get_table_schema(&tenant_id, &table) {
         Ok(schema) => schema,

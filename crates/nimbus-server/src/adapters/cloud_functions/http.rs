@@ -24,6 +24,7 @@ use crate::execution::invocations::{
 };
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::state::{AppError, AppState};
+use crate::tenant_isolation::TenantIsolationContext;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,7 +81,15 @@ pub(crate) async fn http_handler(
                 query.0,
                 body,
             )?;
-            execute_http_target(state, registry, tenant_id, entrypoint, args, None)
+            execute_http_target(
+                state,
+                registry,
+                deployment.generation,
+                tenant_id,
+                entrypoint,
+                args,
+                None,
+            )
         }
         CloudFunctionsHttpExposure::Callable => {
             handle_callable_target(
@@ -202,15 +211,28 @@ fn header_value_contains(headers: &HeaderMap, name: header::HeaderName, needle: 
 fn execute_http_target(
     state: Arc<AppState>,
     registry: Arc<CloudFunctionsRegistry>,
+    deployment_generation: u64,
     tenant_id: TenantId,
     function_name: String,
     args: Value,
     auth: Option<InvocationAuth>,
 ) -> std::result::Result<Response, AppError> {
     let server_request_id = next_runtime_server_request_id("cloud-functions-http");
+    let isolation = TenantIsolationContext::application(
+        tenant_id.clone(),
+        normalize_principal_context(auth.as_ref()),
+        "cloud_functions.http_runtime",
+    )
+    .with_deployment_generation(deployment_generation);
+    isolation.ensure_deployment_generation_matches(
+        deployment_generation,
+        "cloud functions http runtime deployment",
+    )?;
+    let bundle = registry.runtime_bundle();
+    isolation.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
     let services = state
         .runtime_service_registry()
-        .snapshot_for_tenant(&tenant_id);
+        .snapshot_for_tenant(isolation.tenant_id());
     let request = InvocationRequest {
         kind: InvocationKind::Mutation,
         function_name,
@@ -221,11 +243,7 @@ fn execute_http_target(
         services: services.clone(),
     };
     let bridge = Arc::new(CloudFunctionsHostBridge::build(
-        RuntimeHostScope::new(
-            state.service.clone(),
-            registry.runtime_policy(),
-            tenant_id.clone(),
-        ),
+        RuntimeHostScope::new(state.service.clone(), registry.runtime_policy(), isolation),
         RuntimeHostInvocation::new(
             normalize_principal_context(auth.as_ref()),
             Some(server_request_id.clone()),
@@ -237,7 +255,7 @@ fn execute_http_target(
         &registry.runtime_executor(),
         registry.runtime_policy(),
         bridge.clone(),
-        registry.runtime_bundle(),
+        bundle,
         request,
         RuntimeBundleInvocationOptions::enforcing_policy_limit(
             &tenant_id,

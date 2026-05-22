@@ -37,7 +37,7 @@ use super::write_stream::{
 use crate::adapters::firebase::resource_names::{self, FirestoreDatabaseName};
 use crate::adapters::firebase::{
     firestore_document_name, resource_name_error_to_core, storage_table_for_collection_path,
-    tenant_id_for_database,
+    tenant_context_for_database,
 };
 use crate::application_auth::{
     extract_bearer_token_from_metadata, grpc_status_from_app_error,
@@ -513,14 +513,16 @@ impl ActiveListenRequestStream {
         );
         let (resume, existence_filter_count) =
             apply_expected_count_resume_policy(resume, prepared_target.expected_count)?;
-        let tenant_id = tenant_id_for_database(&database).map_err(firebase_grpc_status)?;
+        let tenant_context =
+            tenant_context_for_database(&database, &self.principal, "firestore.grpc.listen")
+                .map_err(firebase_grpc_status)?;
         let (sender, receiver) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
         let registration = self
             .state
             .service
             .clone()
             .subscribe_async_with_principal(
-                tenant_id,
+                tenant_context.tenant_id().clone(),
                 prepared_target.query,
                 self.principal.clone(),
                 format!("firestore-listen-{target_id}"),

@@ -38,7 +38,7 @@ pub(super) async fn run_subscription_forwarder(
     service: Arc<nimbus_engine::Service>,
     registry: Arc<ConvexRegistry>,
     runtime_service_registry: Arc<dyn crate::service_registry::RuntimeServiceRegistry>,
-    tenant_id: TenantId,
+    tenant_context: crate::tenant_isolation::TenantIsolationContext,
     subscription_statuses: SubscriptionStatuses,
     runtime_cancellation: HostCallCancellation,
 ) {
@@ -63,7 +63,7 @@ pub(super) async fn run_subscription_forwarder(
                         &service,
                         &registry,
                         &runtime_service_registry,
-                        &tenant_id,
+                        &tenant_context,
                         &transforms,
                         &runtime_cancellation,
                         ConvexSubscriptionEvent {

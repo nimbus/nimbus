@@ -28,7 +28,7 @@ pub(super) async fn handle_runtime_named_subscription(
     let setup = {
         let service = ctx.state.service.clone();
         let registry = ctx.convex_registry.clone();
-        let tenant_id_for_worker = ctx.tenant_id.clone();
+        let tenant_context_for_worker = ctx.tenant_context.clone();
         let name_for_worker = name.clone();
         let args_for_worker = args.clone();
         let cursor_for_worker = cursor.clone();
@@ -37,7 +37,7 @@ pub(super) async fn handle_runtime_named_subscription(
             &service,
             &registry,
             &ctx.state.runtime_service_registry(),
-            &tenant_id_for_worker,
+            &tenant_context_for_worker,
             &name_for_worker,
             &args_for_worker,
             page_size,

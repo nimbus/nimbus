@@ -28,16 +28,17 @@ pub(crate) async fn start_service(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, service_name)): Path<(String, String)>,
 ) -> Result<Json<ServiceLifecycleResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.service.start")?;
     let manager = sandbox_service_manager(&state)?;
     let handle = manager
-        .start_service_async(&tenant_id, &service_name, HostCallCancellation::default())
+        .start_service_for_context_async(&tenant, &service_name, HostCallCancellation::default())
         .await?
-        .ok_or_else(|| service_not_found(&tenant_id, &service_name))?;
-    record_service_event(&state, &tenant_id, "start", &handle).await?;
+        .ok_or_else(|| service_not_found(tenant.tenant_id(), &service_name))?;
+    record_service_event(&state, tenant.tenant_id(), "start", &handle).await?;
 
     Ok(Json(ServiceLifecycleResponse::from_handle(
-        &tenant_id, &handle,
+        tenant.tenant_id(),
+        &handle,
     )))
 }
 
@@ -45,16 +46,17 @@ pub(crate) async fn stop_service(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, service_name)): Path<(String, String)>,
 ) -> Result<Json<ServiceLifecycleResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.service.stop")?;
     let manager = sandbox_service_manager(&state)?;
     let handle = manager
-        .stop_service_async(&tenant_id, &service_name)
+        .stop_service_for_context_async(&tenant, &service_name)
         .await?
-        .ok_or_else(|| service_not_found(&tenant_id, &service_name))?;
-    record_service_event(&state, &tenant_id, "stop", &handle).await?;
+        .ok_or_else(|| service_not_found(tenant.tenant_id(), &service_name))?;
+    record_service_event(&state, tenant.tenant_id(), "stop", &handle).await?;
 
     Ok(Json(ServiceLifecycleResponse::from_handle(
-        &tenant_id, &handle,
+        tenant.tenant_id(),
+        &handle,
     )))
 }
 
@@ -62,16 +64,17 @@ pub(crate) async fn restart_service(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, service_name)): Path<(String, String)>,
 ) -> Result<Json<ServiceLifecycleResponse>, AppError> {
-    let tenant_id = parse_user_tenant_id(tenant_id)?;
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.service.restart")?;
     let manager = sandbox_service_manager(&state)?;
     let handle = manager
-        .restart_service_async(&tenant_id, &service_name, HostCallCancellation::default())
+        .restart_service_for_context_async(&tenant, &service_name, HostCallCancellation::default())
         .await?
-        .ok_or_else(|| service_not_found(&tenant_id, &service_name))?;
-    record_service_event(&state, &tenant_id, "restart", &handle).await?;
+        .ok_or_else(|| service_not_found(tenant.tenant_id(), &service_name))?;
+    record_service_event(&state, tenant.tenant_id(), "restart", &handle).await?;
 
     Ok(Json(ServiceLifecycleResponse::from_handle(
-        &tenant_id, &handle,
+        tenant.tenant_id(),
+        &handle,
     )))
 }
 

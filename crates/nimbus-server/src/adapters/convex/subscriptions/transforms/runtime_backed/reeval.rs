@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use nimbus_core::{Error, Page, TenantId};
+use nimbus_core::{Error, Page};
 use nimbus_runtime::{
     HostCallCancellation, InvocationAuth, InvocationKind, InvocationRequest, InvocationServices,
 };
@@ -16,12 +16,13 @@ use crate::adapters::convex::execution::{
 use crate::adapters::convex::subscriptions::next_runtime_subscription_server_request_id;
 use crate::execution::read_tracking::{RuntimeReadSet, commit_intersects_runtime_read_set};
 use crate::service_registry::RuntimeServiceRegistry;
+use crate::tenant_isolation::TenantIsolationContext;
 
 pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a> {
     pub(super) service: &'a Arc<nimbus_engine::Service>,
     pub(super) registry: &'a Arc<ConvexRegistry>,
     pub(super) runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
-    pub(super) tenant_id: &'a TenantId,
+    pub(super) tenant_context: &'a TenantIsolationContext,
     pub(super) transforms: &'a RwLock<ConvexSubscriptionTransforms>,
     pub(super) runtime_cancellation: &'a HostCallCancellation,
     pub(super) event: ConvexSubscriptionEvent<'a>,
@@ -32,7 +33,7 @@ impl<'a> RuntimeTransformContext<'a> {
         service: &'a Arc<nimbus_engine::Service>,
         registry: &'a Arc<ConvexRegistry>,
         runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
-        tenant_id: &'a TenantId,
+        tenant_context: &'a TenantIsolationContext,
         transforms: &'a RwLock<ConvexSubscriptionTransforms>,
         runtime_cancellation: &'a HostCallCancellation,
         event: ConvexSubscriptionEvent<'a>,
@@ -41,7 +42,7 @@ impl<'a> RuntimeTransformContext<'a> {
             service,
             registry,
             runtime_service_registry,
-            tenant_id,
+            tenant_context,
             transforms,
             runtime_cancellation,
             event,
@@ -53,7 +54,10 @@ impl<'a> RuntimeTransformContext<'a> {
             self.service,
             self.registry,
             self.runtime_service_registry,
-            self.tenant_id,
+            self.tenant_context.reauthorize_application(
+                nimbus_core::PrincipalContext::anonymous(),
+                "convex_subscription_runtime",
+            ),
         )
     }
 }
@@ -198,7 +202,7 @@ fn should_skip_runtime_transform(
         && let Some(read_set) = read_set
         && !commit_intersects_runtime_read_set(
             context.service,
-            context.tenant_id,
+            context.tenant_context.tenant_id(),
             commit,
             read_set,
             context.event.deleted_documents,

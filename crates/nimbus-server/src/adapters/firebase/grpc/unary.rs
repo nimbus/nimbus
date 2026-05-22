@@ -51,7 +51,7 @@ use crate::adapters::firebase::{
     get_document_for_database, list_collection_ids_for_database, list_collection_ids_request,
     list_collection_ids_request_error_to_core, resource_name_error_to_core,
     rollback_transaction_session_for_database, run_aggregation_query_for_database,
-    run_query_documents_for_database,
+    run_query_documents_for_database, tenant_context_for_database,
 };
 use crate::application_auth::{
     extract_bearer_token_from_metadata, grpc_status_from_app_error,
@@ -86,9 +86,13 @@ pub(super) async fn handle_commit(
     let (state, auth) = resolve_request_auth(service, &request).await?;
     let request = request.into_inner();
     let database = parse_database_name(&request.database)?;
+    let tenant_context =
+        tenant_context_for_database(&database, &auth.principal, "firestore.grpc.commit")
+            .map_err(firebase_grpc_status)?;
     let batch = lower_write_batch(&request.writes, &database)?;
     let outcome = commit_batch_for_database(
         &state,
+        &tenant_context,
         &database,
         &auth.principal,
         batch,
@@ -115,6 +119,12 @@ pub(super) async fn handle_get_document(
     let parsed_document = resource_names::parse_document_name(&request.name)
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        &parsed_document.database,
+        &auth.principal,
+        "firestore.grpc.get_document",
+    )
+    .map_err(firebase_grpc_status)?;
     let mask = lower_optional_document_mask(request.mask)?;
     let transaction = match request.consistency_selector {
         None => None,
@@ -129,6 +139,7 @@ pub(super) async fn handle_get_document(
     };
     let document = get_document_for_database(
         &state,
+        &tenant_context,
         &parsed_document.database,
         &auth.principal,
         &parsed_document.document_path,
@@ -150,8 +161,17 @@ pub(super) async fn handle_batch_get_documents(
 ) -> Result<Response<tonic::codegen::BoxStream<BatchGetDocumentsResponse>>, Status> {
     let (state, auth) = resolve_request_auth(service, &request).await?;
     let (database, request) = lower_batch_get_request(request.into_inner())?;
-    let outcome = batch_get_documents_for_database(&state, &database, &auth.principal, &request)
-        .map_err(firebase_grpc_status)?;
+    let tenant_context =
+        tenant_context_for_database(&database, &auth.principal, "firestore.grpc.batch_get")
+            .map_err(firebase_grpc_status)?;
+    let outcome = batch_get_documents_for_database(
+        &state,
+        &tenant_context,
+        &database,
+        &auth.principal,
+        &request,
+    )
+    .map_err(firebase_grpc_status)?;
     let read_time = Some(prost_timestamp_from_core(outcome.read_time)?);
     let responses = outcome
         .entries
@@ -185,12 +205,21 @@ pub(super) async fn handle_batch_write(
     let (state, auth) = resolve_request_auth(service, &request).await?;
     let request = request.into_inner();
     let database = parse_database_name(&request.database)?;
+    let tenant_context =
+        tenant_context_for_database(&database, &auth.principal, "firestore.grpc.batch_write")
+            .map_err(firebase_grpc_status)?;
     let batch = lower_write_batch(&request.writes, &database)?;
     batch_write_request::reject_duplicate_write_targets(&batch.writes)
         .map_err(batch_write_request_error_to_core)
         .map_err(firebase_grpc_status)?;
-    let outcome = batch_write_for_database(&state, &database, &auth.principal, batch.writes)
-        .map_err(firebase_grpc_status)?;
+    let outcome = batch_write_for_database(
+        &state,
+        &tenant_context,
+        &database,
+        &auth.principal,
+        batch.writes,
+    )
+    .map_err(firebase_grpc_status)?;
 
     Ok(Response::new(BatchWriteResponse {
         write_results: outcome
@@ -264,9 +293,16 @@ pub(super) async fn handle_list_documents(
     let parent = resource_names::parse_parent_name(&request.parent)
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        &parent.database,
+        &auth.principal,
+        "firestore.grpc.list_documents",
+    )
+    .map_err(firebase_grpc_status)?;
     let response_mask = lower_optional_document_mask(request.mask)?;
     let outcome = run_query_documents_for_database(
         &state,
+        &tenant_context,
         &parent.database,
         &auth.principal,
         parent.parent_document_path.as_ref(),
@@ -305,7 +341,7 @@ pub(super) async fn handle_list_collection_ids(
     service: &FirestoreGrpcService,
     request: Request<ListCollectionIdsRequest>,
 ) -> Result<Response<proto::ListCollectionIdsResponse>, Status> {
-    let (state, _auth) = resolve_request_auth(service, &request).await?;
+    let (state, auth) = resolve_request_auth(service, &request).await?;
     let request = request.into_inner();
     if let Some(proto::list_collection_ids_request::ConsistencySelector::ReadTime(_)) =
         request.consistency_selector.as_ref()
@@ -336,8 +372,15 @@ pub(super) async fn handle_list_collection_ids(
     let parent = resource_names::parse_parent_name(&request.parent)
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        &parent.database,
+        &auth.principal,
+        "firestore.grpc.list_collection_ids",
+    )
+    .map_err(firebase_grpc_status)?;
     let page = list_collection_ids_for_database(
         &state,
+        &tenant_context,
         &parent.database,
         parent.parent_document_path.as_ref(),
         &parsed_request,
@@ -367,6 +410,12 @@ pub(super) async fn handle_create_document(
     let parent = resource_names::parse_parent_name(&request.parent)
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        &parent.database,
+        &auth.principal,
+        "firestore.grpc.create_document",
+    )
+    .map_err(firebase_grpc_status)?;
     let collection_target =
         resource_names::parse_collection_target(&request.parent, &request.collection_id)
             .map_err(resource_name_error_to_core)
@@ -401,10 +450,18 @@ pub(super) async fn handle_create_document(
         }],
         &parent.database,
     )?;
-    commit_batch_for_database(&state, &parent.database, &auth.principal, batch, None)
-        .map_err(firebase_grpc_status)?;
+    commit_batch_for_database(
+        &state,
+        &tenant_context,
+        &parent.database,
+        &auth.principal,
+        batch,
+        None,
+    )
+    .map_err(firebase_grpc_status)?;
     let created = get_document_for_database(
         &state,
+        &tenant_context,
         &parent.database,
         &auth.principal,
         &document_path,
@@ -427,9 +484,21 @@ pub(super) async fn handle_begin_transaction(
     let (state, auth) = resolve_request_auth(service, &request).await?;
     let request = request.into_inner();
     let database = parse_database_name(&request.database)?;
+    let tenant_context = tenant_context_for_database(
+        &database,
+        &auth.principal,
+        "firestore.grpc.begin_transaction",
+    )
+    .map_err(firebase_grpc_status)?;
     let mode = lower_transaction_mode(request.options)?;
-    let session = begin_transaction_session_for_database(&state, &database, &auth.principal, mode)
-        .map_err(firebase_grpc_status)?;
+    let session = begin_transaction_session_for_database(
+        &state,
+        &tenant_context,
+        &database,
+        &auth.principal,
+        mode,
+    )
+    .map_err(firebase_grpc_status)?;
 
     Ok(Response::new(BeginTransactionResponse {
         transaction: session.token.as_str().as_bytes().to_vec(),
@@ -443,8 +512,12 @@ pub(super) async fn handle_rollback(
     let (state, auth) = resolve_request_auth(service, &request).await?;
     let request = request.into_inner();
     let database = parse_database_name(&request.database)?;
+    let tenant_context =
+        tenant_context_for_database(&database, &auth.principal, "firestore.grpc.rollback")
+            .map_err(firebase_grpc_status)?;
     rollback_transaction_session_for_database(
         &state,
+        &tenant_context,
         &database,
         &auth.principal,
         &request.transaction,
@@ -465,6 +538,12 @@ pub(super) async fn handle_update_document(
     let parsed_document = resource_names::parse_document_name(&document.name)
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        &parsed_document.database,
+        &auth.principal,
+        "firestore.grpc.update_document",
+    )
+    .map_err(firebase_grpc_status)?;
     let response_mask = lower_optional_document_mask(request.mask)?;
     let document_name = document.name.clone();
     let document_path = parsed_document.document_path.clone();
@@ -479,6 +558,7 @@ pub(super) async fn handle_update_document(
     )?;
     commit_batch_for_database(
         &state,
+        &tenant_context,
         &parsed_document.database,
         &auth.principal,
         batch,
@@ -487,6 +567,7 @@ pub(super) async fn handle_update_document(
     .map_err(firebase_grpc_status)?;
     let updated = get_document_for_database(
         &state,
+        &tenant_context,
         &parsed_document.database,
         &auth.principal,
         &document_path,
@@ -511,6 +592,12 @@ pub(super) async fn handle_delete_document(
     let parsed_document = resource_names::parse_document_name(&request.name)
         .map_err(resource_name_error_to_core)
         .map_err(firebase_grpc_status)?;
+    let tenant_context = tenant_context_for_database(
+        &parsed_document.database,
+        &auth.principal,
+        "firestore.grpc.delete_document",
+    )
+    .map_err(firebase_grpc_status)?;
     let batch = lower_write_batch(
         &[proto::Write {
             operation: Some(proto::write::Operation::Delete(request.name)),
@@ -522,6 +609,7 @@ pub(super) async fn handle_delete_document(
     )?;
     commit_batch_for_database(
         &state,
+        &tenant_context,
         &parsed_document.database,
         &auth.principal,
         batch,
@@ -537,8 +625,15 @@ pub(super) async fn handle_run_query(
 ) -> Result<Response<tonic::codegen::BoxStream<RunQueryResponse>>, Status> {
     let (state, auth) = resolve_request_auth(service, &request).await?;
     let request = lower_run_query_request(request.into_inner())?;
+    let tenant_context = tenant_context_for_database(
+        &request.database,
+        &auth.principal,
+        "firestore.grpc.run_query",
+    )
+    .map_err(firebase_grpc_status)?;
     let outcome = run_query_documents_for_database(
         &state,
+        &tenant_context,
         &request.database,
         &auth.principal,
         request.parent_document_path.as_ref(),
@@ -592,8 +687,15 @@ pub(super) async fn handle_run_aggregation_query(
 ) -> Result<Response<tonic::codegen::BoxStream<RunAggregationQueryResponse>>, Status> {
     let (state, auth) = resolve_request_auth(service, &request).await?;
     let request = lower_run_aggregation_query_request(request.into_inner())?;
+    let tenant_context = tenant_context_for_database(
+        &request.database,
+        &auth.principal,
+        "firestore.grpc.run_aggregation_query",
+    )
+    .map_err(firebase_grpc_status)?;
     let outcome = run_aggregation_query_for_database(
         &state,
+        &tenant_context,
         &request.database,
         &auth.principal,
         request.parent_document_path.as_ref(),

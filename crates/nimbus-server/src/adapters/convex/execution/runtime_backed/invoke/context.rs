@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::{Error, TenantId};
+use nimbus_core::Error;
 use nimbus_runtime::{
     HostCallCancellation, InvocationKind, InvocationRequest, InvocationServices, RuntimeBundle,
 };
@@ -16,6 +16,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_on_worker_with_host_state,
 };
 use crate::service_registry::RuntimeServiceRegistry;
+use crate::tenant_isolation::TenantIsolationContext;
 
 use super::super::super::runtime_error_to_core;
 
@@ -23,7 +24,7 @@ pub(in crate::adapters::convex) struct RuntimeInvocationContext<'a> {
     service: &'a Arc<nimbus_engine::Service>,
     registry: &'a Arc<ConvexRegistry>,
     runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
-    tenant_id: &'a TenantId,
+    isolation: TenantIsolationContext,
 }
 
 impl<'a> RuntimeInvocationContext<'a> {
@@ -31,25 +32,28 @@ impl<'a> RuntimeInvocationContext<'a> {
         service: &'a Arc<nimbus_engine::Service>,
         registry: &'a Arc<ConvexRegistry>,
         runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
-        tenant_id: &'a TenantId,
+        isolation: TenantIsolationContext,
     ) -> Self {
         Self {
             service,
             registry,
             runtime_service_registry,
-            tenant_id,
+            isolation,
         }
     }
 
     pub(in crate::adapters::convex) fn runtime_services(&self) -> InvocationServices {
         self.runtime_service_registry
-            .snapshot_for_tenant(self.tenant_id)
+            .snapshot_for_tenant(self.isolation.tenant_id())
     }
 
     pub(in crate::adapters::convex) fn required_runtime_bundle(
         &self,
     ) -> Result<RuntimeBundle, Error> {
-        self.registry.required_runtime_bundle()
+        let bundle = self.registry.required_runtime_bundle()?;
+        self.isolation
+            .ensure_runtime_bundle_matches(&bundle, "convex runtime bundle")?;
+        Ok(bundle)
     }
 
     pub(in crate::adapters::convex) async fn invoke_with_trace_async_cancellable(
@@ -64,7 +68,7 @@ impl<'a> RuntimeInvocationContext<'a> {
             ConvexHostBridgeScope::new(
                 self.service.clone(),
                 self.registry.clone(),
-                self.tenant_id.clone(),
+                self.isolation.clone(),
                 self.runtime_service_registry.clone(),
             ),
             ConvexHostBridgeInvocation::new(
@@ -85,7 +89,7 @@ impl<'a> RuntimeInvocationContext<'a> {
             bundle,
             request,
             RuntimeBundleInvocationOptions::enforcing_policy_limit(
-                self.tenant_id,
+                self.isolation.tenant_id(),
                 server_request_id.as_deref(),
                 Some(cancellation),
             ),

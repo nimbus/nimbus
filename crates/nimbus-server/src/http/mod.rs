@@ -18,6 +18,7 @@ use crate::protocol::{
     VersionInfoResponse,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
+use crate::tenant_isolation::TenantIsolationContext;
 
 mod deploy;
 mod documents;
@@ -70,4 +71,12 @@ fn parse_document_id(value: &str) -> Result<DocumentId, AppError> {
 
 fn parse_user_tenant_id(value: impl Into<String>) -> Result<TenantId, AppError> {
     crate::system_tenant::user_tenant_id(value).map_err(AppError::from)
+}
+
+fn parse_operator_tenant_context(
+    value: impl Into<String>,
+    surface: &'static str,
+) -> Result<TenantIsolationContext, AppError> {
+    parse_user_tenant_id(value)
+        .map(|tenant_id| TenantIsolationContext::operator(tenant_id, surface))
 }

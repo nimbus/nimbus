@@ -1,13 +1,15 @@
 use super::invoke::invoke_named_convex_function_with_trace_async_cancellable;
 use super::*;
+use crate::application_auth::normalize_principal_context;
 use crate::service_registry::RuntimeServiceRegistry;
+use crate::tenant_isolation::TenantIsolationContext;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_async(
     service: &Arc<nimbus_engine::Service>,
     registry: &Arc<ConvexRegistry>,
     runtime_service_registry: &Arc<dyn RuntimeServiceRegistry>,
-    tenant_id: &TenantId,
+    tenant_context: &TenantIsolationContext,
     name: &str,
     args: &Value,
     page_size: Option<usize>,
@@ -16,8 +18,15 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
     cancellation: HostCallCancellation,
     server_request_id: Option<String>,
 ) -> Result<ConvexRuntimeSubscriptionSetup, Error> {
-    let context =
-        RuntimeInvocationContext::new(service, registry, runtime_service_registry, tenant_id);
+    let context = RuntimeInvocationContext::new(
+        service,
+        registry,
+        runtime_service_registry,
+        tenant_context.reauthorize_application(
+            normalize_principal_context(auth.as_ref()),
+            "convex_subscription_runtime",
+        ),
+    );
     let kind = if page_size.is_some() {
         InvocationKind::PaginatedQuery
     } else {

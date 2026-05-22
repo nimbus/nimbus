@@ -9,6 +9,7 @@ pub(crate) mod capabilities;
 pub(crate) mod responses;
 
 use crate::execution::host_state::RuntimeHostState;
+use crate::tenant_isolation::TenantIsolationContext;
 
 pub(crate) struct RuntimeHostBootstrap {
     pub(crate) principal: PrincipalContext,
@@ -72,19 +73,19 @@ pub(crate) fn commit_runtime_mutation_execution_unit(
 pub(crate) struct RuntimeHostScope {
     service: Arc<Service>,
     runtime_policy: Arc<RuntimePolicy>,
-    tenant_id: TenantId,
+    isolation: TenantIsolationContext,
 }
 
 impl RuntimeHostScope {
     pub(crate) fn new(
         service: Arc<Service>,
         runtime_policy: Arc<RuntimePolicy>,
-        tenant_id: TenantId,
+        isolation: TenantIsolationContext,
     ) -> Self {
         Self {
             service,
             runtime_policy,
-            tenant_id,
+            isolation,
         }
     }
 
@@ -138,7 +139,7 @@ impl RuntimeHostContext {
     ) -> Result<Self> {
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             service: &scope.service,
-            tenant_id: &scope.tenant_id,
+            tenant_id: scope.isolation.tenant_id(),
             principal: invocation.principal,
             server_request_id: invocation.server_request_id,
             invocation_kind: invocation.invocation_kind,
@@ -151,7 +152,7 @@ impl RuntimeHostContext {
         })?;
         Ok(Self {
             service: scope.service,
-            tenant_id: scope.tenant_id,
+            tenant_id: scope.isolation.tenant_id().clone(),
             principal: bootstrap.principal,
             execution_unit: bootstrap.execution_unit,
             state: bootstrap.state,
