@@ -78,7 +78,7 @@ Reviewed on 2026-05-22.
 | MicroVM service compute | krun launches one service sandbox as one microVM; service manager does not intentionally share a VM across tenants. Runtime permission model separates `in_process_untrusted` from `microvm_service`. | Need hard admission tests that prevent multiple tenants sharing a guest, enforce per-tenant/per-sandbox quotas, and prove workloads with broad OS needs move to `microvm_service` or a trusted tier. |
 | Volumes/files | Compose volumes are parsed/rendered but not admitted into the krun bundle; current bundle only adds Nimbus-owned read-only helper mounts. | Bind mounts must be rejected by default. Named volumes need Nimbus-owned paths under the tenant root, explicit read/write policy, quota, cleanup, and no cross-tenant reuse unless a future shared-read-only artifact policy is added. |
 | Images/builds | OCI materializer verifies pulled blob digests and sanitizes archive paths before extraction. | Production image admission still needs digest-pinned references and provenance/signature policy before tenant-controlled images are mounted or extracted. |
-| System/control data | `_nimbus` records services, ports, jobs, machines, and events with tenant IDs for operator visibility. | Tenant runtime/API surfaces must not expose `_nimbus` as a tenant. Operator-only control-plane reads need explicit auth and audit, not tenant path access. |
+| System/control data | `_nimbus` records services, ports, jobs, machines, and events with tenant IDs for operator visibility. System Convex routes use the system registry, require local-admin auth when local security is configured, and application runtime HostBridge reads stay scoped to the application tenant even when querying tables with system-control names such as `routes`. | Native HTTP/API tenant authorization still needs a full tenant-membership/session model beyond local-operator authority. |
 
 ## Phase Ledger
 
@@ -1190,7 +1190,38 @@ Remaining before TIC5 is done:
   principal authority today.
 - Native HTTP/local operator routes need the scoped session and tenant
   membership model noted above.
-- `_nimbus` visibility proof remains open.
+
+### 2026-05-22 TIC5 _nimbus Operator Visibility Proof
+
+Added the tenant-runtime side of the `_nimbus` visibility proof.
+
+Completed in this checkpoint:
+
+- Added a local-server security test with both a system Convex registry and an
+  application Convex runtime bundle.
+- Proved an application-tenant runtime query that asks HostBridge for the
+  `routes` table receives only the application tenant's table state, not the
+  system tenant's seeded route inventory.
+- In the same test, proved `/convex/_nimbus/query` rejects missing local-admin
+  auth with `401 Unauthorized` when local security is configured and returns
+  the seeded system route inventory only with the local-admin bearer token.
+
+Verification evidence:
+
+- `cargo test -p nimbus-server tenant_runtime_cannot_read_system_tenant_routes -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 731 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+- `cargo test -p nimbus-server local_server_security -- --nocapture`
+  - result: pass; 13 passed, 0 failed, 719 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+
+Remaining before TIC5 is done:
+
+- Cloud Functions public unauthenticated HTTP exposure needs an explicit note or
+  policy decision separate from callable auth, because it does not carry bearer
+  principal authority today.
+- Native HTTP/local operator routes need the scoped session and tenant
+  membership model noted above.
 
 ### 2026-05-22 TIC3 Rootful Linux Localhost-Only Proof
 

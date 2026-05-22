@@ -728,6 +728,112 @@ async fn system_tenant_convex_routes_require_local_admin_auth_when_configured() 
 }
 
 #[tokio::test]
+async fn tenant_runtime_cannot_read_system_tenant_routes() {
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, token) = local_server_security(temp.path());
+    let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
+    let application_registry = convex_registry_with_routes_and_bundle(
+        json!([
+            {
+                "name": "notes:systemRoutes",
+                "kind": "query",
+                "plan": {
+                    "table": "routes",
+                    "filters": [],
+                    "order": null,
+                    "limit": null
+                }
+            }
+        ]),
+        json!([]),
+        Some(
+            r#"
+globalThis.__nimbusInvoke = async function(request) {
+  const routes = await globalThis.__nimbusAsyncHostValue("op_nimbus_ctx_query", {
+    query: {
+      table: "routes",
+      filters: [],
+      order: null,
+      limit: null,
+    },
+    session_id: `${request.kind}:${request.function_name}`,
+  });
+  return {
+    status: "ok",
+    value: routes,
+  };
+};
+
+export {};
+"#,
+        ),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    fixture.create_tenant("demo", Service::create_tenant);
+    let service = fixture.service();
+    crate::system_tenant::prepare_system_tenant_async(&service, None)
+        .await
+        .expect("system tenant should prepare");
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(service)
+            .with_system_convex_registry(system_registry)
+            .with_convex(application_registry)
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+    let api = HttpApiFixture::new(&server);
+
+    let application_routes = api
+        .convex_named_query("demo", "notes:systemRoutes", json!({}))
+        .await;
+    let application_status = application_routes.status();
+    let application_body = application_routes
+        .json::<serde_json::Value>()
+        .await
+        .expect("application runtime query body should parse");
+    assert_eq!(
+        application_status,
+        StatusCode::OK,
+        "application runtime query should complete against its own tenant: {application_body}"
+    );
+    assert_eq!(
+        application_body,
+        json!([]),
+        "application runtime HostBridge query must not expose _nimbus.routes"
+    );
+
+    let missing_auth = server
+        .client()
+        .post(server.http_url("/convex/_nimbus/query"))
+        .json(&json!({ "name": "routes:list", "args": {} }))
+        .send()
+        .await
+        .expect("missing auth system query should send");
+    assert_eq!(missing_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let system_routes = server
+        .client()
+        .post(server.http_url("/convex/_nimbus/query"))
+        .bearer_auth(&token.token)
+        .json(&json!({ "name": "routes:list", "args": {} }))
+        .send()
+        .await
+        .expect("operator-authenticated system query should send");
+    assert_eq!(system_routes.status(), StatusCode::OK);
+    let routes = system_routes
+        .json::<serde_json::Value>()
+        .await
+        .expect("operator-authenticated system route body should parse");
+    assert!(
+        routes.as_array().is_some_and(|routes| routes
+            .iter()
+            .any(|route| route["path"] == "/health" && route["adapter"] == "native")),
+        "operator-authenticated _nimbus query should return system route inventory: {routes}"
+    );
+}
+
+#[tokio::test]
 async fn convex_websocket_bad_origin_is_rejected_before_auth() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
