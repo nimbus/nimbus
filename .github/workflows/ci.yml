@@ -82,6 +82,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       # `make clippy` triggers the UI dependency graph (codegen + SPA build)
       # before invoking cargo, so nimbus-server's `include_str!`s of the
@@ -131,6 +133,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
@@ -171,6 +175,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       - name: Run isolated runtime test lane
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
@@ -217,6 +223,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -312,6 +320,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       - name: Start libsql provider fixture
         run: |
@@ -423,6 +433,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       # The server harness surface compiles nimbus-server, which include_str!s
       # the convex codegen output and rust-embeds the SPA dist. `make build-ui`
@@ -489,6 +501,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       # `make build-ui` runs codegen + SPA build via the Makefile dependency
       # graph so the nimbus-server crate compiles regardless of matrix surface.
@@ -653,6 +667,8 @@ jobs:
           cache-directories: ~/.cargo/.rusty_v8
           cache-on-failure: "true"
           cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
