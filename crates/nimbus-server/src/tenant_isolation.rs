@@ -30,9 +30,10 @@ impl TenantIsolationAuthority {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TenantIsolationMode {
     LocalDevelopment,
+    #[default]
     Production,
 }
 
@@ -42,12 +43,6 @@ impl TenantIsolationMode {
             Self::LocalDevelopment => "local-development",
             Self::Production => "production",
         }
-    }
-}
-
-impl Default for TenantIsolationMode {
-    fn default() -> Self {
-        Self::Production
     }
 }
 
@@ -442,10 +437,10 @@ fn is_loopback_or_wildcard_network_grant(grant: &str) -> bool {
 
 fn network_grant_host(grant: &str) -> &str {
     let grant = grant.trim();
-    if let Some(rest) = grant.strip_prefix('[') {
-        if let Some((host, _)) = rest.split_once(']') {
-            return host;
-        }
+    if let Some(rest) = grant.strip_prefix('[')
+        && let Some((host, _)) = rest.split_once(']')
+    {
+        return host;
     }
     if grant.matches(':').count() == 1 {
         return grant.split_once(':').map_or(grant, |(host, _)| host);

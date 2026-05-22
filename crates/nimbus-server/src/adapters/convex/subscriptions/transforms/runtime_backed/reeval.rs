@@ -19,39 +19,19 @@ use crate::service_registry::RuntimeServiceRegistry;
 use crate::tenant_isolation::{TenantIsolationContext, TenantIsolationMode};
 
 pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a> {
-    pub(super) service: &'a Arc<nimbus_engine::Service>,
-    pub(super) registry: &'a Arc<ConvexRegistry>,
-    pub(super) runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
-    pub(super) tenant_context: &'a TenantIsolationContext,
-    pub(super) transforms: &'a RwLock<ConvexSubscriptionTransforms>,
-    pub(super) runtime_cancellation: &'a HostCallCancellation,
-    pub(super) tenant_isolation_mode: TenantIsolationMode,
-    pub(super) event: ConvexSubscriptionEvent<'a>,
+    pub(in crate::adapters::convex::subscriptions) service: &'a Arc<nimbus_engine::Service>,
+    pub(in crate::adapters::convex::subscriptions) registry: &'a Arc<ConvexRegistry>,
+    pub(in crate::adapters::convex::subscriptions) runtime_service_registry:
+        &'a Arc<dyn RuntimeServiceRegistry>,
+    pub(in crate::adapters::convex::subscriptions) tenant_context: &'a TenantIsolationContext,
+    pub(in crate::adapters::convex::subscriptions) transforms:
+        &'a RwLock<ConvexSubscriptionTransforms>,
+    pub(in crate::adapters::convex::subscriptions) runtime_cancellation: &'a HostCallCancellation,
+    pub(in crate::adapters::convex::subscriptions) tenant_isolation_mode: TenantIsolationMode,
+    pub(in crate::adapters::convex::subscriptions) event: ConvexSubscriptionEvent<'a>,
 }
 
 impl<'a> RuntimeTransformContext<'a> {
-    pub(in crate::adapters::convex::subscriptions) fn new(
-        service: &'a Arc<nimbus_engine::Service>,
-        registry: &'a Arc<ConvexRegistry>,
-        runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
-        tenant_context: &'a TenantIsolationContext,
-        transforms: &'a RwLock<ConvexSubscriptionTransforms>,
-        runtime_cancellation: &'a HostCallCancellation,
-        tenant_isolation_mode: TenantIsolationMode,
-        event: ConvexSubscriptionEvent<'a>,
-    ) -> Self {
-        Self {
-            service,
-            registry,
-            runtime_service_registry,
-            tenant_context,
-            transforms,
-            runtime_cancellation,
-            tenant_isolation_mode,
-            event,
-        }
-    }
-
     fn runtime_invocation_context(&self) -> RuntimeInvocationContext<'_> {
         RuntimeInvocationContext::new(
             self.service,
