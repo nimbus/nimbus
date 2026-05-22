@@ -19,6 +19,7 @@ use crate::state::record_authenticated_usage;
 
 const FIRESTORE_LISTEN_AUTH_SUBPROTOCOL_PREFIX: &str = "nimbus.firebase.auth.";
 pub(crate) const FIRESTORE_LISTEN_WEBSOCKET_PROTOCOL: &str = "nimbus.firebase.listen.v1";
+const MAX_CLOSE_REASON_BYTES: usize = 123;
 
 pub(crate) async fn listen_websocket(
     Extension(service): Extension<FirestoreGrpcService>,
@@ -174,9 +175,28 @@ where
     let _ = sender
         .send(Message::Close(Some(CloseFrame {
             code,
-            reason: reason.into().into(),
+            reason: websocket_close_reason(reason.into()).into(),
         })))
         .await;
+}
+
+fn websocket_close_reason(reason: String) -> String {
+    if reason.len() <= MAX_CLOSE_REASON_BYTES {
+        return reason;
+    }
+    let marker = "...";
+    let available = MAX_CLOSE_REASON_BYTES - marker.len();
+    let head_budget = available * 3 / 4;
+    let tail_budget = available - head_budget;
+    let mut head_end = head_budget;
+    while !reason.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+    let mut tail_start = reason.len() - tail_budget;
+    while !reason.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    format!("{}{}{}", &reason[..head_end], marker, &reason[tail_start..])
 }
 
 fn resolve_upgrade_bearer(headers: &HeaderMap) -> Result<Option<String>, Status> {
@@ -244,4 +264,27 @@ fn extract_subprotocol_bearer(headers: &HeaderMap) -> Result<Option<String>, Sta
         ));
     }
     Ok(Some(token))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn websocket_close_reason_preserves_frame_limit() {
+        let reason = format!("{}{}", "a".repeat(130), "b".repeat(130));
+        let close_reason = websocket_close_reason(reason);
+
+        assert!(close_reason.len() <= MAX_CLOSE_REASON_BYTES);
+        assert!(close_reason.starts_with("aaaaaaaa"));
+        assert!(close_reason.ends_with("bbbbbbbb"));
+        assert!(close_reason.contains("..."));
+    }
+
+    #[test]
+    fn websocket_close_reason_preserves_short_reasons() {
+        let reason = "permission denied".to_string();
+
+        assert_eq!(websocket_close_reason(reason.clone()), reason);
+    }
 }
