@@ -46,7 +46,7 @@ impl TenantIsolationMode {
 
 impl Default for TenantIsolationMode {
     fn default() -> Self {
-        Self::LocalDevelopment
+        Self::Production
     }
 }
 
@@ -457,6 +457,14 @@ mod tests {
             PrincipalContext::anonymous(),
             "test",
         )
+    }
+
+    #[test]
+    fn tenant_isolation_mode_defaults_to_production() {
+        assert_eq!(
+            TenantIsolationMode::default(),
+            TenantIsolationMode::Production
+        );
     }
 
     #[test]
