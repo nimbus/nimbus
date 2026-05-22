@@ -33,6 +33,16 @@ CI_YML=".github/workflows/ci.yml"
 DESKTOP_UI_YML=".github/workflows/desktop-ui.yml"
 NODE_COMPAT_YML=".github/workflows/node-compat-nightly.yml"
 
+# CM1 (post-CC closeout) consolidated the sccache + Swatinem + toolchain
+# bootstrap into a composite action. Each workflow proves sccache is
+# wired by either calling the composite (`uses: ./.github/actions/setup-rust-cached`)
+# or referencing `mozilla-actions/sccache-action` inline. Both shapes pass
+# this verifier; what matters is that every Rust workflow ends up with
+# sccache configured. Pin-floor and save-always checks (#4) include the
+# composite as a search target so a stale pin there is still caught.
+COMPOSITE_ACTION=".github/actions/setup-rust-cached/action.yml"
+COMPOSITE_USES_REF="\\./\\.github/actions/setup-rust-cached"
+
 PASS=0
 FAIL=0
 FAIL_DETAIL=()
@@ -84,6 +94,8 @@ else
 fi
 
 # 2. sccache wired into every Rust workflow that defines a Rust job.
+#    Wiring may be direct (`uses: mozilla-actions/sccache-action`) or
+#    indirect through the CM1 composite action.
 step 2 "sccache wired into every Rust workflow"
 SCCACHE_MISSING=()
 for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}"; do
@@ -91,12 +103,16 @@ for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}"; do
     SCCACHE_MISSING+=("${wf} (file missing)")
     continue
   fi
-  if ! grep -qE 'mozilla-actions/sccache-action' "${wf}"; then
-    SCCACHE_MISSING+=("${wf} (no sccache-action wired)")
+  if grep -qE 'mozilla-actions/sccache-action' "${wf}"; then
+    continue
   fi
+  if grep -qE "${COMPOSITE_USES_REF}" "${wf}" && grep -qE 'mozilla-actions/sccache-action' "${COMPOSITE_ACTION}" 2>/dev/null; then
+    continue
+  fi
+  SCCACHE_MISSING+=("${wf} (no sccache-action wired directly or via composite)")
 done
 if [ ${#SCCACHE_MISSING[@]} -eq 0 ]; then
-  pass "sccache-action present in ci.yml, desktop-ui.yml, node-compat-nightly.yml"
+  pass "sccache-action wired in ci.yml, desktop-ui.yml, node-compat-nightly.yml (direct or via composite)"
 else
   fail "sccache-action not wired into all Rust workflows" "$(printf '%s; ' "${SCCACHE_MISSING[@]}")"
 fi
@@ -135,7 +151,7 @@ fi
 step 4 "sccache-action pinned >= v0.0.10 and save-always retracted"
 PIN_FLOOR_OK=1
 PIN_DETAIL=()
-for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}"; do
+for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}" "${COMPOSITE_ACTION}"; do
   [ -f "${wf}" ] || continue
   BAD_PINS=$(grep -E 'mozilla-actions/sccache-action@v0\.0\.(0|1|2|3|4|5|6|7|8|9)([^0-9]|$)' "${wf}" || true)
   if [ -n "${BAD_PINS}" ]; then
@@ -144,7 +160,7 @@ for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}"; do
   fi
 done
 SAVE_ALWAYS_HITS=0
-for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}"; do
+for wf in "${CI_YML}" "${DESKTOP_UI_YML}" "${NODE_COMPAT_YML}" "${COMPOSITE_ACTION}"; do
   [ -f "${wf}" ] || continue
   hits=$(grep -cE 'save-always:\s*true' "${wf}" || true)
   hits=${hits// /}
