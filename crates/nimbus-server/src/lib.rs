@@ -67,7 +67,9 @@ pub use sandbox::{
 };
 pub use service_manager::SandboxServiceManager;
 pub use tenant_isolation::{
-    RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantImagePolicyDecision,
+    RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantImageAdmission,
+    TenantImageAdmissionSource, TenantImageAttestationEvidence, TenantImagePolicyDecision,
+    TenantImageSignatureEvidence, TenantImageVerificationEvidence, TenantImageVerificationProvider,
     TenantIsolationAuditRecord, TenantIsolationAuthorityDecision, TenantIsolationDecision,
     TenantIsolationDecisionId, TenantIsolationMode, TenantIsolationPolicyInput,
     TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,

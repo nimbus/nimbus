@@ -146,7 +146,7 @@ This plan is complete when:
 | EIH4 | `done` | Add drift/audit scanner for existing state. | `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` passed with clean and malformed-state fixtures. |
 | EIH5 | `done` | Prove hard quota enforcement below launch reservation. | `scripts/prove-linux-cgroup-memory-limit.sh` passed on minicloud: cgroup v2 reported `oom 1` and `oom_kill 1` under `memory.max=33554432` with swap disabled. |
 | EIH6 | `done` | Define workload identity shape. | `TenantWorkloadStableIdentity` renders stable Nimbus and SPIFFE-style IDs, includes node/machine location in the decision fingerprint, and is documented as the future secret-provider auth subject. |
-| EIH7 | `todo` | Define image provenance/signature admission. | Digest, signature, builder identity, attestation, and local-build rejection paths are tested or explicitly blocked. |
+| EIH7 | `done` | Define image provenance/signature admission. | `TenantImageVerificationProvider` admits digest-pinned images and tests tag-only, unsigned, wrong signature identity, wrong provenance builder, SBOM, and local-build rejection paths. |
 | EIH8 | `todo` | Add audit/observability contract. | Admission/rejection/materialization/cleanup events carry correlation IDs and redacted tenant-safe attributes. |
 | EIH9 | `todo` | Enterprise readiness closeout. | Threat model, isolation matrix, residual-risk register, conformance evidence, and operator runbook references are complete. |
 
@@ -619,6 +619,52 @@ Dirty-worktree caveat:
   `docs/architecture/horizontal-scaling.md`, desktop-auth proof images, and
   untracked plan/research docs remain present and intentionally untouched.
 
+### 2026-05-22 EIH7 Image Provenance And Signature Admission
+
+Completed in this checkpoint:
+
+- Added the `tenant_isolation::image_admission` module with the
+  `TenantImageVerificationProvider` seam.
+- Extended `TenantImagePolicyDecision` with production policy inputs:
+  allowed registries, digest requirement, signature issuer/subject,
+  provenance builder ID, required attestation predicates, SBOM requirement,
+  and explicit local-build allowance.
+- Added registry-image and local-build admission sources plus structured
+  verification evidence for signatures, attestations, and SBOM presence.
+- Kept the production digest-pinned floor provider-free; signature,
+  provenance, and SBOM requirements call the provider seam.
+- Documented the architecture in
+  `docs/architecture/sandbox/microvm-service-baseline.md`: Sigstore/Cosign is
+  intended to plug in behind `TenantImageVerificationProvider`, not directly in
+  the decision artifact.
+
+Verification evidence:
+
+- `cargo test -p nimbus-server image_admission -- --nocapture`
+  - result: pass; 7 passed, 0 failed, 0 ignored, 753 filtered out.
+- `cargo test -p nimbus-server tenant_isolation -- --nocapture`
+  - result: pass; 35 passed, 0 failed, 0 ignored, 725 filtered out.
+- `make verify-tenant-isolation-conformance`
+  - initial sandboxed result: blocked by local listener bind
+    `PermissionDenied` in the Mac execution sandbox.
+  - approved rerun result: pass.
+  - server conformance result: 1 passed, 0 failed, 0 ignored, 759 filtered
+    out; report printed 21 scenarios, 12 allowed, 9 denied.
+  - production image-admission result: 4 passed, 0 failed, 0 ignored, 523
+    filtered out.
+- `cargo fmt --all --check`
+  - result: pass.
+- `cargo clippy -p nimbus-server --all-targets`
+  - result: pass; finished dev profile in 14.68s.
+- `git diff --check`
+  - result: pass.
+
+Dirty-worktree caveat:
+
+- Unrelated generated Convex files, `package-lock.json`,
+  `docs/architecture/horizontal-scaling.md`, desktop-auth proof images, and
+  untracked plan/research docs remain present and intentionally untouched.
+
 ## Execution Log
 
 | Date | Phase | Status | Files | Summary | Verification |
@@ -630,3 +676,4 @@ Dirty-worktree caveat:
 | 2026-05-22 | EIH4 | `done` | `crates/nimbus-server/src/tenant_isolation_drift.rs`, `crates/nimbus-server/src/lib.rs`, `crates/nimbus-server/src/system_tenant.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added a read-only tenant-isolation drift scanner that correlates sandbox manifests, tenant volume roots, service handles, port records, route metadata, and optional decision/audit anchors, with clean and malformed-state fixtures. Next phase is EIH5 hard quota enforcement proof. | `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 748 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
 | 2026-05-22 | EIH5 | `done` | `scripts/prove-linux-cgroup-memory-limit.sh`, `Makefile`, `docs/plans/proof/tenant-isolation-enterprise-hardening/eih5-minicloud-cgroup-memory.md`, `crates/nimbus-sandbox/src/backends/container/state.rs`, `crates/nimbus-sandbox/src/backends/krun/state.rs`, `crates/nimbus-sandbox/src/backends/oci/port_manager.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added a reusable Linux cgroup v2 memory-limit proof, proved the limit firing on Debian minicloud, recorded the sandbox hard-enforcement paths below reservation, and fixed focused sandbox clippy helper findings. Next phase is EIH6 workload identity shape. | `bash -n scripts/prove-linux-cgroup-memory-limit.sh` passed; minicloud proof passed with `allocation_exit_status=137`, `oom 1`, `oom_kill 1`, and no leftover proof cgroups; `cargo test -p nimbus-sandbox resource -- --nocapture` passed: 5 passed, 0 failed, 0 ignored, 108 filtered out; `cargo test -p nimbus-sandbox conmon_launch_plan_injects_mount_prelude_for_image_backed_sandboxes -- --nocapture` passed: 1 passed, 0 failed, 0 ignored, 112 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-sandbox --all-targets` passed; `git diff --check` passed. `make proof-helpers` still has an unrelated local Homebrew cask helper failure at `assert.guest_proof_health`. |
 | 2026-05-22 | EIH6 | `done` | `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/lib.rs`, `docs/architecture/server/auth-runtime-trust.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added the stable workload identity projection, node/machine location in decision fingerprints, SPIFFE-style rendering, audit exposure via `workload_stable_id`, and architecture guidance for future secret-provider auth. Next phase is EIH7 image provenance and signature admission. | `cargo test -p nimbus-server tenant_workload_stable_identity -- --nocapture` passed: 3 passed, 0 failed, 0 ignored, 750 filtered out; `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 28 passed, 0 failed, 0 ignored, 725 filtered out; `cargo test -p nimbus-server runtime_execution_admission -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 751 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
+| 2026-05-22 | EIH7 | `done` | `crates/nimbus-server/src/tenant_isolation/image_admission.rs`, `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/lib.rs`, `docs/architecture/sandbox/microvm-service-baseline.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added production image verification policy inputs and the provider seam for signature/provenance/SBOM evidence, with explicit local-build rejection and documentation that Sigstore/Cosign belongs behind the provider. Next phase is EIH8 audit and observability. | `cargo test -p nimbus-server image_admission -- --nocapture` passed: 7 passed, 0 failed, 0 ignored, 753 filtered out; `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 35 passed, 0 failed, 0 ignored, 725 filtered out; `make verify-tenant-isolation-conformance` passed after approved listener-bind rerun: server conformance 1 passed with 21 scenarios (12 allowed, 9 denied), production image admission 4 passed; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |

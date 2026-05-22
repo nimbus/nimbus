@@ -155,6 +155,13 @@ Production tenant isolation requires these additional boundaries:
 - **Filesystem and storage:** mutable sandbox artifacts live under
   tenant-owned roots. Shared image/blob caches are content-addressed,
   immutable after verification, and never shared writable state.
+- **Image admission:** production registry images must meet the admitted image
+  policy before launch. The current policy surface has a digest-pinned floor,
+  optional allowed registries, optional signature issuer/subject, optional
+  SLSA-style provenance builder and predicate requirements, optional SBOM
+  evidence, and explicit local-build allowance. Sigstore/Cosign should plug in
+  behind `TenantImageVerificationProvider`; Nimbus does not hard-code a
+  concrete verifier into the tenant-isolation decision shape.
 - **Networking:** service ports are loopback-only by default and mediated
   through tenant-scoped service bindings. Non-loopback exposure requires an
   explicit operator policy record.
