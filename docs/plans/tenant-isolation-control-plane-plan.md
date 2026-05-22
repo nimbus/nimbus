@@ -71,7 +71,7 @@ Reviewed on 2026-05-22.
 | Layer | Current evidence | Gap before production tenant isolation |
 | --- | --- | --- |
 | Tenant identity | `TenantIsolationContext` now carries tenant, authority, surface, runtime bundle tenant labels, deployment generation, and service launch validation across native HTTP, native WebSocket, Convex, Firebase/Firestore, Cloud Functions, MongoDB compatibility commands, runtime HostBridge, and sandbox service launch. `SandboxServiceManager` keys active handles by `(tenant_id, service_name)` and rejects launch specs whose tenant/service/backend differ from the admitted request. | Later phases must extend the context/admission artifact with admitted network, storage, volume, image, secret, runtime grant, and quota policy instead of passing those as independent ad hoc arguments. |
-| Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not a global tenant-membership gate today. The path tenant ID is validated but not bound to a verified principal before all data paths. |
+| Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. Application principals carrying tenant claims are now checked by `TenantIsolationContext` before Convex, Convex HTTP actions, Cloud Functions HTTP, and Firebase/Firestore database contexts reach storage/runtime. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not yet a full tenant-membership/session gate for every non-operator surface. Anonymous/public app requests remain allowed when the app exposes them, and principal-less native HTTP remains local-operator scoped. |
 | Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, materialized rootfs roots, and container network namespace/status/IPAM state now lower under tenant-owned roots. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots while leaving shared content-addressed image cache and other tenants intact. | Named volume admission/paths are still not lowered into service bundles and remain TIC6. |
 | Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding on the rootful Linux service path after the quota changes. Runtime service lookup is tenant-scoped. Compose service lowering now rejects non-loopback host addresses unless a future operator network exposure policy is added. System port records now carry explicit tenant, service, and endpoint ownership fields. krun/container port allocation now enforces a default per-tenant published-port quota while keeping host-port reservation global. Container network/IPAM mutable state is tenant-rooted. `TenantIsolationMode::Production` now rejects generic loopback/wildcard in-process runtime network grants before Convex or Cloud Functions runtime invocation. | Future admitted tenant-owned endpoint grants need an explicit policy object instead of generic localhost authority. |
 | In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::ensure_runtime_policy_admitted(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. `TenantIsolationMode::default()` is production, so public `serve*`, router builders, and CLI `nimbus start` enter production tenant isolation unless they explicitly opt out; `nimbus dev` opts into local-development mode. Active/in-flight/queued per-tenant runtime budgets are first-class start flags. Production rejections now name the canonical fallback tier: `in_process_trusted_only`, `microvm_service`, or future `wasm_capability_sandbox`. | TIC4 still needs actual lowering/routing for rejected workloads, native-addon/package-manager proof beyond grant shape, and tenant-accounted CPU/memory/time/worker budgets beyond top-level invocation accounting. |
@@ -89,7 +89,7 @@ Reviewed on 2026-05-22.
 | TIC2 | `done` | Tenant-scope existing sandbox filesystem state. | krun/container bundle/state/rootfs/log paths include tenant-owned roots; tenant deletion stops services and removes tenant sandbox artifacts without touching other tenants. |
 | TIC3 | `done` | Fail-closed network admission and port ownership. | Non-loopback service exposure is rejected unless operator policy allows it; port leases carry tenant/service identity, quotas, and cleanup; localhost-only proof remains green on the rootful Linux service path. |
 | TIC4 | `in_progress` | Runtime compute admission and host capability isolation. | CLI start enters production isolation by default; production runtime policies reject unsafe tier/backend/grant combinations; Node loopback grants cannot bypass service grants; runtime CPU/memory/time/worker/nested-call budgets are tenant-accounted. |
-| TIC5 | `pending` | Tenant-scoped storage/API authorization. | Native HTTP, adapter, runtime, scheduler, and system-control paths prove a principal/session cannot address another tenant by swapping the path tenant ID. |
+| TIC5 | `in_progress` | Tenant-scoped storage/API authorization. | Native HTTP, adapter, runtime, scheduler, and system-control paths prove a principal/session cannot address another tenant by swapping the path tenant ID. |
 | TIC6 | `pending` | Tenant-scoped volumes, images, secrets, and mounts. | Bind mounts are denied by default; named volumes lower only to Nimbus-owned tenant paths; production images require digest/provenance policy; secrets are handles, not ambient env. |
 | TIC7 | `pending` | Per-tenant microVM/resource quotas. | Tests cover per-tenant active microVM count, sandbox CPU/memory/disk/log/port quotas, scheduler fairness, and runtime in-flight limits. |
 | TIC8 | `pending` | End-to-end multi-tenant proof harness. | A two-tenant harness proves runtime compute, microVM compute, network, storage, HostBridge, service lookup, volumes, logs, cleanup, and system metadata isolation. |
@@ -864,12 +864,56 @@ Remaining before TIC4 is done:
 
 Remaining after this checkpoint:
 
-- TIC4 still needs production-mode defaulting/routing and tenant-accounted
+- TIC4 still needs production runtime fallback routing and tenant-accounted
   runtime CPU, memory, execution-time, worker-thread, and nested-call budgets.
 - TIC5-TIC8 remain open as recorded in the phase ledger.
 - Dirty worktree caveat: this checkpoint remains mixed into an already-dirty
   workspace that includes unrelated generated Convex/demo artifacts,
   `package-lock.json`, desktop-auth proof images/plans, and prior docs edits.
+
+### 2026-05-22 TIC5 Application Tenant-Claim Gate
+
+Started TIC5 with a conservative adapter-boundary tenant-claim gate for
+application principals.
+
+Completed in this checkpoint:
+
+- Added `TenantIsolationContext::ensure_application_principal_tenant_access(...)`
+  as the shared server-owned gate for checking application principals against
+  the admitted tenant before tenant-facing provider/runtime work.
+- The gate prefers `verified_claims` over identity claims and recognizes
+  `tenant_id`, `tenantId`, `nimbus_tenant_id`, and `nimbusTenantId` when they
+  are string claims.
+- Wired the gate through Convex function routes, Convex HTTP actions, Cloud
+  Functions HTTP runtime dispatch, and Firebase/Firestore database context
+  creation before those paths reach storage or runtime execution.
+- Proved a principal scoped to tenant A is rejected when it targets tenant B,
+  while anonymous/public app requests with no tenant claim remain allowed by
+  design until Nimbus has a full tenant-membership/session model.
+
+Verification evidence:
+
+- `cargo fmt --all --check`
+  - result: pass
+- `cargo test -p nimbus-server tenant_isolation -- --nocapture`
+  - result: pass; 14 passed, 0 failed, 707 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+- `cargo test -p nimbus-server firestore_database_context -- --nocapture`
+  - result: pass; 3 passed, 0 failed, 718 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+
+Remaining before TIC5 is done:
+
+- Native HTTP/local operator routes need a richer scoped session and tenant
+  membership model beyond today's local-admin operator authority.
+- Convex, Firebase/Firestore, and Cloud Functions need end-to-end
+  swapped-tenant HTTP tests with a real or fake verifier so the transport
+  status codes and response envelopes are covered, not only the shared gate.
+- Scheduler and runtime HostBridge paths need proof that every provider call
+  uses the server-owned invocation tenant rather than any tenant value supplied
+  by JavaScript payloads.
+- `_nimbus` visibility needs explicit operator-only proof across tenant-facing
+  adapters.
 
 ### 2026-05-22 TIC3 Rootful Linux Localhost-Only Proof
 

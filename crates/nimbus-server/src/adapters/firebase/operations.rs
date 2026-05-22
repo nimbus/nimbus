@@ -102,11 +102,13 @@ pub(crate) fn tenant_context_for_database(
     principal: &PrincipalContext,
     surface: &'static str,
 ) -> Result<TenantIsolationContext> {
-    Ok(TenantIsolationContext::application(
+    let context = TenantIsolationContext::application(
         tenant_id_for_database(database)?,
         principal.clone(),
         surface,
-    ))
+    );
+    context.ensure_application_principal_tenant_access("Firestore database tenant")?;
+    Ok(context)
 }
 
 fn tenant_id_for_context_database<'a>(
@@ -471,6 +473,30 @@ mod tests {
             tenant_id_for_context_database(&isolation, &database("tenant-a"), "Firestore test")
                 .is_ok(),
             "matching Firestore database tenant should be admitted"
+        );
+    }
+
+    #[test]
+    fn firestore_database_context_rejects_mismatched_principal_tenant_claim() {
+        let principal = PrincipalContext {
+            authenticated: true,
+            claims: serde_json::Map::from_iter([(
+                "tenant_id".to_string(),
+                serde_json::Value::String("tenant-b".to_string()),
+            )]),
+            verified_claims: serde_json::Map::new(),
+        };
+
+        let error = tenant_context_for_database(&database("tenant-a"), &principal, "test")
+            .expect_err("principal tenant claim should gate Firestore database access");
+
+        assert!(
+            error.to_string().contains("authorizes tenant `tenant-b`"),
+            "error should name the principal tenant claim: {error}"
+        );
+        assert!(
+            error.to_string().contains("targeted tenant `tenant-a`"),
+            "error should name the rejected database tenant: {error}"
         );
     }
 }

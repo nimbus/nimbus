@@ -1,4 +1,5 @@
 use nimbus_core::{Error, PrincipalContext, Result, TenantId};
+use serde_json::{Map, Value};
 use std::net::IpAddr;
 
 use nimbus_runtime::{
@@ -210,6 +211,55 @@ impl TenantIsolationContext {
         })?;
         Ok(())
     }
+
+    pub(crate) fn ensure_application_principal_tenant_access(&self, context: &str) -> Result<()> {
+        let TenantIsolationAuthority::Application { principal } = &self.authority else {
+            return Ok(());
+        };
+        let Some(claim) = principal_tenant_claim(principal) else {
+            return Ok(());
+        };
+        if claim.value == self.tenant_id.as_str() {
+            return Ok(());
+        }
+        Err(Error::PermissionDenied(format!(
+            "application principal claim `{}` authorizes tenant `{}`, but {context} targeted tenant `{}`",
+            claim.name, claim.value, self.tenant_id
+        )))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TenantPrincipalClaim<'a> {
+    name: &'static str,
+    value: &'a str,
+}
+
+fn principal_tenant_claim(principal: &PrincipalContext) -> Option<TenantPrincipalClaim<'_>> {
+    const CLAIM_NAMES: [&str; 4] = [
+        "tenant_id",
+        "tenantId",
+        "nimbus_tenant_id",
+        "nimbusTenantId",
+    ];
+    for claims in [&principal.verified_claims, &principal.claims] {
+        if let Some(claim) = tenant_claim_from_map(claims, CLAIM_NAMES) {
+            return Some(claim);
+        }
+    }
+    None
+}
+
+fn tenant_claim_from_map<'a>(
+    claims: &'a Map<String, Value>,
+    claim_names: impl IntoIterator<Item = &'static str>,
+) -> Option<TenantPrincipalClaim<'a>> {
+    claim_names.into_iter().find_map(|name| {
+        claims
+            .get(name)
+            .and_then(Value::as_str)
+            .map(|value| TenantPrincipalClaim { name, value })
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -459,6 +509,17 @@ mod tests {
         )
     }
 
+    fn principal_with_tenant_claim(claim: &'static str, tenant: &str) -> PrincipalContext {
+        PrincipalContext {
+            authenticated: true,
+            claims: serde_json::Map::from_iter([(
+                claim.to_string(),
+                serde_json::Value::String(tenant.to_string()),
+            )]),
+            verified_claims: serde_json::Map::new(),
+        }
+    }
+
     #[test]
     fn tenant_isolation_mode_defaults_to_production() {
         assert_eq!(
@@ -556,6 +617,49 @@ mod tests {
             error.to_string().contains("referenced tenant tenant-b"),
             "error should name the rejected tenant: {error}"
         );
+    }
+
+    #[test]
+    fn application_context_rejects_mismatched_principal_tenant_claim() {
+        let context = TenantIsolationContext::application(
+            TenantId::new("tenant-a").expect("tenant id should parse"),
+            principal_with_tenant_claim("tenant_id", "tenant-b"),
+            "test",
+        );
+
+        let error = context
+            .ensure_application_principal_tenant_access("convex route tenant")
+            .expect_err("mismatched application tenant claim must be rejected");
+        assert!(
+            error.to_string().contains("permission denied"),
+            "error should map to permission denial: {error}"
+        );
+        assert!(
+            error.to_string().contains("authorizes tenant `tenant-b`"),
+            "error should name the authorized tenant claim: {error}"
+        );
+        assert!(
+            error.to_string().contains("targeted tenant `tenant-a`"),
+            "error should name the rejected target tenant: {error}"
+        );
+    }
+
+    #[test]
+    fn application_context_allows_matching_verified_principal_tenant_claim() {
+        let mut principal = principal_with_tenant_claim("tenant_id", "tenant-b");
+        principal.verified_claims = serde_json::Map::from_iter([(
+            "tenantId".to_string(),
+            serde_json::Value::String("tenant-a".to_string()),
+        )]);
+        let context = TenantIsolationContext::application(
+            TenantId::new("tenant-a").expect("tenant id should parse"),
+            principal,
+            "test",
+        );
+
+        context
+            .ensure_application_principal_tenant_access("convex route tenant")
+            .expect("verified tenant claim should take precedence and authorize access");
     }
 
     #[test]

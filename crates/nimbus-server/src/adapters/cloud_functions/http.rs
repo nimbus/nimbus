@@ -228,6 +228,7 @@ fn execute_http_target(
         deployment_generation,
         "cloud functions http runtime deployment",
     )?;
+    isolation.ensure_application_principal_tenant_access("cloud functions http tenant")?;
     let bundle = registry.runtime_bundle();
     isolation.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
     isolation.ensure_runtime_policy_admitted(

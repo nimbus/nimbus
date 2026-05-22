@@ -126,5 +126,6 @@ pub(super) async fn registry_and_auth(
     .with_deployment_generation(deployment.generation);
     tenant_context
         .ensure_deployment_generation_matches(deployment.generation, "convex active deployment")?;
+    tenant_context.ensure_application_principal_tenant_access("convex route tenant")?;
     Ok((registry, auth, tenant_context))
 }
