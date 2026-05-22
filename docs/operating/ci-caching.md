@@ -17,7 +17,7 @@ CI uses two complementary caches:
 | Layer | Action | Granularity | Backend | Lifetime |
 |-------|--------|-------------|---------|----------|
 | Floor | `Swatinem/rust-cache@v2` | per-job (one slot per `shared-key`) | GitHub Actions cache | 7 days idle, ~10 GB per slot |
-| Hot | `mozilla-actions/sccache-action@v0.0.6` (`RUSTC_WRAPPER=sccache`) | per-rustc-call (content-addressed) | GitHub Actions cache (shared across all jobs in repo) | 7 days idle, one shared pool |
+| Hot | `mozilla-actions/sccache-action@v0.0.10` (`RUSTC_WRAPPER=sccache`) | per-rustc-call (content-addressed) | GitHub Actions cache (shared across all jobs in repo) | 7 days idle, one shared pool |
 
 **Swatinem** stores the `target/` directory plus `~/.cargo/registry` and
 `~/.cargo/git` under a job-specific `shared-key`. On a hit it restores
@@ -39,7 +39,7 @@ other's work.
 ## What runs sccache
 
 Every job that invokes `rustc` (directly or transitively via `cargo`)
-has `mozilla-actions/sccache-action@v0.0.6` installed and uses
+has `mozilla-actions/sccache-action@v0.0.10` installed and uses
 `RUSTC_WRAPPER=sccache`. The env vars are set at workflow level in:
 
 - `.github/workflows/ci.yml`
@@ -142,15 +142,16 @@ All invocations set:
 cache-on-failure: "true"
 cache-bin: "false"
 save-if: ${{ github.ref == 'refs/heads/main' }}
-save-always: true
 ```
 
 `save-if` restricts cache writes to pushes on `main` (PR builds restore
 but don't save, so PR builds can't pollute the shared slot). The
 `cache-bin: "false"` keeps `target/release` binaries out of the cache
 (they bloat the slot and aren't useful for next-build deltas).
-`save-always: true` forces a save on reruns even when Swatinem's
-"save-if-changed" heuristic would otherwise skip it.
+Swatinem v2 saves on the success path by default; there is no
+`save-always` knob on `Swatinem/rust-cache@v2`. CC3's original
+addition of `save-always: true` was wrong-headed and was retracted in
+CC9 — see `docs/plans/proof/ci-caching-canonicalization/cc9-pin-and-save-always-retraction.md`.
 
 ## How to read sccache stats
 
@@ -188,7 +189,12 @@ two pushes restore the rate.
    backend is unavailable. Re-run the job; transient.
 6. **If `Cache cargo artifacts` reports "cache not found"**: Swatinem
    slot expired (7-day idle) or was rotated (see below). The next
-   `save-always` save will repopulate it.
+   successful push on `main` will repopulate it.
+7. **If sccache stats show `Server startup failed: cache storage
+   failed to read` with HTTP 400 from `_apis/artifactcache/cache`**:
+   the pinned `mozilla-actions/sccache-action` version is calling the
+   deprecated v1 GHA cache API. Bump to `v0.0.10` or newer (see CC9
+   proof). The pin floor is enforced by the verifier.
 
 ## How to force a fresh cache rotation
 
@@ -212,7 +218,7 @@ under the 7-day idle policy.
 
 To rotate **only** the sccache pool (rare): change `SCCACHE_GHA_ENABLED`
 to `false` for one push (forces miss-everything) and back. The
-`mozilla-actions/sccache-action@v0.0.6` keys by repo+ref+OS, so an
+`mozilla-actions/sccache-action@v0.0.10` keys by repo+ref+OS, so an
 explicit cache eviction via `gh cache delete` is the simpler tool.
 
 ## How `gh run rerun` interacts with cache saves

@@ -73,7 +73,7 @@ jobs:
           components: clippy
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -83,7 +83,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       # `make clippy` triggers the UI dependency graph (codegen + SPA build)
       # before invoking cargo, so nimbus-server's `include_str!`s of the
@@ -124,7 +123,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -134,7 +133,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
@@ -166,7 +164,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -176,7 +174,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       - name: Run isolated runtime test lane
         # V8-sensitive runtime tests are subprocess-isolated in the harness, so
@@ -214,7 +211,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -224,7 +221,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -311,7 +307,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -321,7 +317,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       - name: Start libsql provider fixture
         run: |
@@ -444,7 +439,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -454,10 +449,9 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -511,7 +505,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -521,7 +515,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       # CC4: nimbus-ui artifacts (convex codegen + SPA dist) are produced by
       # the ui-artifacts leader job and consumed here. Touching the files
@@ -529,7 +522,7 @@ jobs:
       # Makefile's UI_DIST_INDEX target stays satisfied and no rebuild
       # happens transitively.
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -576,7 +569,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -586,7 +579,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       # `make build-ui` runs codegen + SPA build via the Makefile dependency
       # graph so the nimbus-server crate compiles regardless of matrix surface.
@@ -743,7 +735,7 @@ jobs:
         # CC2: sccache wired into every Rust job. RUSTC_WRAPPER and
         # SCCACHE_GHA_ENABLED are set workflow-wide; this action installs the
         # binary and configures the GitHub Actions cache backend.
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -753,7 +745,6 @@ jobs:
           cache-on-failure: "true"
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          save-always: true
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -762,7 +753,7 @@ jobs:
       # Touching the files keeps Make's UI_DIST_INDEX target satisfied so no
       # rebuild happens during the coverage cargo-llvm-cov invocation.
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
