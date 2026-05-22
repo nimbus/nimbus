@@ -163,11 +163,23 @@ pub enum TenantWorkloadKind {
     SystemTask,
 }
 
+impl TenantWorkloadKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RuntimeFunction => "runtime_function",
+            Self::SandboxService => "sandbox_service",
+            Self::HttpRequest => "http_request",
+            Self::SystemTask => "system_task",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TenantWorkloadIdentity {
     kind: TenantWorkloadKind,
     name: String,
     runtime_tier: Option<RuntimeIsolationTier>,
+    sandbox_backend: Option<SandboxBackendKind>,
     sandbox_id: Option<String>,
     invocation_id: Option<String>,
 }
@@ -178,6 +190,7 @@ impl TenantWorkloadIdentity {
             kind,
             name: name.into(),
             runtime_tier: None,
+            sandbox_backend: None,
             sandbox_id: None,
             invocation_id: None,
         }
@@ -196,6 +209,11 @@ impl TenantWorkloadIdentity {
         self
     }
 
+    pub fn with_sandbox_backend(mut self, backend: SandboxBackendKind) -> Self {
+        self.sandbox_backend = Some(backend);
+        self
+    }
+
     pub fn with_sandbox_id(mut self, sandbox_id: impl Into<String>) -> Self {
         self.sandbox_id = Some(sandbox_id.into());
         self
@@ -208,6 +226,169 @@ impl TenantWorkloadIdentity {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn kind(&self) -> TenantWorkloadKind {
+        self.kind
+    }
+
+    pub fn runtime_tier(&self) -> Option<RuntimeIsolationTier> {
+        self.runtime_tier
+    }
+
+    pub fn sandbox_backend(&self) -> Option<SandboxBackendKind> {
+        self.sandbox_backend
+    }
+
+    pub fn sandbox_id(&self) -> Option<&str> {
+        self.sandbox_id.as_deref()
+    }
+
+    pub fn invocation_id(&self) -> Option<&str> {
+        self.invocation_id.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct TenantWorkloadLocation {
+    node_id: Option<String>,
+    machine_id: Option<String>,
+}
+
+impl TenantWorkloadLocation {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_node_id(mut self, node_id: impl Into<String>) -> Self {
+        self.node_id = Some(node_id.into());
+        self
+    }
+
+    pub fn with_machine_id(mut self, machine_id: impl Into<String>) -> Self {
+        self.machine_id = Some(machine_id.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantWorkloadStableIdentity {
+    format_version: &'static str,
+    tenant_id: String,
+    surface: String,
+    deployment_generation: Option<u64>,
+    workload_kind: TenantWorkloadKind,
+    workload_name: String,
+    runtime_tier: Option<RuntimeIsolationTier>,
+    runtime_backend: Option<RuntimeBackendKind>,
+    sandbox_backend: Option<SandboxBackendKind>,
+    node_id: Option<String>,
+    machine_id: Option<String>,
+    sandbox_id: Option<String>,
+    invocation_id: Option<String>,
+}
+
+impl TenantWorkloadStableIdentity {
+    const FORMAT_VERSION: &'static str = "v1";
+
+    fn from_decision(decision: &TenantIsolationDecision) -> Self {
+        let runtime_backend = matches!(
+            decision.workload.kind(),
+            TenantWorkloadKind::RuntimeFunction
+        )
+        .then_some(decision.runtime.backend_kind());
+        Self {
+            format_version: Self::FORMAT_VERSION,
+            tenant_id: decision.tenant_id.as_str().to_string(),
+            surface: decision.surface.to_string(),
+            deployment_generation: decision.deployment_generation,
+            workload_kind: decision.workload.kind(),
+            workload_name: decision.workload.name().to_string(),
+            runtime_tier: decision.workload.runtime_tier(),
+            runtime_backend,
+            sandbox_backend: decision.workload.sandbox_backend(),
+            node_id: decision.location.node_id.clone(),
+            machine_id: decision.location.machine_id.clone(),
+            sandbox_id: decision.workload.sandbox_id.clone(),
+            invocation_id: decision.workload.invocation_id.clone(),
+        }
+    }
+
+    pub fn stable_id(&self) -> String {
+        format!(
+            "nimbus-workload:{}{}",
+            self.format_version,
+            self.path_suffix()
+        )
+    }
+
+    pub fn spiffe_path(&self) -> String {
+        format!(
+            "/nimbus/workload/{}{}",
+            self.format_version,
+            self.path_suffix()
+        )
+    }
+
+    pub fn spiffe_id(&self, trust_domain: &str) -> Result<String> {
+        let trust_domain = validate_spiffe_trust_domain(trust_domain)?;
+        Ok(format!("spiffe://{}{}", trust_domain, self.spiffe_path()))
+    }
+
+    pub fn tenant_id(&self) -> &str {
+        &self.tenant_id
+    }
+
+    pub fn deployment_generation(&self) -> Option<u64> {
+        self.deployment_generation
+    }
+
+    pub fn node_id(&self) -> Option<&str> {
+        self.node_id.as_deref()
+    }
+
+    pub fn machine_id(&self) -> Option<&str> {
+        self.machine_id.as_deref()
+    }
+
+    fn path_suffix(&self) -> String {
+        let deployment = self
+            .deployment_generation
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let runtime_tier = self
+            .runtime_tier
+            .map(RuntimeIsolationTier::label)
+            .unwrap_or("none");
+        let runtime_backend = self
+            .runtime_backend
+            .map(runtime_backend_label)
+            .unwrap_or("none");
+        let sandbox_backend = self
+            .sandbox_backend
+            .map(sandbox_backend_label)
+            .unwrap_or("none");
+
+        [
+            ("tenant", self.tenant_id.as_str()),
+            ("deployment", deployment.as_str()),
+            ("surface", self.surface.as_str()),
+            ("kind", self.workload_kind.label()),
+            ("name", self.workload_name.as_str()),
+            ("runtime-tier", runtime_tier),
+            ("runtime-backend", runtime_backend),
+            ("sandbox-backend", sandbox_backend),
+            ("node", self.node_id.as_deref().unwrap_or("none")),
+            ("machine", self.machine_id.as_deref().unwrap_or("none")),
+            ("sandbox", self.sandbox_id.as_deref().unwrap_or("none")),
+            (
+                "invocation",
+                self.invocation_id.as_deref().unwrap_or("none"),
+            ),
+        ]
+        .into_iter()
+        .map(|(label, value)| format!("/{label}/{}", identity_path_segment(value)))
+        .collect()
     }
 }
 
@@ -285,6 +466,14 @@ impl TenantRuntimePolicyDecision {
 
     pub fn admission(&self) -> &TenantRuntimePolicyAdmission {
         &self.admission
+    }
+
+    pub fn tier(&self) -> RuntimeIsolationTier {
+        self.tier
+    }
+
+    pub fn backend_kind(&self) -> RuntimeBackendKind {
+        self.backend_kind
     }
 }
 
@@ -569,6 +758,7 @@ struct TenantIsolationDecisionFingerprint<'a> {
     surface: &'a str,
     authority: &'a TenantIsolationAuthorityDecision,
     deployment_generation: Option<u64>,
+    location: &'a TenantWorkloadLocation,
     workload: &'a TenantWorkloadIdentity,
     runtime: &'a TenantRuntimePolicyDecision,
     services: &'a TenantServiceGrantPolicyDecision,
@@ -588,6 +778,7 @@ pub struct TenantIsolationDecision {
     surface: &'static str,
     authority: TenantIsolationAuthorityDecision,
     deployment_generation: Option<u64>,
+    location: TenantWorkloadLocation,
     workload: TenantWorkloadIdentity,
     runtime: TenantRuntimePolicyDecision,
     services: TenantServiceGrantPolicyDecision,
@@ -609,6 +800,7 @@ impl TenantIsolationDecision {
             surface: context.surface,
             authority: &authority,
             deployment_generation: context.deployment_generation,
+            location: &context.location,
             workload: &input.workload,
             runtime: &input.runtime,
             services: &input.services,
@@ -627,6 +819,7 @@ impl TenantIsolationDecision {
             surface: context.surface,
             authority,
             deployment_generation: context.deployment_generation,
+            location: context.location.clone(),
             workload: input.workload,
             runtime: input.runtime,
             services: input.services,
@@ -650,6 +843,10 @@ impl TenantIsolationDecision {
 
     pub fn workload(&self) -> &TenantWorkloadIdentity {
         &self.workload
+    }
+
+    pub fn workload_stable_identity(&self) -> TenantWorkloadStableIdentity {
+        TenantWorkloadStableIdentity::from_decision(self)
     }
 
     pub fn runtime(&self) -> &TenantRuntimePolicyDecision {
@@ -758,6 +955,7 @@ impl TenantIsolationDecision {
             surface: self.surface.to_string(),
             authority_class: self.authority.class().to_string(),
             deployment_generation: self.deployment_generation,
+            workload_stable_id: self.workload_stable_identity().stable_id(),
             workload: self.workload.clone(),
             runtime: self.runtime.clone(),
             services: self.services.clone(),
@@ -879,6 +1077,7 @@ pub struct TenantIsolationAuditRecord {
     surface: String,
     authority_class: String,
     deployment_generation: Option<u64>,
+    workload_stable_id: String,
     workload: TenantWorkloadIdentity,
     runtime: TenantRuntimePolicyDecision,
     services: TenantServiceGrantPolicyDecision,
@@ -897,6 +1096,7 @@ pub(crate) struct TenantIsolationContext {
     authority: TenantIsolationAuthority,
     surface: &'static str,
     deployment_generation: Option<u64>,
+    location: TenantWorkloadLocation,
 }
 
 impl TenantIsolationContext {
@@ -906,6 +1106,7 @@ impl TenantIsolationContext {
             authority: TenantIsolationAuthority::Operator,
             surface,
             deployment_generation: None,
+            location: TenantWorkloadLocation::default(),
         }
     }
 
@@ -919,6 +1120,7 @@ impl TenantIsolationContext {
             authority: TenantIsolationAuthority::Application { principal },
             surface,
             deployment_generation: None,
+            location: TenantWorkloadLocation::default(),
         }
     }
 
@@ -928,6 +1130,7 @@ impl TenantIsolationContext {
             authority: TenantIsolationAuthority::System,
             surface,
             deployment_generation: None,
+            location: TenantWorkloadLocation::default(),
         }
     }
 
@@ -944,11 +1147,17 @@ impl TenantIsolationContext {
         if let Some(generation) = self.deployment_generation {
             context = context.with_deployment_generation(generation);
         }
+        context = context.with_workload_location(self.location.clone());
         context
     }
 
     pub(crate) fn with_deployment_generation(mut self, generation: u64) -> Self {
         self.deployment_generation = Some(generation);
+        self
+    }
+
+    pub(crate) fn with_workload_location(mut self, location: TenantWorkloadLocation) -> Self {
+        self.location = location;
         self
     }
 
@@ -1058,6 +1267,52 @@ fn principal_tenant_claim(principal: &PrincipalContext) -> Option<TenantPrincipa
         }
     }
     None
+}
+
+fn validate_spiffe_trust_domain(trust_domain: &str) -> Result<&str> {
+    let trust_domain = trust_domain.trim();
+    if trust_domain.is_empty() {
+        return Err(Error::InvalidInput(
+            "SPIFFE trust domain cannot be empty".to_string(),
+        ));
+    }
+    if trust_domain.contains("://")
+        || trust_domain.contains('/')
+        || trust_domain.chars().any(char::is_whitespace)
+    {
+        return Err(Error::InvalidInput(format!(
+            "SPIFFE trust domain `{trust_domain}` must not include a scheme, slash, or whitespace"
+        )));
+    }
+    Ok(trust_domain)
+}
+
+fn identity_path_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::new();
+    for byte in value.as_bytes().iter().copied() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
+}
+
+fn runtime_backend_label(kind: RuntimeBackendKind) -> &'static str {
+    match kind {
+        RuntimeBackendKind::V8 => "v8",
+    }
+}
+
+fn sandbox_backend_label(kind: SandboxBackendKind) -> &'static str {
+    match kind {
+        SandboxBackendKind::Container => "container",
+        SandboxBackendKind::Krun => "krun",
+    }
 }
 
 pub(crate) fn admit_runtime_invocation_decision(
@@ -1480,6 +1735,133 @@ mod tests {
     }
 
     #[test]
+    fn tenant_workload_stable_identity_includes_location_and_spiffe_shape() {
+        let principal = principal_with_tenant_claim("tenant_id", "tenant-a");
+        let context = TenantIsolationContext::application(
+            TenantId::new("tenant-a").expect("tenant id should parse"),
+            principal,
+            "convex.runtime",
+        )
+        .with_deployment_generation(7)
+        .with_workload_location(
+            TenantWorkloadLocation::new()
+                .with_node_id("node-a")
+                .with_machine_id("default"),
+        );
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = context
+            .admit_decision(tenant_decision_input(&context, &policy))
+            .expect("decision should admit matching tenant authority");
+
+        let identity = decision.workload_stable_identity();
+
+        assert_eq!(identity.tenant_id(), "tenant-a");
+        assert_eq!(identity.deployment_generation(), Some(7));
+        assert_eq!(identity.node_id(), Some("node-a"));
+        assert_eq!(identity.machine_id(), Some("default"));
+        assert_eq!(
+            identity.stable_id(),
+            "nimbus-workload:v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
+        );
+        assert_eq!(
+            identity.spiffe_path(),
+            "/nimbus/workload/v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
+        );
+        assert_eq!(
+            identity
+                .spiffe_id("nimbus.local")
+                .expect("trust domain should be valid"),
+            "spiffe://nimbus.local/nimbus/workload/v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
+        );
+
+        let audit_json = serde_json::to_string(&decision.to_audit_record())
+            .expect("audit record should serialize");
+        assert!(
+            audit_json.contains("\"workload_stable_id\""),
+            "audit record should expose the canonical workload identity: {audit_json}"
+        );
+        assert!(
+            audit_json.contains("messages%3Asend"),
+            "audit record should use the stable escaped workload name: {audit_json}"
+        );
+    }
+
+    #[test]
+    fn tenant_workload_stable_identity_distinguishes_sandbox_backend_and_location() {
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let context_a = test_application_context()
+            .with_deployment_generation(9)
+            .with_workload_location(
+                TenantWorkloadLocation::new()
+                    .with_node_id("node-a")
+                    .with_machine_id("machine-a"),
+            );
+        let context_b = test_application_context()
+            .with_deployment_generation(9)
+            .with_workload_location(
+                TenantWorkloadLocation::new()
+                    .with_node_id("node-b")
+                    .with_machine_id("machine-b"),
+            );
+        let input = TenantIsolationPolicyInput::new(
+            TenantWorkloadIdentity::sandbox_service("db:primary", "sandbox-1")
+                .with_sandbox_backend(SandboxBackendKind::Krun),
+        )
+        .with_runtime_policy(
+            &context_a,
+            &policy,
+            RuntimeIsolationTier::MicroVmService,
+            TenantIsolationMode::Production,
+        );
+
+        let decision_a = context_a
+            .admit_decision(input.clone())
+            .expect("first location should admit");
+        let decision_b = context_b
+            .admit_decision(input)
+            .expect("second location should admit");
+
+        assert_ne!(
+            decision_a.id(),
+            decision_b.id(),
+            "location must participate in the immutable decision fingerprint"
+        );
+        assert_eq!(
+            decision_a.workload_stable_identity().stable_id(),
+            "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/sandbox_service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun/node/node-a/machine/machine-a/sandbox/sandbox-1/invocation/none"
+        );
+        assert_eq!(
+            decision_b.workload_stable_identity().stable_id(),
+            "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/sandbox_service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun/node/node-b/machine/machine-b/sandbox/sandbox-1/invocation/none"
+        );
+    }
+
+    #[test]
+    fn tenant_workload_stable_identity_rejects_invalid_spiffe_trust_domains() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = context
+            .admit_decision(tenant_decision_input(&context, &policy))
+            .expect("decision should admit");
+        let identity = decision.workload_stable_identity();
+
+        for trust_domain in [
+            "",
+            "spiffe://nimbus.local",
+            "nimbus.local/path",
+            "nimbus local",
+        ] {
+            let error = identity
+                .spiffe_id(trust_domain)
+                .expect_err("invalid trust domain should be rejected");
+            assert!(
+                error.to_string().contains("SPIFFE trust domain"),
+                "error should name the invalid trust-domain field: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn tenant_isolation_decision_clones_inputs_so_policy_cannot_widen_after_admission() {
         let context = test_application_context().with_deployment_generation(11);
         let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
@@ -1827,7 +2209,12 @@ mod tests {
             PrincipalContext::anonymous(),
             "convex websocket route",
         )
-        .with_deployment_generation(42);
+        .with_deployment_generation(42)
+        .with_workload_location(
+            TenantWorkloadLocation::new()
+                .with_node_id("node-source")
+                .with_machine_id("machine-source"),
+        );
 
         let derived =
             context.reauthorize_application(PrincipalContext::system(), "convex subscription");
@@ -1850,6 +2237,14 @@ mod tests {
                 .contains("authorized deployment generation 42"),
             "error should name the preserved deployment generation: {error}"
         );
+
+        let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+        let decision = derived
+            .admit_decision(tenant_decision_input(&derived, &policy))
+            .expect("derived context should still admit matching tenant");
+        let identity = decision.workload_stable_identity();
+        assert_eq!(identity.node_id(), Some("node-source"));
+        assert_eq!(identity.machine_id(), Some("machine-source"));
     }
 
     #[test]
