@@ -810,7 +810,12 @@ jobs:
         # runners have shown rust-lld bus errors when multiple large coverage
         # test binaries link in parallel. CC6 re-tests `-j 2`/`-j 4` once
         # sccache has reduced cold-build link pressure.
-        run: cargo llvm-cov -j 1 --workspace --exclude nimbus-runtime --lcov --output-path lcov.info
+        # CC7: --no-doc-tests skips doc-test instrumentation. Doc-tests are
+        # still executed in the rust-workspace-tests job (`make test-rust-docs`),
+        # so this drops only the *measurement* of doc-test line coverage, not
+        # the doc-tests themselves. Saves the secondary `--test` harness
+        # rebuild that doubled link work under the instrumented profile.
+        run: cargo llvm-cov -j 1 --workspace --exclude nimbus-runtime --no-doc-tests --lcov --output-path lcov.info
 
       - name: Show sccache stats
         # CC1: telemetry. Captures hit/miss/store counts so cc1-coverage-only-stats.md
