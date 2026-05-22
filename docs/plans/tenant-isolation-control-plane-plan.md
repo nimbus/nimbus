@@ -74,7 +74,7 @@ Reviewed on 2026-05-22.
 | Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not a global tenant-membership gate today. The path tenant ID is validated but not bound to a verified principal before all data paths. |
 | Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, materialized rootfs roots, and container network namespace/status/IPAM state now lower under tenant-owned roots. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots while leaving shared content-addressed image cache and other tenants intact. | Named volume admission/paths are still not lowered into service bundles and remain TIC6. |
 | Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding on the rootful Linux service path after the quota changes. Runtime service lookup is tenant-scoped. Compose service lowering now rejects non-loopback host addresses unless a future operator network exposure policy is added. System port records now carry explicit tenant, service, and endpoint ownership fields. krun/container port allocation now enforces a default per-tenant published-port quota while keeping host-port reservation global. Container network/IPAM mutable state is tenant-rooted. `TenantIsolationMode::Production` now rejects generic loopback/wildcard in-process runtime network grants before Convex or Cloud Functions runtime invocation. | Future admitted tenant-owned endpoint grants need an explicit policy object instead of generic localhost authority. |
-| In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::ensure_runtime_policy_admitted(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. | TIC4 still needs production-mode wiring at every final serve/deploy entrypoint, a trusted-only/microVM routing story for rejected workloads, native-addon/package-manager proof beyond grant shape, and tenant-accounted CPU/memory/time/worker budgets rather than only current concurrency limits. |
+| In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::ensure_runtime_policy_admitted(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. CLI `nimbus start` now selects production tenant-isolation mode by default, `nimbus dev` explicitly opts into local-development mode, and active/in-flight/queued per-tenant runtime budgets are first-class start flags. | TIC4 still needs the public embedder `serve*` default contract documented or tightened, a trusted-only/microVM routing story for rejected workloads, native-addon/package-manager proof beyond grant shape, and tenant-accounted CPU/memory/time/worker budgets beyond top-level invocation accounting. |
 | MicroVM service compute | krun launches one service sandbox as one microVM; service manager does not intentionally share a VM across tenants. Runtime permission model separates `in_process_untrusted` from `microvm_service`. | Need hard admission tests that prevent multiple tenants sharing a guest, enforce per-tenant/per-sandbox quotas, and prove workloads with broad OS needs move to `microvm_service` or a trusted tier. |
 | Volumes/files | Compose volumes are parsed/rendered but not admitted into the krun bundle; current bundle only adds Nimbus-owned read-only helper mounts. | Bind mounts must be rejected by default. Named volumes need Nimbus-owned paths under the tenant root, explicit read/write policy, quota, cleanup, and no cross-tenant reuse unless a future shared-read-only artifact policy is added. |
 | Images/builds | OCI materializer verifies pulled blob digests and sanitizes archive paths before extraction. | Production image admission still needs digest-pinned references and provenance/signature policy before tenant-controlled images are mounted or extracted. |
@@ -88,7 +88,7 @@ Reviewed on 2026-05-22.
 | TIC1 | `done` | Add an explicit tenant isolation context/admission artifact. | Unit tests prove mismatched tenant/deployment/service/runtime identities are rejected before runtime or sandbox launch. |
 | TIC2 | `done` | Tenant-scope existing sandbox filesystem state. | krun/container bundle/state/rootfs/log paths include tenant-owned roots; tenant deletion stops services and removes tenant sandbox artifacts without touching other tenants. |
 | TIC3 | `done` | Fail-closed network admission and port ownership. | Non-loopback service exposure is rejected unless operator policy allows it; port leases carry tenant/service identity, quotas, and cleanup; localhost-only proof remains green on the rootful Linux service path. |
-| TIC4 | `in_progress` | Runtime compute admission and host capability isolation. | Production runtime policies reject unsafe tier/backend/grant combinations; Node loopback grants cannot bypass service grants; runtime CPU/memory/time/worker/nested-call budgets are tenant-accounted. |
+| TIC4 | `in_progress` | Runtime compute admission and host capability isolation. | CLI start enters production isolation by default; production runtime policies reject unsafe tier/backend/grant combinations; Node loopback grants cannot bypass service grants; runtime CPU/memory/time/worker/nested-call budgets are tenant-accounted. |
 | TIC5 | `pending` | Tenant-scoped storage/API authorization. | Native HTTP, adapter, runtime, scheduler, and system-control paths prove a principal/session cannot address another tenant by swapping the path tenant ID. |
 | TIC6 | `pending` | Tenant-scoped volumes, images, secrets, and mounts. | Bind mounts are denied by default; named volumes lower only to Nimbus-owned tenant paths; production images require digest/provenance policy; secrets are handles, not ambient env. |
 | TIC7 | `pending` | Per-tenant microVM/resource quotas. | Tests cover per-tenant active microVM count, sandbox CPU/memory/disk/log/port quotas, scheduler fairness, and runtime in-flight limits. |
@@ -731,6 +731,57 @@ Remaining after TIC3:
 - TIC8 must add the two-tenant end-to-end proof harness.
 - Rootless minicloud libkrun execution still has a separate diagnostic gap;
   the rootful Linux service path remains the TIC3 production proof.
+
+### 2026-05-22 TIC4 Start Runtime Isolation Defaults And Budgets
+
+Started TIC4 at the final CLI server entrypoint and runtime budget control
+plane.
+
+Completed in this checkpoint:
+
+- Made `nimbus start` carry `TenantIsolationMode::Production` by default
+  through `StartCommand` into `ServeOptions`, so production runtime admission is
+  active for the normal foreground server path.
+- Made `nimbus dev` explicitly set `TenantIsolationMode::LocalDevelopment`,
+  preserving Node-compatible localhost grants only for the local-development
+  command path.
+- Added the selected tenant-isolation mode to the startup summary, making the
+  production/local-development boundary visible in operator output.
+- Added `--runtime-max-active-per-tenant`,
+  `--runtime-max-in-flight-per-tenant`, and
+  `--runtime-max-queued-per-tenant` flags, lowering them into
+  `RuntimeLimits` so the existing per-tenant runtime admission counters are
+  operator-configurable instead of only derived from global worker limits.
+- Left `TenantIsolationMode::default()` unchanged for now so existing embedder
+  APIs remain explicit follow-up work instead of a hidden behavior flip across
+  every test and embedding surface.
+
+Verification evidence:
+
+- `cargo fmt --all --check`
+  - result: pass
+- `cargo test -p nimbus-bin cli_surface -- --nocapture`
+  - result: pass; 25 passed, 0 failed, 491 filtered out in `src/main.rs`;
+    `server_discovery_serde` had 0 matching tests.
+- `cargo test -p nimbus-bin dev_plan_uses_project_local_persistence_root -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 515 filtered out in `src/main.rs`;
+    `server_discovery_serde` had 0 matching tests.
+- `cargo test -p nimbus-server tenant_isolation -- --nocapture`
+  - result: pass; 9 passed, 0 failed, 706 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+
+Remaining before TIC4 is done:
+
+- Decide and document whether public library `serve*` defaults should flip to
+  production isolation before launch or require an explicit production builder.
+- Add a canonical routing outcome for workloads rejected from
+  `in_process_untrusted` so broad OS capability needs move to
+  `microvm_service` or a trusted-only tier instead of only returning an
+  admission error.
+- Add tenant-accounted CPU, memory, execution-time, worker-thread, and nested
+  runtime budgets beyond the top-level active/in-flight/queued counters.
+- Prove native-addon and package-manager containment beyond the current
+  grant/root-shape rejection.
 
 Remaining after this checkpoint:
 

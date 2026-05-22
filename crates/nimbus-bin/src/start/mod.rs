@@ -16,8 +16,11 @@ pub(crate) use self::boot::run_start_command;
 pub(crate) use self::config::persistence_config_from_start_command;
 pub(crate) use self::config::{CliKeyProvider, CliTenantProvider};
 use self::runtime_limits::{
-    default_runtime_heap_mb, default_runtime_initial_heap_mb, default_runtime_max_instances,
-    default_runtime_max_nested_calls, default_runtime_timeout_secs, default_runtime_worker_threads,
+    default_runtime_heap_mb, default_runtime_initial_heap_mb,
+    default_runtime_max_active_per_tenant, default_runtime_max_in_flight_per_tenant,
+    default_runtime_max_instances, default_runtime_max_nested_calls,
+    default_runtime_max_queued_per_tenant, default_runtime_timeout_secs,
+    default_runtime_worker_threads,
 };
 
 #[derive(Debug, Args)]
@@ -174,6 +177,18 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = default_runtime_max_instances())]
     pub(crate) runtime_max_instances: usize,
 
+    /// Maximum active top-level runtime invocations per tenant.
+    #[arg(long, default_value_t = default_runtime_max_active_per_tenant())]
+    pub(crate) runtime_max_active_per_tenant: usize,
+
+    /// Maximum active plus parked top-level runtime invocations per tenant.
+    #[arg(long, default_value_t = default_runtime_max_in_flight_per_tenant())]
+    pub(crate) runtime_max_in_flight_per_tenant: usize,
+
+    /// Maximum queued top-level runtime invocations per tenant.
+    #[arg(long, default_value_t = default_runtime_max_queued_per_tenant())]
+    pub(crate) runtime_max_queued_per_tenant: usize,
+
     /// Number of runtime worker threads.
     #[arg(long, default_value_t = default_runtime_worker_threads())]
     pub(crate) runtime_worker_threads: usize,
@@ -222,6 +237,10 @@ pub(crate) struct StartCommand {
     /// Tenant to create automatically on startup (used by `nimbus dev`).
     #[arg(skip)]
     pub(crate) auto_tenant: Option<String>,
+
+    /// Tenant-isolation mode selected by the owning command.
+    #[arg(skip = nimbus_server::TenantIsolationMode::Production)]
+    pub(crate) tenant_isolation_mode: nimbus_server::TenantIsolationMode,
 }
 
 impl Default for StartCommand {
@@ -260,6 +279,9 @@ impl Default for StartCommand {
             runtime_initial_heap_mb: default_runtime_initial_heap_mb(),
             runtime_timeout_secs: default_runtime_timeout_secs(),
             runtime_max_instances: default_runtime_max_instances(),
+            runtime_max_active_per_tenant: default_runtime_max_active_per_tenant(),
+            runtime_max_in_flight_per_tenant: default_runtime_max_in_flight_per_tenant(),
+            runtime_max_queued_per_tenant: default_runtime_max_queued_per_tenant(),
             runtime_worker_threads: default_runtime_worker_threads(),
             runtime_max_nested_calls: default_runtime_max_nested_calls(),
             encryption_key_provider: None,
@@ -270,6 +292,7 @@ impl Default for StartCommand {
             encryption_aws_endpoint_url: None,
             deploy_admin_token: None,
             auto_tenant: None,
+            tenant_isolation_mode: nimbus_server::TenantIsolationMode::Production,
         }
     }
 }

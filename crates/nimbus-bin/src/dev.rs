@@ -358,6 +358,7 @@ fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
         compose_file: command.compose_file,
         deploy_admin_token: Some(deploy_admin_token),
         auto_tenant: Some("demo".to_string()),
+        tenant_isolation_mode: nimbus_server::TenantIsolationMode::LocalDevelopment,
         ..StartCommand::default()
     };
 
@@ -1130,6 +1131,11 @@ mod tests {
             plan.start_command.auto_tenant,
             Some("demo".to_string()),
             "dev plan should auto-create the demo tenant"
+        );
+        assert_eq!(
+            plan.start_command.tenant_isolation_mode,
+            nimbus_server::TenantIsolationMode::LocalDevelopment,
+            "dev should preserve Node-compatible localhost grants explicitly"
         );
     }
 

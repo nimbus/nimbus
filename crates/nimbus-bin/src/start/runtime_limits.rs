@@ -20,6 +20,18 @@ pub(crate) fn default_runtime_max_instances() -> usize {
     RuntimeLimits::default().max_concurrent_runtime_instances
 }
 
+pub(crate) fn default_runtime_max_active_per_tenant() -> usize {
+    RuntimeLimits::default().max_active_top_level_invocations_per_tenant
+}
+
+pub(crate) fn default_runtime_max_in_flight_per_tenant() -> usize {
+    RuntimeLimits::default().max_in_flight_top_level_invocations_per_tenant
+}
+
+pub(crate) fn default_runtime_max_queued_per_tenant() -> usize {
+    RuntimeLimits::default().max_queued_top_level_invocations_per_tenant
+}
+
 pub(crate) fn default_runtime_worker_threads() -> usize {
     RuntimeLimits::default().worker_threads
 }
@@ -34,6 +46,9 @@ pub(crate) fn runtime_limits_from_command(command: &StartCommand) -> RuntimeLimi
         initial_heap_mb: command.runtime_initial_heap_mb,
         execution_timeout: Duration::from_secs(command.runtime_timeout_secs),
         max_concurrent_runtime_instances: command.runtime_max_instances,
+        max_active_top_level_invocations_per_tenant: command.runtime_max_active_per_tenant,
+        max_in_flight_top_level_invocations_per_tenant: command.runtime_max_in_flight_per_tenant,
+        max_queued_top_level_invocations_per_tenant: command.runtime_max_queued_per_tenant,
         worker_threads: command.runtime_worker_threads,
         max_nested_runtime_invocations: command.runtime_max_nested_calls,
         ..RuntimeLimits::default()
