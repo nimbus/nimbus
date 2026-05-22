@@ -707,6 +707,164 @@ async fn firebase_listen_websocket_auth_offer_controls_bootstrap_visibility() {
 }
 
 #[tokio::test]
+async fn firebase_listen_websocket_rejects_application_bearer_for_different_tenant() {
+    let _guard = auth::auth_test_guard().await;
+    let issuer = "https://firebase-auth.example.com";
+    let application_id = "nimbus-firebase-test";
+    let (tenant_b_token, jwks_data_url) = auth::issue_es256_test_token(
+        issuer,
+        application_id,
+        "user-123",
+        json!({ "tenant_id": "tenant-b" }),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    fixture.create_tenant("tenant-a", Service::create_tenant);
+    let tenant_b = fixture.create_tenant("tenant-b", Service::create_tenant);
+    let service = fixture.service();
+    seed_firebase_document(
+        &service,
+        &tenant_b,
+        &["listenTenantProof", "mine"],
+        [("name", json!("Visible"))],
+    );
+    let registry = convex_registry_with_routes_and_bundle_and_auth(
+        json!([]),
+        json!([]),
+        None,
+        Some(firebase_test_auth_config(
+            issuer,
+            application_id,
+            &jwks_data_url,
+        )),
+    );
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(service)
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
+            .with_convex(registry)
+            .with_firebase(FirebaseConfig::new())
+            .build(),
+    )
+    .await;
+
+    let encoded_token = URL_SAFE_NO_PAD.encode(tenant_b_token.as_bytes());
+    let mut authorized_request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("same-tenant listen websocket request should build");
+    authorized_request.headers_mut().insert(
+        header::ORIGIN,
+        axum::http::HeaderValue::from_static("http://localhost:5173"),
+    );
+    authorized_request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        axum::http::HeaderValue::from_str(&format!(
+            "nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded_token}"
+        ))
+        .expect("listen auth subprotocol header should build"),
+    );
+    let mut authorized_socket = WebSocketFixture::connect_request(authorized_request)
+        .await
+        .expect("same-tenant listen websocket should connect");
+    authorized_socket
+        .send_binary(
+            firebase_tenant_listen_query_request(
+                31,
+                "projects/tenant-b/databases/(default)",
+                "projects/tenant-b/databases/(default)/documents",
+                "listenTenantProof",
+            )
+            .encode_to_vec(),
+        )
+        .await;
+    let (_authorized_target_changes, authorized_document_changes) =
+        collect_listen_websocket_bootstrap(&mut authorized_socket).await;
+    assert_eq!(authorized_document_changes.len(), 1);
+    assert_eq!(
+        authorized_document_changes[0]
+            .document
+            .as_ref()
+            .expect("same-tenant listen bootstrap should include a document")
+            .name,
+        "projects/tenant-b/databases/(default)/documents/listenTenantProof/mine"
+    );
+
+    let mut rejected_request = server
+        .ws_url("/google.firestore.v1.Firestore/Listen")
+        .into_client_request()
+        .expect("swapped-tenant listen websocket request should build");
+    rejected_request.headers_mut().insert(
+        header::ORIGIN,
+        axum::http::HeaderValue::from_static("http://localhost:5173"),
+    );
+    rejected_request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        axum::http::HeaderValue::from_str(&format!(
+            "nimbus.firebase.listen.v1,nimbus.firebase.auth.{encoded_token}"
+        ))
+        .expect("listen auth subprotocol header should build"),
+    );
+    let mut rejected_socket = WebSocketFixture::connect_request(rejected_request)
+        .await
+        .expect("swapped-tenant listen websocket should connect before target admission");
+    rejected_socket
+        .send_binary(
+            firebase_tenant_listen_query_request(
+                32,
+                "projects/tenant-a/databases/(default)",
+                "projects/tenant-a/databases/(default)/documents",
+                "listenTenantProof",
+            )
+            .encode_to_vec(),
+        )
+        .await;
+    let close = rejected_socket.next_message().await;
+    let WsMessage::Close(Some(frame)) = close else {
+        panic!("expected swapped-tenant listen to close with a policy frame, got {close:?}");
+    };
+    assert_eq!(frame.code, WsCloseCode::Policy);
+    assert!(
+        frame.reason.contains("authorizes tenant `tenant-b`"),
+        "swapped-tenant Listen close reason should name the verified tenant claim: {frame:?}"
+    );
+    assert!(
+        frame.reason.contains("targeted tenant `tenant-a`"),
+        "swapped-tenant Listen close reason should name the rejected target tenant: {frame:?}"
+    );
+}
+
+fn firebase_tenant_listen_query_request(
+    target_id: i32,
+    database: &str,
+    parent: &str,
+    collection_id: &str,
+) -> GrpcListenRequest {
+    GrpcListenRequest {
+        database: database.to_string(),
+        target_change: Some(GrpcListenTargetChange::AddTarget(GrpcTarget {
+            target_id,
+            once: false,
+            expected_count: None,
+            target_type: Some(GrpcTargetType::Query(
+                crate::adapters::firebase::grpc::generated::google::firestore::v1::target::QueryTarget {
+                    parent: parent.to_string(),
+                    query_type: Some(GrpcListenQueryType::StructuredQuery(GrpcStructuredQuery {
+                        from: vec![GrpcCollectionSelector {
+                            collection_id: collection_id.to_string(),
+                            all_descendants: false,
+                        }],
+                        ..Default::default()
+                    })),
+                },
+            )),
+            resume_type: None,
+        })),
+        labels: HashMap::new(),
+    }
+}
+
+#[tokio::test]
 async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_in() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
