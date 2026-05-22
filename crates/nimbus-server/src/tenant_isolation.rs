@@ -15,8 +15,13 @@ use nimbus_sandbox::{
 
 use crate::sandbox::SandboxServiceLaunch;
 
+mod audit_events;
 mod image_admission;
 
+pub use audit_events::{
+    TENANT_ISOLATION_EVENT_SCHEMA_VERSION, TenantIsolationEvent, TenantIsolationEventKind,
+    TenantIsolationEventResult, TenantIsolationEventValue,
+};
 pub use image_admission::{
     TenantImageAdmission, TenantImageAdmissionSource, TenantImageAttestationEvidence,
     TenantImageSignatureEvidence, TenantImageVerificationEvidence, TenantImageVerificationProvider,

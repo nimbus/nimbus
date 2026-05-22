@@ -67,16 +67,18 @@ pub use sandbox::{
 };
 pub use service_manager::SandboxServiceManager;
 pub use tenant_isolation::{
-    RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantImageAdmission,
-    TenantImageAdmissionSource, TenantImageAttestationEvidence, TenantImagePolicyDecision,
-    TenantImageSignatureEvidence, TenantImageVerificationEvidence, TenantImageVerificationProvider,
-    TenantIsolationAuditRecord, TenantIsolationAuthorityDecision, TenantIsolationDecision,
-    TenantIsolationDecisionId, TenantIsolationMode, TenantIsolationPolicyInput,
-    TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,
-    TenantRuntimePolicyAdmission, TenantRuntimePolicyDecision, TenantSecretPolicyDecision,
-    TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
-    TenantStoragePolicyDecision, TenantVolumePolicyDecision, TenantWorkloadIdentity,
-    TenantWorkloadKind, TenantWorkloadLocation, TenantWorkloadStableIdentity,
+    RuntimeIsolationTier, TENANT_ISOLATION_EVENT_SCHEMA_VERSION, TenantAuditRedactionPolicy,
+    TenantImageAdmission, TenantImageAdmissionSource, TenantImageAttestationEvidence,
+    TenantImagePolicyDecision, TenantImageSignatureEvidence, TenantImageVerificationEvidence,
+    TenantImageVerificationProvider, TenantIsolationAuditRecord, TenantIsolationAuthorityDecision,
+    TenantIsolationDecision, TenantIsolationDecisionId, TenantIsolationEvent,
+    TenantIsolationEventKind, TenantIsolationEventResult, TenantIsolationEventValue,
+    TenantIsolationMode, TenantIsolationPolicyInput, TenantNetworkEndpointDecision,
+    TenantNetworkPolicyDecision, TenantQuotaPolicyDecision, TenantRuntimePolicyAdmission,
+    TenantRuntimePolicyDecision, TenantSecretPolicyDecision, TenantServiceAccessDecision,
+    TenantServiceGrantPolicyDecision, TenantStorageAccessDecision, TenantStoragePolicyDecision,
+    TenantVolumePolicyDecision, TenantWorkloadIdentity, TenantWorkloadKind, TenantWorkloadLocation,
+    TenantWorkloadStableIdentity,
 };
 pub use tenant_isolation_drift::{
     TenantIsolationDriftReport, TenantIsolationDriftScanConfig, TenantIsolationDriftSurface,
