@@ -66,6 +66,28 @@ This plan does not own:
 - cluster membership transport
 - browser policy credentials or WASI agent HTTP allowlists
 
+## Dependency Posture
+
+Use the dependency audit at
+`docs/plans/research/service-identity-provenance-dependency-audit.md` before
+promoting implementation. The intended dependency posture is:
+
+- Reuse iroh endpoint identity as a transport-peer input only. It can help bind
+  a connection to a cluster node, but it is not a tenant workload identity and
+  must not authorize provider credentials by itself.
+- Use SPIFFE/SPIRE through a Workload API adapter for production SVIDs when
+  available. Local development may use a Nimbus local issuer, but that fallback
+  must stay explicitly non-production.
+- Prefer `jsonwebtoken`/`openidconnect` for new JWT/OIDC minting or verification
+  code, and avoid expanding the existing Convex compatibility verifier's
+  hand-coded `ring` path into provider-auth infrastructure.
+- Keep AWS, GCP, Azure, Vault, and Kubernetes client libraries adapter-local and
+  feature-gated. Runtime crates receive identity projections only; they do not
+  link cloud/provider SDKs.
+- Wrap token-bearing values in zeroizing or secret wrapper types and keep raw
+  token strings out of debug output, audit payloads, metrics, and guest-visible
+  context.
+
 ## Identity Contract
 
 The provider-auth subject is the stable workload identity:

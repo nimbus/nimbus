@@ -427,7 +427,9 @@ archived plans only when you need historical execution detail.
     OIDC/JWT minting, SPIFFE/SVID shape, mTLS/service-account tokens,
     node/machine identity binding, Vault/Kubernetes/AWS/GCP/Azure
     provider-auth adapters, lifecycle/revocation, and audit. Consumes
-    `TenantWorkloadStableIdentity`; does not own secret values.
+    `TenantWorkloadStableIdentity`; does not own secret values. Dependency
+    review at
+    `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 - `docs/plans/artifact-provenance-verification-plan.md`
   - canonical deferred plan for production artifact verification behind
     the landed `TenantImageVerificationProvider` seam: maintained OCI
@@ -435,7 +437,8 @@ archived plans only when you need historical execution detail.
     SBOM evidence, offline/private-root verification, and extension from
     service images to runtime/function bundles and machine images. Nimbus
     owns policy evaluation and evidence normalization, not cryptographic
-    verification.
+    verification. Dependency review at
+    `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 
 ## Archive Policy
 

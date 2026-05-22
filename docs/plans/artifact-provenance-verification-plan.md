@@ -60,6 +60,24 @@ Nimbus does **not** own:
 only enterprise verifier while it remains experimental/pre-1.0 and lacks
 attestation verification coverage.
 
+## Dependency Posture
+
+Use the dependency audit at
+`docs/plans/research/service-identity-provenance-dependency-audit.md` before
+promoting implementation.
+
+- Iroh-blobs may distribute artifacts by BLAKE3 hash, but BLAKE3 transfer
+  integrity is not publisher identity, image signature, SLSA provenance, or
+  SBOM trust. Runtime bundles and machine images may need both a BLAKE3
+  distribution hash and a SHA-256/Sigstore provenance anchor.
+- Use a maintained OCI reference parser before enforcing production image
+  policy. Nimbus already depends on `oci-client` in some crates; AP0 should
+  choose a single parser path instead of adding more string slicing.
+- Prefer Cosign and SLSA verifier command adapters first, with fixture parity
+  and output normalization, before replacing them with a Rust library path.
+- Keep verifier credentials and registry tokens out of gossip, audit payloads,
+  and process output captured in failure events.
+
 ## Scope
 
 This plan covers artifact classes that can carry executable or trusted code:

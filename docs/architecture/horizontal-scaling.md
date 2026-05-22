@@ -355,7 +355,10 @@ sequenceDiagram
 ```
 
 **Key properties:**
-- Content-addressed: BLAKE3 hash IS the bundle identity (replaces SHA-256 checks)
+- Content-addressed distribution: BLAKE3 hash is the cluster transfer/cache
+  identity. Artifact trust still belongs to image/bundle provenance policy, so
+  bundles may carry both the BLAKE3 distribution hash and a SHA-256/Sigstore
+  provenance anchor.
 - Verified streaming: integrity checked incrementally during transfer, not just
   at the end — safe to start using before full transfer completes
 - P2P: nodes pull from the nearest peer that has the content, not just the
@@ -603,13 +606,13 @@ sequenceDiagram
 flowchart LR
     subgraph iroh_eco["Iroh Ecosystem (all networking)"]
         direction TB
-        IC["iroh core\nv0.97"]
-        IG["iroh-gossip\nv0.98"]
-        IB["iroh-blobs\nv0.100"]
+        IC["iroh core\n1.0 stable target"]
+        IG["iroh-gossip\nstable iroh-compatible line"]
+        IB["iroh-blobs\nstable iroh-compatible line"]
     end
 
     subgraph raft_eco["Raft (all consensus)"]
-        OR["openraft\nv0.10"]
+        OR["openraft\nv0.9.x"]
     end
 
     subgraph existing["Already in binary"]
@@ -631,11 +634,16 @@ flowchart LR
 
 | Crate | Version | Stability | Role |
 |-------|---------|-----------|------|
-| `iroh` | 0.97 | Pre-1.0 (active, 500K nodes/mo on public net) | QUIC mesh, identity, NAT traversal, relay, connection lifecycle |
-| `iroh-gossip` | 0.98 | Pre-1.0 (2000-node CI stress tests) | Subscription fanout (topics), membership (HyParView), broadcast (PlumTree) |
-| `iroh-blobs` | 0.100 | Pre-1.0 (active) | Bundle distribution, OCI layer transfer, content-addressed P2P |
-| `openraft` | 0.10 | Alpha (production at Databend/CnosDB/Quickwit) | Consensus, leader election, log replication, scheduling decisions |
+| `iroh` | Target stable 1.0.0; use 1.0.0-rc.0 only for proof lanes | Release-candidate transition until 1.0.0 lands | QUIC mesh, endpoint public-key identity, NAT traversal, relay, connection lifecycle |
+| `iroh-gossip` | Stable iroh-compatible line at promotion | Version-sensitive with iroh core | Subscription fanout (topics), membership (HyParView), broadcast (PlumTree) |
+| `iroh-blobs` | Stable iroh-compatible line at promotion; upstream latest still recommends 0.35 for production-quality use | Version-sensitive, requires production proof gate | Bundle distribution, OCI layer transfer, content-addressed P2P |
+| `openraft` | 0.9.x; 0.10 is alpha | API unstable before 1.0 | Consensus, leader election, log replication, scheduling decisions |
 | `axum` | 0.8 | Stable | HTTP/WebSocket transport, request forwarding (already in binary) |
+
+Iroh endpoint IDs are transport identities. Nimbus still needs durable
+membership policy that maps an authenticated endpoint to a canonical `node_id`
+and decides which tenants, topics, streams, and provider-auth operations that
+node may serve.
 
 ### What we no longer need
 
@@ -1588,7 +1596,8 @@ either invisible or explicitly accepted.
 - Provider-auth credentials are minted from admitted stable workload
   identity, not from gossip topics, node-local sessions, or tenant-supplied
   metadata. Cluster membership and node identity are prerequisites for
-  trusting a node to mint or exchange those credentials.
+  trusting a node to mint or exchange those credentials. Iroh peer identity is
+  one input to that membership binding, not the full workload identity.
 - Cross-node multiplexed protocol traffic (CDP for browser sessions,
   future analogues) rides its own iroh QUIC stream, not a framed
   wrapper inside another RPC channel — see the routing-over-proxying
@@ -1601,9 +1610,10 @@ either invisible or explicitly accepted.
    Start with one global group, partition when write contention or node count
    demands it.
 
-2. **BLAKE3 vs SHA-256 for bundles** — iroh-blobs uses BLAKE3; current bundle
-   integrity uses SHA-256. Options: carry both hashes, or migrate to BLAKE3
-   end-to-end (faster, streaming-friendly).
+2. **BLAKE3 vs SHA-256 for bundles** — iroh-blobs uses BLAKE3 for
+   content-addressed transfer; OCI/Sigstore/SLSA evidence still anchors on
+   digest/signature semantics. Default to carrying both hashes until a promoted
+   artifact-provenance plan proves a narrower trust model.
 
 3. **Storage Raft vs. Cluster Raft** — same Raft group for scheduling and
    storage replication, or separate? Same group is simpler (one leader).
