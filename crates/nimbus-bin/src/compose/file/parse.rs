@@ -70,6 +70,12 @@ pub(super) fn parse_port_binding(
         ));
     }
 
+    if !host_address.is_loopback() {
+        return Err(Error::InvalidInput(format!(
+            "services.{service_name}.ports: non-loopback host address {host_address} requires an explicit Nimbus operator network exposure policy"
+        )));
+    }
+
     Ok(ComposePortBindingPlan {
         name: if index == 0 {
             "default".to_owned()
