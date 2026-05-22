@@ -19,6 +19,9 @@ use std::thread;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use nimbus_core::TenantId;
+
+use crate::artifact_paths;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
@@ -49,8 +52,13 @@ pub(crate) struct OciNetworkLayout {
 }
 
 impl OciNetworkLayout {
-    pub(crate) fn new(state_root: impl Into<PathBuf>, sandbox_id: &SandboxId) -> Self {
-        let network_root = state_root.into().join("networks");
+    pub(crate) fn new(
+        state_root: impl Into<PathBuf>,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+    ) -> Self {
+        let state_root = state_root.into();
+        let network_root = artifact_paths::tenant_root(&state_root, tenant_id).join("networks");
         let run_root = network_root.join("run");
         let netns_root = network_root.join("netns");
         let container_network_dir = network_root.join("containers").join(sandbox_id.as_str());
@@ -1088,9 +1096,10 @@ mod tests {
     fn allocate_container_ips_reserves_and_loads_podman_style_static_ips() {
         let temp_dir = tempdir().expect("temp dir should create");
         let config = OciNetworkConfig::default();
+        let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let first_id = crate::instance::SandboxId::new("db-01");
         let second_id = crate::instance::SandboxId::new("db-02");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &first_id);
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &first_id);
 
         let first = allocate_container_ips(&layout, &config, &first_id)
             .expect("first allocation should succeed");
@@ -1134,8 +1143,9 @@ mod tests {
     fn deallocate_container_ips_removes_persisted_assignment() {
         let temp_dir = tempdir().expect("temp dir should create");
         let config = OciNetworkConfig::default();
+        let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let sandbox_id = crate::instance::SandboxId::new("db-01");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &sandbox_id);
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
 
         let assigned = allocate_container_ips(&layout, &config, &sandbox_id)
             .expect("allocation should succeed");
@@ -1145,6 +1155,74 @@ mod tests {
         assert!(
             load_container_ips(&layout, &sandbox_id).is_err(),
             "removed allocation should no longer load"
+        );
+    }
+
+    #[test]
+    fn network_layout_roots_mutable_state_by_tenant() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let tenant_a = TenantId::new("tenant-a").expect("tenant should parse");
+        let tenant_b = TenantId::new("tenant-b").expect("tenant should parse");
+        let sandbox_id = crate::instance::SandboxId::new("db-01");
+
+        let layout_a = OciNetworkLayout::new(temp_dir.path(), &tenant_a, &sandbox_id);
+        let layout_b = OciNetworkLayout::new(temp_dir.path(), &tenant_b, &sandbox_id);
+
+        assert_eq!(
+            layout_a.network_root,
+            temp_dir
+                .path()
+                .join("tenants")
+                .join("tenant-a")
+                .join("networks")
+        );
+        assert_eq!(
+            layout_a.netns_path,
+            temp_dir
+                .path()
+                .join("tenants")
+                .join("tenant-a")
+                .join("networks")
+                .join("netns")
+                .join("db-01")
+        );
+        assert_ne!(
+            layout_a.ipam_state_path, layout_b.ipam_state_path,
+            "same sandbox id in different tenants must not share mutable IPAM state"
+        );
+        assert_ne!(
+            layout_a.status_path, layout_b.status_path,
+            "same sandbox id in different tenants must not share netavark status"
+        );
+    }
+
+    #[test]
+    fn tenant_network_ipam_state_isolated_for_same_sandbox_id() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let config = OciNetworkConfig::default();
+        let tenant_a = TenantId::new("tenant-a").expect("tenant should parse");
+        let tenant_b = TenantId::new("tenant-b").expect("tenant should parse");
+        let sandbox_id = crate::instance::SandboxId::new("db-01");
+        let layout_a = OciNetworkLayout::new(temp_dir.path(), &tenant_a, &sandbox_id);
+        let layout_b = OciNetworkLayout::new(temp_dir.path(), &tenant_b, &sandbox_id);
+
+        let tenant_a_ips = allocate_container_ips(&layout_a, &config, &sandbox_id)
+            .expect("tenant-a allocation should succeed");
+        let tenant_b_ips = allocate_container_ips(&layout_b, &config, &sandbox_id)
+            .expect("tenant-b allocation should succeed");
+
+        assert_eq!(
+            tenant_a_ips,
+            vec!["10.89.0.2".parse::<Ipv4Addr>().expect("IPv4 should parse")]
+        );
+        assert_eq!(
+            tenant_b_ips,
+            vec!["10.89.0.2".parse::<Ipv4Addr>().expect("IPv4 should parse")],
+            "each tenant gets an independent network/IPAM namespace"
+        );
+        assert_ne!(
+            layout_a.ipam_state_path, layout_b.ipam_state_path,
+            "tenant IPAM files must be distinct"
         );
     }
 }
