@@ -68,6 +68,7 @@ pub(crate) struct OciConmonConfig {
     pub buildah_path: PathBuf,
     pub use_buildah_unshare: bool,
     pub log_level: String,
+    pub log_size_max_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,7 +89,7 @@ pub(crate) fn build_launch_plan(
     mount_session_name: Option<&str>,
     create_prelude: &[String],
 ) -> OciConmonLaunchPlan {
-    let create_command = CommandSpec::new(config.conmon_path.clone()).args([
+    let mut create_args = vec![
         "--api-version".to_owned(),
         "1".to_owned(),
         "-c".to_owned(),
@@ -121,7 +122,12 @@ pub(crate) fn build_launch_plan(
         "--log".to_owned(),
         "--runtime-arg".to_owned(),
         layout.oci_log.to_string_lossy().into_owned(),
-    ]);
+    ];
+    if let Some(log_size_max_bytes) = config.log_size_max_bytes {
+        create_args.push("--log-size-max".to_owned());
+        create_args.push(log_size_max_bytes.to_string());
+    }
+    let create_command = CommandSpec::new(config.conmon_path.clone()).args(create_args);
 
     let state_command = CommandSpec::new(config.runtime_path.clone())
         .arg("state")
@@ -188,6 +194,7 @@ mod tests {
             buildah_path: Path::new("/usr/bin/buildah").into(),
             use_buildah_unshare: true,
             log_level: "debug".to_owned(),
+            log_size_max_bytes: None,
         };
 
         let launch_plan = build_launch_plan(
@@ -232,6 +239,7 @@ mod tests {
             buildah_path: Path::new("/usr/bin/buildah").into(),
             use_buildah_unshare: true,
             log_level: "debug".to_owned(),
+            log_size_max_bytes: Some(1024 * 1024),
         };
 
         let launch_plan = build_launch_plan(
@@ -256,6 +264,14 @@ mod tests {
         assert!(
             script.contains(".krun_vm.json"),
             "expected krun vm config prelude inside the unshare shell script: {script}"
+        );
+        assert!(
+            script.contains("--log-size-max"),
+            "expected conmon log cap to remain in the final create command: {script}"
+        );
+        assert!(
+            script.contains("1048576"),
+            "expected conmon log cap bytes to remain in the final create command: {script}"
         );
         assert!(
             script.contains("/usr/bin/conmon"),

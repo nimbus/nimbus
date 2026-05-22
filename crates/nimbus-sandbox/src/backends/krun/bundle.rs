@@ -407,6 +407,16 @@ fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
             message: "krun sandbox memory_limit_bytes must be greater than zero".to_owned(),
         });
     }
+    if matches!(resources.disk_limit_bytes, Some(0)) {
+        return Err(SandboxError::InvalidSpec {
+            message: "krun sandbox disk_limit_bytes must be greater than zero".to_owned(),
+        });
+    }
+    if matches!(resources.log_limit_bytes, Some(0)) {
+        return Err(SandboxError::InvalidSpec {
+            message: "krun sandbox log_limit_bytes must be greater than zero".to_owned(),
+        });
+    }
 
     if let Some(memory_limit_bytes) = resources.memory_limit_bytes
         && memory_limit_bytes < MIN_MEMORY_LIMIT_BYTES

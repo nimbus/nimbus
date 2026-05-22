@@ -24,13 +24,14 @@ use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
+use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::process::pid_is_alive;
 use crate::spec::{
     SandboxBuildLaunchSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
-    SandboxRestartPolicy, SandboxSpec,
+    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec,
 };
 
 mod launch;
@@ -88,6 +89,7 @@ pub struct KrunSandboxBackendConfig {
     pub use_buildah_unshare: bool,
     pub published_port_range: RangeInclusive<u16>,
     pub max_published_ports_per_tenant: Option<usize>,
+    pub resource_quota_policy: SandboxResourceQuotaPolicy,
     pub launch_mode: KrunLaunchMode,
     pub log_level: String,
     pub start_timeout: Duration,
@@ -128,6 +130,7 @@ impl Default for KrunSandboxBackendConfig {
             use_buildah_unshare: true,
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             max_published_ports_per_tenant: Some(DEFAULT_MAX_PORTS_PER_TENANT),
+            resource_quota_policy: SandboxResourceQuotaPolicy::default(),
             launch_mode: KrunLaunchMode::Execute,
             log_level: "debug".to_owned(),
             start_timeout: Duration::from_secs(DEFAULT_START_TIMEOUT_SECS),
@@ -204,6 +207,13 @@ impl KrunSandboxBackend {
                 let _ = self.cleanup_manifest_launch_artifacts(&launch_plan.manifest);
             }),
         }
+    }
+
+    fn resource_quota_manager(&self) -> ResourceQuotaManager {
+        ResourceQuotaManager::new(
+            self.config.state_root.clone(),
+            self.config.resource_quota_policy.clone(),
+        )
     }
 
     pub fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {

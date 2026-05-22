@@ -211,6 +211,18 @@ impl SandboxServiceManager {
             }
         }
         .map_err(|error| sandbox_backend_error(key, "start", &error))?;
+        if handle.tenant_id != key.tenant_id {
+            return Err(Error::InvalidInput(format!(
+                "sandbox backend returned handle for tenant {}, but service activation requested tenant {}",
+                handle.tenant_id, key.tenant_id
+            )));
+        }
+        if handle.name != key.service_name {
+            return Err(Error::InvalidInput(format!(
+                "sandbox backend returned handle for service {}, but service activation requested {}",
+                handle.name, key.service_name
+            )));
+        }
 
         self.state
             .lock()
@@ -545,6 +557,7 @@ mod tests {
         artifact_cleanup_calls: AtomicUsize,
         inspect_calls: AtomicUsize,
         ready_after_inspects: usize,
+        handle_tenant_override: Option<TenantId>,
         handles: Mutex<BTreeMap<String, SandboxHandle>>,
     }
 
@@ -557,11 +570,22 @@ mod tests {
                 artifact_cleanup_calls: AtomicUsize::new(0),
                 inspect_calls: AtomicUsize::new(0),
                 ready_after_inspects,
+                handle_tenant_override: None,
                 handles: Mutex::new(BTreeMap::new()),
             }
         }
 
-        fn sandbox_handle(&self, service_name: &str, status: SandboxStatus) -> SandboxHandle {
+        fn with_handle_tenant_override(mut self, tenant_id: TenantId) -> Self {
+            self.handle_tenant_override = Some(tenant_id);
+            self
+        }
+
+        fn sandbox_handle(
+            &self,
+            tenant_id: &TenantId,
+            service_name: &str,
+            status: SandboxStatus,
+        ) -> SandboxHandle {
             let endpoints = if status == SandboxStatus::Ready {
                 vec![
                     PublishedEndpoint::new(
@@ -574,8 +598,14 @@ mod tests {
             } else {
                 Vec::new()
             };
+            let handle_tenant_id = self
+                .handle_tenant_override
+                .as_ref()
+                .unwrap_or(tenant_id)
+                .clone();
             SandboxHandle::new(
-                SandboxId::new(format!("sandbox-{service_name}")),
+                handle_tenant_id.clone(),
+                SandboxId::new(format!("sandbox-{handle_tenant_id}-{service_name}")),
                 service_name,
                 SandboxBackendKind::Krun,
                 status,
@@ -599,7 +629,11 @@ mod tests {
 
         fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
             self.image_starts.fetch_add(1, Ordering::SeqCst);
-            let handle = self.sandbox_handle(&launch.spec.name, SandboxStatus::Starting);
+            let handle = self.sandbox_handle(
+                &launch.spec.tenant_id,
+                &launch.spec.name,
+                SandboxStatus::Starting,
+            );
             self.handles
                 .lock()
                 .expect("backend lock should not be poisoned")
@@ -609,7 +643,11 @@ mod tests {
 
         fn start_from_build(&self, launch: SandboxBuildLaunchSpec) -> SandboxFuture<SandboxHandle> {
             self.build_starts.fetch_add(1, Ordering::SeqCst);
-            let handle = self.sandbox_handle(&launch.spec.name, SandboxStatus::Starting);
+            let handle = self.sandbox_handle(
+                &launch.spec.tenant_id,
+                &launch.spec.name,
+                SandboxStatus::Starting,
+            );
             self.handles
                 .lock()
                 .expect("backend lock should not be poisoned")
@@ -625,7 +663,8 @@ mod tests {
                 .expect("backend lock should not be poisoned");
             let handle = handles.get_mut(id.as_str()).cloned().map(|mut handle| {
                 if inspect_call >= self.ready_after_inspects {
-                    handle = self.sandbox_handle(&handle.name, SandboxStatus::Ready);
+                    handle =
+                        self.sandbox_handle(&handle.tenant_id, &handle.name, SandboxStatus::Ready);
                     handles.insert(id.as_str().to_owned(), handle.clone());
                 }
                 handle
@@ -707,6 +746,40 @@ mod tests {
                 .expect("db binding should be in snapshot")
                 .port,
             15432
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_service_binding_async_rejects_backend_handle_for_wrong_tenant() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1).with_handle_tenant_override(
+            TenantId::new("tenant-b").expect("tenant id should be valid"),
+        ));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db"),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend,
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+
+        let error = manager
+            .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
+            .await
+            .expect_err("backend handle from another tenant should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("backend returned handle for tenant tenant-b"),
+            "error should name the backend tenant mismatch: {error}"
         );
     }
 

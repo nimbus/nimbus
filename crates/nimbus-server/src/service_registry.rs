@@ -59,6 +59,9 @@ impl RuntimeServiceRegistry for SandboxCatalogRuntimeServiceRegistry {
             .sandboxes_for_tenant(tenant_id)
             .into_iter()
             .filter_map(|(service_name, handle)| {
+                if &handle.tenant_id != tenant_id {
+                    return None;
+                }
                 service_binding_from_handle(&handle).map(|binding| (service_name, binding))
             })
             .collect()
@@ -69,10 +72,19 @@ impl RuntimeServiceRegistry for SandboxCatalogRuntimeServiceRegistry {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Result<Option<InvocationServiceBinding>, Error> {
-        Ok(self
+        let Some(handle) = self
             .sandbox_catalog
             .sandbox_for_service(tenant_id, service_name)
-            .and_then(|handle| service_binding_from_handle(&handle)))
+        else {
+            return Ok(None);
+        };
+        if handle.tenant_id != *tenant_id {
+            return Err(Error::PermissionDenied(format!(
+                "sandbox catalog returned service {service_name} for tenant {}, but runtime lookup requested tenant {tenant_id}",
+                handle.tenant_id
+            )));
+        }
+        Ok(service_binding_from_handle(&handle))
     }
 }
 
@@ -165,6 +177,7 @@ mod tests {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
                 SandboxHandle::new(
+                    tenant_id.clone(),
                     SandboxId::new("sandbox-db"),
                     "db",
                     SandboxBackendKind::Krun,
@@ -207,6 +220,7 @@ mod tests {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
                 SandboxHandle::new(
+                    tenant_id.clone(),
                     SandboxId::new("sandbox-db"),
                     "db",
                     SandboxBackendKind::Krun,
@@ -227,12 +241,41 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_skips_sandboxes_for_a_different_tenant() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let other_tenant = TenantId::new("tenant-b").expect("tenant id should be valid");
+        let registry = SandboxCatalogRuntimeServiceRegistry::new(Arc::new(StubSandboxCatalog {
+            sandboxes: BTreeMap::from([(
+                "db".to_string(),
+                SandboxHandle::new(
+                    other_tenant,
+                    SandboxId::new("sandbox-db"),
+                    "db",
+                    SandboxBackendKind::Krun,
+                    SandboxStatus::Ready,
+                    vec![PublishedEndpoint::new(
+                        "postgres",
+                        PublishedEndpointProtocol::Tcp,
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
+                    )],
+                ),
+            )]),
+        }));
+
+        assert!(
+            registry.snapshot_for_tenant(&tenant_id).is_empty(),
+            "tenant-scoped service snapshots must not project another tenant's handle"
+        );
+    }
+
+    #[test]
     fn resolve_service_binding_returns_binding_for_named_service() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let registry = SandboxCatalogRuntimeServiceRegistry::new(Arc::new(StubSandboxCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
                 SandboxHandle::new(
+                    tenant_id.clone(),
                     SandboxId::new("sandbox-db"),
                     "db",
                     SandboxBackendKind::Krun,
@@ -253,5 +296,39 @@ mod tests {
 
         assert_eq!(binding.port, 15432);
         assert_eq!(binding.protocol, InvocationServiceProtocol::Tcp);
+    }
+
+    #[test]
+    fn resolve_service_binding_rejects_handle_for_a_different_tenant() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let other_tenant = TenantId::new("tenant-b").expect("tenant id should be valid");
+        let registry = SandboxCatalogRuntimeServiceRegistry::new(Arc::new(StubSandboxCatalog {
+            sandboxes: BTreeMap::from([(
+                "db".to_string(),
+                SandboxHandle::new(
+                    other_tenant,
+                    SandboxId::new("sandbox-db"),
+                    "db",
+                    SandboxBackendKind::Krun,
+                    SandboxStatus::Ready,
+                    vec![PublishedEndpoint::new(
+                        "postgres",
+                        PublishedEndpointProtocol::Tcp,
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
+                    )],
+                ),
+            )]),
+        }));
+
+        let error = registry
+            .resolve_service_binding(&tenant_id, "db")
+            .expect_err("mismatched handle tenant should fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("returned service db for tenant tenant-b"),
+            "error should name the rejected handle tenant: {error}"
+        );
     }
 }

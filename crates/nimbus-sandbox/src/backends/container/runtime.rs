@@ -31,12 +31,14 @@ use crate::backends::oci::network::{
     unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
+use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::process::pid_is_alive;
 use crate::spec::{
-    SandboxBuildLaunchSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxSpec,
+    SandboxBuildLaunchSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
+    SandboxResourceQuotaPolicy, SandboxSpec,
 };
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";
@@ -67,6 +69,7 @@ pub struct ContainerSandboxBackendConfig {
     pub use_buildah_unshare: bool,
     pub published_port_range: RangeInclusive<u16>,
     pub max_published_ports_per_tenant: Option<usize>,
+    pub resource_quota_policy: SandboxResourceQuotaPolicy,
     pub network_name: String,
     pub network_interface: String,
     pub network_subnet: String,
@@ -110,6 +113,7 @@ impl Default for ContainerSandboxBackendConfig {
             use_buildah_unshare: true,
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             max_published_ports_per_tenant: Some(DEFAULT_MAX_PORTS_PER_TENANT),
+            resource_quota_policy: SandboxResourceQuotaPolicy::default(),
             network_name: crate::backends::oci::network::DEFAULT_NETWORK_NAME.to_owned(),
             network_interface: crate::backends::oci::network::DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: crate::backends::oci::network::DEFAULT_NETWORK_SUBNET.to_owned(),
@@ -153,6 +157,13 @@ impl ContainerSandboxBackend {
             self.config.published_port_range.clone(),
         )
         .with_max_ports_per_tenant(self.config.max_published_ports_per_tenant)
+    }
+
+    fn resource_quota_manager(&self) -> ResourceQuotaManager {
+        ResourceQuotaManager::new(
+            self.config.state_root.clone(),
+            self.config.resource_quota_policy.clone(),
+        )
     }
 
     fn network_config(&self) -> OciNetworkConfig {
@@ -257,6 +268,7 @@ impl ContainerSandboxBackend {
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<ContainerLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
+        self.resource_quota_manager().ensure_launch_quota(spec)?;
         let prepared_launch =
             self.prepare_image_launch(spec, &sandbox_id, image_reference, overrides)?;
         self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
@@ -271,6 +283,7 @@ impl ContainerSandboxBackend {
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<ContainerLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
+        self.resource_quota_manager().ensure_launch_quota(spec)?;
         let prepared_launch = self.prepare_built_image_launch(
             spec,
             &sandbox_id,
@@ -314,6 +327,8 @@ impl ContainerSandboxBackend {
 
         let resolved_launch = resolve_launch_spec(spec, launch_defaults);
         let mut resolved_spec = resolved_launch.spec.clone();
+        self.resource_quota_manager()
+            .ensure_launch_quota(&resolved_spec)?;
         resolved_spec.port_bindings.extend(
             self.port_manager().allocate_missing_bindings_for_tenant(
                 &resolved_spec.tenant_id,
@@ -370,6 +385,7 @@ impl ContainerSandboxBackend {
                     .is_some_and(ContainerLaunchArtifact::uses_mount_session_unshare)
                     && self.config.use_buildah_unshare,
                 log_level: self.config.log_level.clone(),
+                log_size_max_bytes: resolved_spec.resources.log_limit_bytes,
             },
             &conmon_layout,
             sandbox_id,
@@ -382,6 +398,7 @@ impl ContainerSandboxBackend {
         );
 
         let handle = SandboxHandle::new(
+            resolved_spec.tenant_id.clone(),
             sandbox_id.clone(),
             resolved_spec.name.clone(),
             SandboxBackendKind::Container,

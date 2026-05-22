@@ -72,11 +72,11 @@ Reviewed on 2026-05-22.
 | --- | --- | --- |
 | Tenant identity | `TenantIsolationContext` now carries tenant, authority, surface, runtime bundle tenant labels, deployment generation, and service launch validation across native HTTP, native WebSocket, Convex, Firebase/Firestore, Cloud Functions, MongoDB compatibility commands, runtime HostBridge, and sandbox service launch. `SandboxServiceManager` keys active handles by `(tenant_id, service_name)` and rejects launch specs whose tenant/service/backend differ from the admitted request. | Later phases must extend the context/admission artifact with admitted network, storage, volume, image, secret, runtime grant, and quota policy instead of passing those as independent ad hoc arguments. |
 | Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. Application principals carrying tenant claims are now checked by `TenantIsolationContext` before Convex, Convex HTTP actions, Cloud Functions HTTP, and Firebase/Firestore database contexts reach storage/runtime. Convex function routes, Convex HTTP actions, Firebase REST `batchGet`, Firebase gRPC `GetDocument`, Firebase Listen/WebSocket, and Cloud Functions callable transport tests now prove same-tenant access succeeds while a `tenant_id=tenant-b` bearer targeting tenant `tenant-a` returns `403`, gRPC `PermissionDenied`, or a policy websocket close before provider access. Cloud Functions public HTTP is intentionally single-tenant-only in the current adapter phase and rejects ambiguous multi-tenant binding instead of accepting path/header tenant selection. Convex runtime HostBridge payloads now reject unknown fields, and direct DB/scheduler HostBridge tests prove an injected `tenant_id` payload is rejected before either tenant receives storage or scheduled-job side effects. Native HTTP is a local-operator surface: local-admin auth/session authorizes operator access, route parsing rejects reserved `_nimbus` user-tenant IDs, and native handlers consume `TenantIsolationContext::operator(...)` before service/provider calls. | TIC5 is closed for current storage/API surfaces. Future per-tenant application membership on native HTTP would be a new product auth surface rather than a gap in the current local-operator API. |
-| Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, materialized rootfs roots, named volume roots, and container network namespace/status/IPAM state now lower under tenant-owned roots. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots and named volumes while leaving shared content-addressed image cache and other tenants intact. | TIC2/TIC6 sandbox artifact ownership is closed for current service surfaces. TIC7 still owns broader disk-byte quota enforcement. |
+| Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, materialized rootfs roots, named volume roots, and container network namespace/status/IPAM state now lower under tenant-owned roots. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots and named volumes while leaving shared content-addressed image cache and other tenants intact. Sandbox launch admission now accounts active sandboxes, vCPUs, memory bytes, disk bytes, and log bytes per tenant before writing a new active manifest. | TIC2/TIC6 sandbox artifact ownership is closed for current service surfaces. TIC7 closes Nimbus launch reservation accounting; platform-specific hard disk write caps still belong to the operator/runtime filesystem layer. |
 | Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding on the rootful Linux service path after the quota changes. Runtime service lookup is tenant-scoped. Compose service lowering now rejects non-loopback host addresses unless a future operator network exposure policy is added. System port records now carry explicit tenant, service, and endpoint ownership fields. krun/container port allocation now enforces a default per-tenant published-port quota while keeping host-port reservation global. Container network/IPAM mutable state is tenant-rooted. `TenantIsolationMode::Production` now rejects generic loopback/wildcard in-process runtime network grants before Convex or Cloud Functions runtime invocation. | Future admitted tenant-owned endpoint grants need an explicit policy object instead of generic localhost authority. |
 | In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::admit_runtime_policy(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. `TenantIsolationMode::default()` is production, so public `serve*`, router builders, and CLI `nimbus start` enter production tenant isolation unless they explicitly opt out; `nimbus dev` opts into local-development mode. Active/in-flight/queued per-tenant runtime budgets are first-class start flags. `RuntimeTenantBudget` now makes the per-tenant CPU-slot, worker-slot, heap, timeout, queue, and nested-call budget explicit and exposed through runtime diagnostics. Cross-runtime nested invocations are marked as nested, tenant-labelled, and `BudgetedNestedInvocationBypass` rather than hidden top-level queue bypasses. Production rejections now produce a `RuntimePolicyAdmission::Route(RuntimeIsolationRoute)` decision with the canonical fallback tier: `in_process_trusted_only`, `microvm_service`, or future `wasm_capability_sandbox`. `RuntimeExecutionAdmission` is the call-boundary handoff: it allows admitted in-process policies and fails closed when a routed fallback tier is not configured, so unsafe policies never silently execute in process. Product-named tests prove package-manager subprocess and native-addon/package-loading shaped policies route to `microvm_service`. | TIC4 is closed for tenant isolation. Product work that adds an actual microVM JavaScript/function executor must consume `RuntimeExecutionAdmission` instead of bypassing it. |
-| MicroVM service compute | krun launches one service sandbox as one microVM; service manager does not intentionally share a VM across tenants. Runtime permission model separates `in_process_untrusted` from `microvm_service`. | Need hard admission tests that prevent multiple tenants sharing a guest, enforce per-tenant/per-sandbox quotas, and prove workloads with broad OS needs move to `microvm_service` or a trusted tier. |
-| Volumes/files | `SandboxMountSpec` now carries logical tenant-volume mounts rather than caller-provided host paths. Compose rejects host bind mounts, anonymous volumes, undeclared named volumes, unsupported top-level volume options, invalid guest destinations, duplicate destinations, and more than 32 mounts per sandbox. krun and container bundles materialize named volumes under `state/tenants/<tenant_id>/volumes/<name>` with read/write policy in OCI mount options, and tenant cleanup removes only the target tenant's volume roots. | Disk-byte quotas remain TIC7. Shared read-only artifact policy remains future work; no cross-tenant writable volume sharing is admitted. |
+| MicroVM service compute | krun/container service sandboxes carry tenant ID on both `SandboxSpec` and `SandboxHandle`. `SandboxServiceManager` rejects a backend handle whose tenant or service differs from the admitted `(tenant_id, service_name)` request, and runtime service registry snapshots/lookups fail closed if a catalog returns another tenant's handle. `SandboxResourceQuotaPolicy` and the shared OCI `ResourceQuotaManager` enforce per-tenant active sandbox, vCPU, memory, disk-reservation, and log-reservation quotas before sandbox launch; conmon receives per-sandbox `--log-size-max`; Compose `x-nimbus.disk_limit` and `x-nimbus.log_limit` lower into sandbox resources. Runtime admission already routes broad OS needs out of `in_process_untrusted` to `microvm_service` or trusted tiers. | TIC7 is closed for current service placement and Nimbus control-plane quota surfaces. Product work that adds multi-workload guests, a JavaScript microVM executor, or platform filesystem project quotas must consume this same tenant/handle/quota contract. |
+| Volumes/files | `SandboxMountSpec` now carries logical tenant-volume mounts rather than caller-provided host paths. Compose rejects host bind mounts, anonymous volumes, undeclared named volumes, unsupported top-level volume options, invalid guest destinations, duplicate destinations, and more than 32 mounts per sandbox. krun and container bundles materialize named volumes under `state/tenants/<tenant_id>/volumes/<name>` with read/write policy in OCI mount options, and tenant cleanup removes only the target tenant's volume roots. Sandbox launch quotas now reserve disk bytes per tenant and reject over-quota launches. | Shared read-only artifact policy remains future work; no cross-tenant writable volume sharing is admitted. Hard runtime disk-write caps require filesystem/runtime support such as project quotas, quota-backed volumes, or another operator-provided disk quota driver. |
 | Images/builds | OCI materializer verifies pulled blob digests and sanitizes archive paths before extraction. `nimbus start` production Compose admission now rejects tag-only image references, local build-backed services without an operator-owned provenance/signature policy, and raw Compose secrets before backend setup; digest-pinned image references are admitted as the current provenance anchor. Local-development Compose remains permissive for developer workflow. | Full cryptographic signature/attestation verification is not yet implemented; production mode fails closed for local builds until that operator policy exists. |
 | System/control data | `_nimbus` records services, ports, jobs, machines, and events with tenant IDs for operator visibility. System Convex routes use the system registry, require local-admin auth when local security is configured, and application runtime HostBridge reads stay scoped to the application tenant even when querying tables with system-control names such as `routes`. | Native HTTP/API tenant authorization still needs a full tenant-membership/session model beyond local-operator authority. |
 
@@ -91,7 +91,7 @@ Reviewed on 2026-05-22.
 | TIC4 | `done` | Runtime compute admission and host capability isolation. | CLI start enters production isolation by default; production runtime policies reject unsafe tier/backend/grant combinations; Node loopback grants cannot bypass service grants; runtime CPU/memory/time/worker/nested-call budgets are tenant-accounted and visible in diagnostics; fallback routes fail closed until a concrete fallback executor is configured. |
 | TIC5 | `done` | Tenant-scoped storage/API authorization. | Native HTTP, adapter, runtime, scheduler, and system-control paths prove a principal/session cannot address another tenant by swapping the path tenant ID. |
 | TIC6 | `done` | Tenant-scoped volumes, images, secrets, and mounts. | Bind mounts are denied by default; named volumes lower only to Nimbus-owned tenant paths with mount-count quota and cleanup; production images require digest/provenance admission; raw Compose secrets fail closed. |
-| TIC7 | `pending` | Per-tenant microVM/resource quotas. | Tests cover per-tenant active microVM count, sandbox CPU/memory/disk/log/port quotas, scheduler fairness, and runtime in-flight limits. |
+| TIC7 | `done` | Per-tenant microVM/resource quotas. | Tests cover per-tenant active microVM count, sandbox CPU/memory/disk/log/port launch quotas, conmon log caps, tenant-owned service handles, scheduler/runtime budgets, and runtime in-flight limits. |
 | TIC8 | `pending` | End-to-end multi-tenant proof harness. | A two-tenant harness proves runtime compute, microVM compute, network, storage, HostBridge, service lookup, volumes, logs, cleanup, and system metadata isolation. |
 
 ## Required Gates
@@ -1539,6 +1539,72 @@ owns broader disk-byte quota enforcement and resource quota policy. A future
 operator image-signature/attestation verifier must replace the current
 digest-pinned-only provenance anchor before production admits local builds or
 non-digest references.
+
+### 2026-05-22 TIC7 MicroVM Resource Quotas And Handle Ownership
+
+Closed TIC7 at the sandbox launch admission seam and the runtime service
+handle projection seam.
+
+Completed in this checkpoint:
+
+- Added `SandboxResourceQuotaPolicy` and `SandboxResourceCharge` so active
+  sandbox count, vCPU, memory, disk-reservation, and log-reservation budgets
+  are first-class tenant quota inputs.
+- Added the shared OCI `ResourceQuotaManager` and wired both krun and
+  container backends through it before launch planning/materialization. Quota
+  accounting reads only the target tenant's active manifests, while stopped or
+  other-tenant manifests do not consume the requested tenant's budget.
+- Added `disk_limit_bytes` and `log_limit_bytes` to sandbox resources, exposed
+  them through Compose `x-nimbus.disk_limit` and `x-nimbus.log_limit`, and
+  rejected zero-valued disk/log limits before bundle materialization.
+- Passed per-sandbox log limits to conmon as `--log-size-max`, making service
+  log growth bounded by the admitted sandbox resource contract.
+- Added `tenant_id` to `SandboxHandle` and changed service-manager/runtime
+  registry projections to reject or hide handles whose tenant differs from the
+  requested tenant, even if a backend/catalog incorrectly returns one.
+- Preserved the existing TIC3 published-port quota, TIC4 runtime
+  active/in-flight/queued/nested-call budgets, and runtime fallback routing as
+  part of the broader per-tenant resource contract.
+
+Verification evidence:
+
+- `cargo check -p nimbus-sandbox`
+  - result: pass; `Finished dev profile` in 1.75s.
+- `cargo check -p nimbus-bin`
+  - result: pass; `Finished dev profile` in 8.34s.
+- `cargo test -p nimbus-sandbox --no-run`
+  - result: pass; `Finished test profile` in 3.69s; built lib,
+    `neovex-guest-user-switch`, and `krun_linux_smoke` test executables.
+- `cargo test -p nimbus-server --no-run`
+  - result: pass; `Finished test profile` in 28.82s.
+- `cargo test -p nimbus-bin --no-run`
+  - result: pass; `Finished test profile` in 15.56s.
+- `cargo test -p nimbus-sandbox resource_quota -- --nocapture`
+  - result: pass; 3 passed, 0 failed, 110 filtered out in `src/lib.rs`;
+    guest-user-switch and Linux smoke targets had 0 matching tests.
+- `cargo test -p nimbus-sandbox active_sandbox_quota -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 112 filtered out in `src/lib.rs`;
+    guest-user-switch and Linux smoke targets had 0 matching tests.
+- `cargo test -p nimbus-sandbox conmon_launch_plan_injects_mount_prelude_for_image_backed_sandboxes -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 112 filtered out in `src/lib.rs`;
+    guest-user-switch and Linux smoke targets had 0 matching tests.
+- `cargo test -p nimbus-server service_binding -- --nocapture`
+  - result: pass; 10 passed, 0 failed, 729 filtered out in `src/lib.rs`;
+    MongoDB/reactive-loop targets had 0 matching tests.
+- `cargo test -p nimbus-bin x_nimbus_disk -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 526 filtered out in `src/main.rs`;
+    `server_discovery_serde` target had 0 matching tests.
+- `cargo fmt --all --check`
+  - result: pass.
+- `git diff --check`
+  - result: pass.
+
+TIC7 status after this checkpoint: closed for current service placement,
+launch quota admission, conmon log caps, and tenant-owned handle projection.
+Disk limits are enforced as Nimbus launch reservations against per-tenant
+budgets; a hard runtime disk-write cap still requires a platform quota driver
+such as project quotas, quota-backed volumes, or another runtime filesystem
+enforcer.
 
 ## Execution Notes
 

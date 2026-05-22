@@ -131,10 +131,17 @@ pub(super) fn parse_cpu_count(
 }
 
 pub(super) fn parse_memory_limit(service_name: &str, value: &str) -> Result<u64, Error> {
+    parse_byte_limit(
+        &format!("services.{service_name}.deploy.resources.limits.memory"),
+        value,
+    )
+}
+
+pub(super) fn parse_byte_limit(label: &str, value: &str) -> Result<u64, Error> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(Error::InvalidInput(format!(
-            "services.{service_name}.deploy.resources.limits.memory: expected a byte value like 256M or 1G"
+            "{label}: expected a byte value like 256M or 1G"
         )));
     }
 
@@ -144,14 +151,12 @@ pub(super) fn parse_memory_limit(service_name: &str, value: &str) -> Result<u64,
         .count();
     if digits_len == 0 {
         return Err(Error::InvalidInput(format!(
-            "services.{service_name}.deploy.resources.limits.memory: invalid value {value:?}. Expected format: 256M, 1G, etc."
+            "{label}: invalid value {value:?}. Expected format: 256M, 1G, etc."
         )));
     }
 
     let amount = trimmed[..digits_len].parse::<u64>().map_err(|error| {
-        Error::InvalidInput(format!(
-            "services.{service_name}.deploy.resources.limits.memory: invalid numeric value {value:?}: {error}"
-        ))
+        Error::InvalidInput(format!("{label}: invalid numeric value {value:?}: {error}"))
     })?;
     let unit = trimmed[digits_len..].trim().to_ascii_lowercase();
     let multiplier = match unit.as_str() {
@@ -162,14 +167,12 @@ pub(super) fn parse_memory_limit(service_name: &str, value: &str) -> Result<u64,
         "t" | "tb" => 1024_u64.pow(4),
         other => {
             return Err(Error::InvalidInput(format!(
-                "services.{service_name}.deploy.resources.limits.memory: unsupported unit {other:?}. Expected format: 256M, 1G, etc."
+                "{label}: unsupported unit {other:?}. Expected format: 256M, 1G, etc."
             )));
         }
     };
     amount.checked_mul(multiplier).ok_or_else(|| {
-        Error::InvalidInput(format!(
-            "services.{service_name}.deploy.resources.limits.memory: value {value:?} overflowed u64 bytes"
-        ))
+        Error::InvalidInput(format!("{label}: value {value:?} overflowed u64 bytes"))
     })
 }
 

@@ -279,6 +279,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             let handle = SandboxHandle::new(
+                spec.tenant_id.clone(),
                 sandbox_id.clone(),
                 spec.name.clone(),
                 SandboxBackendKind::Container,

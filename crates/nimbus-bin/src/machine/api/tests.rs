@@ -573,6 +573,7 @@ fn write_container_manifest(
     fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
 
     let handle = SandboxHandle::new(
+        nimbus::TenantId::new(tenant_id).expect("tenant id should parse"),
         SandboxId::new(sandbox_id),
         service_name,
         SandboxBackendKind::Container,
@@ -689,6 +690,7 @@ impl SandboxBackend for RefreshingInspectBackend {
                 endpoints.clone(),
             );
             Ok(Some(SandboxHandle::new(
+                nimbus::TenantId::new("svc-demo").expect("tenant id should parse"),
                 sandbox_id,
                 "demo",
                 SandboxBackendKind::Container,

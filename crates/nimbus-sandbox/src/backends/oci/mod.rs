@@ -5,3 +5,4 @@ pub(crate) mod conmon;
 pub(crate) mod materializer;
 pub(crate) mod network;
 pub(crate) mod port_manager;
+pub(crate) mod resource_quota;

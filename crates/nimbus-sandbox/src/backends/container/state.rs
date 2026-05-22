@@ -452,6 +452,7 @@ mod tests {
         fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
 
         let handle = SandboxHandle::new(
+            tenant_id.clone(),
             sandbox_id,
             service_name,
             crate::backend::SandboxBackendKind::Container,

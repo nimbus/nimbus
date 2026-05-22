@@ -14,6 +14,7 @@ impl KrunSandboxBackend {
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<KrunLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
+        self.resource_quota_manager().ensure_launch_quota(spec)?;
         let prepared_launch =
             self.prepare_image_launch(spec, &sandbox_id, image_reference, overrides)?;
         self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
@@ -28,6 +29,7 @@ impl KrunSandboxBackend {
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<KrunLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
+        self.resource_quota_manager().ensure_launch_quota(spec)?;
         let prepared_launch = self.prepare_built_image_launch(
             spec,
             &sandbox_id,
@@ -81,6 +83,8 @@ impl KrunSandboxBackend {
 
         let mut resolved_launch = resolve_launch_spec(spec, launch_defaults);
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
+        self.resource_quota_manager()
+            .ensure_launch_quota(&resolved_launch.spec)?;
         let bundle_layout = KrunBundleLayout::new(crate::artifact_paths::bundle_dir(
             &self.config.bundle_root,
             &resolved_launch.spec.tenant_id,
@@ -123,6 +127,7 @@ impl KrunSandboxBackend {
                     .is_some_and(KrunLaunchArtifact::uses_mount_session_unshare)
                     && self.config.use_buildah_unshare,
                 log_level: self.config.log_level.clone(),
+                log_size_max_bytes: resolved_launch.spec.resources.log_limit_bytes,
             },
             &conmon_layout,
             sandbox_id,
@@ -141,6 +146,7 @@ impl KrunSandboxBackend {
         );
 
         let handle = SandboxHandle::new(
+            resolved_launch.spec.tenant_id.clone(),
             sandbox_id.clone(),
             resolved_launch.spec.name.clone(),
             SandboxBackendKind::Krun,

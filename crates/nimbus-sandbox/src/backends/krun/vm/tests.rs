@@ -33,7 +33,7 @@ use crate::instance::{SandboxId, SandboxStatus};
 use crate::spec::{
     SandboxBuildLaunchSpec, SandboxFilesystemSpec, SandboxImageLaunchSpec,
     SandboxImageProcessOverrides, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec,
-    SandboxResourceLimits, SandboxRestartPolicy, SandboxSpec,
+    SandboxResourceLimits, SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec,
 };
 
 #[test]
@@ -722,6 +722,35 @@ fn start_from_image_plan_only_rejects_same_tenant_port_quota_exhaustion() {
 }
 
 #[test]
+fn plan_only_backend_rejects_same_tenant_active_sandbox_quota_exhaustion() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    );
+    config.resource_quota_policy = SandboxResourceQuotaPolicy::default()
+        .with_max_active_sandboxes_per_tenant(Some(1))
+        .with_max_vcpus_per_tenant(None)
+        .with_max_memory_bytes_per_tenant(None)
+        .with_max_disk_bytes_per_tenant(None)
+        .with_max_log_bytes_per_tenant(None);
+    let backend = KrunSandboxBackend::new(config);
+
+    block_on(backend.start(sample_spec()))
+        .expect("first plan-only sandbox should consume the single active slot");
+
+    let error = block_on(backend.start(sample_spec_for_tenant("tenant", "api")))
+        .expect_err("second same-tenant sandbox should exceed active sandbox quota");
+
+    assert!(
+        error.to_string().contains("active sandbox quota exceeded")
+            && error.to_string().contains("tenant")
+            && error.to_string().contains("limit 1"),
+        "expected active sandbox quota error, got: {error}"
+    );
+}
+
+#[test]
 fn configured_stop_signal_prefers_image_metadata_and_falls_back_to_term() {
     assert_eq!(
         configured_stop_signal(&sample_image_metadata().with_stop_signal("SIGQUIT")),
@@ -1185,6 +1214,7 @@ fn sample_manifest(spec: SandboxSpec, launch_mode: KrunLaunchMode) -> KrunSandbo
     let endpoints = visible_published_endpoints(launch_mode, &spec, SandboxStatus::Starting);
     KrunSandboxManifest {
         handle: crate::instance::SandboxHandle::new(
+            spec.tenant_id.clone(),
             crate::instance::SandboxId::new("sandbox-01"),
             spec.name.clone(),
             SandboxBackendKind::Krun,
