@@ -53,12 +53,18 @@ impl Default for TenantIsolationMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeIsolationTier {
     InProcessUntrusted,
+    InProcessTrustedOnly,
+    WasmCapabilitySandbox,
+    MicroVmService,
 }
 
 impl RuntimeIsolationTier {
     fn label(self) -> &'static str {
         match self {
             Self::InProcessUntrusted => "in_process_untrusted",
+            Self::InProcessTrustedOnly => "in_process_trusted_only",
+            Self::WasmCapabilitySandbox => "wasm_capability_sandbox",
+            Self::MicroVmService => "microvm_service",
         }
     }
 }
@@ -189,20 +195,53 @@ impl TenantIsolationContext {
         if !matches!(mode, TenantIsolationMode::Production) {
             return Ok(());
         }
-        validate_production_in_process_untrusted_policy(policy.limits()).map_err(|reason| {
+        if !matches!(tier, RuntimeIsolationTier::InProcessUntrusted) {
+            return Ok(());
+        }
+        validate_production_in_process_untrusted_policy(policy.limits()).map_err(|rejection| {
             Error::InvalidInput(format!(
-                "tenant isolation context for {} on {} rejected {context}: production {} runtime policy {reason}",
+                "tenant isolation context for {} on {} rejected {context}: production {} runtime policy {}; route via {}",
                 self.authority.describe(),
                 self.surface,
-                tier.label()
+                tier.label(),
+                rejection.reason,
+                rejection.recommended_tier.label()
             ))
-        })
+        })?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProductionRuntimePolicyRejection {
+    reason: String,
+    recommended_tier: RuntimeIsolationTier,
+}
+
+impl ProductionRuntimePolicyRejection {
+    fn new(reason: impl Into<String>, recommended_tier: RuntimeIsolationTier) -> Self {
+        Self {
+            reason: reason.into(),
+            recommended_tier,
+        }
+    }
+
+    fn trusted_only(reason: impl Into<String>) -> Self {
+        Self::new(reason, RuntimeIsolationTier::InProcessTrustedOnly)
+    }
+
+    fn microvm_service(reason: impl Into<String>) -> Self {
+        Self::new(reason, RuntimeIsolationTier::MicroVmService)
+    }
+
+    fn wasm_capability_sandbox(reason: impl Into<String>) -> Self {
+        Self::new(reason, RuntimeIsolationTier::WasmCapabilitySandbox)
     }
 }
 
 fn validate_production_in_process_untrusted_policy(
     limits: &nimbus_runtime::RuntimeLimits,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), ProductionRuntimePolicyRejection> {
     match limits.backend_kind {
         RuntimeBackendKind::V8 => {}
     }
@@ -210,64 +249,88 @@ fn validate_production_in_process_untrusted_policy(
         limits.bundle_content_kind,
         RuntimeBundleContentKind::JavaScript
     ) {
-        return Err(format!(
-            "uses unsupported bundle content kind {:?}",
-            limits.bundle_content_kind
+        return Err(ProductionRuntimePolicyRejection::wasm_capability_sandbox(
+            format!(
+                "uses unsupported bundle content kind {:?}",
+                limits.bundle_content_kind
+            ),
         ));
     }
     if matches!(limits.mode, RuntimeMode::Privileged) {
-        return Err("uses privileged runtime mode".to_string());
+        return Err(ProductionRuntimePolicyRejection::trusted_only(
+            "uses privileged runtime mode",
+        ));
     }
     if !matches!(
         limits.preset,
         RuntimePreset::Application | RuntimePreset::Code
     ) {
-        return Err(format!(
+        return Err(ProductionRuntimePolicyRejection::trusted_only(format!(
             "uses {:?} preset, which is not an untrusted application preset",
             limits.preset
-        ));
+        )));
     }
 
     let grants = &limits.grants;
-    reject_grant_family("run", &grants.run)?;
-    reject_grant_family("ffi", &grants.ffi)?;
-    reject_grant_family("env_write", &grants.env_write)?;
-    reject_grant_family("identity", &grants.identity)?;
-    reject_grant_family("tool", &grants.tool)?;
+    reject_microvm_grant_family("run", &grants.run)?;
+    reject_microvm_grant_family("ffi", &grants.ffi)?;
+    reject_trusted_grant_family("env_write", &grants.env_write)?;
+    reject_trusted_grant_family("identity", &grants.identity)?;
+    reject_trusted_grant_family("tool", &grants.tool)?;
     if let Some(grant) = grants
         .net_connect
         .iter()
         .find(|grant| is_loopback_or_wildcard_network_grant(grant))
     {
-        return Err(format!(
+        return Err(ProductionRuntimePolicyRejection::microvm_service(format!(
             "includes generic localhost or wildcard network authority `{grant}`"
-        ));
+        )));
     }
     if !grants.net_listen.is_empty() {
-        return Err(format!(
+        return Err(ProductionRuntimePolicyRejection::microvm_service(format!(
             "includes network listen grants {}; production tenant services must expose endpoints through Nimbus service policy",
             format_grants(&grants.net_listen)
-        ));
+        )));
     }
-    reject_grant_family("worker", &grants.worker)?;
+    reject_microvm_grant_family("worker", &grants.worker)?;
     if grants.sys.iter().any(|grant| grant == "inspector") {
-        return Err("includes inspector sys grant".to_string());
+        return Err(ProductionRuntimePolicyRejection::trusted_only(
+            "includes inspector sys grant",
+        ));
     }
     if let Some(grant) = broad_filesystem_grant(grants) {
-        return Err(format!(
+        return Err(ProductionRuntimePolicyRejection::microvm_service(format!(
             "includes broad filesystem/package-loading grant `{grant}`"
-        ));
+        )));
     }
     Ok(())
 }
 
-fn reject_grant_family(family: &str, grants: &[String]) -> std::result::Result<(), String> {
+fn reject_microvm_grant_family(
+    family: &str,
+    grants: &[String],
+) -> std::result::Result<(), ProductionRuntimePolicyRejection> {
+    reject_grant_family(family, grants, RuntimeIsolationTier::MicroVmService)
+}
+
+fn reject_trusted_grant_family(
+    family: &str,
+    grants: &[String],
+) -> std::result::Result<(), ProductionRuntimePolicyRejection> {
+    reject_grant_family(family, grants, RuntimeIsolationTier::InProcessTrustedOnly)
+}
+
+fn reject_grant_family(
+    family: &str,
+    grants: &[String],
+    recommended_tier: RuntimeIsolationTier,
+) -> std::result::Result<(), ProductionRuntimePolicyRejection> {
     if grants.is_empty() {
         return Ok(());
     }
-    Err(format!(
-        "includes {family} grants {}",
-        format_grants(grants)
+    Err(ProductionRuntimePolicyRejection::new(
+        format!("includes {family} grants {}", format_grants(grants)),
+        recommended_tier,
     ))
 }
 
@@ -581,6 +644,56 @@ mod tests {
             error.to_string().contains("in_process_untrusted"),
             "error should name the runtime tier: {error}"
         );
+        assert!(
+            error.to_string().contains("route via microvm_service"),
+            "error should name the canonical routing fallback: {error}"
+        );
+    }
+
+    #[test]
+    fn production_untrusted_runtime_admission_routes_trusted_grants_to_trusted_tier() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits {
+            grants: nimbus_runtime::RuntimeGrants {
+                env_write: vec!["DEBUG".to_string()],
+                ..nimbus_runtime::RuntimeGrants::application_web_standard()
+            },
+            ..RuntimeLimits::application_web_standard()
+        });
+
+        let error = context
+            .ensure_runtime_policy_admitted(
+                &policy,
+                RuntimeIsolationTier::InProcessUntrusted,
+                TenantIsolationMode::Production,
+                "runtime invocation",
+            )
+            .expect_err("trusted-only grants must not enter production untrusted runtime");
+        assert!(
+            error.to_string().contains("env_write"),
+            "error should explain the rejected grant family: {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("route via in_process_trusted_only"),
+            "error should name the trusted-only routing fallback: {error}"
+        );
+    }
+
+    #[test]
+    fn production_admission_only_validates_in_process_untrusted_tier() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
+
+        context
+            .ensure_runtime_policy_admitted(
+                &policy,
+                RuntimeIsolationTier::MicroVmService,
+                TenantIsolationMode::Production,
+                "microvm service runtime policy",
+            )
+            .expect("microVM service routing owns OS isolation outside the in-process gate");
     }
 
     #[test]
