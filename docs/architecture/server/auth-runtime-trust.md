@@ -43,6 +43,60 @@ The current landed architecture now reflects the following settled rules:
   aware only where explicitly named as such.
 - Pre-launch direct corrections are preferred over compatibility shims.
 
+## Tenant Workload Identity
+
+Tenant-isolated work now has one canonical workload identity projection:
+`TenantWorkloadStableIdentity`, produced from an admitted
+`TenantIsolationDecision`.
+
+The stable ID format is:
+
+```text
+nimbus-workload:v1
+  /tenant/<tenant_id>
+  /deployment/<generation|none>
+  /surface/<admission_surface>
+  /kind/<runtime_function|sandbox_service|http_request|system_task>
+  /name/<percent-escaped service-or-function>
+  /runtime-tier/<tier|none>
+  /runtime-backend/<backend|none>
+  /sandbox-backend/<backend|none>
+  /node/<node_id|none>
+  /machine/<machine_id|none>
+  /sandbox/<sandbox_id|none>
+  /invocation/<invocation_id|none>
+```
+
+The same projection can render a SPIFFE-style path:
+
+```text
+/nimbus/workload/v1/tenant/.../invocation/...
+```
+
+and a full ID when a trust domain is configured:
+
+```text
+spiffe://<trust-domain>/nimbus/workload/v1/tenant/.../invocation/...
+```
+
+Rules:
+
+- The stable workload identity is derived only after tenant admission; lower
+  seams do not assemble it from caller-supplied tenant strings.
+- Tenant ID, deployment generation, admission surface, service/function name,
+  runtime tier/backend, sandbox backend, node/machine, sandbox, and invocation
+  IDs are explicit fields. Fields that do not apply render as `none`, rather
+  than disappearing from the schema.
+- Non-path-safe bytes are percent-escaped in path segments so service names
+  such as `messages:send` have deterministic identities.
+- Decision fingerprints include node/machine location, so a decision admitted
+  for one execution location cannot be silently reused as a different
+  provider-auth subject.
+- Future secret-management and service-identity providers must use this
+  stable workload identity as the provider-auth subject. They should not mint
+  credentials from only `tenant_id`, raw bearer claims, or process-local
+  runtime context.
+
 ## Agent Auth Contract
 
 This is a forward-looking contract for the `nimbus agent` workload class.

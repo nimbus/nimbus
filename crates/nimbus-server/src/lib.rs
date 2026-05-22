@@ -74,7 +74,7 @@ pub use tenant_isolation::{
     TenantRuntimePolicyAdmission, TenantRuntimePolicyDecision, TenantSecretPolicyDecision,
     TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
     TenantStoragePolicyDecision, TenantVolumePolicyDecision, TenantWorkloadIdentity,
-    TenantWorkloadKind,
+    TenantWorkloadKind, TenantWorkloadLocation, TenantWorkloadStableIdentity,
 };
 pub use tenant_isolation_drift::{
     TenantIsolationDriftReport, TenantIsolationDriftScanConfig, TenantIsolationDriftSurface,
