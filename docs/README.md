@@ -23,6 +23,8 @@ Each adapter speaks a different client protocol against the same engine.
 ## Operating
 
 - [CLI reference](operating/cli.md) -- server flags, service/machine commands
+- [Tenant isolation runbook](operating/tenant-isolation.md) -- rejection,
+  drift, conformance, and incident-response workflow
 - [Storage backends](operating/storage-backends.md) -- SQLite, Postgres, MySQL, libSQL, redb
 - [Encryption at rest](operating/encryption.md) -- key providers, migration, recovery
 - [Deploy admin API](operating/deploy-admin-api.md) -- staging, diffing, activation
@@ -50,6 +52,8 @@ Internal docs mirroring the crate tree. See
 
 ## Other
 
+- [Tenant isolation](tenant-isolation.md) -- threat model, isolation matrix,
+  evidence, residual risks, and external review targets
 - [Plans](plans/README.md) -- active execution plans and archived history
 - [Research](plans/research/) -- background research and north-star direction
 - [Demos](../demos/README.md) -- working example applications
