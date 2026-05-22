@@ -13,6 +13,23 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
+- `docs/plans/ci-modernization-plan.md`
+  - active execution plan covering CI infrastructure modernization that
+    sits alongside the archived CC caching baseline. Extracts the
+    duplicated Rust + sccache + Swatinem bootstrap into a composite
+    action at `.github/actions/setup-rust-cached/` so the next
+    sccache-action pin bump becomes a 1-line change (root cause of
+    CC9's 12-site blast radius). SHA-pins every third-party action
+    with a version-name comment, pins `runs-on: ubuntu-latest` →
+    `ubuntu-24.04` for runner determinism, fixes the
+    `actions/create-github-app-token@v3.2.0` patch over-pin, emits
+    `$GITHUB_STEP_SUMMARY` markdown from high-value jobs
+    (verifier/deny/coverage/desktop-ui), adds a CodeQL workflow, and
+    audits the dependabot PR queue. `/goal` control plane gated on
+    `bash scripts/verify-ci-modernization.sh` (twelve conditions).
+    Once the plan closes, `docs/operating/ci-modernization.md`
+    becomes the canonical infrastructure contract alongside
+    `docs/operating/ci-caching.md`.
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -59,14 +76,17 @@ archived plans only when you need historical execution detail.
     promote a new active plan.
 - `docs/plans/archive/ci-caching-canonicalization-plan.md`
   - completed execution record for the CI caching canonicalization wave
-    (CC0-CC8, closed 2026-05-22). Layered sccache (per-rustc-call
+    (CC0-CC9, closed 2026-05-22). Layered sccache (per-rustc-call
     content-addressed cache via `mozilla-actions/sccache-action`) on
     top of the existing Swatinem floor across every Rust job in
     `.github/workflows/ci.yml`, `.github/workflows/desktop-ui.yml`, and
     `.github/workflows/node-compat-nightly.yml`. Rotated all Swatinem
-    `shared-key` values `-v1 → -v2` to force a clean dep tree, added
-    `save-always: true` for rerun-safe saves, and gated `save-if` on
-    `refs/heads/main` so PRs cannot poison the main-branch pool.
+    `shared-key` values `-v1 → -v2` to force a clean dep tree, gated
+    `save-if` on `refs/heads/main` so PRs cannot poison the main-branch
+    pool, and (CC9) raised the `sccache-action` pin floor to `v0.0.10`
+    plus retracted CC3's wrong-headed `save-always: true` after the
+    GHA cache v1 → v2 migration broke every Rust job on the original
+    `v0.0.6` pin.
     Inserted two leader jobs: `ui-artifacts` (one canonical SPA build
     consumed by harness + coverage via `actions/download-artifact@v7`)
     and `warm-sccache` (serial cold-start that populates the sccache
