@@ -219,17 +219,17 @@ impl SandboxBackend for HarnessSandboxBackend {
         let tenant = tenant_id.as_str().to_owned();
         for kind in ["bundles", "state"] {
             let root = self.tenant_artifact_root(kind, &tenant);
-            if root.exists() {
-                if let Err(error) = std::fs::remove_dir_all(&root) {
-                    return Box::pin(async move {
-                        Err(SandboxError::OperationFailed {
-                            message: format!(
-                                "failed to remove harness tenant root {}: {error}",
-                                root.display()
-                            ),
-                        })
-                    });
-                }
+            if root.exists()
+                && let Err(error) = std::fs::remove_dir_all(&root)
+            {
+                return Box::pin(async move {
+                    Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to remove harness tenant root {}: {error}",
+                            root.display()
+                        ),
+                    })
+                });
             }
         }
         self.records

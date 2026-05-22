@@ -19,6 +19,17 @@ use super::facade::{BLOCKING_RESULT_POLL_INTERVAL, RuntimeExecutor};
 use super::lifecycle::run_invocation_lifecycle;
 use super::queue::{RuntimeWorkerJob, RuntimeWorkerResultSender, RuntimeWorkerRouter};
 
+struct DirectRuntimeInvocation {
+    watchdog: WatchdogTimer,
+    host: RuntimeHost,
+    policy: Arc<RuntimePolicy>,
+    bundle: RuntimeBundle,
+    request: InvocationRequest,
+    context: RuntimeInvocationContext,
+    cancellation: Option<HostCallCancellation>,
+    queue_started_at: Instant,
+}
+
 fn bridge_blocking_invocation<T, F>(thread_panic_message: &'static str, task: F) -> Result<T>
 where
     T: Send,
@@ -51,16 +62,17 @@ impl RuntimeExecutor {
             .map_err(|_| RuntimeWorkerRouter::closed_error())
     }
 
-    async fn invoke_job(
-        watchdog: WatchdogTimer,
-        host: RuntimeHost,
-        policy: Arc<RuntimePolicy>,
-        bundle: RuntimeBundle,
-        request: InvocationRequest,
-        context: RuntimeInvocationContext,
-        cancellation: Option<HostCallCancellation>,
-        queue_started_at: Instant,
-    ) -> Result<Value> {
+    async fn invoke_job(invocation: DirectRuntimeInvocation) -> Result<Value> {
+        let DirectRuntimeInvocation {
+            watchdog,
+            host,
+            policy,
+            bundle,
+            request,
+            context,
+            cancellation,
+            queue_started_at,
+        } = invocation;
         let permit = SharedInvocationPermit::new(
             policy.clone(),
             context.tenant_label.clone(),
@@ -119,16 +131,16 @@ impl RuntimeExecutor {
             .policy
             .metrics()
             .record_request_correlation(&context);
-        Self::invoke_job(
-            self.inner.watchdog.clone(),
-            runtime.invocation_host(),
-            self.inner.policy.clone(),
+        Self::invoke_job(DirectRuntimeInvocation {
+            watchdog: self.inner.watchdog.clone(),
+            host: runtime.invocation_host(),
+            policy: self.inner.policy.clone(),
             bundle,
             request,
             context,
             cancellation,
-            Instant::now(),
-        )
+            queue_started_at: Instant::now(),
+        })
         .await
     }
 

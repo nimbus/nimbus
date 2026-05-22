@@ -49,7 +49,7 @@ pub(crate) fn commit_batch_for_database(
         Some(transaction_bytes) => {
             let transaction_token = decode_transaction_token(transaction_bytes)?;
             state.service.commit_transaction_session(
-                &tenant_id,
+                tenant_id,
                 &transaction_token,
                 principal,
                 Some(batch),
@@ -88,7 +88,7 @@ pub(crate) fn rollback_transaction_session_for_database(
     let token = decode_transaction_token(transaction)?;
     state
         .service
-        .rollback_transaction_session(&tenant_id, &token, principal)
+        .rollback_transaction_session(tenant_id, &token, principal)
 }
 
 pub(crate) fn tenant_id_for_database(
@@ -151,7 +151,7 @@ pub(crate) fn batch_get_documents_for_database(
         .map(|requested_document| {
             let document = read_batch_get_document(
                 state,
-                &tenant_id,
+                tenant_id,
                 principal,
                 transaction_token.as_ref(),
                 &requested_document.document_path,
@@ -212,7 +212,7 @@ pub(crate) fn list_collection_ids_for_database(
         tenant_id_for_context_database(isolation, database, "Firestore list-collections database")?;
     let collection_ids = state
         .service
-        .list_collection_ids_for_parent(&tenant_id, parent_document_path)?
+        .list_collection_ids_for_parent(tenant_id, parent_document_path)?
         .into_iter()
         .map(|collection_id| collection_id.to_string())
         .collect::<Vec<_>>();
@@ -232,7 +232,7 @@ pub(crate) fn get_document_for_database(
     let transaction_token = transaction.map(decode_transaction_token).transpose()?;
     read_batch_get_document(
         state,
-        &tenant_id,
+        tenant_id,
         principal,
         transaction_token.as_ref(),
         document_path,
@@ -317,7 +317,7 @@ pub(crate) fn run_query_documents_for_database(
             Some(transaction_token) => state
                 .service
                 .query_collection_group_documents_structured_in_transaction(
-                    &tenant_id,
+                    tenant_id,
                     transaction_token,
                     principal,
                     &collection_target.collection_group,
@@ -327,7 +327,7 @@ pub(crate) fn run_query_documents_for_database(
             None => state
                 .service
                 .query_collection_group_documents_structured_with_principal_cancellable(
-                    &tenant_id,
+                    tenant_id,
                     &collection_target.collection_group,
                     parent_document_path,
                     &structured_query,
@@ -346,14 +346,14 @@ pub(crate) fn run_query_documents_for_database(
         let table = storage_table_for_collection_path(&collection_path)?;
         match transaction_token.as_ref() {
             Some(transaction_token) => state.service.query_documents_structured_in_transaction(
-                &tenant_id,
+                tenant_id,
                 transaction_token,
                 principal,
                 &table,
                 &structured_query,
             )?,
             None => state.service.query_documents_structured_with_principal(
-                &tenant_id,
+                tenant_id,
                 &table,
                 &structured_query,
                 principal,
@@ -398,7 +398,7 @@ pub(crate) fn run_aggregation_query_for_database(
         state
             .service
             .aggregate_collection_group_documents_structured_with_principal_cancellable(
-                &tenant_id,
+                tenant_id,
                 &collection_target.collection_group,
                 parent_document_path,
                 &aggregation_query,
@@ -410,7 +410,7 @@ pub(crate) fn run_aggregation_query_for_database(
         state
             .service
             .aggregate_documents_structured_with_principal_cancellable(
-                &tenant_id,
+                tenant_id,
                 &table,
                 &aggregation_query,
                 principal,

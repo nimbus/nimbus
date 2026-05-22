@@ -1,8 +1,8 @@
 # Plan: Tenant Isolation Control Plane
 
-Active plan for making tenant isolation an explicit control-plane contract
-across in-process runtime compute, microVM service compute, networking,
-storage, runtime host access, and sandbox artifacts.
+Completed execution record for making tenant isolation an explicit
+control-plane contract across in-process runtime compute, microVM service
+compute, networking, storage, runtime host access, and sandbox artifacts.
 
 This plan exists because hardware microVM isolation is necessary but not
 sufficient. OCI gives Nimbus an execution envelope; Nimbus must still prove
@@ -13,7 +13,7 @@ network exposure, storage roots, and cleanup all stay tenant-scoped.
 
 ## Status
 
-- **Status:** `active`
+- **Status:** `done` (closed 2026-05-22; archived alongside this revision)
 - **Activated:** 2026-05-22
 - **Primary owner:** this plan
 - **Parent references:**
@@ -1665,6 +1665,61 @@ gap: native HTTP remains a local-operator surface until product auth adds a
 tenant membership/session model, so the harness proves native operator gating
 and adapter-level tenant-claim rejection rather than inventing a second native
 application-auth contract.
+
+### 2026-05-22 Closeout Verification And Archive
+
+Closed the plan, archived the execution record, and cleaned the focused clippy
+gate that covered the final tenant-isolation slice.
+
+Completed in this checkpoint:
+
+- Archived this plan under `docs/plans/archive/` and moved the plan index plus
+  sandbox security-audit references from active execution to completed
+  baseline.
+- Kept the runtime invocation clippy cleanup aligned with the runtime seam by
+  wrapping the direct invocation state in a named envelope, matching the
+  worker/backend invocation shape without changing behavior.
+- Cleaned focused clippy findings in Convex manifest defaults/conflict checks,
+  Convex subscription re-evaluation context construction, Firebase tenant-ID
+  forwarding, `TenantIsolationMode` default derivation, network-grant parsing,
+  and the TIC8 harness cleanup path.
+
+Verification evidence:
+
+- `cargo test -p nimbus-runtime blocking_bridge -- --nocapture`
+  - result: pass; 2 passed, 0 failed, 497 filtered out in `src/lib.rs`;
+    `engine_proofs` and `locker_smoke` targets had 0 matching tests.
+- `cargo clippy -p nimbus-server --tests -- -D warnings`
+  - result: pass; `Finished dev profile` in 15.90s.
+- `cargo test -p nimbus-server two_tenant_isolation_harness_covers_runtime_services_storage_and_system_control -- --nocapture`
+  - result: pass; `Finished test profile` in 52.21s; 1 passed, 0 failed,
+    739 filtered out in `src/lib.rs`; `mongodb_spec` target had 0 matching
+    tests with 23 filtered out; `reactive_loop` target had 0 matching tests
+    with 32 filtered out.
+- `cargo test -p nimbus-server firestore_database_context -- --nocapture`
+  - result: pass; 3 passed, 0 failed, 737 filtered out in `src/lib.rs`;
+    `mongodb_spec` target had 0 matching tests with 23 filtered out;
+    `reactive_loop` target had 0 matching tests with 32 filtered out.
+- `cargo test -p nimbus-server convex_registry_rejects_conflicting_runtime_target_metadata_before_invocation -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 739 filtered out in `src/lib.rs`;
+    `mongodb_spec` target had 0 matching tests with 23 filtered out;
+    `reactive_loop` target had 0 matching tests with 32 filtered out.
+- `cargo fmt --all --check`
+  - result: pass.
+- `git diff --check`
+  - result: pass.
+- `rg -n "docs/plans/tenant-isolation-control-plane-plan.md" docs README.md ARCHITECTURE.md AGENTS.md`
+  - result: pass for live references; only historical verification-command
+    transcripts inside this archived plan still mention the pre-archive path.
+- `npm run docs:validate-refs:strict`
+  - result: not available in this checkout; `npm` reported `Missing script:
+    "docs:validate-refs:strict"`, and `npm run` listed no docs reference
+    validation script.
+
+Plan status after this checkpoint: closed and archived. Future
+tenant-isolation changes should start from the architecture docs and this
+completed baseline, then promote a new active plan before changing production
+tenant-isolation contracts.
 
 ## Execution Notes
 

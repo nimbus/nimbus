@@ -84,13 +84,13 @@ impl ConvexFunctionDefinition {
         let compatibility_target = self
             .runtime_compatibility_target
             .or(self.node_runtime_target)
-            .unwrap_or_else(|| match self.runtime_environment {
+            .unwrap_or(match self.runtime_environment {
                 ConvexRuntimeEnvironment::Default => RuntimeCompatibilityTarget::WebStandardIsolate,
                 ConvexRuntimeEnvironment::Node => RuntimeCompatibilityTarget::Node22,
             });
         let package_resolution =
             self.runtime_package_resolution
-                .unwrap_or_else(|| match self.runtime_environment {
+                .unwrap_or(match self.runtime_environment {
                     ConvexRuntimeEnvironment::Default => ConvexRuntimePackageResolution::Bundled,
                     ConvexRuntimeEnvironment::Node => {
                         ConvexRuntimePackageResolution::NodeExternalPackages
@@ -107,13 +107,12 @@ impl ConvexFunctionDefinition {
     pub(super) fn validate_runtime_selection(&self) -> Result<(), String> {
         if let (Some(runtime_target), Some(node_target)) =
             (self.runtime_compatibility_target, self.node_runtime_target)
+            && runtime_target != node_target
         {
-            if runtime_target != node_target {
-                return Err(format!(
-                    "function {} has conflicting runtime_compatibility_target {:?} and node_runtime_target {:?}",
-                    self.name, runtime_target, node_target
-                ));
-            }
+            return Err(format!(
+                "function {} has conflicting runtime_compatibility_target {:?} and node_runtime_target {:?}",
+                self.name, runtime_target, node_target
+            ));
         }
 
         let selection = self.runtime_selection();

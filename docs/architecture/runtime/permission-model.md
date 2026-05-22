@@ -143,9 +143,9 @@ multi-tenant isolation. The current server-side gate is
 runtime network grants before Convex or Cloud Functions can invoke
 `in_process_untrusted` JavaScript. `TenantIsolationMode::default()` is
 production; local-development entrypoints such as `nimbus dev` must opt out
-explicitly when they need Node-compatible localhost grants. The active owner
-for finishing that cross-layer policy is
-`docs/plans/tenant-isolation-control-plane-plan.md`.
+explicitly when they need Node-compatible localhost grants. The completed
+cross-layer baseline is
+`docs/plans/archive/tenant-isolation-control-plane-plan.md`.
 
 Secret and identity grants are declaration and audit inputs until a future
 secret-store or service-identity API exists. Declaring a `secret` grant does not

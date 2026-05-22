@@ -28,18 +28,22 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `/goal` control plane gated on
     `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
     conditions).
-- `docs/plans/tenant-isolation-control-plane-plan.md`
-  - canonical active plan for making production tenant isolation explicit
-    across compute, networking, storage, HostBridge/runtime grants, sandbox
-    artifacts, volumes, images, secrets, and resource quotas. Starts from the
-    completed krun microVM hardening and libkrun runtime-stack baselines, but
-    does not allow those VM proofs to stand in for full tenant isolation.
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/archive/tenant-isolation-control-plane-plan.md`
+  - completed execution record for making production tenant isolation explicit
+    across compute, networking, storage, HostBridge/runtime grants, sandbox
+    artifacts, volumes, images, secrets, cleanup, and resource quotas (closed
+    2026-05-22). Added the server-owned `TenantIsolationContext`, tenant-owned
+    sandbox roots and volumes, fail-closed network/image/secret admission,
+    runtime grant/tier admission, storage/API tenant authorization, microVM
+    resource quotas, and the two-tenant proof harness. Future tenant-isolation
+    waves should start from current architecture docs plus this baseline and
+    promote a new active plan before changing the contract.
 - `docs/plans/archive/local-dev-canonicalization-plan.md`
   - completed execution record for the local-dev canonicalization wave
     (LD0-LD7, closed 2026-05-21). Made `nimbus-server`'s cross-toolchain
@@ -446,7 +450,7 @@ the work is explicitly a historical review.
 - For production tenant isolation across microVM services, in-process runtime
   grants, HostBridge access, storage namespaces, service networking, volumes,
   images, secrets, quotas, or cleanup, start with
-  `docs/plans/tenant-isolation-control-plane-plan.md`, then cross-check
+  `docs/plans/archive/tenant-isolation-control-plane-plan.md`, then cross-check
   `docs/plans/security/sandbox-isolation-audit.md`,
   `docs/architecture/sandbox/microvm-service-baseline.md`,
   `docs/architecture/runtime/permission-model.md`, and

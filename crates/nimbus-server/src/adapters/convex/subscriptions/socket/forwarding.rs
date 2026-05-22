@@ -60,21 +60,21 @@ pub(super) async fn run_subscription_forwarder(
                 .await;
                 let request_id_for_transform = request_id.clone();
                 match apply_subscription_transform(
-                    RuntimeTransformContext::new(
-                        &service,
-                        &registry,
-                        &runtime_service_registry,
-                        &tenant_context,
-                        &transforms,
-                        &runtime_cancellation,
+                    RuntimeTransformContext {
+                        service: &service,
+                        registry: &registry,
+                        runtime_service_registry: &runtime_service_registry,
+                        tenant_context: &tenant_context,
+                        transforms: &transforms,
+                        runtime_cancellation: &runtime_cancellation,
                         tenant_isolation_mode,
-                        ConvexSubscriptionEvent {
+                        event: ConvexSubscriptionEvent {
                             subscription_id,
                             request_id: request_id_for_transform.as_deref(),
                             commit: commit_hint.as_ref(),
                             deleted_documents: &snapshot.deleted_documents,
                         },
-                    ),
+                    },
                     snapshot.to_json_documents(),
                 )
                 .await

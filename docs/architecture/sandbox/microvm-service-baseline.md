@@ -136,8 +136,8 @@ Preferred probe hierarchy by platform:
   production service sandbox must be admitted with tenant-owned identity,
   bundle/state/rootfs/log/volume roots, network exposure policy, resource
   quotas, image provenance policy, and HostBridge/runtime grants before OCI
-  bundle generation. The active owner for that cross-layer work is
-  `docs/plans/tenant-isolation-control-plane-plan.md`.
+  bundle generation. The completed cross-layer baseline is
+  `docs/plans/archive/tenant-isolation-control-plane-plan.md`.
 
 ## Tenant Isolation Boundary
 
