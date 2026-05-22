@@ -35,7 +35,7 @@ pub use limits::{
     RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGrants, RuntimeLanguage, RuntimeLimits, RuntimeMode,
     RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind, RuntimePreset,
-    RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeTenantBudget,
 };
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,

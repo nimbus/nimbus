@@ -140,7 +140,7 @@ This plan is complete when:
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
 | EIH0 | `done` | Prior-art and codebase research. | Research doc records primary/code-source evidence, Nimbus decisions, rejected options, and follow-up code-reading targets. |
-| EIH1 | `todo` | Define `TenantIsolationDecision` or equivalent typed admission artifact. | Unit tests prove decision construction is immutable, tenant-bound, and carries decision IDs plus audit-safe fields. |
+| EIH1 | `done` | Define `TenantIsolationDecision` or equivalent typed admission artifact. | `cargo test -p nimbus-server tenant_isolation -- --nocapture`, `cargo test -p nimbus-server runtime_execution_admission -- --nocapture`, `cargo fmt --all --check`, and `cargo clippy -p nimbus-server --all-targets` passed. |
 | EIH2 | `todo` | Separate policy decision point from policy enforcement points. | Runtime, sandbox, storage/API, service lookup, and HostBridge seams consume the decision in focused tests. |
 | EIH3 | `todo` | Promote TIC8 into tenant-isolation conformance suite. | One command runs allowed/denied scenario fixtures with counts and failure messages. |
 | EIH4 | `todo` | Add drift/audit scanner for existing state. | Tests inject malformed manifests/handles/ports/volumes/routes and assert violations are reported without mutating state. |
@@ -327,8 +327,51 @@ Verification evidence:
   - result: pass; source-evidence section, decision/rejection ledger,
     EIH0 ledger row, plan index, and follow-up reading note are present.
 
+### 2026-05-22 EIH1 Typed Decision Artifact
+
+Completed in this checkpoint:
+
+- Added `TenantIsolationDecision` and stable `TenantIsolationDecisionId`
+  construction from a deterministic fingerprint of tenant, surface,
+  authority projection, deployment generation, workload identity, runtime
+  policy, service grants, network endpoints, storage namespace, volume/image/
+  secret policy, quotas, and audit redaction policy.
+- Added typed policy projections for runtime admission, service grants,
+  network endpoints, storage namespace, named volumes, digest-pinned image
+  policy, secret handles, quota reservations, workload identity, and
+  audit-redaction metadata.
+- Added an audit-safe `TenantIsolationAuditRecord` projection that carries
+  decision ID and policy shape while redacting principal claims, bearer
+  claims, raw credentials, and secret handles by schema.
+- Routed `RuntimeExecutionAdmission::for_policy` through the decision artifact
+  so at least one enforcement seam now consumes the typed snapshot instead of
+  recomputing the runtime policy admission result directly.
+- Re-exported `RuntimeTenantBudget` from `nimbus-runtime` because the server
+  decision artifact records the existing public runtime budget type.
+
+Verification evidence:
+
+- `cargo test -p nimbus-server tenant_isolation -- --nocapture`
+  - result: pass; 20 passed, 0 failed, 0 ignored, 723 filtered out. Includes
+    new stable-ID, audit-redaction, immutable-snapshot, tenant/deployment
+    binding, and mismatched-application-claim tests, plus the TIC8 harness.
+- `cargo test -p nimbus-server runtime_execution_admission -- --nocapture`
+  - result: pass; 2 passed, 0 failed, 0 ignored, 741 filtered out.
+- `cargo fmt --all --check`
+  - result: pass.
+- `cargo clippy -p nimbus-server --all-targets`
+  - result: pass; finished dev profile in 26.03s.
+
+Dirty-worktree caveat:
+
+- Unrelated generated Convex files, `package-lock.json`,
+  `docs/architecture/horizontal-scaling.md`, desktop-auth proof images, and
+  other untracked plan/research docs were already present and intentionally
+  left untouched.
+
 ## Execution Log
 
 | Date | Phase | Status | Files | Summary | Verification |
 | --- | --- | --- | --- | --- | --- |
 | 2026-05-22 | EIH0 | `done` | `docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md`, `docs/plans/README.md` | Started the follow-on enterprise hardening plan, then closed EIH0 by mapping Kubernetes/Gatekeeper, Firecracker/Kata/gVisor, SPIFFE/SPIRE/Vault, Sigstore/SLSA, and OpenTelemetry primary/code-source patterns to Nimbus decisions and rejected options. Next phase is EIH1 typed admission decision. | `git diff --check` passed; `rg -n "tenant-isolation-enterprise-hardening|tenant-isolation-control-plane" docs/plans/README.md docs/plans/tenant-isolation-enterprise-hardening-plan.md docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md` passed; `rg -n "Primary And Code-Source|Nimbus Decisions And Rejections|EIH0 |tenant-isolation-enterprise-hardening" docs/plans/tenant-isolation-enterprise-hardening-plan.md docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md docs/plans/README.md` passed. |
+| 2026-05-22 | EIH1 | `done` | `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/execution/runtime_admission.rs`, `crates/nimbus-server/src/lib.rs`, `crates/nimbus-runtime/src/lib.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added the typed immutable tenant-isolation decision artifact, deterministic decision IDs, workload/policy/quota/audit projections, audit-safe redaction projection, unit coverage for immutability and mismatched authority, and routed runtime execution admission through the decision snapshot. Next phase is EIH2 broader PDP/PEP consumption across sandbox, storage/API, service lookup, and HostBridge seams. | `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 20 passed, 0 failed, 0 ignored, 723 filtered out; `cargo test -p nimbus-server runtime_execution_admission -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 741 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed. |

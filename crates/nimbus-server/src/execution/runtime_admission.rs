@@ -2,7 +2,8 @@ use nimbus_core::{Error, Result};
 use nimbus_runtime::RuntimePolicy;
 
 use crate::tenant_isolation::{
-    RuntimeIsolationTier, RuntimePolicyAdmission, TenantIsolationContext, TenantIsolationMode,
+    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantIsolationPolicyInput,
+    TenantRuntimePolicyAdmission, TenantWorkloadIdentity,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,11 +22,30 @@ impl RuntimeExecutionAdmission {
         tier: RuntimeIsolationTier,
         mode: TenantIsolationMode,
     ) -> Self {
-        match isolation.admit_runtime_policy(policy, tier, mode) {
-            RuntimePolicyAdmission::AdmitInProcess => Self::InProcess,
-            RuntimePolicyAdmission::Route(route) => Self::FallbackUnavailable {
-                tier: route.recommended_tier(),
-                reason: route.reason().to_string(),
+        let decision = isolation.admit_decision(
+            TenantIsolationPolicyInput::new(TenantWorkloadIdentity::runtime_function(
+                "runtime_execution",
+                tier,
+            ))
+            .with_runtime_policy(isolation, policy, tier, mode),
+        );
+        let decision = match decision {
+            Ok(decision) => decision,
+            Err(error) => {
+                return Self::FallbackUnavailable {
+                    tier: RuntimeIsolationTier::InProcessTrustedOnly,
+                    reason: format!("tenant isolation decision rejected runtime policy: {error}"),
+                };
+            }
+        };
+        match decision.runtime().admission().clone() {
+            TenantRuntimePolicyAdmission::AdmitInProcess => Self::InProcess,
+            TenantRuntimePolicyAdmission::Route {
+                recommended_tier,
+                reason,
+            } => Self::FallbackUnavailable {
+                tier: recommended_tier,
+                reason,
             },
         }
     }
