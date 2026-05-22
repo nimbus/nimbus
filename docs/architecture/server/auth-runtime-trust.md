@@ -97,6 +97,39 @@ Rules:
   credentials from only `tenant_id`, raw bearer claims, or process-local
   runtime context.
 
+## Tenant Isolation Audit Events
+
+Tenant isolation telemetry uses `TenantIsolationEvent`, a structured event
+projection from either an admitted `TenantIsolationDecision` or a narrow
+no-decision context for pre-admission rejection, cleanup, and drift findings.
+The schema version is `nimbus.tenant_isolation.event.v1`.
+
+Event kinds are:
+
+- `admission`
+- `rejection`
+- `materialization`
+- `runtime_invocation`
+- `sandbox_launch`
+- `storage_access`
+- `host_bridge_operation`
+- `cleanup`
+- `drift_violation`
+
+Every event carries tenant ID, surface, principal class, result, reason code,
+correlation IDs, audit redaction fields, and any available decision ID,
+stable workload ID, workload kind/name, runtime tier, sandbox ID, invocation
+ID, and service name. Decision-backed events derive those fields from the
+admitted decision, not from caller-supplied strings.
+
+Sensitive attributes are redacted by the event schema. Attribute and
+correlation-ID keys that name bearer claims, authorization headers, cookies,
+credentials, passwords, private keys, raw credentials, secrets, secret
+handles, or tokens are not serialized with caller-provided values. The event
+records the redacted field path and serializes the value as `redacted`
+instead. Callers may add more redacted attributes, but they must not bypass
+the schema by attaching raw secrets to another telemetry channel.
+
 ## Agent Auth Contract
 
 This is a forward-looking contract for the `nimbus agent` workload class.
