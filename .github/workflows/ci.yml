@@ -422,12 +422,62 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  warm-sccache:
+    # CC5: warm the per-rustc-call sccache before downstream parallel Rust
+    # jobs fan out. `cargo check --workspace --tests` rustc's every
+    # workspace crate and dev-dep once, populating sccache so concurrent
+    # downstream jobs hit instead of all cold-compiling identical deps in
+    # parallel. The job consumes ui-artifacts because nimbus-server's
+    # include_str!s of the convex codegen output and rust-embed of the SPA
+    # dist must be present for the workspace to type-check.
+    name: Warm sccache
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name != 'schedule'
+    needs: [ui-artifacts]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-ubuntu-stable-warm-sccache-no-bin-v2
+          cache-directories: ~/.cargo/.rusty_v8
+          cache-on-failure: "true"
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-always: true
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Warm sccache via workspace check
+        run: cargo check --workspace --tests
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
+
   harness:
     name: ${{ matrix.surface-label }} Verification Harness
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name != 'schedule'
-    needs: [ui-artifacts]
+    needs: [ui-artifacts, warm-sccache]
     strategy:
       fail-fast: false
       matrix:
@@ -639,7 +689,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event_name != 'schedule'
-    needs: [ui-artifacts]
+    needs: [ui-artifacts, warm-sccache]
     env:
       NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
