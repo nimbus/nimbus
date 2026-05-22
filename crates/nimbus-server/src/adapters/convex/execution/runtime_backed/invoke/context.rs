@@ -15,6 +15,7 @@ use crate::application_auth::normalize_principal_context;
 use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_on_worker_with_host_state,
 };
+use crate::execution::runtime_admission::RuntimeExecutionAdmission;
 use crate::service_registry::RuntimeServiceRegistry;
 use crate::tenant_isolation::{RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode};
 
@@ -70,12 +71,13 @@ impl<'a> RuntimeInvocationContext<'a> {
         let (runtime_executor, runtime_policy) = self
             .registry
             .runtime_lane_for_function(&request.function_name);
-        self.isolation.ensure_runtime_policy_admitted(
+        RuntimeExecutionAdmission::for_policy(
+            &self.isolation,
             &runtime_policy,
             RuntimeIsolationTier::InProcessUntrusted,
             self.tenant_isolation_mode,
-            "convex runtime invocation",
-        )?;
+        )
+        .ensure_in_process_available("convex runtime invocation")?;
         let bridge = Arc::new(ConvexHostBridge::build(
             ConvexHostBridgeScope::new(
                 self.service.clone(),

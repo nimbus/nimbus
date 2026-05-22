@@ -60,7 +60,7 @@ pub(crate) enum RuntimeIsolationTier {
 }
 
 impl RuntimeIsolationTier {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::InProcessUntrusted => "in_process_untrusted",
             Self::InProcessTrustedOnly => "in_process_trusted_only",
@@ -215,21 +215,6 @@ impl TenantIsolationContext {
         )))
     }
 
-    pub(crate) fn ensure_runtime_policy_admitted(
-        &self,
-        policy: &RuntimePolicy,
-        tier: RuntimeIsolationTier,
-        mode: TenantIsolationMode,
-        context: &str,
-    ) -> Result<()> {
-        match self.admit_runtime_policy(policy, tier, mode) {
-            RuntimePolicyAdmission::AdmitInProcess => Ok(()),
-            RuntimePolicyAdmission::Route(route) => {
-                Err(self.runtime_route_error(context, tier, route))
-            }
-        }
-    }
-
     pub(crate) fn admit_runtime_policy(
         &self,
         policy: &RuntimePolicy,
@@ -246,22 +231,6 @@ impl TenantIsolationContext {
             Ok(()) => RuntimePolicyAdmission::AdmitInProcess,
             Err(rejection) => RuntimePolicyAdmission::Route(rejection.into_route()),
         }
-    }
-
-    fn runtime_route_error(
-        &self,
-        context: &str,
-        tier: RuntimeIsolationTier,
-        route: RuntimeIsolationRoute,
-    ) -> Error {
-        Error::InvalidInput(format!(
-            "tenant isolation context for {} on {} rejected {context}: production {} runtime policy {}; route via {}",
-            self.authority.describe(),
-            self.surface,
-            tier.label(),
-            route.reason(),
-            route.recommended_tier().label()
-        ))
     }
 
     pub(crate) fn ensure_application_principal_tenant_access(&self, context: &str) -> Result<()> {
@@ -795,40 +764,31 @@ mod tests {
         let context = test_application_context();
         let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
 
-        context
-            .ensure_runtime_policy_admitted(
+        assert_eq!(
+            context.admit_runtime_policy(
                 &policy,
                 RuntimeIsolationTier::InProcessUntrusted,
                 TenantIsolationMode::Production,
-                "runtime invocation",
-            )
-            .expect("web-standard application grants should be production-admissible");
+            ),
+            RuntimePolicyAdmission::AdmitInProcess,
+            "web-standard application grants should be production-admissible"
+        );
     }
 
     #[test]
     fn production_untrusted_runtime_admission_rejects_generic_node_loopback_grants() {
-        let context = test_application_context();
         let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
 
-        let error = context
-            .ensure_runtime_policy_admitted(
-                &policy,
-                RuntimeIsolationTier::InProcessUntrusted,
-                TenantIsolationMode::Production,
-                "runtime invocation",
-            )
-            .expect_err("node loopback grants must not enter production untrusted runtime");
+        let route = production_untrusted_route(&policy);
+
         assert!(
-            error.to_string().contains("generic localhost"),
-            "error should explain loopback authority: {error}"
+            route.reason().contains("generic localhost"),
+            "route should explain loopback authority: {route:?}"
         );
-        assert!(
-            error.to_string().contains("in_process_untrusted"),
-            "error should name the runtime tier: {error}"
-        );
-        assert!(
-            error.to_string().contains("route via microvm_service"),
-            "error should name the canonical routing fallback: {error}"
+        assert_eq!(
+            route.recommended_tier(),
+            RuntimeIsolationTier::MicroVmService,
+            "route should name the canonical routing fallback"
         );
     }
 
@@ -882,7 +842,6 @@ mod tests {
 
     #[test]
     fn production_untrusted_runtime_admission_routes_trusted_grants_to_trusted_tier() {
-        let context = test_application_context();
         let policy = RuntimePolicy::new(RuntimeLimits {
             grants: nimbus_runtime::RuntimeGrants {
                 env_write: vec!["DEBUG".to_string()],
@@ -891,23 +850,16 @@ mod tests {
             ..RuntimeLimits::application_web_standard()
         });
 
-        let error = context
-            .ensure_runtime_policy_admitted(
-                &policy,
-                RuntimeIsolationTier::InProcessUntrusted,
-                TenantIsolationMode::Production,
-                "runtime invocation",
-            )
-            .expect_err("trusted-only grants must not enter production untrusted runtime");
+        let route = production_untrusted_route(&policy);
+
         assert!(
-            error.to_string().contains("env_write"),
-            "error should explain the rejected grant family: {error}"
+            route.reason().contains("env_write"),
+            "route should explain the rejected grant family: {route:?}"
         );
-        assert!(
-            error
-                .to_string()
-                .contains("route via in_process_trusted_only"),
-            "error should name the trusted-only routing fallback: {error}"
+        assert_eq!(
+            route.recommended_tier(),
+            RuntimeIsolationTier::InProcessTrustedOnly,
+            "route should name the trusted-only routing fallback"
         );
     }
 
@@ -916,14 +868,15 @@ mod tests {
         let context = test_application_context();
         let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
 
-        context
-            .ensure_runtime_policy_admitted(
+        assert_eq!(
+            context.admit_runtime_policy(
                 &policy,
                 RuntimeIsolationTier::MicroVmService,
                 TenantIsolationMode::Production,
-                "microvm service runtime policy",
-            )
-            .expect("microVM service routing owns OS isolation outside the in-process gate");
+            ),
+            RuntimePolicyAdmission::AdmitInProcess,
+            "microVM service routing owns OS isolation outside the in-process gate"
+        );
     }
 
     #[test]
@@ -931,13 +884,14 @@ mod tests {
         let context = test_application_context();
         let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
 
-        context
-            .ensure_runtime_policy_admitted(
+        assert_eq!(
+            context.admit_runtime_policy(
                 &policy,
                 RuntimeIsolationTier::InProcessUntrusted,
                 TenantIsolationMode::LocalDevelopment,
-                "runtime invocation",
-            )
-            .expect("local development mode should preserve Node compatibility localhost grants");
+            ),
+            RuntimePolicyAdmission::AdmitInProcess,
+            "local development mode should preserve Node compatibility localhost grants"
+        );
     }
 }

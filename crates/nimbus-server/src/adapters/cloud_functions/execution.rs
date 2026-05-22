@@ -11,6 +11,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host,
     next_runtime_server_request_id,
 };
+use crate::execution::runtime_admission::RuntimeExecutionAdmission;
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::service_registry::RuntimeServiceRegistry;
 use crate::tenant_isolation::{RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode};
@@ -76,12 +77,13 @@ impl CloudFunctionsTriggerExecutor {
         let bundle = self.registry.runtime_bundle();
         isolation
             .ensure_runtime_bundle_matches(&bundle, "cloud functions trigger runtime bundle")?;
-        isolation.ensure_runtime_policy_admitted(
+        RuntimeExecutionAdmission::for_policy(
+            &isolation,
             &self.registry.runtime_policy(),
             RuntimeIsolationTier::InProcessUntrusted,
             self.tenant_isolation_mode,
-            "cloud functions trigger runtime invocation",
-        )?;
+        )
+        .ensure_in_process_available("cloud functions trigger runtime invocation")?;
         let services = self
             .runtime_service_registry
             .snapshot_for_tenant(isolation.tenant_id());
