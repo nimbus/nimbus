@@ -71,6 +71,35 @@ impl RuntimeIsolationTier {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RuntimePolicyAdmission {
+    AdmitInProcess,
+    Route(RuntimeIsolationRoute),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuntimeIsolationRoute {
+    reason: String,
+    recommended_tier: RuntimeIsolationTier,
+}
+
+impl RuntimeIsolationRoute {
+    fn new(reason: impl Into<String>, recommended_tier: RuntimeIsolationTier) -> Self {
+        Self {
+            reason: reason.into(),
+            recommended_tier,
+        }
+    }
+
+    pub(crate) fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    pub(crate) fn recommended_tier(&self) -> RuntimeIsolationTier {
+        self.recommended_tier
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TenantIsolationContext {
     tenant_id: TenantId,
     authority: TenantIsolationAuthority,
@@ -193,23 +222,46 @@ impl TenantIsolationContext {
         mode: TenantIsolationMode,
         context: &str,
     ) -> Result<()> {
+        match self.admit_runtime_policy(policy, tier, mode) {
+            RuntimePolicyAdmission::AdmitInProcess => Ok(()),
+            RuntimePolicyAdmission::Route(route) => {
+                Err(self.runtime_route_error(context, tier, route))
+            }
+        }
+    }
+
+    pub(crate) fn admit_runtime_policy(
+        &self,
+        policy: &RuntimePolicy,
+        tier: RuntimeIsolationTier,
+        mode: TenantIsolationMode,
+    ) -> RuntimePolicyAdmission {
         if !matches!(mode, TenantIsolationMode::Production) {
-            return Ok(());
+            return RuntimePolicyAdmission::AdmitInProcess;
         }
         if !matches!(tier, RuntimeIsolationTier::InProcessUntrusted) {
-            return Ok(());
+            return RuntimePolicyAdmission::AdmitInProcess;
         }
-        validate_production_in_process_untrusted_policy(policy.limits()).map_err(|rejection| {
-            Error::InvalidInput(format!(
-                "tenant isolation context for {} on {} rejected {context}: production {} runtime policy {}; route via {}",
-                self.authority.describe(),
-                self.surface,
-                tier.label(),
-                rejection.reason,
-                rejection.recommended_tier.label()
-            ))
-        })?;
-        Ok(())
+        match validate_production_in_process_untrusted_policy(policy.limits()) {
+            Ok(()) => RuntimePolicyAdmission::AdmitInProcess,
+            Err(rejection) => RuntimePolicyAdmission::Route(rejection.into_route()),
+        }
+    }
+
+    fn runtime_route_error(
+        &self,
+        context: &str,
+        tier: RuntimeIsolationTier,
+        route: RuntimeIsolationRoute,
+    ) -> Error {
+        Error::InvalidInput(format!(
+            "tenant isolation context for {} on {} rejected {context}: production {} runtime policy {}; route via {}",
+            self.authority.describe(),
+            self.surface,
+            tier.label(),
+            route.reason(),
+            route.recommended_tier().label()
+        ))
     }
 
     pub(crate) fn ensure_application_principal_tenant_access(&self, context: &str) -> Result<()> {
@@ -286,6 +338,10 @@ impl ProductionRuntimePolicyRejection {
 
     fn wasm_capability_sandbox(reason: impl Into<String>) -> Self {
         Self::new(reason, RuntimeIsolationTier::WasmCapabilitySandbox)
+    }
+
+    fn into_route(self) -> RuntimeIsolationRoute {
+        RuntimeIsolationRoute::new(self.reason, self.recommended_tier)
     }
 }
 
@@ -517,6 +573,20 @@ mod tests {
                 serde_json::Value::String(tenant.to_string()),
             )]),
             verified_claims: serde_json::Map::new(),
+        }
+    }
+
+    fn production_untrusted_route(policy: &RuntimePolicy) -> RuntimeIsolationRoute {
+        let context = test_application_context();
+        match context.admit_runtime_policy(
+            policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            TenantIsolationMode::Production,
+        ) {
+            RuntimePolicyAdmission::Route(route) => route,
+            RuntimePolicyAdmission::AdmitInProcess => {
+                panic!("policy should have produced a runtime isolation route")
+            }
         }
     }
 
@@ -759,6 +829,54 @@ mod tests {
         assert!(
             error.to_string().contains("route via microvm_service"),
             "error should name the canonical routing fallback: {error}"
+        );
+    }
+
+    #[test]
+    fn production_untrusted_runtime_admission_routes_package_manager_run_to_microvm() {
+        let policy = RuntimePolicy::new(RuntimeLimits {
+            grants: nimbus_runtime::RuntimeGrants {
+                run: vec!["npm".to_string()],
+                ..nimbus_runtime::RuntimeGrants::application_web_standard()
+            },
+            ..RuntimeLimits::application_node22()
+        });
+
+        let route = production_untrusted_route(&policy);
+
+        assert_eq!(
+            route.recommended_tier(),
+            RuntimeIsolationTier::MicroVmService
+        );
+        assert!(
+            route.reason().contains("run grants `npm`"),
+            "route should name the package-manager subprocess authority: {route:?}"
+        );
+    }
+
+    #[test]
+    fn production_untrusted_runtime_admission_routes_native_addon_package_loading_to_microvm() {
+        let policy = RuntimePolicy::new(RuntimeLimits {
+            grants: nimbus_runtime::RuntimeGrants {
+                read: vec![
+                    "$generated_root".to_string(),
+                    "$app_root".to_string(),
+                    "$cache_root".to_string(),
+                ],
+                ..nimbus_runtime::RuntimeGrants::application_web_standard()
+            },
+            ..RuntimeLimits::application_web_standard()
+        });
+
+        let route = production_untrusted_route(&policy);
+
+        assert_eq!(
+            route.recommended_tier(),
+            RuntimeIsolationTier::MicroVmService
+        );
+        assert!(
+            route.reason().contains("broad filesystem/package-loading"),
+            "route should name the native-addon/package-loading authority: {route:?}"
         );
     }
 
