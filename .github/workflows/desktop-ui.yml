@@ -54,29 +54,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: ci-ubuntu-stable-desktop-ui-v2
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "true"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: "true"
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
