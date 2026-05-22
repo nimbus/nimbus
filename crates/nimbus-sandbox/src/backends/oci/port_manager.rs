@@ -382,7 +382,7 @@ mod tests {
         let container_dir = manifest_path
             .parent()
             .expect("manifest path should have a parent directory");
-        fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
+        fs::create_dir_all(container_dir).expect("container manifest directory should exist");
         let manifest = json!({
             "status": status,
             "spec": {
