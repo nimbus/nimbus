@@ -133,7 +133,15 @@ fn render_compose_top_reads_pidfiles_from_persisted_state() {
         "db",
         SandboxStatus::Ready,
     );
-    let container_dir = krun_config.state_root.join("containers").join("db-01aaa");
+    let container_dir = krun_config
+        .state_root
+        .join("tenants")
+        .join(context.control_plane.local_tenant_id.as_str())
+        .join("sandboxes")
+        .join("db-01aaa")
+        .join("state")
+        .join("containers")
+        .join("db-01aaa");
     fs::write(container_dir.join("pidfile"), "4294967294\n").expect("pidfile should write");
     fs::write(container_dir.join("conmon.pid"), "4294967295\n")
         .expect("conmon pidfile should write");

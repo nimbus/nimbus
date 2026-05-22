@@ -1037,6 +1037,7 @@ fn restart_backoff_delay_grows_and_caps() {
 fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() {
     let manifest: KrunSandboxManifest = serde_json::from_value(json!({
         "handle": {
+            "tenant_id": "tenant",
             "id": "sandbox-01",
             "name": "legacy",
             "backend": "krun",
