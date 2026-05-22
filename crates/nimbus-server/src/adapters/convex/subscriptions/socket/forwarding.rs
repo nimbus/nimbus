@@ -41,6 +41,7 @@ pub(super) async fn run_subscription_forwarder(
     tenant_context: crate::tenant_isolation::TenantIsolationContext,
     subscription_statuses: SubscriptionStatuses,
     runtime_cancellation: HostCallCancellation,
+    tenant_isolation_mode: crate::tenant_isolation::TenantIsolationMode,
 ) {
     let mut subscription_rx = subscription_rx;
     while let Some(event) = subscription_rx.recv().await {
@@ -66,6 +67,7 @@ pub(super) async fn run_subscription_forwarder(
                         &tenant_context,
                         &transforms,
                         &runtime_cancellation,
+                        tenant_isolation_mode,
                         ConvexSubscriptionEvent {
                             subscription_id,
                             request_id: request_id_for_transform.as_deref(),

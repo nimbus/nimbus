@@ -47,6 +47,7 @@ pub(super) async fn handle_runtime_named_subscription(
             Some(super::next_runtime_subscription_server_request_id(
                 "convex-ws-subscription-bootstrap",
             )),
+            ctx.state.tenant_isolation_mode,
         )
         .await
         {

@@ -476,6 +476,79 @@ export {};
 }
 
 #[tokio::test]
+async fn production_convex_node_runtime_rejects_loopback_network_grants_before_invocation() {
+    let registry = convex_registry_with_routes_and_bundle(
+        json!([
+            {
+                "name": "network:scan",
+                "kind": "query",
+                "visibility": "public",
+                "runtime_environment": "node",
+                "runtime_engine": "v8",
+                "runtime_bundle_content_kind": "javascript",
+                "runtime_compatibility_target": "node22",
+                "runtime_package_resolution": "node_external_packages",
+                "node_runtime_target": "node22",
+                "runtime_handler": "async () => ({ ran: true })",
+                "plan": null
+            }
+        ]),
+        json!([]),
+        Some(
+            r#"
+globalThis.__nimbusInvoke = async function() {
+  throw new Error("production runtime admission should reject before invocation");
+};
+
+export {};
+	"#,
+        ),
+    );
+    let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> =
+        Arc::new(StubRuntimeServiceRegistry {
+            binding: InvocationServiceBinding {
+                host: "127.0.0.1".to_string(),
+                port: 15432,
+                protocol: InvocationServiceProtocol::Tcp,
+                endpoints: BTreeMap::new(),
+            },
+        });
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let application_auth_verifier = crate::router::convex_application_auth_verifier(&registry);
+    let server = ServerFixture::start(
+        crate::router::RouterBuildConfig::core(fixture.service())
+            .with_application_auth_verifier(application_auth_verifier)
+            .with_convex(registry)
+            .with_runtime_service_registry(runtime_service_registry)
+            .with_tenant_isolation_mode(crate::TenantIsolationMode::Production)
+            .build(),
+    )
+    .await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    let response = api
+        .convex_named_query("demo", "network:scan", json!({}))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response
+        .text()
+        .await
+        .expect("error body should be readable");
+    assert!(
+        body.contains("production in_process_untrusted"),
+        "error should name the rejected runtime tier: {body}"
+    );
+    assert!(
+        body.contains("generic localhost"),
+        "error should name generic loopback authority: {body}"
+    );
+}
+
+#[tokio::test]
 async fn convex_runtime_query_waits_for_activation_capable_services_get_once() {
     let registry = convex_registry_with_routes_and_bundle(
         json!([

@@ -19,6 +19,7 @@ use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::service_manager::SandboxServiceManager;
 use crate::service_registry::RuntimeServiceRegistry;
 use crate::system::VersionCheck;
+use crate::tenant_isolation::TenantIsolationMode;
 
 pub(crate) struct AppStateConfig {
     pub(crate) service: Arc<Service>,
@@ -33,6 +34,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     pub(crate) deploy_admin_token: Option<String>,
     pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
+    pub(crate) tenant_isolation_mode: TenantIsolationMode,
     pub(crate) listen_addr: Option<SocketAddr>,
     pub(crate) server_shutdown: Option<watch::Sender<bool>>,
     pub(crate) version_check: Arc<VersionCheck>,
@@ -49,6 +51,7 @@ pub(crate) struct AppState {
     machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
     pub(crate) deploy_admin_token: Option<String>,
     pub(crate) local_server_security: Option<Arc<LocalServerSecurityState>>,
+    pub(crate) tenant_isolation_mode: TenantIsolationMode,
     pub(crate) listen_addr: Option<SocketAddr>,
     server_shutdown: Option<watch::Sender<bool>>,
     pub(crate) version_check: Arc<VersionCheck>,
@@ -69,6 +72,7 @@ impl AppState {
             machine_lifecycle_manager,
             deploy_admin_token,
             local_server_security,
+            tenant_isolation_mode,
             listen_addr,
             server_shutdown,
             version_check,
@@ -94,6 +98,7 @@ impl AppState {
             machine_lifecycle_manager,
             deploy_admin_token,
             local_server_security,
+            tenant_isolation_mode,
             listen_addr,
             server_shutdown,
             version_check,
@@ -143,6 +148,7 @@ impl AppState {
                 registry,
                 deployment_generation,
                 self.runtime_service_registry(),
+                self.tenant_isolation_mode,
             ),
         ))?;
         Ok(())
@@ -332,6 +338,7 @@ mod tests {
             machine_lifecycle_manager: None,
             deploy_admin_token: None,
             local_server_security: None,
+            tenant_isolation_mode: TenantIsolationMode::LocalDevelopment,
             listen_addr: None,
             server_shutdown: None,
             version_check: test_version_check(),

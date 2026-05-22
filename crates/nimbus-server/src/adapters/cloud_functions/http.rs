@@ -24,7 +24,7 @@ use crate::execution::invocations::{
 };
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::state::{AppError, AppState};
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant_isolation::{RuntimeIsolationTier, TenantIsolationContext};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -230,6 +230,12 @@ fn execute_http_target(
     )?;
     let bundle = registry.runtime_bundle();
     isolation.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
+    isolation.ensure_runtime_policy_admitted(
+        &registry.runtime_policy(),
+        RuntimeIsolationTier::InProcessUntrusted,
+        state.tenant_isolation_mode,
+        "cloud functions http runtime invocation",
+    )?;
     let services = state
         .runtime_service_registry()
         .snapshot_for_tenant(isolation.tenant_id());
