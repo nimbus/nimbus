@@ -74,7 +74,7 @@ Reviewed on 2026-05-22.
 | Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. Application principals carrying tenant claims are now checked by `TenantIsolationContext` before Convex, Convex HTTP actions, Cloud Functions HTTP, and Firebase/Firestore database contexts reach storage/runtime. Convex function routes, Convex HTTP actions, Firebase REST `batchGet`, Firebase gRPC `GetDocument`, Firebase Listen/WebSocket, and Cloud Functions callable transport tests now prove same-tenant access succeeds while a `tenant_id=tenant-b` bearer targeting tenant `tenant-a` returns `403`, gRPC `PermissionDenied`, or a policy websocket close before provider access. Cloud Functions public HTTP is intentionally single-tenant-only in the current adapter phase and rejects ambiguous multi-tenant binding instead of accepting path/header tenant selection. Convex runtime HostBridge payloads now reject unknown fields, and direct DB/scheduler HostBridge tests prove an injected `tenant_id` payload is rejected before either tenant receives storage or scheduled-job side effects. Native HTTP is a local-operator surface: local-admin auth/session authorizes operator access, route parsing rejects reserved `_nimbus` user-tenant IDs, and native handlers consume `TenantIsolationContext::operator(...)` before service/provider calls. | TIC5 is closed for current storage/API surfaces. Future per-tenant application membership on native HTTP would be a new product auth surface rather than a gap in the current local-operator API. |
 | Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, materialized rootfs roots, and container network namespace/status/IPAM state now lower under tenant-owned roots. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots while leaving shared content-addressed image cache and other tenants intact. | Named volume admission/paths are still not lowered into service bundles and remain TIC6. |
 | Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding on the rootful Linux service path after the quota changes. Runtime service lookup is tenant-scoped. Compose service lowering now rejects non-loopback host addresses unless a future operator network exposure policy is added. System port records now carry explicit tenant, service, and endpoint ownership fields. krun/container port allocation now enforces a default per-tenant published-port quota while keeping host-port reservation global. Container network/IPAM mutable state is tenant-rooted. `TenantIsolationMode::Production` now rejects generic loopback/wildcard in-process runtime network grants before Convex or Cloud Functions runtime invocation. | Future admitted tenant-owned endpoint grants need an explicit policy object instead of generic localhost authority. |
-| In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::ensure_runtime_policy_admitted(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. `TenantIsolationMode::default()` is production, so public `serve*`, router builders, and CLI `nimbus start` enter production tenant isolation unless they explicitly opt out; `nimbus dev` opts into local-development mode. Active/in-flight/queued per-tenant runtime budgets are first-class start flags. `RuntimeTenantBudget` now makes the per-tenant CPU-slot, worker-slot, heap, timeout, queue, and nested-call budget explicit and exposed through runtime diagnostics. Cross-runtime nested invocations are marked as nested, tenant-labelled, and `BudgetedNestedInvocationBypass` rather than hidden top-level queue bypasses. Production rejections now name the canonical fallback tier: `in_process_trusted_only`, `microvm_service`, or future `wasm_capability_sandbox`. | TIC4 still needs actual lowering/routing for rejected workloads and explicit native-addon/package-manager admission proof beyond grant-shape rejection. |
+| In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. `TenantIsolationContext::ensure_runtime_policy_admitted(...)` now gates production `in_process_untrusted` runtime policies for Convex and Cloud Functions, rejecting generic localhost/wildcard networking, listen grants, run, FFI, env write, identity, tool, worker, inspector, privileged mode, non-application presets, and broad filesystem/package-loading roots before JavaScript runs. `TenantIsolationMode::default()` is production, so public `serve*`, router builders, and CLI `nimbus start` enter production tenant isolation unless they explicitly opt out; `nimbus dev` opts into local-development mode. Active/in-flight/queued per-tenant runtime budgets are first-class start flags. `RuntimeTenantBudget` now makes the per-tenant CPU-slot, worker-slot, heap, timeout, queue, and nested-call budget explicit and exposed through runtime diagnostics. Cross-runtime nested invocations are marked as nested, tenant-labelled, and `BudgetedNestedInvocationBypass` rather than hidden top-level queue bypasses. Production rejections now produce a `RuntimePolicyAdmission::Route(RuntimeIsolationRoute)` decision with the canonical fallback tier: `in_process_trusted_only`, `microvm_service`, or future `wasm_capability_sandbox`. Product-named tests prove package-manager subprocess and native-addon/package-loading shaped policies route to `microvm_service`. | TIC4 still needs actual lowering/routing for rejected workloads instead of surfacing the admission route as an error. |
 | MicroVM service compute | krun launches one service sandbox as one microVM; service manager does not intentionally share a VM across tenants. Runtime permission model separates `in_process_untrusted` from `microvm_service`. | Need hard admission tests that prevent multiple tenants sharing a guest, enforce per-tenant/per-sandbox quotas, and prove workloads with broad OS needs move to `microvm_service` or a trusted tier. |
 | Volumes/files | Compose volumes are parsed/rendered but not admitted into the krun bundle; current bundle only adds Nimbus-owned read-only helper mounts. | Bind mounts must be rejected by default. Named volumes need Nimbus-owned paths under the tenant root, explicit read/write policy, quota, cleanup, and no cross-tenant reuse unless a future shared-read-only artifact policy is added. |
 | Images/builds | OCI materializer verifies pulled blob digests and sanitizes archive paths before extraction. | Production image admission still needs digest-pinned references and provenance/signature policy before tenant-controlled images are mounted or extracted. |
@@ -1289,8 +1289,8 @@ Functions/Firebase/Convex surfaces.
 
 Remaining after TIC5:
 
-- TIC4 still needs production runtime fallback routing and explicit
-  native-addon/package-manager admission proof beyond grant-shape rejection.
+- TIC4 still needs production runtime fallback execution routing instead of
+  surfacing the admission route as an error.
 - TIC6-TIC8 remain open as recorded in the phase ledger.
 
 ### 2026-05-22 TIC3 Rootful Linux Localhost-Only Proof
@@ -1388,12 +1388,44 @@ Verification evidence:
 Remaining before TIC4 is done:
 
 - Lower `route via microvm_service` or `route via in_process_trusted_only`
-  admission decisions through an execution path instead of returning only an
-  admission error with the canonical fallback tier.
-- Add explicit native-addon/package-manager production proof cases. Current
-  production admission rejects the relevant broad authority families, but the
-  plan still needs tests that name native-addon/package-manager attempts in
-  product terms.
+  admission decisions through an execution path instead of returning the
+  admission route as an error.
+
+### 2026-05-22 TIC4 Runtime Fallback Decision And Native Package Proof
+
+Lifted runtime fallback routing out of string-only errors and proved the
+product-shaped unsafe cases.
+
+Completed in this checkpoint:
+
+- Added `RuntimePolicyAdmission` and `RuntimeIsolationRoute` so production
+  `in_process_untrusted` admission can return a structured route decision with
+  the reason and recommended tier.
+- Kept `ensure_runtime_policy_admitted(...)` as the compatibility guard for
+  current Convex and Cloud Functions in-process execution; it now formats the
+  structured route as the existing admission error.
+- Added package-manager subprocess proof: an application Node policy with an
+  `npm` run grant routes to `microvm_service`.
+- Added native-addon/package-loading proof: an application policy with broad
+  `$app_root`/`$cache_root` package-loading reads routes to
+  `microvm_service`.
+
+Verification evidence:
+
+- `cargo test -p nimbus-server production_untrusted_runtime_admission_routes -- --nocapture`
+  - result: pass; 3 passed, 0 failed, 731 filtered out in `src/lib.rs`;
+    MongoDB spec and reactive-loop integration targets had 0 matching tests.
+- `cargo fmt --all --check`
+  - result: pass.
+- `git diff --check`
+  - result: pass.
+
+Remaining before TIC4 is done:
+
+- Wire `RuntimePolicyAdmission::Route(...)` into an execution fallback path for
+  `microvm_service` and `in_process_trusted_only` policies. Until that exists,
+  Convex and Cloud Functions correctly fail closed in production by surfacing
+  the admission route as an error.
 
 ## Execution Notes
 
