@@ -1,0 +1,764 @@
+use std::collections::BTreeMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::{Path, PathBuf};
+
+use super::*;
+use crate::SandboxServiceManager;
+use crate::local_server::{
+    LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
+};
+use crate::router::RouterBuildConfig;
+use crate::service_registry::RuntimeServiceRegistry;
+use nimbus_runtime::RuntimeLimits;
+use nimbus_sandbox::{
+    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
+    SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
+    SandboxMountSpec, SandboxProcessSpec, SandboxSpec, SandboxStatus,
+};
+
+struct HarnessSandboxServiceCatalog;
+
+impl crate::SandboxServiceCatalog for HarnessSandboxServiceCatalog {
+    fn sandbox_service_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+    ) -> Option<crate::SandboxServiceLaunch> {
+        if service_name != "db" {
+            return None;
+        }
+        let spec = SandboxSpec::new(
+            tenant_id.clone(),
+            "db",
+            SandboxBackendKind::Krun,
+            SandboxFilesystemSpec::new(""),
+            SandboxProcessSpec::new(Vec::<String>::new()),
+        )
+        .with_mount(SandboxMountSpec::tenant_volume("data", "/var/lib/db"));
+        Some(crate::SandboxServiceLaunch::image(
+            SandboxImageLaunchSpec::new(
+                spec,
+                "registry.example.com/nimbus/postgres@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        ))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct HarnessSandboxRecord {
+    handle: SandboxHandle,
+    bundle_path: PathBuf,
+    rootfs_path: PathBuf,
+    state_dir: PathBuf,
+    log_path: PathBuf,
+    volume_path: PathBuf,
+}
+
+#[derive(Debug)]
+struct HarnessSandboxBackend {
+    root: PathBuf,
+    handles: Mutex<BTreeMap<String, SandboxHandle>>,
+    records: Mutex<BTreeMap<(String, String), HarnessSandboxRecord>>,
+    start_calls: AtomicUsize,
+    stop_calls: AtomicUsize,
+}
+
+impl HarnessSandboxBackend {
+    fn new(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            handles: Mutex::new(BTreeMap::new()),
+            records: Mutex::new(BTreeMap::new()),
+            start_calls: AtomicUsize::new(0),
+            stop_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn record_for(&self, tenant_id: &str, service_name: &str) -> HarnessSandboxRecord {
+        self.records
+            .lock()
+            .expect("sandbox records lock should not be poisoned")
+            .get(&(tenant_id.to_owned(), service_name.to_owned()))
+            .cloned()
+            .unwrap_or_else(|| panic!("missing sandbox record for {tenant_id}/{service_name}"))
+    }
+
+    fn tenant_artifact_root(&self, kind: &str, tenant_id: &str) -> PathBuf {
+        self.root.join(kind).join("tenants").join(tenant_id)
+    }
+
+    fn materialize_record(&self, spec: &SandboxSpec) -> Result<SandboxHandle, SandboxError> {
+        let tenant = spec.tenant_id.as_str();
+        let service = spec.name.as_str();
+        let sandbox_id = SandboxId::new(format!("sandbox-{tenant}-{service}"));
+        let sandbox_root = |kind: &str| {
+            self.tenant_artifact_root(kind, tenant)
+                .join("sandboxes")
+                .join(sandbox_id.as_str())
+        };
+        let bundle_path = sandbox_root("bundles").join("bundle").join("config.json");
+        let state_dir = sandbox_root("state").join("state");
+        let rootfs_path = sandbox_root("state").join("rootfs").join("rootfs");
+        let log_path = state_dir
+            .join("containers")
+            .join(sandbox_id.as_str())
+            .join("ctr.log");
+        let volume_path = self
+            .tenant_artifact_root("state", tenant)
+            .join("volumes")
+            .join("data");
+
+        for path in [&bundle_path, &rootfs_path, &log_path] {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to create harness sandbox artifact directory {}: {error}",
+                        parent.display()
+                    ),
+                })?;
+            }
+        }
+        std::fs::create_dir_all(&volume_path).map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to create harness tenant volume {}: {error}",
+                volume_path.display()
+            ),
+        })?;
+        std::fs::write(&bundle_path, "{}").map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to write harness bundle {}: {error}",
+                bundle_path.display()
+            ),
+        })?;
+        std::fs::write(&rootfs_path, "rootfs").map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to write harness rootfs marker {}: {error}",
+                rootfs_path.display()
+            ),
+        })?;
+        std::fs::write(&log_path, "").map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to write harness log {}: {error}",
+                log_path.display()
+            ),
+        })?;
+
+        let handle = SandboxHandle::new(
+            spec.tenant_id.clone(),
+            sandbox_id,
+            service,
+            SandboxBackendKind::Krun,
+            SandboxStatus::Ready,
+            vec![PublishedEndpoint::new(
+                "postgres",
+                PublishedEndpointProtocol::Tcp,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), tenant_service_port(tenant)),
+            )],
+        );
+        self.handles
+            .lock()
+            .expect("sandbox handles lock should not be poisoned")
+            .insert(handle.id.as_str().to_owned(), handle.clone());
+        self.records
+            .lock()
+            .expect("sandbox records lock should not be poisoned")
+            .insert(
+                (tenant.to_owned(), service.to_owned()),
+                HarnessSandboxRecord {
+                    handle: handle.clone(),
+                    bundle_path,
+                    rootfs_path,
+                    state_dir,
+                    log_path,
+                    volume_path,
+                },
+            );
+        Ok(handle)
+    }
+}
+
+impl SandboxBackend for HarnessSandboxBackend {
+    fn kind(&self) -> SandboxBackendKind {
+        SandboxBackendKind::Krun
+    }
+
+    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
+        Box::pin(async move {
+            Err(SandboxError::InvalidSpec {
+                message: format!("harness rootfs launch unsupported for {}", spec.name),
+            })
+        })
+    }
+
+    fn start_from_image(&self, launch: SandboxImageLaunchSpec) -> SandboxFuture<SandboxHandle> {
+        self.start_calls.fetch_add(1, Ordering::SeqCst);
+        let result = self.materialize_record(&launch.spec);
+        Box::pin(async move { result })
+    }
+
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+        let handle = self
+            .handles
+            .lock()
+            .expect("sandbox handles lock should not be poisoned")
+            .get(id.as_str())
+            .cloned();
+        Box::pin(async move { Ok(handle) })
+    }
+
+    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
+        self.stop_calls.fetch_add(1, Ordering::SeqCst);
+        self.handles
+            .lock()
+            .expect("sandbox handles lock should not be poisoned")
+            .remove(id.as_str());
+        Box::pin(async { Ok(()) })
+    }
+
+    fn remove_tenant_artifacts(&self, tenant_id: TenantId) -> SandboxFuture<()> {
+        let tenant = tenant_id.as_str().to_owned();
+        for kind in ["bundles", "state"] {
+            let root = self.tenant_artifact_root(kind, &tenant);
+            if root.exists() {
+                if let Err(error) = std::fs::remove_dir_all(&root) {
+                    return Box::pin(async move {
+                        Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "failed to remove harness tenant root {}: {error}",
+                                root.display()
+                            ),
+                        })
+                    });
+                }
+            }
+        }
+        self.records
+            .lock()
+            .expect("sandbox records lock should not be poisoned")
+            .retain(|(record_tenant, _), _| record_tenant != &tenant);
+        Box::pin(async { Ok(()) })
+    }
+}
+
+#[tokio::test]
+async fn two_tenant_isolation_harness_covers_runtime_services_storage_and_system_control() {
+    let _guard = auth::auth_test_guard().await;
+    let temp = tempdir().expect("tempdir should build");
+    let (local_server_security, local_admin_token) = local_server_security(temp.path());
+    let issuer = "https://issuer.example.com";
+    let application_id = "nimbus-test";
+    let (tenant_b_jwt, jwks_data_url) = auth::issue_es256_test_token(
+        issuer,
+        application_id,
+        "user-tenant-b",
+        json!({ "tenant_id": "tenant-b", "email": "tenant-b@example.com" }),
+    );
+    let registry = convex_registry_with_routes_and_bundle_and_auth(
+        json!([
+            {
+                "name": "services:proof",
+                "kind": "query",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async (ctx, { probeUrl }) => { const namesBefore = Object.keys(ctx.services).sort(); const binding = await ctx.services.get(\"db\"); let deniedLookup = null; try { await ctx.services.get(\"other\"); deniedLookup = \"allowed\"; } catch (error) { deniedLookup = String(error && error.message ? error.message : error); } let deniedFetch = null; try { await fetch(probeUrl); deniedFetch = \"allowed\"; } catch (error) { deniedFetch = String(error && error.message ? error.message : error); } return { namesBefore, namesAfter: Object.keys(ctx.services).sort(), binding, deniedLookup, deniedFetch }; }"
+            },
+            {
+                "name": "messages:list",
+                "kind": "query",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async (ctx) => await ctx.db.query(\"messages\").take(20)"
+            },
+            {
+                "name": "system:routes",
+                "kind": "query",
+                "visibility": "public",
+                "plan": null,
+                "runtime_handler": "async (ctx) => await ctx.db.query(\"routes\").take(20)"
+            }
+        ]),
+        json!([]),
+        Some(HARNESS_RUNTIME_BUNDLE),
+        Some(json!({
+            "providers": [
+                {
+                    "type": "customJwt",
+                    "issuer": issuer,
+                    "jwks": jwks_data_url,
+                    "algorithm": "ES256",
+                    "applicationID": application_id
+                }
+            ]
+        })),
+    )
+    .with_runtime_limits(runtime_limits_with_db_service_grant());
+    let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
+    let sandbox_backend = Arc::new(HarnessSandboxBackend::new(temp.path().join("sandbox")));
+    let sandbox_service_manager = Arc::new(
+        SandboxServiceManager::new(
+            Arc::new(HarnessSandboxServiceCatalog),
+            sandbox_backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1)),
+    );
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    crate::system_tenant::prepare_system_tenant_async(&service, None)
+        .await
+        .expect("system tenant should prepare");
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(service)
+            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
+                &registry,
+            ))
+            .with_convex(registry)
+            .with_system_convex_registry(system_registry)
+            .with_sandbox_service_manager(sandbox_service_manager.clone())
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    assert_eq!(
+        create_tenant_with_admin(&server, &local_admin_token.token, "tenant-a")
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        create_tenant_with_admin(&server, &local_admin_token.token, "tenant-b")
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        insert_document_with_admin(
+            &server,
+            &local_admin_token.token,
+            "tenant-a",
+            "messages",
+            json!({ "body": "tenant-a message" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        insert_document_with_admin(
+            &server,
+            &local_admin_token.token,
+            "tenant-b",
+            "messages",
+            json!({ "body": "tenant-b message" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    let native_without_operator = server
+        .client()
+        .get(server.http_url("/api/tenants/tenant-a/documents/messages"))
+        .send()
+        .await
+        .expect("unauthenticated native list should send");
+    assert_eq!(native_without_operator.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        list_documents_with_admin(&server, &local_admin_token.token, "tenant-a", "messages").await
+            ["data"][0]["body"],
+        json!("tenant-a message")
+    );
+    assert_eq!(
+        list_documents_with_admin(&server, &local_admin_token.token, "tenant-b", "messages").await
+            ["data"][0]["body"],
+        json!("tenant-b message")
+    );
+
+    let tenant_a_services = convex_query_json(
+        &server,
+        "tenant-a",
+        None,
+        "services:proof",
+        json!({ "probeUrl": format!("http://127.0.0.1:{}/", tenant_service_port("tenant-a")) }),
+    )
+    .await;
+    let tenant_b_services = convex_query_json(
+        &server,
+        "tenant-b",
+        Some(&tenant_b_jwt),
+        "services:proof",
+        json!({ "probeUrl": format!("http://127.0.0.1:{}/", tenant_service_port("tenant-b")) }),
+    )
+    .await;
+    assert_service_proof(&tenant_a_services, tenant_service_port("tenant-a"));
+    assert_service_proof(&tenant_b_services, tenant_service_port("tenant-b"));
+    assert_ne!(
+        tenant_a_services["binding"]["port"], tenant_b_services["binding"]["port"],
+        "same service name must resolve to each tenant's own sandbox binding"
+    );
+
+    let tenant_a_record = sandbox_backend.record_for("tenant-a", "db");
+    let tenant_b_record = sandbox_backend.record_for("tenant-b", "db");
+    assert_eq!(
+        sandbox_backend.start_calls.load(Ordering::SeqCst),
+        2,
+        "each tenant should start exactly one sandbox for the shared service name"
+    );
+    assert_ne!(tenant_a_record.handle.id, tenant_b_record.handle.id);
+    assert_distinct_tenant_path_pair(&tenant_a_record.bundle_path, &tenant_b_record.bundle_path);
+    assert_distinct_tenant_path_pair(&tenant_a_record.rootfs_path, &tenant_b_record.rootfs_path);
+    assert_distinct_tenant_path_pair(&tenant_a_record.state_dir, &tenant_b_record.state_dir);
+    assert_distinct_tenant_path_pair(&tenant_a_record.log_path, &tenant_b_record.log_path);
+    assert_distinct_tenant_path_pair(&tenant_a_record.volume_path, &tenant_b_record.volume_path);
+
+    let tenant_b_messages = convex_query_json(
+        &server,
+        "tenant-b",
+        Some(&tenant_b_jwt),
+        "messages:list",
+        json!({}),
+    )
+    .await;
+    assert_eq!(tenant_b_messages[0]["body"], json!("tenant-b message"));
+    let swapped = post_convex_query(
+        &server,
+        "tenant-a",
+        Some(&tenant_b_jwt),
+        "messages:list",
+        json!({}),
+    )
+    .await;
+    let swapped_status = swapped.status();
+    let swapped_body = swapped
+        .text()
+        .await
+        .expect("swapped tenant body should read");
+    assert_eq!(
+        swapped_status,
+        StatusCode::FORBIDDEN,
+        "swapped tenant body: {swapped_body}"
+    );
+    assert!(swapped_body.contains("authorizes tenant `tenant-b`"));
+    assert!(swapped_body.contains("targeted tenant `tenant-a`"));
+
+    let application_system_routes =
+        convex_query_json(&server, "tenant-a", None, "system:routes", json!({})).await;
+    assert_eq!(
+        application_system_routes,
+        json!([]),
+        "application runtime HostBridge reads must stay in the application tenant, not _nimbus"
+    );
+    let missing_system_auth =
+        post_convex_query(&server, "_nimbus", None, "routes:list", json!({})).await;
+    assert_eq!(missing_system_auth.status(), StatusCode::UNAUTHORIZED);
+    let operator_system_routes = post_convex_query(
+        &server,
+        "_nimbus",
+        Some(&local_admin_token.token),
+        "routes:list",
+        json!({}),
+    )
+    .await;
+    assert_eq!(operator_system_routes.status(), StatusCode::OK);
+    let routes = operator_system_routes
+        .json::<serde_json::Value>()
+        .await
+        .expect("operator system routes should parse");
+    assert!(
+        routes.as_array().is_some_and(|routes| routes
+            .iter()
+            .any(|route| route["path"] == "/health" && route["adapter"] == "native")),
+        "operator-authenticated _nimbus query should see system route inventory: {routes}"
+    );
+
+    let delete_tenant_a = server
+        .client()
+        .delete(server.http_url("/api/tenants/tenant-a"))
+        .bearer_auth(&local_admin_token.token)
+        .send()
+        .await
+        .expect("tenant delete should send");
+    assert_eq!(delete_tenant_a.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        sandbox_backend.stop_calls.load(Ordering::SeqCst),
+        1,
+        "deleting tenant-a should stop only tenant-a's active sandbox"
+    );
+    assert!(
+        sandbox_service_manager
+            .snapshot_for_tenant(&TenantId::new("tenant-a").expect("tenant id should parse"))
+            .is_empty()
+    );
+    assert!(
+        sandbox_service_manager
+            .snapshot_for_tenant(&TenantId::new("tenant-b").expect("tenant id should parse"))
+            .contains_key("db")
+    );
+    assert!(
+        !sandbox_backend
+            .tenant_artifact_root("state", "tenant-a")
+            .exists(),
+        "tenant-a state artifacts should be removed"
+    );
+    assert!(
+        sandbox_backend
+            .tenant_artifact_root("state", "tenant-b")
+            .exists(),
+        "tenant-b state artifacts should remain"
+    );
+    let tenant_b_after_delete = convex_query_json(
+        &server,
+        "tenant-b",
+        Some(&tenant_b_jwt),
+        "messages:list",
+        json!({}),
+    )
+    .await;
+    assert_eq!(tenant_b_after_delete[0]["body"], json!("tenant-b message"));
+}
+
+const HARNESS_RUNTIME_BUNDLE: &str = r#"
+const definitions = new Map([
+  ["services:proof", {
+    name: "services:proof",
+    kind: "query",
+    runtime_handler: "async (ctx, { probeUrl }) => { const namesBefore = Object.keys(ctx.services).sort(); const binding = await ctx.services.get(\"db\"); let deniedLookup = null; try { await ctx.services.get(\"other\"); deniedLookup = \"allowed\"; } catch (error) { deniedLookup = String(error && error.message ? error.message : error); } let deniedFetch = null; try { await fetch(probeUrl); deniedFetch = \"allowed\"; } catch (error) { deniedFetch = String(error && error.message ? error.message : error); } return { namesBefore, namesAfter: Object.keys(ctx.services).sort(), binding, deniedLookup, deniedFetch }; }",
+  }],
+  ["messages:list", {
+    name: "messages:list",
+    kind: "query",
+    runtime_handler: "async (ctx) => await ctx.db.query(\"messages\").take(20)",
+  }],
+  ["system:routes", {
+    name: "system:routes",
+    kind: "query",
+    runtime_handler: "async (ctx) => await ctx.db.query(\"routes\").take(20)",
+  }],
+]);
+
+function compileRuntimeHandler(definition) {
+  return new Function(
+    "ctx",
+    "args",
+    "request",
+    "return (" + definition.runtime_handler + ")(ctx, args, request);",
+  );
+}
+
+const handlers = new Map(
+  [...definitions.values()].map((definition) => [
+    definition.name,
+    compileRuntimeHandler(definition),
+  ]),
+);
+
+globalThis.__nimbusInvoke = async function(request) {
+  try {
+    const handler = handlers.get(request.function_name);
+    return {
+      status: "ok",
+      value: await handler(
+        globalThis.__nimbusCreateContext({
+          request,
+          sessionId: `${request.kind}:${request.function_name}`,
+        }),
+        request.args ?? {},
+        request,
+      ),
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "nimbusHostError" in error) {
+      return { status: "error", error: error.nimbusHostError };
+    }
+    throw error;
+  }
+};
+
+export {};
+"#;
+
+fn runtime_limits_with_db_service_grant() -> RuntimeLimits {
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.grants.service = vec!["db".to_owned()];
+    limits
+}
+
+fn tenant_service_port(tenant_id: &str) -> u16 {
+    match tenant_id {
+        "tenant-a" => 15_432,
+        "tenant-b" => 25_432,
+        other => panic!("unexpected harness tenant id: {other}"),
+    }
+}
+
+fn local_server_security(
+    root: &Path,
+) -> (
+    Arc<LocalServerSecurityState>,
+    crate::local_server::LocalAdminTokenRecord,
+) {
+    let paths = LocalServerPaths {
+        auth_token_path: root.join("auth").join("token"),
+        server_discovery_path: root.join("run").join("server.json"),
+        audit_log_path: root.join("logs").join("access.jsonl"),
+    };
+    let token = load_or_create_local_admin_token(&paths).expect("token should exist");
+    (
+        Arc::new(LocalServerSecurityState::new(paths, token.clone())),
+        token,
+    )
+}
+
+fn query_function(name: &str, table: &str) -> serde_json::Value {
+    json!({
+        "name": name,
+        "kind": "query",
+        "plan": {
+            "table": table,
+            "filters": [],
+            "order": null,
+            "limit": null
+        }
+    })
+}
+
+async fn create_tenant_with_admin(
+    server: &ServerFixture,
+    admin_token: &str,
+    tenant_id: &str,
+) -> reqwest::Response {
+    server
+        .client()
+        .post(server.http_url("/api/tenants"))
+        .bearer_auth(admin_token)
+        .json(&json!({ "id": tenant_id }))
+        .send()
+        .await
+        .expect("admin tenant create should send")
+}
+
+async fn insert_document_with_admin(
+    server: &ServerFixture,
+    admin_token: &str,
+    tenant_id: &str,
+    table: &str,
+    fields: serde_json::Value,
+) -> reqwest::Response {
+    server
+        .client()
+        .post(server.http_url(&format!("/api/tenants/{tenant_id}/documents")))
+        .bearer_auth(admin_token)
+        .json(&json!({ "table": table, "fields": fields }))
+        .send()
+        .await
+        .expect("admin document insert should send")
+}
+
+async fn list_documents_with_admin(
+    server: &ServerFixture,
+    admin_token: &str,
+    tenant_id: &str,
+    table: &str,
+) -> serde_json::Value {
+    let response = server
+        .client()
+        .get(server.http_url(&format!("/api/tenants/{tenant_id}/documents/{table}")))
+        .bearer_auth(admin_token)
+        .send()
+        .await
+        .expect("admin document list should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    response
+        .json::<serde_json::Value>()
+        .await
+        .expect("admin document list body should parse")
+}
+
+async fn post_convex_query(
+    server: &ServerFixture,
+    tenant_id: &str,
+    bearer: Option<&str>,
+    name: &str,
+    args: serde_json::Value,
+) -> reqwest::Response {
+    let mut request = server
+        .client()
+        .post(server.http_url(&format!("/convex/{tenant_id}/query")))
+        .json(&json!({ "name": name, "args": args }));
+    if let Some(bearer) = bearer {
+        request = request.bearer_auth(bearer);
+    }
+    request.send().await.expect("convex query should send")
+}
+
+async fn convex_query_json(
+    server: &ServerFixture,
+    tenant_id: &str,
+    bearer: Option<&str>,
+    name: &str,
+    args: serde_json::Value,
+) -> serde_json::Value {
+    let response = post_convex_query(server, tenant_id, bearer, name, args).await;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .expect("convex query body should read");
+    assert_eq!(status, StatusCode::OK, "convex query body: {body}");
+    serde_json::from_str(&body).expect("convex query body should parse")
+}
+
+fn assert_service_proof(body: &serde_json::Value, expected_port: u16) {
+    assert_eq!(body["namesBefore"], json!([]));
+    assert_eq!(body["namesAfter"], json!(["db"]));
+    assert_eq!(body["binding"]["host"], json!("127.0.0.1"));
+    assert_eq!(body["binding"]["port"], json!(expected_port));
+    assert_eq!(body["binding"]["protocol"], json!("tcp"));
+    assert_eq!(
+        body["binding"]["endpoints"]["postgres"]["host"],
+        json!("127.0.0.1")
+    );
+    assert_eq!(
+        body["binding"]["endpoints"]["postgres"]["port"],
+        json!(expected_port)
+    );
+    assert!(
+        body["deniedLookup"]
+            .as_str()
+            .is_some_and(|message| message.contains("runtime service grant denied for `other`")),
+        "unexpected service grant denial proof: {body}"
+    );
+    assert_ne!(
+        body["deniedFetch"],
+        json!("allowed"),
+        "service grants must not imply generic localhost network reach: {body}"
+    );
+}
+
+fn assert_distinct_tenant_path_pair(tenant_a: &Path, tenant_b: &Path) {
+    assert_ne!(
+        tenant_a,
+        tenant_b,
+        "tenant artifact paths must not collide: {}",
+        tenant_a.display()
+    );
+    assert!(
+        tenant_a.to_string_lossy().contains(&format!(
+            "{}tenant-a{}",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        )),
+        "tenant-a artifact path should include tenant root: {}",
+        tenant_a.display()
+    );
+    assert!(
+        tenant_b.to_string_lossy().contains(&format!(
+            "{}tenant-b{}",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        )),
+        "tenant-b artifact path should include tenant root: {}",
+        tenant_b.display()
+    );
+}
