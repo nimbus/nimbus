@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: build-fedora-release-srpms.sh --output-dir <path> --nimbus-version <semver> --nimbus-linux-amd64-tarball <path> --nimbus-linux-arm64-tarball <path> --nimbus-crun-version <semver> --nimbus-crun-linux-amd64 <path> --nimbus-crun-linux-arm64 <path> [options]
+usage: build-fedora-release-srpms.sh --output-dir <path> --nimbus-version <semver> --nimbus-linux-amd64-tarball <path> --nimbus-linux-arm64-tarball <path> --nimbus-libkrun-version <semver> --nimbus-libkrun-linux-amd64-archive <path> --nimbus-libkrun-linux-arm64-archive <path> --nimbus-crun-version <semver> --nimbus-crun-linux-amd64 <path> --nimbus-crun-linux-arm64 <path> [options]
 
 Build deterministic Fedora/COPR source bundles and SRPMs for the Nimbus Linux
 release artifacts without introducing a second source-build pipeline.
@@ -13,6 +13,11 @@ Required:
   --nimbus-version <semver>           Released nimbus version (leading `v` accepted)
   --nimbus-linux-amd64-tarball <path> `nimbus_linux_x86_64.tar.gz` release asset
   --nimbus-linux-arm64-tarball <path> `nimbus_linux_arm64.tar.gz` release asset
+  --nimbus-libkrun-version <semver>   Released nimbus-libkrun version (leading `v` accepted)
+  --nimbus-libkrun-linux-amd64-archive <path>
+                                      `nimbus-libkrun-linux-amd64.tar.gz` release asset
+  --nimbus-libkrun-linux-arm64-archive <path>
+                                      `nimbus-libkrun-linux-arm64.tar.gz` release asset
   --nimbus-crun-version <semver>      Released nimbus-crun version (leading `v` accepted)
   --nimbus-crun-linux-amd64 <path>    `nimbus-crun-linux-amd64` release asset
   --nimbus-crun-linux-arm64 <path>    `nimbus-crun-linux-arm64` release asset
@@ -29,6 +34,9 @@ Examples:
     --nimbus-version v0.1.10 \
     --nimbus-linux-amd64-tarball /tmp/nimbus_linux_x86_64.tar.gz \
     --nimbus-linux-arm64-tarball /tmp/nimbus_linux_arm64.tar.gz \
+    --nimbus-libkrun-version v1.17.4-nimbus.1 \
+    --nimbus-libkrun-linux-amd64-archive /tmp/nimbus-libkrun-linux-amd64.tar.gz \
+    --nimbus-libkrun-linux-arm64-archive /tmp/nimbus-libkrun-linux-arm64.tar.gz \
     --nimbus-crun-version v0.1.4 \
     --nimbus-crun-linux-amd64 /tmp/nimbus-crun-linux-amd64 \
     --nimbus-crun-linux-arm64 /tmp/nimbus-crun-linux-arm64
@@ -57,6 +65,12 @@ sha256_file() {
   die "neither sha256sum nor shasum is available to checksum generated artifacts"
 }
 
+rpm_safe_version() {
+  local version="$1"
+  version="${version#v}"
+  printf '%s\n' "${version//-/.}"
+}
+
 write_nimbus_readme() {
   local file_path="$1"
   local version="$2"
@@ -73,6 +87,24 @@ artifacts instead of rebuilding the V8 host binary from source inside COPR.
 The resulting RPM installs the Nimbus host CLI at /usr/bin/nimbus and depends
 on the distro container primitives (buildah, conmon, netavark, aardvark-dns)
 plus the private nimbus-crun runtime package.
+EOF
+}
+
+write_nimbus_libkrun_readme() {
+  local file_path="$1"
+  local version="$2"
+
+  cat >"$file_path" <<EOF
+# nimbus-libkrun
+
+Version: ${version}
+Repository: https://github.com/nimbus/nimbus-libkrun
+
+This Fedora/COPR source bundle wraps the published Nimbus-private libkrun
+runtime archives instead of rebuilding libkrun or libkrunfw inside COPR.
+
+The resulting RPM installs the validated private runtime stack under
+/usr/libexec/nimbus/lib for nimbus-crun service execution.
 EOF
 }
 
@@ -165,6 +197,75 @@ install -D -m 0644 "LICENSE" "%{buildroot}%{_docdir}/%{name}/LICENSE"
 EOF
 }
 
+render_nimbus_libkrun_spec() {
+  local spec_path="$1"
+  local version="$2"
+  local release_number="$3"
+
+  cat >"$spec_path" <<EOF
+%global debug_package %{nil}
+%global _build_id_links none
+
+Name:           nimbus-libkrun
+Version:        ${version}
+Release:        ${release_number}%{?dist}
+Summary:        Nimbus-private libkrun runtime stack
+License:        Nimbus-Community-1.0
+URL:            https://github.com/nimbus/nimbus-libkrun
+Source0:        %{name}-%{version}-release-artifacts.tar.gz
+ExclusiveArch:  x86_64 aarch64
+
+%description
+Nimbus-private libkrun runtime stack for KVM-based service execution.
+
+This RPM installs the validated libkrun and libkrunfw runtime libraries under
+/usr/libexec/nimbus/lib. It intentionally does not replace Fedora's distro
+libkrun or libkrunfw packages.
+
+%prep
+%autosetup -n %{name}-%{version}
+
+%install
+rm -rf %{buildroot}
+
+case "%{_arch}" in
+  x86_64)
+    libkrun_archive="nimbus-libkrun-linux-amd64.tar.gz"
+    ;;
+  aarch64)
+    libkrun_archive="nimbus-libkrun-linux-arm64.tar.gz"
+    ;;
+  *)
+    echo "unsupported architecture: %{_arch}" >&2
+    exit 1
+    ;;
+esac
+
+build_tmp="%{_builddir}/%{name}-%{version}-payload"
+rm -rf "\${build_tmp}"
+mkdir -p "\${build_tmp}"
+tar -xzf "\${libkrun_archive}" -C "\${build_tmp}"
+
+mkdir -p "%{buildroot}%{_libexecdir}/nimbus"
+cp -a "\${build_tmp}/lib" "%{buildroot}%{_libexecdir}/nimbus/lib"
+cp -a "\${build_tmp}/include" "%{buildroot}%{_libexecdir}/nimbus/include"
+install -D -m 0644 "\${build_tmp}/NIMBUS_LIBKRUN_RELEASE.txt" "%{buildroot}%{_libexecdir}/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
+install -D -m 0644 "README.package.md" "%{buildroot}%{_docdir}/%{name}/README.md"
+install -D -m 0644 "LICENSE" "%{buildroot}%{_docdir}/%{name}/LICENSE"
+
+%files
+%{_libexecdir}/nimbus/lib/*
+%{_libexecdir}/nimbus/include/*
+%{_libexecdir}/nimbus/NIMBUS_LIBKRUN_RELEASE.txt
+%doc %{_docdir}/%{name}/README.md
+%license %{_docdir}/%{name}/LICENSE
+
+%changelog
+* Thu May 21 2026 Nimbus <opensource@nimbus.github.io> - ${version}-${release_number}
+- Package published nimbus-libkrun release artifacts for Fedora/COPR
+EOF
+}
+
 render_nimbus_crun_spec() {
   local spec_path="$1"
   local version="$2"
@@ -182,14 +283,14 @@ License:        Nimbus-Community-1.0
 URL:            https://github.com/nimbus/nimbus-crun
 Source0:        %{name}-%{version}-release-artifacts.tar.gz
 ExclusiveArch:  x86_64 aarch64
-Requires:       libkrun
-Requires:       libkrunfw
+Requires:       nimbus-libkrun
 
 %description
 Patched private crun runtime for Nimbus.
 
 This RPM intentionally mirrors the existing nimbus-crun GitHub release
-artifacts instead of introducing a second Fedora-only runtime build pipeline.
+artifacts and depends on the paired nimbus-libkrun package instead of Fedora's
+distro libkrun/libkrunfw packages.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -220,8 +321,8 @@ install -D -m 0644 "LICENSE" "%{buildroot}%{_docdir}/%{name}/LICENSE"
 %license %{_docdir}/%{name}/LICENSE
 
 %changelog
-* Sat Apr 18 2026 Nimbus <opensource@nimbus.github.io> - ${version}-${release_number}
-- Package published release artifacts for Fedora/COPR
+* Thu May 21 2026 Nimbus <opensource@nimbus.github.io> - ${version}-${release_number}
+- Package published release artifacts for Fedora/COPR with nimbus-libkrun
 EOF
 }
 
@@ -229,6 +330,9 @@ output_dir=""
 nimbus_version=""
 nimbus_linux_amd64_tarball=""
 nimbus_linux_arm64_tarball=""
+nimbus_libkrun_version=""
+nimbus_libkrun_linux_amd64_archive=""
+nimbus_libkrun_linux_arm64_archive=""
 nimbus_crun_version=""
 nimbus_crun_linux_amd64=""
 nimbus_crun_linux_arm64=""
@@ -252,6 +356,18 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --nimbus-linux-arm64-tarball)
       nimbus_linux_arm64_tarball="${2:-}"
+      shift 2
+      ;;
+    --nimbus-libkrun-version)
+      nimbus_libkrun_version="${2:-}"
+      shift 2
+      ;;
+    --nimbus-libkrun-linux-amd64-archive)
+      nimbus_libkrun_linux_amd64_archive="${2:-}"
+      shift 2
+      ;;
+    --nimbus-libkrun-linux-arm64-archive)
+      nimbus_libkrun_linux_arm64_archive="${2:-}"
       shift 2
       ;;
     --nimbus-crun-version)
@@ -292,15 +408,24 @@ done
 [[ -n "$nimbus_version" ]] || die "--nimbus-version is required"
 [[ -n "$nimbus_linux_amd64_tarball" ]] || die "--nimbus-linux-amd64-tarball is required"
 [[ -n "$nimbus_linux_arm64_tarball" ]] || die "--nimbus-linux-arm64-tarball is required"
+[[ -n "$nimbus_libkrun_version" ]] || die "--nimbus-libkrun-version is required"
+[[ -n "$nimbus_libkrun_linux_amd64_archive" ]] || die "--nimbus-libkrun-linux-amd64-archive is required"
+[[ -n "$nimbus_libkrun_linux_arm64_archive" ]] || die "--nimbus-libkrun-linux-arm64-archive is required"
 [[ -n "$nimbus_crun_version" ]] || die "--nimbus-crun-version is required"
 [[ -n "$nimbus_crun_linux_amd64" ]] || die "--nimbus-crun-linux-amd64 is required"
 [[ -n "$nimbus_crun_linux_arm64" ]] || die "--nimbus-crun-linux-arm64 is required"
 
-nimbus_version="${nimbus_version#v}"
-nimbus_crun_version="${nimbus_crun_version#v}"
+nimbus_release_version="${nimbus_version#v}"
+nimbus_libkrun_release_version="${nimbus_libkrun_version#v}"
+nimbus_crun_release_version="${nimbus_crun_version#v}"
+nimbus_version="$(rpm_safe_version "$nimbus_release_version")"
+nimbus_libkrun_version="$(rpm_safe_version "$nimbus_libkrun_release_version")"
+nimbus_crun_version="$(rpm_safe_version "$nimbus_crun_release_version")"
 
 [[ -f "$nimbus_linux_amd64_tarball" ]] || die "nimbus amd64 tarball not found: $nimbus_linux_amd64_tarball"
 [[ -f "$nimbus_linux_arm64_tarball" ]] || die "nimbus arm64 tarball not found: $nimbus_linux_arm64_tarball"
+[[ -f "$nimbus_libkrun_linux_amd64_archive" ]] || die "nimbus-libkrun amd64 archive not found: $nimbus_libkrun_linux_amd64_archive"
+[[ -f "$nimbus_libkrun_linux_arm64_archive" ]] || die "nimbus-libkrun arm64 archive not found: $nimbus_libkrun_linux_arm64_archive"
 [[ -f "$nimbus_crun_linux_amd64" ]] || die "nimbus-crun amd64 asset not found: $nimbus_crun_linux_amd64"
 [[ -f "$nimbus_crun_linux_arm64" ]] || die "nimbus-crun arm64 asset not found: $nimbus_crun_linux_arm64"
 
@@ -327,31 +452,47 @@ write_nimbus_readme "${nimbus_source_root}/README.package.md" "$nimbus_version"
 nimbus_source_bundle="${source_bundles_dir}/nimbus-${nimbus_version}-release-artifacts.tar.gz"
 COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar -czf "$nimbus_source_bundle" -C "$build_dir" "nimbus-${nimbus_version}"
 
+nimbus_libkrun_source_root="${build_dir}/nimbus-libkrun-${nimbus_libkrun_version}"
+mkdir -p "$nimbus_libkrun_source_root"
+install -m 0644 LICENSE "${nimbus_libkrun_source_root}/LICENSE"
+install -m 0644 "$nimbus_libkrun_linux_amd64_archive" "${nimbus_libkrun_source_root}/nimbus-libkrun-linux-amd64.tar.gz"
+install -m 0644 "$nimbus_libkrun_linux_arm64_archive" "${nimbus_libkrun_source_root}/nimbus-libkrun-linux-arm64.tar.gz"
+write_nimbus_libkrun_readme "${nimbus_libkrun_source_root}/README.package.md" "$nimbus_libkrun_release_version"
+
+nimbus_libkrun_source_bundle="${source_bundles_dir}/nimbus-libkrun-${nimbus_libkrun_version}-release-artifacts.tar.gz"
+COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar -czf "$nimbus_libkrun_source_bundle" -C "$build_dir" "nimbus-libkrun-${nimbus_libkrun_version}"
+
 nimbus_crun_source_root="${build_dir}/nimbus-crun-${nimbus_crun_version}"
 mkdir -p "$nimbus_crun_source_root"
 install -m 0644 LICENSE "${nimbus_crun_source_root}/LICENSE"
 install -m 0644 "$nimbus_crun_linux_amd64" "${nimbus_crun_source_root}/nimbus-crun-linux-amd64"
 install -m 0644 "$nimbus_crun_linux_arm64" "${nimbus_crun_source_root}/nimbus-crun-linux-arm64"
-write_nimbus_crun_readme "${nimbus_crun_source_root}/README.package.md" "$nimbus_crun_version"
+write_nimbus_crun_readme "${nimbus_crun_source_root}/README.package.md" "$nimbus_crun_release_version"
 
 nimbus_crun_source_bundle="${source_bundles_dir}/nimbus-crun-${nimbus_crun_version}-release-artifacts.tar.gz"
 COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar -czf "$nimbus_crun_source_bundle" -C "$build_dir" "nimbus-crun-${nimbus_crun_version}"
 
 nimbus_spec="${specs_dir}/nimbus.spec"
+nimbus_libkrun_spec="${specs_dir}/nimbus-libkrun.spec"
 nimbus_crun_spec="${specs_dir}/nimbus-crun.spec"
 render_nimbus_spec "$nimbus_spec" "$nimbus_version" "$release_number"
+render_nimbus_libkrun_spec "$nimbus_libkrun_spec" "$nimbus_libkrun_version" "$release_number"
 render_nimbus_crun_spec "$nimbus_crun_spec" "$nimbus_crun_version" "$release_number"
 
 artifact_paths=(
   "$nimbus_source_bundle"
+  "$nimbus_libkrun_source_bundle"
   "$nimbus_crun_source_bundle"
   "$nimbus_spec"
+  "$nimbus_libkrun_spec"
   "$nimbus_crun_spec"
 )
 
 printf 'source_bundle.nimbus=%s\n' "$nimbus_source_bundle"
+printf 'source_bundle.nimbus_libkrun=%s\n' "$nimbus_libkrun_source_bundle"
 printf 'source_bundle.nimbus_crun=%s\n' "$nimbus_crun_source_bundle"
 printf 'spec.nimbus=%s\n' "$nimbus_spec"
+printf 'spec.nimbus_libkrun=%s\n' "$nimbus_libkrun_spec"
 printf 'spec.nimbus_crun=%s\n' "$nimbus_crun_spec"
 
 if [[ "$render_only" -eq 0 ]]; then
@@ -375,15 +516,27 @@ if [[ "$render_only" -eq 0 ]]; then
     --define "_srcrpmdir ${srpms_dir}" \
     --define "_rpmdir ${output_dir}/rpms" \
     --define "dist %{nil}" \
+    -bs "$nimbus_libkrun_spec"
+
+  "$rpmbuild_bin" \
+    --define "_topdir ${rpmbuild_topdir}" \
+    --define "_sourcedir ${source_bundles_dir}" \
+    --define "_specdir ${specs_dir}" \
+    --define "_srcrpmdir ${srpms_dir}" \
+    --define "_rpmdir ${output_dir}/rpms" \
+    --define "dist %{nil}" \
     -bs "$nimbus_crun_spec"
 
   nimbus_srpm="${srpms_dir}/nimbus-${nimbus_version}-${release_number}.src.rpm"
+  nimbus_libkrun_srpm="${srpms_dir}/nimbus-libkrun-${nimbus_libkrun_version}-${release_number}.src.rpm"
   nimbus_crun_srpm="${srpms_dir}/nimbus-crun-${nimbus_crun_version}-${release_number}.src.rpm"
   [[ -f "$nimbus_srpm" ]] || die "expected SRPM not found: $nimbus_srpm"
+  [[ -f "$nimbus_libkrun_srpm" ]] || die "expected SRPM not found: $nimbus_libkrun_srpm"
   [[ -f "$nimbus_crun_srpm" ]] || die "expected SRPM not found: $nimbus_crun_srpm"
 
-  artifact_paths+=("$nimbus_srpm" "$nimbus_crun_srpm")
+  artifact_paths+=("$nimbus_srpm" "$nimbus_libkrun_srpm" "$nimbus_crun_srpm")
   printf 'srpm.nimbus=%s\n' "$nimbus_srpm"
+  printf 'srpm.nimbus_libkrun=%s\n' "$nimbus_libkrun_srpm"
   printf 'srpm.nimbus_crun=%s\n' "$nimbus_crun_srpm"
 fi
 

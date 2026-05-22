@@ -127,8 +127,8 @@ manual libkrun builds as a supported install path.
 | NLS2 | `done` | Add `nimbus-libkrun` CI/release artifacts for Linux amd64/arm64. | Release has runtime archives, checksums, provenance, symbol proof, and libkrunfw version proof. |
 | NLS3 | `done` | Rebuild `nimbus-crun` against the Nimbus-private libkrun stack. | `v1.27.1-nimbus.1` has `$ORIGIN/lib` RUNPATH, `+LIBKRUN`, release provenance, and fail-closed missing-symbol build gating. |
 | NLS4 | `done` | Update direct install/uninstall/verify flows. | Install helper dry-runs and real Linux proof install `nimbus`, `nimbus-libkrun`, and `nimbus-crun` together. |
-| NLS5 | `in_progress` | Update deb/rpm, apt, and COPR builders/workflows. | Package helper tests produce three packages/SRPMs and dependency metadata uses `nimbus-libkrun`. |
-| NLS6 | `todo` | Capture fresh Linux service smoke from installed artifacts and close docs. | Debian 13 and Fedora proof show localhost-only krun smoke plus private library resolution. |
+| NLS5 | `done` | Update deb/rpm, apt, and COPR builders/workflows. | Package helper tests produce three packages/SRPMs and dependency metadata uses `nimbus-libkrun`. |
+| NLS6 | `in_progress` | Capture fresh Linux service smoke from installed artifacts and close docs. | Debian 13 and Fedora proof show localhost-only krun smoke plus private library resolution. |
 
 ## Phase Details
 
@@ -438,7 +438,7 @@ Closeout evidence, 2026-05-21:
 
 ### NLS5: Linux Packages And Release Mirror
 
-Status: `in_progress`
+Status: `done`
 
 Deliverables:
 
@@ -469,9 +469,37 @@ Acceptance criteria:
 - release/build logs print both Nimbus release tags and upstream source
   versions
 
+Closeout evidence, 2026-05-21:
+
+- local syntax gates passed:
+  `bash -n scripts/build-linux-release-packages.sh`,
+  `bash -n scripts/verify-build-linux-release-packages-helper.sh`,
+  `bash -n scripts/build-fedora-release-srpms.sh`,
+  `bash -n scripts/verify-build-fedora-release-srpms-helper.sh`, and
+  `bash -n scripts/verify-build-apt-repository-helper.sh`
+- local workflow lint passed:
+  `actionlint .github/workflows/linux-packages.yml .github/workflows/apt-repo.yml .github/workflows/copr-srpms.yml .github/workflows/linux-distribution-release.yml`
+- local helper gate passed:
+  `bash scripts/verify-build-linux-release-packages-helper.sh` reported
+  `verified: linux package builder rendered deterministic nimbus/nimbus-libkrun/nimbus-crun deb/rpm manifests`
+- Debian 13 `minicloud` package helper gate passed with the same
+  three-package manifest proof
+- Debian 13 `minicloud` apt repository helper gate passed:
+  `bash scripts/verify-build-apt-repository-helper.sh` reported
+  `verified: apt repository builder produced signed metadata via local`
+- Debian 13 `minicloud` Fedora/COPR helper gate passed under Podman:
+  `bash scripts/verify-build-fedora-release-srpms-helper.sh` reported
+  reusable `nimbus`, `nimbus-libkrun`, and `nimbus-crun` source RPMs,
+  installed x86_64 RPMs, and query-verified aarch64 RPM metadata
+- `packaging/linux-distribution-contract.env` now pins
+  `NIMBUS_CRUN_VERSION=v1.27.1-nimbus.1`,
+  `NIMBUS_CRUN_UPSTREAM_VERSION=1.27.1`,
+  `NIMBUS_LIBKRUN_VERSION=v1.17.4-nimbus.1`, and
+  `NIMBUS_LIBKRUN_UPSTREAM_VERSION=1.17.4`
+
 ### NLS6: Fresh Host Proof And Closeout
 
-Status: `todo`
+Status: `in_progress`
 
 Deliverables:
 

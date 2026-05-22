@@ -33,7 +33,10 @@ jobs:
     outputs:
       release_tag: ${{ steps.contract.outputs.release_tag }}
       nimbus_version: ${{ steps.contract.outputs.nimbus_version }}
+      nimbus_libkrun_version: ${{ steps.contract.outputs.nimbus_libkrun_version }}
+      nimbus_libkrun_upstream_version: ${{ steps.contract.outputs.nimbus_libkrun_upstream_version }}
       nimbus_crun_version: ${{ steps.contract.outputs.nimbus_crun_version }}
+      nimbus_crun_upstream_version: ${{ steps.contract.outputs.nimbus_crun_upstream_version }}
       apt_distribution: ${{ steps.contract.outputs.apt_distribution }}
       copr_project: ${{ steps.contract.outputs.copr_project }}
       publish_apt_repo: ${{ steps.contract.outputs.publish_apt_repo }}
@@ -65,7 +68,10 @@ jobs:
           fi
 
           nimbus_version="${release_tag#v}"
+          nimbus_libkrun_version="${NIMBUS_LIBKRUN_VERSION#v}"
+          nimbus_libkrun_upstream_version="${NIMBUS_LIBKRUN_UPSTREAM_VERSION}"
           nimbus_crun_version="${NIMBUS_CRUN_VERSION#v}"
+          nimbus_crun_upstream_version="${NIMBUS_CRUN_UPSTREAM_VERSION}"
           apt_distribution="${APT_REPOSITORY_DISTRIBUTION}"
           copr_project="${COPR_PROJECT}"
 
@@ -83,10 +89,18 @@ jobs:
             submit_to_copr="${INPUT_SUBMIT_TO_COPR}"
           fi
 
+          printf 'Resolved nimbus-libkrun release tag v%s from upstream libkrun %s\n' \
+            "${nimbus_libkrun_version}" "${nimbus_libkrun_upstream_version}"
+          printf 'Resolved nimbus-crun release tag v%s from upstream crun %s\n' \
+            "${nimbus_crun_version}" "${nimbus_crun_upstream_version}"
+
           {
             echo "release_tag=v${nimbus_version}"
             echo "nimbus_version=${nimbus_version}"
+            echo "nimbus_libkrun_version=${nimbus_libkrun_version}"
+            echo "nimbus_libkrun_upstream_version=${nimbus_libkrun_upstream_version}"
             echo "nimbus_crun_version=${nimbus_crun_version}"
+            echo "nimbus_crun_upstream_version=${nimbus_crun_upstream_version}"
             echo "apt_distribution=${apt_distribution}"
             echo "copr_project=${copr_project}"
             echo "publish_apt_repo=${publish_apt_repo}"
@@ -101,6 +115,7 @@ jobs:
       contents: read
     with:
       nimbus_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      nimbus_libkrun_version: ${{ needs.resolve-contract.outputs.nimbus_libkrun_version }}
       nimbus_crun_version: ${{ needs.resolve-contract.outputs.nimbus_crun_version }}
 
   apt-repo:
@@ -114,6 +129,7 @@ jobs:
     secrets: inherit
     with:
       nimbus_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      nimbus_libkrun_version: ${{ needs.resolve-contract.outputs.nimbus_libkrun_version }}
       nimbus_crun_version: ${{ needs.resolve-contract.outputs.nimbus_crun_version }}
       distribution: ${{ needs.resolve-contract.outputs.apt_distribution }}
       publish: ${{ needs.resolve-contract.outputs.publish_apt_repo == 'true' }}
@@ -127,6 +143,7 @@ jobs:
     secrets: inherit
     with:
       nimbus_version: ${{ needs.resolve-contract.outputs.release_tag }}
+      nimbus_libkrun_version: ${{ needs.resolve-contract.outputs.nimbus_libkrun_version }}
       nimbus_crun_version: ${{ needs.resolve-contract.outputs.nimbus_crun_version }}
       copr_project: ${{ needs.resolve-contract.outputs.copr_project }}
       submit_to_copr: ${{ needs.resolve-contract.outputs.submit_to_copr == 'true' }}

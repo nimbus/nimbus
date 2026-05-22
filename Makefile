@@ -335,9 +335,11 @@ build-nimbus-machine-guest-binary:
 build-linux-release-packages:
 	@test -n "$(OUTPUT_DIR)" || (echo "set OUTPUT_DIR=/absolute/path/to/output-dir" && exit 1)
 	@test -n "$(NIMBUS_BINARY)" || (echo "set NIMBUS_BINARY=/absolute/path/to/nimbus" && exit 1)
+	@test -n "$(NIMBUS_LIBKRUN_ARCHIVE)" || (echo "set NIMBUS_LIBKRUN_ARCHIVE=/absolute/path/to/nimbus-libkrun-linux-<arch>.tar.gz" && exit 1)
 	@test -n "$(NIMBUS_CRUN_BINARY)" || (echo "set NIMBUS_CRUN_BINARY=/absolute/path/to/nimbus-crun" && exit 1)
 	@test -n "$(VERSION)" || (echo "set VERSION=X.Y.Z or VERSION=vX.Y.Z" && exit 1)
-	bash scripts/build-linux-release-packages.sh --output-dir "$(OUTPUT_DIR)" --nimbus-binary "$(NIMBUS_BINARY)" --nimbus-crun-binary "$(NIMBUS_CRUN_BINARY)" --version "$(VERSION)" $(if $(CRUN_VERSION),--crun-version "$(CRUN_VERSION)",) $(if $(ARCH),--arch "$(ARCH)",) $(foreach format,$(FORMAT),--format "$(format)") $(if $(NFPM),--nfpm "$(NFPM)",) $(if $(RENDER_ONLY),--render-only,)
+	@test -n "$(LIBKRUN_VERSION)" || (echo "set LIBKRUN_VERSION=X.Y.Z or LIBKRUN_VERSION=vX.Y.Z" && exit 1)
+	bash scripts/build-linux-release-packages.sh --output-dir "$(OUTPUT_DIR)" --nimbus-binary "$(NIMBUS_BINARY)" --nimbus-libkrun-archive "$(NIMBUS_LIBKRUN_ARCHIVE)" --nimbus-crun-binary "$(NIMBUS_CRUN_BINARY)" --version "$(VERSION)" --libkrun-version "$(LIBKRUN_VERSION)" $(if $(CRUN_VERSION),--crun-version "$(CRUN_VERSION)",) $(if $(ARCH),--arch "$(ARCH)",) $(foreach format,$(FORMAT),--format "$(format)") $(if $(NFPM),--nfpm "$(NFPM)",) $(if $(RENDER_ONLY),--render-only,)
 
 # Build a static Debian/Ubuntu apt repository tree from prebuilt .deb packages
 build-apt-repository:
@@ -351,10 +353,13 @@ build-fedora-release-srpms:
 	@test -n "$(NIMBUS_VERSION)" || (echo "set NIMBUS_VERSION=X.Y.Z or NIMBUS_VERSION=vX.Y.Z" && exit 1)
 	@test -n "$(NIMBUS_LINUX_AMD64_TARBALL)" || (echo "set NIMBUS_LINUX_AMD64_TARBALL=/absolute/path/to/nimbus_linux_x86_64.tar.gz" && exit 1)
 	@test -n "$(NIMBUS_LINUX_ARM64_TARBALL)" || (echo "set NIMBUS_LINUX_ARM64_TARBALL=/absolute/path/to/nimbus_linux_arm64.tar.gz" && exit 1)
+	@test -n "$(NIMBUS_LIBKRUN_VERSION)" || (echo "set NIMBUS_LIBKRUN_VERSION=X.Y.Z or NIMBUS_LIBKRUN_VERSION=vX.Y.Z" && exit 1)
+	@test -n "$(NIMBUS_LIBKRUN_LINUX_AMD64_ARCHIVE)" || (echo "set NIMBUS_LIBKRUN_LINUX_AMD64_ARCHIVE=/absolute/path/to/nimbus-libkrun-linux-amd64.tar.gz" && exit 1)
+	@test -n "$(NIMBUS_LIBKRUN_LINUX_ARM64_ARCHIVE)" || (echo "set NIMBUS_LIBKRUN_LINUX_ARM64_ARCHIVE=/absolute/path/to/nimbus-libkrun-linux-arm64.tar.gz" && exit 1)
 	@test -n "$(NIMBUS_CRUN_VERSION)" || (echo "set NIMBUS_CRUN_VERSION=X.Y.Z or NIMBUS_CRUN_VERSION=vX.Y.Z" && exit 1)
 	@test -n "$(NIMBUS_CRUN_LINUX_AMD64)" || (echo "set NIMBUS_CRUN_LINUX_AMD64=/absolute/path/to/nimbus-crun-linux-amd64" && exit 1)
 	@test -n "$(NIMBUS_CRUN_LINUX_ARM64)" || (echo "set NIMBUS_CRUN_LINUX_ARM64=/absolute/path/to/nimbus-crun-linux-arm64" && exit 1)
-	bash scripts/build-fedora-release-srpms.sh --output-dir "$(OUTPUT_DIR)" --nimbus-version "$(NIMBUS_VERSION)" --nimbus-linux-amd64-tarball "$(NIMBUS_LINUX_AMD64_TARBALL)" --nimbus-linux-arm64-tarball "$(NIMBUS_LINUX_ARM64_TARBALL)" --nimbus-crun-version "$(NIMBUS_CRUN_VERSION)" --nimbus-crun-linux-amd64 "$(NIMBUS_CRUN_LINUX_AMD64)" --nimbus-crun-linux-arm64 "$(NIMBUS_CRUN_LINUX_ARM64)" $(if $(RELEASE),--release "$(RELEASE)",) $(if $(RPMBUILD),--rpmbuild "$(RPMBUILD)",) $(if $(RENDER_ONLY),--render-only,)
+	bash scripts/build-fedora-release-srpms.sh --output-dir "$(OUTPUT_DIR)" --nimbus-version "$(NIMBUS_VERSION)" --nimbus-linux-amd64-tarball "$(NIMBUS_LINUX_AMD64_TARBALL)" --nimbus-linux-arm64-tarball "$(NIMBUS_LINUX_ARM64_TARBALL)" --nimbus-libkrun-version "$(NIMBUS_LIBKRUN_VERSION)" --nimbus-libkrun-linux-amd64-archive "$(NIMBUS_LIBKRUN_LINUX_AMD64_ARCHIVE)" --nimbus-libkrun-linux-arm64-archive "$(NIMBUS_LIBKRUN_LINUX_ARM64_ARCHIVE)" --nimbus-crun-version "$(NIMBUS_CRUN_VERSION)" --nimbus-crun-linux-amd64 "$(NIMBUS_CRUN_LINUX_AMD64)" --nimbus-crun-linux-arm64 "$(NIMBUS_CRUN_LINUX_ARM64)" $(if $(RELEASE),--release "$(RELEASE)",) $(if $(RPMBUILD),--rpmbuild "$(RPMBUILD)",) $(if $(RENDER_ONLY),--render-only,)
 
 # Check whether a Podman/libkrun machine tmp root will overflow Darwin's unix-socket path budget
 check-podman-machine-socket-paths:

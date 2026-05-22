@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: build-linux-release-packages.sh --output-dir <path> --nimbus-binary <path> --nimbus-crun-binary <path> --version <semver> [options]
+usage: build-linux-release-packages.sh --output-dir <path> --nimbus-binary <path> --nimbus-libkrun-archive <path> --nimbus-crun-binary <path> --version <semver> [options]
 
 Stage the Nimbus Linux package payloads, render nFPM manifests for Debian and
 RPM formats, and optionally build the packages when `nfpm` is available.
@@ -11,10 +11,13 @@ RPM formats, and optionally build the packages when `nfpm` is available.
 Required:
   --output-dir <path>          Output root for staged payloads, manifests, and packages
   --nimbus-binary <path>       Linux `nimbus` binary to package at /usr/bin/nimbus
+  --nimbus-libkrun-archive <path>
+                              `nimbus-libkrun-linux-<arch>.tar.gz` release archive
   --nimbus-crun-binary <path>  Linux patched `crun` binary to package at /usr/libexec/nimbus/crun
   --version <semver>           Nimbus package version (leading `v` accepted)
 
 Optional:
+  --libkrun-version <semver>   nimbus-libkrun package version (leading `v` accepted)
   --crun-version <semver>      nimbus-crun package version (default: --version)
   --arch <amd64|arm64>         Package architecture (default: host architecture)
   --format <deb|rpm>           Package format to build; repeatable (default: deb + rpm)
@@ -26,6 +29,7 @@ Examples:
   bash scripts/build-linux-release-packages.sh \
     --output-dir /tmp/nimbus-linux-packages \
     --nimbus-binary /tmp/nimbus \
+    --nimbus-libkrun-archive /tmp/nimbus-libkrun-linux-amd64.tar.gz \
     --nimbus-crun-binary /tmp/nimbus-crun \
     --version 0.1.10 \
     --arch amd64
@@ -33,8 +37,10 @@ Examples:
   bash scripts/build-linux-release-packages.sh \
     --output-dir /tmp/nimbus-linux-packages \
     --nimbus-binary /tmp/nimbus \
+    --nimbus-libkrun-archive /tmp/nimbus-libkrun-linux-amd64.tar.gz \
     --nimbus-crun-binary /tmp/nimbus-crun \
     --version v0.1.10 \
+    --libkrun-version v1.17.4-nimbus.1 \
     --crun-version 0.1.4 \
     --render-only
 EOF
@@ -127,6 +133,24 @@ This package installs the patched private runtime at /usr/libexec/nimbus/crun.
 It does not replace the system crun package. Nimbus invokes this private path
 explicitly so distro Podman/CRI-O flows can keep using the distro runtime
 unmodified.
+EOF
+}
+
+write_nimbus_libkrun_readme() {
+  local file_path="$1"
+  local version="$2"
+  cat >"$file_path" <<EOF
+# nimbus-libkrun
+
+Version: ${version}
+Repository: https://github.com/nimbus/nimbus-libkrun
+
+This package installs the Nimbus-private libkrun runtime stack under
+/usr/libexec/nimbus/lib and its matching headers under
+/usr/libexec/nimbus/include.
+
+It does not replace distro libkrun or libkrunfw packages. Nimbus-private crun
+resolves this package through its private runtime path.
 EOF
 }
 
@@ -223,10 +247,61 @@ EOF
   append_yaml_list "$manifest_path" "depends" "${dependencies[@]}"
 }
 
+render_nimbus_libkrun_manifest() {
+  local manifest_path="$1"
+  local version="$2"
+  local arch="$3"
+  local staged_root="$4"
+
+  cat >"$manifest_path" <<EOF
+# yaml-language-server: \$schema=https://nfpm.goreleaser.com/schema.json
+name: nimbus-libkrun
+arch: ${arch}
+platform: linux
+version: ${version}
+version_schema: semver
+section: admin
+priority: optional
+maintainer: Nimbus
+vendor: Nimbus
+homepage: https://github.com/nimbus/nimbus-libkrun
+license: Nimbus-Community-1.0
+description: |
+  Nimbus-private libkrun runtime stack for KVM-based service execution.
+
+  This package installs the validated libkrun and libkrunfw runtime libraries
+  under /usr/libexec/nimbus/lib for use by nimbus-crun.
+rpm:
+  summary: Nimbus-private libkrun runtime stack
+  group: Applications/System
+contents:
+  - src: ${staged_root}/usr/libexec/nimbus/lib
+    dst: /usr/libexec/nimbus/lib
+    type: tree
+  - src: ${staged_root}/usr/libexec/nimbus/include
+    dst: /usr/libexec/nimbus/include
+    type: tree
+  - src: ${staged_root}/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt
+    dst: /usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt
+    file_info:
+      mode: 0644
+  - src: ${staged_root}/usr/share/doc/nimbus-libkrun/README.md
+    dst: /usr/share/doc/nimbus-libkrun/README.md
+    file_info:
+      mode: 0644
+  - src: ${staged_root}/usr/share/doc/nimbus-libkrun/LICENSE
+    dst: /usr/share/doc/nimbus-libkrun/LICENSE
+    file_info:
+      mode: 0644
+EOF
+}
+
 output_dir=""
 nimbus_binary=""
+nimbus_libkrun_archive=""
 nimbus_crun_binary=""
 version=""
+libkrun_version=""
 crun_version=""
 arch=""
 nfpm_bin="${NFPM_BIN:-nfpm}"
@@ -243,12 +318,20 @@ while [[ "$#" -gt 0 ]]; do
       nimbus_binary="${2:-}"
       shift 2
       ;;
+    --nimbus-libkrun-archive)
+      nimbus_libkrun_archive="${2:-}"
+      shift 2
+      ;;
     --nimbus-crun-binary)
       nimbus_crun_binary="${2:-}"
       shift 2
       ;;
     --version)
       version="${2:-}"
+      shift 2
+      ;;
+    --libkrun-version)
+      libkrun_version="${2:-}"
       shift 2
       ;;
     --crun-version)
@@ -290,6 +373,7 @@ done
 
 [[ -n "$output_dir" ]] || die "--output-dir is required"
 [[ -n "$nimbus_binary" ]] || die "--nimbus-binary is required"
+[[ -n "$nimbus_libkrun_archive" ]] || die "--nimbus-libkrun-archive is required"
 [[ -n "$nimbus_crun_binary" ]] || die "--nimbus-crun-binary is required"
 [[ -n "$version" ]] || die "--version is required"
 
@@ -298,6 +382,11 @@ if [[ "${#formats[@]}" -eq 0 ]]; then
 fi
 
 version="${version#v}"
+if [[ -z "$libkrun_version" ]]; then
+  die "--libkrun-version is required"
+else
+  libkrun_version="${libkrun_version#v}"
+fi
 if [[ -z "$crun_version" ]]; then
   crun_version="$version"
 else
@@ -309,6 +398,7 @@ if [[ -z "$arch" ]]; then
 fi
 
 [[ -f "$nimbus_binary" ]] || die "nimbus binary not found: $nimbus_binary"
+[[ -f "$nimbus_libkrun_archive" ]] || die "nimbus-libkrun archive not found: $nimbus_libkrun_archive"
 [[ -f "$nimbus_crun_binary" ]] || die "nimbus-crun binary not found: $nimbus_crun_binary"
 
 mkdir -p "$output_dir"
@@ -322,22 +412,34 @@ rm -rf "$staging_dir" "$manifests_dir" "$packages_dir"
 mkdir -p "$staging_dir" "$manifests_dir" "$packages_dir"
 
 nimbus_stage="${staging_dir}/nimbus"
+nimbus_libkrun_stage="${staging_dir}/nimbus-libkrun"
 nimbus_crun_stage="${staging_dir}/nimbus-crun"
 
 install -d "${nimbus_stage}/usr/bin" \
   "${nimbus_stage}/usr/share/doc/nimbus" \
+  "${nimbus_libkrun_stage}/usr/libexec/nimbus" \
+  "${nimbus_libkrun_stage}/usr/share/doc/nimbus-libkrun" \
   "${nimbus_crun_stage}/usr/libexec/nimbus" \
   "${nimbus_crun_stage}/usr/share/doc/nimbus-crun"
 
 install -m 0755 "$nimbus_binary" "${nimbus_stage}/usr/bin/nimbus"
+tar -xzf "$nimbus_libkrun_archive" -C "${nimbus_libkrun_stage}/usr/libexec/nimbus"
 install -m 0755 "$nimbus_crun_binary" "${nimbus_crun_stage}/usr/libexec/nimbus/crun"
 install -m 0644 LICENSE "${nimbus_stage}/usr/share/doc/nimbus/LICENSE"
+install -m 0644 LICENSE "${nimbus_libkrun_stage}/usr/share/doc/nimbus-libkrun/LICENSE"
 install -m 0644 LICENSE "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/LICENSE"
 write_nimbus_readme "${nimbus_stage}/usr/share/doc/nimbus/README.md" "$version"
+write_nimbus_libkrun_readme "${nimbus_libkrun_stage}/usr/share/doc/nimbus-libkrun/README.md" "$libkrun_version"
 write_nimbus_crun_readme "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/README.md" "$crun_version"
+
+[[ -e "${nimbus_libkrun_stage}/usr/libexec/nimbus/lib/libkrun.so.1" ]] || die "nimbus-libkrun archive is missing lib/libkrun.so.1"
+[[ -e "${nimbus_libkrun_stage}/usr/libexec/nimbus/lib/libkrunfw.so.5" ]] || die "nimbus-libkrun archive is missing lib/libkrunfw.so.5"
+[[ -f "${nimbus_libkrun_stage}/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt" ]] || die "nimbus-libkrun archive is missing NIMBUS_LIBKRUN_RELEASE.txt"
 
 nimbus_deb_manifest="${manifests_dir}/nimbus-deb.yaml"
 nimbus_rpm_manifest="${manifests_dir}/nimbus-rpm.yaml"
+nimbus_libkrun_deb_manifest="${manifests_dir}/nimbus-libkrun-deb.yaml"
+nimbus_libkrun_rpm_manifest="${manifests_dir}/nimbus-libkrun-rpm.yaml"
 nimbus_crun_deb_manifest="${manifests_dir}/nimbus-crun-deb.yaml"
 nimbus_crun_rpm_manifest="${manifests_dir}/nimbus-crun-rpm.yaml"
 
@@ -353,23 +455,36 @@ render_nimbus_manifest \
   "$arch" \
   "$nimbus_stage" \
   "buildah" "conmon" "netavark" "aardvark-dns" "nimbus-crun"
+render_nimbus_libkrun_manifest \
+  "$nimbus_libkrun_deb_manifest" \
+  "$libkrun_version" \
+  "$arch" \
+  "$nimbus_libkrun_stage"
+render_nimbus_libkrun_manifest \
+  "$nimbus_libkrun_rpm_manifest" \
+  "$libkrun_version" \
+  "$arch" \
+  "$nimbus_libkrun_stage"
 render_nimbus_crun_manifest \
   "$nimbus_crun_deb_manifest" \
   "$crun_version" \
   "$arch" \
   "$nimbus_crun_stage" \
-  "libkrun" "libkrunfw"
+  "nimbus-libkrun"
 render_nimbus_crun_manifest \
   "$nimbus_crun_rpm_manifest" \
   "$crun_version" \
   "$arch" \
   "$nimbus_crun_stage" \
-  "libkrun" "libkrunfw"
+  "nimbus-libkrun"
 
 printf 'stage.nimbus=%s\n' "$nimbus_stage"
+printf 'stage.nimbus_libkrun=%s\n' "$nimbus_libkrun_stage"
 printf 'stage.nimbus_crun=%s\n' "$nimbus_crun_stage"
 printf 'manifest.nimbus.deb=%s\n' "$nimbus_deb_manifest"
 printf 'manifest.nimbus.rpm=%s\n' "$nimbus_rpm_manifest"
+printf 'manifest.nimbus_libkrun.deb=%s\n' "$nimbus_libkrun_deb_manifest"
+printf 'manifest.nimbus_libkrun.rpm=%s\n' "$nimbus_libkrun_rpm_manifest"
 printf 'manifest.nimbus_crun.deb=%s\n' "$nimbus_crun_deb_manifest"
 printf 'manifest.nimbus_crun.rpm=%s\n' "$nimbus_crun_rpm_manifest"
 
@@ -387,10 +502,10 @@ for format in "${formats[@]}"; do
   manifest_list=""
   case "$format" in
     deb)
-      manifest_list="${nimbus_deb_manifest} ${nimbus_crun_deb_manifest}"
+      manifest_list="${nimbus_deb_manifest} ${nimbus_libkrun_deb_manifest} ${nimbus_crun_deb_manifest}"
       ;;
     rpm)
-      manifest_list="${nimbus_rpm_manifest} ${nimbus_crun_rpm_manifest}"
+      manifest_list="${nimbus_rpm_manifest} ${nimbus_libkrun_rpm_manifest} ${nimbus_crun_rpm_manifest}"
       ;;
     *)
       die "unsupported format in build loop: ${format}"
