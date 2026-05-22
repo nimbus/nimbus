@@ -29,7 +29,7 @@ permissions:
 jobs:
   resolve-contract:
     name: Resolve Linux distribution contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       release_tag: ${{ steps.contract.outputs.release_tag }}
       nimbus_version: ${{ steps.contract.outputs.nimbus_version }}
