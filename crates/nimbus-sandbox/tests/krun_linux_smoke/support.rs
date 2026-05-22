@@ -143,10 +143,8 @@ pub(super) fn read_manifest_mount_session_name(
     state_root: &std::path::Path,
     sandbox_id: &nimbus_sandbox::SandboxId,
 ) -> String {
-    let manifest_path = state_root
-        .join("containers")
-        .join(sandbox_id.as_str())
-        .join("manifest.json");
+    let tenant_id = sandbox_tenant();
+    let manifest_path = manifest_path(state_root, &tenant_id, sandbox_id);
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap_or_else(|_| {
             panic!("manifest should be readable at {}", manifest_path.display())
@@ -161,6 +159,43 @@ pub(super) fn read_manifest_mount_session_name(
             )
         })
         .to_owned()
+}
+
+pub(super) fn bundle_config_path(
+    bundle_root: &std::path::Path,
+    tenant_id: &TenantId,
+    sandbox_id: &nimbus_sandbox::SandboxId,
+) -> PathBuf {
+    bundle_root
+        .join("tenants")
+        .join(tenant_id.as_str())
+        .join("sandboxes")
+        .join(sandbox_id.as_str())
+        .join("bundle")
+        .join("config.json")
+}
+
+pub(super) fn container_state_dir(
+    state_root: &std::path::Path,
+    tenant_id: &TenantId,
+    sandbox_id: &nimbus_sandbox::SandboxId,
+) -> PathBuf {
+    state_root
+        .join("tenants")
+        .join(tenant_id.as_str())
+        .join("sandboxes")
+        .join(sandbox_id.as_str())
+        .join("state")
+        .join("containers")
+        .join(sandbox_id.as_str())
+}
+
+pub(super) fn manifest_path(
+    state_root: &std::path::Path,
+    tenant_id: &TenantId,
+    sandbox_id: &nimbus_sandbox::SandboxId,
+) -> PathBuf {
+    container_state_dir(state_root, tenant_id, sandbox_id).join("manifest.json")
 }
 
 pub(super) fn read_buildah_rootfs_file(

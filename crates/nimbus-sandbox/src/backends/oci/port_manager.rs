@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use super::buildah::{OciExposedPort, OciExposedPortProtocol};
+use crate::artifact_paths;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxStatus;
 use crate::spec::SandboxPortBinding;
@@ -71,31 +72,17 @@ impl PortManager {
     }
 
     fn read_used_host_ports(&self) -> Result<BTreeSet<u16>> {
-        let containers_root = self.state_root.join("containers");
-        if !containers_root.exists() {
-            return Ok(BTreeSet::new());
-        }
-
         let mut used_host_ports = BTreeSet::new();
-        for entry in
-            std::fs::read_dir(&containers_root).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to read port-manager state directory {}: {error}",
-                    containers_root.display()
-                ),
+        for manifest_path in
+            artifact_paths::all_manifest_paths(&self.state_root).map_err(|error| {
+                SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to read port-manager tenant state directory {}: {error}",
+                        self.state_root.display()
+                    ),
+                }
             })?
         {
-            let entry = entry.map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to iterate port-manager state directory {}: {error}",
-                    containers_root.display()
-                ),
-            })?;
-            let manifest_path = entry.path().join("manifest.json");
-            if !manifest_path.exists() {
-                continue;
-            }
-
             let contents =
                 std::fs::read(&manifest_path).map_err(|error| SandboxError::OperationFailed {
                     message: format!(
@@ -162,9 +149,11 @@ mod tests {
     use tempfile::TempDir;
 
     use super::PortManager;
+    use crate::artifact_paths;
     use crate::backends::oci::buildah::{OciExposedPort, OciExposedPortProtocol};
-    use crate::instance::SandboxStatus;
+    use crate::instance::{SandboxId, SandboxStatus};
     use crate::spec::SandboxPortBinding;
+    use nimbus_core::TenantId;
 
     #[test]
     fn allocate_missing_bindings_uses_range_and_skips_existing_guest_ports() {
@@ -244,7 +233,12 @@ mod tests {
         status: SandboxStatus,
         host_guest_ports: &[(u16, u16)],
     ) {
-        let container_dir = state_root.join("containers").join(sandbox_id);
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
+        let sandbox_id = SandboxId::new(sandbox_id);
+        let manifest_path = artifact_paths::manifest_path(state_root, &tenant_id, &sandbox_id);
+        let container_dir = manifest_path
+            .parent()
+            .expect("manifest path should have a parent directory");
         fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
         let manifest = json!({
             "status": status,
@@ -262,7 +256,7 @@ mod tests {
             },
         });
         fs::write(
-            container_dir.join("manifest.json"),
+            manifest_path,
             serde_json::to_vec_pretty(&manifest).expect("manifest JSON should serialize"),
         )
         .expect("manifest JSON should be written");

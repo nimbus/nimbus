@@ -86,10 +86,8 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
         "expected HTTP response from guest-user-switch sandbox",
     );
 
-    let ctr_log_path = state_root
-        .join("containers")
-        .join(handle.id.as_str())
-        .join("ctr.log");
+    let tenant_id = sandbox_tenant();
+    let ctr_log_path = container_state_dir(&state_root, &tenant_id, &handle.id).join("ctr.log");
     let ctr_log = std::fs::read_to_string(&ctr_log_path)
         .unwrap_or_else(|_| panic!("ctr.log should be readable at {}", ctr_log_path.display()));
     let uid_line = ctr_log
@@ -114,7 +112,7 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
     assert_eq!(uid_value, "33", "guest should run as www-data uid 33");
     assert_eq!(gid_value, "33", "guest should run as www-data gid 33");
 
-    let bundle_config_path = bundle_root.join(handle.id.as_str()).join("config.json");
+    let bundle_config_path = bundle_config_path(&bundle_root, &tenant_id, &handle.id);
     let bundle_config: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&bundle_config_path).unwrap_or_else(|_| {
             panic!(

@@ -14,7 +14,8 @@ impl KrunSandboxBackend {
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<KrunLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
-        let prepared_launch = self.prepare_image_launch(&sandbox_id, image_reference, overrides)?;
+        let prepared_launch =
+            self.prepare_image_launch(spec, &sandbox_id, image_reference, overrides)?;
         self.plan_start_with_materialized_launch(spec, &sandbox_id, prepared_launch)
     }
 
@@ -28,6 +29,7 @@ impl KrunSandboxBackend {
     ) -> Result<KrunLaunchPlan> {
         let sandbox_id = next_sandbox_id(&spec.name);
         let prepared_launch = self.prepare_built_image_launch(
+            spec,
             &sandbox_id,
             image_name,
             dockerfile_path,
@@ -79,8 +81,11 @@ impl KrunSandboxBackend {
 
         let mut resolved_launch = resolve_launch_spec(spec, launch_defaults);
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
-        let bundle_layout =
-            KrunBundleLayout::new(self.config.bundle_root.join(sandbox_id.as_str()));
+        let bundle_layout = KrunBundleLayout::new(crate::artifact_paths::bundle_dir(
+            &self.config.bundle_root,
+            &resolved_launch.spec.tenant_id,
+            sandbox_id,
+        ));
         write_bundle_config(
             &bundle_layout,
             &hostname_for(&resolved_launch.spec),
@@ -93,7 +98,11 @@ impl KrunSandboxBackend {
             },
         )?;
 
-        let conmon_layout = OciConmonLayout::new(&self.config.state_root, sandbox_id);
+        let conmon_layout = OciConmonLayout::new_for_tenant(
+            &self.config.state_root,
+            &resolved_launch.spec.tenant_id,
+            sandbox_id,
+        );
         conmon_layout
             .ensure_directories()
             .map_err(|error| SandboxError::OperationFailed {
@@ -162,26 +171,34 @@ impl KrunSandboxBackend {
 
     fn prepare_image_launch(
         &self,
+        spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         image_reference: &str,
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
-        OciImageMaterializer::under_state_root(&self.config.state_root).prepare_image_launch(
+        OciImageMaterializer::for_tenant_sandbox(
+            &self.config.state_root,
+            &spec.tenant_id,
             sandbox_id,
-            image_reference,
-            overrides,
         )
+        .prepare_image_launch(sandbox_id, image_reference, overrides)
     }
 
     fn prepare_built_image_launch(
         &self,
+        spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         image_name: &str,
         dockerfile_path: &Path,
         context_path: &Path,
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<PreparedMaterializedImageLaunch> {
-        OciDockerfileBuilder::under_state_root(&self.config.state_root).prepare_built_image_launch(
+        OciDockerfileBuilder::for_tenant_sandbox(
+            &self.config.state_root,
+            &spec.tenant_id,
+            sandbox_id,
+        )
+        .prepare_built_image_launch(
             sandbox_id,
             image_name,
             dockerfile_path,

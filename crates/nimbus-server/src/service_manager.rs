@@ -467,7 +467,20 @@ impl RuntimeServiceRegistry for SandboxServiceManager {
         for (key, handle) in &tenant_handles {
             block_on(self.sandbox_backend.stop(&handle.id))
                 .map_err(|error| sandbox_backend_error(key, "stop", &error))?;
+            let mut stopped_handle = handle.clone();
+            stopped_handle.status = SandboxStatus::Stopped;
+            stopped_handle.published_endpoints.clear();
+            block_on(self.record_service_handle(key, &stopped_handle))?;
         }
+        block_on(
+            self.sandbox_backend
+                .remove_tenant_artifacts(tenant_id.clone()),
+        )
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to remove sandbox artifacts for tenant {tenant_id}: {error}"
+            ))
+        })?;
 
         let mut state = self
             .state
@@ -529,6 +542,7 @@ mod tests {
         image_starts: AtomicUsize,
         build_starts: AtomicUsize,
         stop_calls: AtomicUsize,
+        artifact_cleanup_calls: AtomicUsize,
         inspect_calls: AtomicUsize,
         ready_after_inspects: usize,
         handles: Mutex<BTreeMap<String, SandboxHandle>>,
@@ -540,6 +554,7 @@ mod tests {
                 image_starts: AtomicUsize::new(0),
                 build_starts: AtomicUsize::new(0),
                 stop_calls: AtomicUsize::new(0),
+                artifact_cleanup_calls: AtomicUsize::new(0),
                 inspect_calls: AtomicUsize::new(0),
                 ready_after_inspects,
                 handles: Mutex::new(BTreeMap::new()),
@@ -624,6 +639,11 @@ mod tests {
                 .lock()
                 .expect("backend lock should not be poisoned")
                 .remove(id.as_str());
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn remove_tenant_artifacts(&self, _tenant_id: TenantId) -> SandboxFuture<()> {
+            self.artifact_cleanup_calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move { Ok(()) })
         }
     }
@@ -1086,6 +1106,11 @@ mod tests {
             .expect("tenant teardown should stop tracked sandboxes");
 
         assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            backend.artifact_cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "tenant teardown should remove tenant-owned sandbox artifact roots"
+        );
         assert!(
             manager.snapshot_for_tenant(&tenant_id).is_empty(),
             "tenant teardown should clear manager snapshots"

@@ -8,6 +8,7 @@
 
 pub mod backends;
 
+mod artifact_paths;
 mod backend;
 mod endpoint;
 mod error;

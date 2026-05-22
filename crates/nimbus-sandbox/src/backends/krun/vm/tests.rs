@@ -106,8 +106,9 @@ fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
     config.use_buildah_unshare = false;
     let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
 
+    let spec = sparse_image_spec("build-trait");
     let handle = block_on(backend.start_from_build(SandboxBuildLaunchSpec::new(
-        sparse_image_spec("build-trait"),
+        spec.clone(),
         "nimbus-api",
         &dockerfile_path,
         &workspace,
@@ -121,12 +122,7 @@ fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
         .expect("inspect should succeed")
         .expect("plan-only build-backed sandbox should persist a manifest");
     assert_eq!(inspected.id, handle.id);
-    let manifest_path = temp_dir
-        .path()
-        .join("state")
-        .join("containers")
-        .join(handle.id.as_str())
-        .join("manifest.json");
+    let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest = fs::read_to_string(&manifest_path).expect("manifest should be readable");
     assert!(
         manifest.contains("\"Rootfs\""),
@@ -147,18 +143,9 @@ fn plan_start_writes_bundle_and_manifest_under_backend_roots() {
     ));
     let spec = sample_spec();
 
-    let handle = block_on(backend.start(spec)).expect("plan-only start should succeed");
-    let manifest_dir = temp_dir
-        .path()
-        .join("state")
-        .join("containers")
-        .join(handle.id.as_str());
-    let manifest_path = manifest_dir.join("manifest.json");
-    let bundle_path = temp_dir
-        .path()
-        .join("bundles")
-        .join(handle.id.as_str())
-        .join("config.json");
+    let handle = block_on(backend.start(spec.clone())).expect("plan-only start should succeed");
+    let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
+    let bundle_path = bundle_config_path(temp_dir.path(), &spec, &handle.id);
 
     assert!(manifest_path.exists(), "sandbox manifest should be written");
     assert!(bundle_path.exists(), "bundle config should be written");
@@ -169,6 +156,93 @@ fn plan_start_writes_bundle_and_manifest_under_backend_roots() {
         rendered_bundle
             .contains("\"krun.port_map\": \"127.0.0.1:15432:5432,127.0.0.1:18080:8080\""),
         "bundle config should preserve the address:host:guest TSI mapping"
+    );
+}
+
+#[test]
+fn plan_start_scopes_artifacts_by_tenant_for_same_service_name() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    ));
+    let tenant_a = sample_spec_for_tenant("tenant-a", "api");
+    let tenant_b = sample_spec_for_tenant("tenant-b", "api");
+
+    let handle_a =
+        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
+    let handle_b =
+        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+
+    let manifest_a = manifest_path(temp_dir.path(), &tenant_a, &handle_a.id);
+    let manifest_b = manifest_path(temp_dir.path(), &tenant_b, &handle_b.id);
+    let bundle_a = bundle_config_path(temp_dir.path(), &tenant_a, &handle_a.id);
+    let bundle_b = bundle_config_path(temp_dir.path(), &tenant_b, &handle_b.id);
+
+    assert_ne!(
+        manifest_a, manifest_b,
+        "tenant-scoped manifests must not collide for the same service name"
+    );
+    assert_ne!(
+        bundle_a, bundle_b,
+        "tenant-scoped bundles must not collide for the same service name"
+    );
+    assert!(manifest_a.is_file(), "tenant-a manifest should be written");
+    assert!(manifest_b.is_file(), "tenant-b manifest should be written");
+    assert!(bundle_a.is_file(), "tenant-a bundle should be written");
+    assert!(bundle_b.is_file(), "tenant-b bundle should be written");
+
+    let tenant_a_manifest =
+        fs::read_to_string(&manifest_a).expect("tenant-a manifest should be readable");
+    let tenant_b_manifest =
+        fs::read_to_string(&manifest_b).expect("tenant-b manifest should be readable");
+    assert!(tenant_a_manifest.contains("\"tenant_id\": \"tenant-a\""));
+    assert!(tenant_b_manifest.contains("\"tenant_id\": \"tenant-b\""));
+}
+
+#[test]
+fn remove_tenant_artifacts_deletes_only_matching_krun_tenant_roots() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    ));
+    let tenant_a = sample_spec_for_tenant("tenant-a", "api");
+    let tenant_b = sample_spec_for_tenant("tenant-b", "api");
+    let handle_a =
+        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
+    let handle_b =
+        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+    let shared_cache = temp_dir
+        .path()
+        .join("state")
+        .join("image-cache")
+        .join("oci");
+    fs::create_dir_all(&shared_cache).expect("shared image cache should be creatable");
+    fs::write(shared_cache.join("digest"), "verified blob").expect("cache marker should write");
+
+    block_on(backend.remove_tenant_artifacts(tenant_a.tenant_id.clone()))
+        .expect("tenant-a artifacts should be removed");
+
+    assert!(
+        !manifest_path(temp_dir.path(), &tenant_a, &handle_a.id).exists(),
+        "tenant-a manifest should be removed"
+    );
+    assert!(
+        !bundle_config_path(temp_dir.path(), &tenant_a, &handle_a.id).exists(),
+        "tenant-a bundle should be removed"
+    );
+    assert!(
+        manifest_path(temp_dir.path(), &tenant_b, &handle_b.id).exists(),
+        "tenant-b manifest should remain"
+    );
+    assert!(
+        bundle_config_path(temp_dir.path(), &tenant_b, &handle_b.id).exists(),
+        "tenant-b bundle should remain"
+    );
+    assert!(
+        shared_cache.join("digest").exists(),
+        "shared content-addressed image cache should not be removed with one tenant"
     );
 }
 
@@ -187,18 +261,12 @@ fn plan_only_start_writes_krun_vm_config_for_explicit_resource_limits() {
             .with_memory_limit_bytes(256 * 1024 * 1024),
     );
 
-    let handle = block_on(backend.start(spec)).expect("plan-only start should succeed");
+    let handle = block_on(backend.start(spec.clone())).expect("plan-only start should succeed");
     let vm_config_path = krun_vm_config_path(&rootfs);
     let vm_config =
         fs::read_to_string(&vm_config_path).expect("krun vm config should be materialized");
-    let bundle = fs::read_to_string(
-        temp_dir
-            .path()
-            .join("bundles")
-            .join(handle.id.as_str())
-            .join("config.json"),
-    )
-    .expect("bundle config should be readable");
+    let bundle = fs::read_to_string(bundle_config_path(temp_dir.path(), &spec, &handle.id))
+        .expect("bundle config should be readable");
 
     assert!(vm_config.contains("\"cpus\": 2"));
     assert!(vm_config.contains("\"ram_mib\": 256"));
@@ -410,29 +478,20 @@ fn start_from_image_plan_only_persists_and_then_cleans_up_materialized_rootfs() 
 
     let handle = block_on(
         backend.start_from_image(
-            SandboxImageLaunchSpec::new(spec, &image_reference)
+            SandboxImageLaunchSpec::new(spec.clone(), &image_reference)
                 .with_process_overrides(SandboxImageProcessOverrides::default()),
         ),
     )
     .expect("plan-only image-backed start should succeed");
 
-    let manifest_path = temp_dir
-        .path()
-        .join("state")
-        .join("containers")
-        .join(handle.id.as_str())
-        .join("manifest.json");
+    let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest_before_stop =
         fs::read_to_string(&manifest_path).expect("manifest should be readable before stop");
     assert!(
         manifest_before_stop.contains("\"launch_artifact\""),
         "manifest should retain launch-artifact metadata while running"
     );
-    let rootfs_path = temp_dir
-        .path()
-        .join("state")
-        .join("materialized-rootfs")
-        .join(handle.id.as_str());
+    let rootfs_path = rootfs_artifact_path(temp_dir.path(), &spec, &handle.id);
     assert!(
         rootfs_path.exists(),
         "image-backed plan should materialize a rootfs under the krun state root"
@@ -531,8 +590,9 @@ fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_por
 
     block_on(backend.stop(&first.id)).expect("stopping the first sandbox should succeed");
 
+    let third_spec = sparse_image_spec("third");
     let third = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
-        sparse_image_spec("third"),
+        third_spec.clone(),
         &image_reference,
     )))
     .expect("third plan-only image-backed start should succeed");
@@ -542,14 +602,9 @@ fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_por
     assert_eq!(third_inspected.published_endpoints.len(), 1);
     assert_eq!(third_inspected.published_endpoints[0].address.port(), 15000);
 
-    let third_bundle = fs::read_to_string(
-        temp_dir
-            .path()
-            .join("bundles")
-            .join(third.id.as_str())
-            .join("config.json"),
-    )
-    .expect("third bundle config should be readable");
+    let third_bundle =
+        fs::read_to_string(bundle_config_path(temp_dir.path(), &third_spec, &third.id))
+            .expect("third bundle config should be readable");
     assert!(
         third_bundle.contains("\"krun.port_map\": \"127.0.0.1:15000:8080\""),
         "auto-assigned bindings should rewrite the krun port map annotation"
@@ -952,6 +1007,30 @@ fn sparse_image_spec(name: &str) -> SandboxSpec {
         SandboxFilesystemSpec::new(PathBuf::new()),
         SandboxProcessSpec::new(Vec::<String>::new()),
     )
+}
+
+fn sample_spec_for_tenant(tenant_id: &str, name: &str) -> SandboxSpec {
+    SandboxSpec::new(
+        TenantId::new(tenant_id).expect("tenant id should be valid"),
+        name,
+        SandboxBackendKind::Krun,
+        SandboxFilesystemSpec::new("/srv/rootfs"),
+        SandboxProcessSpec::new(["/usr/bin/service"]),
+    )
+}
+
+fn manifest_path(root: &Path, spec: &SandboxSpec, sandbox_id: &SandboxId) -> PathBuf {
+    crate::artifact_paths::manifest_path(&root.join("state"), &spec.tenant_id, sandbox_id)
+}
+
+fn bundle_config_path(root: &Path, spec: &SandboxSpec, sandbox_id: &SandboxId) -> PathBuf {
+    crate::artifact_paths::bundle_dir(&root.join("bundles"), &spec.tenant_id, sandbox_id)
+        .join("config.json")
+}
+
+fn rootfs_artifact_path(root: &Path, spec: &SandboxSpec, sandbox_id: &SandboxId) -> PathBuf {
+    crate::artifact_paths::rootfs_root(&root.join("state"), &spec.tenant_id, sandbox_id)
+        .join(sandbox_id.as_str())
 }
 
 fn sample_launch_defaults() -> OciImageLaunchDefaults {

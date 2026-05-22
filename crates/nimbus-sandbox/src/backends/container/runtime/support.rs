@@ -27,6 +27,16 @@ pub(super) fn sample_spec() -> SandboxSpec {
     )
 }
 
+pub(super) fn sample_spec_for_tenant(tenant_id: &str, name: &str) -> SandboxSpec {
+    SandboxSpec::new(
+        TenantId::new(tenant_id).expect("tenant should parse"),
+        name,
+        SandboxBackendKind::Container,
+        SandboxFilesystemSpec::new(PathBuf::from("/tmp/rootfs")),
+        SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
+    )
+}
+
 pub(super) fn sample_launch_defaults(rootfs_path: PathBuf) -> OciImageLaunchDefaults {
     OciImageLaunchDefaults {
         filesystem: SandboxFilesystemSpec::new(rootfs_path),

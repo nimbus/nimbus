@@ -185,12 +185,18 @@ impl KrunSandboxBackend {
     }
 
     pub(super) fn read_manifest(&self, id: &SandboxId) -> Result<Option<KrunSandboxManifest>> {
-        let manifest_path = self
-            .config
-            .state_root
-            .join("containers")
-            .join(id.as_str())
-            .join("manifest.json");
+        let Some(manifest_path) =
+            crate::artifact_paths::manifest_path_for_sandbox_id(&self.config.state_root, id)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to find krun sandbox manifest for {} under {}: {error}",
+                        id,
+                        self.config.state_root.display()
+                    ),
+                })?
+        else {
+            return Ok(None);
+        };
         if !manifest_path.exists() {
             return Ok(None);
         }

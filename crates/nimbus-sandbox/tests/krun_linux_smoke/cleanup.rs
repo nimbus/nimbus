@@ -77,7 +77,8 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
         "expected HTTP response from non-root-user sandbox",
     );
 
-    let bundle_config_path = bundle_root.join(handle.id.as_str()).join("config.json");
+    let tenant_id = sandbox_tenant();
+    let bundle_config_path = bundle_config_path(&bundle_root, &tenant_id, &handle.id);
     let bundle_config: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&bundle_config_path).unwrap_or_else(|_| {
             panic!(
@@ -103,10 +104,7 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
         "krun bundle must use root gid for VMM /dev/kvm access"
     );
 
-    let manifest_path = state_root
-        .join("containers")
-        .join(handle.id.as_str())
-        .join("manifest.json");
+    let manifest_path = manifest_path(&state_root, &tenant_id, &handle.id);
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap_or_else(|_| {
             panic!("manifest should be readable at {}", manifest_path.display())

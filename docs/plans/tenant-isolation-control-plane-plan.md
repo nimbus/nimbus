@@ -72,7 +72,7 @@ Reviewed on 2026-05-22.
 | --- | --- | --- |
 | Tenant identity | `TenantIsolationContext` now carries tenant, authority, surface, runtime bundle tenant labels, deployment generation, and service launch validation across native HTTP, native WebSocket, Convex, Firebase/Firestore, Cloud Functions, MongoDB compatibility commands, runtime HostBridge, and sandbox service launch. `SandboxServiceManager` keys active handles by `(tenant_id, service_name)` and rejects launch specs whose tenant/service/backend differ from the admitted request. | Later phases must extend the context/admission artifact with admitted network, storage, volume, image, secret, runtime grant, and quota policy instead of passing those as independent ad hoc arguments. |
 | Storage database | Embedded providers use per-tenant storage files; Postgres uses one tenant schema per tenant behind provider metadata; MySQL uses one tenant database per tenant; external provider docs require per-tenant namespaces; `_nimbus` is a reserved system tenant. | Physical namespace selection is mostly at the right provider seam, but native HTTP/API tenant authorization is not a global tenant-membership gate today. The path tenant ID is validated but not bound to a verified principal before all data paths. |
-| Sandbox state | krun manifests include `spec.tenant_id`, and state views can list/filter by tenant. | Bundle, state, materialized rootfs, logs, and image materialization roots are currently under global sandbox roots keyed mostly by `sandbox_id`, not tenant-scoped directories. Tenant deletion stops tracked handles but needs verified cleanup of tenant-owned sandbox artifacts and volumes. |
+| Sandbox state | krun/container bundle, manifest, conmon state, logs, persist/exit files, and materialized rootfs roots now lower under tenant-owned `tenants/<tenant_id>/sandboxes/<sandbox_id>/...` paths. State views and port scans enumerate tenant roots, and tenant teardown removes only the target tenant's sandbox artifact roots while leaving shared content-addressed image cache and other tenants intact. | Named volume admission/paths are still not lowered into service bundles and remain TIC6. Container network/IPAM ownership and non-loopback exposure policy remain TIC3. |
 | Networking | `SandboxPortBinding` defaults to loopback; krun bundles emit address-bearing `krun.port_map`; patched `nimbus-crun`/`nimbus-libkrun` proved localhost-only TSI binding. Runtime service lookup is tenant-scoped. | Compose accepts explicit non-loopback host addresses. Public exposure needs operator policy. In-process runtime network grants must not allow tenants to scan localhost service ports and bypass `ctx.services` grants. Port leases need tenant ownership, quotas, and cleanup evidence. |
 | In-process runtime compute | `RuntimeLimits` already has per-tenant active/in-flight/queued top-level invocation caps; `RuntimePolicy` owns runtime instance concurrency; runtime permissions are grant-derived; `RuntimeInvocationContext` and HostBridge carry the invocation tenant. | Need a first-class runtime admission gate that rejects unsafe tier/backend/grant combinations for production, constrains Node loopback grants, proves worker/subprocess/FFI/native-addon/package-loading containment, and accounts runtime CPU/memory/time per tenant rather than only globally. |
 | MicroVM service compute | krun launches one service sandbox as one microVM; service manager does not intentionally share a VM across tenants. Runtime permission model separates `in_process_untrusted` from `microvm_service`. | Need hard admission tests that prevent multiple tenants sharing a guest, enforce per-tenant/per-sandbox quotas, and prove workloads with broad OS needs move to `microvm_service` or a trusted tier. |
@@ -86,7 +86,7 @@ Reviewed on 2026-05-22.
 | --- | --- | --- | --- |
 | TIC0 | `done` | Audit current tenant-isolation shape and define production gates. | This plan records code/doc evidence and gaps. |
 | TIC1 | `done` | Add an explicit tenant isolation context/admission artifact. | Unit tests prove mismatched tenant/deployment/service/runtime identities are rejected before runtime or sandbox launch. |
-| TIC2 | `pending` | Tenant-scope sandbox filesystem state. | krun bundle/state/rootfs/log paths include tenant-owned roots; tenant deletion stops services and removes tenant sandbox artifacts without touching other tenants. |
+| TIC2 | `done` | Tenant-scope existing sandbox filesystem state. | krun/container bundle/state/rootfs/log paths include tenant-owned roots; tenant deletion stops services and removes tenant sandbox artifacts without touching other tenants. |
 | TIC3 | `pending` | Fail-closed network admission and port ownership. | Non-loopback service exposure is rejected unless operator policy allows it; port leases carry tenant/service identity, quotas, and cleanup; localhost-only proof remains green. |
 | TIC4 | `pending` | Runtime compute admission and host capability isolation. | Production runtime policies reject unsafe tier/backend/grant combinations; Node loopback grants cannot bypass service grants; runtime CPU/memory/time/worker/nested-call budgets are tenant-accounted. |
 | TIC5 | `pending` | Tenant-scoped storage/API authorization. | Native HTTP, adapter, runtime, scheduler, and system-control paths prove a principal/session cannot address another tenant by swapping the path tenant ID. |
@@ -473,6 +473,59 @@ Remaining after TIC1:
   control-plane surfaces.
 - TIC6-TIC8 must close volumes/images/secrets/mounts, microVM quotas, and the
   two-tenant end-to-end proof harness.
+- Dirty worktree caveat: this checkpoint remains mixed into an already-dirty
+  workspace that includes unrelated generated Convex/demo artifacts,
+  `package-lock.json`, desktop-auth proof images/plans, and prior docs edits.
+
+### 2026-05-22 TIC2 Tenant-Owned Sandbox Artifact Roots
+
+Closed the existing sandbox filesystem-state portion of TIC2 for krun and
+container backends.
+
+Completed in this checkpoint:
+
+- Added a shared `nimbus-sandbox` artifact path module that roots bundle,
+  state, manifest, conmon log, exit/persist, and materialized rootfs paths by
+  tenant before sandbox ID:
+  `tenants/<tenant_id>/sandboxes/<sandbox_id>/...`.
+- Updated krun and container start planning so OCI bundles, conmon state,
+  manifests, logs, and materialized image/build rootfs directories use the
+  tenant-owned path layout before any `config.json` or rootfs is written.
+- Kept the OCI blob cache shared only as a top-level content-addressed cache;
+  tenant cleanup leaves it in place while removing tenant-owned mutable roots.
+- Updated state inspection and port scans to enumerate the tenant-rooted
+  manifest layout instead of the former global `containers/<sandbox_id>` path.
+  Ambiguous duplicate sandbox IDs across tenant roots now fail instead of
+  silently selecting a cross-tenant manifest.
+- Added `SandboxBackend::remove_tenant_artifacts(...)` and wired
+  `SandboxServiceManager::teardown_tenant(...)` to stop tracked services,
+  project stopped service/port state, and then remove only the target tenant's
+  sandbox artifact roots.
+- Updated Linux krun smoke path expectations so real-host verification follows
+  the tenant-rooted bundle, manifest, and log layout.
+
+Verification evidence:
+
+- `cargo test -p nimbus-sandbox -- --nocapture`
+  - result: pass; 98 passed, 0 failed, 0 ignored in `src/lib.rs`; 2 passed,
+    0 failed in `src/bin/neovex-guest-user-switch.rs`; Linux smoke target and
+    doc tests had 0 runnable tests on this macOS host.
+- `cargo test -p nimbus-server service_manager -- --nocapture`
+  - result: pass; 7 passed, 0 failed, 704 filtered out; MongoDB spec and
+    reactive-loop integration targets had 0 matching tests.
+- `cargo test -p nimbus-server delete_tenant_stops_manager_owned_sandbox_services -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 710 filtered out; MongoDB spec and
+    reactive-loop integration targets had 0 matching tests.
+
+Remaining after TIC2:
+
+- TIC3 must tenant-own network exposure policy, port leases, and container
+  network/IPAM cleanup evidence. This checkpoint did not claim non-loopback or
+  runtime-localhost isolation.
+- TIC6 must add named volume admission and paths. Current service bundles still
+  do not lower tenant-provided volume mounts; the only krun bind mount remains
+  the Nimbus-owned read-only guest-user helper mount.
+- TIC4/TIC5/TIC7/TIC8 remain open as recorded in the phase ledger.
 - Dirty worktree caveat: this checkpoint remains mixed into an already-dirty
   workspace that includes unrelated generated Convex/demo artifacts,
   `package-lock.json`, desktop-auth proof images/plans, and prior docs edits.
