@@ -34,9 +34,9 @@ inputs:
     default: "false"
   googlesource-cookie:
     description: >-
-      Contents of the .googlesource.com gitcookie. Pass
-      `${{ secrets.GOOGLESOURCE_COOKIE }}` from the calling workflow.
-      When empty the credential-configuration step is skipped.
+      Contents of the .googlesource.com gitcookie. Pass the calling
+      workflow's GOOGLESOURCE_COOKIE secret as the value. When empty
+      the credential-configuration step is skipped.
     required: false
     default: ""
 
