@@ -446,6 +446,9 @@ pub(crate) async fn record_service_handle_async(
     for endpoint in &handle.published_endpoints {
         let mut fields = object_fields(json!({
             "serviceId": service_id.as_str(),
+            "tenantId": tenant_id.as_str(),
+            "serviceName": handle.name.as_str(),
+            "endpointName": endpoint.name.as_str(),
             "hostPort": endpoint.address.port(),
             "protocol": endpoint_protocol(endpoint.protocol),
             "state": sandbox_status(handle.status),

@@ -781,6 +781,12 @@ mod tests {
             ports[0].fields.get("serviceId"),
             Some(&json!("service:tenant:db"))
         );
+        assert_eq!(ports[0].fields.get("tenantId"), Some(&json!("tenant")));
+        assert_eq!(ports[0].fields.get("serviceName"), Some(&json!("db")));
+        assert_eq!(
+            ports[0].fields.get("endpointName"),
+            Some(&json!("postgres"))
+        );
         assert_eq!(ports[0].fields.get("hostPort"), Some(&json!(15432)));
         assert_eq!(ports[0].fields.get("guestPort"), Some(&json!(5432)));
         assert_eq!(ports[0].fields.get("state"), Some(&json!("ready")));
@@ -858,6 +864,14 @@ mod tests {
             .await
             .expect("system ports should list after start");
         assert_eq!(system_ports.len(), 1);
+        assert_eq!(
+            system_ports[0].fields.get("tenantId"),
+            Some(&json!("tenant"))
+        );
+        assert_eq!(
+            system_ports[0].fields.get("serviceName"),
+            Some(&json!("db"))
+        );
         assert_eq!(system_ports[0].fields.get("hostPort"), Some(&json!(15432)));
         assert_eq!(system_ports[0].fields.get("guestPort"), Some(&json!(5432)));
         assert_eq!(system_ports[0].fields.get("state"), Some(&json!("ready")));

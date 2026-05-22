@@ -519,6 +519,35 @@ services:
 }
 
 #[test]
+fn compose_project_rejects_non_loopback_port_exposure_without_policy() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: busybox:latest
+    ports:
+      - "0.0.0.0:8080:80"
+"#,
+    );
+
+    let error =
+        ComposeProjectPlan::load(&compose).expect_err("non-loopback exposure should fail closed");
+    assert!(
+        error.to_string().contains("non-loopback host address"),
+        "expected non-loopback policy error, got: {error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("operator network exposure policy"),
+        "expected operator-policy guidance, got: {error}"
+    );
+}
+
+#[test]
 fn compose_project_lowers_into_sandbox_service_catalog() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(
