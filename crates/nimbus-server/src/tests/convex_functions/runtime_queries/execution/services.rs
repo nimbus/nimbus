@@ -542,8 +542,12 @@ export {};
         .await
         .expect("error body should be readable");
     assert!(
-        body.contains("production in_process_untrusted"),
-        "error should name the rejected runtime tier: {body}"
+        body.contains("microvm_service"),
+        "error should name the unavailable fallback runtime tier: {body}"
+    );
+    assert!(
+        body.contains("fail closed"),
+        "error should make fail-closed behavior explicit: {body}"
     );
     assert!(
         body.contains("generic localhost"),
