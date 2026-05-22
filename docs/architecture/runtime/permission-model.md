@@ -27,9 +27,11 @@ before runtime mode and grants answer "which exact resources may it use?"
 | `wasm_capability_sandbox` | Same Nimbus process, WASM Component Model boundary, typed WIT imports, Store resource limits, and fuel/epoch interruption. | Future WASM components and tightly scoped agent extensions that receive only imported capabilities. | Deferred until the wasmtime backend proves WIT imports, Store lifecycle, interruption, and resource limits. |
 | `microvm_service` | Separate sandbox lifecycle, usually a krun-backed microVM on Linux, with host exposure controlled through service bindings and endpoint policy. | Services or agents that need broader OS behavior, subprocesses, native dependencies, or crash/security isolation beyond an in-process engine. | Current service-control and sandbox seam. Security audit routing is owned by the execution-isolation plan. |
 
-Tier selection must be explicit in architecture and validation decisions. A
-future implementation may add a Rust enum for these tiers, but the contract
-already applies to plan and review work.
+Tier selection must be explicit in architecture and validation decisions. The
+server admission path has an internal `RuntimeIsolationTier` vocabulary for
+the current `in_process_untrusted` gate and its canonical routing fallbacks:
+`in_process_trusted_only`, `microvm_service`, and future
+`wasm_capability_sandbox`.
 
 ### Tier Admission Rules
 
