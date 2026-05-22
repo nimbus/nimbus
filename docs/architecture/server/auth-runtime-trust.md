@@ -45,11 +45,11 @@ The current landed architecture now reflects the following settled rules:
 
 ## Tenant Workload Identity
 
-Tenant-isolated work now has one canonical workload identity projection:
+Tenant-isolated work now has one canonical workload/audit identity projection:
 `TenantWorkloadStableIdentity`, produced from an admitted
 `TenantIsolationDecision`.
 
-The stable ID format is:
+The admitted decision/audit ID format is:
 
 ```text
 nimbus-workload:v1
@@ -67,7 +67,7 @@ nimbus-workload:v1
   /invocation/<invocation_id|none>
 ```
 
-The same projection can render a SPIFFE-style path:
+The same projection can render a SPIFFE-style audit path:
 
 ```text
 /nimbus/workload/v1/tenant/.../invocation/...
@@ -81,8 +81,8 @@ spiffe://<trust-domain>/nimbus/workload/v1/tenant/.../invocation/...
 
 Rules:
 
-- The stable workload identity is derived only after tenant admission; lower
-  seams do not assemble it from caller-supplied tenant strings.
+- The admitted workload/audit identity is derived only after tenant admission;
+  lower seams do not assemble it from caller-supplied tenant strings.
 - Tenant ID, deployment generation, admission surface, service/function name,
   runtime tier/backend, sandbox backend, node/machine, sandbox, and invocation
   IDs are explicit fields. Fields that do not apply render as `none`, rather
@@ -90,12 +90,16 @@ Rules:
 - Non-path-safe bytes are percent-escaped in path segments so service names
   such as `messages:send` have deterministic identities.
 - Decision fingerprints include node/machine location, so a decision admitted
-  for one execution location cannot be silently reused as a different
-  provider-auth subject.
-- Future secret-management and service-identity providers must use this
-  stable workload identity as the provider-auth subject. They should not mint
-  credentials from only `tenant_id`, raw bearer claims, or process-local
-  runtime context.
+  for one execution location cannot be silently reused as another admitted
+  execution context.
+- Future service-identity providers must derive provider-auth subjects from
+  this admitted projection, but the provider policy subject should be a stable,
+  low-cardinality workload projection. Placement and per-invocation fields
+  (`node_id`, `machine_id`, `sandbox_id`, `invocation_id`, decision ID) belong
+  in signed credential/audit claims unless a provider explicitly requires a
+  stronger placement-bound subject.
+- Secret-management and service-identity providers must not mint credentials
+  from only `tenant_id`, raw bearer claims, or process-local runtime context.
 
 ## Tenant Isolation Audit Events
 

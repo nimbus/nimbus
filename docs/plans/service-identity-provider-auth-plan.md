@@ -4,10 +4,11 @@ Canonical deferred design and execution plan for workload identity minting and
 provider-auth exchange in Nimbus.
 
 The tenant-isolation enterprise hardening work introduced
-`TenantWorkloadStableIdentity`, a stable subject derived from an admitted
-`TenantIsolationDecision`. This plan owns the next layer: short-lived
-credentials and service identity. Secret management owns secret values and
-references; this plan owns identity minting and provider authentication.
+`TenantWorkloadStableIdentity`, an admitted workload/audit projection derived
+from a `TenantIsolationDecision`. This plan owns the next layer:
+low-cardinality provider subjects, short-lived credentials, and service identity.
+Secret management owns secret values and references; this plan owns identity
+minting and provider authentication.
 
 ---
 
@@ -20,7 +21,10 @@ references; this plan owns identity minting and provider authentication.
   AWS IRSA/OIDC, GCP Workload Identity Federation, Azure federated
   credentials, SPIFFE/SPIRE SVIDs, mTLS client certificates, or signed
   service-account tokens.
-- **Canonical subject:** `TenantWorkloadStableIdentity`
+- **Canonical source:** `TenantWorkloadStableIdentity`
+- **Provider subject:** stable workload projection defined by SI0;
+  per-invocation and placement fields become credential claims, not the cloud
+  provider allow-policy subject.
 - **Current posture reference:** `docs/tenant-isolation.md`
 
 ## Goal
@@ -90,7 +94,11 @@ promoting implementation. The intended dependency posture is:
 
 ## Identity Contract
 
-The provider-auth subject is the stable workload identity:
+The provider-auth subject is a stable workload projection derived from the
+admitted `TenantWorkloadStableIdentity`, not the full decision/audit string.
+It intentionally excludes placement and per-credential fields such as
+`node_id`, `machine_id`, `sandbox_id`, and `invocation_id` so cloud provider
+policies do not need to change on every invocation or reschedule:
 
 ```text
 nimbus-workload:v1
@@ -102,21 +110,35 @@ nimbus-workload:v1
   /runtime-tier/<tier|none>
   /runtime-backend/<backend|none>
   /sandbox-backend/<backend|none>
-  /node/<node_id|none>
-  /machine/<machine_id|none>
-  /sandbox/<sandbox_id|none>
-  /invocation/<invocation_id|none>
 ```
 
 When a SPIFFE-compatible trust domain is configured, the same subject can be
 rendered as:
 
 ```text
-spiffe://<trust-domain>/nimbus/workload/v1/tenant/.../invocation/...
+spiffe://<trust-domain>/nimbus/workload/v1/tenant/.../sandbox-backend/...
 ```
 
-Provider adapters must use this subject or a signed projection of it. They
-must not reconstruct identity from caller inputs.
+Credential instances then carry signed, short-lived claims for correlation and
+placement binding:
+
+```text
+sub=<stable workload subject>
+aud=<provider audience>
+exp=<short ttl>
+jti=<credential instance id>
+nimbus_decision_id=<tenant isolation decision id>
+nimbus_workload_stable_id=<full admitted audit projection>
+nimbus_node_id=<node_id|none>
+nimbus_machine_id=<machine_id|none>
+nimbus_sandbox_id=<sandbox_id|none>
+nimbus_invocation_id=<invocation_id|none>
+```
+
+Provider adapters must use the stable subject or a signed projection of it for
+provider allow policies. They may use placement and invocation claims as
+additional proof or audit inputs, but must not reconstruct identity from caller
+inputs.
 
 ## Topic Coverage
 
@@ -124,7 +146,7 @@ This plan is expected to cover the follow-up topics below when promoted:
 
 | Topic | Required coverage |
 | --- | --- |
-| Service identity | Workload identity issuance; short-lived credential forms; OIDC/JWT, SPIFFE SVID, mTLS certificate, and service-account token outputs; TTL, renewal, revocation, and redaction behavior. |
+| Service identity | Stable workload subject issuance; short-lived credential forms; OIDC/JWT, SPIFFE SVID, mTLS certificate, and service-account token outputs; TTL, renewal, revocation, and redaction behavior. |
 | Identity grants vs secret grants | `identity` grants authorize identity projection or credential minting; `secret` grants authorize secret handle reads. A workload with one grant does not implicitly receive the other. |
 | SPIFFE/SPIRE | Trust-domain shape, SPIFFE ID path convention, workload selectors, node attestation, SVID rotation, and local-dev fallback without SPIRE. |
 | Secret-provider auth | Vault Kubernetes/JWT/OIDC auth; AWS/GCP/Azure workload identity mapping; provider-specific subject/audience claims; per-tenant secret-store routing from the secret-management plan; audit correlation between credential mint and secret read. |
@@ -138,11 +160,11 @@ This plan is expected to cover the follow-up topics below when promoted:
 
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
-| SI0 | `todo` | Define provider-auth policy input and audit schema. | Tests prove identity mint requests without an admitted decision fail closed and forged tenant/workload/node identities are denied. |
+| SI0 | `todo` | Define provider-auth policy input, stable workload subject projection, per-credential claim set, and audit schema. | Tests prove identity mint requests without an admitted decision fail closed, forged tenant/workload/node identities are denied, and provider policy subjects do not include invocation IDs. |
 | SI1 | `todo` | Promote `identity` grant to enforced capability. | Runtime and sandbox tests prove identity APIs deny without explicit grants. |
 | SI2 | `todo` | Add canonical node/machine identity, local-dev trust-domain fallback, and signing-key management. | Key rotation, stale-key denial, canonical `node_id`/`machine_id`, and local-dev fallback tests pass without exposing private key material. |
-| SI3 | `todo` | Implement short-lived OIDC/JWT minting. | Tokens carry tenant/workload subject, audience, expiry, and decision ID; wrong audience/provider denies. |
-| SI4 | `todo` | Define SPIFFE/SVID integration path. | SPIFFE IDs render from `TenantWorkloadStableIdentity`; registration entries bind workload selectors, node attestation inputs, and node/machine selectors; SVID rotation is tested. |
+| SI3 | `todo` | Implement short-lived OIDC/JWT minting. | Tokens carry stable workload subject, audience, expiry, decision ID, credential instance ID, and optional placement/invocation claims; wrong audience/provider denies. |
+| SI4 | `todo` | Define SPIFFE/SVID integration path. | SPIFFE IDs render from the stable workload subject projection; registration entries bind workload selectors, node attestation inputs, and node/machine selectors; SVID rotation is tested. |
 | SI5 | `todo` | Add provider-auth adapters and per-tenant secret-store routing hooks. | Vault, Kubernetes, AWS, GCP, and Azure adapters are either implemented or gated by precise provider blockers; subject/audience mapping and mint-to-secret-read audit correlation are tested. |
 | SI6 | `todo` | Propagate identity projections to runtime and sandbox seams. | V8/Deno/Node, future Bun/JSC, wasmtime, HostBridge, OCI annotations/labels, microVM metadata, and cgroup/sandbox audit labels consume server-owned scoped projections only after admission. |
 | SI7 | `todo` | Add lifecycle and revocation. | Mint, renew, revoke, expiry, node compromise, and tenant cleanup paths are tested. |
@@ -171,7 +193,8 @@ This plan is expected to cover the follow-up topics below when promoted:
 ## Acceptance Criteria
 
 - Every minted credential is short-lived and tied to an admitted
-  `TenantWorkloadStableIdentity`.
+  `TenantWorkloadStableIdentity` through a stable workload subject plus signed
+  decision, placement, and invocation claims.
 - Every provider exchange records tenant ID, decision ID, workload subject,
   provider, audience, expiry, and result in tenant-safe audit events.
 - Runtime code, sandbox guests, and agents cannot request arbitrary audiences,

@@ -83,24 +83,31 @@ Operational caveats from current upstream docs:
    not prove tenant membership, workload grants, service authorization, or
    provider-auth eligibility.
 
-3. **Keep BLAKE3 and SHA-256 roles separate.**
+3. **Separate provider subjects from audit correlation.**
+   The full admitted workload identity is valuable evidence, but provider allow
+   policies should normally key on a stable, low-cardinality workload subject.
+   Decision IDs, node/machine placement, sandbox IDs, invocation IDs, and token
+   instance IDs belong in signed credential claims and audit records unless a
+   provider explicitly requires a placement-bound subject.
+
+4. **Keep BLAKE3 and SHA-256 roles separate.**
    Iroh BLAKE3 hashes are excellent for transfer integrity and P2P addressing.
    OCI/Sigstore/SLSA workflows still use digest and signature semantics that
    should remain verifier-owned. Runtime bundles may carry both a BLAKE3
    distribution hash and a SHA-256/Sigstore provenance anchor.
 
-4. **Use SPIFFE/SPIRE as the production issuer path, not a mandatory local-dev
+5. **Use SPIFFE/SPIRE as the production issuer path, not a mandatory local-dev
    dependency.**
    Local development may use a Nimbus local issuer for short-lived test
    credentials, but production SPIFFE/SVID support should consume the Workload
    API through an adapter.
 
-5. **Keep provider auth optional and feature-gated.**
+6. **Keep provider auth optional and feature-gated.**
    Adding AWS, GCP, Azure, Vault, or Kubernetes support should not drag every
    cloud SDK into the default binary unless the product distribution explicitly
    chooses that profile.
 
-6. **Prefer command adapters for supply-chain verification first.**
+7. **Prefer command adapters for supply-chain verification first.**
    Cosign and SLSA verifier are reference tools. A library path can come later
    after fixture parity and security review.
 

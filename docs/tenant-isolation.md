@@ -121,7 +121,8 @@ Accepted for the current baseline:
 - Secret provider authentication is not complete until
   `docs/plans/service-identity-provider-auth-plan.md` can mint short-lived,
   tenant-scoped credentials from admitted `TenantWorkloadStableIdentity`
-  subjects.
+  projections, using stable provider subjects plus signed decision and
+  invocation claims.
 - Native HTTP tenant membership is not a general customer auth model yet. The
   current native API is a local-operator surface guarded by local admin auth.
 - Audit event schema is stable, but export routing and retention policy are
@@ -142,7 +143,8 @@ Prioritize external security review in this order:
    `TenantImageVerificationProvider` plus concrete Cosign/SLSA/SBOM backends
    from `docs/plans/artifact-provenance-verification-plan.md`.
 5. Service identity and provider auth:
-   `TenantWorkloadStableIdentity` plus short-lived credential minting from
+   `TenantWorkloadStableIdentity` projections, stable provider subjects, and
+   short-lived credential minting from
    `docs/plans/service-identity-provider-auth-plan.md`.
 6. Storage provider namespace isolation:
    `crates/nimbus-storage/` plus provider topology docs.

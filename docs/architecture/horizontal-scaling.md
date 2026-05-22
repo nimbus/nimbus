@@ -150,17 +150,18 @@ natively — this is exactly what HyParView was designed for.
 iroh-gossip provides topic-based pub/sub out of the box. For subscription
 invalidation:
 
-```
-Topic model (maps directly to Nimbus semantics):
-├── topic:<tenant_id>:mutations     → all mutations for a tenant
-├── topic:<tenant_id>:<table_name>  → per-table granularity (if needed)
-└── topic:cluster:state             → node capacity, scheduling metadata
+```text
+Tenant-scoped topic model (target syntax):
+├── topic:<tenant_id>:mutations     -> all invalidations for a tenant
+├── topic:<tenant_id>:<resource>    -> per-resource granularity when needed
+└── topic:cluster:state             -> node capacity, scheduling metadata
 ```
 
-At 3-5 nodes, a single per-tenant topic with broadcast is sufficient — local
-filtering at each node determines which WebSocket clients care. At 20+ nodes,
-per-table topics reduce unnecessary traffic. iroh-gossip handles both models
-with the same API.
+At 3-5 nodes, a single cluster invalidation topic with local filtering or one
+tenant-scoped mutation topic per active tenant is sufficient. At 20+ nodes,
+per-resource topics reduce unnecessary traffic. iroh-gossip handles these
+models with the same API; Open Question 4 decides when Nimbus activates the
+finer-grained fanout.
 
 Zenoh's key-expression hierarchy (`tenant/123/table/users/**`) is elegant but
 solves a problem we don't have yet — we'd need hundreds of nodes before
@@ -553,14 +554,14 @@ sequenceDiagram
     participant N1 as Node 1 (Leader)
     participant N3 as Node 3
 
-    Note over C,N3: Client subscribed on Node 2, topic: tenant-42
+    Note over C,N3: Client subscribed on Node 2, topic:<tenant_id>:mutations
 
     C->>N2: mutation request (HTTP)
     N2->>N1: forward to leader (Iroh stream)
     N1->>N1: Engine applies mutation
     N1->>N1: Storage commits (atomic)
 
-    N1->>N1: Publish invalidation on<br/>iroh-gossip topic "tenant-42"
+    N1->>N1: Publish invalidation on<br/>iroh-gossip topic "topic:tenant-42:mutations"
 
     par PlumTree broadcast
         N1-->>N2: invalidation (gossip)
@@ -1340,7 +1341,7 @@ sequenceDiagram
         N1-->>N3: replicate log entry
     end
 
-    N1->>N1: publish invalidation on<br/>gossip topic "tenant-D"
+    N1->>N1: publish invalidation on<br/>gossip topic "topic:tenant-D:mutations"
 
     par Gossip fanout
         N1-->>N2: invalidation (gossip)
@@ -1403,19 +1404,19 @@ flowchart TD
     subgraph topics["iroh-gossip Topic Hierarchy"]
         direction TB
 
-        Cluster["topic: cluster:state\n(all nodes subscribe)\nNode capacity, membership changes"]
+        Cluster["topic:cluster:state\n(all nodes subscribe)\nNode capacity, membership changes"]
 
-        TenantA["topic: tenant:acme-corp\n(nodes with Tenant A subs)\nMutation invalidations for Tenant A"]
+        TenantA["topic:acme-corp:mutations\n(nodes with Tenant A subs)\nMutation invalidations for Tenant A"]
 
-        TenantB["topic: tenant:widgets-inc\n(nodes with Tenant B subs)\nMutation invalidations for Tenant B"]
+        TenantB["topic:widgets-inc:mutations\n(nodes with Tenant B subs)\nMutation invalidations for Tenant B"]
 
-        TenantC["topic: tenant:startup-xyz\n(nodes with Tenant C subs)\nMutation invalidations for Tenant C"]
+        TenantC["topic:startup-xyz:mutations\n(nodes with Tenant C subs)\nMutation invalidations for Tenant C"]
     end
 
     subgraph nodes["Which nodes subscribe to which topics"]
-        N1["Node 1: cluster:state\n+ tenant:acme-corp\n+ tenant:widgets-inc"]
-        N2["Node 2: cluster:state\n+ tenant:widgets-inc\n+ tenant:startup-xyz"]
-        N3["Node 3: cluster:state\n+ tenant:acme-corp\n+ tenant:startup-xyz"]
+        N1["Node 1: topic:cluster:state\n+ topic:acme-corp:mutations\n+ topic:widgets-inc:mutations"]
+        N2["Node 2: topic:cluster:state\n+ topic:widgets-inc:mutations\n+ topic:startup-xyz:mutations"]
+        N3["Node 3: topic:cluster:state\n+ topic:acme-corp:mutations\n+ topic:startup-xyz:mutations"]
     end
 
     Cluster --> N1 & N2 & N3
@@ -1432,18 +1433,20 @@ flowchart TD
 
 **Topic subscription is dynamic:**
 - When a client connects with a subscription for Tenant X, the node joins
-  `tenant:X` gossip topic (if not already subscribed)
+  the relevant `topic:<tenant_id>:...` gossip topic (if not already subscribed)
 - When the last subscription for Tenant X disconnects from a node, the node
-  leaves the `tenant:X` topic
+  leaves the tenant-scoped topic
 - Mutations for Tenant X only reach nodes that currently have active
   subscriptions — no wasted bandwidth
 
-**At small scale (<10 tenants):** a single broadcast topic works fine. All
-nodes get all invalidations, filter locally. Simpler to implement.
+**At small scale (<10 tenants):** an implementation may start with a single
+cluster invalidation topic and filter locally. Payloads must still carry the
+same tenant-scoped envelope so moving to `topic:<tenant_id>:...` fanout is a
+mechanical transport change, not a payload or policy change.
 
-**At medium scale (10-1000 tenants):** per-tenant topics. Nodes only receive
-invalidations for tenants they're serving. iroh-gossip handles this natively
-with independent overlay networks per topic.
+**At medium scale (10-1000 tenants):** activate tenant-scoped topics. Nodes
+only receive invalidations for tenants they're serving. iroh-gossip handles
+this natively with independent overlay networks per topic.
 
 **At large scale (1000+ tenants):** tenant topics are still efficient because
 iroh-gossip's HyParView scales logarithmically. A node with 100 active
@@ -1581,11 +1584,12 @@ either invisible or explicitly accepted.
 
 **Shared invariants the consumer plans rely on:**
 
-- The canonical topic naming is `topic:<tenant_id>:<table_name>` (per-
-  tenant per-resource) and `topic:cluster:state` (engine-wide). Plans
-  extending this with sub-categories use `topic:<tenant_id>:<table>:
-  <sub>` — see the secret-management plan's `:secrets:<store_name>`
-  extension.
+- When consumer plans use tenant-scoped gossip, the canonical topic naming is
+  `topic:<tenant_id>:<resource>` and `topic:cluster:state` (engine-wide).
+  Plans extending this with sub-categories use
+  `topic:<tenant_id>:<resource>:<sub>` — see the secret-management plan's
+  `:secrets:<store_name>` extension. Open Question 4 decides when the transport
+  activates tenant-scoped topics, not the payload envelope or topic syntax.
 - Durable state lives in openraft (small metadata) or iroh-blobs
   (large content-addressed payloads). Gossip carries invalidation and
   liveness only — never the canonical value of any stateful resource.
@@ -1619,10 +1623,11 @@ either invisible or explicitly accepted.
    storage replication, or separate? Same group is simpler (one leader).
    Separate allows independent replication factors. Start with same.
 
-4. **Gossip topic granularity** — per-tenant topics from day one, or single
-   broadcast topic with local filtering? Single topic is simpler to implement;
-   per-tenant topics reduce bandwidth at scale. Decide based on expected
-   tenant-to-node ratio.
+4. **Gossip topic activation** — tenant-scoped topic syntax is fixed as
+   `topic:<tenant_id>:...`, but the MVP may start with one cluster
+   invalidation topic and local filtering. Single topic is simpler to
+   implement; tenant-scoped topics reduce bandwidth at scale. Decide the
+   activation threshold based on expected tenant-to-node ratio.
 
 5. **Cloud auto-join discovery** — implement a custom `Discovery` backend that
    queries cloud provider APIs (AWS EC2 tags, GCP labels, Azure tags) to find
