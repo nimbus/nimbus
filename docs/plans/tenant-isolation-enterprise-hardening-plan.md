@@ -144,7 +144,7 @@ This plan is complete when:
 | EIH2 | `done` | Separate policy decision point from policy enforcement points. | Runtime, sandbox, storage/API, service lookup, and HostBridge seams consume the decision in focused tests. |
 | EIH3 | `done` | Promote TIC8 into tenant-isolation conformance suite. | `make verify-tenant-isolation-conformance` passed with 21 server scenarios (12 allowed, 9 denied) plus 4 production image-admission tests. |
 | EIH4 | `done` | Add drift/audit scanner for existing state. | `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` passed with clean and malformed-state fixtures. |
-| EIH5 | `todo` | Prove hard quota enforcement below launch reservation. | Linux-focused tests or minicloud proof show cgroup/project-quota/log/disk enforcement, or a precise platform blocker is recorded. |
+| EIH5 | `done` | Prove hard quota enforcement below launch reservation. | `scripts/prove-linux-cgroup-memory-limit.sh` passed on minicloud: cgroup v2 reported `oom 1` and `oom_kill 1` under `memory.max=33554432` with swap disabled. |
 | EIH6 | `todo` | Define workload identity shape. | Docs and tests bind tenant, deployment, service/function, runtime tier, node/machine, and sandbox/invocation IDs into a stable identity string. |
 | EIH7 | `todo` | Define image provenance/signature admission. | Digest, signature, builder identity, attestation, and local-build rejection paths are tested or explicitly blocked. |
 | EIH8 | `todo` | Add audit/observability contract. | Admission/rejection/materialization/cleanup events carry correlation IDs and redacted tenant-safe attributes. |
@@ -510,6 +510,64 @@ Dirty-worktree caveat:
   other untracked plan/research docs remain present and intentionally
   untouched.
 
+### 2026-05-22 EIH5 Hard Quota Enforcement Proof
+
+Completed in this checkpoint:
+
+- Added `scripts/prove-linux-cgroup-memory-limit.sh`, a Linux cgroup v2 proof
+  helper that creates a temporary cgroup, sets `memory.max`, disables cgroup
+  swap where supported, runs a child allocator inside the cgroup, and reports
+  `memory.events` plus the child exit status.
+- Added the `make prove-linux-cgroup-memory-limit` convenience target and
+  included the proof script in `proof-helpers` syntax checks.
+- Recorded minicloud proof evidence in
+  `docs/plans/proof/tenant-isolation-enterprise-hardening/eih5-minicloud-cgroup-memory.md`.
+- Confirmed the product shape: Nimbus reservation/quota admission remains in
+  `oci/resource_quota.rs`, while hard enforcement is lowered into cgroup/OCI,
+  conmon, and libkrun-facing launch artifacts at the sandbox seam.
+- Fixed three sandbox test-helper clippy findings that blocked the focused
+  `nimbus-sandbox` clippy lane.
+
+Verification evidence:
+
+- `bash -n scripts/prove-linux-cgroup-memory-limit.sh`
+  - result: pass.
+- `ssh nimbus@192.168.4.29 'bash -s' < scripts/prove-linux-cgroup-memory-limit.sh`
+  - result: pass on Debian 13 minicloud.
+  - evidence: `memory.max=33554432`, `memory.high=max`,
+    `memory.swap.max=0`, allocator `allocation_exit_status=137`,
+    `memory.events.after` recorded `oom 1` and `oom_kill 1`,
+    `result=pass`, `reason=cgroup-v2-memory-limit-fired`.
+- `cargo test -p nimbus-sandbox resource -- --nocapture`
+  - result: pass; 5 passed, 0 failed, 0 ignored, 108 filtered out.
+- `cargo test -p nimbus-sandbox conmon_launch_plan_injects_mount_prelude_for_image_backed_sandboxes -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 0 ignored, 112 filtered out.
+- `cargo fmt --all --check`
+  - result: pass.
+- `cargo clippy -p nimbus-sandbox --all-targets`
+  - result: pass; finished dev profile in 2.69s after the clippy helper
+    cleanups.
+- `git diff --check`
+  - result: pass.
+- `ssh nimbus@192.168.4.29 'find /sys/fs/cgroup -maxdepth 1 -type d -name "nimbus-eih5-memory-*" -print'`
+  - result: pass; no temporary proof cgroups remained.
+
+Verification caveat:
+
+- `make proof-helpers` was attempted after adding the proof script syntax
+  check. It passed the new `bash -n scripts/prove-linux-cgroup-memory-limit.sh`
+  line and earlier helper checks, then failed in the existing Homebrew cask
+  proof helper at `assert.guest_proof_health` because the fake guest machine
+  API health capture returned curl status 7. That failure is unrelated to
+  EIH5 and was not repaired in this checkpoint.
+
+Dirty-worktree caveat:
+
+- Unrelated generated Convex files, `package-lock.json`,
+  `docs/architecture/horizontal-scaling.md`, desktop-auth proof images, and
+  other untracked plan/research docs remain present and intentionally
+  untouched.
+
 ## Execution Log
 
 | Date | Phase | Status | Files | Summary | Verification |
@@ -519,3 +577,4 @@ Dirty-worktree caveat:
 | 2026-05-22 | EIH2 | `done` | `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/execution/runtime_admission.rs`, `crates/nimbus-server/src/service_registry.rs`, `crates/nimbus-server/src/service_manager.rs`, `crates/nimbus-server/src/runtime_host/*`, `crates/nimbus-server/src/adapters/convex/**`, `crates/nimbus-server/src/adapters/cloud_functions/**`, `crates/nimbus-server/src/lib.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Separated the policy decision point from runtime/sandbox/storage/service/HostBridge policy enforcement points. Runtime invocations now admit one decision, HostBridge and runtime storage consume decision-derived projections, service lookup requires service grants, and sandbox launch consumes a service activation decision. Next phase is EIH3 tenant-isolation conformance suite promotion. | `cargo check -p nimbus-server` passed; `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 23 passed, 0 failed, 0 ignored, 725 filtered out; `cargo test -p nimbus-server service_manager -- --nocapture` passed: 9 passed, 0 failed, 0 ignored, 739 filtered out; `cargo test -p nimbus-server runtime_execution_admission -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 746 filtered out; `cargo test -p nimbus-server host_bridge_service_lookup_rejects_service_missing_from_decision_grants -- --nocapture` passed: 1 passed, 0 failed, 0 ignored, 747 filtered out; `cargo test -p nimbus-server convex_runtime_query_resolves_missing_service_bindings_via_services_get -- --nocapture` passed: 1 passed, 0 failed, 0 ignored, 747 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
 | 2026-05-22 | EIH3 | `done` | `crates/nimbus-server/src/tests/tenant_isolation_harness.rs`, `scripts/verify-tenant-isolation-conformance.sh`, `Makefile`, `docs/architecture/testing/verification-architecture.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Promoted the TIC8 two-tenant harness into a reusable conformance suite with printed allowed/denied scenario counts, added the one-command conformance gate, and documented it as the required isolation gate for runtime/sandbox/storage/HostBridge/service/image-admission changes. Next phase is EIH4 drift/audit scanner. | `bash -n scripts/verify-tenant-isolation-conformance.sh` passed; `make verify-tenant-isolation-conformance` passed after approved listener-bind rerun: server conformance 1 passed with 21 scenarios (12 allowed, 9 denied), production image admission 4 passed; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
 | 2026-05-22 | EIH4 | `done` | `crates/nimbus-server/src/tenant_isolation_drift.rs`, `crates/nimbus-server/src/lib.rs`, `crates/nimbus-server/src/system_tenant.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added a read-only tenant-isolation drift scanner that correlates sandbox manifests, tenant volume roots, service handles, port records, route metadata, and optional decision/audit anchors, with clean and malformed-state fixtures. Next phase is EIH5 hard quota enforcement proof. | `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 748 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
+| 2026-05-22 | EIH5 | `done` | `scripts/prove-linux-cgroup-memory-limit.sh`, `Makefile`, `docs/plans/proof/tenant-isolation-enterprise-hardening/eih5-minicloud-cgroup-memory.md`, `crates/nimbus-sandbox/src/backends/container/state.rs`, `crates/nimbus-sandbox/src/backends/krun/state.rs`, `crates/nimbus-sandbox/src/backends/oci/port_manager.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added a reusable Linux cgroup v2 memory-limit proof, proved the limit firing on Debian minicloud, recorded the sandbox hard-enforcement paths below reservation, and fixed focused sandbox clippy helper findings. Next phase is EIH6 workload identity shape. | `bash -n scripts/prove-linux-cgroup-memory-limit.sh` passed; minicloud proof passed with `allocation_exit_status=137`, `oom 1`, `oom_kill 1`, and no leftover proof cgroups; `cargo test -p nimbus-sandbox resource -- --nocapture` passed: 5 passed, 0 failed, 0 ignored, 108 filtered out; `cargo test -p nimbus-sandbox conmon_launch_plan_injects_mount_prelude_for_image_backed_sandboxes -- --nocapture` passed: 1 passed, 0 failed, 0 ignored, 112 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-sandbox --all-targets` passed; `git diff --check` passed. `make proof-helpers` still has an unrelated local Homebrew cask helper failure at `assert.guest_proof_health`. |
