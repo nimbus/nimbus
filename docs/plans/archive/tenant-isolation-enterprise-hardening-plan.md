@@ -4,9 +4,9 @@ Follow-on plan after
 `docs/plans/archive/tenant-isolation-control-plane-plan.md`. The completed
 baseline made tenant isolation explicit across runtime, microVM, storage,
 network, HostBridge, volumes, images, secrets, quotas, cleanup, and system
-metadata. This plan makes that foundation enterprise-grade: auditable,
-policy-driven, externally reviewable, and easier to extend without reopening
-isolation seams.
+metadata. This completed plan made that foundation enterprise-grade:
+auditable, policy-driven, externally reviewable, and easier to extend without
+reopening isolation seams.
 
 Prior-art research lives at
 `docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md`.
@@ -15,9 +15,12 @@ Prior-art research lives at
 
 ## Status
 
-- **Status:** `active`
+- **Status:** `done` (closed 2026-05-22; archived alongside this revision)
 - **Activated:** 2026-05-22
 - **Primary owner:** this plan
+- **Current posture docs:**
+  - `docs/tenant-isolation.md`
+  - `docs/operating/tenant-isolation.md`
 - **Parent baseline:**
   - `docs/plans/archive/tenant-isolation-control-plane-plan.md`
 - **Sibling references:**
@@ -148,7 +151,7 @@ This plan is complete when:
 | EIH6 | `done` | Define workload identity shape. | `TenantWorkloadStableIdentity` renders stable Nimbus and SPIFFE-style IDs, includes node/machine location in the decision fingerprint, and is documented as the future secret-provider auth subject. |
 | EIH7 | `done` | Define image provenance/signature admission. | `TenantImageVerificationProvider` admits digest-pinned images and tests tag-only, unsigned, wrong signature identity, wrong provenance builder, SBOM, and local-build rejection paths. |
 | EIH8 | `done` | Add audit/observability contract. | `TenantIsolationEvent` covers admission, rejection, materialization, runtime, sandbox, storage, HostBridge, cleanup, and drift events with schema-level redaction tests. |
-| EIH9 | `todo` | Enterprise readiness closeout. | Threat model, isolation matrix, residual-risk register, conformance evidence, and operator runbook references are complete. |
+| EIH9 | `done` | Enterprise readiness closeout. | `docs/tenant-isolation.md` and `docs/operating/tenant-isolation.md` publish threat model, isolation matrix, residual risks, review targets, and runbook references; this plan is archived. |
 
 ## Phase Details
 
@@ -715,6 +718,54 @@ Dirty-worktree caveat:
   `docs/architecture/horizontal-scaling.md`, desktop-auth proof images, and
   untracked plan/research docs remain present and intentionally untouched.
 
+### 2026-05-22 EIH9 Enterprise Readiness Closeout
+
+Completed in this checkpoint:
+
+- Published `docs/tenant-isolation.md` as the customer-facing posture note
+  with scope, architecture claim, threat model, isolation matrix, evidence
+  commands, residual risks, and external review targets.
+- Published `docs/operating/tenant-isolation.md` as the operator runbook for
+  rejected admission decisions, drift findings, conformance gates, evidence
+  preservation, and incident closeout.
+- Linked the readiness docs from `docs/README.md`,
+  `docs/plans/README.md`, the research note, and the sandbox isolation audit.
+- Moved this plan to
+  `docs/plans/archive/tenant-isolation-enterprise-hardening-plan.md` and
+  removed it from the active plan list.
+- Recorded the completed tenant-isolation posture as starting from current
+  docs plus the archived control-plane and enterprise-hardening ledgers.
+
+Verification evidence:
+
+- `npm run docs:validate-refs:strict`
+  - result: unavailable; `package.json` does not define that script.
+- `ls docs/tenant-isolation.md docs/operating/tenant-isolation.md docs/plans/archive/tenant-isolation-enterprise-hardening-plan.md`
+  - result: pass; all published readiness/archive docs exist.
+- `test ! -e docs/plans/tenant-isolation-enterprise-hardening-plan.md`
+  - result: pass; active plan path is gone after archive.
+- `rg -n "docs/tenant-isolation.md|operating/tenant-isolation.md|archive/tenant-isolation-enterprise-hardening-plan.md|Tenant isolation" docs/README.md docs/plans/README.md docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md docs/plans/security/sandbox-isolation-audit.md docs/architecture/README.md`
+  - result: pass; index, research, sandbox audit, and architecture routing
+    docs point to the new posture/runbook/archive locations.
+- `make verify-tenant-isolation-conformance`
+  - result: pass.
+  - server conformance result: 1 passed, 0 failed, 0 ignored, 761 filtered
+    out; report printed 21 scenarios, 12 allowed, 9 denied.
+  - production image-admission result: 4 passed, 0 failed, 0 ignored, 523
+    filtered out.
+- `cargo fmt --all --check`
+  - result: pass.
+- `cargo clippy -p nimbus-server --all-targets`
+  - result: pass; finished dev profile in 0.84s after the docs-only closeout.
+- `git diff --check`
+  - result: pass.
+
+Dirty-worktree caveat:
+
+- Unrelated generated Convex files, `package-lock.json`,
+  `docs/architecture/horizontal-scaling.md`, desktop-auth proof images, and
+  untracked plan/research docs remain present and intentionally untouched.
+
 ## Execution Log
 
 | Date | Phase | Status | Files | Summary | Verification |
@@ -728,3 +779,4 @@ Dirty-worktree caveat:
 | 2026-05-22 | EIH6 | `done` | `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/lib.rs`, `docs/architecture/server/auth-runtime-trust.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added the stable workload identity projection, node/machine location in decision fingerprints, SPIFFE-style rendering, audit exposure via `workload_stable_id`, and architecture guidance for future secret-provider auth. Next phase is EIH7 image provenance and signature admission. | `cargo test -p nimbus-server tenant_workload_stable_identity -- --nocapture` passed: 3 passed, 0 failed, 0 ignored, 750 filtered out; `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 28 passed, 0 failed, 0 ignored, 725 filtered out; `cargo test -p nimbus-server runtime_execution_admission -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 751 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
 | 2026-05-22 | EIH7 | `done` | `crates/nimbus-server/src/tenant_isolation/image_admission.rs`, `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/lib.rs`, `docs/architecture/sandbox/microvm-service-baseline.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added production image verification policy inputs and the provider seam for signature/provenance/SBOM evidence, with explicit local-build rejection and documentation that Sigstore/Cosign belongs behind the provider. Next phase is EIH8 audit and observability. | `cargo test -p nimbus-server image_admission -- --nocapture` passed: 7 passed, 0 failed, 0 ignored, 753 filtered out; `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 35 passed, 0 failed, 0 ignored, 725 filtered out; `make verify-tenant-isolation-conformance` passed after approved listener-bind rerun: server conformance 1 passed with 21 scenarios (12 allowed, 9 denied), production image admission 4 passed; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
 | 2026-05-22 | EIH8 | `done` | `crates/nimbus-server/src/tenant_isolation/audit_events.rs`, `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/lib.rs`, `docs/architecture/server/auth-runtime-trust.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added the structured tenant-isolation event schema, decision-backed and no-decision constructors, correlation IDs, tenant-safe attributes, schema-level sensitive-key redaction, and architecture documentation. Next phase is EIH9 enterprise readiness closeout. | `cargo test -p nimbus-server audit_events -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 760 filtered out; `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 37 passed, 0 failed, 0 ignored, 725 filtered out; `make verify-tenant-isolation-conformance` passed after approved listener-bind rerun: server conformance 1 passed with 21 scenarios (12 allowed, 9 denied), production image admission 4 passed; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
+| 2026-05-22 | EIH9 | `done` | `docs/tenant-isolation.md`, `docs/operating/tenant-isolation.md`, `docs/README.md`, `docs/architecture/README.md`, `docs/plans/README.md`, `docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md`, `docs/plans/security/sandbox-isolation-audit.md`, `docs/plans/archive/tenant-isolation-enterprise-hardening-plan.md` | Published enterprise readiness posture and operator runbook, routed current docs/indexes to them, recorded residual risks and external review targets, and archived this plan. | `npm run docs:validate-refs:strict` unavailable because no script exists; readiness/archive file checks passed; routing `rg` check passed; `make verify-tenant-isolation-conformance` passed with 21 server scenarios (12 allowed, 9 denied) and 4 production image-admission tests; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |

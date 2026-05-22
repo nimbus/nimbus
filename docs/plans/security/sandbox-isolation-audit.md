@@ -18,6 +18,8 @@ broader and is recorded in the completed baseline at
 isolate security posture, the `nimbus-runtime` HostBridge trait surface,
 application-layer tenant authorization, sandbox filesystem state, volumes,
 image admission, secrets, quotas, and cross-layer cleanup.
+The current enterprise tenant-isolation posture is published at
+`docs/tenant-isolation.md`.
 
 Out of scope for the krun patch findings below: proving that those broader
 tenant-isolation controls are complete. A closed microVM finding must not be

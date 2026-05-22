@@ -2,7 +2,8 @@
 
 Durable research note for the follow-on work after
 `docs/plans/archive/tenant-isolation-control-plane-plan.md`. Pairs with
-`docs/plans/tenant-isolation-enterprise-hardening-plan.md`.
+`docs/plans/archive/tenant-isolation-enterprise-hardening-plan.md` and the
+current posture note at `docs/tenant-isolation.md`.
 
 This document is not progress state. It records what the current Nimbus
 tenant-isolation architecture should learn from mature control planes and

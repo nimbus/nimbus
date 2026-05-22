@@ -28,14 +28,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `/goal` control plane gated on
     `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
     conditions).
-- `docs/plans/tenant-isolation-enterprise-hardening-plan.md`
-  - canonical follow-on plan for turning the completed tenant-isolation
-    control-plane baseline into an enterprise-grade trust surface: typed
-    admission decision records, PDP/PEP separation, reusable conformance,
-    drift/audit scanning, hard quota proof, workload identity, image
-    provenance/signature policy, observability, and customer-facing readiness
-    evidence. Prior-art research lives at
-    `docs/plans/research/tenant-isolation-enterprise-hardening-prior-art.md`.
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -52,6 +44,16 @@ archived plans only when you need historical execution detail.
     resource quotas, and the two-tenant proof harness. Future tenant-isolation
     waves should start from current architecture docs plus this baseline and
     promote a new active plan before changing the contract.
+- `docs/plans/archive/tenant-isolation-enterprise-hardening-plan.md`
+  - completed follow-on execution record for turning the tenant-isolation
+    control-plane baseline into an enterprise-grade trust surface (closed
+    2026-05-22). Added typed admission decision records, PDP/PEP separation,
+    reusable conformance, read-only drift/audit scanning, Linux hard-quota
+    proof, stable workload identity, image provenance/signature policy,
+    structured redacted audit events, and customer/operator readiness docs.
+    Current posture starts from `docs/tenant-isolation.md`,
+    `docs/operating/tenant-isolation.md`, and the architecture docs linked
+    there.
 - `docs/plans/archive/local-dev-canonicalization-plan.md`
   - completed execution record for the local-dev canonicalization wave
     (LD0-LD7, closed 2026-05-21). Made `nimbus-server`'s cross-toolchain
@@ -459,7 +461,9 @@ the work is explicitly a historical review.
   grants, HostBridge access, storage namespaces, service networking, volumes,
   images, secrets, quotas, cleanup, enterprise auditability, admission
   decisions, conformance, or workload identity, start with
-  `docs/plans/tenant-isolation-enterprise-hardening-plan.md`, then cross-check
+  `docs/tenant-isolation.md` and `docs/operating/tenant-isolation.md`, then
+  cross-check
+  `docs/plans/archive/tenant-isolation-enterprise-hardening-plan.md`,
   `docs/plans/archive/tenant-isolation-control-plane-plan.md`,
   `docs/plans/security/sandbox-isolation-audit.md`,
   `docs/architecture/sandbox/microvm-service-baseline.md`,
