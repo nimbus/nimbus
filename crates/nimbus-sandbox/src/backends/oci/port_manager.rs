@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
+use nimbus_core::TenantId;
 use serde::Deserialize;
 
 use super::buildah::{OciExposedPort, OciExposedPortProtocol};
@@ -10,10 +11,13 @@ use crate::error::{Result, SandboxError};
 use crate::instance::SandboxStatus;
 use crate::spec::SandboxPortBinding;
 
+pub(crate) const DEFAULT_MAX_PORTS_PER_TENANT: usize = 128;
+
 #[derive(Debug, Clone)]
 pub(crate) struct PortManager {
     range: RangeInclusive<u16>,
     state_root: PathBuf,
+    max_ports_per_tenant: Option<usize>,
 }
 
 impl PortManager {
@@ -21,11 +25,18 @@ impl PortManager {
         Self {
             range,
             state_root: state_root.into(),
+            max_ports_per_tenant: None,
         }
     }
 
-    pub(crate) fn allocate_missing_bindings(
+    pub(crate) fn with_max_ports_per_tenant(mut self, max_ports_per_tenant: Option<usize>) -> Self {
+        self.max_ports_per_tenant = max_ports_per_tenant;
+        self
+    }
+
+    pub(crate) fn allocate_missing_bindings_for_tenant(
         &self,
+        tenant_id: &TenantId,
         existing_bindings: &[SandboxPortBinding],
         exposed_ports: &[OciExposedPort],
     ) -> Result<Vec<SandboxPortBinding>> {
@@ -36,7 +47,7 @@ impl PortManager {
             .iter()
             .map(|binding| binding.guest_port)
             .collect();
-        let mut allocated = Vec::new();
+        let mut unmapped_tcp_guest_ports = Vec::new();
 
         for exposed_port in exposed_ports {
             if exposed_port.protocol != OciExposedPortProtocol::Tcp {
@@ -45,13 +56,24 @@ impl PortManager {
             if !mapped_guest_ports.insert(exposed_port.port) {
                 continue;
             }
+            unmapped_tcp_guest_ports.push(exposed_port.port);
+        }
 
+        self.ensure_tenant_port_quota(
+            tenant_id,
+            existing_bindings
+                .len()
+                .saturating_add(unmapped_tcp_guest_ports.len()),
+        )?;
+
+        let mut allocated = Vec::new();
+        for guest_port in unmapped_tcp_guest_ports {
             let host_port = self.next_available_host_port(&used_host_ports)?;
             used_host_ports.insert(host_port);
             allocated.push(SandboxPortBinding::tcp(
-                auto_binding_name(exposed_port.port),
+                auto_binding_name(guest_port),
                 host_port,
-                exposed_port.port,
+                guest_port,
             ));
         }
 
@@ -115,6 +137,57 @@ impl PortManager {
 
         Ok(used_host_ports)
     }
+
+    fn ensure_tenant_port_quota(&self, tenant_id: &TenantId, launch_ports: usize) -> Result<()> {
+        let Some(max_ports_per_tenant) = self.max_ports_per_tenant else {
+            return Ok(());
+        };
+        let active_ports = self.read_reserved_port_count_for_tenant(tenant_id)?;
+        let requested_ports = active_ports.saturating_add(launch_ports);
+        if requested_ports <= max_ports_per_tenant {
+            return Ok(());
+        }
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "published port quota exceeded for tenant {tenant_id}: {requested_ports} requested/reserved ports exceeds limit {max_ports_per_tenant}"
+            ),
+        })
+    }
+
+    fn read_reserved_port_count_for_tenant(&self, tenant_id: &TenantId) -> Result<usize> {
+        let mut reserved_ports = 0usize;
+        for manifest_path in artifact_paths::manifest_paths_for_tenant(&self.state_root, tenant_id)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to read port-manager tenant state directory {} for tenant {tenant_id}: {error}",
+                    self.state_root.display()
+                ),
+            })?
+        {
+            let contents =
+                std::fs::read(&manifest_path).map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to read sandbox manifest {}: {error}",
+                        manifest_path.display()
+                    ),
+                })?;
+            let manifest: PortLeaseManifest =
+                serde_json::from_slice(&contents).map_err(|error| {
+                    SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to parse sandbox manifest {} for tenant port quota: {error}",
+                            manifest_path.display()
+                        ),
+                    }
+                })?;
+
+            if manifest.status.reserves_ports() {
+                reserved_ports =
+                    reserved_ports.saturating_add(manifest.spec.port_bindings.len());
+            }
+        }
+        Ok(reserved_ports)
+    }
 }
 
 fn auto_binding_name(guest_port: u16) -> String {
@@ -158,6 +231,7 @@ mod tests {
     #[test]
     fn allocate_missing_bindings_uses_range_and_skips_existing_guest_ports() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let tenant_id = tenant_id("tenant-a");
         let manager = PortManager::new(temp_dir.path(), 15000..=15005);
         let existing = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
         let exposed = vec![
@@ -167,7 +241,7 @@ mod tests {
         ];
 
         let allocated = manager
-            .allocate_missing_bindings(&existing, &exposed)
+            .allocate_missing_bindings_for_tenant(&tenant_id, &existing, &exposed)
             .expect("port allocation should succeed");
 
         assert_eq!(
@@ -179,14 +253,17 @@ mod tests {
     #[test]
     fn allocate_missing_bindings_ignores_stopped_manifests_and_reserves_active_ones() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let tenant_id = tenant_id("tenant-a");
         write_manifest(
             temp_dir.path(),
+            &tenant_id,
             "active",
             SandboxStatus::Ready,
             &[(15000, 5432)],
         );
         write_manifest(
             temp_dir.path(),
+            &tenant_id,
             "stopped",
             SandboxStatus::Stopped,
             &[(15001, 5432)],
@@ -194,7 +271,11 @@ mod tests {
 
         let manager = PortManager::new(temp_dir.path(), 15000..=15002);
         let allocated = manager
-            .allocate_missing_bindings(&[], &[tcp_exposed_port(8080), tcp_exposed_port(8443)])
+            .allocate_missing_bindings_for_tenant(
+                &tenant_id,
+                &[],
+                &[tcp_exposed_port(8080), tcp_exposed_port(8443)],
+            )
             .expect("port allocation should succeed");
 
         assert_eq!(
@@ -209,8 +290,10 @@ mod tests {
     #[test]
     fn allocate_missing_bindings_keeps_not_ready_ports_reserved() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let tenant_id = tenant_id("tenant-a");
         write_manifest(
             temp_dir.path(),
+            &tenant_id,
             "not-ready",
             SandboxStatus::NotReady,
             &[(15000, 5432)],
@@ -218,7 +301,7 @@ mod tests {
 
         let manager = PortManager::new(temp_dir.path(), 15000..=15001);
         let allocated = manager
-            .allocate_missing_bindings(&[], &[tcp_exposed_port(8080)])
+            .allocate_missing_bindings_for_tenant(&tenant_id, &[], &[tcp_exposed_port(8080)])
             .expect("port allocation should succeed");
 
         assert_eq!(
@@ -227,15 +310,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tenant_port_quota_rejects_explicit_bindings_that_exceed_same_tenant_limit() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let tenant_id = tenant_id("tenant-a");
+        write_manifest(
+            temp_dir.path(),
+            &tenant_id,
+            "active",
+            SandboxStatus::Ready,
+            &[(15000, 5432)],
+        );
+
+        let manager =
+            PortManager::new(temp_dir.path(), 15000..=15002).with_max_ports_per_tenant(Some(1));
+        let existing = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
+        let error = manager
+            .allocate_missing_bindings_for_tenant(&tenant_id, &existing, &[])
+            .expect_err("explicit bindings should still count against the tenant port quota");
+
+        assert!(
+            error.to_string().contains("published port quota exceeded")
+                && error.to_string().contains("tenant-a")
+                && error.to_string().contains("limit 1"),
+            "expected tenant quota error, got: {error}"
+        );
+    }
+
+    #[test]
+    fn tenant_port_quota_counts_only_same_tenant_but_reserves_host_ports_globally() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let tenant_a = tenant_id("tenant-a");
+        let tenant_b = tenant_id("tenant-b");
+        write_manifest(
+            temp_dir.path(),
+            &tenant_a,
+            "active-a",
+            SandboxStatus::Ready,
+            &[(15000, 5432)],
+        );
+        write_manifest(
+            temp_dir.path(),
+            &tenant_b,
+            "active-b",
+            SandboxStatus::Ready,
+            &[(15001, 6379)],
+        );
+
+        let manager =
+            PortManager::new(temp_dir.path(), 15000..=15002).with_max_ports_per_tenant(Some(2));
+        let allocated = manager
+            .allocate_missing_bindings_for_tenant(&tenant_a, &[], &[tcp_exposed_port(8080)])
+            .expect("other tenant leases should not consume tenant-a quota");
+
+        assert_eq!(
+            allocated,
+            vec![SandboxPortBinding::tcp("tcp-8080", 15002, 8080)],
+            "other tenant leases should still reserve host ports globally"
+        );
+    }
+
     fn write_manifest(
         state_root: &std::path::Path,
+        tenant_id: &TenantId,
         sandbox_id: &str,
         status: SandboxStatus,
         host_guest_ports: &[(u16, u16)],
     ) {
-        let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
         let sandbox_id = SandboxId::new(sandbox_id);
-        let manifest_path = artifact_paths::manifest_path(state_root, &tenant_id, &sandbox_id);
+        let manifest_path = artifact_paths::manifest_path(state_root, tenant_id, &sandbox_id);
         let container_dir = manifest_path
             .parent()
             .expect("manifest path should have a parent directory");
@@ -260,6 +403,10 @@ mod tests {
             serde_json::to_vec_pretty(&manifest).expect("manifest JSON should serialize"),
         )
         .expect("manifest JSON should be written");
+    }
+
+    fn tenant_id(value: &str) -> TenantId {
+        TenantId::new(value).expect("tenant id should parse")
     }
 
     fn tcp_exposed_port(port: u16) -> OciExposedPort {

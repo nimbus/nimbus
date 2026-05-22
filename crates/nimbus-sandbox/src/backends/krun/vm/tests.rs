@@ -612,6 +612,41 @@ fn start_from_image_plan_only_auto_assigns_exposed_ports_and_reuses_released_por
 }
 
 #[test]
+fn start_from_image_plan_only_rejects_same_tenant_port_quota_exhaustion() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let image_reference = sample_registry_image_reference();
+
+    let mut config = KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    );
+    config.use_buildah_unshare = false;
+    config.published_port_range = 15000..=15005;
+    config.max_published_ports_per_tenant = Some(1);
+
+    let backend = KrunSandboxBackend::new(config);
+
+    block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
+        sparse_image_spec("first"),
+        &image_reference,
+    )))
+    .expect("first image-backed service should consume the single tenant port");
+
+    let error = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
+        sparse_image_spec("second"),
+        &image_reference,
+    )))
+    .expect_err("second same-tenant image-backed service should exceed the port quota");
+
+    assert!(
+        error.to_string().contains("published port quota exceeded")
+            && error.to_string().contains("tenant")
+            && error.to_string().contains("limit 1"),
+        "expected tenant port quota error, got: {error}"
+    );
+}
+
+#[test]
 fn configured_stop_signal_prefers_image_metadata_and_falls_back_to_term() {
     assert_eq!(
         configured_stop_signal(&sample_image_metadata().with_stop_signal("SIGQUIT")),

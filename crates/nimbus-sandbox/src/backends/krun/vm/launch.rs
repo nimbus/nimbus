@@ -247,7 +247,8 @@ impl KrunSandboxBackend {
         &self,
         manifest: &mut KrunSandboxManifest,
     ) -> Result<()> {
-        let auto_bindings = self.port_manager().allocate_missing_bindings(
+        let auto_bindings = self.port_manager().allocate_missing_bindings_for_tenant(
+            &manifest.spec.tenant_id,
             &manifest.spec.port_bindings,
             &manifest.image_metadata.exposed_ports,
         )?;
@@ -316,6 +317,7 @@ impl KrunSandboxBackend {
             self.config.state_root.clone(),
             self.config.published_port_range.clone(),
         )
+        .with_max_ports_per_tenant(self.config.max_published_ports_per_tenant)
     }
 }
 

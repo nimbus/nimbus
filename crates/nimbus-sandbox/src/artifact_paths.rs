@@ -69,24 +69,17 @@ pub(crate) fn all_manifest_paths(state_root: &Path) -> io::Result<Vec<PathBuf>> 
     let mut paths = Vec::new();
     for tenant_entry in fs::read_dir(&tenants_root)? {
         let tenant_entry = tenant_entry?;
-        let sandboxes_root = tenant_entry.path().join(SANDBOXES_DIR);
-        if !sandboxes_root.exists() {
-            continue;
-        }
-        for sandbox_entry in fs::read_dir(&sandboxes_root)? {
-            let sandbox_entry = sandbox_entry?;
-            let sandbox_name = sandbox_entry.file_name();
-            let manifest_path = sandbox_entry
-                .path()
-                .join(STATE_DIR)
-                .join(CONTAINERS_DIR)
-                .join(sandbox_name)
-                .join(MANIFEST_FILE);
-            if manifest_path.exists() {
-                paths.push(manifest_path);
-            }
-        }
+        paths.extend(manifest_paths_under_tenant_root(tenant_entry.path())?);
     }
+    paths.sort();
+    Ok(paths)
+}
+
+pub(crate) fn manifest_paths_for_tenant(
+    state_root: &Path,
+    tenant_id: &TenantId,
+) -> io::Result<Vec<PathBuf>> {
+    let mut paths = manifest_paths_under_tenant_root(tenant_root(state_root, tenant_id))?;
     paths.sort();
     Ok(paths)
 }
@@ -126,4 +119,27 @@ pub(crate) fn manifest_path_for_sandbox_id(
         selected = Some(manifest_path);
     }
     Ok(selected)
+}
+
+fn manifest_paths_under_tenant_root(tenant_root: PathBuf) -> io::Result<Vec<PathBuf>> {
+    let sandboxes_root = tenant_root.join(SANDBOXES_DIR);
+    if !sandboxes_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut paths = Vec::new();
+    for sandbox_entry in fs::read_dir(&sandboxes_root)? {
+        let sandbox_entry = sandbox_entry?;
+        let sandbox_name = sandbox_entry.file_name();
+        let manifest_path = sandbox_entry
+            .path()
+            .join(STATE_DIR)
+            .join(CONTAINERS_DIR)
+            .join(sandbox_name)
+            .join(MANIFEST_FILE);
+        if manifest_path.exists() {
+            paths.push(manifest_path);
+        }
+    }
+    Ok(paths)
 }
