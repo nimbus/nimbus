@@ -91,10 +91,10 @@ jobs:
           git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           # Cache build outputs only. Toolchain-managed executables under
           # ~/.cargo/bin must not be restored over the runner's cargo shim.
@@ -184,11 +184,11 @@ jobs:
           git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Set up Windows Perl
         if: matrix.os == 'windows'
-        uses: shogo82148/actions-setup-perl@v1
+        uses: shogo82148/actions-setup-perl@a198315ec4e9244f206879ea7b63078003aec8a6 # v1
         with:
           distribution: strawberry
           perl-version: "5.42"
@@ -209,7 +209,7 @@ jobs:
           git config --global core.longpaths true
 
       - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           # Cache build outputs only. Toolchain-managed executables under
           # ~/.cargo/bin must not be restored over the runner's cargo shim.
@@ -578,7 +578,7 @@ jobs:
 
       - name: Generate release notes
         id: release-notes
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
         with:
           config: cliff.toml
           args: --latest --strip header
@@ -587,7 +587,7 @@ jobs:
           OUTPUT: /tmp/RELEASE_NOTES.md
 
       - name: Generate full changelog
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
         with:
           config: cliff.toml
           github_token: ${{ github.token }}
