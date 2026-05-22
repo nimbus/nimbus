@@ -571,6 +571,11 @@ jobs:
       NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
       NIMBUS_LIBSQL_URL: http://127.0.0.1:18080
       NIMBUS_LIBSQL_ADMIN_URL: http://127.0.0.1:18081
+      # CC1: route rustc through sccache. CARGO_INCREMENTAL is already 0 at
+      # the workflow level (sccache requires it). Swatinem (below) still
+      # caches target/ as the floor; sccache handles per-rustc-call hits.
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     services:
       postgres:
         image: postgres:16
@@ -613,6 +618,14 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        # CC1: pilot — wire sccache into the Coverage job only. RUSTC_WRAPPER
+        # + SCCACHE_GHA_ENABLED are set at the job env block; this action
+        # installs the binary and configures the GitHub Actions cache backend.
+        # CC2 expands to the rest of the Rust jobs once we've observed
+        # 5-10 runs of Coverage hit-rate trends.
+        uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -679,8 +692,15 @@ jobs:
         #
         # Keep the instrumented workspace build serialized. GitHub-hosted Linux
         # runners have shown rust-lld bus errors when multiple large coverage
-        # test binaries link in parallel.
+        # test binaries link in parallel. CC6 re-tests `-j 2`/`-j 4` once
+        # sccache has reduced cold-build link pressure.
         run: cargo llvm-cov -j 1 --workspace --exclude nimbus-runtime --lcov --output-path lcov.info
+
+      - name: Show sccache stats
+        # CC1: telemetry. Captures hit/miss/store counts so cc1-coverage-only-stats.md
+        # can record the trend across 5-10 runs.
+        if: always()
+        run: sccache --show-stats
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
