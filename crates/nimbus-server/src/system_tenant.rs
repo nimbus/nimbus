@@ -1265,16 +1265,16 @@ fn object_fields(value: Value) -> Map<String, Value> {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct RouteInventoryEntry {
-    method: &'static str,
-    path: &'static str,
-    adapter: &'static str,
-    handler: &'static str,
-    auth_required: bool,
+pub(crate) struct RouteInventoryEntry {
+    pub(crate) method: &'static str,
+    pub(crate) path: &'static str,
+    pub(crate) adapter: &'static str,
+    pub(crate) handler: &'static str,
+    pub(crate) auth_required: bool,
 }
 
 impl RouteInventoryEntry {
-    fn document_id(self) -> String {
+    pub(crate) fn document_id(self) -> String {
         format!(
             "route:{}:{}",
             self.method.to_ascii_lowercase(),
@@ -1441,7 +1441,7 @@ pub(crate) fn endpoint_protocol(protocol: PublishedEndpointProtocol) -> &'static
     }
 }
 
-fn route_inventory() -> Vec<RouteInventoryEntry> {
+pub(crate) fn route_inventory() -> Vec<RouteInventoryEntry> {
     vec![
         route("GET", "/health", "native", "health", false),
         route("GET", "/ui", "ui", "ui_root", false),

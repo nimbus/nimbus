@@ -143,7 +143,7 @@ This plan is complete when:
 | EIH1 | `done` | Define `TenantIsolationDecision` or equivalent typed admission artifact. | `cargo test -p nimbus-server tenant_isolation -- --nocapture`, `cargo test -p nimbus-server runtime_execution_admission -- --nocapture`, `cargo fmt --all --check`, and `cargo clippy -p nimbus-server --all-targets` passed. |
 | EIH2 | `done` | Separate policy decision point from policy enforcement points. | Runtime, sandbox, storage/API, service lookup, and HostBridge seams consume the decision in focused tests. |
 | EIH3 | `done` | Promote TIC8 into tenant-isolation conformance suite. | `make verify-tenant-isolation-conformance` passed with 21 server scenarios (12 allowed, 9 denied) plus 4 production image-admission tests. |
-| EIH4 | `todo` | Add drift/audit scanner for existing state. | Tests inject malformed manifests/handles/ports/volumes/routes and assert violations are reported without mutating state. |
+| EIH4 | `done` | Add drift/audit scanner for existing state. | `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` passed with clean and malformed-state fixtures. |
 | EIH5 | `todo` | Prove hard quota enforcement below launch reservation. | Linux-focused tests or minicloud proof show cgroup/project-quota/log/disk enforcement, or a precise platform blocker is recorded. |
 | EIH6 | `todo` | Define workload identity shape. | Docs and tests bind tenant, deployment, service/function, runtime tier, node/machine, and sandbox/invocation IDs into a stable identity string. |
 | EIH7 | `todo` | Define image provenance/signature admission. | Digest, signature, builder identity, attestation, and local-build rejection paths are tested or explicitly blocked. |
@@ -472,6 +472,44 @@ Dirty-worktree caveat:
   other untracked plan/research docs remain present and intentionally
   untouched.
 
+### 2026-05-22 EIH4 Read-Only Drift/Audit Scanner
+
+Completed in this checkpoint:
+
+- Added `tenant_isolation_drift` as the server-owned read-only scanner for
+  tenant-isolation state.
+- The scanner correlates sandbox manifest roots, tenant volume roots,
+  `_nimbus.services`, `_nimbus.ports`, and `_nimbus.routes` without repairing
+  or deleting state.
+- Sandbox checks report malformed manifests, tenant/path/handle mismatches,
+  duplicate active service manifests, duplicate sandbox IDs, invalid mounts,
+  missing tenant volume roots, and non-loopback host-port bindings.
+- System-state checks report malformed or orphaned service handles and port
+  records, manifest/service/port mismatches, route metadata drift, unexpected
+  route documents, and optional missing tenant-isolation decision/audit
+  anchors for active service handles.
+- Tests prove a clean service projection stays clean, and injected malformed
+  manifests, handles, ports, volume roots, route metadata, and missing
+  decision/audit anchors are reported without mutating the bad state.
+
+Verification evidence:
+
+- `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture`
+  - result: pass; 2 passed, 0 failed, 0 ignored, 748 filtered out.
+- `cargo fmt --all --check`
+  - result: pass.
+- `cargo clippy -p nimbus-server --all-targets`
+  - result: pass; finished dev profile in 8.15s.
+- `git diff --check`
+  - result: pass.
+
+Dirty-worktree caveat:
+
+- Unrelated generated Convex files, `package-lock.json`,
+  `docs/architecture/horizontal-scaling.md`, desktop-auth proof images, and
+  other untracked plan/research docs remain present and intentionally
+  untouched.
+
 ## Execution Log
 
 | Date | Phase | Status | Files | Summary | Verification |
@@ -480,3 +518,4 @@ Dirty-worktree caveat:
 | 2026-05-22 | EIH1 | `done` | `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/execution/runtime_admission.rs`, `crates/nimbus-server/src/lib.rs`, `crates/nimbus-runtime/src/lib.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added the typed immutable tenant-isolation decision artifact, deterministic decision IDs, workload/policy/quota/audit projections, audit-safe redaction projection, unit coverage for immutability and mismatched authority, and routed runtime execution admission through the decision snapshot. Next phase is EIH2 broader PDP/PEP consumption across sandbox, storage/API, service lookup, and HostBridge seams. | `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 20 passed, 0 failed, 0 ignored, 723 filtered out; `cargo test -p nimbus-server runtime_execution_admission -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 741 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed. |
 | 2026-05-22 | EIH2 | `done` | `crates/nimbus-server/src/tenant_isolation.rs`, `crates/nimbus-server/src/execution/runtime_admission.rs`, `crates/nimbus-server/src/service_registry.rs`, `crates/nimbus-server/src/service_manager.rs`, `crates/nimbus-server/src/runtime_host/*`, `crates/nimbus-server/src/adapters/convex/**`, `crates/nimbus-server/src/adapters/cloud_functions/**`, `crates/nimbus-server/src/lib.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Separated the policy decision point from runtime/sandbox/storage/service/HostBridge policy enforcement points. Runtime invocations now admit one decision, HostBridge and runtime storage consume decision-derived projections, service lookup requires service grants, and sandbox launch consumes a service activation decision. Next phase is EIH3 tenant-isolation conformance suite promotion. | `cargo check -p nimbus-server` passed; `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed: 23 passed, 0 failed, 0 ignored, 725 filtered out; `cargo test -p nimbus-server service_manager -- --nocapture` passed: 9 passed, 0 failed, 0 ignored, 739 filtered out; `cargo test -p nimbus-server runtime_execution_admission -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 746 filtered out; `cargo test -p nimbus-server host_bridge_service_lookup_rejects_service_missing_from_decision_grants -- --nocapture` passed: 1 passed, 0 failed, 0 ignored, 747 filtered out; `cargo test -p nimbus-server convex_runtime_query_resolves_missing_service_bindings_via_services_get -- --nocapture` passed: 1 passed, 0 failed, 0 ignored, 747 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
 | 2026-05-22 | EIH3 | `done` | `crates/nimbus-server/src/tests/tenant_isolation_harness.rs`, `scripts/verify-tenant-isolation-conformance.sh`, `Makefile`, `docs/architecture/testing/verification-architecture.md`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Promoted the TIC8 two-tenant harness into a reusable conformance suite with printed allowed/denied scenario counts, added the one-command conformance gate, and documented it as the required isolation gate for runtime/sandbox/storage/HostBridge/service/image-admission changes. Next phase is EIH4 drift/audit scanner. | `bash -n scripts/verify-tenant-isolation-conformance.sh` passed; `make verify-tenant-isolation-conformance` passed after approved listener-bind rerun: server conformance 1 passed with 21 scenarios (12 allowed, 9 denied), production image admission 4 passed; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |
+| 2026-05-22 | EIH4 | `done` | `crates/nimbus-server/src/tenant_isolation_drift.rs`, `crates/nimbus-server/src/lib.rs`, `crates/nimbus-server/src/system_tenant.rs`, `docs/plans/tenant-isolation-enterprise-hardening-plan.md` | Added a read-only tenant-isolation drift scanner that correlates sandbox manifests, tenant volume roots, service handles, port records, route metadata, and optional decision/audit anchors, with clean and malformed-state fixtures. Next phase is EIH5 hard quota enforcement proof. | `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` passed: 2 passed, 0 failed, 0 ignored, 748 filtered out; `cargo fmt --all --check` passed; `cargo clippy -p nimbus-server --all-targets` passed; `git diff --check` passed. |

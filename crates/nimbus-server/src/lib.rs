@@ -20,6 +20,7 @@ mod state;
 mod system;
 mod system_tenant;
 mod tenant_isolation;
+mod tenant_isolation_drift;
 mod ws;
 
 use std::sync::Arc;
@@ -74,6 +75,10 @@ pub use tenant_isolation::{
     TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
     TenantStoragePolicyDecision, TenantVolumePolicyDecision, TenantWorkloadIdentity,
     TenantWorkloadKind,
+};
+pub use tenant_isolation_drift::{
+    TenantIsolationDriftReport, TenantIsolationDriftScanConfig, TenantIsolationDriftSurface,
+    TenantIsolationDriftViolation, scan_tenant_isolation_drift_async,
 };
 
 /// Optional server runtime surfaces layered on top of the core service.
