@@ -78,7 +78,7 @@ Reviewed on 2026-05-22.
 | MicroVM service compute | krun/container service sandboxes carry tenant ID on both `SandboxSpec` and `SandboxHandle`. `SandboxServiceManager` rejects a backend handle whose tenant or service differs from the admitted `(tenant_id, service_name)` request, and runtime service registry snapshots/lookups fail closed if a catalog returns another tenant's handle. `SandboxResourceQuotaPolicy` and the shared OCI `ResourceQuotaManager` enforce per-tenant active sandbox, vCPU, memory, disk-reservation, and log-reservation quotas before sandbox launch; conmon receives per-sandbox `--log-size-max`; Compose `x-nimbus.disk_limit` and `x-nimbus.log_limit` lower into sandbox resources. Runtime admission already routes broad OS needs out of `in_process_untrusted` to `microvm_service` or trusted tiers. | TIC7 is closed for current service placement and Nimbus control-plane quota surfaces. Product work that adds multi-workload guests, a JavaScript microVM executor, or platform filesystem project quotas must consume this same tenant/handle/quota contract. |
 | Volumes/files | `SandboxMountSpec` now carries logical tenant-volume mounts rather than caller-provided host paths. Compose rejects host bind mounts, anonymous volumes, undeclared named volumes, unsupported top-level volume options, invalid guest destinations, duplicate destinations, and more than 32 mounts per sandbox. krun and container bundles materialize named volumes under `state/tenants/<tenant_id>/volumes/<name>` with read/write policy in OCI mount options, and tenant cleanup removes only the target tenant's volume roots. Sandbox launch quotas now reserve disk bytes per tenant and reject over-quota launches. | Shared read-only artifact policy remains future work; no cross-tenant writable volume sharing is admitted. Hard runtime disk-write caps require filesystem/runtime support such as project quotas, quota-backed volumes, or another operator-provided disk quota driver. |
 | Images/builds | OCI materializer verifies pulled blob digests and sanitizes archive paths before extraction. `nimbus start` production Compose admission now rejects tag-only image references, local build-backed services without an operator-owned provenance/signature policy, and raw Compose secrets before backend setup; digest-pinned image references are admitted as the current provenance anchor. Local-development Compose remains permissive for developer workflow. | Full cryptographic signature/attestation verification is not yet implemented; production mode fails closed for local builds until that operator policy exists. |
-| System/control data | `_nimbus` records services, ports, jobs, machines, and events with tenant IDs for operator visibility. System Convex routes use the system registry, require local-admin auth when local security is configured, and application runtime HostBridge reads stay scoped to the application tenant even when querying tables with system-control names such as `routes`. | Native HTTP/API tenant authorization still needs a full tenant-membership/session model beyond local-operator authority. |
+| System/control data | `_nimbus` records services, ports, jobs, machines, and events with tenant IDs for operator visibility. System Convex routes use the system registry, require local-admin auth when local security is configured, and application runtime HostBridge reads stay scoped to the application tenant even when querying tables with system-control names such as `routes`. The TIC8 harness proves unauthenticated `_nimbus` queries are rejected, operator-authenticated `_nimbus` queries can read system route inventory, and tenant runtime reads of `routes` stay in the application tenant. | Native HTTP/API tenant authorization still needs a full tenant-membership/session model beyond local-operator authority. |
 
 ## Phase Ledger
 
@@ -92,7 +92,7 @@ Reviewed on 2026-05-22.
 | TIC5 | `done` | Tenant-scoped storage/API authorization. | Native HTTP, adapter, runtime, scheduler, and system-control paths prove a principal/session cannot address another tenant by swapping the path tenant ID. |
 | TIC6 | `done` | Tenant-scoped volumes, images, secrets, and mounts. | Bind mounts are denied by default; named volumes lower only to Nimbus-owned tenant paths with mount-count quota and cleanup; production images require digest/provenance admission; raw Compose secrets fail closed. |
 | TIC7 | `done` | Per-tenant microVM/resource quotas. | Tests cover per-tenant active microVM count, sandbox CPU/memory/disk/log/port launch quotas, conmon log caps, tenant-owned service handles, scheduler/runtime budgets, and runtime in-flight limits. |
-| TIC8 | `pending` | End-to-end multi-tenant proof harness. | A two-tenant harness proves runtime compute, microVM compute, network, storage, HostBridge, service lookup, volumes, logs, cleanup, and system metadata isolation. |
+| TIC8 | `done` | End-to-end multi-tenant proof harness. | A two-tenant harness proves runtime compute, microVM compute, network, storage, HostBridge, service lookup, volumes, logs, cleanup, and system metadata isolation. |
 
 ## Required Gates
 
@@ -1605,6 +1605,66 @@ Disk limits are enforced as Nimbus launch reservations against per-tenant
 budgets; a hard runtime disk-write cap still requires a platform quota driver
 such as project quotas, quota-backed volumes, or another runtime filesystem
 enforcer.
+
+### 2026-05-22 TIC8 End-To-End Two-Tenant Harness
+
+Closed TIC8 with a focused server-level two-tenant proof harness plus real
+krun plan-only artifact checks.
+
+Completed in this checkpoint:
+
+- Added
+  `two_tenant_isolation_harness_covers_runtime_services_storage_and_system_control`
+  under `nimbus-server`.
+- The harness creates `tenant-a` and `tenant-b` under local-admin native HTTP,
+  inserts same-table storage records for both tenants, and proves native HTTP
+  storage reads are operator-gated and tenant-scoped.
+- The harness starts identically named `db` services for both tenants through
+  `SandboxServiceManager`, proves each runtime sees only its own
+  `ctx.services.db` binding, and proves the same service name resolves to
+  distinct tenant-owned sandbox IDs and loopback-only endpoints.
+- The harness proves a runtime service grant for `db` does not allow arbitrary
+  service lookup (`other` is denied by runtime service grant enforcement) and
+  does not imply generic localhost network reach (`fetch` to the service port
+  does not succeed without an admitted network grant).
+- The harness proves storage/API tenant authority by returning only
+  `tenant-b` data for a `tenant-b` JWT and rejecting the same JWT against a
+  `tenant-a` Convex route before the function can run.
+- The harness proves `_nimbus` remains a control-plane tenant: application
+  runtime reads of `routes` return the app tenant's empty table, unauthenticated
+  `_nimbus` Convex queries fail, and local-admin-authenticated `_nimbus` queries
+  return system route inventory.
+- The harness deletes `tenant-a` and proves only tenant-a's sandbox is stopped
+  and artifacts are removed while tenant-b's service binding, storage record,
+  and artifact root remain.
+- Re-ran the real krun plan-only path, named-volume, and tenant-cleanup tests
+  so the harness evidence includes actual backend bundle/state/log/volume path
+  materialization, not only server-level fake backend records.
+
+Verification evidence:
+
+- `cargo test -p nimbus-server two_tenant_isolation_harness_covers_runtime_services_storage_and_system_control -- --nocapture`
+  - result: pass; `Finished test profile` in 23.44s; 1 passed, 0 failed,
+    739 filtered out in `src/lib.rs`; `mongodb_spec` target had 0 matching
+    tests with 23 filtered out; `reactive_loop` target had 0 matching tests
+    with 32 filtered out.
+- `cargo test -p nimbus-sandbox plan_start_scopes_artifacts_by_tenant_for_same_service_name -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 112 filtered out in `src/lib.rs`;
+    guest-user-switch and Linux smoke targets had 0 matching tests.
+- `cargo test -p nimbus-sandbox plan_start_lowers_tenant_volume_mounts_under_tenant_state_root -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 112 filtered out in `src/lib.rs`;
+    guest-user-switch and Linux smoke targets had 0 matching tests.
+- `cargo test -p nimbus-sandbox remove_tenant_artifacts_deletes_only_matching_krun_tenant_roots -- --nocapture`
+  - result: pass; 1 passed, 0 failed, 112 filtered out in `src/lib.rs`;
+    guest-user-switch and Linux smoke targets had 0 matching tests.
+- `cargo fmt --all --check`
+  - result: pass.
+
+TIC8 status after this checkpoint: closed. The remaining caveat is not a TIC8
+gap: native HTTP remains a local-operator surface until product auth adds a
+tenant membership/session model, so the harness proves native operator gating
+and adapter-level tenant-claim rejection rather than inventing a second native
+application-auth contract.
 
 ## Execution Notes
 

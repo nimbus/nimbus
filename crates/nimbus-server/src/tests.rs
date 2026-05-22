@@ -1187,6 +1187,8 @@ mod mongodb_wire;
 mod registry_and_license;
 #[path = "tests/scheduling.rs"]
 mod scheduling;
+#[path = "tests/tenant_isolation_harness.rs"]
+mod tenant_isolation_harness;
 #[path = "tests/verification_harness.rs"]
 mod verification_harness;
 #[path = "tests/websocket_protocol.rs"]
