@@ -386,11 +386,48 @@ jobs:
           test "${WORKSPACE_TEST_RESULT}" = success
           test "${EXTERNAL_PROVIDER_TEST_RESULT}" = success
 
+  ui-artifacts:
+    # CC4: leader job that builds the nimbus-ui artifacts (convex codegen +
+    # SPA dist) once per push. Downstream Rust jobs that compile nimbus-server
+    # consume the result via actions/download-artifact instead of running
+    # npm ci + make build-ui themselves.
+    name: UI Artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build nimbus-ui artifacts
+        run: make build-ui
+
+      - name: Upload nimbus-ui artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-artifacts
+          path: |
+            packages/nimbus-ui/.nimbus/convex
+            packages/nimbus-ui/dist
+          if-no-files-found: error
+          retention-days: 1
+
   harness:
     name: ${{ matrix.surface-label }} Verification Harness
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name != 'schedule'
+    needs: [ui-artifacts]
     strategy:
       fail-fast: false
       matrix:
@@ -436,22 +473,19 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           save-always: true
 
-      # The server harness surface compiles nimbus-server, which include_str!s
-      # the convex codegen output and rust-embeds the SPA dist. `make build-ui`
-      # runs both steps via the Makefile dependency graph. The other surfaces
-      # don't strictly need it, but building unconditionally keeps the matrix
-      # uniform and stays cheap on warm caches (Make no-ops when dist is fresh).
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      # CC4: nimbus-ui artifacts (convex codegen + SPA dist) are produced by
+      # the ui-artifacts leader job and consumed here. Touching the files
+      # bumps their mtimes above the freshly-cloned source tree so the
+      # Makefile's UI_DIST_INDEX target stays satisfied and no rebuild
+      # happens transitively.
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v7
         with:
-          node-version: lts/*
-          cache: npm
+          name: ui-artifacts
+          path: packages/nimbus-ui
 
-      - name: Install JS dependencies
-        run: npm ci
-
-      - name: Build nimbus-ui artifacts
-        run: make build-ui
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Run required verification harness corpus
         run: bash scripts/verification-harness.sh required ${{ matrix.surface }}
@@ -605,6 +639,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event_name != 'schedule'
+    needs: [ui-artifacts]
     env:
       NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
@@ -673,21 +708,17 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # Coverage instruments the full workspace including nimbus-server, which
-      # include_str!s the convex codegen output and rust-embeds the SPA dist.
-      # `make build-ui` runs both steps via the Makefile dependency graph so
-      # the coverage cargo-llvm-cov invocation below sees real artifacts.
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      # CC4: nimbus-ui artifacts come from the ui-artifacts leader job.
+      # Touching the files keeps Make's UI_DIST_INDEX target satisfied so no
+      # rebuild happens during the coverage cargo-llvm-cov invocation.
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v7
         with:
-          node-version: lts/*
-          cache: npm
+          name: ui-artifacts
+          path: packages/nimbus-ui
 
-      - name: Install JS dependencies
-        run: npm ci
-
-      - name: Build nimbus-ui artifacts
-        run: make build-ui
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Start libsql provider fixture
         run: |
