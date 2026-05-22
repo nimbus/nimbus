@@ -32,7 +32,7 @@ Current implementation by layer:
 | --- | --- | --- |
 | Execution runtime | V8 backend in `nimbus-runtime` | code execution only |
 | Isolation backend | krun backend in `nimbus-sandbox` | OCI lowering, lifecycle, logs, manifests |
-| VM launch stack | `buildah` + `conmon` + patched `crun` + `libkrun` | subprocess orchestration |
+| VM launch stack | `buildah` + `conmon` + `nimbus-crun` + `nimbus-libkrun` | private Nimbus runtime stack orchestration |
 | Service manager | `SandboxServiceManager` in `nimbus-server` | declared services, activation, readiness, teardown |
 | Developer/operator UX | `nimbus-bin` | Compose validation and `nimbus compose ...` |
 
@@ -45,7 +45,7 @@ compose.yaml / image / build context
   -> runtime snapshots ready bindings for ctx.services.<name>
   -> await ctx.services.get("<name>") triggers cancellable activation when needed
   -> nimbus-sandbox krun backend materializes OCI bundle + state
-  -> conmon -> patched /usr/libexec/nimbus/crun -> libkrun VM
+  -> conmon -> patched /usr/libexec/nimbus/crun -> private nimbus-libkrun VM
   -> guest service answers via TSI-mapped host port
 ```
 
@@ -126,7 +126,9 @@ Preferred probe hierarchy by platform:
 - The guest service is not treated as ready just because OCI/crun reports
   `"running"`; readiness is gated on actual service reachability.
 - Host-side krun bundles stay root for `/dev/kvm`; image `USER` is preserved
-  and applied inside the guest.
+  and applied inside the guest. The current krun/libkrun stack is validated
+  for a root-owned Nimbus service path; non-root `/dev/kvm` access remains the
+  tracked F5 hardening lane.
 - Host-side krun bundles carry the SMH hardening baseline: explicit
   `process.noNewPrivileges`, explicit krun VMM capabilities, and an explicit
   seccomp allowlist validated by Linux krun smoke.

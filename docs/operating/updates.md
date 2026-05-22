@@ -32,6 +32,12 @@ suggests the right command for your host**.
 If detection cannot decide, the SPA falls back to `Copy command` against
 the build-from-source guidance.
 
+On Linux, the install-script update path refreshes the paired private krun
+runtime stack as well as the `nimbus` binary: `nimbus-libkrun` installs under
+`/usr/libexec/nimbus/lib`, and `nimbus-crun` installs at
+`/usr/libexec/nimbus/crun`. The supported Nimbus service path does not update
+or rely on distro `libkrun`.
+
 ### Why no auto-upgrade
 
 Operators run nimbus in mixed environments — local laptops, CI runners,

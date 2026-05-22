@@ -1,6 +1,6 @@
 # Plan: Nimbus Libkrun Runtime Stack
 
-Focused active plan for making the patched krun service stack installable and
+Archived plan for making the patched krun service stack installable and
 reproducible from Nimbus-owned release artifacts.
 
 This plan follows the completed sandbox hardening proof:
@@ -10,7 +10,8 @@ This plan follows the completed sandbox hardening proof:
 
 ## Status
 
-- **Status:** `active`
+- **Status:** `done`
+- **Archived:** 2026-05-21
 - **Primary owner:** this plan
 - **Parent distribution plan:** `docs/plans/distribution-plan.md`
 - **Security proof baseline:**
@@ -128,7 +129,7 @@ manual libkrun builds as a supported install path.
 | NLS3 | `done` | Rebuild `nimbus-crun` against the Nimbus-private libkrun stack. | `v1.27.1-nimbus.1` has `$ORIGIN/lib` RUNPATH, `+LIBKRUN`, release provenance, and fail-closed missing-symbol build gating. |
 | NLS4 | `done` | Update direct install/uninstall/verify flows. | Install helper dry-runs and real Linux proof install `nimbus`, `nimbus-libkrun`, and `nimbus-crun` together. |
 | NLS5 | `done` | Update deb/rpm, apt, and COPR builders/workflows. | Package helper tests produce three packages/SRPMs and dependency metadata uses `nimbus-libkrun`. |
-| NLS6 | `in_progress` | Capture fresh Linux service smoke from installed artifacts and close docs. | Debian 13 and Fedora proof show localhost-only krun smoke plus private library resolution. |
+| NLS6 | `done` | Capture fresh Linux service smoke from installed artifacts and close docs. | Debian 13 and Fedora proof show localhost-only krun smoke plus private library resolution. |
 
 ## Phase Details
 
@@ -499,7 +500,7 @@ Closeout evidence, 2026-05-21:
 
 ### NLS6: Fresh Host Proof And Closeout
 
-Status: `in_progress`
+Status: `done`
 
 Deliverables:
 
@@ -523,12 +524,52 @@ Acceptance criteria:
 - `readelf -d /usr/libexec/nimbus/crun` shows private `$ORIGIN/lib` RUNPATH
 - `nm -D /usr/libexec/nimbus/lib/libkrun.so.1.17.4` shows
   `krun_set_port_map_with_bind_address`
-- `NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=<host-ip> cargo test -p
-  nimbus-sandbox --test krun_linux_smoke
-  krun_backend_image_backed_smoke_pulls_and_boots_busybox -- --ignored
-  --nocapture` passes from the installed stack
+- the root VMM krun smoke passes from the installed stack with
+  `NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=<host-ip>` and the image-backed
+  `krun_backend_image_backed_smoke_pulls_and_boots_busybox` test binary
 - `docs/plans/security/sandbox-isolation-audit.md` still states F4 is closed
   only for the patched paired stack
+
+Closeout evidence:
+
+- Local script gates passed:
+  `bash -n scripts/collect-vmm-package-versions.sh`,
+  `bash -n scripts/check-vmm-host.sh`,
+  `bash -n scripts/prepare-linux-vmm-validation-bundle.sh`,
+  `bash -n scripts/verify-linux-vmm-validation-bundle-helper.sh`,
+  `bash scripts/verify-linux-vmm-validation-bundle-helper.sh`, and
+  `git diff --check -- scripts/collect-vmm-package-versions.sh scripts/check-vmm-host.sh scripts/prepare-linux-vmm-validation-bundle.sh scripts/verify-linux-vmm-validation-bundle-helper.sh`.
+- Debian 13 `minicloud` helper proof passed:
+  `bash scripts/verify-linux-vmm-validation-bundle-helper.sh`.
+- Debian 13 released-artifact staging proof passed after downloading
+  `nimbus-crun-linux-amd64` from `nimbus-crun v1.27.1-nimbus.1` and
+  `nimbus-libkrun-linux-amd64.tar.gz` from
+  `nimbus-libkrun v1.17.4-nimbus.1`: generated LH3 reported
+  `stage.source=released-artifacts`, `stage.nimbus_libkrun_root=<stage>`,
+  `crun version 1.27.1-dirty`, and `+LIBKRUN`, with
+  `<stage>/lib/libkrun.so.1` and `<stage>/lib/libkrunfw.so.5` present for
+  `$ORIGIN/lib` resolution.
+- Debian 13 root-context host proof passed:
+  `sudo bash scripts/check-vmm-host.sh` ended with `result supported`.
+- Debian 13 root-context collector showed
+  `nimbus.libkrun version=v1.17.4-nimbus.1`,
+  `nimbus.libkrun.symbol present krun_set_port_map_with_bind_address`,
+  `nimbus.crun.version ... +LIBKRUN`, and
+  `nimbus.crun.runpath present $ORIGIN/lib`.
+- Debian 13 root VMM smoke passed from the installed stack:
+  `sudo env NIMBUS_KRUN_SMOKE_WORKDIR=/tmp/nimbus-krun-smoke-nls6-root-unwrapped NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun NIMBUS_KRUN_SMOKE_CONMON=/usr/bin/conmon NIMBUS_KRUN_SMOKE_BUILDAH=/usr/bin/buildah NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=192.168.4.29 target/debug/deps/krun_linux_smoke-3c2c39554d8244a8 krun_backend_image_backed_smoke_pulls_and_boots_busybox --ignored --nocapture`
+  reported `1 passed`, with `192.168.4.29:18081` connection refused.
+- Fedora proof remained package/channel proof in Fedora 42 userspace:
+  `bash scripts/verify-build-fedora-release-srpms-helper.sh` rebuilt
+  reusable `nimbus`, `nimbus-libkrun`, and `nimbus-crun` SRPMs, installed the
+  x86_64 RPM stack, and query-verified aarch64 RPM metadata/files without any
+  `nimbus-crun` dependency on distro `libkrun` or `libkrunfw`.
+- Documentation closeout updated `README.md`,
+  `docs/plans/distribution-plan.md`, `docs/operating/updates.md`,
+  `docs/architecture/sandbox/microvm-service-baseline.md`,
+  `docs/architecture/sandbox/krun-vmm-host-validation.md`,
+  `docs/architecture/sandbox/krun-sandbox-backend-smoke.md`, and
+  `docs/plans/security/sandbox-isolation-audit.md`.
 
 ## Verification Command Set
 
@@ -570,7 +611,7 @@ Linux host proof:
 ```bash
 readelf -d /usr/libexec/nimbus/crun | grep '$ORIGIN/lib'
 nm -D /usr/libexec/nimbus/lib/libkrun.so.1.17.4 | grep krun_set_port_map_with_bind_address
-NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=<host-ip> cargo test -p nimbus-sandbox --test krun_linux_smoke krun_backend_image_backed_smoke_pulls_and_boots_busybox -- --ignored --nocapture
+sudo env NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST=<host-ip> NIMBUS_KRUN_SMOKE_RUNTIME=/usr/libexec/nimbus/crun target/debug/deps/krun_linux_smoke-* krun_backend_image_backed_smoke_pulls_and_boots_busybox --ignored --nocapture
 ```
 
 ## Stop Conditions

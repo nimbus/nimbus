@@ -284,6 +284,14 @@ Download the latest release from [GitHub Releases](https://github.com/nimbus/nim
 | macOS | Apple Silicon | `nimbus_darwin_arm64.tar.gz` |
 | Windows | x86_64 | `nimbus_windows_x86_64.zip` |
 
+Linux hardware-isolated service execution also needs the paired private
+runtime stack: `nimbus-libkrun` from
+[`nimbus/nimbus-libkrun`](https://github.com/nimbus/nimbus-libkrun) and
+`nimbus-crun` from
+[`nimbus/nimbus-crun`](https://github.com/nimbus/nimbus-crun). The install
+script installs those release artifacts under `/usr/libexec/nimbus` and does
+not depend on distro `libkrun` for Nimbus service execution.
+
 ### Build from source
 
 ```bash

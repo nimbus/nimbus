@@ -1,11 +1,12 @@
 # krun VMM Host Validation
 
-This runbook is the operator-facing historical baseline for the krun-backed
-VMM foundation. It defines the reproducible Linux-side commands and evidence
-used to build the patched private `nimbus-crun` binary, stage it at
-`/usr/libexec/nimbus/crun`, prepare the first OCI bundle recipe with
-`krun.port_map` in `"host:guest"` form, and lay out the repeatable conmon
-lifecycle drill.
+This runbook is the operator-facing baseline for the krun-backed VMM
+foundation. It defines the reproducible Linux-side commands and evidence used
+to install the published private Nimbus runtime stack, prepare the first OCI
+bundle recipe with `krun.port_map`, and lay out the repeatable conmon
+lifecycle drill. Source-build commands remain as diagnostics for fork work;
+supported install and validation paths consume released `nimbus-libkrun` and
+`nimbus-crun` artifacts.
 
 On macOS, run this runbook inside the Linux machine guest described by
 `docs/plans/distribution-plan.md` Channel 4, not on the macOS host. The VMM
@@ -15,7 +16,7 @@ Repo-owned helper entrypoints:
 
 - `make check-vmm-host`
 - `make collect-vmm-package-versions`
-- `make prepare-linux-vmm-validation-bundle CRUN_SRC=~/src/github.com/containers/crun OUTPUT_ROOT=/tmp/nimbus-linux-vmm-validation`
+- `make prepare-linux-vmm-validation-bundle NIMBUS_CRUN_ASSET=/tmp/nimbus-crun-linux-amd64 NIMBUS_LIBKRUN_ARCHIVE=/tmp/nimbus-libkrun-linux-amd64.tar.gz OUTPUT_ROOT=/tmp/nimbus-linux-vmm-validation`
 - `make collect-podman-machine-diagnostics MACHINE=nimbus-libkrun-validation PROVIDER=libkrun OUTPUT_DIR=/tmp/nimbus-libkrun-diagnostics`
 - `make recreate-podman-machine MACHINE=nimbus-libkrun-users-only PROVIDER=libkrun TMP_ROOT=/tmp/podman OUTPUT_DIR=/tmp/nimbus-libkrun-users-only-recreate VOLUME=/Users:/Users`
 - `make verify-crun-patch CRUN_SRC=~/src/github.com/containers/crun`
@@ -38,18 +39,23 @@ Repo-owned helper entrypoints:
 - If starting from macOS, execute these steps inside the machine VM guest
 - Debian 13 or Fedora 40+ are the supported first targets
 - `/dev/kvm` must exist
-- the current user should be `root` or in the `kvm` group
-- the pinned upstream source checkout is expected at
-  `~/src/github.com/containers/crun`
+- commands that actually launch the krun VM must run through the root-owned
+  Nimbus service path until the F5 non-root KVM lane closes
+- a non-root operator may run collection/preflight helpers, but passing those
+  helpers as a user in the `kvm` group is not a substitute for the root VMM
+  smoke
+- the pinned upstream source checkout at `~/src/github.com/containers/crun`
+  is optional diagnostic context, not the supported install source
 
 ## Generate The Linux Command Bundle
 
 To minimize judgment on the Linux host, generate the numbered `LH1`-`LH6`
-execution bundle first:
+execution bundle first from released runtime artifacts:
 
 ```bash
 bash scripts/prepare-linux-vmm-validation-bundle.sh \
-  --crun-source ~/src/github.com/containers/crun \
+  --nimbus-crun-asset /tmp/nimbus-crun-linux-amd64 \
+  --nimbus-libkrun-archive /tmp/nimbus-libkrun-linux-amd64.tar.gz \
   --output-root /tmp/nimbus-linux-vmm-validation
 ```
 
@@ -57,7 +63,8 @@ Or through `make`:
 
 ```bash
 make prepare-linux-vmm-validation-bundle \
-  CRUN_SRC=~/src/github.com/containers/crun \
+  NIMBUS_CRUN_ASSET=/tmp/nimbus-crun-linux-amd64 \
+  NIMBUS_LIBKRUN_ARCHIVE=/tmp/nimbus-libkrun-linux-amd64.tar.gz \
   OUTPUT_ROOT=/tmp/nimbus-linux-vmm-validation
 ```
 
@@ -65,14 +72,15 @@ This emits:
 
 - `session.env` with the fixed paths and parameters for the Linux run
 - `commands/00-run-through-lh6.sh` for the full sequence
-- numbered `commands/01...11...` scripts for each queue step
+- numbered `commands/01...11...` scripts for each queue step; `LH2` skips
+  source-patch verification unless `CRUN_SOURCE` is provided
 - `99-writeback-checklist.txt` listing the artifact files to record alongside
   the current task or compare against the archived VMM foundation evidence
 
 Recommended Linux-host entrypoint:
 
 ```bash
-bash /tmp/nimbus-linux-vmm-validation/commands/00-run-through-lh6.sh
+sudo bash /tmp/nimbus-linux-vmm-validation/commands/00-run-through-lh6.sh
 ```
 
 If a queue item fails and needs focused reruns, execute the numbered scripts
@@ -181,7 +189,7 @@ you repeat this repair.
 Run the checked-in host probe first:
 
 ```bash
-bash scripts/check-vmm-host.sh
+sudo bash scripts/check-vmm-host.sh
 ```
 
 Record the output in the VMM plan `Execution Log` before moving on. The command
@@ -190,7 +198,7 @@ returns non-zero if the host is not ready for Linux krun/conmon validation.
 Then collect the package/version evidence the plan expects for `LH1` and `V2`:
 
 ```bash
-bash scripts/collect-vmm-package-versions.sh
+sudo bash scripts/collect-vmm-package-versions.sh
 ```
 
 Record the exact output in the VMM plan alongside the host probe result.
@@ -203,9 +211,11 @@ bash scripts/verify-crun-patch.sh ~/src/github.com/containers/crun
 
 Record the exact source path that was verified.
 
-## 3. Build And Stage The Patched Binary
+## 3. Optional Source Diagnostic: Build And Stage The Patched Binary
 
-Stage a private patched binary without touching the system runtime:
+Stage a private patched binary without touching the system runtime when
+working on `nimbus-crun` itself. Normal operator validation should use the
+released asset path from the generated bundle.
 
 ```bash
 bash scripts/build-nimbus-crun.sh \
@@ -221,7 +231,10 @@ without mutating the source checkout.
 
 ## 4. Install The Private Runtime Path
 
-Install the private runtime path expected by the plan:
+Install the private runtime path expected by the plan. The generated bundle
+installs the released `nimbus-libkrun` archive under `/usr/libexec/nimbus`
+and the released `nimbus-crun` binary at `/usr/libexec/nimbus/crun`. The
+source-build command below is retained only for fork diagnostics:
 
 ```bash
 bash scripts/build-nimbus-crun.sh \
@@ -263,7 +276,7 @@ is provided, then updates `config.json` so these fields are present:
   },
   "annotations": {
     "run.oci.handler": "krun",
-    "krun.port_map": "18080:8080"
+    "krun.port_map": "127.0.0.1:18080:8080"
   }
 }
 ```
@@ -276,7 +289,10 @@ Notes:
   command such as `postgres`.
 - `run.oci.handler=krun` selects the libkrun handler when invoking the `crun`
   binary directly.
-- `krun.port_map` must stay in `"host:guest"` form.
+- `krun.port_map` may use legacy `"host:guest"` form for broad host binding,
+  but Nimbus service execution should use address-bearing form such as
+  `"127.0.0.1:18080:8080"` so the patched `nimbus-libkrun` hook binds TSI to
+  the requested host address.
 - `root.path` may be absolute or relative; crun `1.22` resolves either form.
 
 For the repo-owned config transformation proof, run:

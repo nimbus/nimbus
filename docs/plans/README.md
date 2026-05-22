@@ -28,14 +28,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `/goal` control plane gated on
     `bash scripts/verify-ci-caching-canonicalization.sh` (twelve
     conditions).
-- `docs/plans/nimbus-libkrun-runtime-stack-plan.md`
-  - canonical active plan for shipping the patched Linux krun service stack
-    from Nimbus-owned release artifacts. Owns the new
-    `nimbus/nimbus-libkrun` repo, the paired `nimbus-crun`
-    `v1.27.1-nimbus.1` release line, direct installer updates, and the
-    Debian/Fedora package mirror changes that move Nimbus away from manual or
-    distro `libkrun` for service execution.
-
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -68,6 +60,14 @@ archived plans only when you need historical execution detail.
     Linux localhost-only proof. Covered SMH0-SMH4, closed 2026-05-21. Future
     distribution packaging must pin and ship the validated patched
     crun/libkrun stack or rerun the same smoke proof for a replacement stack.
+- `docs/plans/archive/nimbus-libkrun-runtime-stack-plan.md`
+  - completed execution record for shipping the patched Linux krun service
+    stack from Nimbus-owned release artifacts (closed 2026-05-21). Created
+    `nimbus/nimbus-libkrun`, published `v1.17.4-nimbus.1`, paired
+    `nimbus-crun` `v1.27.1-nimbus.1`, updated direct install/uninstall/verify,
+    Linux package builders, apt/COPR mirror workflows, VMM helpers, and docs,
+    and closed with Debian 13 root VMM localhost-only smoke plus Fedora 42
+    package proof. Future krun stack bumps should promote a new active plan.
 - `docs/plans/archive/runtime-engine-seam-plan.md`
   - completed Step 0 runtime-extension baseline (RS0-RS6, closed
     2026-05-21). Defined `WorkerLoop` / `RuntimeBackend` as the execution seam,
@@ -435,7 +435,7 @@ the work is explicitly a historical review.
   another install-script wave unless one already owns the slice.
 - For Linux krun service stack packaging, `nimbus-libkrun`, or paired
   `nimbus-crun` release work, start with
-  `docs/plans/nimbus-libkrun-runtime-stack-plan.md`, then cross-check
+  `docs/plans/archive/nimbus-libkrun-runtime-stack-plan.md`, then cross-check
   `docs/plans/distribution-plan.md`.
 - For Convex or Nimbus CLI/codegen workflow work (`packages/codegen/`,
   `packages/convex/`, `demos/convex/`, or the `nimbus start --app-dir`

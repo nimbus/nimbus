@@ -23,39 +23,45 @@ This smoke path proves the Rust backend can:
 
 - Linux host with `/dev/kvm`
 - `conmon`, `buildah`, and `/usr/libexec/nimbus/crun` installed
+- `/usr/libexec/nimbus/lib` populated by the matching `nimbus-libkrun`
+  release archive
+- the smoke command that launches the VM runs as root, matching the current
+  root-owned Nimbus service path
 - VMM foundation validation complete (`LH1` through `LH6`)
-- mounted rootfs for the guest workload
-
-The easiest way to get a known-good rootfs is to reuse the VMM foundation
-bundle flow:
-
-```bash
-buildah from --name nimbus-http docker://busybox:latest
-ROOTFS="$(buildah mount nimbus-http)"
-echo "${ROOTFS}"
-```
 
 ## Command
 
-Run the ignored Linux-only integration test:
+Build the ignored Linux-only integration test as the operator user, then run
+the produced test binary under `sudo` so Cargo does not leave root-owned build
+artifacts in the workspace:
 
 ```bash
-export NIMBUS_KRUN_SMOKE_ROOTFS="${ROOTFS}"
-export NIMBUS_KRUN_SMOKE_WORKDIR="/tmp/nimbus-sandbox-smoke"
-export NIMBUS_KRUN_SMOKE_RUNTIME="/usr/libexec/nimbus/crun"
-export NIMBUS_KRUN_SMOKE_CONMON="$(command -v conmon)"
-export NIMBUS_KRUN_SMOKE_BUILDAH="$(command -v buildah)"
-export NIMBUS_KRUN_SMOKE_HOST_PORT="18080"
-export NIMBUS_KRUN_SMOKE_GUEST_PORT="8080"
+cargo test -p nimbus-sandbox --test krun_linux_smoke \
+  krun_backend_image_backed_smoke_pulls_and_boots_busybox \
+  -- --ignored --list
 
-cargo test -p nimbus-sandbox krun_backend_smoke_boots_http_service_and_survives_backend_restart -- --ignored --nocapture
+test_bin="$(find target/debug/deps -maxdepth 1 -type f -perm -111 \
+  -name 'krun_linux_smoke-*' | head -1)"
+
+sudo env \
+  NIMBUS_KRUN_SMOKE_WORKDIR="/tmp/nimbus-sandbox-smoke" \
+  NIMBUS_KRUN_SMOKE_RUNTIME="/usr/libexec/nimbus/crun" \
+  NIMBUS_KRUN_SMOKE_CONMON="$(command -v conmon)" \
+  NIMBUS_KRUN_SMOKE_BUILDAH="$(command -v buildah)" \
+  NIMBUS_KRUN_SMOKE_NON_LOOPBACK_HOST="<host-lan-ip>" \
+  "${test_bin}" \
+  krun_backend_image_backed_smoke_pulls_and_boots_busybox \
+  --ignored --nocapture
 ```
 
 ## Expected outcomes
 
 - The test reaches `SandboxStatus::Ready`
 - A fresh `KrunSandboxBackend` instance can `inspect(...)` the running sandbox
-- The guest HTTP service answers on `127.0.0.1:${NIMBUS_KRUN_SMOKE_HOST_PORT}`
+- The guest HTTP service answers on `127.0.0.1:18081` unless
+  `NIMBUS_KRUN_IMAGE_SMOKE_HOST_PORT` overrides the default
+- The non-loopback probe refuses `<host-lan-ip>:18081`, proving the patched
+  bind-address hook kept TSI loopback-only
 - Logs persist under
   `${NIMBUS_KRUN_SMOKE_WORKDIR}/state/containers/<sandbox-id>/ctr.log` and
   `oci.log`
@@ -69,9 +75,9 @@ against the original closeout evidence in
 
 - exact `cargo test` command
 - concrete `NIMBUS_KRUN_SMOKE_WORKDIR` path
-- rootfs source and path
 - observed sandbox id
 - log file paths
 - HTTP connectivity proof
+- non-loopback refusal proof
 - restart-survival proof (`inspect(...)` from a fresh backend instance)
 - stop outcome and exit-status evidence
