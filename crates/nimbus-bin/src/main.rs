@@ -14,6 +14,7 @@ mod local_server_client;
 mod machine;
 mod node;
 mod path_boundary;
+mod policy;
 mod start;
 #[cfg(test)]
 mod test_support;
@@ -28,6 +29,7 @@ use crate::dev::{DevCommand, run_dev_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
 use crate::init::{InitCommand, run_init_command};
 use crate::machine::{MachineCommand, run_machine_command};
+use crate::policy::{PolicyCommand, run_policy_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
 use crate::token::{TokenCommand, run_token_command};
 use crate::ui::{UiCommand, run_ui_command};
@@ -71,6 +73,9 @@ enum Command {
     /// Compose-backed local service lifecycle commands.
     #[command(name = "compose")]
     Compose(ComposeCommand),
+    /// Validate and explain Nimbus operator policy files.
+    #[command(subcommand)]
+    Policy(PolicyCommand),
     /// Encryption admin commands.
     #[command(subcommand)]
     Encryption(EncryptionCommand),
@@ -97,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 persistence_config_from_start_command(&StartCommand::default())?;
             run_compose_command(command, &persistence_config).await?;
         }
+        Command::Policy(command) => run_policy_command(command).await?,
         Command::Encryption(command) => {
             let persistence_config =
                 persistence_config_from_start_command(&StartCommand::default())?;
@@ -104,4 +110,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_subcommands_parse() {
+        let cli = Cli::parse_from([
+            "nimbus",
+            "policy",
+            "validate",
+            "--file",
+            "nimbus.policy.yaml",
+            "-f",
+            "json",
+        ]);
+
+        assert!(
+            matches!(cli.command, Command::Policy(PolicyCommand::Validate(_))),
+            "policy validate should parse as a first-class root command"
+        );
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "policy",
+            "diff",
+            "--from",
+            "before.yaml",
+            "--to",
+            "after.yaml",
+        ]);
+
+        assert!(
+            matches!(cli.command, Command::Policy(PolicyCommand::Diff(_))),
+            "policy diff should parse as a first-class root command"
+        );
+    }
 }

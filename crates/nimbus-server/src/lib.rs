@@ -67,6 +67,8 @@ pub use sandbox::{
 };
 pub use service_manager::SandboxServiceManager;
 pub use tenant_isolation::{
+    OPERATOR_POLICY_SCHEMA_VERSION, OperatorPolicyDecisionEvaluation, OperatorPolicyDiff,
+    OperatorPolicyDiffSummary, OperatorPolicyDocument, OperatorPolicyEvaluation,
     RuntimeIsolationTier, TENANT_ISOLATION_EVENT_SCHEMA_VERSION, TenantAuditRedactionPolicy,
     TenantImageAdmission, TenantImageAdmissionSource, TenantImageAttestationEvidence,
     TenantImagePolicyDecision, TenantImageSignatureEvidence, TenantImageVerificationEvidence,
