@@ -145,7 +145,7 @@ should remain packaged and versioned with Nimbus.
 | EPS4b1 | `done` | Package a sandbox-local supervisor/proxy entrypoint with Nimbus. | `cargo test -p nimbus-bin sandbox_supervisor -- --nocapture`: hidden `nimbus sandbox-supervisor` entrypoint parses, consumes env-backed `SandboxEgressEnforcementPlan`, rejects missing/invalid contracts, and reports validation-only status with `packet_enforcement_active=false`. |
 | EPS4b2a | `done` | Select the supervisor/proxy enforcement contract for process-capable sandbox launches. | `cargo test -p nimbus-sandbox egress -- --nocapture` and focused krun/container bundle egress tests prove default-deny and explicit-allow bundles emit `supervisor_proxy` + `recreate_required`, spoofed env is replaced, and invalid egress policy fails closed. |
 | EPS4b2b | `done` | Force process-capable guest egress through the supervisor/proxy or equivalent kernel-enforced path. | `cargo test -p nimbus-sandbox netavark_request -- --nocapture` and `cargo test -p nimbus-sandbox container_launch_network_config_denies_direct_egress_for_supervised_processes -- --nocapture` prove container execute-mode network intent uses a netavark internal bridge that denies ambient direct egress. Minicloud evidence: `sudo -E NIMBUS_CONTAINER_EGRESS_WORKDIR=/tmp/nimbus-container-egress-proof target/debug/deps/container_linux_egress-* --ignored --nocapture` passed, proving a real BusyBox guest records direct external HTTP egress as `denied`. `cargo test -p nimbus-sandbox krun::vm -- --nocapture` proves krun execute-mode now fails closed before bundle/state artifact materialization until a packet-level libkrun TSI egress PEP exists. |
-| EPS4b3 | `todo` | Add Linux network conformance and live egress reload proof. | Linux conformance proves real guest traffic default deny, allowed endpoint success, SSRF denial after DNS resolution, loopback/internal denial, L7 method/path denial, and egress-only reload through the proxy or kernel-enforced path. |
+| EPS4b3 | `in_progress` | Add Linux network conformance and live egress reload proof. | Current evidence: `cargo test -p nimbus-sandbox egress_proxy -- --nocapture` proves the reusable HTTP egress proxy enforces default deny, allowed endpoint success, DNS-resolved internal/SSRF denial, L7 method/path denial, hop-by-hop proxy header cleanup, and live policy reload without restart. Remaining evidence: wire the proxy into process-capable launches and run the Linux guest conformance matrix. |
 | EPS5 | `todo` | Add OCSF and OpenTelemetry export mapping. | Fixtures prove tenant/sandbox events redact secrets and map to stable OCSF/OTel records with decision IDs. |
 | EPS6 | `todo` | Add external policy backend seam without making it mandatory. | Fake OPA/Cedar-style adapters prove allow, deny, malformed output, timeout, and unavailable-backend fail-closed behavior. |
 | EPS7 | `todo` | Add denied-event policy draft workflow. | Denied egress fixtures produce minimal draft policy, never auto-apply, and require explicit approval. |
@@ -269,6 +269,15 @@ through a tenant volume, and passed with `denied`. `KrunSandboxBackend` refuses
 execute-mode before bundle/state artifact materialization until Nimbus has a
 packet-level egress policy hook for libkrun TSI. EPS4b3 still owns allowed
 endpoint success, SSRF/internal and L7 denial, and reload conformance.
+
+Batch 5 started EPS4b3 with the reusable egress proxy enforcement core. The
+proxy listens on loopback by default, parses HTTP forward-proxy absolute URIs
+with the shared typed policy model, resolves DNS before authorization so
+name-based SSRF/internal targets are denied, strips hop-by-hop proxy headers,
+forwards allowed requests in origin-form, and supports live policy reload by
+swapping the compiled policy without restarting the listener. This is the
+product seam needed for the Linux guest matrix, but it is not yet wired into
+container launch or exposed through the sandbox supervisor entrypoint.
 
 ## Open Questions
 
