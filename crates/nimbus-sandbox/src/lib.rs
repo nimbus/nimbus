@@ -22,9 +22,9 @@ pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use egress::{
     CompiledSandboxEgressPolicy, SANDBOX_EGRESS_ENFORCEMENT_ENV,
     SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION, SANDBOX_EGRESS_LEGACY_POLICY_ENV,
-    SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxEgressAuthorization, SandboxEgressEnforcementMode,
-    SandboxEgressEnforcementPlan, SandboxEgressLaunchEnforcement, SandboxEgressPolicy,
-    SandboxEgressReloadPolicy, SandboxEgressRequest, SandboxEgressRule,
+    SANDBOX_EGRESS_PROXY_URL_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxEgressAuthorization,
+    SandboxEgressEnforcementMode, SandboxEgressEnforcementPlan, SandboxEgressLaunchEnforcement,
+    SandboxEgressPolicy, SandboxEgressReloadPolicy, SandboxEgressRequest, SandboxEgressRule,
 };
 pub use egress_proxy::{SandboxEgressProxy, SandboxEgressProxyConfig};
 pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};

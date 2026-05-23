@@ -134,6 +134,11 @@ impl OciNetworkDirectEgress {
     }
 }
 
+pub(crate) fn bridge_gateway_addr(config: &OciNetworkConfig) -> Result<Ipv4Addr> {
+    let (_, gateway) = parse_ipv4_subnet_and_gateway(&config.network_subnet)?;
+    parse_ipv4_address(&gateway)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OciMachinePortForwarderConfig {
     pub host: String,

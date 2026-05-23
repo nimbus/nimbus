@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,12 +27,14 @@ use crate::backends::oci::materializer::{
 };
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, OciMachinePortForwarderConfig,
-    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
+    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,
     create_persistent_network_namespace, expose_machine_ports, remove_persistent_network_namespace,
     setup_container_network, teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
+use crate::egress::SandboxEgressPolicy;
+use crate::egress_proxy::{SandboxEgressProxy, SandboxEgressProxyConfig};
 use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
@@ -126,14 +129,50 @@ impl Default for ContainerSandboxBackendConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
+    egress_proxies: Arc<Mutex<HashMap<SandboxId, SandboxEgressProxy>>>,
 }
 
 impl ContainerSandboxBackend {
     pub fn new(config: ContainerSandboxBackendConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            egress_proxies: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn reload_egress_policy(&self, id: &SandboxId, egress: SandboxEgressPolicy) -> Result<()> {
+        let compiled = egress
+            .compile()
+            .map_err(|message| SandboxError::InvalidSpec { message })?;
+        let Some(mut manifest) = self.read_manifest(id)? else {
+            return Err(SandboxError::NotFound {
+                sandbox_id: id.as_str().to_owned(),
+            });
+        };
+        if manifest.launch_mode != ContainerLaunchMode::Execute {
+            return Err(SandboxError::InvalidSpec {
+                message: "container egress live reload requires execute-mode sandbox".to_owned(),
+            });
+        }
+        manifest.spec.egress = compiled.policy().clone();
+        self.ensure_egress_proxy_running(&manifest)?;
+        let proxies = self
+            .egress_proxies
+            .lock()
+            .map_err(|_| SandboxError::OperationFailed {
+                message: "container egress proxy registry lock is poisoned".to_owned(),
+            })?;
+        let proxy = proxies
+            .get(id)
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!("container egress proxy for sandbox {id} is not running"),
+            })?;
+        proxy.reload_policy(compiled)?;
+        drop(proxies);
+        self.write_manifest(&manifest)
     }
 
     fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {
@@ -337,6 +376,9 @@ impl ContainerSandboxBackend {
                 &resolved_launch.image_metadata.exposed_ports,
             )?,
         );
+        let egress_proxy = (self.config.launch_mode == ContainerLaunchMode::Execute)
+            .then(|| self.allocate_egress_proxy(&resolved_spec))
+            .transpose()?;
         let network_layout = OciNetworkLayout::new(
             &self.config.state_root,
             &resolved_spec.tenant_id,
@@ -358,6 +400,9 @@ impl ContainerSandboxBackend {
                     &self.config.state_root,
                     &resolved_spec,
                 )?,
+                egress_proxy_url: egress_proxy
+                    .as_ref()
+                    .map(ContainerEgressProxyManifest::proxy_url),
             },
         )?;
 
@@ -420,6 +465,7 @@ impl ContainerSandboxBackend {
                 bundle_layout,
                 conmon_layout,
                 network_layout,
+                egress_proxy,
                 conmon_launch,
                 last_exit_code: None,
                 launch_mode: self.config.launch_mode,
@@ -433,6 +479,10 @@ impl ContainerSandboxBackend {
         ensure_linux_host()?;
         let mut manifest = manifest.clone();
         self.configure_network(&manifest)?;
+        if let Err(error) = self.ensure_egress_proxy_running(&manifest) {
+            let _ = self.release_execution_artifacts(&mut manifest);
+            return Err(error);
+        }
         if let Err(error) = spawn_background(&manifest.conmon_launch.create_command) {
             let _ = self.release_execution_artifacts(&mut manifest);
             return Err(error);
@@ -505,7 +555,10 @@ impl ContainerSandboxBackend {
 
         let runtime_state = runtime_state(&manifest.conmon_launch.state_command)?;
         match runtime_state.as_deref() {
-            Some("running") => Ok(running_status(manifest)),
+            Some("running") => {
+                self.ensure_egress_proxy_running(manifest)?;
+                Ok(running_status(manifest))
+            }
             Some("created") | Some("creating") => Ok(SandboxStatus::Starting),
             Some("stopped") => Ok(SandboxStatus::Stopped),
             Some("paused") => Ok(SandboxStatus::Stopping),
@@ -616,8 +669,54 @@ impl ContainerSandboxBackend {
         Ok(())
     }
 
+    fn allocate_egress_proxy(&self, spec: &SandboxSpec) -> Result<ContainerEgressProxyManifest> {
+        let network_config = self.network_config();
+        let gateway = bridge_gateway_addr(&network_config)?;
+        let port = self
+            .port_manager()
+            .allocate_internal_host_port(&spec.port_bindings)?;
+        Ok(ContainerEgressProxyManifest {
+            host: gateway.to_string(),
+            port,
+        })
+    }
+
+    fn ensure_egress_proxy_running(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
+        let Some(egress_proxy) = manifest.egress_proxy.as_ref() else {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container sandbox {} has no egress proxy assignment",
+                    manifest.handle.id
+                ),
+            });
+        };
+        let mut proxies =
+            self.egress_proxies
+                .lock()
+                .map_err(|_| SandboxError::OperationFailed {
+                    message: "container egress proxy registry lock is poisoned".to_owned(),
+                })?;
+        if proxies.contains_key(&manifest.handle.id) {
+            return Ok(());
+        }
+        let policy = manifest
+            .spec
+            .egress
+            .compile()
+            .map_err(|message| SandboxError::InvalidSpec { message })?;
+        let bind_addr = egress_proxy.bind_addr()?;
+        let proxy = SandboxEgressProxy::start(
+            SandboxEgressProxyConfig::new(policy).with_bind_addr(bind_addr),
+        )?;
+        proxies.insert(manifest.handle.id.clone(), proxy);
+        Ok(())
+    }
+
     fn release_execution_artifacts(&self, manifest: &mut ContainerSandboxManifest) -> Result<()> {
         let mut errors = Vec::new();
+        if let Err(error) = self.stop_egress_proxy(&manifest.handle.id) {
+            errors.push(error.to_string());
+        }
         let _ = run_status_best_effort(&manifest.conmon_launch.delete_command);
         if let Err(error) = teardown_container_network(
             &manifest.network_layout,
@@ -652,6 +751,17 @@ impl ContainerSandboxBackend {
                 ),
             })
         }
+    }
+
+    fn stop_egress_proxy(&self, id: &SandboxId) -> Result<()> {
+        let mut proxies =
+            self.egress_proxies
+                .lock()
+                .map_err(|_| SandboxError::OperationFailed {
+                    message: "container egress proxy registry lock is poisoned".to_owned(),
+                })?;
+        proxies.remove(id);
+        Ok(())
     }
 
     fn read_manifest(&self, id: &SandboxId) -> Result<Option<ContainerSandboxManifest>> {
@@ -806,11 +916,37 @@ struct ContainerSandboxManifest {
     bundle_layout: ContainerBundleLayout,
     conmon_layout: OciConmonLayout,
     network_layout: OciNetworkLayout,
+    egress_proxy: Option<ContainerEgressProxyManifest>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,
     launch_mode: ContainerLaunchMode,
     shutdown_requested: bool,
     status: SandboxStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ContainerEgressProxyManifest {
+    host: String,
+    port: u16,
+}
+
+impl ContainerEgressProxyManifest {
+    fn proxy_url(&self) -> String {
+        format!("http://{}:{}", self.host, self.port)
+    }
+
+    fn bind_addr(&self) -> Result<SocketAddr> {
+        let host = self
+            .host
+            .parse::<IpAddr>()
+            .map_err(|_| SandboxError::InvalidSpec {
+                message: format!(
+                    "container egress proxy host {:?} must be an IP address",
+                    self.host
+                ),
+            })?;
+        Ok(SocketAddr::new(host, self.port))
+    }
 }
 
 #[derive(Debug, Deserialize)]

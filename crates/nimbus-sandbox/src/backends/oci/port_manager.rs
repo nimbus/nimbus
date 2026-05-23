@@ -80,6 +80,15 @@ impl PortManager {
         Ok(allocated)
     }
 
+    pub(crate) fn allocate_internal_host_port(
+        &self,
+        existing_bindings: &[SandboxPortBinding],
+    ) -> Result<u16> {
+        let mut used_host_ports = self.read_used_host_ports()?;
+        used_host_ports.extend(existing_bindings.iter().map(|binding| binding.host_port));
+        self.next_available_host_port(&used_host_ports)
+    }
+
     fn next_available_host_port(&self, used_host_ports: &BTreeSet<u16>) -> Result<u16> {
         self.range
             .clone()
@@ -133,6 +142,9 @@ impl PortManager {
                     .into_iter()
                     .map(|binding| binding.host_port),
             );
+            if let Some(egress_proxy) = manifest.egress_proxy {
+                used_host_ports.insert(egress_proxy.port);
+            }
         }
 
         Ok(used_host_ports)
@@ -198,11 +210,17 @@ fn auto_binding_name(guest_port: u16) -> String {
 struct PortLeaseManifest {
     status: SandboxStatus,
     spec: PortLeaseSpec,
+    egress_proxy: Option<PortLeaseEgressProxy>,
 }
 
 #[derive(Debug, Deserialize)]
 struct PortLeaseSpec {
     port_bindings: Vec<SandboxPortBinding>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PortLeaseEgressProxy {
+    port: u16,
 }
 
 impl SandboxStatus {
@@ -311,6 +329,46 @@ mod tests {
     }
 
     #[test]
+    fn allocate_internal_host_port_skips_active_egress_proxy_leases() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let tenant_id = tenant_id("tenant-a");
+        write_manifest_with_egress_proxy(
+            temp_dir.path(),
+            &tenant_id,
+            "active",
+            SandboxStatus::Ready,
+            15000,
+        );
+
+        let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+        let allocated = manager
+            .allocate_internal_host_port(&[])
+            .expect("internal port allocation should skip active proxy leases");
+
+        assert_eq!(allocated, 15001);
+    }
+
+    #[test]
+    fn allocate_internal_host_port_ignores_stopped_egress_proxy_leases() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let tenant_id = tenant_id("tenant-a");
+        write_manifest_with_egress_proxy(
+            temp_dir.path(),
+            &tenant_id,
+            "stopped",
+            SandboxStatus::Stopped,
+            15000,
+        );
+
+        let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+        let allocated = manager
+            .allocate_internal_host_port(&[])
+            .expect("stopped proxy lease should not reserve a host port");
+
+        assert_eq!(allocated, 15000);
+    }
+
+    #[test]
     fn tenant_port_quota_rejects_explicit_bindings_that_exceed_same_tenant_limit() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
         let tenant_id = tenant_id("tenant-a");
@@ -396,6 +454,36 @@ mod tests {
                         "guest_port": guest_port,
                     }))
                     .collect::<Vec<_>>(),
+            },
+        });
+        fs::write(
+            manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("manifest JSON should serialize"),
+        )
+        .expect("manifest JSON should be written");
+    }
+
+    fn write_manifest_with_egress_proxy(
+        state_root: &std::path::Path,
+        tenant_id: &TenantId,
+        sandbox_id: &str,
+        status: SandboxStatus,
+        egress_proxy_port: u16,
+    ) {
+        let sandbox_id = SandboxId::new(sandbox_id);
+        let manifest_path = artifact_paths::manifest_path(state_root, tenant_id, &sandbox_id);
+        let container_dir = manifest_path
+            .parent()
+            .expect("manifest path should have a parent directory");
+        fs::create_dir_all(container_dir).expect("container manifest directory should exist");
+        let manifest = json!({
+            "status": status,
+            "egress_proxy": {
+                "host": "10.89.0.1",
+                "port": egress_proxy_port,
+            },
+            "spec": {
+                "port_bindings": [],
             },
         });
         fs::write(

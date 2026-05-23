@@ -6,9 +6,19 @@ use crate::endpoint::PublishedEndpointProtocol;
 
 pub const SANDBOX_EGRESS_ENFORCEMENT_ENV: &str = "NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON";
 pub const SANDBOX_EGRESS_LEGACY_POLICY_ENV: &str = "NIMBUS_SANDBOX_EGRESS_POLICY_JSON";
-pub const SANDBOX_EGRESS_RESERVED_ENV_KEYS: [&str; 2] = [
+pub const SANDBOX_EGRESS_PROXY_URL_ENV: &str = "NIMBUS_SANDBOX_EGRESS_PROXY_URL";
+pub const SANDBOX_EGRESS_RESERVED_ENV_KEYS: [&str; 11] = [
     SANDBOX_EGRESS_ENFORCEMENT_ENV,
     SANDBOX_EGRESS_LEGACY_POLICY_ENV,
+    SANDBOX_EGRESS_PROXY_URL_ENV,
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
 ];
 pub const SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION: u32 = 1;
 
