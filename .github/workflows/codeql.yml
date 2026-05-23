@@ -3,9 +3,8 @@ name: CodeQL
 # CM6: SAST coverage for Nimbus. CodeQL analyzes the JavaScript/TypeScript
 # package tree and the Rust workspace on every PR + weekly schedule.
 #
-# Rust support in CodeQL is GA as of 2025; the analysis is most useful when
-# the build step exercises real codepaths, but autobuild + a workspace check
-# is sufficient for the baseline.
+# Rust support in CodeQL is GA as of 2025 and uses `build-mode: none` only
+# (the cargo-based extractor runs without an explicit build step).
 
 on:
   push:
@@ -38,7 +37,7 @@ jobs:
           - language: javascript-typescript
             build-mode: none
           - language: rust
-            build-mode: manual
+            build-mode: none
 
     steps:
       - name: Check out repository
@@ -50,32 +49,6 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
-
-      - name: Set up Rust toolchain
-        if: matrix.language == 'rust'
-        uses: ./.github/actions/setup-rust-cached
-        with:
-          shared-key: codeql-rust-stable-no-bin-v2
-          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
-
-      - name: Set up Node.js
-        if: matrix.language == 'rust'
-        uses: actions/setup-node@v6
-        with:
-          node-version: lts/*
-          cache: npm
-
-      - name: Install JS dependencies
-        if: matrix.language == 'rust'
-        run: npm ci
-
-      - name: Build Rust workspace for CodeQL
-        if: matrix.language == 'rust'
-        # `cargo check` is sufficient for CodeQL — it exercises type checking
-        # and macro expansion (the inputs CodeQL needs to build its database)
-        # without paying the full link cost. Make's UI dependency graph runs
-        # codegen + SPA build first so include_str! in nimbus-server resolves.
-        run: make check
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4
