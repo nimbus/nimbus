@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
@@ -35,6 +35,45 @@ pub trait ArtifactVerifierBackend: Send + Sync {
         &self,
         request: &ArtifactVerificationRequest,
     ) -> ArtifactVerifierResult<ArtifactVerificationEvidence>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OfflineVerificationConfig {
+    trusted_root_path: PathBuf,
+}
+
+impl OfflineVerificationConfig {
+    pub fn new(trusted_root_path: impl Into<PathBuf>) -> Self {
+        Self {
+            trusted_root_path: trusted_root_path.into(),
+        }
+    }
+
+    pub fn trusted_root_path(&self) -> &Path {
+        &self.trusted_root_path
+    }
+
+    pub fn validate(&self, verifier_name: &str) -> ArtifactVerifierResult<()> {
+        let metadata = std::fs::metadata(&self.trusted_root_path).map_err(|error| {
+            ArtifactVerifierError::backend_error(format!(
+                "{verifier_name} offline verification requires readable trusted root `{}`: {error}",
+                self.trusted_root_path.display()
+            ))
+        })?;
+        if !metadata.is_file() {
+            return Err(ArtifactVerifierError::backend_error(format!(
+                "{verifier_name} offline verification trusted root `{}` is not a file",
+                self.trusted_root_path.display()
+            )));
+        }
+        if metadata.len() == 0 {
+            return Err(ArtifactVerifierError::backend_error(format!(
+                "{verifier_name} offline verification trusted root `{}` is empty",
+                self.trusted_root_path.display()
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

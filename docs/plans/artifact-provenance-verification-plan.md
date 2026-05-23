@@ -14,7 +14,7 @@ verification logic.
 
 ## Status
 
-- **Status:** `AP1` through `AP5` are complete; `AP6` is `in_progress`;
+- **Status:** `AP1` through `AP6` are complete; `AP7` is `in_progress`;
   `AP0` parser hardening is complete.
 - **Primary owner:** this plan
 - **Activation gate:** `AP0` was promoted as a prerequisite for enterprise
@@ -275,6 +275,20 @@ command to this list and to `scripts/verify-artifact-provenance.sh`.
 - Operator image policy now has a focused regression proving `sbom_required`
   compiles into tenant image admission and rejects missing SBOM evidence.
 
+`AP6` is complete:
+
+- `OfflineVerificationConfig` validates local trusted-root material before any
+  verifier command runs.
+- `CosignVerifierBackend` can run in offline/private-root mode with
+  `--offline=true --trusted-root <path>`.
+- Missing or invalid trusted-root files fail closed before command invocation,
+  so local/offline fixtures do not accidentally fall back to public-network
+  verification.
+- The current SLSA file-artifact path already supports local provenance files
+  through `SlsaVerifierBackend::with_provenance_path`; stronger SLSA/private
+  root customization remains tool-specific follow-on scope if the selected
+  verifier exposes it.
+
 ## Scope
 
 This plan covers artifact classes that can carry executable or trusted code:
@@ -299,8 +313,8 @@ identity. It feeds verified artifact evidence into those seams.
 | AP3 | `done` | Implement SLSA provenance verifier backend for OCI images and file artifacts. | `cargo test -p nimbus-server slsa -- --nocapture` passed 10 focused SLSA adapter tests covering digest-pinned image, file artifact with provenance path, builder ID, predicate type, immutable subject, malformed output, timeout, missing tool, mutable image, and missing file/provenance inputs. Regression checks `cargo test -p nimbus-server image_admission -- --nocapture` and `cargo test -p nimbus-server operator_policy -- --nocapture` passed after adding optional provenance `source_uri` policy context. |
 | AP4 | `done` | Extend provenance policy from images to runtime/function bundles and executable guest artifacts. | `cargo test -p nimbus-server artifact_admission -- --nocapture` passed 4 admission tests covering verified runtime bundles, missing digest, wrong digest, wrong builder, wrong predicate, and guest executable admission. `cargo test -p nimbus-server runtime_invocation_options_admit_bundle_provenance -- --nocapture` passed and proves the runtime invocation option admits provenance before executor entry. |
 | AP5 | `done` | Add SBOM evidence backend and operator policy hooks. | `cargo test -p nimbus-server sbom -- --nocapture` passed 8 SBOM backend/image-admission tests covering SBOM-present, SBOM-missing, empty/malformed output, missing tool, mutable image, missing SBOM policy, redaction, and tenant image admission. `cargo test -p nimbus-server operator_image_policy_sbom_required -- --nocapture` passed and proves the operator policy hook. |
-| AP6 | `in_progress` | Add offline/private-root verification mode. | Local fixture trust material verifies without public network dependencies. Public-network-only mode is not required for offline fixtures, and missing/invalid local trust roots fail closed. |
-| AP7 | `todo` | Publish operator runbook and conformance gate. | `bash scripts/verify-artifact-provenance.sh` and a Makefile target verify image, bundle, SLSA, SBOM, offline/private-root, redaction, timeout, missing-tool, and malformed-output fixtures in one command; docs describe operational use and residual risks. |
+| AP6 | `done` | Add offline/private-root verification mode. | `cargo test -p nimbus-server offline -- --nocapture` passed local offline/private-root fixtures covering trusted-root command args and missing trusted-root fail-closed behavior. |
+| AP7 | `in_progress` | Publish operator runbook and conformance gate. | `bash scripts/verify-artifact-provenance.sh` and a Makefile target verify image, bundle, SLSA, SBOM, offline/private-root, redaction, timeout, missing-tool, and malformed-output fixtures in one command; docs describe operational use and residual risks. |
 
 ## Acceptance Criteria
 
