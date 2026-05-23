@@ -93,7 +93,7 @@ Out of scope:
 | CA2 | With mold landed in the composite, retest `cargo llvm-cov -j 2` and `-j 4` for the Coverage job. Land the highest stable `-j` value as the new constant, update the inline comment that documents the deferral. Verifier asserts the Coverage step is no longer `-j 1` (`grep -E 'cargo llvm-cov -j (2|4|8)' ci.yml`). Bus-error recurrence is a CA2 acceptance signal — if `-j 2` regresses, CA2 documents the disposition in proof and leaves `-j 1` in place; CA3 still proceeds. | done |
 | CA3 | Shard the Coverage job across N parallel lanes by workspace member group. Each lane runs `cargo llvm-cov --no-report -p <group>` against the same instrumented profile; a final reducer job calls `cargo llvm-cov report --lcov --output-path lcov.info` after downloading `.profraw` artifacts from every shard. Critical path goes from `sum(crates)` to `max(group)`. Verifier asserts: the Coverage job is fan-out + fan-in shape (matrix with N ≥ 2 entries plus a dependent reducer), and the reducer publishes the same `lcov.info` artifact + Codecov upload that the single-job shape produced. | done |
 | CA4 | Extend `setup-rust-cached` adoption to `release.yml`. Migrate the inline `dtolnay/rust-toolchain` + `Swatinem/rust-cache` sites in `release.yml` (`build-linux-arm64` + the 3-entry `build` matrix covering linux x86_64 / darwin arm64 / windows x86_64) to `uses: ./.github/actions/setup-rust-cached`. macOS / Windows runners get sccache via the composite the same way Linux jobs do (sccache-action is platform-aware). Composite extended with `save-cache: always\|auto\|never` so release-tag builds can save their per-target caches while PR CI keeps the `save-if: refs/heads/main` invariant. Verifier asserts zero inline `mozilla-actions/sccache-action` references workflow-wide (already enforced by CM verifier condition 3, kept in CA scope as a regression gate); plus the new assertion: zero inline `Swatinem/rust-cache` references in `release.yml` (composite-only). First post-CA4 release run records cold sccache stats in proof; the second records warm hit-rate. | done |
-| CA5 | Closeout. Flip every ledger row to `done`. Investigate the Windows release-build pole — profile the build to identify the dominant component (likely vendored OpenSSL via Strawberry Perl, or V8 fresh build), and document follow-up either in this plan (if landed) or as deferred scope. Append Execution Log with actual SHAs. Move plan to `docs/plans/archive/`. Promote `docs/operating/ci-modernization.md` with a new "Coverage and release acceleration" section synthesizing CA1–CA4 contracts. Update routing in `docs/plans/README.md` + `CLAUDE.md` to point at the archived path. Verifier's `plan_file()` helper accepts both active and archived paths. | pending |
+| CA5 | Closeout. Flip every ledger row to `done`. Investigate the Windows release-build pole — profile the build to identify the dominant component (likely vendored OpenSSL via Strawberry Perl, or V8 fresh build), and document follow-up either in this plan (if landed) or as deferred scope. Append Execution Log with actual SHAs. Move plan to `docs/plans/archive/`. Promote `docs/operating/ci-modernization.md` with a new "Coverage and release acceleration" section synthesizing CA1–CA4 contracts. Update routing in `docs/plans/README.md` + `CLAUDE.md` to point at the archived path. Verifier's `plan_file()` helper accepts both active and archived paths. | done |
 
 ## Completion Gate
 
@@ -145,12 +145,12 @@ line `10 passed, 0 failed`. The 10 conditions:
 
 | CA  | Commit(s) | Subject |
 |-----|-----------|---------|
-| CA0 | (this commit) | scaffold Coverage Acceleration plan + verifier + baseline proof |
-| CA1 | (this commit) | install mold linker in setup-rust-cached composite |
-| CA2 | (this commit) | retest coverage parallelism, land -j 4 |
-| CA3 | (this commit) | shard Coverage across N parallel lanes with cargo llvm-cov reducer |
-| CA4 | (this commit) | migrate release.yml to setup-rust-cached composite |
-| CA5 | _pending_ | closeout — promote contract, archive plan, update routing |
+| CA0 | `3e86c329` | scaffold Coverage Acceleration plan + verifier + baseline proof |
+| CA1 | `263f39f7` + `a7afe415` | install mold linker in setup-rust-cached composite (initial LINKER=mold landed broken; hotfix switched to RUSTFLAGS `-fuse-ld=mold`) |
+| CA2 | `f4dad1b8` | retest coverage parallelism, land -j 4 |
+| CA3 | `3996dd9a` | shard Coverage across 3 parallel lanes with cargo llvm-cov reducer |
+| CA4 | `d66f85fb` | migrate release.yml to setup-rust-cached composite |
+| CA5 | (this commit) | closeout — promote contract, archive plan, update routing |
 
 ## Notes on staging order
 

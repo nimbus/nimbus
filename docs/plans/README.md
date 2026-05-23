@@ -4,22 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/coverage-acceleration-plan.md`
-  - active execution plan for the next CI / release wall-time wave
-    (CA0–CA5). Activated 2026-05-22 against the measured CM-closeout
-    baseline: PR CI wall 33m57s with Coverage as the critical-path
-    pole at 24m27s (`cargo llvm-cov -j 1 --workspace` serialized due
-    to a CC6-era rust-lld bus-error deferral); release wall 76m35s
-    with Windows at 70m12s and no sccache anywhere in `release.yml`
-    (CM1 explicitly deferred release migration). The plan installs
-    `mold` in the `setup-rust-cached` composite so the link-step
-    constraint that motivated `-j 1` can be retested, lands the
-    highest stable `-j` value, shards Coverage across N parallel
-    lanes that fan into a `cargo llvm-cov report` reducer, migrates
-    the 5 inline `dtolnay/rust-toolchain` + `Swatinem/rust-cache`
-    sites in `release.yml` into the composite, and investigates the
-    Windows release-build pole. Activation gate at
-    `bash scripts/verify-coverage-acceleration.sh` (10 conditions).
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -35,6 +19,28 @@ Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/archive/coverage-acceleration-plan.md`
+  - completed execution record for the Coverage Acceleration wave
+    (CA0-CA5, closed 2026-05-22). Cut PR CI Coverage's critical
+    path from 24m27s `cargo llvm-cov -j 1 --workspace` to a 3-shard
+    fan-out + `cargo llvm-cov report` reducer (lanes: `server`,
+    `engine`, `rest`) on `-j 4` under mold. Installed `mold` in the
+    `setup-rust-cached` composite via `CARGO_TARGET_*_RUSTFLAGS=
+    -C link-arg=-fuse-ld=mold` (the `LINKER=mold` shape was tried
+    first and failed with `fatal: unknown -m argument: 64`; the
+    proof doc captures the failure mode). Migrated the 5 inline
+    `dtolnay/rust-toolchain` + `Swatinem/rust-cache` sites in
+    `release.yml` into the composite with a new `save-cache: always`
+    input so release tag builds save per-target caches without
+    violating CC9's `save-if: refs/heads/main` PR-poison invariant.
+    The Windows release-build pole (70m12s of 76m35s release wall:
+    vendored OpenSSL via Strawberry Perl, V8 prebuilt link via
+    `link.exe`, cold-target `cargo build --release`) is documented
+    as deferred scope for a future release-acceleration plan.
+    Canonical contract lives in `docs/operating/ci-modernization.md`
+    (the "Coverage and release acceleration" section). Promote a
+    new active plan before another coverage / release acceleration
+    wave.
 - `docs/plans/archive/tenant-isolation-control-plane-plan.md`
   - completed execution record for making production tenant isolation explicit
     across compute, networking, storage, HostBridge/runtime grants, sandbox

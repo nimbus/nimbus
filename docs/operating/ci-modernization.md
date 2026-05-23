@@ -125,10 +125,182 @@ CM plan are satisfied. The CC plan has its own gate at
 run independently; CM2 is composite-aware on the CC side, so neither
 regresses the other.
 
+The Coverage Acceleration (CA) plan that followed has its own gate
+at `scripts/verify-coverage-acceleration.sh`; the three gates layer
+without conflict.
+
+## Coverage and release acceleration
+
+The Coverage Acceleration (CA) plan, executed on the CM/CC baseline,
+landed four contract additions that future contributors should
+preserve:
+
+### mold linker on Linux
+
+The composite action installs `mold` on every Linux runner and
+exports the linker via `RUSTFLAGS`:
+
+```yaml
+- name: Install mold linker (Linux)
+  if: runner.os == 'Linux'
+  shell: bash
+  run: |
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends mold
+    echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "${GITHUB_ENV}"
+    echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "${GITHUB_ENV}"
+    mold --version
+```
+
+Do not switch this to `CARGO_TARGET_*_LINKER=mold` — that invocation
+makes rustc call mold directly via the gcc driver protocol, which
+passes `-m64`, which mold rejects with `fatal: unknown -m argument:
+64`. The `RUSTFLAGS+fuse-ld=mold` path keeps `cc` as the driver and
+delegates to mold for the link step, which is the supported shape.
+
+macOS and Windows branches of the composite no-op this step; they
+remain on the platform default linker. Use `runner.os == 'Linux'`
+to gate the install.
+
+### Coverage `-j` constant
+
+`cargo llvm-cov` in `ci.yml` runs with `-j 4` (matching `ubuntu-24.04`
+core count). The CC6-era `-j 1` serialization existed to avoid a
+rust-lld bus-error class triggered by parallel link of large
+instrumented test binaries; mold's separate process model side-steps
+that class.
+
+If a future runner image change resurrects the bus-error class:
+
+1. Revert the Coverage step's `-j` to `-j 1`.
+2. Insert a `CA2-disposition:` block in the 12 lines above the
+   `run: cargo llvm-cov ...` line documenting which run surfaced
+   the regression and mold version that exhibited it.
+
+The verifier's condition 5 accepts both shapes; the disposition tag
+keeps the contract intentional rather than drifty.
+
+### Coverage sharding shape (fan-out + reducer)
+
+The Coverage job in `ci.yml` is a 3-shard fan-out + dependent
+reducer rather than a single workspace-wide job:
+
+```yaml
+coverage:
+  strategy:
+    fail-fast: false
+    matrix:
+      include:
+        - shard: server
+          packages: "-p nimbus-server"
+          needs-providers: "true"
+        - shard: engine
+          packages: "-p nimbus-engine -p nimbus-sandbox -p nimbus-machine"
+          needs-providers: "false"
+        - shard: rest
+          packages: "-p nimbus-core -p nimbus-storage -p nimbus-testing -p nimbus-bin -p nimbus"
+          needs-providers: "false"
+  steps:
+    - cargo llvm-cov --no-report -j 4 ${{ matrix.packages }}
+    - upload coverage-profraw-${{ matrix.shard }} artifact
+
+coverage-reduce:
+  needs: [coverage, ui-artifacts]
+  steps:
+    - cargo llvm-cov --no-run --workspace --exclude nimbus-runtime
+    - download coverage-profraw-* artifacts (merge-multiple: true)
+      to target/llvm-cov-target/profraw/
+    - cargo llvm-cov report --lcov --output-path lcov.info
+    - upload + codecov
+```
+
+Shard partition rationale:
+
+| Shard | Crates | Why |
+|-------|--------|-----|
+| `server` | `nimbus-server` | Heaviest single crate; carries the postgres/mysql/libsql integration surface. |
+| `engine` | `nimbus-engine`, `nimbus-sandbox`, `nimbus-machine` | Middle-tier crates with substantial test counts, no external provider deps. |
+| `rest` | `nimbus-core`, `nimbus-storage`, `nimbus-testing`, `nimbus-bin`, `nimbus` | Lightweight tail; combined fits one shard. |
+
+`nimbus-runtime` stays excluded workspace-wide — its coverage
+instrumentation budget was retired in CC6.
+
+Provider fixtures (postgres, mysql) run unconditionally on every
+shard because GitHub Actions does not support matrix-conditional
+services. The libsql startup is gated on
+`if: matrix.needs-providers == 'true'` so only the `server` shard
+pays the libsql + namespace-probe wait.
+
+When adding a new workspace crate, place it in the shard that
+balances wall-clock best (typically `rest` unless it pulls external
+provider tests, in which case it joins `server`). Do not introduce
+a 4th shard without measuring — the fan-out + reducer overhead has
+diminishing returns past 3 lanes given current per-crate cost.
+
+### release.yml composite adoption
+
+Every Rust build site in `release.yml` (5 sites: `build-linux-arm64`
+plus the 3-entry `build` matrix covering linux-x86_64, darwin-arm64,
+windows-x86_64) routes through the composite the same way PR CI jobs
+do. The composite's mold step is Linux-gated and no-ops on macOS
+and Windows.
+
+Release tag builds opt into `save-cache: always`:
+
+```yaml
+- uses: ./.github/actions/setup-rust-cached
+  with:
+    shared-key: release-${{ matrix.target }}-no-bin-v1
+    save-cache: always
+    googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+```
+
+The composite's `save-cache` input controls the Swatinem `save-if`:
+
+| `save-cache` | Behavior |
+|--------------|----------|
+| `auto` (default) | Save only on `refs/heads/main` (PR CI invariant). |
+| `always` | Save on any ref (release tags use this). |
+| `never` | Disable saves entirely. |
+
+The CC9 retraction (`save-if: refs/heads/main`) protects PR CI from
+poisoning main's caches; `save-cache: always` on release tags lets
+per-target caches accumulate across tags without violating that
+invariant (release tags do not run from `refs/pull/*`).
+
+The `shared-key: release-<target>-no-bin-v1` namespace keeps release
+tag caches isolated from PR CI's `ci-ubuntu-stable-<job>-no-bin-v2`
+namespace. Bump the `-v1` suffix to invalidate on schema-incompatible
+cache changes (e.g. composite-action contract changes that break
+restore semantics).
+
+### Aggregate gate
+
+`bash scripts/verify-coverage-acceleration.sh` is the local
+equivalent of CA's closeout check; it exits 0 iff all 10 conditions
+of the CA plan are satisfied. The CA gate layers cleanly on top of
+the CM and CC gates.
+
+### Deferred follow-up: Windows release pole
+
+The CA5 closeout (see `docs/plans/proof/coverage-acceleration/ca5-closeout.md`)
+identifies three structural cost components on the
+`x86_64-pc-windows-msvc` release build (vendored OpenSSL via
+Strawberry Perl, V8 prebuilt link via `link.exe`, cold-target
+`cargo build --release`) and lists candidate lanes for a future
+release-acceleration plan: `rustls` over OpenSSL, `lld-link` over
+`link.exe`, and a release-side `warm-sccache` leader.
+
+Promote a new active plan before attacking these — none are in
+scope for the closed CA wave.
+
 ## Routing
 
 - Canonical contract: this file (`docs/operating/ci-modernization.md`).
-- Plan archive: `docs/plans/archive/ci-modernization-plan.md`.
-- Proof artifacts: `docs/plans/proof/ci-modernization/`.
-- Verifier: `scripts/verify-ci-modernization.sh`.
+- Plan archive: `docs/plans/archive/ci-modernization-plan.md`,
+  `docs/plans/archive/coverage-acceleration-plan.md`.
+- Proof artifacts: `docs/plans/proof/ci-modernization/`,
+  `docs/plans/proof/coverage-acceleration/`.
+- Verifier: `scripts/verify-ci-modernization.sh`,
+  `scripts/verify-coverage-acceleration.sh`.
 - Sister contract (caching layer): `docs/operating/ci-caching.md`.
