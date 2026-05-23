@@ -10,16 +10,44 @@ require_env() {
   fi
 }
 
-require_env NIMBUS_TEST_POSTGRES_URL
-require_env NIMBUS_MYSQL_URL
-require_env NIMBUS_LIBSQL_URL
-require_env NIMBUS_LIBSQL_ADMIN_URL
-
 export NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES="${NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES:-1}"
 
-cargo test -p nimbus-storage postgres_provider -- --nocapture
-cargo test -p nimbus-storage mysql_provider -- --nocapture
-cargo test -p nimbus-storage libsql_provider -- --nocapture
-cargo test -p nimbus-engine postgres_provider -- --nocapture
-cargo test -p nimbus-engine mysql_provider -- --nocapture
-cargo test -p nimbus-engine libsql_replica_provider -- --nocapture
+run_postgres() {
+  require_env NIMBUS_TEST_POSTGRES_URL
+  cargo test -p nimbus-storage postgres_provider -- --nocapture
+  cargo test -p nimbus-engine postgres_provider -- --nocapture
+}
+
+run_mysql() {
+  require_env NIMBUS_MYSQL_URL
+  cargo test -p nimbus-storage mysql_provider -- --nocapture
+  cargo test -p nimbus-engine mysql_provider -- --nocapture
+}
+
+run_libsql() {
+  require_env NIMBUS_LIBSQL_URL
+  require_env NIMBUS_LIBSQL_ADMIN_URL
+  cargo test -p nimbus-storage libsql_provider -- --nocapture
+  cargo test -p nimbus-engine libsql_replica_provider -- --nocapture
+}
+
+case "${NIMBUS_PROVIDER_FILTER:-}" in
+  postgres)
+    run_postgres
+    ;;
+  mysql)
+    run_mysql
+    ;;
+  libsql)
+    run_libsql
+    ;;
+  "")
+    run_postgres
+    run_mysql
+    run_libsql
+    ;;
+  *)
+    echo "unknown NIMBUS_PROVIDER_FILTER=${NIMBUS_PROVIDER_FILTER} (expected postgres|mysql|libsql)" >&2
+    exit 1
+    ;;
+esac

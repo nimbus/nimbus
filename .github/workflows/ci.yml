@@ -225,41 +225,31 @@ jobs:
         run: make test-rust-docs
 
   external-provider-tests:
-    name: External Provider Integration Tests
+    name: External Provider Integration Tests (${{ matrix.provider }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
+    strategy:
+      # CW3: split by provider so postgres / mysql / libsql run in parallel
+      # instead of serialized in one ~14.6m job. Within-provider tests stay
+      # serial via serial_test::serial(<provider>); across-provider was
+      # always safe (different services, no shared state). Each matrix
+      # shard starts only its own provider's fixture via the per-step
+      # `if: matrix.provider == ...` gate, and NIMBUS_PROVIDER_FILTER tells
+      # scripts/test-external-providers.sh which cargo invocations to run.
+      fail-fast: false
+      matrix:
+        include:
+          - provider: postgres
+          - provider: mysql
+          - provider: libsql
     env:
       NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
+      NIMBUS_PROVIDER_FILTER: ${{ matrix.provider }}
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
       NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
       NIMBUS_LIBSQL_URL: http://127.0.0.1:18080
       NIMBUS_LIBSQL_ADMIN_URL: http://127.0.0.1:18081
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres -d postgres"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=12
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
-          MYSQL_DATABASE: test
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=12
 
     steps:
       - name: Check out repository
@@ -271,7 +261,60 @@ jobs:
           shared-key: ci-ubuntu-stable-external-providers-no-bin-v2
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
+      - name: Start postgres provider fixture
+        if: matrix.provider == 'postgres'
+        run: |
+          docker run --detach \
+            --name nimbus-postgres-provider-tests \
+            --publish 5432:5432 \
+            --env POSTGRES_DB=postgres \
+            --env POSTGRES_PASSWORD=postgres \
+            --health-cmd "pg_isready -U postgres -d postgres" \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 12 \
+            postgres:16
+
+      - name: Wait for postgres provider fixture
+        if: matrix.provider == 'postgres'
+        run: |
+          for _ in {1..60}; do
+            if docker exec nimbus-postgres-provider-tests pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs nimbus-postgres-provider-tests
+          exit 1
+
+      - name: Start mysql provider fixture
+        if: matrix.provider == 'mysql'
+        run: |
+          docker run --detach \
+            --name nimbus-mysql-provider-tests \
+            --publish 3306:3306 \
+            --env MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+            --env MYSQL_DATABASE=test \
+            --health-cmd "mysqladmin ping -h 127.0.0.1 --silent" \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 12 \
+            mysql:8.4
+
+      - name: Wait for mysql provider fixture
+        if: matrix.provider == 'mysql'
+        run: |
+          for _ in {1..60}; do
+            if docker exec nimbus-mysql-provider-tests mysqladmin ping -h 127.0.0.1 --silent >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs nimbus-mysql-provider-tests
+          exit 1
+
       - name: Start libsql provider fixture
+        if: matrix.provider == 'libsql'
         run: |
           docker run --detach \
             --name nimbus-libsql-provider-tests \
@@ -282,6 +325,7 @@ jobs:
             /bin/sqld --enable-namespaces --no-welcome
 
       - name: Wait for libsql provider fixture
+        if: matrix.provider == 'libsql'
         run: |
           for _ in {1..60}; do
             if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/nimbus_provider_probe/create \
