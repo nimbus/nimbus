@@ -313,6 +313,30 @@ jobs:
           docker logs nimbus-mysql-provider-tests
           exit 1
 
+      # PW1: pin libsql image to a known-good tag and cache the docker
+      # image layer between runs so cold pulls don't dominate the gate path.
+      # Pin selected 2026-05-23 — most recent v0.24.x present on GHCR for
+      # tursodatabase/libsql-server.
+      - name: Restore cached libsql docker image
+        if: matrix.provider == 'libsql'
+        id: libsql-image-cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/libsql-image.tar.gz
+          key: libsql-image-v0.24.26
+
+      - name: Load cached libsql docker image
+        if: matrix.provider == 'libsql' && steps.libsql-image-cache.outputs.cache-hit == 'true'
+        run: docker load --input /tmp/libsql-image.tar.gz
+
+      # v0.24.26
+      - name: Pull and save libsql docker image (cache miss)
+        if: matrix.provider == 'libsql' && steps.libsql-image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull ghcr.io/tursodatabase/libsql-server:v0.24.26
+          docker save ghcr.io/tursodatabase/libsql-server:v0.24.26 | gzip > /tmp/libsql-image.tar.gz
+
+      # v0.24.26
       - name: Start libsql provider fixture
         if: matrix.provider == 'libsql'
         run: |
@@ -321,7 +345,7 @@ jobs:
             --publish 18080:8080 \
             --publish 18081:8081 \
             --env SQLD_ADMIN_LISTEN_ADDR=0.0.0.0:8081 \
-            ghcr.io/tursodatabase/libsql-server:latest \
+            ghcr.io/tursodatabase/libsql-server:v0.24.26 \
             /bin/sqld --enable-namespaces --no-welcome
 
       - name: Wait for libsql provider fixture
@@ -762,6 +786,26 @@ jobs:
       - name: Refresh nimbus-ui artifact mtimes
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
+      # PW1: pin libsql image + cache docker layer (mirrors external-provider shard).
+      - name: Restore cached libsql docker image
+        id: libsql-image-cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/libsql-image.tar.gz
+          key: libsql-image-v0.24.26
+
+      - name: Load cached libsql docker image
+        if: steps.libsql-image-cache.outputs.cache-hit == 'true'
+        run: docker load --input /tmp/libsql-image.tar.gz
+
+      # v0.24.26
+      - name: Pull and save libsql docker image (cache miss)
+        if: steps.libsql-image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull ghcr.io/tursodatabase/libsql-server:v0.24.26
+          docker save ghcr.io/tursodatabase/libsql-server:v0.24.26 | gzip > /tmp/libsql-image.tar.gz
+
+      # v0.24.26
       - name: Start libsql provider fixture
         run: |
           docker run --detach \
@@ -769,7 +813,7 @@ jobs:
             --publish 18080:8080 \
             --publish 18081:8081 \
             --env SQLD_ADMIN_LISTEN_ADDR=0.0.0.0:8081 \
-            ghcr.io/tursodatabase/libsql-server:latest \
+            ghcr.io/tursodatabase/libsql-server:v0.24.26 \
             /bin/sqld --enable-namespaces --no-welcome
 
       - name: Wait for libsql provider fixture
