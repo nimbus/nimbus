@@ -30,10 +30,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
     completed runtime engine seam and execution-isolation baselines, keeps
     Bun/JSC proof-only and `in_process_trusted_only`, records Gate 10 on Bun
     `c57f7e58c0`, Gate 11 permission inventory on Bun `9e20ac28a2`, and Gate
-    12 memory behavior on Bun `f6c87be47e`, and Gate 13 package/module policy
-    on Bun `f0cee692c0`, and drives BJ4-BJ7: lifecycle/reuse,
-    artifact metadata and server rejection, fork/upstream/hold decision, and
-    closeout.
+    12 memory behavior on Bun `f6c87be47e`, Gate 13 package/module policy on
+    Bun `f0cee692c0`, and Gate 14 lifecycle/reuse stress on Bun
+    `65cdc97796`, and drives BJ5-BJ7: artifact metadata and server rejection,
+    fork/upstream/hold decision, and closeout.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
