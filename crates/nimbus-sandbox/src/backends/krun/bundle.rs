@@ -9,6 +9,7 @@ use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const EGRESS_POLICY_ENV: &str = "NIMBUS_SANDBOX_EGRESS_POLICY_JSON";
 const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
 const KRUN_REQUIRED_CAPABILITIES: &[&str] =
     &["CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE", "CAP_SYS_ADMIN"];
@@ -233,6 +234,10 @@ pub(crate) fn build_bundle_config(
 
     validate_port_bindings(&spec.port_bindings)?;
     validate_resource_limits(&spec.resources)?;
+    spec.egress
+        .validate()
+        .map_err(|message| SandboxError::InvalidSpec { message })?;
+    let process_env = process_env(spec)?;
 
     // krun VMMs always run as root because the crun process needs /dev/kvm access.
     // Any image USER is applied later inside the guest after the VMM is already
@@ -280,7 +285,7 @@ pub(crate) fn build_bundle_config(
             "noNewPrivileges": true,
             "capabilities": krun_process_capabilities(),
             "args": spec.process.args,
-            "env": process_env(&spec.process),
+            "env": process_env,
             "cwd": process_cwd(&spec.process),
         },
         "root": {
@@ -387,12 +392,24 @@ fn process_cwd(process: &SandboxProcessSpec) -> String {
     }
 }
 
-fn process_env(process: &SandboxProcessSpec) -> Vec<String> {
-    if process.env.is_empty() {
-        return vec![DEFAULT_PATH_ENV.to_owned()];
-    }
+fn process_env(spec: &SandboxSpec) -> Result<Vec<String>> {
+    let mut env = if spec.process.env.is_empty() {
+        vec![DEFAULT_PATH_ENV.to_owned()]
+    } else {
+        spec.process.env.clone()
+    };
+    env.retain(|entry| env_key(entry).is_none_or(|key| key != EGRESS_POLICY_ENV));
+    let rendered =
+        serde_json::to_string(&spec.egress).map_err(|error| SandboxError::OperationFailed {
+            message: format!("failed to serialize sandbox egress policy: {error}"),
+        })?;
+    env.push(format!("{EGRESS_POLICY_ENV}={rendered}"));
+    Ok(env)
+}
 
-    process.env.clone()
+fn env_key(entry: &str) -> Option<&str> {
+    let (key, _) = entry.split_once('=')?;
+    (!key.is_empty()).then_some(key)
 }
 
 fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
@@ -528,6 +545,7 @@ mod tests {
         write_bundle_config,
     };
     use crate::backend::SandboxBackendKind;
+    use crate::egress::{SandboxEgressPolicy, SandboxEgressRule};
     use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{
         SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
@@ -639,6 +657,36 @@ mod tests {
             config["process"]["noNewPrivileges"], true,
             "krun VMM process should not be able to gain new privileges through exec"
         );
+    }
+
+    #[test]
+    fn bundle_config_materializes_sandbox_egress_policy_env() {
+        let spec =
+            sample_spec().with_egress_policy(SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "stripe",
+                PublishedEndpointProtocol::Https,
+                "api.stripe.com",
+                443,
+            )
+            .with_methods(["POST"])
+            .with_path_prefixes(["/v1/"])]));
+
+        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build");
+
+        let env = config["process"]["env"]
+            .as_array()
+            .expect("env should be an array");
+        let policy_env = env
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .find_map(|entry| entry.strip_prefix("NIMBUS_SANDBOX_EGRESS_POLICY_JSON="))
+            .expect("egress policy env should be present");
+        let policy: SandboxEgressPolicy =
+            serde_json::from_str(policy_env).expect("policy env should contain JSON");
+        assert_eq!(policy.rules().len(), 1);
+        assert_eq!(policy.rules()[0].name, "stripe");
+        assert_eq!(policy.rules()[0].methods, vec!["POST".to_string()]);
     }
 
     #[test]

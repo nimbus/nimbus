@@ -30,7 +30,8 @@ pub use nimbus_runtime::{
 // Sandbox orchestration surface.
 pub use nimbus_sandbox::{
     PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
-    SandboxBuildLaunchSpec, SandboxError, SandboxFilesystemSpec, SandboxHandle, SandboxId,
+    SandboxBuildLaunchSpec, SandboxEgressAuthorization, SandboxEgressPolicy, SandboxEgressRequest,
+    SandboxEgressRule, SandboxError, SandboxFilesystemSpec, SandboxHandle, SandboxId,
     SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSource,
     SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge,
     SandboxResourceLimits, SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec,

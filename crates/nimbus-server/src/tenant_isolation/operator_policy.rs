@@ -19,6 +19,12 @@ use super::{
     TenantWorkloadKind,
 };
 
+mod egress;
+mod reload;
+
+pub use egress::{OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy};
+pub use reload::{OperatorPolicyReloadOutcome, OperatorPolicyReloadState};
+
 pub const OPERATOR_POLICY_SCHEMA_VERSION: u32 = 1;
 
 const DEFAULT_REDACTED_FIELDS: [&str; 4] = [
@@ -93,15 +99,17 @@ impl OperatorPolicyDocument {
         let image_policy = workload.image.summary();
         let image_reference = image_policy.reference.clone();
         let endpoint_summaries = workload.network.endpoint_summaries();
+        let sandbox_egress = workload.network.egress_summaries();
         let quotas_summary = workload.quotas.summary();
-        let trace = workload.trace(
+        let trace = workload.trace(OperatorPolicyTraceInput {
             mode,
-            storage_namespace.as_str(),
-            &services,
-            &endpoint_summaries,
-            &named_volumes,
-            secret_handles.len(),
-        );
+            storage_namespace: storage_namespace.as_str(),
+            services: &services,
+            network_endpoint_summaries: &endpoint_summaries,
+            sandbox_egress_summaries: &sandbox_egress,
+            named_volumes: &named_volumes,
+            secret_handle_count: secret_handles.len(),
+        });
 
         let mut quotas = TenantQuotaPolicyDecision::default()
             .with_runtime_budget(runtime_policy.tenant_budget());
@@ -138,6 +146,7 @@ impl OperatorPolicyDocument {
             sandbox_id: workload.sandbox.sandbox_id.clone(),
             services,
             network_endpoints: endpoint_summaries,
+            sandbox_egress,
             storage_namespace,
             named_volumes,
             image_policy,
@@ -293,33 +302,39 @@ impl OperatorPolicyWorkload {
         Ok(())
     }
 
-    fn trace(
-        &self,
-        mode: TenantIsolationMode,
-        storage_namespace: &str,
-        services: &[String],
-        network_endpoint_summaries: &[String],
-        named_volumes: &[String],
-        secret_handle_count: usize,
-    ) -> Vec<String> {
+    fn trace(&self, input: OperatorPolicyTraceInput<'_>) -> Vec<String> {
         let mut trace = vec![
-            format!("tenant isolation mode: {}", mode.as_str()),
+            format!("tenant isolation mode: {}", input.mode.as_str()),
             format!("runtime profile: {}", self.runtime.profile.label()),
             format!("runtime tier: {}", self.runtime.tier.label()),
-            format!("service grants: {}", join_or_none(services)),
+            format!("service grants: {}", join_or_none(input.services)),
             format!(
                 "network endpoints: {}",
-                join_or_none(network_endpoint_summaries)
+                join_or_none(input.network_endpoint_summaries)
             ),
-            format!("storage namespace: {storage_namespace}"),
-            format!("named volumes: {}", join_or_none(named_volumes)),
-            format!("secret handles: {secret_handle_count}"),
+            format!(
+                "sandbox egress: {}",
+                join_or_none(input.sandbox_egress_summaries)
+            ),
+            format!("storage namespace: {}", input.storage_namespace),
+            format!("named volumes: {}", join_or_none(input.named_volumes)),
+            format!("secret handles: {}", input.secret_handle_count),
         ];
         if let Some(image) = &self.image.reference {
             trace.push(format!("image reference: {image}"));
         }
         trace
     }
+}
+
+struct OperatorPolicyTraceInput<'a> {
+    mode: TenantIsolationMode,
+    storage_namespace: &'a str,
+    services: &'a [String],
+    network_endpoint_summaries: &'a [String],
+    sandbox_egress_summaries: &'a [String],
+    named_volumes: &'a [String],
+    secret_handle_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -443,6 +458,8 @@ impl OperatorServicePolicy {
 pub struct OperatorNetworkPolicy {
     #[serde(default)]
     pub endpoints: Vec<OperatorNetworkEndpointPolicy>,
+    #[serde(default)]
+    pub egress: OperatorSandboxEgressPolicy,
 }
 
 impl OperatorNetworkPolicy {
@@ -460,6 +477,7 @@ impl OperatorNetworkPolicy {
             }
             decision
         }))
+        .with_sandbox_egress(self.egress.to_sandbox_policy())
     }
 
     fn endpoint_summaries(&self) -> Vec<String> {
@@ -467,6 +485,10 @@ impl OperatorNetworkPolicy {
             .into_iter()
             .map(OperatorNetworkEndpointPolicy::summary)
             .collect()
+    }
+
+    fn egress_summaries(&self) -> Vec<String> {
+        self.egress.summaries()
     }
 
     fn normalized_endpoints(&self) -> Vec<&OperatorNetworkEndpointPolicy> {
@@ -497,6 +519,7 @@ impl OperatorNetworkPolicy {
                 ));
             }
         }
+        self.egress.validate(workload_key)?;
         Ok(())
     }
 }
@@ -885,6 +908,10 @@ impl OperatorPolicyEvaluation {
                 join_or_none(&decision.network_endpoints)
             ));
             output.push_str(&format!(
+                "  sandbox_egress: {}\n",
+                join_or_none(&decision.sandbox_egress)
+            ));
+            output.push_str(&format!(
                 "  storage_namespace: {}\n",
                 decision.storage_namespace
             ));
@@ -929,6 +956,7 @@ pub struct OperatorPolicyDecisionEvaluation {
     pub sandbox_id: Option<String>,
     pub services: Vec<String>,
     pub network_endpoints: Vec<String>,
+    pub sandbox_egress: Vec<String>,
     pub storage_namespace: String,
     pub named_volumes: Vec<String>,
     pub image_policy: OperatorPolicyImageSummary,
@@ -994,6 +1022,7 @@ impl OperatorPolicyDiff {
 
     pub fn render_text(&self) -> String {
         let mut output = String::from("Policy diff\n");
+        output.push_str(&format!("Lifecycle: {}\n", self.lifecycle().label()));
         if self.added_workloads.is_empty()
             && self.removed_workloads.is_empty()
             && self.changed_workloads.is_empty()
@@ -1008,18 +1037,36 @@ impl OperatorPolicyDiff {
             output.push_str(&format!("- {}\n", decision.workload_key));
         }
         for summary in &self.changed_workloads {
-            output.push_str(&format!("~ {}\n", summary.workload_key));
+            output.push_str(&format!(
+                "~ {} (lifecycle: {})\n",
+                summary.workload_key,
+                summary.lifecycle.label()
+            ));
             for change in &summary.changes {
                 output.push_str(&format!("  {change}\n"));
             }
         }
         output
     }
+
+    pub fn lifecycle(&self) -> OperatorPolicyLifecycle {
+        if !self.added_workloads.is_empty() || !self.removed_workloads.is_empty() {
+            return OperatorPolicyLifecycle::RecreateRequired;
+        }
+        self.changed_workloads
+            .iter()
+            .map(|summary| summary.lifecycle)
+            .fold(
+                OperatorPolicyLifecycle::DynamicReload,
+                OperatorPolicyLifecycle::max,
+            )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OperatorPolicyDiffSummary {
     pub workload_key: String,
+    pub lifecycle: OperatorPolicyLifecycle,
     pub changes: Vec<String>,
 }
 
@@ -1029,11 +1076,13 @@ impl OperatorPolicyDiffSummary {
         next: &OperatorPolicyDecisionEvaluation,
     ) -> Option<Self> {
         let mut changes = Vec::new();
+        let mut lifecycle = OperatorPolicyLifecycle::DynamicReload;
         if previous.tenant_id != next.tenant_id {
             changes.push(format!(
                 "tenant changed: {} -> {}",
                 previous.tenant_id, next.tenant_id
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         if previous.tenant_isolation_mode != next.tenant_isolation_mode {
             changes.push(format!(
@@ -1041,6 +1090,7 @@ impl OperatorPolicyDiffSummary {
                 previous.tenant_isolation_mode.as_str(),
                 next.tenant_isolation_mode.as_str()
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         if previous.runtime_profile != next.runtime_profile {
             changes.push(format!(
@@ -1048,6 +1098,7 @@ impl OperatorPolicyDiffSummary {
                 previous.runtime_profile.label(),
                 next.runtime_profile.label()
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         if previous.runtime_tier != next.runtime_tier {
             changes.push(format!(
@@ -1055,13 +1106,24 @@ impl OperatorPolicyDiffSummary {
                 previous.runtime_tier.label(),
                 next.runtime_tier.label()
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
-        record_vec_delta(&mut changes, "services", &previous.services, &next.services);
-        record_vec_delta(
+        if record_vec_delta(&mut changes, "services", &previous.services, &next.services) {
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
+        }
+        if record_vec_delta(
             &mut changes,
             "network endpoints",
             &previous.network_endpoints,
             &next.network_endpoints,
+        ) {
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
+        }
+        record_vec_delta(
+            &mut changes,
+            "sandbox egress",
+            &previous.sandbox_egress,
+            &next.sandbox_egress,
         );
         if previous.sandbox_backend != next.sandbox_backend {
             changes.push(format!(
@@ -1069,6 +1131,7 @@ impl OperatorPolicyDiffSummary {
                 optional_backend_label(previous.sandbox_backend),
                 optional_backend_label(next.sandbox_backend)
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         if previous.sandbox_id != next.sandbox_id {
             changes.push(format!(
@@ -1076,25 +1139,32 @@ impl OperatorPolicyDiffSummary {
                 previous.sandbox_id.as_deref().unwrap_or("none"),
                 next.sandbox_id.as_deref().unwrap_or("none")
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         if previous.storage_namespace != next.storage_namespace {
             changes.push(format!(
                 "storage namespace changed: {} -> {}",
                 previous.storage_namespace, next.storage_namespace
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
-        record_vec_delta(
+        if record_vec_delta(
             &mut changes,
             "volumes",
             &previous.named_volumes,
             &next.named_volumes,
-        );
-        record_image_policy_delta(&mut changes, &previous.image_policy, &next.image_policy);
+        ) {
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
+        }
+        if record_image_policy_delta(&mut changes, &previous.image_policy, &next.image_policy) {
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
+        }
         if previous.secret_handles != next.secret_handles {
             changes.push(format!(
                 "secret handles changed: count {} -> {}",
                 previous.secret_handle_count, next.secret_handle_count
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         if previous.quotas != next.quotas {
             changes.push(format!(
@@ -1102,6 +1172,7 @@ impl OperatorPolicyDiffSummary {
                 quota_summary(previous.quotas.sandbox_charge),
                 quota_summary(next.quotas.sandbox_charge)
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         record_vec_delta(
             &mut changes,
@@ -1116,38 +1187,74 @@ impl OperatorPolicyDiffSummary {
                 admission_label(&previous.runtime_admission),
                 admission_label(&next.runtime_admission)
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         if previous.decision_id != next.decision_id && changes.is_empty() {
             changes.push(format!(
                 "decision authority fingerprint changed: {} -> {}",
                 previous.decision_id, next.decision_id
             ));
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
         (!changes.is_empty()).then(|| Self {
             workload_key: next.workload_key.clone(),
+            lifecycle,
             changes,
         })
     }
 }
 
-fn record_vec_delta(changes: &mut Vec<String>, label: &str, previous: &[String], next: &[String]) {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorPolicyLifecycle {
+    #[default]
+    DynamicReload,
+    RecreateRequired,
+}
+
+impl OperatorPolicyLifecycle {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DynamicReload => "dynamic_reload",
+            Self::RecreateRequired => "recreate_required",
+        }
+    }
+
+    fn max(self, other: Self) -> Self {
+        if matches!(self, Self::RecreateRequired) || matches!(other, Self::RecreateRequired) {
+            Self::RecreateRequired
+        } else {
+            Self::DynamicReload
+        }
+    }
+}
+
+fn record_vec_delta(
+    changes: &mut Vec<String>,
+    label: &str,
+    previous: &[String],
+    next: &[String],
+) -> bool {
     let previous: BTreeSet<_> = previous.iter().cloned().collect();
     let next: BTreeSet<_> = next.iter().cloned().collect();
     let added: Vec<_> = next.difference(&previous).cloned().collect();
     let removed: Vec<_> = previous.difference(&next).cloned().collect();
+    let changed = !added.is_empty() || !removed.is_empty();
     if !added.is_empty() {
         changes.push(format!("{label} added: {}", added.join(", ")));
     }
     if !removed.is_empty() {
         changes.push(format!("{label} removed: {}", removed.join(", ")));
     }
+    changed
 }
 
 fn record_image_policy_delta(
     changes: &mut Vec<String>,
     previous: &OperatorPolicyImageSummary,
     next: &OperatorPolicyImageSummary,
-) {
+) -> bool {
+    let original_len = changes.len();
     if previous.reference != next.reference {
         changes.push(format!(
             "image reference changed: {} -> {}",
@@ -1196,6 +1303,7 @@ fn record_image_policy_delta(
             bool_label(next.allow_local_build)
         ));
     }
+    changes.len() != original_len
 }
 
 fn normalized_strings(values: &[String]) -> Vec<String> {
@@ -1443,6 +1551,73 @@ workloads:
       allowed_registries:
         - registry.example.com
 "#;
+    const INVALID_EGRESS_POLICY: &str = r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: sandbox_service
+    name: "worker"
+    sandbox:
+      sandbox_id: "worker-1"
+      backend: krun
+    network:
+      egress:
+        allow:
+          - name: all
+            protocol: https
+            host: "*.example.com"
+            port: 443
+"#;
+    const EGRESS_DIFF_FROM: &str = r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: sandbox_service
+    name: "worker"
+    sandbox:
+      sandbox_id: "worker-1"
+      backend: krun
+    network:
+      egress:
+        allow:
+          - name: stripe
+            protocol: https
+            host: api.stripe.com
+            port: 443
+            methods:
+              - POST
+            path_prefixes:
+              - /v1/
+"#;
+    const EGRESS_DIFF_TO: &str = r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: sandbox_service
+    name: "worker"
+    sandbox:
+      sandbox_id: "worker-1"
+      backend: krun
+    network:
+      egress:
+        allow:
+          - name: stripe
+            protocol: https
+            host: api.stripe.com
+            port: 443
+            methods:
+              - POST
+            path_prefixes:
+              - /v1/
+          - name: github
+            protocol: https
+            host: api.github.com
+            port: 443
+            methods:
+              - GET
+            path_prefixes:
+              - /repos/
+"#;
     const INVALID_CUSTOM_STORAGE_NAMESPACE: &str = r#"
 schema_version: 1
 tenant: tenant-a
@@ -1538,6 +1713,12 @@ workloads:
         assert_eq!(decision.storage_namespace, "tenant-a");
         assert_eq!(decision.services, vec!["db".to_string()]);
         assert_eq!(decision.network_endpoints.len(), 1);
+        assert_eq!(decision.sandbox_egress.len(), 1);
+        assert!(
+            decision.sandbox_egress[0].contains("stripe-api"),
+            "egress summary should name the rule: {:?}",
+            decision.sandbox_egress
+        );
         assert_eq!(
             decision.runtime_admission,
             TenantRuntimePolicyAdmission::AdmitInProcess
@@ -1559,6 +1740,7 @@ workloads:
         assert!(rendered.contains("runtime_function/messages:send"));
         assert!(rendered.contains("runtime_admission: admit_in_process"));
         assert!(rendered.contains("storage_namespace: tenant-a"));
+        assert!(rendered.contains("sandbox_egress: stripe-api"));
     }
 
     #[test]
@@ -1621,6 +1803,7 @@ workloads:
             (INVALID_PORT, "host_port must not be 0"),
             (INVALID_SECRET, "looks like inline secret material"),
             (INVALID_IMAGE, "image.digest_required=false is unsafe"),
+            (INVALID_EGRESS_POLICY, "wildcards"),
             (
                 INVALID_CUSTOM_STORAGE_NAMESPACE,
                 "custom storage namespaces are deferred",
@@ -1675,6 +1858,64 @@ workloads:
         assert!(rendered.contains("~ runtime_function/messages:send"));
         assert!(rendered.contains("services added: cache"));
         assert!(rendered.contains("network endpoints added: cache/redis"));
+        assert!(rendered.contains("Lifecycle: recreate_required"));
+    }
+
+    #[test]
+    fn policy_diff_classifies_egress_only_changes_as_dynamic_reload() {
+        let from = parse_policy(EGRESS_DIFF_FROM);
+        let to = parse_policy(EGRESS_DIFF_TO);
+
+        let diff = OperatorPolicyDiff::between(&from, &to).expect("diff should evaluate");
+
+        assert_eq!(diff.lifecycle(), OperatorPolicyLifecycle::DynamicReload);
+        assert_eq!(diff.changed_workloads.len(), 1);
+        assert_eq!(
+            diff.changed_workloads[0].lifecycle,
+            OperatorPolicyLifecycle::DynamicReload
+        );
+        let rendered = diff.render_text();
+        assert!(rendered.contains("Lifecycle: dynamic_reload"));
+        assert!(rendered.contains("sandbox egress added: github"));
+    }
+
+    #[test]
+    fn policy_reload_keeps_last_known_good_after_invalid_candidate() {
+        let mut reload = OperatorPolicyReloadState::new(parse_policy(EGRESS_DIFF_FROM))
+            .expect("initial policy should evaluate");
+        let original_ids = reload
+            .evaluation()
+            .decisions
+            .iter()
+            .map(|decision| decision.decision_id.clone())
+            .collect::<Vec<_>>();
+
+        let applied = reload.reload(parse_policy(EGRESS_DIFF_TO));
+        assert!(applied.applied, "valid egress change should apply");
+        assert_eq!(
+            applied.lifecycle,
+            Some(OperatorPolicyLifecycle::DynamicReload)
+        );
+
+        let rejected = reload.reload(parse_policy(INVALID_EGRESS_POLICY));
+        assert!(!rejected.applied, "invalid reload should be rejected");
+        assert!(
+            rejected
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("wildcards")),
+            "invalid reload should expose validation reason: {:?}",
+            rejected.error
+        );
+        assert_ne!(
+            rejected.active_decision_ids, original_ids,
+            "last-known-good should remain the previously applied candidate, not roll back to the original"
+        );
+        assert_eq!(
+            reload.evaluation().decisions[0].sandbox_egress.len(),
+            2,
+            "rejected reload should keep the last valid egress policy active"
+        );
     }
 
     #[test]

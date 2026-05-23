@@ -843,6 +843,80 @@ services:
 }
 
 #[test]
+fn compose_project_lowers_x_nimbus_egress_policy_into_sandbox_spec() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    x-nimbus:
+      egress:
+        allow:
+          - name: stripe-api
+            protocol: https
+            host: api.stripe.com
+            port: 443
+            methods:
+              - POST
+            path_prefixes:
+              - /v1/
+"#,
+    );
+
+    let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
+    let catalog = ComposeProjectPlan::load(&compose)
+        .expect("compose file should resolve")
+        .into_service_catalog()
+        .expect("compose project should lower into a service catalog");
+    let launch = catalog
+        .sandbox_service_for_tenant(&tenant_id, "api")
+        .expect("api launch should exist");
+
+    match launch {
+        SandboxServiceLaunch::Image(launch) => {
+            assert_eq!(launch.spec.egress.rules().len(), 1);
+            let rule = &launch.spec.egress.rules()[0];
+            assert_eq!(rule.name, "stripe-api");
+            assert_eq!(rule.host, "api.stripe.com");
+            assert_eq!(rule.methods, vec!["POST".to_string()]);
+            assert_eq!(rule.path_prefixes, vec!["/v1/".to_string()]);
+        }
+        SandboxServiceLaunch::Build(_) => panic!("api should lower as an image-backed launch"),
+    }
+}
+
+#[test]
+fn compose_project_rejects_invalid_x_nimbus_egress_policy() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    x-nimbus:
+      egress:
+        allow:
+          - name: all
+            protocol: https
+            host: "*.example.com"
+            port: 443
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose)
+        .expect_err("wildcard egress policy should fail during compose admission");
+    assert!(
+        error.to_string().contains("x-nimbus.egress") && error.to_string().contains("wildcards"),
+        "error should name the invalid egress shape: {error}"
+    );
+}
+
+#[test]
 fn production_compose_admission_rejects_local_builds_without_provenance_policy() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(

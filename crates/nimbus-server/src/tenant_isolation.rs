@@ -10,7 +10,8 @@ use nimbus_runtime::{
     RuntimeGrants, RuntimeMode, RuntimePolicy, RuntimePreset, RuntimeTenantBudget,
 };
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge, SandboxSpec,
+    PublishedEndpointProtocol, SandboxBackendKind, SandboxEgressAuthorization, SandboxEgressPolicy,
+    SandboxEgressRequest, SandboxResourceCharge, SandboxSpec,
 };
 
 use crate::sandbox::SandboxServiceLaunch;
@@ -32,10 +33,12 @@ pub use operator_policy::{
     OperatorImageProvenancePolicy, OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy,
     OperatorNetworkPolicy, OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults,
     OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDocument,
-    OperatorPolicyEvaluation, OperatorPolicyImageSummary, OperatorPolicyMetadata,
-    OperatorPolicyQuotaSummary, OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy,
-    OperatorRuntimeProfile, OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy,
-    OperatorStoragePolicy, OperatorVolumePolicy,
+    OperatorPolicyEvaluation, OperatorPolicyImageSummary, OperatorPolicyLifecycle,
+    OperatorPolicyMetadata, OperatorPolicyQuotaSummary, OperatorPolicyReloadOutcome,
+    OperatorPolicyReloadState, OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy,
+    OperatorRuntimeProfile, OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy,
+    OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy,
+    OperatorVolumePolicy,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,6 +559,7 @@ pub struct TenantNetworkPolicyDecision {
     endpoints: Vec<TenantNetworkEndpointDecision>,
     public_exposure_allowed: bool,
     generic_loopback_allowed: bool,
+    sandbox_egress: SandboxEgressPolicy,
 }
 
 impl TenantNetworkPolicyDecision {
@@ -564,11 +568,41 @@ impl TenantNetworkPolicyDecision {
             endpoints: endpoints.into_iter().collect(),
             public_exposure_allowed: false,
             generic_loopback_allowed: false,
+            sandbox_egress: SandboxEgressPolicy::default(),
         }
     }
 
     pub fn endpoints(&self) -> &[TenantNetworkEndpointDecision] {
         &self.endpoints
+    }
+
+    pub fn with_sandbox_egress(mut self, sandbox_egress: SandboxEgressPolicy) -> Self {
+        self.sandbox_egress = sandbox_egress;
+        self
+    }
+
+    pub fn sandbox_egress(&self) -> &SandboxEgressPolicy {
+        &self.sandbox_egress
+    }
+
+    pub fn authorize_sandbox_egress(
+        &self,
+        request: &SandboxEgressRequest,
+    ) -> SandboxEgressAuthorization {
+        self.sandbox_egress.authorize(request)
+    }
+
+    pub(crate) fn ensure_sandbox_egress_matches(
+        &self,
+        spec: &SandboxSpec,
+        context: &str,
+    ) -> Result<()> {
+        if &spec.egress == self.sandbox_egress() {
+            return Ok(());
+        }
+        Err(Error::InvalidInput(format!(
+            "tenant network policy did not authorize sandbox egress policy for {context}"
+        )))
     }
 }
 

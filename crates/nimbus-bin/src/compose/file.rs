@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use nimbus::{
     Error, PublishedEndpointProtocol, SandboxBackendKind, SandboxBuildLaunchSpec,
-    SandboxFilesystemSpec, SandboxImageLaunchSpec, SandboxImageProcessOverrides,
-    SandboxLifecycleSpec, SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec,
-    SandboxRestartPolicy, SandboxServiceCatalog, SandboxServiceLaunch, SandboxSpec, TenantId,
-    validate_tenant_volume_name,
+    SandboxEgressPolicy, SandboxEgressRule, SandboxFilesystemSpec, SandboxImageLaunchSpec,
+    SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSpec, SandboxPortBinding,
+    SandboxProcessSpec, SandboxRestartPolicy, SandboxServiceCatalog, SandboxServiceLaunch,
+    SandboxSpec, TenantId, validate_tenant_volume_name,
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -203,4 +203,26 @@ pub(crate) struct ComposeNimbusPlan {
     pub(crate) disk_limit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) log_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) egress: Option<ComposeNimbusEgressPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ComposeNimbusEgressPlan {
+    #[serde(default)]
+    pub(crate) allow: Vec<ComposeNimbusEgressRulePlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ComposeNimbusEgressRulePlan {
+    pub(crate) name: String,
+    pub(crate) protocol: PublishedEndpointProtocol,
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    #[serde(default)]
+    pub(crate) methods: Vec<String>,
+    #[serde(default)]
+    pub(crate) path_prefixes: Vec<String>,
+    #[serde(default)]
+    pub(crate) allow_internal_ips: bool,
 }
