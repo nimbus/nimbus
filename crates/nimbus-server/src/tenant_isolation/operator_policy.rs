@@ -9,6 +9,7 @@ use nimbus_sandbox::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::image_admission::{has_sha256_digest, parse_oci_image_reference};
 use super::{
     RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantImagePolicyDecision,
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
@@ -681,12 +682,17 @@ impl OperatorImagePolicy {
                 "workload `{workload_key}` image.allow_local_build=true is not allowed in production policy"
             ));
         }
-        if let Some(reference) = &self.reference
-            && !is_sha256_digest_pinned(reference)
-        {
-            return invalid_policy(format!(
-                "workload `{workload_key}` image.reference must be pinned with @sha256:<64 hex chars>"
-            ));
+        if let Some(reference) = &self.reference {
+            let parsed = parse_oci_image_reference(reference).map_err(|error| {
+                Error::InvalidInput(format!(
+                    "operator policy invalid: workload `{workload_key}` image.reference is invalid: {error}"
+                ))
+            })?;
+            if !has_sha256_digest(&parsed) {
+                return invalid_policy(format!(
+                    "workload `{workload_key}` image.reference must be pinned with @sha256:<64 hex chars>"
+                ));
+            }
         }
         validate_name_list(
             &self.allowed_registries,
@@ -1380,13 +1386,6 @@ fn quota_summary(charge: Option<SandboxResourceCharge>) -> String {
             )
         })
         .unwrap_or_else(|| "none".to_string())
-}
-
-fn is_sha256_digest_pinned(image_reference: &str) -> bool {
-    let Some((_, digest)) = image_reference.rsplit_once("@sha256:") else {
-        return false;
-    };
-    digest.len() == 64 && digest.as_bytes().iter().all(u8::is_ascii_hexdigit)
 }
 
 fn join_or_none(values: &[String]) -> String {

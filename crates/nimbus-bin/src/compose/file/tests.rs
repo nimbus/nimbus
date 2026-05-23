@@ -789,6 +789,60 @@ services:
 }
 
 #[test]
+fn production_compose_admission_accepts_docker_hub_short_digest_references() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let digest = "1111111111111111111111111111111111111111111111111111111111111111";
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        &format!(
+            r#"
+services:
+  api:
+    image: busybox@sha256:{digest}
+"#
+        ),
+    );
+
+    let project = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(compose),
+        ComposeAdmissionMode::Production,
+    )
+    .expect("Docker Hub short digest image should pass production admission");
+    let api = project.services.get("api").expect("api should load");
+    assert_eq!(
+        api.source,
+        ComposeLaunchPlan::Image {
+            image_reference: format!("busybox@sha256:{digest}"),
+        }
+    );
+}
+
+#[test]
+fn production_compose_admission_rejects_invalid_oci_references() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: ":justtag"
+"#,
+    );
+
+    let error = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(compose),
+        ComposeAdmissionMode::Production,
+    )
+    .expect_err("invalid OCI reference should fail production admission");
+    assert!(
+        error.to_string().contains("invalid OCI image reference"),
+        "expected parser failure, got: {error}"
+    );
+}
+
+#[test]
 fn production_compose_admission_rejects_local_builds_without_provenance_policy() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(

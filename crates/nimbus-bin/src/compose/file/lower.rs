@@ -3,6 +3,7 @@ use super::raw::*;
 use super::warnings::*;
 use super::*;
 use crate::compose::discovery::ResolvedComposeSelection;
+use oci_client::Reference;
 use std::collections::BTreeSet;
 
 impl ComposeProjectPlan {
@@ -409,7 +410,11 @@ fn admit_image_reference(
     image_reference: &str,
     admission_mode: ComposeAdmissionMode,
 ) -> Result<(), Error> {
-    if !admission_mode.is_production() || is_digest_pinned_image_reference(image_reference) {
+    if !admission_mode.is_production() {
+        return Ok(());
+    }
+    let reference = parse_oci_image_reference(image_reference)?;
+    if has_sha256_digest(&reference) {
         return Ok(());
     }
     Err(Error::InvalidInput(format!(
@@ -417,14 +422,25 @@ fn admit_image_reference(
     )))
 }
 
-fn is_digest_pinned_image_reference(image_reference: &str) -> bool {
-    let Some((_, digest)) = image_reference.rsplit_once("@sha256:") else {
-        return false;
-    };
-    digest.len() == 64
-        && digest
-            .chars()
-            .all(|character| character.is_ascii_hexdigit())
+fn parse_oci_image_reference(image_reference: &str) -> Result<Reference, Error> {
+    let stripped = image_reference
+        .strip_prefix("docker://")
+        .unwrap_or(image_reference);
+    Reference::try_from(stripped).map_err(|error| {
+        Error::InvalidInput(format!(
+            "invalid OCI image reference `{image_reference}`: {error}"
+        ))
+    })
+}
+
+fn has_sha256_digest(reference: &Reference) -> bool {
+    reference
+        .digest()
+        .is_some_and(|digest| digest.strip_prefix("sha256:").is_some_and(is_sha256_hex))
+}
+
+fn is_sha256_hex(digest: &str) -> bool {
+    digest.len() == 64 && digest.as_bytes().iter().all(u8::is_ascii_hexdigit)
 }
 
 impl ComposeProcessPlan {

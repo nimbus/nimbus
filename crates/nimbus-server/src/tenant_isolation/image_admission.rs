@@ -1,4 +1,5 @@
 use nimbus_core::{Error, Result};
+use oci_client::Reference;
 use serde::Serialize;
 
 use super::TenantImagePolicyDecision;
@@ -193,15 +194,16 @@ impl TenantImagePolicyDecision {
                 })
             }
             TenantImageAdmissionSource::RegistryImage { image_reference } => {
-                self.admit_registry_image_reference(image_reference)?;
+                let parsed_reference = self.admit_registry_image_reference(image_reference)?;
+                let canonical_image_reference = parsed_reference.whole();
                 let verification = if self.requires_provider_verification() {
-                    provider.verify_registry_image(image_reference)?
+                    provider.verify_registry_image(&canonical_image_reference)?
                 } else {
                     TenantImageVerificationEvidence::default()
                 };
-                self.ensure_signature_policy(&verification, image_reference)?;
-                self.ensure_provenance_policy(&verification, image_reference)?;
-                self.ensure_sbom_policy(&verification, image_reference)?;
+                self.ensure_signature_policy(&verification, &canonical_image_reference)?;
+                self.ensure_provenance_policy(&verification, &canonical_image_reference)?;
+                self.ensure_sbom_policy(&verification, &canonical_image_reference)?;
                 Ok(TenantImageAdmission {
                     source,
                     verification,
@@ -219,21 +221,25 @@ impl TenantImagePolicyDecision {
         )))
     }
 
-    fn admit_registry_image_reference(&self, image_reference: &str) -> Result<()> {
-        if let Some(expected) = self.image_reference.as_deref()
-            && expected != image_reference
-        {
-            return Err(Error::PermissionDenied(format!(
-                "tenant image policy authorized image `{expected}`, but launch requested `{image_reference}`"
-            )));
+    fn admit_registry_image_reference(&self, image_reference: &str) -> Result<Reference> {
+        let requested = parse_oci_image_reference(image_reference)?;
+        if let Some(expected) = self.image_reference.as_deref() {
+            let expected = parse_oci_image_reference(expected)?;
+            if expected.whole() != requested.whole() {
+                return Err(Error::PermissionDenied(format!(
+                    "tenant image policy authorized image `{}`, but launch requested `{}`",
+                    expected.whole(),
+                    requested.whole()
+                )));
+            }
         }
-        if self.digest_required && !is_sha256_digest_pinned(image_reference) {
+        if self.digest_required && !has_sha256_digest(&requested) {
             return Err(Error::PermissionDenied(format!(
                 "tenant image policy requires an immutable sha256 digest reference, but `{image_reference}` is tag-only or missing a valid digest"
             )));
         }
         if !self.allowed_registries.is_empty() {
-            let registry = image_registry(image_reference);
+            let registry = requested.registry();
             if !self
                 .allowed_registries
                 .iter()
@@ -245,7 +251,7 @@ impl TenantImagePolicyDecision {
                 )));
             }
         }
-        Ok(())
+        Ok(requested)
     }
 
     fn requires_provider_verification(&self) -> bool {
@@ -311,30 +317,30 @@ impl TenantImagePolicyDecision {
     }
 }
 
-fn is_sha256_digest_pinned(image_reference: &str) -> bool {
-    let Some((_, digest)) = image_reference.rsplit_once("@sha256:") else {
-        return false;
-    };
-    digest.len() == 64 && digest.as_bytes().iter().all(u8::is_ascii_hexdigit)
-}
-
-fn image_registry(image_reference: &str) -> &str {
-    let image_reference = image_reference
+pub(crate) fn parse_oci_image_reference(image_reference: &str) -> Result<Reference> {
+    let stripped = image_reference
         .strip_prefix("docker://")
         .unwrap_or(image_reference);
-    let first_segment = image_reference
-        .split_once('/')
-        .map(|(registry, _)| registry)
-        .unwrap_or(image_reference);
-    if first_segment == "localhost" || first_segment.contains('.') || first_segment.contains(':') {
-        first_segment
-    } else {
-        "docker.io"
-    }
+    Reference::try_from(stripped).map_err(|error| {
+        Error::InvalidInput(format!(
+            "invalid OCI image reference `{image_reference}`: {error}"
+        ))
+    })
+}
+
+pub(crate) fn has_sha256_digest(reference: &Reference) -> bool {
+    reference
+        .digest()
+        .is_some_and(|digest| digest.strip_prefix("sha256:").is_some_and(is_sha256_hex))
+}
+
+fn is_sha256_hex(digest: &str) -> bool {
+    digest.len() == 64 && digest.as_bytes().iter().all(u8::is_ascii_hexdigit)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -346,6 +352,7 @@ mod tests {
     struct StaticImageVerifier {
         evidence: TenantImageVerificationEvidence,
         calls: AtomicUsize,
+        seen_references: Mutex<Vec<String>>,
     }
 
     impl StaticImageVerifier {
@@ -353,20 +360,32 @@ mod tests {
             Self {
                 evidence,
                 calls: AtomicUsize::new(0),
+                seen_references: Mutex::new(Vec::new()),
             }
         }
 
         fn calls(&self) -> usize {
             self.calls.load(Ordering::SeqCst)
         }
+
+        fn seen_references(&self) -> Vec<String> {
+            self.seen_references
+                .lock()
+                .expect("seen reference list should not be poisoned")
+                .clone()
+        }
     }
 
     impl TenantImageVerificationProvider for StaticImageVerifier {
         fn verify_registry_image(
             &self,
-            _image_reference: &str,
+            image_reference: &str,
         ) -> Result<TenantImageVerificationEvidence> {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            self.seen_references
+                .lock()
+                .expect("seen reference list should not be poisoned")
+                .push(image_reference.to_string());
             Ok(self.evidence.clone())
         }
     }
@@ -411,6 +430,62 @@ mod tests {
     }
 
     #[test]
+    fn image_admission_uses_canonical_oci_parser_for_registry_and_digest_policy() {
+        let digest = format!("sha256:{DIGEST}");
+        let docker_hub_image = format!("busybox@{digest}");
+        let localhost_image = format!("localhost:5000/nimbus/api:stable@{digest}");
+        let tag_and_digest_image = format!("registry.example.com/nimbus/api:v1@{digest}");
+        let verifier = StaticImageVerifier::default();
+
+        TenantImagePolicyDecision::default()
+            .require_digest_reference()
+            .with_allowed_registry("docker.io")
+            .admit_image(
+                TenantImageAdmissionSource::registry(docker_hub_image),
+                &verifier,
+            )
+            .expect("Docker Hub short names should normalize to docker.io/library with digest");
+        TenantImagePolicyDecision::default()
+            .require_digest_reference()
+            .with_allowed_registry("localhost:5000")
+            .admit_image(
+                TenantImageAdmissionSource::registry(localhost_image),
+                &verifier,
+            )
+            .expect("localhost registry with a port should parse and match policy");
+        TenantImagePolicyDecision::default()
+            .require_digest_reference()
+            .with_allowed_registry("registry.example.com")
+            .admit_image(
+                TenantImageAdmissionSource::registry(tag_and_digest_image),
+                &verifier,
+            )
+            .expect("tag plus digest references should remain immutable");
+    }
+
+    #[test]
+    fn image_admission_rejects_invalid_oci_references_before_provider_calls() {
+        let policy = TenantImagePolicyDecision::default()
+            .require_digest_reference()
+            .require_signature("https://issuer.example.com", "repo:nimbus/api");
+        let verifier = StaticImageVerifier::default();
+
+        let error = policy
+            .admit_image(TenantImageAdmissionSource::registry(":justtag"), &verifier)
+            .expect_err("invalid OCI reference should fail closed before verification");
+
+        assert_eq!(
+            verifier.calls(),
+            0,
+            "invalid OCI references should not call the verification provider"
+        );
+        assert!(
+            error.to_string().contains("invalid OCI image reference"),
+            "error should name the parser failure: {error}"
+        );
+    }
+
+    #[test]
     fn image_admission_rejects_unsigned_image_when_signature_is_required() {
         let policy = TenantImagePolicyDecision::digest_pinned(IMAGE)
             .require_signature("https://issuer.example.com", "repo:nimbus/api");
@@ -424,6 +499,60 @@ mod tests {
         assert!(
             error.to_string().contains("requires a matching signature"),
             "error should name the signature requirement: {error}"
+        );
+    }
+
+    #[test]
+    fn image_verification_provider_receives_canonical_oci_reference() {
+        let image = format!("docker://busybox@sha256:{DIGEST}");
+        let policy = TenantImagePolicyDecision::default()
+            .require_digest_reference()
+            .with_allowed_registry("docker.io")
+            .require_signature("https://issuer.example.com", "repo:nimbus/api");
+        let verifier = StaticImageVerifier::with_evidence(
+            TenantImageVerificationEvidence::new()
+                .with_signature("https://issuer.example.com", "repo:nimbus/api"),
+        );
+
+        policy
+            .admit_image(TenantImageAdmissionSource::registry(image), &verifier)
+            .expect("canonicalized Docker Hub digest image with matching signature should pass");
+
+        assert_eq!(
+            verifier.seen_references(),
+            vec![format!("docker.io/library/busybox@sha256:{DIGEST}")],
+            "provider should receive canonical OCI reference without transport prefix"
+        );
+    }
+
+    #[test]
+    fn image_admission_compares_expected_references_after_oci_normalization() {
+        let requested = format!("docker.io/library/busybox@sha256:{DIGEST}");
+        let policy = TenantImagePolicyDecision::digest_pinned(format!("busybox@sha256:{DIGEST}"));
+        let verifier = StaticImageVerifier::default();
+
+        policy
+            .admit_image(TenantImageAdmissionSource::registry(requested), &verifier)
+            .expect(
+                "expected and requested image references should compare after OCI normalization",
+            );
+    }
+
+    #[test]
+    fn image_admission_rejects_registry_mismatch_after_oci_normalization() {
+        let image = format!("ghcr.io/nimbus/api@sha256:{DIGEST}");
+        let policy = TenantImagePolicyDecision::default()
+            .require_digest_reference()
+            .with_allowed_registry("docker.io");
+        let verifier = StaticImageVerifier::default();
+
+        let error = policy
+            .admit_image(TenantImageAdmissionSource::registry(image), &verifier)
+            .expect_err("registry outside the allowlist should fail closed");
+
+        assert!(
+            error.to_string().contains("resolves to registry `ghcr.io`"),
+            "error should name the normalized OCI registry: {error}"
         );
     }
 
