@@ -102,9 +102,21 @@ test: $(UI_DIST_INDEX)
 test-rust-runtime:
 	$(SINGLE_FLIGHT) --key cargo-test-runtime-ci -- cargo test -p nimbus-runtime -- --skip runtime::tests::node_compat::
 
-# Run the CI workspace Rust test bucket
+# Run the CI workspace Rust test bucket. CW2: when NIMBUS_NEXTEST_PARTITION is
+# set to `N/M`, the partition is forwarded as `--partition hash:N/M` so the
+# job can be sharded across the CI matrix. The single-flight key includes the
+# partition suffix so concurrent shards in the same workspace do not collide.
+NIMBUS_NEXTEST_PARTITION ?=
+ifeq ($(strip $(NIMBUS_NEXTEST_PARTITION)),)
+NEXTEST_PARTITION_ARGS :=
+NEXTEST_SINGLE_FLIGHT_SUFFIX :=
+else
+NEXTEST_PARTITION_ARGS := --partition hash:$(NIMBUS_NEXTEST_PARTITION)
+NEXTEST_SINGLE_FLIGHT_SUFFIX := -$(subst /,-of-,$(NIMBUS_NEXTEST_PARTITION))
+endif
+
 test-rust-workspace: $(UI_DIST_INDEX)
-	NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 $(SINGLE_FLIGHT) --key cargo-nextest-workspace-ci -- cargo nextest run --workspace --exclude nimbus-runtime
+	NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 $(SINGLE_FLIGHT) --key cargo-nextest-workspace-ci$(NEXTEST_SINGLE_FLIGHT_SUFFIX) -- cargo nextest run --workspace --exclude nimbus-runtime $(NEXTEST_PARTITION_ARGS)
 
 # Run the CI workspace doctest bucket
 test-rust-docs: $(UI_DIST_INDEX)
