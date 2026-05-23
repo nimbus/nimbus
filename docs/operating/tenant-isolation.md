@@ -48,6 +48,46 @@ Unsafe response:
   access as a quick fix.
 - Do not switch production surfaces to local-development mode.
 
+## Operator Policy And Sandbox Egress
+
+Use operator policy when a workload needs explicit runtime, service, image,
+secret, volume, quota, network endpoint, or sandbox egress authority.
+
+Local review commands:
+
+```sh
+nimbus policy validate --file nimbus.policy.yaml
+nimbus policy explain --file nimbus.policy.yaml
+nimbus policy prove --file nimbus.policy.yaml
+nimbus policy diff --from before.policy.yaml --to after.policy.yaml
+```
+
+`validate` compiles the policy into `TenantIsolationDecision` inputs. `explain`
+shows decision IDs and grant traces. `prove` reports advisory evidence for
+broad egress, direct write-capable endpoint bypass, secret exposure, and
+cross-tenant-looking policy regressions. `diff` classifies dynamic reload
+versus recreate-required authority changes.
+
+Denied sandbox egress can produce a review-required policy draft through the
+operator policy draft API. Drafts are never applied automatically: they record
+`requires_explicit_approval=true`, strip query and fragment data from suggested
+path prefixes, and require `OperatorPolicyDraftApproval` before producing a
+cloned updated policy. Treat drafts as review input, not as an authorization
+decision by themselves.
+
+Use top-level `accepted_risks` only after review. Each accepted risk must carry
+the exact advisory ID, reviewer, and reason. Accepted risks mark matching
+advisories as accepted, but they do not hide unrelated unaccepted regressions.
+
+For process-capable sandbox egress:
+
+- Container launches use the proxy-backed enforcement path and can live-reload
+  egress-only policy changes through the sandbox backend reload seam.
+- krun execute-mode remains fail-closed until a packet-level libkrun TSI egress
+  PEP exists.
+- Runtime, browser, WASI agent, and future microVM-service work should consume
+  the same policy artifact instead of adding broad runtime grants.
+
 ## Drift Findings
 
 The drift scanner is read-only. It reports violations; it does not repair or
@@ -93,6 +133,7 @@ cargo test -p nimbus-server tenant_isolation -- --nocapture
 cargo test -p nimbus-server tenant_isolation_drift -- --nocapture
 cargo test -p nimbus-server audit_events -- --nocapture
 make verify-tenant-isolation-conformance
+make verify-enterprise-policy-egress
 cargo fmt --all --check
 cargo clippy -p nimbus-server --all-targets
 ```

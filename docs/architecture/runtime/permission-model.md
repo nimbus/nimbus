@@ -159,9 +159,10 @@ minted from admitted workload identity through
 ## Policy Engine Boundary
 
 Runtime grants are compiled by Nimbus-owned typed policy code. They are not
-currently delegated to an external policy language or runtime. Future
-operator-authored policy, external PDP integration, sandbox egress policy,
-OCSF/OpenTelemetry export, policy advisor, and policy prover work is owned by
+currently delegated to an external policy language or runtime. Operator policy
+now has a typed artifact, local `validate|explain|diff|prove` UX, optional
+external backend seam, sandbox egress policy, OCSF/OpenTelemetry export
+mappings, denied-event draft workflow, and advisory/prover lane through
 `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
 
 OPA/Rego and Cedar are credible future policy backends when customers need

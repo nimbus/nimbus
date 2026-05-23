@@ -34,6 +34,10 @@ nimbus policy explain --file nimbus.policy.yaml [-f text|json]
 ```
 
 ```bash
+nimbus policy prove --file nimbus.policy.yaml [-f text|json]
+```
+
+```bash
 nimbus policy diff --from before.policy.yaml --to after.policy.yaml [-f text|json]
 ```
 
@@ -175,10 +179,11 @@ Current command taxonomy:
 - `nimbus policy ...`
   shipped local policy UX for strict typed operator policy artifacts.
   `validate` proves the file parses and compiles into tenant-isolation
-  decisions, `explain` renders decision IDs and grant traces, and `diff`
-  summarizes authority changes between two policy files. `storage.namespace`
-  is currently restricted to `tenant` so policy output cannot imply custom
-  namespace enforcement before the storage PEP consumes it.
+  decisions, `explain` renders decision IDs and grant traces, `prove` renders
+  advisory evidence plus accepted-risk status, and `diff` summarizes authority
+  changes between two policy files. `storage.namespace` is currently
+  restricted to `tenant` so policy output cannot imply custom namespace
+  enforcement before the storage PEP consumes it.
 - `nimbus start`
   shipped explicit server-start verb
 - `nimbus compose ...`

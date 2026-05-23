@@ -22,19 +22,15 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `bash scripts/verify-coverage-acceleration.sh` (10 conditions).
 - `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
   - active execution plan for OpenShell-informed enterprise trust work.
-    EPS0-EPS2 are complete: strict typed operator policy artifacts,
+    EPS0-EPS8 are complete: strict typed operator policy artifacts,
     built-in Rust evaluation into the existing `TenantIsolationDecision`
-    path, and `nimbus policy validate|explain|diff`. EPS3 and EPS4a are
-    complete: policy lifecycle classifies launch-materialized egress and
-    static authority changes as recreate-required, and `SandboxEgressPolicy`
-    is wired through operator policy, strict Compose `x-nimbus.egress`,
-    service-manager launch checks, OCI bundle env materialization, and the
-    schema-versioned `SandboxEgressEnforcementPlan` launch contract. EPS4b1
-    is complete with a hidden `nimbus sandbox-supervisor` entrypoint that
-    consumes the contract without claiming packet-level enforcement. EPS4b2+
-    remain open for the actual sandbox-local proxy/Linux conformance and live
-    egress reload, OCSF/OpenTelemetry export, optional external PDP adapters,
-    and policy advisor/prover lanes.
+    path, `nimbus policy validate|explain|diff|prove`, backend-aware reload
+    lifecycle, container proxy-enforced sandbox egress with live reload, krun
+    fail-closed/recreate-required semantics, OCSF/OpenTelemetry export
+    mappings, optional external policy backend seam, denied-egress policy
+    drafts, advisory/prover fixtures with accepted-risk support, operator docs,
+    and the reusable `bash scripts/verify-enterprise-policy-egress.sh`
+    conformance gate.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

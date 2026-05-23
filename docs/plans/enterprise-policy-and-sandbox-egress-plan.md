@@ -52,7 +52,7 @@ This plan owns:
 - OCSF and OpenTelemetry log export mapping for tenant isolation and sandbox
   egress events
 - conformance gates for policy evaluation, egress denial, redaction, and drift
-- deferred policy advisor and policy prover lanes
+- denied-event policy draft and policy prover/advisory lanes
 
 This plan does not own:
 
@@ -150,7 +150,7 @@ should remain packaged and versioned with Nimbus.
 | EPS6 | `done` | Add external policy backend seam without making it mandatory. | `cargo test -p nimbus-server operator_policy -- --nocapture`: fake OPA/Cedar-style adapters prove allow evidence, deny fail-closed, malformed output fail-closed, timeout fail-closed, unavailable-backend fail-closed, no raw secret handles in backend requests, and built-in hard-deny precedence before external allow. |
 | EPS7 | `done` | Add denied-event policy draft workflow. | `cargo test -p nimbus-server operator_policy -- --nocapture`: denied egress fixtures produce minimal review-required draft policy, strip query parameters from suggested paths, never mutate the source policy, reject tenant/workload mismatches, fail apply without explicit approval, and apply only to a cloned policy after approval. |
 | EPS8 | `done` | Add policy prove/advisory lane after policy schema stabilizes. | `cargo test -p nimbus-server operator_policy -- --nocapture` and `cargo test -p nimbus-bin policy -- --nocapture`: prover fixtures detect broad egress, write-bypass, secret exposure, and cross-tenant policy regressions; accepted risks mark matching advisories without hiding unaccepted regressions; malformed accepted-risk records fail closed; `nimbus policy prove` parses and renders. |
-| EPS9 | `todo` | Publish operator docs and conformance runbook. | One command proves policy validation, egress enforcement, export redaction, external-backend fail-closed, and drift behavior. |
+| EPS9 | `done` | Publish operator docs and conformance runbook. | `bash scripts/verify-enterprise-policy-egress.sh`: one command proves policy validation, egress enforcement, export redaction, external-backend fail-closed, and drift behavior. Operator docs cover `policy prove`, denied-egress drafts, accepted risks, container live egress reload, and krun fail-closed semantics. |
 
 ## Success Criteria
 
@@ -359,6 +359,18 @@ regressions. `nimbus policy prove` exposes the lane through the CLI in text and
 JSON formats. Modularity note: `operator_policy.rs` is now a 1,613-line
 composition root over concept-owned children `egress.rs`, `external.rs`,
 `draft.rs`, `prove.rs`, `reload.rs`, and `tests.rs`.
+
+Batch 12 closed EPS9. The operator-facing docs now describe the completed
+policy workflow: `nimbus policy validate`, `explain`, `diff`, and `prove`;
+denied-egress drafts as review inputs that require explicit approval;
+accepted-risk records as advisory markers rather than suppressions; container
+egress as proxy-enforced and live-reloadable; and krun execute-mode as
+fail-closed/recreate-required until a packet-level libkrun TSI egress PEP
+exists. The reusable conformance gate is
+`bash scripts/verify-enterprise-policy-egress.sh`, also exposed as
+`make verify-enterprise-policy-egress`. Its five lanes prove operator policy
+validation/external-backend/draft/prove behavior, sandbox egress contracts,
+egress proxy enforcement, audit export redaction, and drift detection.
 
 ## Open Questions
 

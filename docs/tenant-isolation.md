@@ -75,7 +75,7 @@ audit redactions, and a deterministic decision ID.
 | In-process runtime cannot widen production host grants. | Runtime admission and `RuntimeExecutionAdmission`. | Runtime policy admission tests. | Unsafe policies need configured fallback executors before they can run outside the in-process tier. |
 | MicroVM service compute is tenant-scoped. | `SandboxServiceManager`, service registry, sandbox backend validation. | Conformance same-service-name and sandbox handle scenarios. | Host-side krun/libkrun process still carries accepted root VMM lifetime risk. |
 | Network exposure is private by default. | Service grants, loopback default, patched krun/libkrun TSI bind address. | Conformance localhost denial and Linux localhost-only proof from the sandbox hardening baseline. | Public exposure policy is intentionally not admitted yet. |
-| Sandbox egress has a typed deny-by-default policy contract. | `SandboxEgressPolicy`, compiled canonical policy checks, `SandboxEgressEnforcementPlan`, hidden `nimbus sandbox-supervisor` contract consumer, operator policy compiler, strict Compose `x-nimbus.egress`, service-manager launch checks, and OCI bundle env materialization. | Sandbox egress unit tests, sandbox-supervisor contract tests, operator reload tests, service-manager policy mismatch tests, and Compose lowering tests. | Actual guest traffic is not packet/proxy enforced, and egress policy changes require sandbox recreation, until EPS4b2-EPS4b3 land the sandbox-local proxy or equivalent Linux enforcement path. |
+| Sandbox egress has a typed deny-by-default policy contract. | `SandboxEgressPolicy`, compiled canonical policy checks, `SandboxEgressEnforcementPlan`, hidden `nimbus sandbox-supervisor` contract consumer, operator policy compiler, strict Compose `x-nimbus.egress`, service-manager launch checks, OCI bundle env materialization, and the container egress proxy reload seam. | `make verify-enterprise-policy-egress`, sandbox egress/proxy unit tests, sandbox-supervisor contract tests, operator reload/prove/draft tests, service-manager policy mismatch tests, Compose lowering tests, and minicloud container egress proof. | Container process-capable launches are proxy-enforced and live-reloadable. krun execute-mode remains fail-closed/recreate-required until a packet-level libkrun TSI PEP exists. |
 | Storage/API calls cannot cross tenants by caller-supplied tenant IDs. | Server/adapters/runtime HostBridge consume admitted tenant context. | Conformance runtime storage and bearer-swap scenarios. | External storage providers still require correct provider namespace configuration. |
 | Named volumes are tenant-owned and host binds are denied by default. | Compose admission and sandbox mount materialization. | Conformance same-named-volume scenario. | Shared read-only artifact policy is future work. |
 | Images are immutable at the production floor. | Image admission policy and provider seam using maintained OCI reference parsing. | Image admission unit tests plus production Compose admission tests. | Full Sigstore/Cosign/SLSA/SBOM verification is owned by `docs/plans/artifact-provenance-verification-plan.md` and not wired to a concrete provider yet. |
@@ -95,6 +95,7 @@ cargo test -p nimbus-server tenant_isolation -- --nocapture
 cargo test -p nimbus-server tenant_isolation_drift -- --nocapture
 cargo test -p nimbus-server audit_events -- --nocapture
 make verify-tenant-isolation-conformance
+make verify-enterprise-policy-egress
 cargo fmt --all --check
 cargo clippy -p nimbus-server --all-targets
 ```
@@ -119,21 +120,15 @@ Accepted for the current baseline:
   `TenantImageVerificationProvider` seam. Production deployments that require
   signatures, attestations, or SBOMs must wire battle-tested tooling behind it
   through `docs/plans/artifact-provenance-verification-plan.md`.
-- Arbitrary guest egress from process-capable microVM, browser, or agent
-  sandboxes now has a typed deny-by-default policy contract and launch
-  materialization seam, but it is not yet packet/proxy enforced. The
-  materialized contract is `SandboxEgressEnforcementPlan` carried through
-  `NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON`; today's mode is
-  `launch_metadata` with `recreate_required` reload. Current production
-  controls are private-by-default service exposure, tenant-scoped service
-  grants, broad runtime-network rejection, and egress-policy mismatch
-  rejection at sandbox launch. EPS4b1 adds a hidden validation-only
-  `nimbus sandbox-supervisor` contract consumer; EPS4b2-EPS4b3 in
-  `docs/plans/enterprise-policy-and-sandbox-egress-plan.md` owns the
-  sandbox-local proxy or equivalent Linux enforcement path.
+- Arbitrary guest egress from process-capable container sandboxes is enforced
+  through the host-side egress proxy and can live-reload policy through the
+  sandbox backend seam. krun execute-mode remains fail-closed until Nimbus has
+  a packet-level libkrun TSI egress PEP. Browser and agent services must
+  consume the same operator policy and sandbox egress contract rather than
+  inventing a separate network policy dialect.
 - `TenantIsolationEvent` is the canonical internal event schema. OCSF and
-  OpenTelemetry export mappings are deferred to
-  `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+  OpenTelemetry mappings exist as schema projections, but export routing,
+  retention, and SIEM transport remain operator/product choices.
 - Secret provider authentication is not complete until
   `docs/plans/service-identity-provider-auth-plan.md` can mint short-lived,
   tenant-scoped credentials from admitted `TenantWorkloadStableIdentity`
