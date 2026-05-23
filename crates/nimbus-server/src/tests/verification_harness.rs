@@ -3,6 +3,55 @@ use std::panic::{self, AssertUnwindSafe};
 use super::*;
 
 const VERIFICATION_CASE_FILTER_ENV: &str = "NIMBUS_VERIFY_CASE";
+const VERIFICATION_SHARD_ENV: &str = "NIMBUS_HARNESS_SHARD";
+
+fn parse_shard_env() -> std::result::Result<Option<(usize, usize)>, String> {
+    match std::env::var(VERIFICATION_SHARD_ENV) {
+        Ok(value) if value.is_empty() => Ok(None),
+        Ok(value) => parse_shard_spec(&value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(format!("failed to read {VERIFICATION_SHARD_ENV}: {error}")),
+    }
+}
+
+fn parse_shard_spec(value: &str) -> std::result::Result<(usize, usize), String> {
+    let (lhs, rhs) = value.split_once('/').ok_or_else(|| {
+        format!(
+            "{VERIFICATION_SHARD_ENV} must be of the form `N/M` with 1 <= N <= M; got `{value}`"
+        )
+    })?;
+    let n: usize = lhs.parse().map_err(|_| {
+        format!(
+            "{VERIFICATION_SHARD_ENV} shard index `{lhs}` is not a positive integer (got `{value}`)"
+        )
+    })?;
+    let m: usize = rhs.parse().map_err(|_| {
+        format!(
+            "{VERIFICATION_SHARD_ENV} total shard count `{rhs}` is not a positive integer (got `{value}`)"
+        )
+    })?;
+    if n == 0 || m == 0 || n > m {
+        return Err(format!(
+            "{VERIFICATION_SHARD_ENV} requires 1 <= N <= M; got `{value}`"
+        ));
+    }
+    Ok((n, m))
+}
+
+fn apply_shard(
+    cases: Vec<ServerVerificationHarnessCase>,
+    shard: Option<(usize, usize)>,
+) -> Vec<ServerVerificationHarnessCase> {
+    match shard {
+        Some((n, m)) => cases
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| index % m == (n - 1))
+            .map(|(_, case)| case)
+            .collect(),
+        None => cases,
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ServerVerificationHarnessCase {
@@ -182,7 +231,7 @@ fn selected_server_verification_cases(
     };
 
     let cases = server_verification_corpus(mode);
-    match filter {
+    let filtered = match filter {
         Some(filter) => {
             let selected = cases
                 .iter()
@@ -194,10 +243,12 @@ fn selected_server_verification_cases(
                     "unknown server verification harness case `{filter}`"
                 ));
             }
-            Ok(selected)
+            selected
         }
-        None => Ok(cases.to_vec()),
-    }
+        None => cases.to_vec(),
+    };
+    let shard = parse_shard_env()?;
+    Ok(apply_shard(filtered, shard))
 }
 
 fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {

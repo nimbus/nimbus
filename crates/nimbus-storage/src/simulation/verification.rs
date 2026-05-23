@@ -6,6 +6,57 @@ use nimbus_core::{Error, Result};
 use super::generated::{GeneratedTaskHistory, GeneratedTaskHistoryStep, GeneratedTaskRecord};
 
 pub const VERIFICATION_CASE_FILTER_ENV: &str = "NIMBUS_VERIFY_CASE";
+pub const VERIFICATION_SHARD_ENV: &str = "NIMBUS_HARNESS_SHARD";
+
+fn parse_shard_env() -> Result<Option<(usize, usize)>> {
+    match std::env::var(VERIFICATION_SHARD_ENV) {
+        Ok(value) if value.is_empty() => Ok(None),
+        Ok(value) => parse_shard_spec(&value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(Error::InvalidInput(format!(
+            "failed to read {VERIFICATION_SHARD_ENV}: {error}"
+        ))),
+    }
+}
+
+fn parse_shard_spec(value: &str) -> Result<(usize, usize)> {
+    let (lhs, rhs) = value.split_once('/').ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "{VERIFICATION_SHARD_ENV} must be of the form `N/M` with 1 <= N <= M; got `{value}`"
+        ))
+    })?;
+    let n: usize = lhs.parse().map_err(|_| {
+        Error::InvalidInput(format!(
+            "{VERIFICATION_SHARD_ENV} shard index `{lhs}` is not a positive integer (got `{value}`)"
+        ))
+    })?;
+    let m: usize = rhs.parse().map_err(|_| {
+        Error::InvalidInput(format!(
+            "{VERIFICATION_SHARD_ENV} total shard count `{rhs}` is not a positive integer (got `{value}`)"
+        ))
+    })?;
+    if n == 0 || m == 0 || n > m {
+        return Err(Error::InvalidInput(format!(
+            "{VERIFICATION_SHARD_ENV} requires 1 <= N <= M; got `{value}`"
+        )));
+    }
+    Ok((n, m))
+}
+
+fn apply_shard(
+    cases: Vec<GeneratedTaskHistorySeedCase>,
+    shard: Option<(usize, usize)>,
+) -> Vec<GeneratedTaskHistorySeedCase> {
+    match shard {
+        Some((n, m)) => cases
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| index % m == (n - 1))
+            .map(|(_, case)| case)
+            .collect(),
+        None => cases,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerificationHarnessMode {
@@ -173,10 +224,12 @@ pub fn selected_generated_task_history_seed_corpus(
             )));
         }
     };
-    filter_generated_task_history_seed_corpus(
+    let cases = filter_generated_task_history_seed_corpus(
         generated_task_history_seed_corpus(mode),
         filter.as_deref(),
-    )
+    )?;
+    let shard = parse_shard_env()?;
+    Ok(apply_shard(cases, shard))
 }
 
 pub fn replay_generated_task_history<Id, E, Insert, Update, Delete>(
