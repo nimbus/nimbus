@@ -147,7 +147,7 @@ should remain packaged and versioned with Nimbus.
 | EPS4b2b | `done` | Force process-capable guest egress through the supervisor/proxy or equivalent kernel-enforced path. | `cargo test -p nimbus-sandbox netavark_request -- --nocapture` and `cargo test -p nimbus-sandbox container_launch_network_config_denies_direct_egress_for_supervised_processes -- --nocapture` prove container execute-mode network intent uses a netavark internal bridge that denies ambient direct egress. Minicloud evidence: `sudo -E NIMBUS_CONTAINER_EGRESS_WORKDIR=/tmp/nimbus-container-egress-proof target/debug/deps/container_linux_egress-* --ignored --nocapture` passed, proving a real BusyBox guest records direct external HTTP egress as `denied`. `cargo test -p nimbus-sandbox krun::vm -- --nocapture` proves krun execute-mode now fails closed before bundle/state artifact materialization until a packet-level libkrun TSI egress PEP exists. |
 | EPS4b3 | `done` | Add Linux network conformance and live egress reload proof. | `cargo test -p nimbus-sandbox egress_proxy -- --nocapture` proves the reusable egress proxy enforces default deny, allowed HTTP endpoint success, HTTPS CONNECT tunneling, HTTPS absolute-URI fail-closed behavior, DNS-resolved internal/SSRF denial, L7 method/path denial, hop-by-hop proxy header cleanup, and live policy reload without restart. `cargo test -p nimbus-sandbox container -- --nocapture` proves container execute plans inject a bridge-reachable proxy URL, scrub spoofed proxy env, reserve proxy ports without colliding with service ports, advertise `live_reload`, stop proxy listeners during cleanup, and reload policy into a running proxy. `cargo test -p nimbus-server operator_policy -- --nocapture` and `cargo test -p nimbus-server service_manager -- --nocapture` prove the control plane classifies container egress-only diffs as dynamic, keeps krun egress recreate-required, and can call the sandbox reload seam for an active service. Minicloud evidence: `sudo -E NIMBUS_CONTAINER_EGRESS_WORKDIR=/tmp/nimbus-container-egress-proof target/debug/deps/container_linux_egress-* --ignored --test-threads=1 --nocapture` passed with 2 Linux root tests, proving direct proxy bypass denial, proxy-allowed endpoint success, loopback/default denial, L7 denial, DNS-resolved internal denial, and live reload inside a real BusyBox guest. |
 | EPS5 | `done` | Add OCSF and OpenTelemetry export mapping. | `cargo test -p nimbus-server audit_events -- --nocapture`: fixtures prove tenant isolation events export stable OCSF Base Event and OpenTelemetry log-record shaped JSON with decision IDs, trace/span correlation, namespaced Nimbus attributes, and redactions for tokens, credentials, query parameters, secret handles, authorization values, and raw bearer claims. |
-| EPS6 | `todo` | Add external policy backend seam without making it mandatory. | Fake OPA/Cedar-style adapters prove allow, deny, malformed output, timeout, and unavailable-backend fail-closed behavior. |
+| EPS6 | `done` | Add external policy backend seam without making it mandatory. | `cargo test -p nimbus-server operator_policy -- --nocapture`: fake OPA/Cedar-style adapters prove allow evidence, deny fail-closed, malformed output fail-closed, timeout fail-closed, unavailable-backend fail-closed, no raw secret handles in backend requests, and built-in hard-deny precedence before external allow. |
 | EPS7 | `todo` | Add denied-event policy draft workflow. | Denied egress fixtures produce minimal draft policy, never auto-apply, and require explicit approval. |
 | EPS8 | `todo` | Add policy prove/advisory lane after policy schema stabilizes. | Prover fixtures detect broad egress, write-bypass, secret exposure, or cross-tenant policy regressions with accepted-risk support. |
 | EPS9 | `todo` | Publish operator docs and conformance runbook. | One command proves policy validation, egress enforcement, export redaction, external-backend fail-closed, and drift behavior. |
@@ -312,10 +312,30 @@ attributes and correlation IDs are redacted before either export can serialize
 them, including tokens, credentials, query parameters, secret handles,
 authorization values, and raw bearer claims.
 
+Batch 9 closed EPS6. The operator policy evaluator now has an optional
+`OperatorExternalPolicyBackend` seam. The normal `evaluate()` path remains pure
+typed Rust and requires no OPA, Cedar, SPIRE, or SIEM. Operators or future
+integrations can call `evaluate_with_external_policy(...)` with a backend that
+receives a serializable `OperatorExternalPolicyRequest` built only after the
+built-in compiler admits the workload. That ordering gives built-in hard denies
+precedence: unsafe image, storage, egress, secret, or runtime shapes reject
+before any external backend can return allow. External allow attaches
+`OperatorExternalPolicyEvidence` to the decision evidence and explain output,
+including backend name, version, outcome, and reason. External deny, malformed
+backend output, timeout, or unavailable backend all fail closed without
+producing an admitted evaluation. Requests carry counts and summaries, not raw
+secret handles. Modularity note: `operator_policy.rs` is still a composition
+root and is intentionally kept below the 2,000-line hard limit; EPS6 split its
+tests into `operator_policy/tests.rs` and put the external backend seam in
+`operator_policy/external.rs`, leaving the remaining 1,599-line root as the
+schema/compiler/diff coordinator for this active plan.
+
 ## Open Questions
 
-- Should the first external policy adapter target OPA/Rego because of ecosystem
-  familiarity, or Cedar because of Rust-native authorization and analyzability?
+- Which production external policy adapter should ship first: OPA/Rego because
+  of ecosystem familiarity, or Cedar because of Rust-native authorization and
+  analyzability? EPS6 intentionally landed only the optional typed seam and fake
+  adapters.
 - Should policy prove start as custom Rust property/conformance checks before
   SMT integration, or adopt a solver once the policy schema lands?
 - How much L7 policy belongs in Nimbus versus a future service-mesh or proxy

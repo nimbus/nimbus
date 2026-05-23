@@ -20,9 +20,17 @@ use super::{
 };
 
 mod egress;
+mod external;
 mod reload;
 
 pub use egress::{OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy};
+use external::evaluate_external_policy_backend;
+pub use external::{
+    OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,
+    OperatorExternalPolicyBackendErrorKind, OperatorExternalPolicyBackendIdentity,
+    OperatorExternalPolicyBackendResult, OperatorExternalPolicyDecision,
+    OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome, OperatorExternalPolicyRequest,
+};
 pub use reload::{OperatorPolicyReloadOutcome, OperatorPolicyReloadState};
 
 pub const OPERATOR_POLICY_SCHEMA_VERSION: u32 = 1;
@@ -52,11 +60,18 @@ impl OperatorPolicyDocument {
     }
 
     pub fn evaluate(&self) -> Result<OperatorPolicyEvaluation> {
+        self.evaluate_with_external_policy(None)
+    }
+
+    pub fn evaluate_with_external_policy(
+        &self,
+        external_backend: Option<&dyn OperatorExternalPolicyBackend>,
+    ) -> Result<OperatorPolicyEvaluation> {
         self.validate_shape()?;
         let tenant_id = TenantId::new(self.tenant.clone())?;
         let mut decisions = Vec::with_capacity(self.workloads.len());
         for workload in &self.workloads {
-            decisions.push(self.evaluate_workload(&tenant_id, workload)?);
+            decisions.push(self.evaluate_workload(&tenant_id, workload, external_backend)?);
         }
         Ok(OperatorPolicyEvaluation {
             policy_name: self.metadata.name.clone(),
@@ -70,6 +85,7 @@ impl OperatorPolicyDocument {
         &self,
         tenant_id: &TenantId,
         workload: &OperatorPolicyWorkload,
+        external_backend: Option<&dyn OperatorExternalPolicyBackend>,
     ) -> Result<OperatorPolicyDecisionEvaluation> {
         let context = TenantIsolationContext::operator(tenant_id.clone(), "operator.policy");
         let mode = workload
@@ -134,7 +150,7 @@ impl OperatorPolicyDocument {
                 }),
         )?;
 
-        Ok(OperatorPolicyDecisionEvaluation {
+        let mut evaluation = OperatorPolicyDecisionEvaluation {
             workload_key: workload.key(),
             decision_id: decision.id().as_str().to_string(),
             tenant_id: decision.tenant_id().as_str().to_string(),
@@ -155,9 +171,21 @@ impl OperatorPolicyDocument {
             secret_handles,
             quotas: quotas_summary,
             audit_redactions: decision.audit_redactions().redacted_fields().to_vec(),
+            external_policy: None,
             trace,
             decision,
-        })
+        };
+        if let Some(backend) = external_backend {
+            let external_policy = evaluate_external_policy_backend(
+                backend,
+                evaluation.external_policy_request(self.metadata.name.clone()),
+            )?;
+            evaluation
+                .trace
+                .push(format!("external policy: {}", external_policy.summary()));
+            evaluation.external_policy = Some(external_policy);
+        }
+        Ok(evaluation)
     }
 
     fn validate_shape(&self) -> Result<()> {
@@ -935,6 +963,12 @@ impl OperatorPolicyEvaluation {
                 "  audit_redactions: {}\n",
                 join_or_none(&decision.audit_redactions)
             ));
+            if let Some(external_policy) = &decision.external_policy {
+                output.push_str(&format!(
+                    "  external_policy: {}\n",
+                    external_policy.summary()
+                ));
+            }
             for trace in &decision.trace {
                 output.push_str(&format!("  trace: {trace}\n"));
             }
@@ -966,9 +1000,39 @@ pub struct OperatorPolicyDecisionEvaluation {
     pub secret_handle_count: usize,
     pub quotas: OperatorPolicyQuotaSummary,
     pub audit_redactions: Vec<String>,
+    pub external_policy: Option<OperatorExternalPolicyEvidence>,
     pub trace: Vec<String>,
     #[serde(skip_serializing)]
     pub decision: TenantIsolationDecision,
+}
+
+impl OperatorPolicyDecisionEvaluation {
+    fn external_policy_request(
+        &self,
+        policy_name: Option<String>,
+    ) -> OperatorExternalPolicyRequest {
+        OperatorExternalPolicyRequest {
+            policy_name,
+            tenant_id: self.tenant_id.clone(),
+            workload_key: self.workload_key.clone(),
+            decision_id: self.decision_id.clone(),
+            workload_kind: self.decision.workload().kind().label().to_owned(),
+            workload_name: self.decision.workload().name().to_owned(),
+            runtime_tier: self.runtime_tier.label().to_owned(),
+            tenant_isolation_mode: self.tenant_isolation_mode.as_str().to_owned(),
+            runtime_admission: admission_label(&self.runtime_admission),
+            sandbox_backend: self.sandbox_backend.map(|backend| format!("{backend:?}")),
+            sandbox_id: self.sandbox_id.clone(),
+            services: self.services.clone(),
+            network_endpoints: self.network_endpoints.clone(),
+            sandbox_egress: self.sandbox_egress.clone(),
+            storage_namespace: self.storage_namespace.clone(),
+            named_volumes: self.named_volumes.clone(),
+            image_reference: self.image_reference.clone(),
+            secret_handle_count: self.secret_handle_count,
+            audit_redactions: self.audit_redactions.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
