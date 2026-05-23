@@ -578,12 +578,33 @@ jobs:
       - name: Verify install script helper
         run: bash scripts/verify-install-helper.sh
 
+  # CA3: Coverage is sharded across N parallel lanes plus a dependent
+  # reducer. Each shard runs `cargo llvm-cov --no-report` over its
+  # workspace member group and uploads its profraw artifact;
+  # `coverage-reduce` downloads every shard's profraw, rebuilds the
+  # instrumented workspace via sccache hits, and calls
+  # `cargo llvm-cov report --lcov` to produce the combined lcov.info
+  # consumed by codecov. Critical path is now bounded by
+  # `max(shard wall) + reducer wall` instead of `sum(crates wall)`.
   coverage:
-    name: Coverage
+    name: Coverage shard (${{ matrix.shard }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     if: github.event_name != 'schedule'
     needs: [ui-artifacts, warm-sccache]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: server
+            packages: "-p nimbus-server"
+            needs-providers: "true"
+          - shard: engine
+            packages: "-p nimbus-engine -p nimbus-sandbox -p nimbus-machine"
+            needs-providers: "false"
+          - shard: rest
+            packages: "-p nimbus-core -p nimbus-storage -p nimbus-testing -p nimbus-bin -p nimbus"
+            needs-providers: "false"
     env:
       NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
@@ -620,10 +641,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      # CC2/CM1: sccache is wired into every Rust job through the
-      # setup-rust-cached composite. RUSTC_WRAPPER and SCCACHE_GHA_ENABLED
-      # are set workflow-wide; the composite installs the binary and
-      # configures the GitHub Actions cache backend.
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
         with:
@@ -635,9 +652,6 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      # CC4: nimbus-ui artifacts come from the ui-artifacts leader job.
-      # Touching the files keeps Make's UI_DIST_INDEX target satisfied so no
-      # rebuild happens during the coverage cargo-llvm-cov invocation.
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
         with:
@@ -648,6 +662,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Start libsql provider fixture
+        if: matrix.needs-providers == 'true'
         run: |
           docker run --detach \
             --name nimbus-libsql-coverage \
@@ -658,6 +673,7 @@ jobs:
             /bin/sqld --enable-namespaces --no-welcome
 
       - name: Wait for libsql provider fixture
+        if: matrix.needs-providers == 'true'
         run: |
           for _ in {1..60}; do
             if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/nimbus_coverage_probe/create \
@@ -671,40 +687,87 @@ jobs:
           docker logs nimbus-libsql-coverage
           exit 1
 
-      - name: Generate coverage report
-        # Coverage now provisions explicit external provider fixtures for
-        # Postgres, MySQL, and libsql so provider suites run against the same
-        # explicit env-driven fixture contract the tests already support.
+      - name: Run coverage shard (no report)
+        # CA3: --no-report accumulates profraw files in
+        # target/llvm-cov-target/ but skips lcov generation. The reducer
+        # job downloads every shard's profraw and runs
+        # `cargo llvm-cov report --lcov` to produce the combined lcov.info.
         #
-        # Keep runtime correctness in the blocking runtime test lane, the
-        # verification harness matrix, and the scheduled/manual Node compatibility
-        # evidence workflow. Do not run the V8/Node compatibility corpus again
-        # under coverage instrumentation; it is a conformance signal, not useful
-        # line-coverage input, and instrumentation has made it exceed the PR
-        # coverage budget.
-        #
-        # CA2: re-enable parallel link now that CA1 swapped the link path
-        # to mold via setup-rust-cached. The CC6-era serialization existed
-        # because rust-lld bus-errored when large coverage test binaries
-        # linked in parallel on GitHub-hosted Linux runners. mold's separate
-        # process model and faster link path side-step the bus-error class:
-        # `-j 4` matches the runner core count and unblocks the Coverage
-        # critical path (was 24m27s at -j 1 baseline; see ca0-baseline.md).
-        # If bus errors recur under mold, document the disposition in
-        # ca2-coverage-parallelism.md and tag with `CA2-disposition:` in a
-        # comment above this run line; the verifier accepts that as
-        # intentional-keep evidence.
+        # CA2: -j 4 matches the ubuntu-24.04 runner vCPU count under mold;
+        # see ca2-coverage-parallelism.md for the parallelism unlock.
         #
         # Doc-tests are still executed in the rust-workspace-tests job
-        # (`make test-rust-docs`). cargo-llvm-cov excludes doc-tests by
-        # default (--doctests is the explicit opt-in, and unstable), so we
-        # rely on that default to skip the secondary `--test` harness
-        # rebuild that doubled link work under the instrumented profile.
-        run: cargo llvm-cov -j 4 --workspace --exclude nimbus-runtime --lcov --output-path lcov.info
+        # (`make test-rust-docs`); cargo-llvm-cov excludes doc-tests by
+        # default so we rely on that default to skip the secondary
+        # `--test` harness rebuild.
+        run: cargo llvm-cov --no-report -j 4 ${{ matrix.packages }}
 
       - name: Show sccache stats
-        # CC1: telemetry. Captures hit/miss/store counts so cc1-coverage-only-stats.md
-        # can record the trend across 5-10 runs.
+        if: always()
+        run: sccache --show-stats
+
+      - name: Upload coverage shard profraw
+        # cargo-llvm-cov writes profraw files to
+        # target/llvm-cov-target/profraw/. Upload only that subset so the
+        # artifact stays small (test binaries are rebuilt in the reducer
+        # via warm sccache hits).
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-profraw-${{ matrix.shard }}
+          path: target/llvm-cov-target/profraw/
+          if-no-files-found: error
+          retention-days: 1
+
+  coverage-reduce:
+    name: Coverage reducer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    if: github.event_name != 'schedule'
+    needs: [coverage, ui-artifacts]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-coverage-no-bin-v2
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Rebuild instrumented workspace (no run)
+        # cargo-llvm-cov's `report` subcommand needs the instrumented
+        # binaries' coverage maps on the reducer. Build them without
+        # running tests; sccache should hit on the per-crate compilation
+        # units the shards already populated, so this is fast.
+        run: cargo llvm-cov --no-run --workspace --exclude nimbus-runtime -j 4
+
+      - name: Download every shard's profraw
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-profraw-*
+          path: target/llvm-cov-target/profraw/
+          merge-multiple: true
+
+      - name: Generate combined coverage report
+        # The reducer step the CA3 verifier asserts: a `cargo llvm-cov
+        # report` invocation downstream of the shard matrix.
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Show sccache stats
         if: always()
         run: sccache --show-stats
 
@@ -720,7 +783,7 @@ jobs:
           if [ ! -f lcov.info ]; then
             echo "## Coverage" >> "${GITHUB_STEP_SUMMARY}"
             echo "" >> "${GITHUB_STEP_SUMMARY}"
-            echo ":warning: lcov.info not produced (coverage step failed before report)." >> "${GITHUB_STEP_SUMMARY}"
+            echo ":warning: lcov.info not produced (reducer failed before report)." >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
           covered=$(awk -F: '/^LH:/ {sum += $2} END {print sum+0}' lcov.info)

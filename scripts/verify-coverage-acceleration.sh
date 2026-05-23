@@ -151,12 +151,20 @@ else
 fi
 
 # 6. Coverage job is sharded (matrix N>=2 plus reducer that calls
-#    `cargo llvm-cov report`) (CA3).
+#    `cargo llvm-cov report`) (CA3). Accept either the inline array
+#    form `shard: [a, b, c]` or the matrix.include form with multiple
+#    `- shard: <value>` entries.
 step 6 "Coverage job sharded with reducer (CA3)"
 if [ -f "${CI_WF}" ]; then
   has_matrix_shard=0
   has_reducer=0
-  if grep -qE '^[[:space:]]+(shard|group):[[:space:]]*\[' "${CI_WF}"; then
+  inline_form=$(grep -cE '^[[:space:]]+(shard|group):[[:space:]]*\[' "${CI_WF}" 2>/dev/null || true)
+  inline_form=${inline_form// /}
+  include_form=$(grep -cE '^[[:space:]]+-[[:space:]]+(shard|group):[[:space:]]+[a-zA-Z_]' "${CI_WF}" 2>/dev/null || true)
+  include_form=${include_form// /}
+  if [ "${inline_form}" -gt 0 ] 2>/dev/null; then
+    has_matrix_shard=1
+  elif [ "${include_form}" -ge 2 ] 2>/dev/null; then
     has_matrix_shard=1
   fi
   if grep -qE 'cargo llvm-cov report' "${CI_WF}"; then
@@ -165,7 +173,7 @@ if [ -f "${CI_WF}" ]; then
   if [ "${has_matrix_shard}" = "1" ] && [ "${has_reducer}" = "1" ]; then
     pass "Coverage job declares shard matrix and reducer calls cargo llvm-cov report"
   else
-    fail "Coverage job is not sharded with a reducer" "shard_matrix=${has_matrix_shard} reducer=${has_reducer}"
+    fail "Coverage job is not sharded with a reducer" "shard_matrix=${has_matrix_shard} reducer=${has_reducer} inline=${inline_form} include=${include_form}"
   fi
 else
   fail "${CI_WF} missing"
