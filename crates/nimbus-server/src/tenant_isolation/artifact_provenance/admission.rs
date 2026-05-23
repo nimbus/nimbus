@@ -138,11 +138,12 @@ fn ensure_artifact_policy_evidence(
                 "{context} provenance policy for {subject_label} is missing builder ID"
             )));
         };
+        let source_uri = provenance.source_uri();
         if provenance.predicate_types().is_empty()
-            && !evidence
-                .attestations()
-                .iter()
-                .any(|candidate| candidate.builder_id() == builder_id)
+            && !evidence.attestations().iter().any(|candidate| {
+                candidate.builder_id() == builder_id
+                    && source_uri.is_none_or(|expected| candidate.source_uri() == Some(expected))
+            })
         {
             return Err(Error::PermissionDenied(format!(
                 "{context} requires provenance from builder `{builder_id}` for {subject_label}"
@@ -150,7 +151,9 @@ fn ensure_artifact_policy_evidence(
         }
         for predicate_type in provenance.predicate_types() {
             if !evidence.attestations().iter().any(|candidate| {
-                candidate.builder_id() == builder_id && candidate.predicate_type() == predicate_type
+                candidate.builder_id() == builder_id
+                    && source_uri.is_none_or(|expected| candidate.source_uri() == Some(expected))
+                    && candidate.predicate_type() == predicate_type
             }) {
                 return Err(Error::PermissionDenied(format!(
                     "{context} requires provenance predicate `{predicate_type}` from builder `{builder_id}` for {subject_label}"
@@ -216,7 +219,11 @@ mod tests {
                 evidence: ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
                     "fixture", "test",
                 ))
-                .with_attestation(builder_id, predicate_type),
+                .with_attestation_from_source(
+                    builder_id,
+                    SOURCE_URI,
+                    predicate_type,
+                ),
             }
         }
     }

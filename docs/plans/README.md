@@ -37,8 +37,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
     adapter contract, Cosign image signatures, SLSA image/file provenance,
     runtime bundle and guest executable admission, SBOM presence evidence,
     offline/private-root verification fixtures, the reusable
-    `bash scripts/verify-artifact-provenance.sh` conformance gate, and
-    operator docs.
+    `bash scripts/verify-artifact-provenance.sh` conformance gate, operator
+    docs, real sandbox service-image admission, Convex/Cloud Functions runtime
+    bundle provenance hook propagation, source-scoped provenance enforcement,
+    and composite signature/provenance/SBOM verifier chaining.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -501,19 +503,15 @@ archived plans only when you need historical execution detail.
     review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 - `docs/plans/artifact-provenance-verification-plan.md`
-  - canonical ready-for-execution plan for production artifact verification behind
+  - canonical completed baseline for production artifact verification behind
     the landed `TenantImageVerificationProvider` seam: maintained OCI
     reference parsing, Cosign verification, SLSA provenance verification,
-    SBOM evidence, offline/private-root verification, and extension from
-    service images to runtime/function bundles and machine images. Nimbus
-    owns policy evaluation and evidence normalization, not cryptographic
-    verification. AP0 parser hardening is complete: image admission and
-    Compose production admission use the maintained `oci-client::Reference`
-    parser for the digest-pinned provenance floor. AP1-AP7 are the next
-    executable lane after enterprise policy and sandbox egress; the plan owns
-    the verifier adapter contract, concrete Cosign/SLSA/SBOM/offline backends,
-    runtime/function bundle extension, and final conformance gate. Dependency
-    review at `docs/plans/research/service-identity-provenance-dependency-audit.md`.
+    SBOM evidence, offline/private-root verification, extension from service
+    images to runtime/function bundles and machine images, runtime hook
+    propagation, source-scoped provenance policy, and composite verifier
+    chaining. Nimbus owns policy evaluation and evidence normalization, not
+    cryptographic verification. Dependency review at
+    `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 ## Archive Policy
 
 Completed plans are stored in `docs/plans/archive/` for historical review, but

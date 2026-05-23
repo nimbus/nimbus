@@ -335,10 +335,25 @@ impl ArtifactVerificationEvidence {
         builder_id: impl Into<String>,
         predicate_type: impl Into<String>,
     ) -> Self {
-        self.attestations.push(ArtifactAttestationEvidence {
-            builder_id: builder_id.into(),
-            predicate_type: predicate_type.into(),
-        });
+        self.attestations.push(ArtifactAttestationEvidence::new(
+            builder_id.into(),
+            None,
+            predicate_type.into(),
+        ));
+        self
+    }
+
+    pub fn with_attestation_from_source(
+        mut self,
+        builder_id: impl Into<String>,
+        source_uri: impl Into<String>,
+        predicate_type: impl Into<String>,
+    ) -> Self {
+        self.attestations.push(ArtifactAttestationEvidence::new(
+            builder_id.into(),
+            Some(source_uri.into()),
+            predicate_type.into(),
+        ));
         self
     }
 
@@ -369,13 +384,27 @@ impl ArtifactVerificationEvidence {
             evidence = evidence.with_signature(signature.issuer(), signature.subject());
         }
         for attestation in &self.attestations {
-            evidence =
-                evidence.with_attestation(attestation.builder_id(), attestation.predicate_type());
+            evidence = if let Some(source_uri) = attestation.source_uri() {
+                evidence.with_attestation_from_source(
+                    attestation.builder_id(),
+                    source_uri,
+                    attestation.predicate_type(),
+                )
+            } else {
+                evidence.with_attestation(attestation.builder_id(), attestation.predicate_type())
+            };
         }
         if self.sbom_present {
             evidence = evidence.with_sbom();
         }
         evidence
+    }
+
+    fn merge(mut self, other: ArtifactVerificationEvidence) -> Self {
+        self.signatures.extend(other.signatures);
+        self.attestations.extend(other.attestations);
+        self.sbom_present |= other.sbom_present;
+        self
     }
 }
 
@@ -398,12 +427,25 @@ impl ArtifactSignatureEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ArtifactAttestationEvidence {
     builder_id: String,
+    source_uri: Option<String>,
     predicate_type: String,
 }
 
 impl ArtifactAttestationEvidence {
+    fn new(builder_id: String, source_uri: Option<String>, predicate_type: String) -> Self {
+        Self {
+            builder_id,
+            source_uri,
+            predicate_type,
+        }
+    }
+
     pub fn builder_id(&self) -> &str {
         &self.builder_id
+    }
+
+    pub fn source_uri(&self) -> Option<&str> {
+        self.source_uri.as_deref()
     }
 
     pub fn predicate_type(&self) -> &str {
@@ -487,6 +529,62 @@ impl TenantImageVerificationProvider for ArtifactImageVerificationProvider {
                 ))
             })?;
         Ok(evidence.to_tenant_image_evidence())
+    }
+}
+
+pub struct CompositeArtifactVerifierBackend {
+    identity: ArtifactVerifierBackendIdentity,
+    backends: Vec<Arc<dyn ArtifactVerifierBackend>>,
+}
+
+impl CompositeArtifactVerifierBackend {
+    pub fn new(
+        backends: impl IntoIterator<Item = Arc<dyn ArtifactVerifierBackend>>,
+    ) -> Result<Self> {
+        Self::with_identity(
+            ArtifactVerifierBackendIdentity::new("composite-artifact-verifier", "cli-chain"),
+            backends,
+        )
+    }
+
+    pub fn with_identity(
+        identity: ArtifactVerifierBackendIdentity,
+        backends: impl IntoIterator<Item = Arc<dyn ArtifactVerifierBackend>>,
+    ) -> Result<Self> {
+        let backends = backends.into_iter().collect::<Vec<_>>();
+        if backends.is_empty() {
+            return Err(Error::InvalidInput(
+                "composite artifact verifier requires at least one backend".to_string(),
+            ));
+        }
+        Ok(Self { identity, backends })
+    }
+}
+
+impl std::fmt::Debug for CompositeArtifactVerifierBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CompositeArtifactVerifierBackend")
+            .field("identity", &self.identity)
+            .field("backend_count", &self.backends.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ArtifactVerifierBackend for CompositeArtifactVerifierBackend {
+    fn verify_artifact(
+        &self,
+        request: &ArtifactVerificationRequest,
+    ) -> ArtifactVerifierResult<ArtifactVerificationEvidence> {
+        self.identity.validate()?;
+        let mut merged = ArtifactVerificationEvidence::new(self.identity.clone());
+        for backend in &self.backends {
+            let evidence = backend
+                .verify_artifact(request)
+                .map_err(ArtifactVerifierError::redacted)?;
+            merged = merged.merge(evidence);
+        }
+        Ok(merged)
     }
 }
 
@@ -852,6 +950,8 @@ struct NormalizedSignatureEvidence {
 #[derive(Debug, Deserialize)]
 struct NormalizedAttestationEvidence {
     builder_id: String,
+    #[serde(default)]
+    source_uri: Option<String>,
     predicate_type: String,
 }
 
@@ -884,7 +984,25 @@ fn parse_normalized_evidence(
                 identity.name()
             )));
         }
-        evidence = evidence.with_attestation(attestation.builder_id, attestation.predicate_type);
+        if attestation
+            .source_uri
+            .as_deref()
+            .is_some_and(|source_uri| source_uri.trim().is_empty())
+        {
+            return Err(ArtifactVerifierError::malformed_output(format!(
+                "artifact verifier `{}` emitted an empty attestation source URI",
+                identity.name()
+            )));
+        }
+        evidence = if let Some(source_uri) = attestation.source_uri {
+            evidence.with_attestation_from_source(
+                attestation.builder_id,
+                source_uri,
+                attestation.predicate_type,
+            )
+        } else {
+            evidence.with_attestation(attestation.builder_id, attestation.predicate_type)
+        };
     }
     if normalized.sbom_present {
         evidence = evidence.with_sbom();
@@ -1168,6 +1286,80 @@ mod tests {
             error.to_string().contains("runtime_bundle"),
             "unsupported artifact error should name the artifact class: {error}"
         );
+    }
+
+    #[derive(Debug, Clone)]
+    struct StaticArtifactBackend {
+        evidence: ArtifactVerificationEvidence,
+    }
+
+    impl StaticArtifactBackend {
+        fn new(evidence: ArtifactVerificationEvidence) -> Self {
+            Self { evidence }
+        }
+    }
+
+    impl ArtifactVerifierBackend for StaticArtifactBackend {
+        fn verify_artifact(
+            &self,
+            _request: &ArtifactVerificationRequest,
+        ) -> ArtifactVerifierResult<ArtifactVerificationEvidence> {
+            Ok(self.evidence.clone())
+        }
+    }
+
+    #[test]
+    fn composite_backend_merges_signature_provenance_and_sbom_evidence() {
+        let signature = Arc::new(StaticArtifactBackend::new(
+            ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
+                "signature-fixture",
+                "test",
+            ))
+            .with_signature("https://issuer.example.com", "repo:nimbus/api"),
+        ));
+        let provenance = Arc::new(StaticArtifactBackend::new(
+            ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
+                "provenance-fixture",
+                "test",
+            ))
+            .with_attestation_from_source(
+                "https://github.com/nimbus/builder",
+                "github.com/nimbus/nimbus",
+                "https://slsa.dev/provenance/v1",
+            ),
+        ));
+        let sbom = Arc::new(StaticArtifactBackend::new(
+            ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
+                "sbom-fixture",
+                "test",
+            ))
+            .with_sbom(),
+        ));
+        let backends: Vec<Arc<dyn ArtifactVerifierBackend>> = vec![signature, provenance, sbom];
+        let provider = ArtifactImageVerificationProvider::new(
+            CompositeArtifactVerifierBackend::new(backends)
+                .expect("composite verifier should build"),
+        );
+        let policy = TenantImagePolicyDecision::digest_pinned(IMAGE)
+            .require_signature("https://issuer.example.com", "repo:nimbus/api")
+            .require_provenance_from_source(
+                "https://github.com/nimbus/builder",
+                "github.com/nimbus/nimbus",
+                ["https://slsa.dev/provenance/v1"],
+            )
+            .require_sbom();
+
+        let admission = policy
+            .admit_image(TenantImageAdmissionSource::registry(IMAGE), &provider)
+            .expect("composite evidence should satisfy all image policy requirements");
+
+        assert_eq!(admission.verification().signatures().len(), 1);
+        assert_eq!(admission.verification().attestations().len(), 1);
+        assert_eq!(
+            admission.verification().attestations()[0].source_uri(),
+            Some("github.com/nimbus/nimbus")
+        );
+        assert!(admission.verification().sbom_present());
     }
 
     #[derive(Debug)]

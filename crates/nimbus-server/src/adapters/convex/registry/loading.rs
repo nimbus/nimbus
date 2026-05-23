@@ -182,6 +182,7 @@ impl ConvexRegistry {
             node22_runtime_executor,
             node24_runtime_policy,
             node24_runtime_executor,
+            runtime_bundle_provenance: None,
         })
     }
 
@@ -201,6 +202,32 @@ impl ConvexRegistry {
             convex_node_runtime_lane(limits, RuntimeCompatibilityTarget::Node24);
         self.node24_runtime_policy = node24_policy;
         self.node24_runtime_executor = node24_executor;
+        self
+    }
+
+    pub fn with_runtime_bundle_provenance_verifier(
+        mut self,
+        policy: crate::ArtifactVerificationPolicy,
+        verifier: impl crate::ArtifactVerifierBackend + 'static,
+    ) -> Self {
+        self.runtime_bundle_provenance = Some(RuntimeBundleProvenanceConfig::new(
+            policy,
+            Arc::new(verifier),
+            "convex runtime bundle",
+        ));
+        self
+    }
+
+    pub fn with_runtime_bundle_provenance_verifier_arc(
+        mut self,
+        policy: crate::ArtifactVerificationPolicy,
+        verifier: Arc<dyn crate::ArtifactVerifierBackend>,
+    ) -> Self {
+        self.runtime_bundle_provenance = Some(RuntimeBundleProvenanceConfig::new(
+            policy,
+            verifier,
+            "convex runtime bundle",
+        ));
         self
     }
 }

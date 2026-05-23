@@ -55,6 +55,7 @@ use self::requests::*;
 use self::templates::{empty_args, resolve_http_template};
 
 use crate::application_auth::ApplicationAuthVerifier;
+use crate::execution::invocations::RuntimeBundleProvenanceConfig;
 use crate::execution::read_tracking::{
     RuntimeIndexRangeRead, RuntimeReadSet, synthesize_runtime_subscription_base_queries,
 };
@@ -77,6 +78,7 @@ pub struct ConvexRegistry {
     node22_runtime_executor: Arc<RuntimeExecutor>,
     node24_runtime_policy: Arc<RuntimePolicy>,
     node24_runtime_executor: Arc<RuntimeExecutor>,
+    runtime_bundle_provenance: Option<RuntimeBundleProvenanceConfig>,
 }
 
 impl Default for ConvexRegistry {
@@ -104,6 +106,7 @@ impl Default for ConvexRegistry {
             node22_runtime_executor,
             node24_runtime_policy,
             node24_runtime_executor,
+            runtime_bundle_provenance: None,
         }
     }
 }
