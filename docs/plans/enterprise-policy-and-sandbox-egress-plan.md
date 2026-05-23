@@ -221,7 +221,9 @@ Batch 2 landed EPS3 and EPS4a:
   mode, reload policy, and canonical `SandboxEgressPolicy`; today's launch
   mode is `launch_metadata` with `recreate_required` reload. A future
   supervisor/proxy mode can keep `recreate_required` until live reload is
-  implemented and proven, then advertise `live_reload`. The
+  implemented and proven, then advertise `live_reload`. The prior
+  `NIMBUS_SANDBOX_EGRESS_POLICY_JSON` name remains reserved and scrubbed but
+  is no longer emitted. The
   server service manager rejects sandbox launches whose spec asks for egress
   policy not present in the admitted `TenantIsolationDecision`.
 - Compose supports `x-nimbus.egress.allow` and validates the same sandbox

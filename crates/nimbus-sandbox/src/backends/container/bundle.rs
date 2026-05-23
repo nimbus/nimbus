@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::egress::SandboxEgressEnforcementPlan;
+use crate::egress::{
+    SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxEgressEnforcementPlan,
+};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const EGRESS_ENFORCEMENT_ENV: &str = "NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON";
 const DEFAULT_CPU_PERIOD: u64 = 100_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,13 +284,15 @@ fn process_env(
     } else {
         spec.process.env.clone()
     };
-    env.retain(|entry| env_key(entry).is_none_or(|key| key != EGRESS_ENFORCEMENT_ENV));
+    env.retain(|entry| {
+        env_key(entry).is_none_or(|key| !SANDBOX_EGRESS_RESERVED_ENV_KEYS.contains(&key))
+    });
     let rendered = serde_json::to_string(egress_enforcement).map_err(|error| {
         SandboxError::OperationFailed {
             message: format!("failed to serialize sandbox egress enforcement plan: {error}"),
         }
     })?;
-    env.push(format!("{EGRESS_ENFORCEMENT_ENV}={rendered}"));
+    env.push(format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}={rendered}"));
     Ok(env)
 }
 
@@ -353,7 +356,8 @@ mod tests {
     use super::build_bundle_config;
     use crate::backend::SandboxBackendKind;
     use crate::egress::{
-        SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION, SandboxEgressEnforcementMode,
+        SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+        SANDBOX_EGRESS_LEGACY_POLICY_ENV, SandboxEgressEnforcementMode,
         SandboxEgressEnforcementPlan, SandboxEgressPolicy, SandboxEgressReloadPolicy,
         SandboxEgressRule,
     };
@@ -421,7 +425,8 @@ mod tests {
             .with_path_prefixes(["/v1/"])]));
         spec.process.env = vec![
             "PATH=/usr/bin".to_owned(),
-            "NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON={\"schema_version\":0}".to_owned(),
+            format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}={{\"schema_version\":0}}"),
+            format!("{SANDBOX_EGRESS_LEGACY_POLICY_ENV}={{\"allow\":[]}}"),
         ];
 
         let config = build_bundle_config(
@@ -436,15 +441,23 @@ mod tests {
         let env = config["process"]["env"]
             .as_array()
             .expect("env should be an array");
+        let enforcement_prefix = format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}=");
+        let legacy_policy_prefix = format!("{SANDBOX_EGRESS_LEGACY_POLICY_ENV}=");
         let enforcement_entries = env
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .filter_map(|entry| entry.strip_prefix("NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON="))
+            .filter_map(|entry| entry.strip_prefix(&enforcement_prefix))
             .collect::<Vec<_>>();
         assert_eq!(
             enforcement_entries.len(),
             1,
             "bundle generation should replace spoofed egress enforcement env values"
+        );
+        assert!(
+            env.iter()
+                .filter_map(serde_json::Value::as_str)
+                .all(|entry| !entry.starts_with(&legacy_policy_prefix)),
+            "bundle generation should remove spoofed legacy egress policy env values"
         );
         let enforcement: SandboxEgressEnforcementPlan =
             serde_json::from_str(enforcement_entries[0])
