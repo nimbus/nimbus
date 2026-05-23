@@ -26,9 +26,9 @@ use crate::backends::oci::materializer::{
 };
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, OciMachinePortForwarderConfig,
-    OciNetworkConfig, OciNetworkLayout, create_persistent_network_namespace, expose_machine_ports,
-    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
-    unexpose_machine_ports,
+    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
+    create_persistent_network_namespace, expose_machine_ports, remove_persistent_network_namespace,
+    setup_container_network, teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -173,6 +173,7 @@ impl ContainerSandboxBackend {
             network_name: self.config.network_name.clone(),
             network_interface: self.config.network_interface.clone(),
             network_subnet: self.config.network_subnet.clone(),
+            direct_egress: OciNetworkDirectEgress::Deny,
         }
     }
 

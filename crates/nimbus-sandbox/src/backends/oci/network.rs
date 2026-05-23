@@ -98,6 +98,7 @@ pub(crate) struct OciNetworkConfig {
     pub network_name: String,
     pub network_interface: String,
     pub network_subnet: String,
+    pub direct_egress: OciNetworkDirectEgress,
 }
 
 impl Default for OciNetworkConfig {
@@ -108,6 +109,27 @@ impl Default for OciNetworkConfig {
             network_name: DEFAULT_NETWORK_NAME.to_owned(),
             network_interface: DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: DEFAULT_NETWORK_SUBNET.to_owned(),
+            direct_egress: OciNetworkDirectEgress::Deny,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OciNetworkDirectEgress {
+    Allow,
+    Deny,
+}
+
+impl OciNetworkDirectEgress {
+    fn is_denied(self) -> bool {
+        matches!(self, Self::Deny)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
         }
     }
 }
@@ -447,10 +469,13 @@ fn build_bridge_network(config: &OciNetworkConfig) -> Result<NetavarkNetwork> {
         created: None,
         subnets: vec![NetavarkSubnet { subnet, gateway }],
         ipv6_enabled: false,
-        internal: false,
+        internal: config.direct_egress.is_denied(),
         dns_enabled: true,
         network_dns_servers: Vec::new(),
-        labels: BTreeMap::new(),
+        labels: BTreeMap::from([(
+            "io.nimbus.egress.direct".to_owned(),
+            config.direct_egress.label().to_owned(),
+        )]),
         options: BTreeMap::new(),
         ipam_options: BTreeMap::from([("driver".to_owned(), "host-local".to_owned())]),
     })
@@ -1007,8 +1032,8 @@ mod tests {
     use super::{
         DEFAULT_MACHINE_FORWARDER_HOST, DEFAULT_MACHINE_FORWARDER_PATH,
         DEFAULT_MACHINE_FORWARDER_PORT, OciMachinePortForwarderConfig, OciNetworkConfig,
-        OciNetworkLayout, allocate_container_ips, build_netavark_request, deallocate_container_ips,
-        load_container_ips, netavark_path_env, render_netavark_failure,
+        OciNetworkDirectEgress, OciNetworkLayout, allocate_container_ips, build_netavark_request,
+        deallocate_container_ips, load_container_ips, netavark_path_env, render_netavark_failure,
     };
     use crate::backend::SandboxBackendKind;
     use crate::spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
@@ -1041,6 +1066,14 @@ mod tests {
         assert_eq!(request.port_mappings[0].host_port, 18080);
         assert_eq!(request.port_mappings[0].container_port, 8080);
         assert!(request.network_info.contains_key("nimbus"));
+        assert!(
+            request.network_info["nimbus"].internal,
+            "Nimbus container networks should deny direct external egress by default"
+        );
+        assert_eq!(
+            request.network_info["nimbus"].labels["io.nimbus.egress.direct"],
+            "deny"
+        );
     }
 
     #[test]
@@ -1057,6 +1090,34 @@ mod tests {
         .expect("request should build");
 
         assert_eq!(request.port_mappings[0].host_ip, "");
+    }
+
+    #[test]
+    fn netavark_request_preserves_explicit_direct_egress_allow_when_requested() {
+        let config = OciNetworkConfig {
+            direct_egress: OciNetworkDirectEgress::Allow,
+            ..OciNetworkConfig::default()
+        };
+
+        let request = build_netavark_request(
+            &config,
+            &crate::instance::SandboxId::new("db-01"),
+            "db",
+            "db",
+            &[],
+            &[],
+            false,
+        )
+        .expect("request should build");
+
+        assert!(
+            !request.network_info["nimbus"].internal,
+            "explicit direct egress allow should keep the bridge non-internal"
+        );
+        assert_eq!(
+            request.network_info["nimbus"].labels["io.nimbus.egress.direct"],
+            "allow"
+        );
     }
 
     #[test]
