@@ -157,14 +157,7 @@ mod tests {
 
     #[test]
     fn sandbox_supervisor_command_parses_as_hidden_internal_entrypoint() {
-        let cli = Cli::parse_from([
-            "nimbus",
-            "sandbox-supervisor",
-            "--contract-json",
-            r#"{"schema_version":1,"mode":"supervisor_proxy","reload_policy":"recreate_required","policy":{}}"#,
-            "-f",
-            "json",
-        ]);
+        let cli = Cli::parse_from(["nimbus", "sandbox-supervisor", "-f", "json"]);
 
         assert!(
             matches!(cli.command, Command::SandboxSupervisor(_)),
