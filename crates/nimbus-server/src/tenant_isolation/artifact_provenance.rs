@@ -16,12 +16,14 @@ use super::image_admission::{
 
 mod admission;
 mod cosign;
+mod sbom;
 mod slsa;
 
 pub use admission::{
     ArtifactAdmission, admit_guest_executable_artifact, admit_runtime_bundle_artifact,
 };
 pub use cosign::CosignVerifierBackend;
+pub use sbom::SbomVerifierBackend;
 pub use slsa::{SLSA_PROVENANCE_V1_PREDICATE_TYPE, SlsaVerifierBackend};
 
 pub const DEFAULT_ARTIFACT_VERIFIER_TIMEOUT: Duration = Duration::from_secs(10);

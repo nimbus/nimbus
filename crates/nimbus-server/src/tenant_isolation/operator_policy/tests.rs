@@ -32,6 +32,16 @@ workloads:
       allowed_registries:
         - registry.example.com
 "#;
+const SBOM_REQUIRED_IMAGE_POLICY: &str = r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "images:launch"
+    image:
+      reference: "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      sbom_required: true
+"#;
 const INVALID_EGRESS_POLICY: &str = r#"
 schema_version: 1
 tenant: tenant-a
@@ -235,6 +245,17 @@ impl TenantImageVerificationProvider for NoopImageVerifier {
         _request: &TenantImageVerificationRequest,
     ) -> Result<TenantImageVerificationEvidence> {
         Ok(TenantImageVerificationEvidence::new())
+    }
+}
+
+struct SbomImageVerifier;
+
+impl TenantImageVerificationProvider for SbomImageVerifier {
+    fn verify_registry_image(
+        &self,
+        _request: &TenantImageVerificationRequest,
+    ) -> Result<TenantImageVerificationEvidence> {
+        Ok(TenantImageVerificationEvidence::new().with_sbom())
     }
 }
 
@@ -805,6 +826,28 @@ fn registry_wide_image_policy_still_requires_digest_pinned_launches() {
                 &NoopImageVerifier,
             )
             .expect("digest-pinned image from an allowed registry should pass");
+}
+
+#[test]
+fn operator_image_policy_sbom_required_compiles_to_admission_hook() {
+    let policy = parse_policy(SBOM_REQUIRED_IMAGE_POLICY);
+    let evaluation = policy.evaluate().expect("policy should evaluate");
+    let image = evaluation.decisions[0].decision.image();
+    let source = TenantImageAdmissionSource::registry(
+        "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+
+    let error = image
+        .admit_image(source.clone(), &NoopImageVerifier)
+        .expect_err("SBOM-required operator policy should reject missing SBOM evidence");
+    assert!(
+        error.to_string().contains("requires SBOM evidence"),
+        "missing SBOM evidence should be explicit: {error}"
+    );
+
+    image
+        .admit_image(source, &SbomImageVerifier)
+        .expect("SBOM evidence should satisfy compiled operator policy");
 }
 
 #[test]
