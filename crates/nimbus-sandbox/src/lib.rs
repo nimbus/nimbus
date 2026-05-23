@@ -19,8 +19,9 @@ mod spec;
 
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use egress::{
-    CompiledSandboxEgressPolicy, SandboxEgressAuthorization, SandboxEgressPolicy,
-    SandboxEgressRequest, SandboxEgressRule,
+    CompiledSandboxEgressPolicy, SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+    SandboxEgressAuthorization, SandboxEgressEnforcementMode, SandboxEgressEnforcementPlan,
+    SandboxEgressPolicy, SandboxEgressReloadPolicy, SandboxEgressRequest, SandboxEgressRule,
 };
 pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};

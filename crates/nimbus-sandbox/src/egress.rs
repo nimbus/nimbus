@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::endpoint::PublishedEndpointProtocol;
 
+pub const SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxEgressPolicy {
@@ -108,9 +110,9 @@ impl CompiledSandboxEgressPolicy {
             if !rule.matches_l7(request) {
                 matched_but_denied.get_or_insert_with(|| {
                     format!(
-                    "sandbox egress rule `{}` matched {}, but HTTP method/path policy denied the request",
-                    rule.name,
-                    request.target_summary()
+                        "sandbox egress rule `{}` matched {}, but HTTP method/path policy denied the request",
+                        rule.name,
+                        request.target_summary()
                     )
                 });
                 continue;
@@ -259,6 +261,95 @@ impl SandboxEgressRule {
             }
         }
         true
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxEgressEnforcementMode {
+    LaunchMetadata,
+    SupervisorProxy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxEgressReloadPolicy {
+    RecreateRequired,
+    LiveReload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxEgressEnforcementPlan {
+    pub schema_version: u32,
+    pub mode: SandboxEgressEnforcementMode,
+    pub reload_policy: SandboxEgressReloadPolicy,
+    pub policy: SandboxEgressPolicy,
+}
+
+impl SandboxEgressEnforcementPlan {
+    pub fn launch_metadata(policy: &CompiledSandboxEgressPolicy) -> Self {
+        Self {
+            schema_version: SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            mode: SandboxEgressEnforcementMode::LaunchMetadata,
+            reload_policy: SandboxEgressReloadPolicy::RecreateRequired,
+            policy: policy.policy().clone(),
+        }
+    }
+
+    pub fn supervisor_proxy(
+        policy: &CompiledSandboxEgressPolicy,
+        reload_policy: SandboxEgressReloadPolicy,
+    ) -> Self {
+        Self {
+            schema_version: SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            mode: SandboxEgressEnforcementMode::SupervisorProxy,
+            reload_policy,
+            policy: policy.policy().clone(),
+        }
+    }
+
+    pub fn from_launch_policy(policy: &SandboxEgressPolicy) -> std::result::Result<Self, String> {
+        policy
+            .compile()
+            .map(|compiled| Self::launch_metadata(&compiled))
+    }
+
+    pub fn policy(&self) -> &SandboxEgressPolicy {
+        &self.policy
+    }
+
+    pub fn validate(&self) -> std::result::Result<CompiledSandboxEgressPolicy, String> {
+        if self.schema_version != SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION {
+            return Err(format!(
+                "sandbox egress enforcement schema_version must be {}, got {}",
+                SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION, self.schema_version
+            ));
+        }
+        match (self.mode, self.reload_policy) {
+            (
+                SandboxEgressEnforcementMode::LaunchMetadata,
+                SandboxEgressReloadPolicy::RecreateRequired,
+            )
+            | (
+                SandboxEgressEnforcementMode::SupervisorProxy,
+                SandboxEgressReloadPolicy::LiveReload,
+            )
+            | (
+                SandboxEgressEnforcementMode::SupervisorProxy,
+                SandboxEgressReloadPolicy::RecreateRequired,
+            ) => {}
+            (
+                SandboxEgressEnforcementMode::LaunchMetadata,
+                SandboxEgressReloadPolicy::LiveReload,
+            ) => {
+                return Err(
+                    "launch-metadata sandbox egress enforcement cannot claim live reload"
+                        .to_owned(),
+                );
+            }
+        }
+        self.policy.compile()
     }
 }
 
@@ -549,6 +640,137 @@ mod tests {
             denied.reason().contains("method/path"),
             "L7 denial should be named: {denied:?}"
         );
+    }
+
+    #[test]
+    fn sandbox_egress_enforcement_plan_defaults_to_launch_metadata_recreate_required() {
+        let plan = SandboxEgressEnforcementPlan::launch_metadata(
+            &SandboxEgressPolicy::deny_all()
+                .compile()
+                .expect("deny-all should compile"),
+        );
+
+        assert_eq!(
+            plan.schema_version,
+            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
+        );
+        assert_eq!(plan.mode, SandboxEgressEnforcementMode::LaunchMetadata);
+        assert_eq!(
+            plan.reload_policy,
+            SandboxEgressReloadPolicy::RecreateRequired
+        );
+        assert!(plan.policy().is_deny_all());
+        let compiled = plan.validate().expect("launch metadata should validate");
+        let denied = compiled.authorize(&SandboxEgressRequest::new(
+            PublishedEndpointProtocol::Https,
+            "api.stripe.com",
+            443,
+        ));
+        assert!(!denied.is_allowed());
+    }
+
+    #[test]
+    fn sandbox_egress_enforcement_plan_materializes_canonical_allow_rules() {
+        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "stripe",
+            PublishedEndpointProtocol::Https,
+            "API.Stripe.COM",
+            443,
+        )
+        .with_methods(["POST", "POST"])
+        .with_path_prefixes(["/v1/", "/v1/"])]);
+
+        let plan = SandboxEgressEnforcementPlan::from_launch_policy(&policy)
+            .expect("allow policy should compile into launch metadata");
+
+        assert_eq!(plan.mode, SandboxEgressEnforcementMode::LaunchMetadata);
+        assert_eq!(
+            plan.reload_policy,
+            SandboxEgressReloadPolicy::RecreateRequired
+        );
+        assert_eq!(plan.policy().rules()[0].host, "api.stripe.com");
+        assert_eq!(plan.policy().rules()[0].methods, vec!["POST"]);
+        assert_eq!(plan.policy().rules()[0].path_prefixes, vec!["/v1/"]);
+    }
+
+    #[test]
+    fn sandbox_egress_enforcement_plan_fails_closed_for_invalid_raw_policy() {
+        let plan = SandboxEgressEnforcementPlan {
+            schema_version: SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            mode: SandboxEgressEnforcementMode::LaunchMetadata,
+            reload_policy: SandboxEgressReloadPolicy::RecreateRequired,
+            policy: SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "wildcard",
+                PublishedEndpointProtocol::Https,
+                "*",
+                443,
+            )]),
+        };
+
+        let error = plan
+            .validate()
+            .expect_err("invalid policy should be rejected");
+        assert!(
+            error.contains("wildcards"),
+            "invalid egress contract should expose the policy error: {error}"
+        );
+    }
+
+    #[test]
+    fn sandbox_egress_enforcement_plan_rejects_false_live_reload_claims() {
+        let plan = SandboxEgressEnforcementPlan {
+            schema_version: SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            mode: SandboxEgressEnforcementMode::LaunchMetadata,
+            reload_policy: SandboxEgressReloadPolicy::LiveReload,
+            policy: SandboxEgressPolicy::deny_all(),
+        };
+
+        let error = plan
+            .validate()
+            .expect_err("launch metadata must not claim live reload");
+        assert!(
+            error.contains("cannot claim live reload"),
+            "reload lifecycle mismatch should fail closed: {error}"
+        );
+    }
+
+    #[test]
+    fn sandbox_egress_enforcement_plan_models_future_supervisor_live_reload() {
+        let plan = SandboxEgressEnforcementPlan::supervisor_proxy(
+            &SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "github",
+                PublishedEndpointProtocol::Https,
+                "api.github.com",
+                443,
+            )])
+            .compile()
+            .expect("allow policy should compile"),
+            SandboxEgressReloadPolicy::LiveReload,
+        );
+
+        assert_eq!(plan.mode, SandboxEgressEnforcementMode::SupervisorProxy);
+        assert_eq!(plan.reload_policy, SandboxEgressReloadPolicy::LiveReload);
+        assert_eq!(plan.policy().rules()[0].name, "github");
+        plan.validate()
+            .expect("supervisor proxy contract should validate");
+    }
+
+    #[test]
+    fn sandbox_egress_enforcement_plan_allows_supervisor_recreate_lifecycle() {
+        let plan = SandboxEgressEnforcementPlan::supervisor_proxy(
+            &SandboxEgressPolicy::deny_all()
+                .compile()
+                .expect("deny-all should compile"),
+            SandboxEgressReloadPolicy::RecreateRequired,
+        );
+
+        assert_eq!(plan.mode, SandboxEgressEnforcementMode::SupervisorProxy);
+        assert_eq!(
+            plan.reload_policy,
+            SandboxEgressReloadPolicy::RecreateRequired
+        );
+        plan.validate()
+            .expect("supervisor proxy can start before live reload exists");
     }
 
     #[test]
