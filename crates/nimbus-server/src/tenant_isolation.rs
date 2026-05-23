@@ -29,8 +29,9 @@ pub use artifact_provenance::{
     ArtifactVerificationSubjectKind, ArtifactVerifierBackend, ArtifactVerifierBackendIdentity,
     ArtifactVerifierCommandBackend, ArtifactVerifierCommandInvocation,
     ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, ArtifactVerifierError,
-    ArtifactVerifierErrorKind, ArtifactVerifierResult, DEFAULT_ARTIFACT_VERIFIER_TIMEOUT,
-    ProcessArtifactVerifierCommandRunner, redact_artifact_verifier_output,
+    ArtifactVerifierErrorKind, ArtifactVerifierResult, CosignVerifierBackend,
+    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, ProcessArtifactVerifierCommandRunner,
+    redact_artifact_verifier_output,
 };
 pub use audit_events::{
     TENANT_ISOLATION_EVENT_SCHEMA_VERSION, TenantIsolationEvent, TenantIsolationEventKind,
