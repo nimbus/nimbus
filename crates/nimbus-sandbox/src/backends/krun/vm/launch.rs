@@ -3,6 +3,7 @@ use super::*;
 
 impl KrunSandboxBackend {
     pub(super) fn plan_start(&self, spec: &SandboxSpec) -> Result<KrunLaunchPlan> {
+        self.ensure_execute_egress_enforcement_available()?;
         let sandbox_id = next_sandbox_id(&spec.name);
         self.plan_start_with_id(spec, &sandbox_id, None, None)
     }
@@ -13,6 +14,7 @@ impl KrunSandboxBackend {
         image_reference: &str,
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<KrunLaunchPlan> {
+        self.ensure_execute_egress_enforcement_available()?;
         let sandbox_id = next_sandbox_id(&spec.name);
         self.resource_quota_manager().ensure_launch_quota(spec)?;
         let prepared_launch =
@@ -28,6 +30,7 @@ impl KrunSandboxBackend {
         context_path: &Path,
         overrides: &SandboxImageProcessOverrides,
     ) -> Result<KrunLaunchPlan> {
+        self.ensure_execute_egress_enforcement_available()?;
         let sandbox_id = next_sandbox_id(&spec.name);
         self.resource_quota_manager().ensure_launch_quota(spec)?;
         let prepared_launch = self.prepare_built_image_launch(
@@ -80,6 +83,7 @@ impl KrunSandboxBackend {
                 ),
             });
         }
+        self.ensure_execute_egress_enforcement_available()?;
 
         let mut resolved_launch = resolve_launch_spec(spec, launch_defaults);
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
@@ -174,6 +178,16 @@ impl KrunSandboxBackend {
         };
 
         Ok(KrunLaunchPlan { manifest })
+    }
+
+    fn ensure_execute_egress_enforcement_available(&self) -> Result<()> {
+        if self.config.launch_mode == KrunLaunchMode::PlanOnly {
+            return Ok(());
+        }
+
+        Err(SandboxError::InvalidSpec {
+            message: "krun execute-mode is fail-closed until Nimbus has a packet-level egress enforcement path for libkrun TSI; use the container backend for process-capable launches or plan-only krun materialization".to_owned(),
+        })
     }
 
     fn prepare_image_launch(

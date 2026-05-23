@@ -63,7 +63,7 @@ audit redactions, and a deterministic decision ID.
 | Runtime code asks for broad host capabilities in production. | `TenantIsolationMode::Production` rejects unsafe in-process grants or routes to a stronger tier before JavaScript runs. | `cargo test -p nimbus-server tenant_isolation -- --nocapture`. |
 | Service launch materializes another tenant's sandbox, port, or volume. | Sandbox launch consumes a decision-derived service access projection and validates tenant/service/backend before backend launch. | Tenant isolation unit tests and conformance service/volume collision scenarios. |
 | Tenant-controlled Compose input mounts host paths or exposes public ports. | Production Compose admission rejects host binds, undeclared/unsafe volumes, raw secrets, tag-only images, and non-loopback service exposure unless an explicit policy exists. | Conformance image admission scenarios and sandbox architecture docs. |
-| Tenant image content attacks the host during materialization. | Production image admission requires digest-pinned images as the floor and has a provider seam for signature, provenance, and SBOM policy. | `TenantImageVerificationProvider` tests cover digest floor, unsigned, wrong identity, provenance, SBOM, and local-build rejection. |
+| Tenant image content attacks the host during materialization. | Production image admission requires digest-pinned images as the floor; `SandboxServiceManager` runs image admission before service image materialization; concrete Cosign, SLSA, SBOM, offline/private-root, composite-verifier, and command-adapter seams provide stronger policy. | `make verify-artifact-provenance`, image admission tests, service-manager tests, and production Compose admission tests cover digest floor, unsigned, wrong identity, provenance source URI, SBOM, offline trust roots, and local-build rejection. |
 | Existing state drifts away from the isolation contract. | Read-only drift scanner reports malformed manifests, handles, ports, routes, volume roots, and missing decision/audit anchors. | `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture`. |
 | Audit logs leak bearer claims or secret handles. | `TenantIsolationEvent` redacts sensitive attributes and correlation IDs by schema. | `cargo test -p nimbus-server audit_events -- --nocapture`. |
 
@@ -75,9 +75,10 @@ audit redactions, and a deterministic decision ID.
 | In-process runtime cannot widen production host grants. | Runtime admission and `RuntimeExecutionAdmission`. | Runtime policy admission tests. | Unsafe policies need configured fallback executors before they can run outside the in-process tier. |
 | MicroVM service compute is tenant-scoped. | `SandboxServiceManager`, service registry, sandbox backend validation. | Conformance same-service-name and sandbox handle scenarios. | Host-side krun/libkrun process still carries accepted root VMM lifetime risk. |
 | Network exposure is private by default. | Service grants, loopback default, patched krun/libkrun TSI bind address. | Conformance localhost denial and Linux localhost-only proof from the sandbox hardening baseline. | Public exposure policy is intentionally not admitted yet. |
+| Sandbox egress has a typed deny-by-default policy contract. | `SandboxEgressPolicy`, compiled canonical policy checks, `SandboxEgressEnforcementPlan`, hidden `nimbus sandbox-supervisor` contract consumer, operator policy compiler, strict Compose `x-nimbus.egress`, service-manager launch checks, OCI bundle env materialization, and the container egress proxy reload seam. | `make verify-enterprise-policy-egress`, sandbox egress/proxy unit tests, sandbox-supervisor contract tests, operator reload/prove/draft tests, service-manager policy mismatch tests, Compose lowering tests, and minicloud container egress proof. | Container process-capable launches are proxy-enforced and live-reloadable. krun execute-mode remains fail-closed/recreate-required until a packet-level libkrun TSI PEP exists. |
 | Storage/API calls cannot cross tenants by caller-supplied tenant IDs. | Server/adapters/runtime HostBridge consume admitted tenant context. | Conformance runtime storage and bearer-swap scenarios. | External storage providers still require correct provider namespace configuration. |
 | Named volumes are tenant-owned and host binds are denied by default. | Compose admission and sandbox mount materialization. | Conformance same-named-volume scenario. | Shared read-only artifact policy is future work. |
-| Images are immutable at the production floor. | Image admission policy and provider seam. | Image admission unit tests plus production Compose admission tests. | Full Sigstore/Cosign/SLSA/SBOM verification is owned by `docs/plans/artifact-provenance-verification-plan.md` and not wired to a concrete provider yet. |
+| Images are immutable at the production floor. | Image admission policy, service-manager launch admission, and verifier backends using maintained OCI reference parsing. | Image admission unit tests, service-manager materialization tests, production Compose admission tests, and `make verify-artifact-provenance`. | Verifier backends are command-adapter first and fixture-proven locally; operators still need to supply real Cosign/SLSA/SBOM tooling and trust roots in production environments. |
 | Secrets do not materialize ambiently. | Secret policy records handles/counts, not raw values; raw Compose secrets fail closed. | Tenant audit record and production Compose tests. | Dedicated secret provider integration is tracked separately; provider-auth credentials must consume `docs/plans/service-identity-provider-auth-plan.md`. |
 | Per-tenant resource reservation exists before launch. | Runtime budgets, sandbox quota policy, OCI resource quota manager. | EIH5 minicloud cgroup memory proof and sandbox quota tests. | Hard disk write caps require filesystem/project-quota support. |
 | Cleanup cannot delete another tenant's artifacts. | Tenant-rooted sandbox state, volumes, and storage deletion path. | Conformance cleanup scenarios. | Manual host edits outside Nimbus remain an operator responsibility. |
@@ -94,6 +95,8 @@ cargo test -p nimbus-server tenant_isolation -- --nocapture
 cargo test -p nimbus-server tenant_isolation_drift -- --nocapture
 cargo test -p nimbus-server audit_events -- --nocapture
 make verify-tenant-isolation-conformance
+make verify-enterprise-policy-egress
+make verify-artifact-provenance
 cargo fmt --all --check
 cargo clippy -p nimbus-server --all-targets
 ```
@@ -114,18 +117,20 @@ Accepted for the current baseline:
 - Hard disk write caps are admission/reservation-backed today. A future disk
   quota driver should use project quotas, quota-backed volumes, or an
   equivalent platform primitive.
-- Full cryptographic image verification is represented by the
-  `TenantImageVerificationProvider` seam. Production deployments that require
-  signatures, attestations, or SBOMs must wire battle-tested tooling behind it
-  through `docs/plans/artifact-provenance-verification-plan.md`.
-- Arbitrary guest egress from process-capable microVM, browser, or agent
-  sandboxes is not yet L7/SSRF mediated by a sandbox-local proxy. Current
-  production controls are private-by-default service exposure, tenant-scoped
-  service grants, and broad runtime-network rejection. The follow-on owner is
-  `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+- Cryptographic artifact verification is command-adapter first. Nimbus owns
+  policy, admission, evidence normalization, and redaction, while Cosign,
+  `slsa-verifier`, and SBOM tooling own signature, certificate, transparency
+  log, DSSE/in-toto/SLSA, and SBOM verification. Operators must install and
+  configure the concrete tools and trust roots they require.
+- Arbitrary guest egress from process-capable container sandboxes is enforced
+  through the host-side egress proxy and can live-reload policy through the
+  sandbox backend seam. krun execute-mode remains fail-closed until Nimbus has
+  a packet-level libkrun TSI egress PEP. Browser and agent services must
+  consume the same operator policy and sandbox egress contract rather than
+  inventing a separate network policy dialect.
 - `TenantIsolationEvent` is the canonical internal event schema. OCSF and
-  OpenTelemetry export mappings are deferred to
-  `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+  OpenTelemetry mappings exist as schema projections, but export routing,
+  retention, and SIEM transport remain operator/product choices.
 - Secret provider authentication is not complete until
   `docs/plans/service-identity-provider-auth-plan.md` can mint short-lived,
   tenant-scoped credentials from admitted `TenantWorkloadStableIdentity`

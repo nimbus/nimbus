@@ -1,0 +1,19 @@
+schema_version: 1
+tenant: tenant-a
+metadata:
+  name: unknown-field
+defaults:
+  tenant_isolation_mode: production
+  storage_namespace: tenant
+  audit_redactions:
+    - principal_claims
+    - bearer_claims
+    - secret_handles
+    - raw_credentials
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+    runtime:
+      profile: web_standard
+      tier: in_process_untrusted
+      surprise: true

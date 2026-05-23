@@ -11,6 +11,7 @@ use super::{
     CloudFunctionsArtifactManifest, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
     CloudFunctionsTargetsManifest,
 };
+use crate::execution::invocations::RuntimeBundleProvenanceConfig;
 
 #[derive(Debug)]
 pub struct CloudFunctionsRegistry {
@@ -19,6 +20,7 @@ pub struct CloudFunctionsRegistry {
     runtime_bundle: RuntimeBundle,
     runtime_policy: Arc<RuntimePolicy>,
     runtime_executor: Arc<RuntimeExecutor>,
+    runtime_bundle_provenance: Option<RuntimeBundleProvenanceConfig>,
 }
 
 impl CloudFunctionsRegistry {
@@ -56,6 +58,7 @@ impl CloudFunctionsRegistry {
             runtime_bundle,
             runtime_policy,
             runtime_executor,
+            runtime_bundle_provenance: None,
         })
     }
 
@@ -63,6 +66,32 @@ impl CloudFunctionsRegistry {
         let runtime_policy = Arc::new(RuntimePolicy::new(limits));
         self.runtime_policy = runtime_policy.clone();
         self.runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy));
+        self
+    }
+
+    pub fn with_runtime_bundle_provenance_verifier(
+        mut self,
+        policy: crate::ArtifactVerificationPolicy,
+        verifier: impl crate::ArtifactVerifierBackend + 'static,
+    ) -> Self {
+        self.runtime_bundle_provenance = Some(RuntimeBundleProvenanceConfig::new(
+            policy,
+            Arc::new(verifier),
+            "cloud functions runtime bundle",
+        ));
+        self
+    }
+
+    pub fn with_runtime_bundle_provenance_verifier_arc(
+        mut self,
+        policy: crate::ArtifactVerificationPolicy,
+        verifier: Arc<dyn crate::ArtifactVerifierBackend>,
+    ) -> Self {
+        self.runtime_bundle_provenance = Some(RuntimeBundleProvenanceConfig::new(
+            policy,
+            verifier,
+            "cloud functions runtime bundle",
+        ));
         self
     }
 
@@ -80,6 +109,10 @@ impl CloudFunctionsRegistry {
 
     pub(crate) fn runtime_executor(&self) -> Arc<RuntimeExecutor> {
         self.runtime_executor.clone()
+    }
+
+    pub(crate) fn runtime_bundle_provenance(&self) -> Option<&RuntimeBundleProvenanceConfig> {
+        self.runtime_bundle_provenance.as_ref()
     }
 
     pub fn runtime_limits(&self) -> RuntimeLimits {

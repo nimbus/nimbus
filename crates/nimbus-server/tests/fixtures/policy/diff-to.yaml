@@ -1,0 +1,30 @@
+schema_version: 1
+tenant: tenant-a
+metadata:
+  name: diff-to
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+    services:
+      allow:
+        - db
+        - cache
+    network:
+      endpoints:
+        - service: db
+          name: postgres
+          protocol: tcp
+          host: 127.0.0.1
+          host_port: 15432
+          guest_port: 5432
+        - service: cache
+          name: redis
+          protocol: tcp
+          host: 127.0.0.1
+          host_port: 16379
+          guest_port: 6379
+  - kind: runtime_function
+    name: "messages:list"
+    services:
+      allow:
+        - db

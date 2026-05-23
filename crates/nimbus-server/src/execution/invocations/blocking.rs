@@ -7,6 +7,7 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_cancellation(
     request: InvocationRequest,
     options: RuntimeBundleInvocationOptions<'_>,
 ) -> std::result::Result<serde_json::Value, NimbusRuntimeError> {
+    options.admit_runtime_bundle_artifact(&bundle)?;
     runtime_executor.invoke_blocking_with_cancellation(
         runtime,
         bundle,

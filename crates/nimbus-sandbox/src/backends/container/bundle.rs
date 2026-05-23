@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::egress::{
+    SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_PROXY_URL_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS,
+    SandboxEgressEnforcementPlan, SandboxEgressReloadPolicy,
+};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 
@@ -19,6 +23,7 @@ pub(crate) struct ContainerBundleLayout {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ContainerBundleOptions {
     pub additional_mounts: Vec<ContainerBundleMount>,
+    pub egress_proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,7 +104,20 @@ pub(crate) fn build_bundle_config(
 
     validate_port_bindings(&spec.port_bindings)?;
     validate_resource_limits(&spec.resources)?;
+    let compiled_egress = spec
+        .egress
+        .compile()
+        .map_err(|message| SandboxError::InvalidSpec { message })?;
+    let egress_enforcement = SandboxEgressEnforcementPlan::supervisor_proxy(
+        &compiled_egress,
+        SandboxEgressReloadPolicy::LiveReload,
+    );
     let process_user = parse_process_user(image_user)?;
+    let process_env = process_env(
+        spec,
+        &egress_enforcement,
+        options.egress_proxy_url.as_deref(),
+    )?;
 
     let mut linux = serde_json::Map::new();
     let mut namespaces = vec![
@@ -131,7 +149,7 @@ pub(crate) fn build_bundle_config(
                 "gid": process_user.gid,
             },
             "args": spec.process.args,
-            "env": process_env(&spec.process),
+            "env": process_env,
             "cwd": process_cwd(&spec.process),
         },
         "root": {
@@ -266,12 +284,51 @@ fn process_cwd(process: &SandboxProcessSpec) -> String {
     }
 }
 
-fn process_env(process: &SandboxProcessSpec) -> Vec<String> {
-    if process.env.is_empty() {
+fn process_env(
+    spec: &SandboxSpec,
+    egress_enforcement: &SandboxEgressEnforcementPlan,
+    egress_proxy_url: Option<&str>,
+) -> Result<Vec<String>> {
+    let mut env = if spec.process.env.is_empty() {
         vec![DEFAULT_PATH_ENV.to_owned()]
     } else {
-        process.env.clone()
+        spec.process.env.clone()
+    };
+    env.retain(|entry| {
+        env_key(entry).is_none_or(|key| !SANDBOX_EGRESS_RESERVED_ENV_KEYS.contains(&key))
+    });
+    let rendered = serde_json::to_string(egress_enforcement).map_err(|error| {
+        SandboxError::OperationFailed {
+            message: format!("failed to serialize sandbox egress enforcement plan: {error}"),
+        }
+    })?;
+    env.push(format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}={rendered}"));
+    if let Some(egress_proxy_url) = egress_proxy_url {
+        env.extend(egress_proxy_env_entries(egress_proxy_url));
     }
+    Ok(env)
+}
+
+fn egress_proxy_env_entries(egress_proxy_url: &str) -> Vec<String> {
+    [
+        (SANDBOX_EGRESS_PROXY_URL_ENV, egress_proxy_url),
+        ("HTTP_PROXY", egress_proxy_url),
+        ("http_proxy", egress_proxy_url),
+        ("HTTPS_PROXY", egress_proxy_url),
+        ("https_proxy", egress_proxy_url),
+        ("ALL_PROXY", egress_proxy_url),
+        ("all_proxy", egress_proxy_url),
+        ("NO_PROXY", ""),
+        ("no_proxy", ""),
+    ]
+    .into_iter()
+    .map(|(key, value)| format!("{key}={value}"))
+    .collect()
+}
+
+fn env_key(entry: &str) -> Option<&str> {
+    let (key, _) = entry.split_once('=')?;
+    (!key.is_empty()).then_some(key)
 }
 
 fn default_linux_mounts() -> Vec<Value> {
@@ -328,7 +385,33 @@ mod tests {
 
     use super::build_bundle_config;
     use crate::backend::SandboxBackendKind;
+    use crate::egress::{
+        SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+        SANDBOX_EGRESS_LEGACY_POLICY_ENV, SANDBOX_EGRESS_PROXY_URL_ENV,
+        SandboxEgressEnforcementMode, SandboxEgressEnforcementPlan, SandboxEgressPolicy,
+        SandboxEgressReloadPolicy, SandboxEgressRule,
+    };
+    use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxSpec};
+
+    fn egress_enforcement_from_config(config: &serde_json::Value) -> SandboxEgressEnforcementPlan {
+        let env = config["process"]["env"]
+            .as_array()
+            .expect("env should be an array");
+        let enforcement_prefix = format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}=");
+        let enforcement_entries = env
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(|entry| entry.strip_prefix(&enforcement_prefix))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            enforcement_entries.len(),
+            1,
+            "bundle generation should emit exactly one egress enforcement env value"
+        );
+        serde_json::from_str(enforcement_entries[0])
+            .expect("egress enforcement env should contain JSON")
+    }
 
     fn sample_spec() -> SandboxSpec {
         SandboxSpec::new(
@@ -338,6 +421,15 @@ mod tests {
             SandboxFilesystemSpec::new(PathBuf::from("/tmp/rootfs")),
             SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
         )
+    }
+
+    fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
+        config["process"]["env"]
+            .as_array()
+            .expect("env should be an array")
+            .iter()
+            .map(|value| value.as_str().expect("env entries should be strings"))
+            .collect()
     }
 
     #[test]
@@ -376,5 +468,180 @@ mod tests {
             namespace["type"] == "network" && namespace["path"] == "/run/nimbus/netns/db-01"
         }));
         assert_eq!(config["process"]["user"]["uid"], 0);
+    }
+
+    #[test]
+    fn bundle_config_materializes_sandbox_egress_enforcement_contract_env() {
+        let mut spec =
+            sample_spec().with_egress_policy(SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "stripe",
+                PublishedEndpointProtocol::Https,
+                "api.stripe.com",
+                443,
+            )
+            .with_methods(["POST"])
+            .with_path_prefixes(["/v1/"])]));
+        spec.process.env = vec![
+            "PATH=/usr/bin".to_owned(),
+            format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}={{\"schema_version\":0}}"),
+            format!("{SANDBOX_EGRESS_LEGACY_POLICY_ENV}={{\"allow\":[]}}"),
+        ];
+
+        let config = build_bundle_config(
+            "db",
+            &spec,
+            None,
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect("bundle should render");
+
+        let env = config["process"]["env"]
+            .as_array()
+            .expect("env should be an array");
+        let enforcement_prefix = format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}=");
+        let legacy_policy_prefix = format!("{SANDBOX_EGRESS_LEGACY_POLICY_ENV}=");
+        let enforcement_entries = env
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(|entry| entry.strip_prefix(&enforcement_prefix))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            enforcement_entries.len(),
+            1,
+            "bundle generation should replace spoofed egress enforcement env values"
+        );
+        assert!(
+            env.iter()
+                .filter_map(serde_json::Value::as_str)
+                .all(|entry| !entry.starts_with(&legacy_policy_prefix)),
+            "bundle generation should remove spoofed legacy egress policy env values"
+        );
+        let enforcement: SandboxEgressEnforcementPlan =
+            serde_json::from_str(enforcement_entries[0])
+                .expect("egress enforcement env should contain JSON");
+        assert_eq!(
+            enforcement.schema_version,
+            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            enforcement.mode,
+            SandboxEgressEnforcementMode::SupervisorProxy
+        );
+        assert_eq!(
+            enforcement.reload_policy,
+            SandboxEgressReloadPolicy::LiveReload
+        );
+        assert_eq!(enforcement.policy().rules()[0].host, "api.stripe.com");
+        enforcement
+            .validate()
+            .expect("materialized egress enforcement contract should validate");
+    }
+
+    #[test]
+    fn bundle_config_scrubs_spoofed_proxy_env_and_injects_backend_proxy_url() {
+        let mut spec = sample_spec();
+        spec.process.env = vec![
+            "PATH=/usr/bin".to_owned(),
+            "HTTP_PROXY=http://attacker.invalid:1".to_owned(),
+            "http_proxy=http://attacker.invalid:2".to_owned(),
+            "HTTPS_PROXY=http://attacker.invalid:3".to_owned(),
+            "NO_PROXY=metadata.google.internal,169.254.169.254".to_owned(),
+            format!("{SANDBOX_EGRESS_PROXY_URL_ENV}=http://attacker.invalid:4"),
+        ];
+
+        let config = build_bundle_config(
+            "db",
+            &spec,
+            None,
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions {
+                egress_proxy_url: Some("http://10.89.0.1:15000".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("bundle should render");
+        let env = env_from_config(&config);
+
+        assert!(env.contains(&"PATH=/usr/bin"));
+        for expected in [
+            format!("{SANDBOX_EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000"),
+            "HTTP_PROXY=http://10.89.0.1:15000".to_owned(),
+            "http_proxy=http://10.89.0.1:15000".to_owned(),
+            "HTTPS_PROXY=http://10.89.0.1:15000".to_owned(),
+            "https_proxy=http://10.89.0.1:15000".to_owned(),
+            "ALL_PROXY=http://10.89.0.1:15000".to_owned(),
+            "all_proxy=http://10.89.0.1:15000".to_owned(),
+            "NO_PROXY=".to_owned(),
+            "no_proxy=".to_owned(),
+        ] {
+            assert!(
+                env.contains(&expected.as_str()),
+                "expected proxy env {expected:?} in {env:?}"
+            );
+        }
+        assert!(
+            env.iter().all(|entry| !entry.contains("attacker.invalid")),
+            "operator-provided proxy env must be scrubbed: {env:?}"
+        );
+    }
+
+    #[test]
+    fn bundle_config_materializes_default_deny_supervisor_proxy_egress_contract_env() {
+        let config = build_bundle_config(
+            "db",
+            &sample_spec(),
+            None,
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect("bundle should render");
+
+        let enforcement = egress_enforcement_from_config(&config);
+
+        assert_eq!(
+            enforcement.schema_version,
+            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            enforcement.mode,
+            SandboxEgressEnforcementMode::SupervisorProxy
+        );
+        assert_eq!(
+            enforcement.reload_policy,
+            SandboxEgressReloadPolicy::LiveReload
+        );
+        assert!(
+            enforcement.policy().is_deny_all(),
+            "default sandbox egress should remain deny-all"
+        );
+        enforcement
+            .validate()
+            .expect("default supervisor egress contract should validate");
+    }
+
+    #[test]
+    fn bundle_config_rejects_invalid_sandbox_egress_policy() {
+        let spec =
+            sample_spec().with_egress_policy(SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "wildcard",
+                PublishedEndpointProtocol::Https,
+                "*",
+                443,
+            )]));
+
+        let error = build_bundle_config(
+            "db",
+            &spec,
+            None,
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect_err("invalid sandbox egress policy should fail bundle generation");
+
+        assert!(
+            error.to_string().contains("wildcards"),
+            "bundle generation should expose the invalid egress policy error: {error}"
+        );
     }
 }

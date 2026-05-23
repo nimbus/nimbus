@@ -26,6 +26,22 @@ nimbus token rotate
 ```
 
 ```bash
+nimbus policy validate --file nimbus.policy.yaml [-f text|json]
+```
+
+```bash
+nimbus policy explain --file nimbus.policy.yaml [-f text|json]
+```
+
+```bash
+nimbus policy prove --file nimbus.policy.yaml [-f text|json]
+```
+
+```bash
+nimbus policy diff --from before.policy.yaml --to after.policy.yaml [-f text|json]
+```
+
+```bash
 nimbus start [flags]
 ```
 
@@ -160,6 +176,14 @@ Current command taxonomy:
   shipped local admin token lifecycle command for rotating the localhost server
   access token using live-server semantics when a server is discoverable and
   offline semantics otherwise
+- `nimbus policy ...`
+  shipped local policy UX for strict typed operator policy artifacts.
+  `validate` proves the file parses and compiles into tenant-isolation
+  decisions, `explain` renders decision IDs and grant traces, `prove` renders
+  advisory evidence plus accepted-risk status, and `diff` summarizes authority
+  changes between two policy files. `storage.namespace` is currently
+  restricted to `tenant` so policy output cannot imply custom namespace
+  enforcement before the storage PEP consumes it.
 - `nimbus start`
   shipped explicit server-start verb
 - `nimbus compose ...`

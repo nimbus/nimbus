@@ -166,10 +166,17 @@ Production tenant isolation requires these additional boundaries:
   reference/referrer parsing.
 - **Networking:** service ports are loopback-only by default and mediated
   through tenant-scoped service bindings. Non-loopback exposure requires an
-  explicit operator policy record. Arbitrary outbound guest egress from
-  process-capable services is a separate hardening lane; L7/SSRF mediation,
-  host wildcard validation, internal-IP allowlists, and sandbox-local proxy
-  semantics are owned by
+  explicit operator policy record. Arbitrary outbound guest egress now has a
+  typed deny-by-default `SandboxEgressPolicy` contract that validates host
+  wildcards, malformed host shapes, internal-IP allowlists, reserved-IP
+  targets, and L7 method/path rules, then compiles to a canonical policy before
+  launch comparison/materialization. The launch materialization is the
+  schema-versioned `SandboxEgressEnforcementPlan`; container process-capable
+  launches use the proxy-backed enforcement path with live reload, while krun
+  execute-mode remains fail-closed/recreate-required until a packet-level
+  libkrun TSI egress PEP exists. The hidden `nimbus sandbox-supervisor`
+  entrypoint consumes and validates the contract, but the proven container path
+  is the host-side egress proxy owned by
   `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
 - **HostBridge and runtime grants:** in-process runtime code receives only the
   invocation tenant and exact grants. It cannot request another tenant's

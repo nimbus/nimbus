@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use nimbus_core::TenantId;
 
 use crate::backend::SandboxBackendKind;
+use crate::egress::SandboxEgressPolicy;
 use crate::endpoint::PublishedEndpointProtocol;
 
 const DEFAULT_SANDBOX_PATH: &str =
@@ -557,6 +558,8 @@ pub struct SandboxSpec {
     pub port_bindings: Vec<SandboxPortBinding>,
     #[serde(default)]
     pub mounts: Vec<SandboxMountSpec>,
+    #[serde(default)]
+    pub egress: SandboxEgressPolicy,
 }
 
 impl SandboxSpec {
@@ -577,6 +580,7 @@ impl SandboxSpec {
             lifecycle: SandboxLifecycleSpec::default(),
             port_bindings: Vec::new(),
             mounts: Vec::new(),
+            egress: SandboxEgressPolicy::default(),
         }
     }
 
@@ -640,6 +644,11 @@ impl SandboxSpec {
 
     pub fn with_mounts(mut self, mounts: impl IntoIterator<Item = SandboxMountSpec>) -> Self {
         self.mounts.extend(mounts);
+        self
+    }
+
+    pub fn with_egress_policy(mut self, egress: SandboxEgressPolicy) -> Self {
+        self.egress = egress;
         self
     }
 }

@@ -3,6 +3,7 @@ use super::raw::*;
 use super::warnings::*;
 use super::*;
 use crate::compose::discovery::ResolvedComposeSelection;
+use oci_client::Reference;
 use std::collections::BTreeSet;
 
 impl ComposeProjectPlan {
@@ -253,10 +254,11 @@ impl ComposeServicePlan {
         )?;
         let _ = process.to_image_process_overrides()?;
         let ports = resolve_ports(service_name, raw.ports, &mut warnings)?;
+        let x_nimbus = raw.x_nimbus;
         let resources = ComposeResourcePlan::from_raw(
             service_name,
             raw.deploy,
-            raw.x_nimbus.as_ref(),
+            x_nimbus.as_ref(),
             &mut warnings,
         )?;
         let restart = ComposeRestartPlan::from_raw(raw.restart.as_deref(), &mut warnings)?;
@@ -272,11 +274,11 @@ impl ComposeServicePlan {
             .transpose()?;
         let labels = parse_string_map(raw.labels, &format!("services.{service_name}.labels"))?;
         let volumes = resolve_volume_mounts(service_name, raw.volumes)?;
-        let backend = raw
-            .x_nimbus
+        let backend = x_nimbus
             .as_ref()
             .and_then(|extensions| extensions.backend)
             .unwrap_or(SandboxBackendKind::Krun);
+        let _ = compose_egress_policy(service_name, x_nimbus.as_ref())?;
 
         Ok(Self {
             backend,
@@ -290,7 +292,7 @@ impl ComposeServicePlan {
             stop_grace_period: raw.stop_grace_period,
             labels,
             volumes,
-            x_nimbus: raw.x_nimbus,
+            x_nimbus,
             warnings,
         })
     }
@@ -335,6 +337,7 @@ impl ComposeServicePlan {
             SandboxFilesystemSpec::new(PathBuf::new()),
             SandboxProcessSpec::new(Vec::<String>::new()),
         )
+        .with_egress_policy(compose_egress_policy(service_name, self.x_nimbus.as_ref())?)
         .with_lifecycle(compose_lifecycle_spec(
             &self.restart,
             self.stop_grace_period.as_deref(),
@@ -366,6 +369,41 @@ impl ComposeServicePlan {
         }
         Ok(spec)
     }
+}
+
+fn compose_egress_policy(
+    service_name: &str,
+    x_nimbus: Option<&ComposeNimbusPlan>,
+) -> Result<SandboxEgressPolicy, Error> {
+    let Some(egress) = x_nimbus.and_then(|plan| plan.egress.as_ref()) else {
+        return Ok(SandboxEgressPolicy::deny_all());
+    };
+    let mut rules = egress
+        .allow
+        .iter()
+        .map(|rule| {
+            let mut egress_rule = SandboxEgressRule::new(
+                rule.name.clone(),
+                rule.protocol,
+                rule.host.clone(),
+                rule.port,
+            )
+            .with_methods(rule.methods.clone())
+            .with_path_prefixes(rule.path_prefixes.clone());
+            if rule.allow_internal_ips {
+                egress_rule = egress_rule.allow_internal_ips(true);
+            }
+            egress_rule
+        })
+        .collect::<Vec<_>>();
+    rules.sort_by(|left, right| left.name.cmp(&right.name));
+    let policy = SandboxEgressPolicy::new(rules);
+    policy.validate().map_err(|message| {
+        Error::InvalidInput(format!(
+            "services.{service_name}.x-nimbus.egress: {message}"
+        ))
+    })?;
+    Ok(policy)
 }
 impl ComposeLaunchPlan {
     fn from_raw(
@@ -409,7 +447,11 @@ fn admit_image_reference(
     image_reference: &str,
     admission_mode: ComposeAdmissionMode,
 ) -> Result<(), Error> {
-    if !admission_mode.is_production() || is_digest_pinned_image_reference(image_reference) {
+    if !admission_mode.is_production() {
+        return Ok(());
+    }
+    let reference = parse_oci_image_reference(image_reference)?;
+    if has_sha256_digest(&reference) {
         return Ok(());
     }
     Err(Error::InvalidInput(format!(
@@ -417,14 +459,25 @@ fn admit_image_reference(
     )))
 }
 
-fn is_digest_pinned_image_reference(image_reference: &str) -> bool {
-    let Some((_, digest)) = image_reference.rsplit_once("@sha256:") else {
-        return false;
-    };
-    digest.len() == 64
-        && digest
-            .chars()
-            .all(|character| character.is_ascii_hexdigit())
+fn parse_oci_image_reference(image_reference: &str) -> Result<Reference, Error> {
+    let stripped = image_reference
+        .strip_prefix("docker://")
+        .unwrap_or(image_reference);
+    Reference::try_from(stripped).map_err(|error| {
+        Error::InvalidInput(format!(
+            "invalid OCI image reference `{image_reference}`: {error}"
+        ))
+    })
+}
+
+fn has_sha256_digest(reference: &Reference) -> bool {
+    reference
+        .digest()
+        .is_some_and(|digest| digest.strip_prefix("sha256:").is_some_and(is_sha256_hex))
+}
+
+fn is_sha256_hex(digest: &str) -> bool {
+    digest.len() == 64 && digest.as_bytes().iter().all(u8::is_ascii_hexdigit)
 }
 
 impl ComposeProcessPlan {

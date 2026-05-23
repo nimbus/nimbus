@@ -4,6 +4,27 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
+  - active execution plan for OpenShell-informed enterprise trust work.
+    EPS0-EPS8 are complete: strict typed operator policy artifacts,
+    built-in Rust evaluation into the existing `TenantIsolationDecision`
+    path, `nimbus policy validate|explain|diff|prove`, backend-aware reload
+    lifecycle, container proxy-enforced sandbox egress with live reload, krun
+    fail-closed/recreate-required semantics, OCSF/OpenTelemetry export
+    mappings, optional external policy backend seam, denied-egress policy
+    drafts, advisory/prover fixtures with accepted-risk support, operator docs,
+    and the reusable `bash scripts/verify-enterprise-policy-egress.sh`
+    conformance gate.
+- `docs/plans/artifact-provenance-verification-plan.md`
+  - active execution plan for production artifact provenance verification.
+    AP0-AP7 are complete: maintained OCI image parsing, typed verifier
+    adapter contract, Cosign image signatures, SLSA image/file provenance,
+    runtime bundle and guest executable admission, SBOM presence evidence,
+    offline/private-root verification fixtures, the reusable
+    `bash scripts/verify-artifact-provenance.sh` conformance gate, operator
+    docs, real sandbox service-image admission, Convex/Cloud Functions runtime
+    bundle provenance hook propagation, source-scoped provenance enforcement,
+    and composite signature/provenance/SBOM verifier chaining.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -510,23 +531,15 @@ archived plans only when you need historical execution detail.
     review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 - `docs/plans/artifact-provenance-verification-plan.md`
-  - canonical deferred plan for production artifact verification behind
+  - canonical completed baseline for production artifact verification behind
     the landed `TenantImageVerificationProvider` seam: maintained OCI
     reference parsing, Cosign verification, SLSA provenance verification,
-    SBOM evidence, offline/private-root verification, and extension from
-    service images to runtime/function bundles and machine images. Nimbus
-    owns policy evaluation and evidence normalization, not cryptographic
-    verification. Dependency review at
+    SBOM evidence, offline/private-root verification, extension from service
+    images to runtime/function bundles and machine images, runtime hook
+    propagation, source-scoped provenance policy, and composite verifier
+    chaining. Nimbus owns policy evaluation and evidence normalization, not
+    cryptographic verification. Dependency review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
-- `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
-  - canonical deferred plan for OpenShell-informed enterprise trust work:
-    typed operator policy artifacts, built-in Rust policy evaluation,
-    optional external policy backends such as OPA/Rego or Cedar, sandbox-local
-    egress enforcement for process-capable microVM/browser/agent guests,
-    dynamic versus recreate-required policy lifecycle, OCSF/OpenTelemetry
-    security-event export, and future policy advisor/prover lanes. Research at
-    `docs/plans/research/openshell-competitor-analysis.md`.
-
 ## Archive Policy
 
 Completed plans are stored in `docs/plans/archive/` for historical review, but

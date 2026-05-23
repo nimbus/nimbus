@@ -27,6 +27,7 @@ fs2.workspace = true
 hmac.workspace = true
 http.workspace = true
 libc.workspace = true
+oci-client = "0.16"
 pbkdf2.workspace = true
 prost = "0.13.1"
 prost-types = "0.13.1"

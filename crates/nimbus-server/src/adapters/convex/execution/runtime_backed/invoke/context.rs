@@ -116,7 +116,8 @@ impl<'a> RuntimeInvocationContext<'a> {
                 decision.tenant_id(),
                 server_request_id.as_deref(),
                 Some(cancellation),
-            ),
+            )
+            .with_runtime_bundle_provenance_gate(self.registry.runtime_bundle_provenance()),
             |bridge| bridge.snapshot_read_set(),
         )
         .await

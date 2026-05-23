@@ -29,12 +29,17 @@ pub use nimbus_runtime::{
 };
 // Sandbox orchestration surface.
 pub use nimbus_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
-    SandboxBuildLaunchSpec, SandboxError, SandboxFilesystemSpec, SandboxHandle, SandboxId,
-    SandboxImageLaunchSpec, SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSource,
-    SandboxMountSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge,
-    SandboxResourceLimits, SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec,
-    SandboxStatus, validate_sandbox_mounts, validate_tenant_volume_name,
+    CompiledSandboxEgressPolicy, PublishedEndpoint, PublishedEndpointProtocol,
+    SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+    SANDBOX_EGRESS_LEGACY_POLICY_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxBackend,
+    SandboxBackendKind, SandboxBuildLaunchSpec, SandboxEgressAuthorization,
+    SandboxEgressEnforcementMode, SandboxEgressEnforcementPlan, SandboxEgressPolicy,
+    SandboxEgressReloadPolicy, SandboxEgressRequest, SandboxEgressRule, SandboxError,
+    SandboxFilesystemSpec, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
+    SandboxImageProcessOverrides, SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec,
+    SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
+    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxSpec, SandboxStatus,
+    validate_sandbox_mounts, validate_tenant_volume_name,
 };
 // Server integration and transport construction helpers.
 pub use nimbus_server::{

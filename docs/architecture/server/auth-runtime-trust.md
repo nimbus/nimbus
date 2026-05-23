@@ -128,16 +128,22 @@ admitted decision, not from caller-supplied strings.
 
 Sensitive attributes are redacted by the event schema. Attribute and
 correlation-ID keys that name bearer claims, authorization headers, cookies,
-credentials, passwords, private keys, raw credentials, secrets, secret
-handles, or tokens are not serialized with caller-provided values. The event
-records the redacted field path and serializes the value as `redacted`
-instead. Callers may add more redacted attributes, but they must not bypass
-the schema by attaching raw secrets to another telemetry channel.
+credentials, passwords, private keys, query parameters, raw bearer claims, raw
+credentials, secrets, secret handles, or tokens are not serialized with
+caller-provided values. The event records the redacted field path and
+serializes the value as `redacted` instead. Callers may add more redacted
+attributes, but they must not bypass the schema by attaching raw secrets to
+another telemetry channel.
 
 `TenantIsolationEvent` is the internal canonical schema. Enterprise export
 formats such as OCSF JSONL or OpenTelemetry log records are mappings from this
-schema, not replacements for it. The export, retention, and conformance owner
-is `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+schema, not replacements for it. Nimbus maps events to conservative OCSF Base
+Event records and OpenTelemetry log-record shaped events with low-cardinality
+event names, trace/span correlation when present, and namespaced `nimbus.*`
+attributes for decision ID, tenant ID, workload identity, runtime tier,
+sandbox ID, invocation ID, service name, reason code, and redaction evidence.
+The export, retention, and conformance owner is
+`docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
 
 ## Agent Auth Contract
 
