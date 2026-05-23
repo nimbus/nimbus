@@ -29,7 +29,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - active execution plan for the next Bun/JSC proof wave. Starts from the
     completed runtime engine seam and execution-isolation baselines, keeps
     Bun/JSC proof-only and `in_process_trusted_only`, records the fresh
-    Gate 10 proof on Bun `ea677357e3`, and drives BJ1-BJ7: permission
+    Gate 10 proof on Bun `c57f7e58c0`, and drives BJ1-BJ7: permission
     containment, memory behavior, package/module loading, lifecycle/reuse,
     artifact metadata and server rejection, fork/upstream/hold decision, and
     closeout.

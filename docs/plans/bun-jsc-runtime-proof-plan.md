@@ -12,10 +12,10 @@ justified only after the remaining production blockers are measured.
 - **Current trust tier:** `in_process_trusted_only`
 - **Current product posture:** proof-only, not selectable, no production route
 - **Bun worktree:** `/Users/jack/src/github.com/oven-sh/bun`
-- **Current local Bun proof commit:** `ea677357e3`
+- **Current local Bun proof commit:** `c57f7e58c0`
   (`Add Bun embed timeout cancel proof`)
-- **Current upstream base in local Bun worktree:** `0b20408b65`
-  (`Hardening: input validation and bounds tightening across 26 subsystems (#31129)`)
+- **Current upstream base in local Bun worktree:** `f161e0311d`
+  (`shell: wrap only component-leading ! when neutralizing glob metachars (#31272)`)
 
 ## Decision
 
@@ -42,7 +42,7 @@ The local proof chain has shown:
   execution, clear termination, and recover the same VM for follow-up
   evaluation.
 
-Fresh verification on 2026-05-23:
+Fresh verification after the local Bun pull on 2026-05-23:
 
 ```sh
 cd /Users/jack/src/github.com/oven-sh/bun
@@ -52,7 +52,7 @@ bun scripts/build.ts --profile=debug-no-asan \
   --target=check-bun-embed-probe
 ```
 
-Result: passed. The build configured `bun-debug` at revision `ea677357e3`,
+Result: passed. The build configured `bun-debug` at revision `c57f7e58c0`,
 compiled `bun_embed_probe`, linked `bun-embed-probe`, ran the smoke target, and
 emitted `[build] check-bun-embed-probe done`.
 
@@ -74,7 +74,7 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 
 | Gate | Status | Goal | Verification |
 | --- | --- | --- | --- |
-| BJ0 | `done` | Reconcile current proof evidence, local Bun delta, and merge baseline. | `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed on 2026-05-23 against Bun `ea677357e3`; Nimbus `main` contains merge `8c5f2697`. |
+| BJ0 | `done` | Reconcile current proof evidence, local Bun delta, and merge baseline. | `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed on 2026-05-23 after the local Bun pull against Bun `c57f7e58c0` on upstream base `f161e0311d`; Nimbus `main` contains merge `8c5f2697`. |
 | BJ1 | `todo` | Gate 11: permission-surface containment inventory. | Extend the non-CLI `bun_embed_probe` to classify each host-sensitive surface as `absent_by_default`, `denied_by_default`, `policy_hook_available`, `policy_hook_missing`, or `unsafe_bypass`; record source snippet, expected result, actual result, and hook path. |
 | BJ2 | `todo` | Gate 12: memory behavior and safe first policy. | Run generated Nimbus invocation loops with memory pressure; prove a per-VM heap limit or pressure signal, or record `fresh_per_invocation`/discard-on-pressure as the only safe policy. |
 | BJ3 | `todo` | Gate 13: package/module loading and resolver policy. | Prove the selected Bun artifact shape, decide ESM versus program wrapper for the next lane, reject Node external packages by default, and identify any explicit Bun package resolver API needed. |
