@@ -6,6 +6,7 @@ use std::sync::{
 use crate::tenant_isolation::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
 };
+use nimbus_sandbox::PublishedEndpointProtocol;
 
 use super::*;
 
@@ -417,6 +418,142 @@ fn built_in_hard_deny_precedes_external_policy_backend_allow() {
             .to_string()
             .contains("image.digest_required=false is unsafe"),
         "built-in hard-deny reason should be preserved: {error}"
+    );
+}
+
+#[test]
+fn denied_egress_draft_proposes_minimal_rule_without_mutating_policy() {
+    let policy = parse_policy(EGRESS_DIFF_FROM);
+    let event = OperatorDeniedEgressEvent {
+        tenant_id: "tenant-a".to_string(),
+        workload_kind: "sandbox_service".to_string(),
+        workload_name: "worker".to_string(),
+        protocol: PublishedEndpointProtocol::Https,
+        host: "API.GitHub.com".to_string(),
+        port: 443,
+        method: Some("get".to_string()),
+        path: Some("/repos/nimbus/nimbus?token=do-not-log".to_string()),
+        reason: "sandbox egress default deny".to_string(),
+    };
+
+    let draft = policy
+        .draft_from_denied_egress(event)
+        .expect("external denied egress should produce a draft");
+
+    assert_eq!(draft.kind, OperatorPolicyDraftKind::SandboxEgressAllow);
+    assert_eq!(draft.status, OperatorPolicyDraftStatus::ReviewRequired);
+    assert!(draft.requires_explicit_approval);
+    assert!(!draft.auto_apply);
+    assert_eq!(draft.workload_key, "sandbox_service/worker");
+    assert_eq!(draft.suggested_egress_rule.name, "api-github-com-https-443");
+    assert_eq!(draft.suggested_egress_rule.host, "api.github.com");
+    assert_eq!(draft.suggested_egress_rule.port, 443);
+    assert_eq!(draft.suggested_egress_rule.methods, vec!["GET".to_string()]);
+    assert_eq!(
+        draft.suggested_egress_rule.path_prefixes,
+        vec!["/repos/nimbus/nimbus".to_string()]
+    );
+    assert!(
+        !serde_yaml::to_string(&draft)
+            .expect("draft should serialize")
+            .contains("do-not-log"),
+        "query parameters from denial evidence must not leak into draft policy"
+    );
+    assert_eq!(
+        policy.workloads[0].network.egress.allow.len(),
+        1,
+        "draft generation must not mutate the source policy"
+    );
+}
+
+#[test]
+fn denied_egress_draft_requires_approval_before_apply() {
+    let policy = parse_policy(EGRESS_DIFF_FROM);
+    let draft = policy
+        .draft_from_denied_egress(OperatorDeniedEgressEvent {
+            tenant_id: "tenant-a".to_string(),
+            workload_kind: "sandbox_service".to_string(),
+            workload_name: "worker".to_string(),
+            protocol: PublishedEndpointProtocol::Https,
+            host: "api.github.com".to_string(),
+            port: 443,
+            method: Some("GET".to_string()),
+            path: Some("/repos/".to_string()),
+            reason: "sandbox egress default deny".to_string(),
+        })
+        .expect("denied egress should produce a draft");
+
+    let error = draft
+        .apply_to(&policy, None)
+        .expect_err("draft apply should require approval");
+    assert!(
+        error.to_string().contains("requires explicit approval"),
+        "approval error should be clear: {error}"
+    );
+
+    let approval =
+        OperatorPolicyDraftApproval::new("security-reviewer", "approved GitHub metadata egress")
+            .expect("approval should be valid");
+    let updated = draft
+        .apply_to(&policy, Some(&approval))
+        .expect("approved draft should apply to a cloned policy");
+
+    assert_eq!(
+        policy.workloads[0].network.egress.allow.len(),
+        1,
+        "approved apply must still leave source policy untouched"
+    );
+    assert_eq!(updated.workloads[0].network.egress.allow.len(), 2);
+    let evaluation = updated.evaluate().expect("applied policy should evaluate");
+    assert!(
+        evaluation.decisions[0]
+            .sandbox_egress
+            .iter()
+            .any(|summary| summary.contains("api-github-com-https-443")),
+        "approved draft should produce real policy authority: {:?}",
+        evaluation.decisions[0].sandbox_egress
+    );
+}
+
+#[test]
+fn denied_egress_draft_rejects_mismatched_tenant_and_unknown_workload() {
+    let policy = parse_policy(EGRESS_DIFF_FROM);
+    let mismatched_tenant = OperatorDeniedEgressEvent {
+        tenant_id: "tenant-b".to_string(),
+        workload_kind: "sandbox_service".to_string(),
+        workload_name: "worker".to_string(),
+        protocol: PublishedEndpointProtocol::Https,
+        host: "api.github.com".to_string(),
+        port: 443,
+        method: Some("GET".to_string()),
+        path: Some("/repos/".to_string()),
+        reason: "sandbox egress default deny".to_string(),
+    };
+    let error = policy
+        .draft_from_denied_egress(mismatched_tenant)
+        .expect_err("tenant mismatch should reject");
+    assert!(
+        error.to_string().contains("does not match policy tenant"),
+        "tenant mismatch should be explicit: {error}"
+    );
+
+    let unknown_workload = OperatorDeniedEgressEvent {
+        tenant_id: "tenant-a".to_string(),
+        workload_kind: "sandbox_service".to_string(),
+        workload_name: "missing".to_string(),
+        protocol: PublishedEndpointProtocol::Https,
+        host: "api.github.com".to_string(),
+        port: 443,
+        method: Some("GET".to_string()),
+        path: Some("/repos/".to_string()),
+        reason: "sandbox egress default deny".to_string(),
+    };
+    let error = policy
+        .draft_from_denied_egress(unknown_workload)
+        .expect_err("unknown workload should reject");
+    assert!(
+        error.to_string().contains("is not present in policy"),
+        "unknown workload should be explicit: {error}"
     );
 }
 

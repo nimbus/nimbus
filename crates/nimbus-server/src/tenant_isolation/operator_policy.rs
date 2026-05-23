@@ -19,10 +19,15 @@ use super::{
     TenantWorkloadKind,
 };
 
+mod draft;
 mod egress;
 mod external;
 mod reload;
 
+pub use draft::{
+    OperatorDeniedEgressEvent, OperatorPolicyDraft, OperatorPolicyDraftApproval,
+    OperatorPolicyDraftKind, OperatorPolicyDraftStatus,
+};
 pub use egress::{OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy};
 use external::evaluate_external_policy_backend;
 pub use external::{
