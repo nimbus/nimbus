@@ -251,8 +251,13 @@ jobs:
       NIMBUS_PROVIDER_FILTER: ${{ matrix.provider }}
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
       NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
-      NIMBUS_LIBSQL_URL: http://127.0.0.1:18080
-      NIMBUS_LIBSQL_ADMIN_URL: http://127.0.0.1:18081
+      # PW5: localhost (not 127.0.0.1) is required by sqld v0.24.26 because
+      # in --enable-namespaces mode the server extracts the first dotted
+      # label of the Host header as the namespace ("127" from "127.0.0.1")
+      # and ignores the x-namespace header. With "localhost" sqld falls
+      # back to the x-namespace header that the libsql Rust client sends.
+      NIMBUS_LIBSQL_URL: http://localhost:18080
+      NIMBUS_LIBSQL_ADMIN_URL: http://localhost:18081
 
     steps:
       - name: Check out repository
@@ -355,10 +360,10 @@ jobs:
         if: matrix.provider == 'libsql'
         run: |
           for _ in {1..60}; do
-            if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/nimbus_provider_probe/create \
+            if curl -fsS -X POST http://localhost:18081/v1/namespaces/nimbus_provider_probe/create \
               -H 'content-type: application/json' \
               --data '{}' >/dev/null; then
-              curl -fsS -X DELETE http://127.0.0.1:18081/v1/namespaces/nimbus_provider_probe >/dev/null || true
+              curl -fsS -X DELETE http://localhost:18081/v1/namespaces/nimbus_provider_probe >/dev/null || true
               exit 0
             fi
             sleep 1
