@@ -103,17 +103,21 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   sccache / Swatinem wave.
 - CI infrastructure modernization (composite actions, SHA pinning,
   runner determinism, job summaries, SAST):
-  `docs/plans/ci-modernization-plan.md` as the active execution plan
-  (CM0..CM8). Covers the cross-workflow Rust+sccache+Swatinem
-  composite action extraction (`.github/actions/setup-rust-cached/`),
-  SHA-pinning every third-party action with a version-name comment,
-  pinning `runs-on: ubuntu-latest` → `ubuntu-24.04`, fixing the
-  `create-github-app-token@v3.2.0` patch over-pin, emitting
-  `$GITHUB_STEP_SUMMARY` markdown from high-value jobs, and adding
-  a CodeQL workflow. `/goal` control plane gated on
-  `bash scripts/verify-ci-modernization.sh` (12 conditions). Once
-  the plan closes, `docs/operating/ci-modernization.md` becomes the
-  canonical infrastructure contract alongside `ci-caching.md`.
+  `docs/operating/ci-modernization.md` for the canonical contract,
+  then `docs/plans/archive/ci-modernization-plan.md` as the completed
+  baseline (CM0..CM8, closed 2026-05-22). The baseline covers the
+  cross-workflow Rust + sccache + Swatinem composite action
+  extraction at `.github/actions/setup-rust-cached/`, SHA-pinning
+  every non-`actions/*` `uses:` reference (including codeql-action
+  sub-paths) with a `# vX.Y.Z` version-name comment, pinning
+  `runs-on: ubuntu-latest` → `ubuntu-24.04`, dropping
+  `create-github-app-token@v3.2.0` to `@v3`, emitting
+  `$GITHUB_STEP_SUMMARY` markdown from deny / coverage /
+  rust-gate-summary / desktop-ui, and shipping
+  `.github/workflows/codeql.yml`. `/goal` control plane gated on
+  `bash scripts/verify-ci-modernization.sh` (12 conditions). Promote
+  a new active plan before another CI infrastructure / SAST /
+  composite-action wave.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,
