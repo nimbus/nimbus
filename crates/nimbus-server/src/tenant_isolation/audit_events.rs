@@ -9,6 +9,8 @@ use super::{
 use super::{TenantIsolationAuthority, TenantIsolationContext};
 
 pub const TENANT_ISOLATION_EVENT_SCHEMA_VERSION: &str = "nimbus.tenant_isolation.event.v1";
+pub const TENANT_ISOLATION_OCSF_SCHEMA_VERSION: &str = "1.8.0";
+pub const TENANT_ISOLATION_OTEL_SCOPE_NAME: &str = "nimbus.tenant_isolation";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +68,7 @@ impl TenantIsolationEventResult {
 #[serde(rename_all = "snake_case", tag = "type", content = "value")]
 pub enum TenantIsolationEventValue {
     String(String),
+    StringList(Vec<String>),
     U64(u64),
     Bool(bool),
     Redacted,
@@ -121,6 +124,53 @@ pub struct TenantIsolationEvent {
     correlation_ids: BTreeMap<String, String>,
     attributes: BTreeMap<String, TenantIsolationEventValue>,
     redacted_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantIsolationOcsfEvent {
+    pub time: u64,
+    pub metadata: TenantIsolationOcsfMetadata,
+    pub category_uid: u16,
+    pub category_name: &'static str,
+    pub class_uid: u16,
+    pub class_name: &'static str,
+    pub activity_id: u16,
+    pub activity_name: String,
+    pub type_uid: u32,
+    pub type_name: String,
+    pub severity_id: u8,
+    pub severity: &'static str,
+    pub status_id: u8,
+    pub status: &'static str,
+    pub status_code: String,
+    pub status_detail: String,
+    pub message: String,
+    pub unmapped: BTreeMap<String, TenantIsolationEventValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantIsolationOcsfMetadata {
+    pub version: &'static str,
+    pub product: TenantIsolationOcsfProduct,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantIsolationOcsfProduct {
+    pub name: &'static str,
+    pub vendor_name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantIsolationOtelLogRecord {
+    pub time_unix_nano: u64,
+    pub observed_time_unix_nano: u64,
+    pub severity_text: &'static str,
+    pub severity_number: u8,
+    pub event_name: String,
+    pub trace_id: Option<String>,
+    pub span_id: Option<String>,
+    pub body: String,
+    pub attributes: BTreeMap<String, TenantIsolationEventValue>,
 }
 
 impl TenantIsolationEvent {
@@ -227,6 +277,56 @@ impl TenantIsolationEvent {
         self
     }
 
+    pub fn to_ocsf_event(&self, time_millis: u64) -> TenantIsolationOcsfEvent {
+        let severity = ocsf_severity(self.kind, self.result);
+        let status = ocsf_status(self.result);
+        TenantIsolationOcsfEvent {
+            time: time_millis,
+            metadata: TenantIsolationOcsfMetadata {
+                version: TENANT_ISOLATION_OCSF_SCHEMA_VERSION,
+                product: TenantIsolationOcsfProduct {
+                    name: "Nimbus",
+                    vendor_name: "Nimbus",
+                },
+            },
+            category_uid: 0,
+            category_name: "Uncategorized",
+            class_uid: 0,
+            class_name: "Base Event",
+            activity_id: 99,
+            activity_name: self.kind.label().to_owned(),
+            type_uid: 99,
+            type_name: format!("Base Event: {}", self.kind.label()),
+            severity_id: severity.id,
+            severity: severity.label,
+            status_id: status.id,
+            status: status.label,
+            status_code: self.reason_code.clone(),
+            status_detail: self.summary_message(),
+            message: self.summary_message(),
+            unmapped: self.export_attributes(),
+        }
+    }
+
+    pub fn to_otel_log_record(
+        &self,
+        time_unix_nano: u64,
+        observed_time_unix_nano: u64,
+    ) -> TenantIsolationOtelLogRecord {
+        let severity = otel_severity(self.kind, self.result);
+        TenantIsolationOtelLogRecord {
+            time_unix_nano,
+            observed_time_unix_nano,
+            severity_text: severity.text,
+            severity_number: severity.number,
+            event_name: format!("{}.{}", TENANT_ISOLATION_OTEL_SCOPE_NAME, self.kind.label()),
+            trace_id: self.correlation_ids.get("trace_id").cloned(),
+            span_id: self.correlation_ids.get("span_id").cloned(),
+            body: self.summary_message(),
+            attributes: self.export_attributes(),
+        }
+    }
+
     pub fn with_redacted_attribute(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
         self.attributes
@@ -284,6 +384,84 @@ impl TenantIsolationEvent {
         {
             self.redacted_fields.push(field);
         }
+    }
+
+    fn summary_message(&self) -> String {
+        format!(
+            "Nimbus tenant isolation {} {}: {}",
+            self.kind.label(),
+            self.result.label(),
+            self.reason_code
+        )
+    }
+
+    fn export_attributes(&self) -> BTreeMap<String, TenantIsolationEventValue> {
+        let mut attributes = BTreeMap::from([
+            (
+                "nimbus.schema_version".to_owned(),
+                TenantIsolationEventValue::String(self.schema_version.to_owned()),
+            ),
+            (
+                "nimbus.tenant_id".to_owned(),
+                TenantIsolationEventValue::String(self.tenant_id.clone()),
+            ),
+            (
+                "nimbus.surface".to_owned(),
+                TenantIsolationEventValue::String(self.surface.clone()),
+            ),
+            (
+                "nimbus.principal_class".to_owned(),
+                TenantIsolationEventValue::String(self.principal_class.clone()),
+            ),
+            (
+                "nimbus.event.kind".to_owned(),
+                TenantIsolationEventValue::String(self.kind.label().to_owned()),
+            ),
+            (
+                "nimbus.event.result".to_owned(),
+                TenantIsolationEventValue::String(self.result.label().to_owned()),
+            ),
+            (
+                "nimbus.event.reason_code".to_owned(),
+                TenantIsolationEventValue::String(self.reason_code.clone()),
+            ),
+            (
+                "nimbus.redacted_fields".to_owned(),
+                TenantIsolationEventValue::StringList(self.redacted_fields.clone()),
+            ),
+        ]);
+        insert_optional_string(&mut attributes, "nimbus.decision_id", &self.decision_id);
+        insert_optional_string(
+            &mut attributes,
+            "nimbus.workload_stable_id",
+            &self.workload_stable_id,
+        );
+        insert_optional_string(&mut attributes, "nimbus.workload_name", &self.workload_name);
+        insert_optional_string(&mut attributes, "nimbus.sandbox_id", &self.sandbox_id);
+        insert_optional_string(&mut attributes, "nimbus.invocation_id", &self.invocation_id);
+        insert_optional_string(&mut attributes, "nimbus.service_name", &self.service_name);
+        if let Some(workload_kind) = self.workload_kind {
+            attributes.insert(
+                "nimbus.workload_kind".to_owned(),
+                TenantIsolationEventValue::String(workload_kind.label().to_owned()),
+            );
+        }
+        if let Some(runtime_tier) = self.runtime_tier {
+            attributes.insert(
+                "nimbus.runtime_tier".to_owned(),
+                TenantIsolationEventValue::String(runtime_tier.label().to_owned()),
+            );
+        }
+        for (key, value) in &self.correlation_ids {
+            attributes.insert(
+                format!("nimbus.correlation.{key}"),
+                TenantIsolationEventValue::String(value.clone()),
+            );
+        }
+        for (key, value) in &self.attributes {
+            attributes.insert(format!("nimbus.attribute.{key}"), value.clone());
+        }
+        attributes
     }
 }
 
@@ -345,8 +523,104 @@ fn is_sensitive_event_key(key: &str) -> bool {
         || normalized.contains("credential")
         || normalized.contains("password")
         || normalized.contains("private_key")
+        || normalized.contains("query_param")
+        || normalized.contains("query_string")
+        || normalized.contains("raw_query")
+        || normalized.contains("url_query")
         || normalized.contains("secret")
         || normalized.contains("token")
+}
+
+fn insert_optional_string(
+    attributes: &mut BTreeMap<String, TenantIsolationEventValue>,
+    key: &str,
+    value: &Option<String>,
+) {
+    if let Some(value) = value {
+        attributes.insert(
+            key.to_owned(),
+            TenantIsolationEventValue::String(value.clone()),
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OcsfSeverity {
+    id: u8,
+    label: &'static str,
+}
+
+fn ocsf_severity(
+    kind: TenantIsolationEventKind,
+    result: TenantIsolationEventResult,
+) -> OcsfSeverity {
+    match (kind, result) {
+        (TenantIsolationEventKind::DriftViolation, _) => OcsfSeverity {
+            id: 4,
+            label: "High",
+        },
+        (_, TenantIsolationEventResult::Failed) => OcsfSeverity {
+            id: 4,
+            label: "High",
+        },
+        (_, TenantIsolationEventResult::Denied) => OcsfSeverity {
+            id: 3,
+            label: "Medium",
+        },
+        _ => OcsfSeverity {
+            id: 1,
+            label: "Informational",
+        },
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OcsfStatus {
+    id: u8,
+    label: &'static str,
+}
+
+fn ocsf_status(result: TenantIsolationEventResult) -> OcsfStatus {
+    match result {
+        TenantIsolationEventResult::Denied | TenantIsolationEventResult::Failed => OcsfStatus {
+            id: 2,
+            label: "Failure",
+        },
+        TenantIsolationEventResult::Allowed
+        | TenantIsolationEventResult::Succeeded
+        | TenantIsolationEventResult::Observed => OcsfStatus {
+            id: 1,
+            label: "Success",
+        },
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OtelSeverity {
+    number: u8,
+    text: &'static str,
+}
+
+fn otel_severity(
+    kind: TenantIsolationEventKind,
+    result: TenantIsolationEventResult,
+) -> OtelSeverity {
+    match (kind, result) {
+        (TenantIsolationEventKind::DriftViolation, _) | (_, TenantIsolationEventResult::Failed) => {
+            OtelSeverity {
+                number: 17,
+                text: "ERROR",
+            }
+        }
+        (_, TenantIsolationEventResult::Denied) => OtelSeverity {
+            number: 13,
+            text: "WARN",
+        },
+        _ => OtelSeverity {
+            number: 9,
+            text: "INFO",
+        },
+    }
 }
 
 #[cfg(test)]
@@ -491,6 +765,158 @@ mod tests {
     }
 
     #[test]
+    fn tenant_isolation_event_exports_ocsf_and_otel_records() {
+        let decision = tenant_decision();
+        let event = decision
+            .admission_event("policy_allowed")
+            .with_correlation_id("trace_id", "0af7651916cd43dd8448eb211c80319c")
+            .with_correlation_id("span_id", "b7ad6b7169203331")
+            .with_attribute("operation", "db.query")
+            .with_attribute("table", "messages")
+            .with_service_name("db");
+
+        let ocsf = event.to_ocsf_event(1_772_000_000_000);
+        assert_eq!(ocsf.time, 1_772_000_000_000);
+        assert_eq!(ocsf.metadata.version, TENANT_ISOLATION_OCSF_SCHEMA_VERSION);
+        assert_eq!(ocsf.metadata.product.name, "Nimbus");
+        assert_eq!(ocsf.category_uid, 0);
+        assert_eq!(ocsf.category_name, "Uncategorized");
+        assert_eq!(ocsf.class_uid, 0);
+        assert_eq!(ocsf.class_name, "Base Event");
+        assert_eq!(ocsf.activity_id, 99);
+        assert_eq!(ocsf.activity_name, "admission");
+        assert_eq!(ocsf.type_uid, 99);
+        assert_eq!(ocsf.type_name, "Base Event: admission");
+        assert_eq!(ocsf.severity_id, 1);
+        assert_eq!(ocsf.severity, "Informational");
+        assert_eq!(ocsf.status_id, 1);
+        assert_eq!(ocsf.status, "Success");
+        assert_eq!(ocsf.status_code, "policy_allowed");
+        assert!(ocsf.status_detail.contains("policy_allowed"));
+        assert_eq!(
+            ocsf.unmapped.get("nimbus.decision_id"),
+            Some(&TenantIsolationEventValue::String(
+                decision.id().as_str().to_owned()
+            ))
+        );
+        assert_eq!(
+            ocsf.unmapped.get("nimbus.tenant_id"),
+            Some(&TenantIsolationEventValue::String("tenant-a".to_owned()))
+        );
+        assert_eq!(
+            ocsf.unmapped.get("nimbus.attribute.table"),
+            Some(&TenantIsolationEventValue::String("messages".to_owned()))
+        );
+        assert_eq!(
+            ocsf.unmapped.get("nimbus.service_name"),
+            Some(&TenantIsolationEventValue::String("db".to_owned()))
+        );
+        match ocsf.unmapped.get("nimbus.workload_stable_id") {
+            Some(TenantIsolationEventValue::String(value)) => {
+                assert!(value.contains("messages%3Asend"), "{value}");
+                assert!(value.contains("/invocation/invoke-1"), "{value}");
+            }
+            other => panic!("expected workload stable id, got {other:?}"),
+        }
+        serde_json::to_string(&ocsf).expect("OCSF event should serialize");
+
+        let otel = event.to_otel_log_record(1_772_000_000_000_000_000, 1_772_000_000_000_001_000);
+        assert_eq!(otel.time_unix_nano, 1_772_000_000_000_000_000);
+        assert_eq!(otel.observed_time_unix_nano, 1_772_000_000_000_001_000);
+        assert_eq!(otel.severity_text, "INFO");
+        assert_eq!(otel.severity_number, 9);
+        assert_eq!(otel.event_name, "nimbus.tenant_isolation.admission");
+        assert_eq!(
+            otel.trace_id.as_deref(),
+            Some("0af7651916cd43dd8448eb211c80319c")
+        );
+        assert_eq!(otel.span_id.as_deref(), Some("b7ad6b7169203331"));
+        assert!(otel.body.contains("policy_allowed"));
+        assert_eq!(
+            otel.attributes.get("nimbus.decision_id"),
+            Some(&TenantIsolationEventValue::String(
+                decision.id().as_str().to_owned()
+            ))
+        );
+        assert_eq!(
+            otel.attributes.get("nimbus.correlation.trace_id"),
+            Some(&TenantIsolationEventValue::String(
+                "0af7651916cd43dd8448eb211c80319c".to_owned()
+            ))
+        );
+        assert_eq!(
+            otel.attributes.get("nimbus.event.reason_code"),
+            Some(&TenantIsolationEventValue::String(
+                "policy_allowed".to_owned()
+            ))
+        );
+        serde_json::to_string(&otel).expect("OpenTelemetry log record should serialize");
+    }
+
+    #[test]
+    fn tenant_isolation_event_exports_redact_sensitive_fields() {
+        let event = TenantIsolationEvent::without_decision(
+            TenantIsolationEventKind::HostBridgeOperation,
+            "tenant-a",
+            "runtime.host_bridge",
+            "application",
+            TenantIsolationEventResult::Denied,
+            "secret_grant_denied",
+        )
+        .with_correlation_id("authorization", "Bearer do-not-log-authorization")
+        .with_attribute("query_params", "token=do-not-log-query")
+        .with_attribute("raw_bearer_claims", "{\"sub\":\"do-not-log-claims\"}")
+        .with_attribute("secret_handle", "prod/db/password")
+        .with_attribute("safe_reason", "secret grant denied");
+
+        let ocsf = event.to_ocsf_event(1_772_000_000_000);
+        let otel = event.to_otel_log_record(1_772_000_000_000_000_000, 1_772_000_000_000_001_000);
+        let ocsf_json = serde_json::to_string(&ocsf).expect("OCSF event should serialize");
+        let otel_json = serde_json::to_string(&otel).expect("OTel record should serialize");
+        for serialized in [&ocsf_json, &otel_json] {
+            for secret in [
+                "do-not-log-authorization",
+                "do-not-log-query",
+                "do-not-log-claims",
+                "prod/db/password",
+            ] {
+                assert!(
+                    !serialized.contains(secret),
+                    "sensitive value leaked into export: {serialized}"
+                );
+            }
+            assert!(
+                serialized.contains("\"type\":\"redacted\""),
+                "sensitive fields should serialize as typed redactions: {serialized}"
+            );
+            assert!(
+                serialized.contains("attributes.query_params"),
+                "query parameter redaction should be advertised: {serialized}"
+            );
+            assert!(
+                serialized.contains("attributes.raw_bearer_claims"),
+                "raw bearer claim redaction should be advertised: {serialized}"
+            );
+            assert!(
+                serialized.contains("correlation_ids.authorization"),
+                "authorization correlation redaction should be advertised: {serialized}"
+            );
+        }
+        assert_eq!(
+            ocsf.unmapped.get("nimbus.attribute.query_params"),
+            Some(&TenantIsolationEventValue::Redacted)
+        );
+        assert_eq!(
+            otel.attributes.get("nimbus.attribute.secret_handle"),
+            Some(&TenantIsolationEventValue::Redacted)
+        );
+        assert!(
+            event.correlation_ids().get("authorization").is_none(),
+            "sensitive correlation IDs should be removed before export"
+        );
+    }
+
+    #[test]
     fn tenant_isolation_rejection_cleanup_and_drift_events_redact_by_schema() {
         let context = test_application_context();
         let rejection = TenantIsolationEvent::rejection_from_context(
@@ -499,6 +925,7 @@ mod tests {
         )
         .with_correlation_id("authorization", "Bearer do-not-log")
         .with_attribute("bearer_claims", "{\"sub\":\"do-not-log\"}")
+        .with_attribute("query_params", "session=do-not-log-query")
         .with_attribute("secret_handle", "prod/db/password")
         .with_attribute("safe_reason", "tenant claim mismatch");
 
@@ -542,6 +969,10 @@ mod tests {
             assert!(
                 !serialized.contains("do-not-log-credentials"),
                 "raw credentials must not leak: {serialized}"
+            );
+            assert!(
+                !serialized.contains("do-not-log-query"),
+                "query parameter values must not leak: {serialized}"
             );
             assert!(
                 serialized.contains("\"type\":\"redacted\""),
