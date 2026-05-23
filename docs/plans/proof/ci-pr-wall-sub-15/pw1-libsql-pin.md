@@ -2,28 +2,42 @@
 
 ## Pin
 
-`ghcr.io/tursodatabase/libsql-server:latest` → `:v0.24.26`.
+`ghcr.io/tursodatabase/libsql-server:latest` → `:v0.24.33`.
 
 Selected 2026-05-23: most recent v0.24.x present on GHCR for
 `tursodatabase/libsql-server`. Probed via:
 
 ```
 TOKEN=$(curl -s 'https://ghcr.io/token?scope=repository:tursodatabase/libsql-server:pull' | jq -r .token)
-curl -s "https://ghcr.io/v2/tursodatabase/libsql-server/tags/list?n=500" \
-  -H "Authorization: Bearer ${TOKEN}" | jq -r '.tags[]' | grep -E '^v0\.' | sort -V | tail -10
+curl -s "https://ghcr.io/v2/tursodatabase/libsql-server/tags/list?n=1000" \
+  -H "Authorization: Bearer ${TOKEN}" | jq -r '.tags[]' | grep -E '^v0\.24\.' | sort -V | tail -10
 ```
 
 Result (highest tags):
 
 ```
-v0.24.17 v0.24.18 v0.24.19 v0.24.20 v0.24.21 v0.24.22 v0.24.23
-v0.24.24 v0.24.25 v0.24.26
+v0.24.24 v0.24.25 v0.24.26 v0.24.27 v0.24.28
+v0.24.29 v0.24.30 v0.24.31 v0.24.32 v0.24.33
 ```
 
-`v0.24.26` chosen as the most recent stable. The GitHub releases
-page (`tursodatabase/libsql`) lists tags through `v0.24.32` but
-those do not exist on GHCR (probed individually, all 404). Future
-PW-style refreshes should re-probe.
+### Tag selection notes
+
+The first PW1 pin was `v0.24.26`. That tag has a sqld bug in
+`--enable-namespaces` mode where the server extracts the first
+dotted label of the `Host` header as the namespace and ignores the
+`x-namespace` header that the libsql Rust client sends. A request
+to `http://127.0.0.1:18080` is routed to namespace `127` and
+returns 404. The bug is fixed by `v0.24.33`.
+
+The failed `v0.24.26` pin reached PW2-backfill before being caught
+(External Provider Tests (libsql) failed with
+`Hrana: api error: status=404 Not Found, body={"error":"Namespace
+\`127\` doesn't exist"}` for all 8 libsql tests). PW5 repins to
+`v0.24.33` after verifying all 8 libsql provider tests pass locally
+against that tag. Note: the original PW1 probe used `n=500` and
+listed only up through `v0.24.26`; with `n=1000` the full set
+through `v0.24.33` is visible. Always raise `n=` when probing for
+tag selection.
 
 ## Cache lane
 
@@ -35,7 +49,7 @@ second to `coverage.yml`):
 
 Both gain three new steps before "Start libsql provider fixture":
 
-1. `actions/cache@v5` keyed on `libsql-image-v0.24.26` with path
+1. `actions/cache@v5` keyed on `libsql-image-v0.24.33` with path
    `/tmp/libsql-image.tar.gz`.
 2. On cache hit: `docker load --input /tmp/libsql-image.tar.gz`.
 3. On cache miss: `docker pull` + `docker save | gzip > /tmp/...`.

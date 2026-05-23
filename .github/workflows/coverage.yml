@@ -129,10 +129,12 @@ jobs:
       NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
       NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
-      # PW5: localhost (not 127.0.0.1) because sqld v0.24.26 with
-      # --enable-namespaces extracts the first dotted Host label as the
-      # namespace ("127") and ignores the x-namespace header that the
-      # libsql Rust client sends.
+      # PW5: localhost (not 127.0.0.1) defensively avoids sqld's
+      # subdomain-from-Host-header namespace routing. v0.24.26 had a bug
+      # where with --enable-namespaces the server extracted the first
+      # dotted label ("127" from "127.0.0.1") as the namespace and
+      # ignored the x-namespace header. v0.24.33 fixed it, but a
+      # single-label host (`localhost`) never triggers that codepath.
       NIMBUS_LIBSQL_URL: http://localhost:18080
       NIMBUS_LIBSQL_ADMIN_URL: http://localhost:18081
     services:
@@ -191,20 +193,20 @@ jobs:
         uses: actions/cache@v5
         with:
           path: /tmp/libsql-image.tar.gz
-          key: libsql-image-v0.24.26
+          key: libsql-image-v0.24.33
 
       - name: Load cached libsql docker image
         if: steps.libsql-image-cache.outputs.cache-hit == 'true'
         run: docker load --input /tmp/libsql-image.tar.gz
 
-      # v0.24.26
+      # v0.24.33
       - name: Pull and save libsql docker image (cache miss)
         if: steps.libsql-image-cache.outputs.cache-hit != 'true'
         run: |
-          docker pull ghcr.io/tursodatabase/libsql-server:v0.24.26
-          docker save ghcr.io/tursodatabase/libsql-server:v0.24.26 | gzip > /tmp/libsql-image.tar.gz
+          docker pull ghcr.io/tursodatabase/libsql-server:v0.24.33
+          docker save ghcr.io/tursodatabase/libsql-server:v0.24.33 | gzip > /tmp/libsql-image.tar.gz
 
-      # v0.24.26
+      # v0.24.33
       - name: Start libsql provider fixture
         run: |
           docker run --detach \
@@ -212,7 +214,7 @@ jobs:
             --publish 18080:8080 \
             --publish 18081:8081 \
             --env SQLD_ADMIN_LISTEN_ADDR=0.0.0.0:8081 \
-            ghcr.io/tursodatabase/libsql-server:v0.24.26 \
+            ghcr.io/tursodatabase/libsql-server:v0.24.33 \
             /bin/sqld --enable-namespaces --no-welcome
 
       - name: Wait for libsql provider fixture
