@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::endpoint::PublishedEndpointProtocol;
 
+pub const SANDBOX_EGRESS_ENFORCEMENT_ENV: &str = "NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON";
+pub const SANDBOX_EGRESS_LEGACY_POLICY_ENV: &str = "NIMBUS_SANDBOX_EGRESS_POLICY_JSON";
+pub const SANDBOX_EGRESS_RESERVED_ENV_KEYS: [&str; 2] = [
+    SANDBOX_EGRESS_ENFORCEMENT_ENV,
+    SANDBOX_EGRESS_LEGACY_POLICY_ENV,
+];
 pub const SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
