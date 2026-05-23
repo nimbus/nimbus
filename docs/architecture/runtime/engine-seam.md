@@ -50,7 +50,7 @@ The runtime engine seam therefore separates these axes:
 | Engine | The embedded execution implementation and VM ownership model. | Deno/V8 today; Bun/JSC or wasmtime later. |
 | Compatibility target | The JavaScript or guest API contract exposed to user code. | `WebStandardIsolate`, `Node20`, `Node22`, `Node24`, future Bun-compatible target. |
 | Execution model | How a worker drives progress and scheduling. | run-to-completion, cooperative V8 Locker, future fuel/epoch or engine-specific cooperative loops. |
-| Pooling model | What is retained between invocations. | V8 warm pool, startup snapshot cache, fresh VM, component cache, future engine-local pools. |
+| Pooling model | What is retained between invocations. | V8 `startup_snapshot_cache` / `warm_pool`; Bun/JSC `bun_jsc_trusted_retained` / `bun_jsc_fresh_discard`; component cache. |
 | Permission policy | The host resources the invocation may access. | Runtime mode plus `RuntimeGrants`; independent of engine and compatibility target. |
 | Backend trust tier | Whether the backend is proof-only, trusted in-process only, or suitable for untrusted in-process tenant code. | `proof_only`, `in_process_trusted_only`, `in_process_untrusted`. |
 | Lockdown profile | The concrete backend-specific containment profile whose hooks are actually enforced. | `v8_deno_core` today; Bun/JSC profiles remain rejected until proven. |
@@ -60,6 +60,8 @@ Bun pool beside Deno/V8. That pool is owned by the active
 `bun-jsc-embedder-api-and-pool-plan`; it must stay disabled until Bun exposes
 or Nimbus maintains construction-profile, resolver, native permission, memory,
 cancellation, and teardown controls that pass on macOS and Linux.
+Nimbus policy metadata can now name the future Bun/JSC pool shapes, but
+validation still rejects every Bun/JSC product route.
 
 ## Layering Rules
 
@@ -200,7 +202,8 @@ Before a new engine becomes selectable:
 - operator and metadata APIs must expose the selected engine and compatibility
   target honestly
 
-The default Deno/V8 lane should remain unchanged while these fields are added.
+The default Deno/V8 lane remains unchanged while Bun/JSC metadata stays
+diagnostic-only and fail-closed.
 
 ## RuntimeEngine Responsibilities
 
@@ -335,7 +338,8 @@ not as the generic runtime abstraction. Step 0 for runtime extensions is:
 - move Deno/V8 state ownership below a Deno/V8 engine/backend boundary
 - extract the engine-neutral JavaScript context contract away from Deno ops
 - make runtime policy validation describe supported engine, compatibility,
-  execution, and pooling combinations
+  execution, and pooling combinations; Bun/JSC pool metadata exists, but is not
+  selectable until the Bun-side containment gates pass
 - separate bundle/content metadata from V8 module-specifier and code-cache
   state
 - update generated artifacts and server lane selection before adding a second

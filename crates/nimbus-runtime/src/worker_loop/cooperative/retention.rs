@@ -30,6 +30,9 @@ impl CooperativeWorkerLoop {
             RuntimePoolKind::StartupSnapshotCache => {
                 self.deferred_v8_runtime_drops.defer(runtime.runtime);
             }
+            RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
+                unreachable!("Bun/JSC pool kinds are rejected before V8 runtime invocation")
+            }
         }
     }
 

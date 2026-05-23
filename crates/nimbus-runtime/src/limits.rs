@@ -263,19 +263,32 @@ pub enum RuntimeRoutingAffinity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePoolKind {
-    /// Reuse the worker-local bootstrap snapshot, then build a fresh JsRuntime
-    /// for every invocation.
+    /// V8/Deno: reuse the worker-local bootstrap snapshot, then build a fresh
+    /// JsRuntime for every invocation.
     ///
     /// This preserves the freshest execution boundary and is currently the
     /// default low-latency mode.
     StartupSnapshotCache,
-    /// Retain whole JsRuntime instances with evaluated modules alive across
-    /// invocations. No realm reset, no module reload — only surgical
+    /// V8/Deno: retain whole JsRuntime instances with evaluated modules alive
+    /// across invocations. No realm reset, no module reload — only surgical
     /// per-request state cleanup via `reset_request_state()`.
     ///
     /// Requires `CooperativeLocker` execution model. Fails fast with
     /// `RunToCompletion`.
     WarmPool,
+    /// Bun/JSC: future trusted generated-wrapper pool shape. Retains VMs only
+    /// for host-authored generated wrappers, never for untrusted tenants.
+    ///
+    /// This is typed diagnostic/admission metadata only until BEP4+ land a real
+    /// Bun pool behind the backend seam.
+    BunJscTrustedRetained,
+    /// Bun/JSC: future untrusted pool shape. The pool may coordinate quota and
+    /// lifecycle, but each VM is fresh or discarded unless a hard in-process
+    /// Bun/JSC isolation boundary is proven.
+    ///
+    /// This is typed diagnostic/admission metadata only until BEP4+ land a real
+    /// Bun pool behind the backend seam.
+    BunJscFreshDiscard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -406,23 +419,31 @@ impl RuntimeLimits {
 
     pub fn module_state_semantics(&self) -> RuntimeModuleStateSemantics {
         match self.runtime_pool_kind {
-            RuntimePoolKind::WarmPool => RuntimeModuleStateSemantics::WarmPerBundle,
-            _ => RuntimeModuleStateSemantics::FreshPerInvocation,
+            RuntimePoolKind::WarmPool | RuntimePoolKind::BunJscTrustedRetained => {
+                RuntimeModuleStateSemantics::WarmPerBundle
+            }
+            RuntimePoolKind::StartupSnapshotCache | RuntimePoolKind::BunJscFreshDiscard => {
+                RuntimeModuleStateSemantics::FreshPerInvocation
+            }
         }
     }
 
     pub fn reset_capabilities(&self) -> RuntimeResetCapabilities {
         match self.runtime_pool_kind {
-            RuntimePoolKind::WarmPool => RuntimeResetCapabilities {
-                op_state_per_invocation: true,
-                bootstrap_state_per_invocation: true,
-                user_module_state_per_invocation: false,
-            },
-            RuntimePoolKind::StartupSnapshotCache => RuntimeResetCapabilities {
-                op_state_per_invocation: true,
-                bootstrap_state_per_invocation: true,
-                user_module_state_per_invocation: true,
-            },
+            RuntimePoolKind::WarmPool | RuntimePoolKind::BunJscTrustedRetained => {
+                RuntimeResetCapabilities {
+                    op_state_per_invocation: true,
+                    bootstrap_state_per_invocation: true,
+                    user_module_state_per_invocation: false,
+                }
+            }
+            RuntimePoolKind::StartupSnapshotCache | RuntimePoolKind::BunJscFreshDiscard => {
+                RuntimeResetCapabilities {
+                    op_state_per_invocation: true,
+                    bootstrap_state_per_invocation: true,
+                    user_module_state_per_invocation: true,
+                }
+            }
         }
     }
 
@@ -590,6 +611,15 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                     limits.backend_lifecycle_policy
                 );
             }
+            if !matches!(
+                limits.runtime_pool_kind,
+                RuntimePoolKind::StartupSnapshotCache | RuntimePoolKind::WarmPool
+            ) {
+                panic!(
+                    "V8 runtime backend requires a V8/Deno pool kind, got {:?}",
+                    limits.runtime_pool_kind
+                );
+            }
             if !matches!(limits.language, RuntimeLanguage::JavaScript) {
                 panic!(
                     "V8 runtime backend requires JavaScript runtime language, got {:?}",
@@ -638,11 +668,13 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                 limits.backend_trust_tier,
                 limits.backend_lockdown_profile,
                 limits.backend_lifecycle_policy,
+                limits.runtime_pool_kind,
             ) {
                 (
                     RuntimeBackendTrustTier::ProofOnly,
                     RuntimeBackendLockdownProfile::BunJscProofOnly,
                     RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                    RuntimePoolKind::BunJscTrustedRetained,
                 ) => {
                     panic!("Bun/JSC proof-only runtime backend is not selectable")
                 }
@@ -650,6 +682,7 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                     RuntimeBackendTrustTier::InProcessTrustedOnly,
                     RuntimeBackendLockdownProfile::BunJscTrustedGeneratedWrapper,
                     RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                    RuntimePoolKind::BunJscTrustedRetained,
                 ) => {
                     panic!(
                         "Bun/JSC trusted generated-wrapper profile is not a product runtime route"
@@ -659,13 +692,14 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                     RuntimeBackendTrustTier::InProcessUntrusted,
                     RuntimeBackendLockdownProfile::BunJscInProcessUntrusted,
                     RuntimeBackendLifecyclePolicy::BunJscFreshDiscardPoolOuterQuotaRequired,
+                    RuntimePoolKind::BunJscFreshDiscard,
                 ) => {
                     panic!("Bun/JSC in-process-untrusted lockdown profile is not implemented")
                 }
-                (trust_tier, lockdown_profile, lifecycle_policy) => {
+                (trust_tier, lockdown_profile, lifecycle_policy, runtime_pool_kind) => {
                     panic!(
-                        "Bun/JSC runtime backend requires matching lockdown and lifecycle profiles for {:?}, got {:?} and {:?}",
-                        trust_tier, lockdown_profile, lifecycle_policy
+                        "Bun/JSC runtime backend requires matching lockdown, lifecycle, and pool profiles for {:?}, got {:?}, {:?}, and {:?}",
+                        trust_tier, lockdown_profile, lifecycle_policy, runtime_pool_kind
                     )
                 }
             }
@@ -1074,6 +1108,60 @@ mod tests {
     }
 
     #[test]
+    fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
+        assert_eq!(
+            serde_json::to_value(RuntimePoolKind::StartupSnapshotCache).unwrap(),
+            serde_json::json!("startup_snapshot_cache")
+        );
+        assert_eq!(
+            serde_json::to_value(RuntimePoolKind::WarmPool).unwrap(),
+            serde_json::json!("warm_pool")
+        );
+        assert_eq!(
+            serde_json::to_value(RuntimePoolKind::BunJscTrustedRetained).unwrap(),
+            serde_json::json!("bun_jsc_trusted_retained")
+        );
+        assert_eq!(
+            serde_json::to_value(RuntimePoolKind::BunJscFreshDiscard).unwrap(),
+            serde_json::json!("bun_jsc_fresh_discard")
+        );
+
+        let bun_trusted_retained = RuntimeLimits {
+            runtime_pool_kind: RuntimePoolKind::BunJscTrustedRetained,
+            ..RuntimeLimits::default()
+        };
+        assert_eq!(
+            bun_trusted_retained.module_state_semantics(),
+            RuntimeModuleStateSemantics::WarmPerBundle
+        );
+        assert_eq!(
+            bun_trusted_retained.reset_capabilities(),
+            RuntimeResetCapabilities {
+                op_state_per_invocation: true,
+                bootstrap_state_per_invocation: true,
+                user_module_state_per_invocation: false,
+            }
+        );
+
+        let bun_fresh_discard = RuntimeLimits {
+            runtime_pool_kind: RuntimePoolKind::BunJscFreshDiscard,
+            ..RuntimeLimits::default()
+        };
+        assert_eq!(
+            bun_fresh_discard.module_state_semantics(),
+            RuntimeModuleStateSemantics::FreshPerInvocation
+        );
+        assert_eq!(
+            bun_fresh_discard.reset_capabilities(),
+            RuntimeResetCapabilities {
+                op_state_per_invocation: true,
+                bootstrap_state_per_invocation: true,
+                user_module_state_per_invocation: true,
+            }
+        );
+    }
+
+    #[test]
     fn runtime_limits_expose_tenant_budget_from_normalized_limits() {
         let mut limits = RuntimeLimits::application_web_standard();
         limits.max_concurrent_runtime_instances = 8;
@@ -1158,6 +1246,23 @@ mod tests {
             "V8 must reject Bun/JSC lifecycle policies"
         );
 
+        for runtime_pool_kind in [
+            RuntimePoolKind::BunJscTrustedRetained,
+            RuntimePoolKind::BunJscFreshDiscard,
+        ] {
+            let bun_pool_on_v8 = std::panic::catch_unwind(|| {
+                RuntimePolicy::new(RuntimeLimits {
+                    backend_kind: RuntimeBackendKind::V8,
+                    runtime_pool_kind,
+                    ..RuntimeLimits::default()
+                })
+            });
+            assert!(
+                bun_pool_on_v8.is_err(),
+                "V8 must reject Bun/JSC pool kind {runtime_pool_kind:?}"
+            );
+        }
+
         let bun_jsc_without_matching_profile = std::panic::catch_unwind(|| {
             RuntimePolicy::new(RuntimeLimits {
                 backend_kind: RuntimeBackendKind::BunJsc,
@@ -1165,7 +1270,7 @@ mod tests {
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
                 compatibility_target: RuntimeCompatibilityTarget::Node22,
                 execution_model: RuntimeExecutionModel::RunToCompletion,
-                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                runtime_pool_kind: RuntimePoolKind::BunJscTrustedRetained,
                 ..RuntimeLimits::default()
             })
         });
@@ -1184,7 +1289,7 @@ mod tests {
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
                 compatibility_target: RuntimeCompatibilityTarget::Node22,
                 execution_model: RuntimeExecutionModel::RunToCompletion,
-                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                runtime_pool_kind: RuntimePoolKind::BunJscTrustedRetained,
                 ..RuntimeLimits::default()
             })
         });
@@ -1204,7 +1309,7 @@ mod tests {
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
                 compatibility_target: RuntimeCompatibilityTarget::Node22,
                 execution_model: RuntimeExecutionModel::RunToCompletion,
-                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                runtime_pool_kind: RuntimePoolKind::BunJscTrustedRetained,
                 ..RuntimeLimits::default()
             })
         });
@@ -1224,7 +1329,7 @@ mod tests {
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
                 compatibility_target: RuntimeCompatibilityTarget::Node22,
                 execution_model: RuntimeExecutionModel::RunToCompletion,
-                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                runtime_pool_kind: RuntimePoolKind::BunJscFreshDiscard,
                 ..RuntimeLimits::default()
             })
         });
@@ -1243,13 +1348,33 @@ mod tests {
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
                 compatibility_target: RuntimeCompatibilityTarget::Node22,
                 execution_model: RuntimeExecutionModel::RunToCompletion,
-                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                runtime_pool_kind: RuntimePoolKind::BunJscFreshDiscard,
                 ..RuntimeLimits::default()
             })
         });
         assert!(
             bun_jsc_untrusted_missing_outer_quota_lifecycle.is_err(),
             "Bun/JSC in-process-untrusted profile must require the fresh-VM outer-quota lifecycle policy"
+        );
+
+        let bun_jsc_trusted_profile_with_v8_pool = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::BunJsc,
+                backend_trust_tier: RuntimeBackendTrustTier::InProcessTrustedOnly,
+                backend_lockdown_profile:
+                    RuntimeBackendLockdownProfile::BunJscTrustedGeneratedWrapper,
+                backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+                compatibility_target: RuntimeCompatibilityTarget::Node22,
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            bun_jsc_trusted_profile_with_v8_pool.is_err(),
+            "Bun/JSC must reject V8/Deno pool kinds"
         );
     }
 

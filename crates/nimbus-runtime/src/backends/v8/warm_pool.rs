@@ -130,6 +130,9 @@ impl V8WorkerRuntimePool {
                     },
                 ));
             }
+            RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
+                unreachable!("Bun/JSC pool kinds are rejected before V8 runtime invocation")
+            }
         }
         if self.warmed {
             runtime_owner.policy().metrics().record_runtime_pool_hit();
@@ -219,6 +222,9 @@ impl V8WorkerRuntimePool {
                     .metrics()
                     .increment_retained_runtime_pool_entries();
                 self.enforce_warm_pool_bounds(runtime_owner);
+            }
+            RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
+                unreachable!("Bun/JSC pool kinds are rejected before V8 runtime invocation")
             }
         }
     }
