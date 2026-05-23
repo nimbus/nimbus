@@ -63,8 +63,11 @@ This directory prefers a small-number-of-plans model with clear ownership.
     permission deny profile for filesystem, network/server, env/process,
     subprocess, FFI, plugin, worker, timer, fetch/WebSocket, and
     tenant-visible dynamic-code surfaces on Bun proof commit `0c132cff81`.
-    BEP7 starts memory, cancellation, teardown, and reuse proof work. Fork
-    posture remains upstream-first; no `nimbus/bun` fork yet.
+    BEP7 is in progress: macOS verification passes on Bun proof commit
+    `7bcb026409` with cancellation changed from elapsed-time sleep to
+    host-observed spin-entry acknowledgement, but Linux/minicloud verification
+    is still required before BEP7 can be marked complete. Fork posture remains
+    upstream-first; no `nimbus/bun` fork yet.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

@@ -11,12 +11,12 @@ prove deny-by-default containment.
 
 ## Status
 
-- **Status:** active; `BEP0` through `BEP6` are complete, `BEP7` is next
+- **Status:** active; `BEP0` through `BEP6` are complete, `BEP7` is in progress
 - **Primary owner:** this plan
 - **Nimbus worktree:** `/Users/jack/src/github.com/nimbus/nimbus`
 - **Bun worktree:** `/Users/jack/src/github.com/oven-sh/bun`
-- **Current Bun proof head:** `0c132cff81`
-  (`Add Bun embedder native permission deny profile proof`)
+- **Current Bun proof head:** `7bcb026409`
+  (`Make Bun embedder cancellation proof ack-driven`)
 - **Product posture:** optional backend candidate; not selectable
 - **Fork posture:** upstream-first; no Nimbus Bun fork yet
 - **Completed predecessor:** `docs/plans/bun-jsc-in-process-lockdown-plan.md`
@@ -158,6 +158,7 @@ For Linux proof, use the minicloud lane recorded in
 | 2026-05-23 | BEP4 | `done` | Added `crates/nimbus-runtime/src/backends/bun_jsc/`, a disabled backend-owned Bun/JSC pool scaffold with policy modes, lifecycle state/ack transitions, event-loop progress metrics, cancellation metrics, teardown metrics, and a backend factory that returns a contract error if reached before the containment gates pass. The runtime backend factory selection can now name V8/Deno or Bun/JSC without sharing VM internals. | `cargo test -p nimbus-runtime backends::bun_jsc --lib` passed 4 tests; `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed with the BEP4 scaffold tests added to step 3; `git diff --check` passed. | Start BEP5 by proving resolver/package policy denial or hookability in the Bun proof target. |
 | 2026-05-23 | BEP5 | `done` | Added Bun proof commit `c5bafa6d73`, a native embedder resolver denial hook that is called before dynamic import, lower module-loader import/evaluate paths, `Bun.resolve`, `Bun.resolveSync`, `require.resolve`, `import.meta.resolve`, package roots, plugin-style virtual specifiers, and native addon resolution. The proof target now reports `denied_by_resolver_policy` for those paths while keeping generated Node builtin/external-package wrappers separate from Bun package resolution. | In Bun: `cargo fmt --all --check` passed; `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed; `git diff --check` passed. In Nimbus: `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed end to end. | Start BEP6 by proving native permission denial or hookability for filesystem, network, env/process, subprocess, FFI, plugin, worker, timer, fetch/WebSocket, and dynamic-code surfaces. |
 | 2026-05-23 | BEP6 | `done` | Added Bun proof commit `0c132cff81`, a native deny-profile proof helper that marks policy-owned Bun/process/FFI objects, denies filesystem, network/server, subprocess, plugin, timer, worker, fetch/WebSocket, and FFI entry points, hides env surfaces, and disables tenant-visible dynamic code through JSC `setEvalEnabled(false, ...)`. The permission inventory is now a hard gate: `policy_hook_missing` or `unsafe_bypass` classifications fail the target. | In Bun: `cargo fmt --all --check` passed; `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed; `git diff --check` passed. In Nimbus: `cargo fmt --all --check` passed; `git diff --check` passed; `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed end to end. | Start BEP7 by proving memory, cancellation, teardown, retained-trusted reuse, and fresh/discard policy on macOS and Linux. |
+| 2026-05-23 | BEP7 | `in_progress` | Added Bun proof commit `7bcb026409`, which changes lifecycle cancellation from elapsed-time sleep to host-observed spin-entry acknowledgement before `notify_need_termination()`. The macOS proof now reports `external_cancel_trigger: spin_entered_ack` and `cancellation_timing_policy: state_ack_not_sleep`, while preserving fresh VM create/invoke/destroy loops, retained trusted reuse, post-cancel recovery, and fresh/discard policy because no hard per-VM heap limit is observed. | In Bun: `cargo fmt --all --check` passed; `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed; `git diff --check` passed. In Nimbus: `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed locally. Linux/minicloud verification remains required before this gate can become `done`. | Rerun the minicloud Linux lane with Bun proof head `7bcb026409`, then mark BEP7 complete only if the same reusable gate passes there. |
 
 ## References
 
@@ -176,5 +177,6 @@ For Linux proof, use the minicloud lane recorded in
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-29-bun-pool-owner-scaffold.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-30-resolver-package-policy.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-31-native-permission-profile.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-32-memory-cancellation-lifecycle-checkpoint.md`
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`
