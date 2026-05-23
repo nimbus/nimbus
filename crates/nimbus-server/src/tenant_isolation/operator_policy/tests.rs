@@ -1,7 +1,9 @@
 use std::sync::{
-    Mutex,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::thread;
+use std::time::Duration;
 
 use crate::tenant_isolation::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
@@ -245,6 +247,7 @@ enum FakeExternalPolicyResponse {
     Deny,
     MalformedOutput,
     Timeout,
+    SleepPastEngineTimeout,
     Unavailable,
 }
 
@@ -323,6 +326,14 @@ impl OperatorExternalPolicyBackend for FakeExternalPolicyBackend {
             FakeExternalPolicyResponse::Timeout => Err(
                 OperatorExternalPolicyBackendError::timeout("fixture policy deadline exceeded"),
             ),
+            FakeExternalPolicyResponse::SleepPastEngineTimeout => {
+                thread::sleep(Duration::from_millis(200));
+                Ok(OperatorExternalPolicyDecision::allow(
+                    self.name,
+                    self.version,
+                    "fixture policy allowed too late",
+                ))
+            }
             FakeExternalPolicyResponse::Unavailable => {
                 Err(OperatorExternalPolicyBackendError::unavailable(
                     "fixture policy backend unavailable",
@@ -381,10 +392,17 @@ fn valid_policy_fixture_compiles_to_tenant_isolation_decision() {
 #[test]
 fn external_policy_backend_allow_records_decision_evidence() {
     let policy = parse_policy(VALID_POLICY);
-    let backend = FakeExternalPolicyBackend::fake_opa(FakeExternalPolicyResponse::Allow);
+    let backend = Arc::new(FakeExternalPolicyBackend::fake_opa(
+        FakeExternalPolicyResponse::Allow,
+    ));
+    let engine = OperatorExternalPolicyEngine::from_arc(backend.clone())
+        .with_policy_bundle_hash(
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        .expect("policy bundle hash should be valid");
 
     let evaluation = policy
-        .evaluate_with_external_policy(Some(&backend))
+        .evaluate_with_external_policy(Some(&engine))
         .expect("allowing external policy should admit");
 
     assert_eq!(backend.call_count(), 1);
@@ -397,6 +415,16 @@ fn external_policy_backend_allow_records_decision_evidence() {
     assert_eq!(request.runtime_tier, "in_process_untrusted");
     assert_eq!(request.runtime_admission, "admit_in_process");
     assert_eq!(request.secret_handle_count, 1);
+    assert_eq!(
+        request.policy_bundle_hash.as_deref(),
+        Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+    );
+    assert!(
+        request.input_digest.starts_with("sha256:"),
+        "external request should carry a stable digest: {}",
+        request.input_digest
+    );
+    assert_eq!(request.timeout_millis, 2_000);
     assert!(
         !serde_json::to_string(&request)
             .expect("external request should serialize")
@@ -413,6 +441,12 @@ fn external_policy_backend_allow_records_decision_evidence() {
     assert_eq!(evidence.backend.version, "v0-test");
     assert_eq!(evidence.outcome, OperatorExternalPolicyOutcome::Allow);
     assert_eq!(evidence.reason, "fixture policy allowed");
+    assert_eq!(
+        evidence.policy_bundle_hash.as_deref(),
+        Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+    );
+    assert_eq!(evidence.input_digest, request.input_digest);
+    assert_eq!(evidence.timeout_millis, 2_000);
     let rendered = evaluation.render_explain_text();
     assert!(rendered.contains("external_policy: allow via fake-opa@v0-test"));
     assert!(rendered.contains("trace: external policy: allow via fake-opa@v0-test"));
@@ -421,10 +455,13 @@ fn external_policy_backend_allow_records_decision_evidence() {
 #[test]
 fn external_policy_backend_deny_fails_closed() {
     let policy = parse_policy(VALID_POLICY);
-    let backend = FakeExternalPolicyBackend::fake_cedar(FakeExternalPolicyResponse::Deny);
+    let backend = Arc::new(FakeExternalPolicyBackend::fake_cedar(
+        FakeExternalPolicyResponse::Deny,
+    ));
+    let engine = OperatorExternalPolicyEngine::from_arc(backend.clone());
 
     let error = policy
-        .evaluate_with_external_policy(Some(&backend))
+        .evaluate_with_external_policy(Some(&engine))
         .expect_err("external policy deny should fail closed");
 
     assert_eq!(backend.call_count(), 1);
@@ -447,10 +484,11 @@ fn external_policy_backend_errors_fail_closed() {
         (FakeExternalPolicyResponse::Unavailable, "unavailable"),
     ] {
         let policy = parse_policy(VALID_POLICY);
-        let backend = FakeExternalPolicyBackend::fake_opa(response);
+        let backend = Arc::new(FakeExternalPolicyBackend::fake_opa(response));
+        let engine = OperatorExternalPolicyEngine::from_arc(backend.clone());
 
         let error = policy
-            .evaluate_with_external_policy(Some(&backend))
+            .evaluate_with_external_policy(Some(&engine))
             .expect_err("external policy backend failure should fail closed");
 
         assert_eq!(backend.call_count(), 1);
@@ -464,12 +502,43 @@ fn external_policy_backend_errors_fail_closed() {
 }
 
 #[test]
+fn external_policy_engine_timeout_fails_closed_without_waiting_for_backend() {
+    let policy = parse_policy(VALID_POLICY);
+    let backend = Arc::new(FakeExternalPolicyBackend::fake_opa(
+        FakeExternalPolicyResponse::SleepPastEngineTimeout,
+    ));
+    let engine = OperatorExternalPolicyEngine::from_arc(backend.clone())
+        .with_timeout(Duration::from_millis(25))
+        .expect("timeout should be valid");
+
+    let started = std::time::Instant::now();
+    let error = policy
+        .evaluate_with_external_policy(Some(&engine))
+        .expect_err("engine timeout should fail closed");
+
+    assert_eq!(backend.call_count(), 1);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "engine timeout should bound admission latency"
+    );
+    assert!(
+        error.to_string().contains("failed closed")
+            && error.to_string().contains("timeout")
+            && error.to_string().contains("25ms"),
+        "timeout error should be fail-closed and actionable: {error}"
+    );
+}
+
+#[test]
 fn built_in_hard_deny_precedes_external_policy_backend_allow() {
     let policy = parse_policy(INVALID_IMAGE);
-    let backend = FakeExternalPolicyBackend::fake_opa(FakeExternalPolicyResponse::Allow);
+    let backend = Arc::new(FakeExternalPolicyBackend::fake_opa(
+        FakeExternalPolicyResponse::Allow,
+    ));
+    let engine = OperatorExternalPolicyEngine::from_arc(backend.clone());
 
     let error = policy
-        .evaluate_with_external_policy(Some(&backend))
+        .evaluate_with_external_policy(Some(&engine))
         .expect_err("built-in image policy should reject before external allow");
 
     assert_eq!(
