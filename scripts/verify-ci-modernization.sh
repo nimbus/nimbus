@@ -148,7 +148,7 @@ while IFS= read -r wf; do
       docker://*) continue ;;
     esac
     # The reference must be `org/repo@<40-hex>`.
-    if ! printf '%s' "${ref}" | grep -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[a-f0-9]{40}$'; then
+    if ! printf '%s' "${ref}" | grep -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*@[a-f0-9]{40}$'; then
       BAD_PINS+=("${wf}:${lineno} not SHA-pinned (${ref})")
       continue
     fi
@@ -175,7 +175,7 @@ if [ -d "${ACTIONS_GLOB}" ]; then
         actions/*) continue ;;
         docker://*) continue ;;
       esac
-      if ! printf '%s' "${ref}" | grep -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[a-f0-9]{40}$'; then
+      if ! printf '%s' "${ref}" | grep -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*@[a-f0-9]{40}$'; then
         BAD_PINS+=("${af}:${lineno} not SHA-pinned (${ref})")
         continue
       fi
