@@ -9,11 +9,12 @@ Nimbus plan: `docs/plans/bun-jsc-embedder-api-and-pool-plan.md`
 Status: macOS proof passed; Linux/minicloud proof still required before
 `BEP7` can be marked complete.
 
-Bun proof commit `44540674fc38a51fbea949ea7cf23decb1f4481c`
-(`Clarify Bun embedder lifecycle proof coverage`) strengthens the lifecycle
-proof record. It keeps cancellation state/ack-driven instead of sleep-driven,
-records fresh teardown and retained trusted reuse, and explicitly marks
-before-guest-entry cancellation as still requiring an embedder lifecycle hook.
+Bun proof commit `4b5de5ee5d173975485fd907abe7b6e1457a90c5`
+(`Add Bun embedder pre-entry cancellation gate proof`) strengthens the
+lifecycle proof record. It keeps cancellation state/ack-driven instead of
+sleep-driven, records fresh teardown and retained trusted reuse, and proves
+before-guest-entry cancellation through an owner-side entry gate before calling
+into Bun/JSC.
 
 ## What Changed
 
@@ -21,7 +22,7 @@ The Bun proof target now records lifecycle cancellation as:
 
 ```text
 nimbus bun embed cancellation policy:
-  before_guest_entry: pending_embedder_lifecycle_hook
+  before_guest_entry: owner_entry_gate_denied_and_recovered
   after_guest_entry_sync_loop: spin_entered_ack
   recovery_after_deadline_cancel: ok
   recovery_after_external_cancel: ok
@@ -46,11 +47,10 @@ trigger. The background canceller now spins until either the invocation
 finishes or the guest reaches the generated spin handler and calls the
 host-owned acknowledgement function.
 
-An attempted pre-entry check using the current termination APIs did not
-interrupt evaluation before guest entry. That is now recorded as a source-level
-product blocker instead of being hidden by the passing stress loop: Bun/JSC
-needs an explicit embedder lifecycle hook for owner-side cancellation before
-guest code starts.
+An attempted pre-entry check using the current JSC termination APIs did not
+interrupt evaluation before guest entry. The proof now models the correct
+pool-owned product behavior instead: if cancellation is observed before entry,
+the owner entry gate denies the invocation and never calls `Bun__REPL__evaluate`.
 
 ## Memory Policy Evidence
 
@@ -101,7 +101,7 @@ The reusable gate passed all 10 steps locally, including:
 ## Linux Verification Status
 
 Linux/minicloud verification has not yet been rerun for Bun proof commit
-`44540674fc`. The existing minicloud worktrees are detached, and the Nimbus
+`4b5de5ee5d`. The existing minicloud worktrees are detached, and the Nimbus
 worktree there has a local verification-script modification from the earlier
 Gate 25 proof lane. To avoid overwriting remote state, the intended route is
 an isolated minicloud proof worktree created from Git bundles.
@@ -114,5 +114,5 @@ a reasonable verification step only after explicit user approval.
 ## Outcome
 
 `BEP7` remains in progress. It can be marked complete only after the
-before-guest-entry lifecycle hook is proven, the Linux/minicloud lane passes
-with the same Bun proof head, and the plan records that evidence.
+Linux/minicloud lane passes with the same Bun proof head and the plan records
+that evidence.

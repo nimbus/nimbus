@@ -64,13 +64,12 @@ This directory prefers a small-number-of-plans model with clear ownership.
     subprocess, FFI, plugin, worker, timer, fetch/WebSocket, and
     tenant-visible dynamic-code surfaces on Bun proof commit `0c132cff81`.
     BEP7 is in progress: macOS verification passes on Bun proof commit
-    `44540674fc` with cancellation changed from elapsed-time sleep to
-    host-observed spin-entry acknowledgement, fresh teardown and retained
-    trusted reuse named in the proof output, and before-guest-entry
-    cancellation recorded as still requiring an embedder lifecycle hook;
-    Linux/minicloud verification is also still required before BEP7 can be
-    marked complete. Fork posture remains upstream-first; no `nimbus/bun`
-    fork yet.
+    `4b5de5ee5d` with before-guest-entry cancellation denied by the
+    owner-side entry gate, after-entry cancellation changed from elapsed-time
+    sleep to host-observed spin-entry acknowledgement, and fresh teardown plus
+    retained trusted reuse named in the proof output; Linux/minicloud
+    verification is still required before BEP7 can be marked complete. Fork
+    posture remains upstream-first; no `nimbus/bun` fork yet.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
