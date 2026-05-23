@@ -126,8 +126,9 @@ else
         COND4_OK=0
         continue
       fi
-      LO=$((LN > 3 ? LN - 3 : 1))
-      HI=$((LN + 3))
+      # Comment may sit at the step boundary (above `- name:`); look ±10 lines.
+      LO=$((LN > 10 ? LN - 10 : 1))
+      HI=$((LN + 10))
       if ! sed -n "${LO},${HI}p" "${f}" | grep -Eq '#[[:space:]]*v[0-9]+\.[0-9]+\.[0-9]+'; then
         fail "libsql ref in ${f} missing # vX.Y.Z comment" "Add comment near line ${LN}"
         COND4_OK=0
