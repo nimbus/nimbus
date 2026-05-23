@@ -31,7 +31,7 @@ pub use artifact_provenance::{
     ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, ArtifactVerifierError,
     ArtifactVerifierErrorKind, ArtifactVerifierResult, CosignVerifierBackend,
     DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, ProcessArtifactVerifierCommandRunner,
-    redact_artifact_verifier_output,
+    SLSA_PROVENANCE_V1_PREDICATE_TYPE, SlsaVerifierBackend, redact_artifact_verifier_output,
 };
 pub use audit_events::{
     TENANT_ISOLATION_EVENT_SCHEMA_VERSION, TenantIsolationEvent, TenantIsolationEventKind,
@@ -716,6 +716,7 @@ pub struct TenantImagePolicyDecision {
     allowed_signature_subject: Option<String>,
     provenance_required: bool,
     allowed_builder_id: Option<String>,
+    allowed_source_uri: Option<String>,
     required_attestation_predicates: Vec<String>,
     sbom_required: bool,
     local_build_allowed: bool,
@@ -732,6 +733,7 @@ impl TenantImagePolicyDecision {
             allowed_signature_subject: None,
             provenance_required: false,
             allowed_builder_id: None,
+            allowed_source_uri: None,
             required_attestation_predicates: Vec::new(),
             sbom_required: false,
             local_build_allowed: false,

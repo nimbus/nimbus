@@ -705,10 +705,16 @@ impl OperatorImagePolicy {
                 decision.require_signature(signature.issuer.clone(), signature.subject.clone());
         }
         if let Some(provenance) = &self.provenance {
-            decision = decision.require_provenance(
-                provenance.builder_id.clone(),
-                normalized_strings(&provenance.predicates),
-            );
+            let predicates = normalized_strings(&provenance.predicates);
+            decision = if let Some(source_uri) = &provenance.source_uri {
+                decision.require_provenance_from_source(
+                    provenance.builder_id.clone(),
+                    source_uri.clone(),
+                    predicates,
+                )
+            } else {
+                decision.require_provenance(provenance.builder_id.clone(), predicates)
+            };
         }
         if self.sbom_required {
             decision = decision.require_sbom();
@@ -730,6 +736,7 @@ impl OperatorImagePolicy {
                 .as_ref()
                 .map(|provenance| OperatorImageProvenancePolicy {
                     builder_id: provenance.builder_id.clone(),
+                    source_uri: provenance.source_uri.clone(),
                     predicates: normalized_strings(&provenance.predicates),
                 }),
             sbom_required: self.sbom_required,
@@ -793,6 +800,7 @@ impl OperatorImageSignaturePolicy {
 #[serde(deny_unknown_fields)]
 pub struct OperatorImageProvenancePolicy {
     pub builder_id: String,
+    pub source_uri: Option<String>,
     #[serde(default)]
     pub predicates: Vec<String>,
 }
@@ -800,6 +808,9 @@ pub struct OperatorImageProvenancePolicy {
 impl OperatorImageProvenancePolicy {
     fn validate(&self, workload_key: &str) -> Result<()> {
         validate_required_name(&self.builder_id, "provenance builder_id", workload_key)?;
+        if let Some(source_uri) = &self.source_uri {
+            validate_required_name(source_uri, "provenance source_uri", workload_key)?;
+        }
         validate_name_list(
             &self.predicates,
             &format!("workload `{workload_key}` provenance.predicates"),
@@ -1564,8 +1575,9 @@ fn provenance_summary(provenance: Option<&OperatorImageProvenancePolicy>) -> Str
     provenance
         .map(|provenance| {
             let predicates = join_or_none(&provenance.predicates);
+            let source_uri = provenance.source_uri.as_deref().unwrap_or("none");
             format!(
-                "builder_id={}, predicates={predicates}",
+                "builder_id={}, source_uri={source_uri}, predicates={predicates}",
                 provenance.builder_id
             )
         })
