@@ -146,7 +146,7 @@ should remain packaged and versioned with Nimbus.
 | EPS4b2a | `done` | Select the supervisor/proxy enforcement contract for process-capable sandbox launches. | `cargo test -p nimbus-sandbox egress -- --nocapture` and focused krun/container bundle egress tests prove default-deny and explicit-allow bundles emit `supervisor_proxy`, spoofed env is replaced, and invalid egress policy fails closed. Container bundles now advertise `live_reload`; krun bundles remain `recreate_required` while execute-mode is fail-closed. |
 | EPS4b2b | `done` | Force process-capable guest egress through the supervisor/proxy or equivalent kernel-enforced path. | `cargo test -p nimbus-sandbox netavark_request -- --nocapture` and `cargo test -p nimbus-sandbox container_launch_network_config_denies_direct_egress_for_supervised_processes -- --nocapture` prove container execute-mode network intent uses a netavark internal bridge that denies ambient direct egress. Minicloud evidence: `sudo -E NIMBUS_CONTAINER_EGRESS_WORKDIR=/tmp/nimbus-container-egress-proof target/debug/deps/container_linux_egress-* --ignored --nocapture` passed, proving a real BusyBox guest records direct external HTTP egress as `denied`. `cargo test -p nimbus-sandbox krun::vm -- --nocapture` proves krun execute-mode now fails closed before bundle/state artifact materialization until a packet-level libkrun TSI egress PEP exists. |
 | EPS4b3 | `done` | Add Linux network conformance and live egress reload proof. | `cargo test -p nimbus-sandbox egress_proxy -- --nocapture` proves the reusable egress proxy enforces default deny, allowed HTTP endpoint success, HTTPS CONNECT tunneling, HTTPS absolute-URI fail-closed behavior, DNS-resolved internal/SSRF denial, L7 method/path denial, hop-by-hop proxy header cleanup, and live policy reload without restart. `cargo test -p nimbus-sandbox container -- --nocapture` proves container execute plans inject a bridge-reachable proxy URL, scrub spoofed proxy env, reserve proxy ports without colliding with service ports, advertise `live_reload`, stop proxy listeners during cleanup, and reload policy into a running proxy. `cargo test -p nimbus-server operator_policy -- --nocapture` and `cargo test -p nimbus-server service_manager -- --nocapture` prove the control plane classifies container egress-only diffs as dynamic, keeps krun egress recreate-required, and can call the sandbox reload seam for an active service. Minicloud evidence: `sudo -E NIMBUS_CONTAINER_EGRESS_WORKDIR=/tmp/nimbus-container-egress-proof target/debug/deps/container_linux_egress-* --ignored --test-threads=1 --nocapture` passed with 2 Linux root tests, proving direct proxy bypass denial, proxy-allowed endpoint success, loopback/default denial, L7 denial, DNS-resolved internal denial, and live reload inside a real BusyBox guest. |
-| EPS5 | `todo` | Add OCSF and OpenTelemetry export mapping. | Fixtures prove tenant/sandbox events redact secrets and map to stable OCSF/OTel records with decision IDs. |
+| EPS5 | `done` | Add OCSF and OpenTelemetry export mapping. | `cargo test -p nimbus-server audit_events -- --nocapture`: fixtures prove tenant isolation events export stable OCSF Base Event and OpenTelemetry log-record shaped JSON with decision IDs, trace/span correlation, namespaced Nimbus attributes, and redactions for tokens, credentials, query parameters, secret handles, authorization values, and raw bearer claims. |
 | EPS6 | `todo` | Add external policy backend seam without making it mandatory. | Fake OPA/Cedar-style adapters prove allow, deny, malformed output, timeout, and unavailable-backend fail-closed behavior. |
 | EPS7 | `todo` | Add denied-event policy draft workflow. | Denied egress fixtures produce minimal draft policy, never auto-apply, and require explicit approval. |
 | EPS8 | `todo` | Add policy prove/advisory lane after policy schema stabilizes. | Prover fixtures detect broad egress, write-bypass, secret exposure, or cross-tenant policy regressions with accepted-risk support. |
@@ -299,6 +299,19 @@ Container bundles now advertise `live_reload`; krun bundles stay
 proxy bypass denial, default/loopback denial, L7 denial, DNS-resolved internal
 denial, allowed endpoint success, and live reload in a real Linux guest.
 
+Batch 8 closed EPS5. `TenantIsolationEvent` remains the internal canonical
+audit schema, and enterprise formats are explicit mappings from that schema
+rather than separate event sources. The OCSF export emits a conservative OCSF
+1.8.0 Base Event with `category_uid=0`, `class_uid=0`, `activity_id=99`,
+source-specific Nimbus reason codes in `status_code`, normalized status and
+severity, and all Nimbus context in `unmapped` under `nimbus.*` keys. The
+OpenTelemetry export emits a log-record shaped event with low-cardinality
+`event_name`, OTel severity numbers, trace/span correlation when present, a
+display body, and the same namespaced Nimbus attributes. Sensitive caller
+attributes and correlation IDs are redacted before either export can serialize
+them, including tokens, credentials, query parameters, secret handles,
+authorization values, and raw bearer claims.
+
 ## Open Questions
 
 - Should the first external policy adapter target OPA/Rego because of ecosystem
@@ -307,8 +320,6 @@ denial, allowed endpoint success, and live reload in a real Linux guest.
   SMT integration, or adopt a solver once the policy schema lands?
 - How much L7 policy belongs in Nimbus versus a future service-mesh or proxy
   integration for cluster deployments?
-- Should OCSF export be direct JSONL first, or should the first implementation
-  emit OpenTelemetry log records with OCSF payload attributes?
 
 ## Consumer Rules
 
