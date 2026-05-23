@@ -139,6 +139,18 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   on `bash scripts/verify-coverage-acceleration.sh` (10 conditions).
   Promote a new active plan before another coverage / release
   acceleration wave.
+- PR CI wall acceleration (verification-harness sharding, workspace-
+  tests sharding via cargo-nextest --partition, external-provider
+  matrix split by provider, warm-sccache shrink): the active plan
+  is `docs/plans/ci-wall-acceleration-plan.md` (CW0..CW5). The plan
+  reads the post-CA wall (23.6m on `32951ee7`) and attacks the new
+  poles: Server Verification Harness (12.7m), Rust Workspace Tests
+  (15.7m), External Provider Integration Tests (14.6m), warm-sccache
+  itself (10.2m). Coverage is no longer in the top 5 post-CA. Once
+  closed, `docs/operating/ci-modernization.md` gets a "PR critical-
+  path acceleration" section synthesizing CW1..CW4 contracts.
+  `/goal` control plane gated on
+  `bash scripts/verify-ci-wall-acceleration.sh` (10 conditions).
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,
