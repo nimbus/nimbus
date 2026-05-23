@@ -601,7 +601,7 @@ shipped the item plus a one-line "what landed" note.)
 
 | Item | SHA | Note |
 |------|-----|------|
-| PW0  | TBD | scaffold + verifier + baseline proof |
+| PW0  | bf5dbfeb29d78ece9740ec532f4584e911e86298 | scaffold + verifier + baseline proof |
 | PW1  | TBD | libsql tag pin + docker-image cache |
 | PW2  | TBD | coverage.yml extraction; PR coverage gone |
 | PW3  | TBD | top-level concurrency: group + cancel-in-progress |
