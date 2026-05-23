@@ -198,9 +198,10 @@ coverage:
         - shard: rest
           packages: "-p nimbus-core -p nimbus-storage -p nimbus-testing -p nimbus-bin -p nimbus"
   steps:
-    - cargo llvm-cov --no-report -j 4 ${{ matrix.packages }}
+    - source <(cargo llvm-cov show-env --export-prefix)
+    - cargo test ${{ matrix.packages }} -j 4
     - upload coverage-profraw-${{ matrix.shard }} artifact
-      (path: target/llvm-cov-target/*.profraw)
+      (path: target/nimbus-*.profraw)
 
 coverage-reduce:
   needs: [coverage, ui-artifacts]
@@ -208,18 +209,27 @@ coverage-reduce:
     - source <(cargo llvm-cov show-env --export-prefix)
     - cargo test --no-run --workspace --exclude nimbus-runtime -j 4
     - download coverage-profraw-* artifacts (merge-multiple: true)
-      to target/llvm-cov-target/
+      to target/
+    - source <(cargo llvm-cov show-env --export-prefix)
     - cargo llvm-cov report --lcov --output-path lcov.info
     - upload + codecov
 ```
 
 Three CA3 path/dependency details are load-bearing and easy to get wrong:
 
-- **Profraw files live in `target/llvm-cov-target/` directly**, not in
-  a `profraw/` subdirectory. `cargo llvm-cov --no-report` writes them
-  as `target/llvm-cov-target/nimbus-<pid>-<m>.profraw`. Upload with
-  `path: target/llvm-cov-target/*.profraw`; download into
-  `target/llvm-cov-target/` with `merge-multiple: true` so
+- **Every cargo-llvm-cov invocation goes through `show-env`.** Both
+  the shard run and the reducer source
+  `<(cargo llvm-cov show-env --export-prefix)` before invoking
+  `cargo test` or `cargo llvm-cov report`. Profraws live in
+  `target/nimbus-*.profraw` (show-env's
+  `LLVM_PROFILE_FILE=target/nimbus-%p-%12m.profraw` default).
+  Mixing show-env on the reducer with `cargo llvm-cov --no-report`
+  on the shards does not work — `--no-report` sets
+  `CARGO_TARGET_DIR=target/llvm-cov-target` internally while
+  show-env leaves `CARGO_TARGET_DIR` unset, so the two modes write
+  to different target-dir layouts. Upload with
+  `path: target/nimbus-*.profraw`; download into `target/` with
+  `merge-multiple: true` so the show-env-driven
   `cargo llvm-cov report` finds them at the path it expects.
 - **Every shard runs the libsql fixture.** `nimbus-engine` carries
   `libsql_replica_provider` tests; `nimbus-storage` carries

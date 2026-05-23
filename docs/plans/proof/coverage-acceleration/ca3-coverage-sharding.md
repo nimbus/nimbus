@@ -34,26 +34,31 @@ coverage:
                           # (libsql_provider tests in nimbus-storage)
   steps:
     - setup, services (postgres/mysql), libsql (unconditional — every shard needs it)
-    - cargo llvm-cov --no-report -j 4 ${{ matrix.packages }}
+    - source <(cargo llvm-cov show-env --export-prefix)
+      cargo test ${{ matrix.packages }} -j 4
     - upload coverage-profraw-${{ matrix.shard }} artifact
-      (path: target/llvm-cov-target/*.profraw)
+      (path: target/nimbus-*.profraw)
 
 coverage-reduce:
   needs: [coverage, ui-artifacts]
   steps:
     - setup (same shared-key, warm sccache hits)
-    - cargo llvm-cov --no-run --workspace --exclude nimbus-runtime
-    - download every coverage-profraw-* artifact into target/llvm-cov-target/
+    - source <(cargo llvm-cov show-env --export-prefix)
+      cargo test --no-run --workspace --exclude nimbus-runtime -j 4
+    - download every coverage-profraw-* artifact into target/
       (merge-multiple: true)
-    - cargo llvm-cov report --lcov --output-path lcov.info
+    - source <(cargo llvm-cov show-env --export-prefix)
+      cargo llvm-cov report --lcov --output-path lcov.info
     - upload + codecov
 ```
 
-Three CA5 hotfixes converged on the current shape. CA3 originally
+Four CA5 hotfixes converged on the current shape. CA3 originally
 shipped a per-shard `needs-providers` flag gating libsql startup,
-and the reducer used the deprecated `cargo llvm-cov --no-run`
-incantation; three iterations were needed to fully unbreak the
-shard pipeline.
+used the deprecated `cargo llvm-cov --no-run` incantation in the
+reducer, and mixed `--no-report` (writes profraws to
+`target/llvm-cov-target/`) on shards with show-env (writes to
+`target/`) on the reducer; four iterations were needed to fully
+unbreak the shard pipeline and unify the target-dir convention.
 
 1. **Profraw upload/download path (CA5 hotfix 1, `0d7b868e`).**
    cargo-llvm-cov writes profraw files into the target directory root
@@ -93,6 +98,33 @@ shard pipeline.
    the `LLVM_PROFILE_FILE`/`RUSTFLAGS` env that llvm-cov sets
    internally and lets `cargo test --no-run` build the instrumented
    binaries without attempting any merge.
+5. **Target-dir convention mismatch (CA5 hotfix 4).** Post-hotfix-3
+   CI run 26322199770 had all three shards green and the reducer's
+   rebuild step green but failed on "Generate combined coverage
+   report" with `error: failed to collect object files: not found
+   object files (searched directories:
+   /home/runner/work/nimbus/nimbus/target/llvm-cov-target/debug)`.
+   Root cause: the two cargo-llvm-cov invocation modes use
+   incompatible target-dir conventions. `cargo llvm-cov --no-report`
+   on the shards internally sets
+   `CARGO_TARGET_DIR=target/llvm-cov-target` and writes profraws to
+   `target/llvm-cov-target/nimbus-*.profraw`. `cargo llvm-cov
+   show-env --export-prefix` on the reducer's rebuild does NOT set
+   `CARGO_TARGET_DIR` and exports
+   `LLVM_PROFILE_FILE=target/nimbus-%p-%12m.profraw`, so the rebuild
+   wrote instrumented binaries to `target/debug/deps/...` while the
+   shards' profraws were uploaded from `target/llvm-cov-target/`.
+   The report step (driven by the same `cargo llvm-cov report` mode
+   the shards use) then searched `target/llvm-cov-target/debug` and
+   found neither. Hotfix 4 standardizes on the show-env convention
+   across both: shards source show-env and call `cargo test
+   ${packages} -j 4` (profraws → `target/`); shards upload from
+   `target/nimbus-*.profraw`; reducer downloads into `target/`; the
+   report step sources show-env before `cargo llvm-cov report` so it
+   reads from the same target-dir layout the rebuild + shards wrote
+   into. After hotfix 4 every cargo-llvm-cov invocation in the
+   pipeline goes through show-env, so target-dir is uniformly
+   `target/`.
 
 ## Shard partition rationale
 
@@ -151,13 +183,14 @@ populated the GHA-backed sccache for the same shared-key), this
 step is cheap — most crates resolve to cache hits.
 
 (2) is downloaded from every shard's `coverage-profraw-${shard}`
-artifact into the reducer's `target/llvm-cov-target/` directory
-(not a `profraw/` subdirectory; profraws live in the target dir
-root). `actions/download-artifact@v8` with `pattern:
-coverage-profraw-*` and `merge-multiple: true` flattens every
-shard's profraw files into the same target directory;
-cargo-llvm-cov's report mode picks up every `.profraw` file in
-that directory and merges their counts.
+artifact into the reducer's `target/` directory. Show-env mode
+writes profraws to `target/nimbus-*.profraw` (no
+`llvm-cov-target/` subdirectory), so shards and reducer use the
+same layout end-to-end. `actions/download-artifact@v8` with
+`pattern: coverage-profraw-*` and `merge-multiple: true` flattens
+every shard's profraw files into `target/`; the report step
+sources show-env before `cargo llvm-cov report` so it reads from
+the same target-dir layout the rebuild + shards wrote into.
 
 The `--lcov --output-path lcov.info` then emits the unified lcov fragment
 that codecov consumes downstream.

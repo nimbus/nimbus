@@ -683,10 +683,15 @@ jobs:
           exit 1
 
       - name: Run coverage shard (no report)
-        # CA3: --no-report accumulates profraw files in
-        # target/llvm-cov-target/ but skips lcov generation. The reducer
-        # job downloads every shard's profraw and runs
-        # `cargo llvm-cov report --lcov` to produce the combined lcov.info.
+        # CA3: shards use cargo-llvm-cov's `show-env --export-prefix`
+        # mode to set LLVM_PROFILE_FILE/RUSTFLAGS/RUSTC_WRAPPER, then run
+        # `cargo test` directly. This writes profraws to
+        # `target/nimbus-*.profraw` (the show-env convention) which the
+        # reducer also uses end-to-end. The older `--no-report` flag
+        # writes profraws to `target/llvm-cov-target/` which is
+        # incompatible with the reducer's `cargo test --no-run` rebuild
+        # (the deprecated `--no-run` flag on `cargo llvm-cov` itself
+        # tries to merge profile data instead of just building).
         #
         # CA2: -j 4 matches the ubuntu-24.04 runner vCPU count under mold;
         # see ca2-coverage-parallelism.md for the parallelism unlock.
@@ -695,22 +700,24 @@ jobs:
         # (`make test-rust-docs`); cargo-llvm-cov excludes doc-tests by
         # default so we rely on that default to skip the secondary
         # `--test` harness rebuild.
-        run: cargo llvm-cov --no-report -j 4 ${{ matrix.packages }}
+        run: |
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo test ${{ matrix.packages }} -j 4
 
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats
 
       - name: Upload coverage shard profraw
-        # cargo-llvm-cov writes profraw files directly into the target
-        # directory (target/llvm-cov-target/*.profraw) — there is no
-        # `profraw/` subdirectory. Upload just the .profraw files so the
-        # artifact stays small (test binaries are rebuilt in the reducer
-        # via warm sccache hits).
+        # cargo-llvm-cov's `show-env` mode sets
+        # LLVM_PROFILE_FILE=target/nimbus-%p-%12m.profraw, so profraws
+        # live in `target/` (not `target/llvm-cov-target/`). Upload just
+        # the .profraw files so the artifact stays small (test binaries
+        # are rebuilt in the reducer via warm sccache hits).
         uses: actions/upload-artifact@v7
         with:
           name: coverage-profraw-${{ matrix.shard }}
-          path: target/llvm-cov-target/*.profraw
+          path: target/nimbus-*.profraw
           if-no-files-found: error
           retention-days: 1
 
@@ -759,20 +766,24 @@ jobs:
           cargo test --no-run --workspace --exclude nimbus-runtime -j 4
 
       - name: Download every shard's profraw
-        # cargo-llvm-cov's report mode reads profraw files from the
-        # target dir root (target/llvm-cov-target/), not from a
-        # `profraw/` subdirectory. Flatten every shard's artifact into
-        # that directory so `cargo llvm-cov report` finds the files.
+        # The show-env convention puts profraws at target/nimbus-*.profraw
+        # (no `llvm-cov-target/` subdirectory). Flatten every shard's
+        # artifact into `target/` so the report step's show-env-driven
+        # `cargo llvm-cov report` finds the files.
         uses: actions/download-artifact@v8
         with:
           pattern: coverage-profraw-*
-          path: target/llvm-cov-target/
+          path: target/
           merge-multiple: true
 
       - name: Generate combined coverage report
         # The reducer step the CA3 verifier asserts: a `cargo llvm-cov
-        # report` invocation downstream of the shard matrix.
-        run: cargo llvm-cov report --lcov --output-path lcov.info
+        # report` invocation downstream of the shard matrix. Source
+        # show-env so report reads from the same target dir layout the
+        # rebuild + shards wrote into.
+        run: |
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Show sccache stats
         if: always()

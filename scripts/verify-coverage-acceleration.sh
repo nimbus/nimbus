@@ -124,16 +124,24 @@ fi
 # 5. Coverage step is not -j 1 anymore (CA2 acceptance signal).
 #    Accept any of: no -j flag, -j 2/4/8, or an inline comment block tagging
 #    `CA2-disposition:` to document an intentional regression-keep.
+#    Recognizes both the legacy single-job `run: cargo llvm-cov ...` shape
+#    and the post-CA3 sharded shape (cargo-llvm-cov show-env + cargo test
+#    matrix.packages).
 step 5 "Coverage step parallelism unlocked (post-CA2)"
 if [ -f "${CI_WF}" ]; then
-  # Find the cargo llvm-cov invocation line.
-  cov_line="$(grep -nE '^[[:space:]]*run:[[:space:]]*cargo llvm-cov' "${CI_WF}" | head -1 || true)"
+  # First try the post-CA3 sharded shape: a `cargo test ... matrix.packages`
+  # line inside a show-env block.
+  cov_line="$(grep -nE '^[[:space:]]+cargo test[[:space:]].*matrix\.packages' "${CI_WF}" | head -1 || true)"
+  # Fall back to the legacy single-job `run: cargo llvm-cov` line.
+  if [ -z "${cov_line}" ]; then
+    cov_line="$(grep -nE '^[[:space:]]*run:[[:space:]]*cargo llvm-cov' "${CI_WF}" | head -1 || true)"
+  fi
   if [ -z "${cov_line}" ]; then
     fail "Coverage run-line not found in ${CI_WF}"
   else
     lineno="${cov_line%%:*}"
     content="${cov_line#*:}"
-    if printf '%s' "${content}" | grep -qE 'cargo llvm-cov[[:space:]]+-j[[:space:]]+1([[:space:]]|$)'; then
+    if printf '%s' "${content}" | grep -qE 'cargo (llvm-cov|test)[[:space:]].*-j[[:space:]]+1([[:space:]]|$)'; then
       # Allow explicit CA2 disposition comment within the 12 lines above.
       window_start=$((lineno - 12))
       if [ "${window_start}" -lt 1 ]; then window_start=1; fi

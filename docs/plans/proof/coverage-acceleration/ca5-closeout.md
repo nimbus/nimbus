@@ -24,7 +24,7 @@ landed scope or documented deferred follow-up.
      LINKER=mold landed broken; hotfix switched to RUSTFLAGS
      `-fuse-ld=mold`)
    - CA2: `f4dad1b8` — `-j 4` Coverage flip
-   - CA3: `3996dd9a` + three hotfixes in CA5 — 3-shard Coverage +
+   - CA3: `3996dd9a` + four hotfixes in CA5 — 3-shard Coverage +
      reducer. The initial drop had two bugs caught by CA5 CI run
      26320383660: upload-artifact `path:` pointed at
      `target/llvm-cov-target/profraw/` but cargo-llvm-cov writes
@@ -40,11 +40,26 @@ landed scope or documented deferred follow-up.
      then surfaced a fourth bug: the reducer's `Rebuild
      instrumented workspace (no run)` step used the deprecated
      `cargo llvm-cov --no-run`, which now tries to merge profile
-     data instead of just building. CA5 hotfix 3 switches to
-     `source <(cargo llvm-cov show-env --export-prefix); cargo test
-     --no-run --workspace --exclude nimbus-runtime`.
+     data instead of just building. CA5 hotfix 3 (`ccae3a3d`)
+     switches to `source <(cargo llvm-cov show-env --export-prefix);
+     cargo test --no-run --workspace --exclude nimbus-runtime`.
+     CA5 CI run 26322199770 surfaced a fifth bug downstream of
+     hotfix 3: the shards' `cargo llvm-cov --no-report` mode wrote
+     profraws to `target/llvm-cov-target/` (it sets
+     `CARGO_TARGET_DIR=target/llvm-cov-target` internally), but the
+     reducer's show-env-based rebuild wrote instrumented binaries
+     to `target/` (show-env does not set `CARGO_TARGET_DIR`). The
+     report step then searched `target/llvm-cov-target/debug` for
+     object files and found neither the binaries nor the profraws
+     in a consistent layout. CA5 hotfix 4 standardizes on the
+     show-env convention end-to-end: shards source show-env and
+     call `cargo test ${packages} -j 4`, upload from
+     `target/nimbus-*.profraw`; reducer downloads into `target/`
+     and the report step sources show-env before `cargo llvm-cov
+     report`. Every cargo-llvm-cov invocation in the pipeline now
+     goes through show-env.
    - CA4: `d66f85fb` — release.yml composite migration (5 sites)
-   - CA5: `598dd74e` + three hotfixes — closeout + CA3 hotfixes
+   - CA5: `598dd74e` + four hotfixes — closeout + CA3 hotfixes
 4. Routing entries:
    - `docs/plans/README.md`: move CA entry from active to archived
      section, point at the archived path.

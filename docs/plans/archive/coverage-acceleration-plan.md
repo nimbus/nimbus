@@ -148,9 +148,9 @@ line `10 passed, 0 failed`. The 10 conditions:
 | CA0 | `3e86c329` | scaffold Coverage Acceleration plan + verifier + baseline proof |
 | CA1 | `263f39f7` + `a7afe415` | install mold linker in setup-rust-cached composite (initial LINKER=mold landed broken; hotfix switched to RUSTFLAGS `-fuse-ld=mold`) |
 | CA2 | `f4dad1b8` | retest coverage parallelism, land -j 4 |
-| CA3 | `3996dd9a` + three hotfixes in CA5 | shard Coverage across 3 parallel lanes with cargo llvm-cov reducer. Hotfix 1 (`0d7b868e`): profraw path + engine shard libsql gating. Hotfix 2 (`e86e75c2`): rest shard libsql tests in nimbus-storage; retire `needs-providers` flag. Hotfix 3 (this commit): reducer's deprecated `cargo llvm-cov --no-run` → `cargo llvm-cov show-env + cargo test --no-run`. |
+| CA3 | `3996dd9a` + four hotfixes in CA5 | shard Coverage across 3 parallel lanes with cargo llvm-cov reducer. Hotfix 1 (`0d7b868e`): profraw path + engine shard libsql gating. Hotfix 2 (`e86e75c2`): rest shard libsql tests in nimbus-storage; retire `needs-providers` flag. Hotfix 3 (`ccae3a3d`): reducer's deprecated `cargo llvm-cov --no-run` → `cargo llvm-cov show-env + cargo test --no-run`. Hotfix 4 (this commit): standardize on show-env convention across shards + reducer (shards stop using `--no-report`; profraws live in `target/nimbus-*.profraw`; report step also sources show-env). |
 | CA4 | `d66f85fb` | migrate release.yml to setup-rust-cached composite |
-| CA5 | `598dd74e` + `0d7b868e` + `e86e75c2` + hotfix 3 (this commit) | closeout — promote contract, archive plan, update routing; all three CA3 hotfixes bundled in CA5 |
+| CA5 | `598dd74e` + `0d7b868e` + `e86e75c2` + `ccae3a3d` + hotfix 4 (this commit) | closeout — promote contract, archive plan, update routing; all four CA3 hotfixes bundled in CA5 |
 
 ## Notes on staging order
 
