@@ -34,12 +34,12 @@ pub use operator_policy::{
     OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,
     OperatorExternalPolicyBackendErrorKind, OperatorExternalPolicyBackendIdentity,
     OperatorExternalPolicyBackendResult, OperatorExternalPolicyDecision,
-    OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome, OperatorExternalPolicyRequest,
-    OperatorImagePolicy, OperatorImageProvenancePolicy, OperatorImageSignaturePolicy,
-    OperatorNetworkEndpointPolicy, OperatorNetworkPolicy, OperatorPolicyAcceptedRisk,
-    OperatorPolicyAdvisory, OperatorPolicyAdvisoryKind, OperatorPolicyAdvisorySeverity,
-    OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults, OperatorPolicyDiff,
-    OperatorPolicyDiffSummary, OperatorPolicyDocument, OperatorPolicyDraft,
+    OperatorExternalPolicyEngine, OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome,
+    OperatorExternalPolicyRequest, OperatorImagePolicy, OperatorImageProvenancePolicy,
+    OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy, OperatorNetworkPolicy,
+    OperatorPolicyAcceptedRisk, OperatorPolicyAdvisory, OperatorPolicyAdvisoryKind,
+    OperatorPolicyAdvisorySeverity, OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults,
+    OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDocument, OperatorPolicyDraft,
     OperatorPolicyDraftApproval, OperatorPolicyDraftKind, OperatorPolicyDraftStatus,
     OperatorPolicyEvaluation, OperatorPolicyImageSummary, OperatorPolicyLifecycle,
     OperatorPolicyMetadata, OperatorPolicyProofReport, OperatorPolicyQuotaSummary,
@@ -352,7 +352,15 @@ impl TenantWorkloadStableIdentity {
         format!(
             "nimbus-workload:{}{}",
             self.format_version,
-            self.path_suffix()
+            self.stable_subject_suffix()
+        )
+    }
+
+    pub fn audit_projection_id(&self) -> String {
+        format!(
+            "nimbus-workload-audit:{}{}",
+            self.format_version,
+            self.audit_projection_suffix()
         )
     }
 
@@ -360,7 +368,15 @@ impl TenantWorkloadStableIdentity {
         format!(
             "/nimbus/workload/{}{}",
             self.format_version,
-            self.path_suffix()
+            self.stable_subject_suffix()
+        )
+    }
+
+    pub fn audit_projection_path(&self) -> String {
+        format!(
+            "/nimbus/workload-audit/{}{}",
+            self.format_version,
+            self.audit_projection_suffix()
         )
     }
 
@@ -385,7 +401,15 @@ impl TenantWorkloadStableIdentity {
         self.machine_id.as_deref()
     }
 
-    fn path_suffix(&self) -> String {
+    fn stable_subject_suffix(&self) -> String {
+        self.path_suffix(false)
+    }
+
+    fn audit_projection_suffix(&self) -> String {
+        self.path_suffix(true)
+    }
+
+    fn path_suffix(&self, include_placement: bool) -> String {
         let deployment = self
             .deployment_generation
             .map(|generation| generation.to_string())
@@ -403,7 +427,7 @@ impl TenantWorkloadStableIdentity {
             .map(sandbox_backend_label)
             .unwrap_or("none");
 
-        [
+        let mut segments = vec![
             ("tenant", self.tenant_id.as_str()),
             ("deployment", deployment.as_str()),
             ("surface", self.surface.as_str()),
@@ -412,17 +436,22 @@ impl TenantWorkloadStableIdentity {
             ("runtime-tier", runtime_tier),
             ("runtime-backend", runtime_backend),
             ("sandbox-backend", sandbox_backend),
-            ("node", self.node_id.as_deref().unwrap_or("none")),
-            ("machine", self.machine_id.as_deref().unwrap_or("none")),
-            ("sandbox", self.sandbox_id.as_deref().unwrap_or("none")),
-            (
-                "invocation",
-                self.invocation_id.as_deref().unwrap_or("none"),
-            ),
-        ]
-        .into_iter()
-        .map(|(label, value)| format!("/{label}/{}", identity_path_segment(value)))
-        .collect()
+        ];
+        if include_placement {
+            segments.extend([
+                ("node", self.node_id.as_deref().unwrap_or("none")),
+                ("machine", self.machine_id.as_deref().unwrap_or("none")),
+                ("sandbox", self.sandbox_id.as_deref().unwrap_or("none")),
+                (
+                    "invocation",
+                    self.invocation_id.as_deref().unwrap_or("none"),
+                ),
+            ]);
+        }
+        segments
+            .into_iter()
+            .map(|(label, value)| format!("/{label}/{}", identity_path_segment(value)))
+            .collect()
     }
 }
 
@@ -1053,6 +1082,7 @@ impl TenantIsolationDecision {
             authority_class: self.authority.class().to_string(),
             deployment_generation: self.deployment_generation,
             workload_stable_id: self.workload_stable_identity().stable_id(),
+            workload_audit_projection_id: self.workload_stable_identity().audit_projection_id(),
             workload: self.workload.clone(),
             runtime: self.runtime.clone(),
             services: self.services.clone(),
@@ -1175,6 +1205,7 @@ pub struct TenantIsolationAuditRecord {
     authority_class: String,
     deployment_generation: Option<u64>,
     workload_stable_id: String,
+    workload_audit_projection_id: String,
     workload: TenantWorkloadIdentity,
     runtime: TenantRuntimePolicyDecision,
     services: TenantServiceGrantPolicyDecision,
@@ -1832,7 +1863,7 @@ mod tests {
     }
 
     #[test]
-    fn tenant_workload_stable_identity_includes_location_and_spiffe_shape() {
+    fn tenant_workload_stable_identity_splits_subject_from_audit_projection() {
         let principal = principal_with_tenant_claim("tenant_id", "tenant-a");
         let context = TenantIsolationContext::application(
             TenantId::new("tenant-a").expect("tenant id should parse"),
@@ -1858,17 +1889,25 @@ mod tests {
         assert_eq!(identity.machine_id(), Some("default"));
         assert_eq!(
             identity.stable_id(),
-            "nimbus-workload:v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
+            "nimbus-workload:v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none"
+        );
+        assert_eq!(
+            identity.audit_projection_id(),
+            "nimbus-workload-audit:v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
         );
         assert_eq!(
             identity.spiffe_path(),
-            "/nimbus/workload/v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
+            "/nimbus/workload/v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none"
+        );
+        assert_eq!(
+            identity.audit_projection_path(),
+            "/nimbus/workload-audit/v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
         );
         assert_eq!(
             identity
                 .spiffe_id("nimbus.local")
                 .expect("trust domain should be valid"),
-            "spiffe://nimbus.local/nimbus/workload/v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none/node/node-a/machine/default/sandbox/none/invocation/invoke-1"
+            "spiffe://nimbus.local/nimbus/workload/v1/tenant/tenant-a/deployment/7/surface/convex.runtime/kind/runtime_function/name/messages%3Asend/runtime-tier/in_process_untrusted/runtime-backend/v8/sandbox-backend/none"
         );
 
         let audit_json = serde_json::to_string(&decision.to_audit_record())
@@ -1876,6 +1915,10 @@ mod tests {
         assert!(
             audit_json.contains("\"workload_stable_id\""),
             "audit record should expose the canonical workload identity: {audit_json}"
+        );
+        assert!(
+            audit_json.contains("\"workload_audit_projection_id\""),
+            "audit record should expose the full placement/invocation projection: {audit_json}"
         );
         assert!(
             audit_json.contains("messages%3Asend"),
@@ -1925,11 +1968,16 @@ mod tests {
         );
         assert_eq!(
             decision_a.workload_stable_identity().stable_id(),
-            "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/sandbox_service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun/node/node-a/machine/machine-a/sandbox/sandbox-1/invocation/none"
+            "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/sandbox_service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun"
         );
         assert_eq!(
             decision_b.workload_stable_identity().stable_id(),
-            "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/sandbox_service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun/node/node-b/machine/machine-b/sandbox/sandbox-1/invocation/none"
+            "nimbus-workload:v1/tenant/tenant-a/deployment/9/surface/test/kind/sandbox_service/name/db%3Aprimary/runtime-tier/none/runtime-backend/none/sandbox-backend/krun"
+        );
+        assert_ne!(
+            decision_a.workload_stable_identity().audit_projection_id(),
+            decision_b.workload_stable_identity().audit_projection_id(),
+            "audit projection must retain placement for evidence correlation"
         );
     }
 

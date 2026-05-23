@@ -35,7 +35,8 @@ pub use external::{
     OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,
     OperatorExternalPolicyBackendErrorKind, OperatorExternalPolicyBackendIdentity,
     OperatorExternalPolicyBackendResult, OperatorExternalPolicyDecision,
-    OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome, OperatorExternalPolicyRequest,
+    OperatorExternalPolicyEngine, OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome,
+    OperatorExternalPolicyRequest,
 };
 use prove::validate_accepted_risks;
 pub use prove::{
@@ -78,7 +79,7 @@ impl OperatorPolicyDocument {
 
     pub fn evaluate_with_external_policy(
         &self,
-        external_backend: Option<&dyn OperatorExternalPolicyBackend>,
+        external_backend: Option<&OperatorExternalPolicyEngine>,
     ) -> Result<OperatorPolicyEvaluation> {
         self.validate_shape()?;
         let tenant_id = TenantId::new(self.tenant.clone())?;
@@ -98,7 +99,7 @@ impl OperatorPolicyDocument {
         &self,
         tenant_id: &TenantId,
         workload: &OperatorPolicyWorkload,
-        external_backend: Option<&dyn OperatorExternalPolicyBackend>,
+        external_backend: Option<&OperatorExternalPolicyEngine>,
     ) -> Result<OperatorPolicyDecisionEvaluation> {
         let context = TenantIsolationContext::operator(tenant_id.clone(), "operator.policy");
         let mode = workload
@@ -1045,6 +1046,9 @@ impl OperatorPolicyDecisionEvaluation {
             image_reference: self.image_reference.clone(),
             secret_handle_count: self.secret_handle_count,
             audit_redactions: self.audit_redactions.clone(),
+            policy_bundle_hash: None,
+            input_digest: String::new(),
+            timeout_millis: 0,
         }
     }
 }

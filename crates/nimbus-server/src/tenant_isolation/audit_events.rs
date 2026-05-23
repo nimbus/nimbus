@@ -113,6 +113,7 @@ pub struct TenantIsolationEvent {
     surface: String,
     principal_class: String,
     workload_stable_id: Option<String>,
+    workload_audit_projection_id: Option<String>,
     workload_kind: Option<TenantWorkloadKind>,
     workload_name: Option<String>,
     runtime_tier: Option<RuntimeIsolationTier>,
@@ -188,6 +189,9 @@ impl TenantIsolationEvent {
             surface: decision.surface.to_owned(),
             principal_class: decision.authority.class().to_owned(),
             workload_stable_id: Some(decision.workload_stable_identity().stable_id()),
+            workload_audit_projection_id: Some(
+                decision.workload_stable_identity().audit_projection_id(),
+            ),
             workload_kind: Some(decision.workload.kind()),
             workload_name: Some(decision.workload.name().to_owned()),
             runtime_tier: decision.workload.runtime_tier(),
@@ -218,6 +222,7 @@ impl TenantIsolationEvent {
             surface: surface.into(),
             principal_class: principal_class.into(),
             workload_stable_id: None,
+            workload_audit_projection_id: None,
             workload_kind: None,
             workload_name: None,
             runtime_tier: None,
@@ -435,6 +440,11 @@ impl TenantIsolationEvent {
             &mut attributes,
             "nimbus.workload_stable_id",
             &self.workload_stable_id,
+        );
+        insert_optional_string(
+            &mut attributes,
+            "nimbus.workload_audit_projection_id",
+            &self.workload_audit_projection_id,
         );
         insert_optional_string(&mut attributes, "nimbus.workload_name", &self.workload_name);
         insert_optional_string(&mut attributes, "nimbus.sandbox_id", &self.sandbox_id);
@@ -814,9 +824,19 @@ mod tests {
         match ocsf.unmapped.get("nimbus.workload_stable_id") {
             Some(TenantIsolationEventValue::String(value)) => {
                 assert!(value.contains("messages%3Asend"), "{value}");
-                assert!(value.contains("/invocation/invoke-1"), "{value}");
+                assert!(
+                    !value.contains("/invocation/invoke-1"),
+                    "stable subject must not include per-invocation fields: {value}"
+                );
             }
             other => panic!("expected workload stable id, got {other:?}"),
+        }
+        match ocsf.unmapped.get("nimbus.workload_audit_projection_id") {
+            Some(TenantIsolationEventValue::String(value)) => {
+                assert!(value.contains("messages%3Asend"), "{value}");
+                assert!(value.contains("/invocation/invoke-1"), "{value}");
+            }
+            other => panic!("expected workload audit projection id, got {other:?}"),
         }
         serde_json::to_string(&ocsf).expect("OCSF event should serialize");
 

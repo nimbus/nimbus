@@ -11,7 +11,8 @@ The architecture posture is documented in
 
 1. Capture the `TenantIsolationEvent` for the failed request or drift finding.
 2. Record `decision_id`, `tenant_id`, `surface`, `principal_class`,
-   `workload_stable_id`, `result`, `reason_code`, and correlation IDs.
+   `workload_stable_id`, `workload_audit_projection_id`, `result`,
+   `reason_code`, and correlation IDs.
 3. Do not copy bearer tokens, cookies, raw credentials, or secret handles into
    incident notes. The event schema redacts sensitive fields; keep that
    property intact when exporting or summarizing logs.

@@ -55,11 +55,12 @@ impl OperatorPolicyDraft {
         document: &OperatorPolicyDocument,
         approval: Option<&OperatorPolicyDraftApproval>,
     ) -> Result<OperatorPolicyDocument> {
-        approval.ok_or_else(|| {
+        let approval = approval.ok_or_else(|| {
             Error::InvalidInput(
                 "operator policy draft requires explicit approval before apply".to_string(),
             )
         })?;
+        approval.validate()?;
         if self.tenant_id != document.tenant {
             return Err(Error::InvalidInput(format!(
                 "operator policy draft tenant `{}` does not match policy tenant `{}`",
@@ -101,8 +102,8 @@ impl OperatorPolicyDraft {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OperatorPolicyDraftApproval {
-    pub approved_by: String,
-    pub reason: String,
+    approved_by: String,
+    reason: String,
 }
 
 impl OperatorPolicyDraftApproval {
@@ -111,17 +112,30 @@ impl OperatorPolicyDraftApproval {
             approved_by: approved_by.into(),
             reason: reason.into(),
         };
-        if approval.approved_by.trim().is_empty() {
+        approval.validate()?;
+        Ok(approval)
+    }
+
+    pub fn approved_by(&self) -> &str {
+        &self.approved_by
+    }
+
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.approved_by.trim().is_empty() {
             return Err(Error::InvalidInput(
                 "operator policy draft approval requires approved_by".to_string(),
             ));
         }
-        if approval.reason.trim().is_empty() {
+        if self.reason.trim().is_empty() {
             return Err(Error::InvalidInput(
                 "operator policy draft approval requires a reason".to_string(),
             ));
         }
-        Ok(approval)
+        Ok(())
     }
 }
 

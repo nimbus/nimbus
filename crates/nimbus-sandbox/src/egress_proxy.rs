@@ -2,7 +2,7 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::{
     Arc, RwLock,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -16,6 +16,7 @@ use crate::error::{Result, SandboxError};
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_MAX_CONNECTIONS: usize = 128;
 
 type Resolver = Arc<dyn Fn(&str, u16) -> io::Result<Vec<SocketAddr>> + Send + Sync + 'static>;
 
@@ -25,6 +26,7 @@ pub struct SandboxEgressProxyConfig {
     pub policy: CompiledSandboxEgressPolicy,
     pub connect_timeout: Duration,
     pub io_timeout: Duration,
+    pub max_connections: usize,
     resolver: Resolver,
 }
 
@@ -35,6 +37,7 @@ impl SandboxEgressProxyConfig {
             policy,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             io_timeout: DEFAULT_IO_TIMEOUT,
+            max_connections: DEFAULT_MAX_CONNECTIONS,
             resolver: Arc::new(resolve_socket_addrs),
         }
     }
@@ -47,6 +50,11 @@ impl SandboxEgressProxyConfig {
     pub fn with_timeouts(mut self, connect_timeout: Duration, io_timeout: Duration) -> Self {
         self.connect_timeout = connect_timeout;
         self.io_timeout = io_timeout;
+        self
+    }
+
+    pub fn with_max_connections(mut self, max_connections: usize) -> Self {
+        self.max_connections = max_connections;
         self
     }
 
@@ -66,6 +74,11 @@ pub struct SandboxEgressProxy {
 
 impl SandboxEgressProxy {
     pub fn start(config: SandboxEgressProxyConfig) -> Result<Self> {
+        if config.max_connections == 0 {
+            return Err(SandboxError::OperationFailed {
+                message: "sandbox egress proxy max_connections must be greater than 0".to_owned(),
+            });
+        }
         let listener =
             TcpListener::bind(config.bind_addr).map_err(|error| SandboxError::OperationFailed {
                 message: format!(
@@ -93,6 +106,7 @@ impl SandboxEgressProxy {
             resolver: config.resolver,
             connect_timeout: config.connect_timeout,
             io_timeout: config.io_timeout,
+            connection_limiter: ConnectionLimiter::new(config.max_connections),
         };
         let join = thread::Builder::new()
             .name("nimbus-egress-proxy".to_owned())
@@ -142,18 +156,30 @@ struct ProxyWorker {
     resolver: Resolver,
     connect_timeout: Duration,
     io_timeout: Duration,
+    connection_limiter: ConnectionLimiter,
 }
 
 impl ProxyWorker {
     fn run(self) {
         while !self.shutdown.load(Ordering::SeqCst) {
             match self.listener.accept() {
-                Ok((client, _)) => {
+                Ok((mut client, _)) => {
+                    let Some(connection_permit) = self.connection_limiter.try_acquire() else {
+                        let _ = client.set_write_timeout(Some(self.io_timeout));
+                        let _ = write_http_response(
+                            &mut client,
+                            HttpProxyResponse::service_unavailable(
+                                "sandbox egress proxy connection limit exceeded",
+                            ),
+                        );
+                        continue;
+                    };
                     let policy = Arc::clone(&self.policy);
                     let resolver = Arc::clone(&self.resolver);
                     let connect_timeout = self.connect_timeout;
                     let io_timeout = self.io_timeout;
                     thread::spawn(move || {
+                        let _connection_permit = connection_permit;
                         let _ =
                             handle_client(client, policy, resolver, connect_timeout, io_timeout);
                     });
@@ -164,6 +190,53 @@ impl ProxyWorker {
                 Err(_) => break,
             }
         }
+    }
+}
+
+#[derive(Clone)]
+struct ConnectionLimiter {
+    active: Arc<AtomicUsize>,
+    max: usize,
+}
+
+impl ConnectionLimiter {
+    fn new(max: usize) -> Self {
+        Self {
+            active: Arc::new(AtomicUsize::new(0)),
+            max,
+        }
+    }
+
+    fn try_acquire(&self) -> Option<ConnectionPermit> {
+        let mut current = self.active.load(Ordering::Acquire);
+        loop {
+            if current >= self.max {
+                return None;
+            }
+            match self.active.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(ConnectionPermit {
+                        active: Arc::clone(&self.active),
+                    });
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+
+struct ConnectionPermit {
+    active: Arc<AtomicUsize>,
+}
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -498,6 +571,13 @@ impl HttpProxyResponse {
     fn bad_gateway(body: &str) -> Self {
         Self {
             status: "502 Bad Gateway",
+            body: body.to_owned(),
+        }
+    }
+
+    fn service_unavailable(body: &str) -> Self {
+        Self {
+            status: "503 Service Unavailable",
             body: body.to_owned(),
         }
     }
@@ -837,6 +917,42 @@ mod tests {
         let config = SandboxEgressProxyConfig::new(CompiledSandboxEgressPolicy::deny_all());
 
         assert_eq!(config.bind_addr, SocketAddr::from(([127, 0, 0, 1], 0)));
+        assert_eq!(config.max_connections, DEFAULT_MAX_CONNECTIONS);
+    }
+
+    #[test]
+    fn egress_proxy_rejects_zero_connection_limit() {
+        let error = match SandboxEgressProxy::start(
+            SandboxEgressProxyConfig::new(CompiledSandboxEgressPolicy::deny_all())
+                .with_max_connections(0),
+        ) {
+            Ok(_) => panic!("zero connection limit should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("max_connections"),
+            "error should identify the invalid connection limit: {error}"
+        );
+    }
+
+    #[test]
+    fn connection_limiter_caps_active_permits() {
+        let limiter = ConnectionLimiter::new(1);
+        let permit = limiter
+            .try_acquire()
+            .expect("first connection should acquire the only permit");
+
+        assert!(
+            limiter.try_acquire().is_none(),
+            "second concurrent connection should be rejected"
+        );
+
+        drop(permit);
+        assert!(
+            limiter.try_acquire().is_some(),
+            "released permits should become available again"
+        );
     }
 
     #[test]

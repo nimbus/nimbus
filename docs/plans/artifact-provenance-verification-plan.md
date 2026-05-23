@@ -1,6 +1,6 @@
 # Plan: Artifact Provenance Verification
 
-Canonical deferred design and execution plan for production artifact
+Canonical design, execution plan, and control plane for production artifact
 verification in Nimbus. This plan owns concrete verification backends for OCI
 images, runtime/function bundles, machine images, SBOMs, and attestations.
 
@@ -14,16 +14,18 @@ verification logic.
 
 ## Status
 
-- **Status:** `deferred` for verifier backends; `AP0` parser hardening is
-  complete.
+- **Status:** `ready_for_execution` for `AP1` through `AP7`; `AP0` parser
+  hardening is complete.
 - **Primary owner:** this plan
 - **Activation gate:** `AP0` was promoted as a prerequisite for enterprise
-  policy admission on 2026-05-23. Promote `AP1+` when production deployment
-  needs signed images, signed runtime/function bundles, signed machine images,
-  SBOM enforcement, or SLSA provenance beyond digest pinning.
+  policy admission on 2026-05-23. `AP1+` is now the next implementation lane
+  after the enterprise policy and sandbox egress baseline.
 - **Current policy seam:** `TenantImageVerificationProvider` in
   `crates/nimbus-server/src/tenant_isolation/image_admission.rs`
 - **Current posture reference:** `docs/tenant-isolation.md`
+- **Progress state:** this file's phase ledger plus local git commits on the
+  active worktree/branch are the handoff state. Update the ledger before any
+  context loss, stop, or commit that changes AP scope.
 
 ## Goal
 
@@ -80,6 +82,90 @@ promoting implementation.
 - Keep verifier credentials and registry tokens out of gossip, audit payloads,
   and process output captured in failure events.
 
+## Execution Control Plane
+
+This plan is intended to run as one autonomous `/goal` from `AP1` through
+`AP7`. Do not split the work into separate plans unless a phase proves
+impossible without an external service, account, or trust root that is not
+available locally.
+
+The implementation order is:
+
+1. **Verifier contract first (`AP1`)**
+   - Add a Nimbus-owned verifier adapter boundary that can wrap command-line
+     tools or future library backends.
+   - Evidence entering tenant admission must be typed and normalized. Raw
+     verifier stdout/stderr, registry credentials, bearer tokens, private keys,
+     and cloud credentials must not enter audit output, policy explain output,
+     or errors.
+   - Command/library failures, malformed outputs, timeouts, missing tools, and
+     unsupported artifact classes fail closed.
+
+2. **OCI image verification (`AP2` and `AP3`)**
+   - Wire Cosign and SLSA verifier adapters behind the existing image
+     verification provider seam.
+   - Prefer command adapters first because Cosign/SLSA CLIs are the canonical
+     production tools. Keep parsing narrow and fixture-driven; do not implement
+     signature, Fulcio/Rekor, DSSE, in-toto, or SLSA crypto in Nimbus.
+   - Accept verified issuer/subject, builder ID, predicate type, SBOM presence,
+     and digest-claim evidence only from verifier-normalized output.
+
+3. **Non-image executable artifacts (`AP4`)**
+   - Extend the provenance seam from OCI images to runtime/function bundles and
+     machine/guest artifacts that feed execution.
+   - Runtime invocation must not execute a bundle that policy says requires
+     provenance until the bundle has verified evidence.
+   - Maintain single-binary simplicity: provenance logic lives in server/core
+     admission seams and optional verifier adapters, not in runtime hot paths.
+
+4. **SBOM and offline enterprise modes (`AP5` and `AP6`)**
+   - Add SBOM presence policy without pretending that "SBOM exists" proves
+     vulnerability posture or license compliance.
+   - Add offline/private-root verification fixtures so enterprise and air-gapped
+     deployments can verify without relying on public network calls at
+     admission time.
+
+5. **Operator proof and conformance (`AP7`)**
+   - Publish an operator runbook and a reusable verification script, exposed via
+     Makefile, that proves image, bundle, SLSA, SBOM, offline, and failure-path
+     behavior in one command.
+   - The final gate must run alongside tenant isolation and enterprise policy
+     gates without weakening their assertions.
+
+Autonomous execution rules:
+
+- Keep phase status accurate: exactly one AP phase may be `in_progress`.
+- Commit after meaningful phase checkpoints with messages prefixed by the
+  phase, for example `AP1: add verifier adapter contract`.
+- If a real external binary such as `cosign` or `slsa-verifier` is unavailable,
+  implement the adapter boundary and deterministic fixture/fake command
+  harness first, record the missing binary as a residual risk, and continue
+  with local verifiable behavior. Do not block the whole goal on downloading a
+  live verifier unless the user has approved network/tool installation.
+- Do not add hand-written cryptographic verification code to make tests pass.
+- Prefer narrow fixtures checked into the repo over live network verification.
+- Before completion, update this plan, `docs/plans/README.md`,
+  `docs/tenant-isolation.md`, and relevant runbooks so tracked docs match the
+  implemented product shape.
+
+## Required Verification
+
+Every completed phase must have a focused test command in the ledger. Final
+completion requires all of:
+
+```sh
+cargo fmt --all --check
+cargo clippy -p nimbus-server -p nimbus-bin -- -D warnings
+cargo test -p nimbus-server image_admission -- --nocapture
+cargo test -p nimbus-bin production_compose_admission -- --nocapture
+bash scripts/verify-artifact-provenance.sh
+bash scripts/verify-enterprise-policy-egress.sh
+git diff --check
+```
+
+If `AP4` adds runtime/bundle admission tests in another crate, add the focused
+command to this list and to `scripts/verify-artifact-provenance.sh`.
+
 ## Current Implementation
 
 `AP0` is complete:
@@ -119,13 +205,13 @@ identity. It feeds verified artifact evidence into those seams.
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
 | AP0 | `done` | Replace hand-rolled OCI reference parsing at image admission call sites. | `cargo test -p nimbus-server image_admission -- --nocapture` covers Docker Hub defaults, explicit registries, localhost with ports, digest references, tag+digest references, malformed references, allowed-registry matching, and provider canonical-reference input. Compose production admission has focused digest and invalid-reference coverage in `cargo test -p nimbus-bin production_compose_admission -- --nocapture`. |
-| AP1 | `todo` | Add verifier command/library adapter contract. | Tests prove verifier process/library failures fail closed and redact command output in audit events. |
-| AP2 | `todo` | Implement Cosign verifier backend. | Signed/unsigned/wrong-identity fixtures prove issuer/subject and digest-claim enforcement. |
-| AP3 | `todo` | Implement SLSA provenance verifier backend. | Digest-pinned image and file/bundle fixtures prove builder ID and predicate type enforcement. |
-| AP4 | `todo` | Extend provenance policy from images to runtime/function bundles. | Bundle admission rejects unsigned or mutable artifacts before runtime invocation. |
-| AP5 | `todo` | Add SBOM evidence backend and operator policy hooks. | SBOM-present and SBOM-missing fixtures prove policy behavior without parsing secrets into logs. |
-| AP6 | `todo` | Add offline/private-root verification mode. | Fixture with local trust material verifies without public network dependencies. |
-| AP7 | `todo` | Publish operator runbook and conformance gate. | One command verifies image, bundle, SLSA, SBOM, and failure-path fixtures. |
+| AP1 | `todo` | Add verifier command/library adapter contract. | Focused tests prove success, non-zero exit/library error, missing executable, malformed output, timeout, unsupported artifact class, and redaction of stdout/stderr containing tokens, credentials, secret handles, and registry auth material. |
+| AP2 | `todo` | Implement Cosign verifier backend for OCI images. | Signed, unsigned, wrong issuer, wrong subject, mutable/tag-only, wrong digest claim, malformed verifier output, and missing-tool fixtures prove fail-closed behavior and normalized signature evidence. |
+| AP3 | `todo` | Implement SLSA provenance verifier backend for OCI images and file artifacts. | Digest-pinned image and file/bundle fixtures prove builder ID, predicate type, immutable subject, malformed output, timeout, and missing-tool behavior. |
+| AP4 | `todo` | Extend provenance policy from images to runtime/function bundles and executable guest artifacts. | Bundle admission rejects unsigned, mutable, missing, wrong-digest, wrong-builder, and wrong-predicate artifacts before runtime invocation or sandbox launch. Verified bundle evidence is available to audit/prove output without raw verifier logs. |
+| AP5 | `todo` | Add SBOM evidence backend and operator policy hooks. | SBOM-present, SBOM-missing, malformed SBOM verifier output, and SBOM-required policy fixtures prove policy behavior without parsing secrets into logs or treating SBOM existence as vulnerability clearance. |
+| AP6 | `todo` | Add offline/private-root verification mode. | Local fixture trust material verifies without public network dependencies. Public-network-only mode is not required for offline fixtures, and missing/invalid local trust roots fail closed. |
+| AP7 | `todo` | Publish operator runbook and conformance gate. | `bash scripts/verify-artifact-provenance.sh` and a Makefile target verify image, bundle, SLSA, SBOM, offline/private-root, redaction, timeout, missing-tool, and malformed-output fixtures in one command; docs describe operational use and residual risks. |
 
 ## Acceptance Criteria
 
@@ -137,6 +223,11 @@ identity. It feeds verified artifact evidence into those seams.
   trusting caller-supplied JSON.
 - Verification failures are audit-visible and redact sensitive registry tokens.
 - Tenant isolation conformance still passes after verifier integration.
+- `scripts/verify-artifact-provenance.sh` exists, is referenced from the
+  Makefile, and passes on a clean local checkout without live registry network
+  access.
+- The AP1-AP7 ledger is updated to `done`, or any incomplete phase is marked
+  with a concrete blocker and failing verification evidence.
 
 ## References
 

@@ -493,7 +493,7 @@ archived plans only when you need historical execution detail.
     review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 - `docs/plans/artifact-provenance-verification-plan.md`
-  - canonical deferred plan for production artifact verification behind
+  - canonical ready-for-execution plan for production artifact verification behind
     the landed `TenantImageVerificationProvider` seam: maintained OCI
     reference parsing, Cosign verification, SLSA provenance verification,
     SBOM evidence, offline/private-root verification, and extension from
@@ -501,8 +501,11 @@ archived plans only when you need historical execution detail.
     owns policy evaluation and evidence normalization, not cryptographic
     verification. AP0 parser hardening is complete: image admission and
     Compose production admission use the maintained `oci-client::Reference`
-    parser for the digest-pinned provenance floor. Dependency review at
-    `docs/plans/research/service-identity-provenance-dependency-audit.md`.
+    parser for the digest-pinned provenance floor. AP1-AP7 are the next
+    executable lane after enterprise policy and sandbox egress; the plan owns
+    the verifier adapter contract, concrete Cosign/SLSA/SBOM/offline backends,
+    runtime/function bundle extension, and final conformance gate. Dependency
+    review at `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 ## Archive Policy
 
 Completed plans are stored in `docs/plans/archive/` for historical review, but
