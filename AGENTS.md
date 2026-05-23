@@ -120,19 +120,25 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   composite-action wave.
 - Coverage / release-pipeline acceleration (mold linker, coverage
   parallelism + sharding, release.yml composite adoption, Windows
-  release-build investigation): `docs/plans/coverage-acceleration-plan.md`
-  for the active ledger (CA0..CA5). Activated 2026-05-22 against the
-  measured baseline: CI wall 33m57s dominated by a 24m27s `cargo
-  llvm-cov -j 1 --workspace` step, release wall 76m35s dominated by
-  a 70m12s Windows build. The plan installs `mold` in the
-  `setup-rust-cached` composite, retests `-j 2`/`-j 4` for the
-  Coverage job (CC6's deferred predicate is now met), shards
-  Coverage across N parallel lanes that fan into a `cargo llvm-cov
-  report` reducer, migrates the 5 inline `dtolnay/rust-toolchain` +
-  `Swatinem/rust-cache` sites in `release.yml` into the composite,
-  and investigates the Windows release-build pole. `/goal` control
-  plane gated on `bash scripts/verify-coverage-acceleration.sh`
-  (10 conditions).
+  release-build investigation): `docs/operating/ci-modernization.md`
+  for the canonical contract (see "Coverage and release acceleration"
+  section), then `docs/plans/archive/coverage-acceleration-plan.md`
+  as the completed baseline (CA0..CA5, closed 2026-05-22). The
+  baseline installs `mold` in the `setup-rust-cached` composite via
+  `CARGO_TARGET_*_RUSTFLAGS=-C link-arg=-fuse-ld=mold` (NOT
+  `LINKER=mold` — that invocation fails with `mold: fatal: unknown
+  -m argument: 64`), flips Coverage from `-j 1` to `-j 4`, shards
+  Coverage into 3 lanes (`server` / `engine` / `rest`) that fan into
+  a `cargo llvm-cov report --lcov` reducer with profraw artifact
+  transfer through `target/llvm-cov-target/profraw/`, migrates the
+  5 inline `dtolnay/rust-toolchain` + `Swatinem/rust-cache` sites in
+  `release.yml` into the composite with `save-cache: always` on
+  release tags, and identifies the Windows release pole (vendored
+  OpenSSL, V8 link, cold-target build) as deferred scope for a
+  follow-on release-acceleration plan. `/goal` control plane gated
+  on `bash scripts/verify-coverage-acceleration.sh` (10 conditions).
+  Promote a new active plan before another coverage / release
+  acceleration wave.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,
