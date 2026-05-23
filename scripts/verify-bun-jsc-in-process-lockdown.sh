@@ -29,19 +29,25 @@ if [[ ! -f "${BUN_REPO}/src/jsc/Cargo.toml" ]]; then
   exit 1
 fi
 
-printf '[1/9] Nimbus format\n'
+printf '[1/10] Nimbus format\n'
 cargo fmt --all --check
 
-printf '\n[2/9] Nimbus runtime/backend policy tests\n'
+printf '\n[2/10] Nimbus UI build prerequisites\n'
+if [[ ! -f node_modules/.package-lock.json ]]; then
+  npm ci
+fi
+make build-ui
+
+printf '\n[3/10] Nimbus runtime/backend policy tests\n'
 cargo test -p nimbus-runtime limits::tests --lib
 
-printf '\n[3/9] Nimbus registry/runtime metadata rejection tests\n'
+printf '\n[4/10] Nimbus registry/runtime metadata rejection tests\n'
 cargo test -p nimbus-server registry_and_license::registry --lib
 
-printf '\n[4/9] Nimbus runtime diagnostics tests\n'
+printf '\n[5/10] Nimbus runtime diagnostics tests\n'
 cargo test -p nimbus-server registry_and_license::runtime_metrics --lib
 
-printf '\n[5/9] Nimbus ignored Bun source proof lane\n'
+printf '\n[6/10] Nimbus ignored Bun source proof lane\n'
 NIMBUS_BUN_REPO="${BUN_REPO}" \
 NIMBUS_BUN_BUILD_DIR="${BUN_RUST_ONLY_BUILD_DIR}" \
 NIMBUS_BUN_CACHE_DIR="${BUN_CACHE_DIR}" \
@@ -50,20 +56,20 @@ cargo test -p nimbus-runtime --test engine_proofs \
   bun_jsc_build_gate_reproduces_from_bun_build_graph \
   -- --ignored --nocapture
 
-printf '\n[6/9] Nimbus whitespace diff check\n'
+printf '\n[7/10] Nimbus whitespace diff check\n'
 git diff --check
 
-printf '\n[7/9] Bun Rust format\n'
+printf '\n[8/10] Bun Rust format\n'
 (cd "${BUN_REPO}" && cargo fmt --all --check)
 
-printf '\n[8/9] Bun native embed probe\n'
+printf '\n[9/10] Bun native embed probe\n'
 (cd "${BUN_REPO}" && bun scripts/build.ts --profile=debug-no-asan \
   --build-dir="${BUN_BUILD_DIR}" \
   --cache-dir="${BUN_CACHE_DIR}" \
   --target=check-bun-embed-probe)
 
-printf '\n[9/9] Bun whitespace diff check\n'
+printf '\n[10/10] Bun whitespace diff check\n'
 (cd "${BUN_REPO}" && git diff --check)
 
 printf '\nBun/JSC in-process lockdown gate: pass\n'
-printf '\nRequired before product promotion: run this same gate on the Linux minicloud lane with NIMBUS_BUN_REPO pointing at ~/src/github.com/oven-sh/bun or the future Nimbus Bun fork.\n'
+printf '\nProduct promotion requires this gate to stay green on macOS and Linux/minicloud with NIMBUS_BUN_REPO pointing at the current Bun proof worktree or future Nimbus Bun fork.\n'
