@@ -23,7 +23,8 @@ pub use nimbus_engine::{
 // Runtime execution contract and limits.
 pub use nimbus_runtime::{
     HostBridge, HostBridgeFuture, HostCallRequest, InvocationKind, InvocationRequest,
-    NimbusRuntime, NimbusRuntimeError, RuntimeBackendKind, RuntimeBundle, RuntimeExecutionModel,
+    NimbusRuntime, NimbusRuntimeError, RuntimeBackendKind, RuntimeBackendLifecyclePolicy,
+    RuntimeBackendLockdownProfile, RuntimeBackendTrustTier, RuntimeBundle, RuntimeExecutionModel,
     RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy, VerifiedUserIdentity,
     VerifiedUserIdentityKind,
 };

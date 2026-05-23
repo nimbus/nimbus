@@ -15,6 +15,7 @@ It complements:
 - [Runtime Permission Model](permission-model.md)
 - [Node compatibility surface matrix](node-compat-surface-matrix.md)
 - [New runtime engine proof harness](new-engine-proof-harness.md)
+- [Bun/JSC in-process lockdown plan](../../plans/bun-jsc-in-process-lockdown-plan.md)
 - [Archived execution isolation and runtime backends plan](../../plans/archive/execution-isolation-and-runtime-backends-plan.md)
 - [Archived runtime engine seam plan](../../plans/archive/runtime-engine-seam-plan.md)
 
@@ -33,6 +34,14 @@ termination hooks, and different VM reuse rules. A wasmtime backend would need
 typed imports, Stores, components, fuel or epoch interruption, and a different
 memory limiter. Neither should pretend to be a Deno runtime.
 
+Running the `bun` binary inside an OCI image is a separate sandbox workload
+mode. That path uses Nimbus admission, `nimbus-crun`, and libkrun microVM
+isolation; it does not prove that Bun/JSC is safe as an in-process runtime
+engine. The Bun/JSC engine path only graduates when the in-process embedder can
+deny or mediate every host-sensitive Bun, Node, Web, package, worker,
+subprocess, FFI, filesystem, network, environment, timer, and dynamic-code
+surface through Nimbus policy.
+
 The runtime engine seam therefore separates these axes:
 
 | Axis | Meaning | Examples |
@@ -42,6 +51,8 @@ The runtime engine seam therefore separates these axes:
 | Execution model | How a worker drives progress and scheduling. | run-to-completion, cooperative V8 Locker, future fuel/epoch or engine-specific cooperative loops. |
 | Pooling model | What is retained between invocations. | V8 warm pool, startup snapshot cache, fresh VM, component cache, future engine-local pools. |
 | Permission policy | The host resources the invocation may access. | Runtime mode plus `RuntimeGrants`; independent of engine and compatibility target. |
+| Backend trust tier | Whether the backend is proof-only, trusted in-process only, or suitable for untrusted in-process tenant code. | `proof_only`, `in_process_trusted_only`, `in_process_untrusted`. |
+| Lockdown profile | The concrete backend-specific containment profile whose hooks are actually enforced. | `v8_deno_core` today; Bun/JSC profiles remain rejected until proven. |
 
 ## Layering Rules
 
@@ -198,7 +209,7 @@ conceptual contract:
 | Event-loop progress | Deno/V8 event loop polling and promise settlement. | Bun/JSC event loop driving and promise settlement. | Store call/fuel loop or async component execution. |
 | Timeout and cancellation | V8 isolate termination through the shared watchdog. | JSC execution time limit and termination request. | Fuel/epoch interruption or Store cancellation. |
 | Memory limits | V8 heap limits and near-heap-limit handling. | JSC/Bun heap limit strategy or discard-on-pressure policy. | Store resource limiter. |
-| Reuse | V8 warm-pool reset and stale-context guards. | Bun VM reuse proof, or fresh/discard-only mode. | Component cache with fresh Store, or retained Store reset. |
+| Reuse | V8 warm-pool reset and stale-context guards. | Dedicated Bun/JSC pool with trusted retained-VM proof, or untrusted fresh/discard entries until hard isolation is proven. | Component cache with fresh Store, or retained Store reset. |
 | Teardown | V8 deferred drop queue and locker-aware destruction. | Bun VM destroy path that does not call process exit. | Store drop and cache eviction. |
 
 The common contract is behavioral, not type-level inheritance from Deno/V8.
@@ -246,6 +257,12 @@ past an experimental backend:
   resource limits.
 
 Engine defaults are not security policy. Nimbus grants are the policy.
+The runtime policy also carries `RuntimeBackendTrustTier`,
+`RuntimeBackendLockdownProfile`, and `RuntimeBackendLifecyclePolicy` so product
+state is explicit in diagnostics and cache keys. For Bun/JSC, those values are
+names for proof and future admission states only; every Bun/JSC profile remains
+non-selectable until the in-process lockdown plan proves the corresponding
+permission, resolver, memory, cancellation, reuse, and teardown hooks.
 
 ## Compatibility Rules
 

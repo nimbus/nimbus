@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 use crate::backends::v8::embedder::ModuleSpecifier;
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::{
-    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
+    RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
 };
 use crate::module_loader::BundleModuleCodeCache;
@@ -53,6 +54,9 @@ struct RuntimeBundleShared {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RuntimeBundleEngineCacheKey {
     backend_kind: RuntimeBackendKind,
+    backend_trust_tier: RuntimeBackendTrustTier,
+    backend_lockdown_profile: RuntimeBackendLockdownProfile,
+    backend_lifecycle_policy: RuntimeBackendLifecyclePolicy,
     content_kind: RuntimeBundleContentKind,
     javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     compatibility_target: RuntimeCompatibilityTarget,
@@ -62,6 +66,9 @@ impl RuntimeBundleEngineCacheKey {
     fn for_limits(limits: &RuntimeLimits) -> Self {
         Self {
             backend_kind: limits.backend_kind,
+            backend_trust_tier: limits.backend_trust_tier,
+            backend_lockdown_profile: limits.backend_lockdown_profile,
+            backend_lifecycle_policy: limits.backend_lifecycle_policy,
             content_kind: limits.bundle_content_kind,
             javascript_evaluation_format: limits.javascript_evaluation_format,
             compatibility_target: limits.compatibility_target,

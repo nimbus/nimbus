@@ -10,6 +10,8 @@ defaults or let an experimental engine masquerade as an existing Node target.
 
 The harness is evidence for the runtime engine seam in
 [Runtime Engine Seam](engine-seam.md). It is not a shortcut around that seam.
+For Bun/JSC specifically, the follow-on product plan is
+[Bun/JSC In-Process Lockdown](../../plans/bun-jsc-in-process-lockdown-plan.md).
 
 ## Location And Isolation
 
@@ -77,6 +79,12 @@ minimal VM/JSC APIs needed to construct a VM, install host functions, load a
 bundle, drive promises, cancel execution, and tear down safely. The proof must
 document the exact Bun source revision and the commands that reproduce any
 required generated Rust/Zig/native artifacts.
+
+Running Bun as a binary inside an OCI image or microVM does not satisfy the
+Bun/JSC runtime-engine gate. That is a valid Nimbus sandbox workload path, but
+the in-process backend must prove embedder-level lockdown for every exposed
+Bun, Node, Web, resolver, package, worker, subprocess, FFI, filesystem,
+network, environment, timer, and dynamic-code surface.
 
 For package resolution, Bun/JSC must have its own explicit resolver lane. Do
 not route Bun-backed functions through `node_external_packages`, and do not

@@ -18,6 +18,40 @@ pub enum RuntimeBackendKind {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RuntimeBackendTrustTier {
+    ProofOnly,
+    InProcessTrustedOnly,
+    #[default]
+    InProcessUntrusted,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBackendLockdownProfile {
+    #[default]
+    V8DenoCore,
+    BunJscProofOnly,
+    BunJscTrustedGeneratedWrapper,
+    BunJscInProcessUntrusted,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBackendLifecyclePolicy {
+    #[default]
+    V8DenoCorePool,
+    /// Future Bun/JSC pool shape for trusted generated-wrapper proof lanes.
+    /// This is not the V8 warm pool and must stay non-selectable until there
+    /// is a real Bun backend implementation behind it.
+    BunJscTrustedRetainedPool,
+    /// Future Bun/JSC pool shape for untrusted tenants: the pool may own
+    /// concurrency, quota, cancellation, and teardown, but individual VMs are
+    /// fresh or discarded unless Bun/JSC proves a hard in-process boundary.
+    BunJscFreshDiscardPoolOuterQuotaRequired,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RuntimeBundleContentKind {
     #[serde(rename = "javascript")]
     #[default]
@@ -263,6 +297,9 @@ pub struct RuntimeResetCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeLimits {
     pub backend_kind: RuntimeBackendKind,
+    pub backend_trust_tier: RuntimeBackendTrustTier,
+    pub backend_lockdown_profile: RuntimeBackendLockdownProfile,
+    pub backend_lifecycle_policy: RuntimeBackendLifecyclePolicy,
     pub bundle_content_kind: RuntimeBundleContentKind,
     pub javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     pub compatibility_target: RuntimeCompatibilityTarget,
@@ -493,6 +530,9 @@ impl RuntimeLimits {
             .min(worker_threads);
         Self {
             backend_kind: self.backend_kind,
+            backend_trust_tier: self.backend_trust_tier,
+            backend_lockdown_profile: self.backend_lockdown_profile,
+            backend_lifecycle_policy: self.backend_lifecycle_policy,
             bundle_content_kind: self.bundle_content_kind,
             javascript_evaluation_format: self.javascript_evaluation_format,
             compatibility_target: self.compatibility_target,
@@ -523,6 +563,33 @@ impl RuntimeLimits {
 fn validate_backend_policy_axes(limits: &RuntimeLimits) {
     match limits.backend_kind {
         RuntimeBackendKind::V8 => {
+            if !matches!(
+                limits.backend_trust_tier,
+                RuntimeBackendTrustTier::InProcessUntrusted
+            ) {
+                panic!(
+                    "V8 runtime backend requires in-process-untrusted trust tier, got {:?}",
+                    limits.backend_trust_tier
+                );
+            }
+            if !matches!(
+                limits.backend_lockdown_profile,
+                RuntimeBackendLockdownProfile::V8DenoCore
+            ) {
+                panic!(
+                    "V8 runtime backend requires V8/Deno lockdown profile, got {:?}",
+                    limits.backend_lockdown_profile
+                );
+            }
+            if !matches!(
+                limits.backend_lifecycle_policy,
+                RuntimeBackendLifecyclePolicy::V8DenoCorePool
+            ) {
+                panic!(
+                    "V8 runtime backend requires V8/Deno lifecycle policy, got {:?}",
+                    limits.backend_lifecycle_policy
+                );
+            }
             if !matches!(limits.language, RuntimeLanguage::JavaScript) {
                 panic!(
                     "V8 runtime backend requires JavaScript runtime language, got {:?}",
@@ -549,7 +616,59 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
             }
         }
         RuntimeBackendKind::BunJsc => {
-            panic!("Bun/JSC runtime backend is proof-only and is not selectable")
+            if !matches!(
+                limits.bundle_content_kind,
+                RuntimeBundleContentKind::JavaScript
+            ) {
+                panic!(
+                    "Bun/JSC runtime backend requires JavaScript bundle content, got {:?}",
+                    limits.bundle_content_kind
+                );
+            }
+            if !matches!(
+                limits.javascript_evaluation_format,
+                RuntimeJavaScriptEvaluationFormat::ProgramWrapper
+            ) {
+                panic!(
+                    "Bun/JSC runtime backend requires program-wrapper evaluation format, got {:?}",
+                    limits.javascript_evaluation_format
+                );
+            }
+            match (
+                limits.backend_trust_tier,
+                limits.backend_lockdown_profile,
+                limits.backend_lifecycle_policy,
+            ) {
+                (
+                    RuntimeBackendTrustTier::ProofOnly,
+                    RuntimeBackendLockdownProfile::BunJscProofOnly,
+                    RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                ) => {
+                    panic!("Bun/JSC proof-only runtime backend is not selectable")
+                }
+                (
+                    RuntimeBackendTrustTier::InProcessTrustedOnly,
+                    RuntimeBackendLockdownProfile::BunJscTrustedGeneratedWrapper,
+                    RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                ) => {
+                    panic!(
+                        "Bun/JSC trusted generated-wrapper profile is not a product runtime route"
+                    )
+                }
+                (
+                    RuntimeBackendTrustTier::InProcessUntrusted,
+                    RuntimeBackendLockdownProfile::BunJscInProcessUntrusted,
+                    RuntimeBackendLifecyclePolicy::BunJscFreshDiscardPoolOuterQuotaRequired,
+                ) => {
+                    panic!("Bun/JSC in-process-untrusted lockdown profile is not implemented")
+                }
+                (trust_tier, lockdown_profile, lifecycle_policy) => {
+                    panic!(
+                        "Bun/JSC runtime backend requires matching lockdown and lifecycle profiles for {:?}, got {:?} and {:?}",
+                        trust_tier, lockdown_profile, lifecycle_policy
+                    )
+                }
+            }
         }
     }
 }
@@ -594,6 +713,9 @@ impl Default for RuntimeLimits {
         let routing_affinity_max_entries = worker_threads.saturating_mul(256).max(1024);
         Self {
             backend_kind: RuntimeBackendKind::V8,
+            backend_trust_tier: RuntimeBackendTrustTier::InProcessUntrusted,
+            backend_lockdown_profile: RuntimeBackendLockdownProfile::V8DenoCore,
+            backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::V8DenoCorePool,
             bundle_content_kind: RuntimeBundleContentKind::JavaScript,
             javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::EsModule,
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
@@ -903,6 +1025,18 @@ mod tests {
                 RuntimeBackendKind::V8
             );
             assert_eq!(
+                run_to_completion.limits().backend_lifecycle_policy,
+                RuntimeBackendLifecyclePolicy::V8DenoCorePool
+            );
+            assert_eq!(
+                run_to_completion.limits().backend_trust_tier,
+                RuntimeBackendTrustTier::InProcessUntrusted
+            );
+            assert_eq!(
+                run_to_completion.limits().backend_lockdown_profile,
+                RuntimeBackendLockdownProfile::V8DenoCore
+            );
+            assert_eq!(
                 run_to_completion.limits().bundle_content_kind,
                 RuntimeBundleContentKind::JavaScript
             );
@@ -1012,7 +1146,19 @@ mod tests {
             "V8 must reject Bun/JSC program-wrapper evaluation"
         );
 
-        let bun_jsc_backend = std::panic::catch_unwind(|| {
+        let bun_lifecycle_on_v8 = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::V8,
+                backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            bun_lifecycle_on_v8.is_err(),
+            "V8 must reject Bun/JSC lifecycle policies"
+        );
+
+        let bun_jsc_without_matching_profile = std::panic::catch_unwind(|| {
             RuntimePolicy::new(RuntimeLimits {
                 backend_kind: RuntimeBackendKind::BunJsc,
                 bundle_content_kind: RuntimeBundleContentKind::JavaScript,
@@ -1024,8 +1170,86 @@ mod tests {
             })
         });
         assert!(
-            bun_jsc_backend.is_err(),
-            "Bun/JSC must remain proof-only and non-selectable"
+            bun_jsc_without_matching_profile.is_err(),
+            "Bun/JSC must require an explicit matching lockdown profile"
+        );
+
+        let bun_jsc_proof_only = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::BunJsc,
+                backend_trust_tier: RuntimeBackendTrustTier::ProofOnly,
+                backend_lockdown_profile: RuntimeBackendLockdownProfile::BunJscProofOnly,
+                backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+                compatibility_target: RuntimeCompatibilityTarget::Node22,
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            bun_jsc_proof_only.is_err(),
+            "Bun/JSC proof-only profile must remain non-selectable"
+        );
+
+        let bun_jsc_trusted_only = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::BunJsc,
+                backend_trust_tier: RuntimeBackendTrustTier::InProcessTrustedOnly,
+                backend_lockdown_profile:
+                    RuntimeBackendLockdownProfile::BunJscTrustedGeneratedWrapper,
+                backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+                compatibility_target: RuntimeCompatibilityTarget::Node22,
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            bun_jsc_trusted_only.is_err(),
+            "Bun/JSC trusted-only generated-wrapper profile must not create a product route"
+        );
+
+        let bun_jsc_untrusted = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::BunJsc,
+                backend_trust_tier: RuntimeBackendTrustTier::InProcessUntrusted,
+                backend_lockdown_profile: RuntimeBackendLockdownProfile::BunJscInProcessUntrusted,
+                backend_lifecycle_policy:
+                    RuntimeBackendLifecyclePolicy::BunJscFreshDiscardPoolOuterQuotaRequired,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+                compatibility_target: RuntimeCompatibilityTarget::Node22,
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            bun_jsc_untrusted.is_err(),
+            "Bun/JSC in-process-untrusted profile must remain blocked until lockdown exists"
+        );
+
+        let bun_jsc_untrusted_missing_outer_quota_lifecycle = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::BunJsc,
+                backend_trust_tier: RuntimeBackendTrustTier::InProcessUntrusted,
+                backend_lockdown_profile: RuntimeBackendLockdownProfile::BunJscInProcessUntrusted,
+                backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+                compatibility_target: RuntimeCompatibilityTarget::Node22,
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            bun_jsc_untrusted_missing_outer_quota_lifecycle.is_err(),
+            "Bun/JSC in-process-untrusted profile must require the fresh-VM outer-quota lifecycle policy"
         );
     }
 

@@ -32,7 +32,8 @@ pub use host::{
     RuntimeSyncQueryOrderPayload, RuntimeSyncQueryStartPayload, RuntimeSyncQueryWithIndexPayload,
 };
 pub use limits::{
-    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
+    RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage,
     RuntimeLimits, RuntimeMode, RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind,
     RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeTenantBudget,

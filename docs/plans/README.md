@@ -36,6 +36,17 @@ This directory prefers a small-number-of-plans model with clear ownership.
     unsupported Bun combinations; BJ6 records the hold/no-fork/no-upstream-yet
     decision against the current local Bun delta; BJ7 closed the plan with
     final verification. Bun remains not selectable.
+- `docs/plans/bun-jsc-in-process-lockdown-plan.md`
+  - completed follow-on plan for the product-relevant Bun/JSC question:
+    whether Bun can become a Nimbus in-process runtime backend with
+    Nimbus-owned lockdown. This explicitly does not use OCI/microVM isolation
+    as the answer; Bun inside an OCI image is already a sandbox workload mode.
+    Completed 2026-05-23. BIL0-BIL8 are complete. The backend remains
+    proof-only, upstream-first, and not selectable. A future selectable Bun
+    backend should have a dedicated Bun/JSC pool beside V8/Deno/Node, but that
+    pool must prove filesystem, network, environment, subprocess, FFI, plugin,
+    worker, resolver/package-loading, dynamic-code, memory, cancellation,
+    reuse, teardown, and Linux/minicloud verification gates first.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

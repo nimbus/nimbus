@@ -347,6 +347,9 @@ BJ7 result: the plan is closed. The product answer is no Bun fork, no Bun
 product selector, and no Bun production route. The architectural seam is better
 defined because runtime engine, content kind, JavaScript evaluation format,
 compatibility target, and package resolution are explicit metadata axes.
+The follow-on product question is owned by
+`docs/plans/bun-jsc-in-process-lockdown-plan.md`, which explicitly targets
+in-process Bun/JSC lockdown rather than Bun inside an OCI/microVM workload.
 
 ## Fork Criteria
 
@@ -385,6 +388,7 @@ Closeout result on 2026-05-23: passed.
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`
 - `docs/architecture/runtime/permission-model.md`
+- `docs/plans/bun-jsc-in-process-lockdown-plan.md`
 - `docs/plans/archive/runtime-engine-seam-plan.md`
 - `docs/plans/archive/execution-isolation-and-runtime-backends-plan.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md`

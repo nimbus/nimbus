@@ -39,6 +39,18 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
         .expect("runtime metrics json should parse");
     assert_eq!(body["limits"]["runtime_backend"], json!("v8"));
     assert_eq!(
+        body["limits"]["runtime_backend_trust_tier"],
+        json!("in_process_untrusted")
+    );
+    assert_eq!(
+        body["limits"]["runtime_backend_lockdown_profile"],
+        json!("v8_deno_core")
+    );
+    assert_eq!(
+        body["limits"]["runtime_backend_lifecycle_policy"],
+        json!("v8_deno_core_pool")
+    );
+    assert_eq!(
         body["limits"]["javascript_evaluation_format"],
         json!("es_module")
     );

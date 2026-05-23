@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 use std::net::IpAddr;
 
 use nimbus_runtime::{
-    RuntimeBackendKind, RuntimeBundle, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
+    RuntimeBackendTrustTier, RuntimeBundle, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeMode, RuntimePolicy, RuntimePreset,
     RuntimeTenantBudget,
 };
@@ -500,6 +501,9 @@ pub struct TenantRuntimePolicyDecision {
     tier: RuntimeIsolationTier,
     tenant_isolation_mode: TenantIsolationMode,
     backend_kind: RuntimeBackendKind,
+    backend_trust_tier: RuntimeBackendTrustTier,
+    backend_lockdown_profile: RuntimeBackendLockdownProfile,
+    backend_lifecycle_policy: RuntimeBackendLifecyclePolicy,
     bundle_content_kind: RuntimeBundleContentKind,
     javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     compatibility_target: RuntimeCompatibilityTarget,
@@ -532,6 +536,9 @@ impl TenantRuntimePolicyDecision {
             tier,
             tenant_isolation_mode,
             backend_kind: limits.backend_kind,
+            backend_trust_tier: limits.backend_trust_tier,
+            backend_lockdown_profile: limits.backend_lockdown_profile,
+            backend_lifecycle_policy: limits.backend_lifecycle_policy,
             bundle_content_kind: limits.bundle_content_kind,
             javascript_evaluation_format: limits.javascript_evaluation_format,
             compatibility_target: limits.compatibility_target,
