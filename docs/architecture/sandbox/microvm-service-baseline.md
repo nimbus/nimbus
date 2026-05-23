@@ -166,10 +166,11 @@ Production tenant isolation requires these additional boundaries:
   reference/referrer parsing.
 - **Networking:** service ports are loopback-only by default and mediated
   through tenant-scoped service bindings. Non-loopback exposure requires an
-  explicit operator policy record. Arbitrary outbound guest egress from
-  process-capable services is a separate hardening lane; L7/SSRF mediation,
-  host wildcard validation, internal-IP allowlists, and sandbox-local proxy
-  semantics are owned by
+  explicit operator policy record. Arbitrary outbound guest egress now has a
+  typed deny-by-default `SandboxEgressPolicy` contract that validates host
+  wildcards, internal-IP allowlists, and L7 method/path rules and is
+  materialized into sandbox launch metadata. The actual sandbox-local proxy or
+  equivalent Linux enforcement path remains owned by EPS4b in
   `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
 - **HostBridge and runtime grants:** in-process runtime code receives only the
   invocation tenant and exact grants. It cannot request another tenant's

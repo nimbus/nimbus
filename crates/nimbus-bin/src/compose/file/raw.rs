@@ -446,6 +446,7 @@ fn merge_optional_nimbus_plan(
             replace_if_some(&mut base.snapshot, overlay.snapshot);
             replace_if_some(&mut base.disk_limit, overlay.disk_limit);
             replace_if_some(&mut base.log_limit, overlay.log_limit);
+            replace_if_some(&mut base.egress, overlay.egress);
         }
         (None, Some(overlay)) => *base = Some(overlay),
         _ => {}

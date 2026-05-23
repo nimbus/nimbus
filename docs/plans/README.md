@@ -24,10 +24,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - active execution plan for OpenShell-informed enterprise trust work.
     EPS0-EPS2 are complete: strict typed operator policy artifacts,
     built-in Rust evaluation into the existing `TenantIsolationDecision`
-    path, and `nimbus policy validate|explain|diff`. EPS3+ remain open
-    for dynamic versus recreate-required lifecycle, sandbox-local egress
-    enforcement, OCSF/OpenTelemetry export, optional external PDP
-    adapters, and policy advisor/prover lanes.
+    path, and `nimbus policy validate|explain|diff`. EPS3 and EPS4a are
+    complete: policy lifecycle classifies dynamic egress reloads versus
+    recreate-required authority changes, and `SandboxEgressPolicy` is wired
+    through operator policy, Compose `x-nimbus.egress`, service-manager launch
+    checks, and OCI bundle env materialization. EPS4b+ remain open for the
+    actual sandbox-local proxy/Linux conformance, OCSF/OpenTelemetry export,
+    optional external PDP adapters, and policy advisor/prover lanes.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

@@ -205,6 +205,9 @@ impl SandboxServiceManager {
         let service_access =
             decision.service_access(&key.service_name, "sandbox service launch")?;
         service_access.ensure_sandbox_launch_matches(&launch, actual_backend)?;
+        decision
+            .network()
+            .ensure_sandbox_egress_matches(launch.spec(), "sandbox service launch")?;
 
         let handle = match launch {
             SandboxServiceLaunch::Image(launch) => {
@@ -557,8 +560,8 @@ mod tests {
     use axum::http::StatusCode;
     use nimbus_sandbox::{
         PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxBuildLaunchSpec,
-        SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
-        SandboxProcessSpec, SandboxSpec,
+        SandboxEgressPolicy, SandboxEgressRule, SandboxFilesystemSpec, SandboxFuture,
+        SandboxHandle, SandboxId, SandboxImageLaunchSpec, SandboxProcessSpec, SandboxSpec,
     };
     use nimbus_testing::ServerFixture;
     use serde_json::json;
@@ -767,6 +770,100 @@ mod tests {
             0,
             "unadmitted service should fail before the sandbox backend is called"
         );
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_rejects_unadmitted_sandbox_egress_before_launch() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "stripe",
+            PublishedEndpointProtocol::Https,
+            "api.stripe.com",
+            443,
+        )]);
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db").with_egress_policy(egress),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        );
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = service_activation_decision(&isolation, "db")
+            .expect("db service activation decision should build");
+
+        let error = manager
+            .start_service_for_decision_async(&decision, "db", HostCallCancellation::default())
+            .await
+            .expect_err("decision must reject unadmitted sandbox egress policy");
+
+        assert!(
+            error
+                .to_string()
+                .contains("did not authorize sandbox egress policy"),
+            "error should name the egress-policy mismatch: {error}"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            0,
+            "unadmitted egress should fail before the sandbox backend is called"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_accepts_matching_sandbox_egress_policy() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "stripe",
+            PublishedEndpointProtocol::Https,
+            "api.stripe.com",
+            443,
+        )]);
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db").with_egress_policy(egress.clone()),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+                    "db",
+                    "activation",
+                ))
+                .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
+                .with_network(
+                    crate::tenant_isolation::TenantNetworkPolicyDecision::default()
+                        .with_sandbox_egress(egress),
+                ),
+            )
+            .expect("decision with matching egress should admit");
+
+        manager
+            .start_service_for_decision_async(&decision, "db", HostCallCancellation::default())
+            .await
+            .expect("matching egress policy should start")
+            .expect("handle should be returned");
+
+        assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

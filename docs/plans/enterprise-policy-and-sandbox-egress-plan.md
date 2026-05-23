@@ -139,8 +139,9 @@ should remain packaged and versioned with Nimbus.
 | EPS0 | `done` | Define typed policy artifact schema and ownership boundaries. | `cargo test -p nimbus-server operator_policy -- --nocapture`: golden YAML fixtures reject unknown fields, unsafe defaults, and invalid wildcard/port/secret/image shapes. |
 | EPS1 | `done` | Implement built-in policy compiler into `TenantIsolationDecision` inputs. | `cargo test -p nimbus-server operator_policy -- --nocapture`: compiled decisions use real `TenantIsolationDecision` IDs, runtime admission, audit records, and fail-closed validation. |
 | EPS2 | `done` | Add `nimbus policy validate`, `explain`, and `diff`. | `cargo test -p nimbus-bin policy -- --nocapture`: CLI parse and render fixtures cover stable diagnostics, decision traces, and authority delta summaries. |
-| EPS3 | `todo` | Define dynamic versus recreate-required policy lifecycle. | Tests prove dynamic egress policy can reload, invalid reload keeps last-known-good, and filesystem/process changes require sandbox recreate. |
-| EPS4 | `todo` | Add sandbox-local egress PEP/proxy for process-capable guests. | Linux conformance proves default deny, allowed endpoint success, SSRF denial, wildcard validation, loopback/internal denial, and L7 method/path denial. |
+| EPS3 | `done` | Define dynamic versus recreate-required policy lifecycle. | `cargo test -p nimbus-server operator_policy -- --nocapture`: egress-only diffs classify as `dynamic_reload`, static authority changes classify as `recreate_required`, and invalid reload keeps last-known-good. |
+| EPS4a | `done` | Add typed sandbox egress PEP contract and launch materialization seam. | `cargo test -p nimbus-sandbox egress -- --nocapture`, `cargo test -p nimbus-server service_manager -- --nocapture`, and `cargo test -p nimbus-bin x_nimbus_egress -- --nocapture`: default deny, explicit allow, SSRF/internal denial, wildcard validation, L7 method/path denial, service-manager policy mismatch, and Compose lowering. |
+| EPS4b | `todo` | Add sandbox-local proxy/supervisor binary and Linux network conformance for process-capable guests. | Linux conformance proves real guest traffic default deny, allowed endpoint success, SSRF denial after DNS resolution, loopback/internal denial, and L7 method/path denial through the proxy or kernel-enforced path. |
 | EPS5 | `todo` | Add OCSF and OpenTelemetry export mapping. | Fixtures prove tenant/sandbox events redact secrets and map to stable OCSF/OTel records with decision IDs. |
 | EPS6 | `todo` | Add external policy backend seam without making it mandatory. | Fake OPA/Cedar-style adapters prove allow, deny, malformed output, timeout, and unavailable-backend fail-closed behavior. |
 | EPS7 | `todo` | Add denied-event policy draft workflow. | Denied egress fixtures produce minimal draft policy, never auto-apply, and require explicit approval. |
@@ -192,8 +193,33 @@ Batch 1 landed EPS0-EPS2:
   `nimbus policy diff` provide local policy UX without requiring OPA, Cedar,
   SPIRE, or a SIEM.
 
-Batch 2 should start at EPS3/EPS4: policy lifecycle classification plus
-sandbox-local egress PEP/proxy design and Linux conformance.
+Batch 2 landed EPS3 and EPS4a:
+
+- Policy diffs now classify egress-only changes as `dynamic_reload` and static
+  authority changes such as runtime, service, endpoint, sandbox identity,
+  storage, volume, image, secret, quota, or runtime-admission changes as
+  `recreate_required`.
+- `OperatorPolicyReloadState` gives reloads last-known-good semantics: valid
+  dynamic egress reloads apply, while invalid policy candidates are rejected
+  without replacing the active evaluation.
+- `SandboxEgressPolicy` is the shared sandbox-local PEP contract. Its default
+  is deny-all. Explicit allow rules can narrow by protocol, host, port, HTTP
+  method, path prefix, and `allow_internal_ips`.
+- The current implementation has an evaluator and materialization seam, not
+  packet-level enforcement. krun and container OCI bundle generation inject
+  `NIMBUS_SANDBOX_EGRESS_POLICY_JSON` for the future supervisor/proxy. The
+  server service manager rejects sandbox launches whose spec asks for egress
+  policy not present in the admitted `TenantIsolationDecision`.
+- Compose supports `x-nimbus.egress.allow` and validates the same sandbox
+  egress policy shape before lowering to `SandboxSpec`.
+- Modularity note: `operator_policy.rs` remains the schema/compiler
+  composition root and is intentionally under the 2,000-line hard limit.
+  Concept-owned policy children now own egress and reload state; future policy
+  concepts should follow that pattern instead of growing the composition root.
+
+Batch 3 should complete EPS4b: package the sandbox-local supervisor/proxy,
+force process-capable guest egress through it or an equivalent kernel-enforced
+path, and run the Linux conformance proof.
 
 ## Open Questions
 

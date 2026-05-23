@@ -27,6 +27,16 @@ workloads:
           host: 127.0.0.1
           host_port: 15432
           guest_port: 5432
+      egress:
+        allow:
+          - name: stripe-api
+            protocol: https
+            host: api.stripe.com
+            port: 443
+            methods:
+              - POST
+            path_prefixes:
+              - /v1/
     storage:
       namespace: tenant
     volumes:
