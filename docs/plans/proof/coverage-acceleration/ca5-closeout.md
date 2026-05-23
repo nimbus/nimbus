@@ -24,7 +24,7 @@ landed scope or documented deferred follow-up.
      LINKER=mold landed broken; hotfix switched to RUSTFLAGS
      `-fuse-ld=mold`)
    - CA2: `f4dad1b8` — `-j 4` Coverage flip
-   - CA3: `3996dd9a` + four hotfixes in CA5 — 3-shard Coverage +
+   - CA3: `3996dd9a` + five hotfixes in CA5 — 3-shard Coverage +
      reducer. The initial drop had two bugs caught by CA5 CI run
      26320383660: upload-artifact `path:` pointed at
      `target/llvm-cov-target/profraw/` but cargo-llvm-cov writes
@@ -57,9 +57,17 @@ landed scope or documented deferred follow-up.
      `target/nimbus-*.profraw`; reducer downloads into `target/`
      and the report step sources show-env before `cargo llvm-cov
      report`. Every cargo-llvm-cov invocation in the pipeline now
-     goes through show-env.
+     goes through show-env. CA5 CI run 26323048536 surfaced a sixth
+     bug: the postgres CRUD test
+     `typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud`
+     timed out at 211.56s against its 180s CI budget on the `engine`
+     shard. The wiring was correct; cargo-llvm-cov instrumentation
+     added enough overhead to push the 48-round CRUD loop past the
+     existing budget. CA5 hotfix 5 raises the CI budget from 180s to
+     360s with a comment explicitly attributing the headroom to
+     coverage instrumentation. Local-dev budget stays at 60s.
    - CA4: `d66f85fb` — release.yml composite migration (5 sites)
-   - CA5: `598dd74e` + four hotfixes — closeout + CA3 hotfixes
+   - CA5: `598dd74e` + five hotfixes — closeout + CA3 hotfixes
 4. Routing entries:
    - `docs/plans/README.md`: move CA entry from active to archived
      section, point at the archived path.

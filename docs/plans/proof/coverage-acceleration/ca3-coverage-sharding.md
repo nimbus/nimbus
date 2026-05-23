@@ -52,13 +52,15 @@ coverage-reduce:
     - upload + codecov
 ```
 
-Four CA5 hotfixes converged on the current shape. CA3 originally
+Five CA5 hotfixes converged on the current shape. CA3 originally
 shipped a per-shard `needs-providers` flag gating libsql startup,
 used the deprecated `cargo llvm-cov --no-run` incantation in the
 reducer, and mixed `--no-report` (writes profraws to
 `target/llvm-cov-target/`) on shards with show-env (writes to
 `target/`) on the reducer; four iterations were needed to fully
-unbreak the shard pipeline and unify the target-dir convention.
+unbreak the shard pipeline and unify the target-dir convention,
+and a fifth iteration raised the postgres CRUD test's CI budget to
+absorb cargo-llvm-cov instrumentation overhead.
 
 1. **Profraw upload/download path (CA5 hotfix 1, `0d7b868e`).**
    cargo-llvm-cov writes profraw files into the target directory root
@@ -125,6 +127,18 @@ unbreak the shard pipeline and unify the target-dir convention.
    into. After hotfix 4 every cargo-llvm-cov invocation in the
    pipeline goes through show-env, so target-dir is uniformly
    `target/`.
+6. **Postgres CRUD CI budget under coverage (CA5 hotfix 5).**
+   Post-hotfix-4 CI run 26323048536 had all the wiring green and the
+   reducer green, but the `engine` shard failed with
+   `typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_direct_crud`
+   panicking at 211.56s against its 180s CI budget. The test was
+   designed for non-instrumented CI; cargo-llvm-cov instrumentation
+   adds another ~1.2-2x slowdown on top of CI runner contention on
+   I/O-heavy postgres tests (48 rounds of insert/update/verify).
+   Hotfix 5 raises the test's CI budget from 180s to 360s and adds
+   a comment explicitly calling out coverage instrumentation as one
+   of the contributing factors. The local-dev budget stays at 60s so
+   non-coverage local runs still flag real hangs quickly.
 
 ## Shard partition rationale
 

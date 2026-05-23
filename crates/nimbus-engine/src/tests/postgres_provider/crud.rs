@@ -6,11 +6,13 @@ async fn typed_postgres_config_keeps_sequence_heads_in_sync_across_repeated_dire
     // This lane validates correctness, not a tight performance SLO. Under the
     // full workspace test load in CI, external-provider tests can run much
     // slower than the focused local case, so keep enough headroom to catch
-    // real hangs without flaking on runner contention.
+    // real hangs without flaking on runner contention. The Coverage shards
+    // run this under cargo-llvm-cov instrumentation, which adds another
+    // multiplier on top of CI runner contention.
     expect_external_provider_future_within(
         "postgres repeated direct CRUD should finish promptly",
         Duration::from_secs(60),
-        Duration::from_secs(180),
+        Duration::from_secs(360),
         async {
             with_postgres_service_config(|service_config, _provider_config| async move {
                 let tenant_id = TenantId::new("pg-repeated-crud").expect("tenant id should build");
