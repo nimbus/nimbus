@@ -144,7 +144,7 @@ should remain packaged and versioned with Nimbus.
 | EPS4b0 | `done` | Add a typed egress enforcement contract for the future sandbox supervisor/proxy. | `cargo test -p nimbus-sandbox egress -- --nocapture`: launch metadata is schema-versioned, default-deny by default, explicit allows compile to canonical policy, invalid raw policy fails closed, and launch metadata cannot claim live reload. |
 | EPS4b1 | `done` | Package a sandbox-local supervisor/proxy entrypoint with Nimbus. | `cargo test -p nimbus-bin sandbox_supervisor -- --nocapture`: hidden `nimbus sandbox-supervisor` entrypoint parses, consumes env-backed `SandboxEgressEnforcementPlan`, rejects missing/invalid contracts, and reports validation-only status with `packet_enforcement_active=false`. |
 | EPS4b2a | `done` | Select the supervisor/proxy enforcement contract for process-capable sandbox launches. | `cargo test -p nimbus-sandbox egress -- --nocapture` and focused krun/container bundle egress tests prove default-deny and explicit-allow bundles emit `supervisor_proxy` + `recreate_required`, spoofed env is replaced, and invalid egress policy fails closed. |
-| EPS4b2b | `todo` | Force process-capable guest egress through the supervisor/proxy or equivalent kernel-enforced path. | Linux integration tests prove guest traffic cannot bypass the egress PEP. |
+| EPS4b2b | `in_progress` | Force process-capable guest egress through the supervisor/proxy or equivalent kernel-enforced path. | Current evidence: `cargo test -p nimbus-sandbox netavark_request -- --nocapture` and `cargo test -p nimbus-sandbox container_launch_network_config_denies_direct_egress_for_supervised_processes -- --nocapture` prove container execute-mode network intent uses a netavark internal bridge that denies ambient direct egress. Remaining evidence: Linux integration tests must prove real guest traffic cannot bypass the egress PEP. |
 | EPS4b3 | `todo` | Add Linux network conformance and live egress reload proof. | Linux conformance proves real guest traffic default deny, allowed endpoint success, SSRF denial after DNS resolution, loopback/internal denial, L7 method/path denial, and egress-only reload through the proxy or kernel-enforced path. |
 | EPS5 | `todo` | Add OCSF and OpenTelemetry export mapping. | Fixtures prove tenant/sandbox events redact secrets and map to stable OCSF/OTel records with decision IDs. |
 | EPS6 | `todo` | Add external policy backend seam without making it mandatory. | Fake OPA/Cedar-style adapters prove allow, deny, malformed output, timeout, and unavailable-backend fail-closed behavior. |
@@ -250,6 +250,15 @@ while keeping `recreate_required` reload semantics. The remaining EPS4b work is
 EPS4b2b-EPS4b3: force process-capable guest traffic through the
 supervisor/proxy or an equivalent kernel-enforced path, and run the Linux
 conformance proof.
+
+Batch 4 started EPS4b2b by making container execute-mode network intent deny
+ambient direct egress before the workload starts. `OciNetworkConfig` now carries
+an explicit direct-egress mode, netavark bridge requests render `internal: true`
+and an `io.nimbus.egress.direct=deny` label by default, and the container backend
+selects that denied mode for process-capable launches. This is necessary but not
+sufficient: EPS4b2b remains in progress until the Linux/minicloud proof shows
+real guest traffic cannot bypass the egress PEP, and EPS4b3 still owns allowed
+endpoint success plus L7 and reload conformance.
 
 ## Open Questions
 

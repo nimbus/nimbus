@@ -1,5 +1,6 @@
 use super::support::*;
 
+use crate::backends::oci::network::OciNetworkDirectEgress;
 use tempfile::TempDir;
 
 #[test]
@@ -18,6 +19,20 @@ fn plan_only_backend_persists_a_container_manifest() {
         &handle.id,
     );
     assert!(manifest_path.is_file(), "manifest should be written");
+}
+
+#[test]
+fn container_launch_network_config_denies_direct_egress_for_supervised_processes() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend = sample_plan_only_backend(temp_dir.path());
+
+    let network_config = backend.network_config();
+
+    assert_eq!(
+        network_config.direct_egress,
+        OciNetworkDirectEgress::Deny,
+        "process-capable container launches must not keep ambient bridge egress"
+    );
 }
 
 #[test]
