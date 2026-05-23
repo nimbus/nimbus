@@ -20,6 +20,14 @@ This directory prefers a small-number-of-plans model with clear ownership.
     sites in `release.yml` into the composite, and investigates the
     Windows release-build pole. Activation gate at
     `bash scripts/verify-coverage-acceleration.sh` (10 conditions).
+- `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
+  - active execution plan for OpenShell-informed enterprise trust work.
+    EPS0-EPS2 are complete: strict typed operator policy artifacts,
+    built-in Rust evaluation into the existing `TenantIsolationDecision`
+    path, and `nimbus policy validate|explain|diff`. EPS3+ remain open
+    for dynamic versus recreate-required lifecycle, sandbox-local egress
+    enforcement, OCSF/OpenTelemetry export, optional external PDP
+    adapters, and policy advisor/prover lanes.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -490,15 +498,6 @@ archived plans only when you need historical execution detail.
     owns policy evaluation and evidence normalization, not cryptographic
     verification. Dependency review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
-- `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
-  - canonical deferred plan for OpenShell-informed enterprise trust work:
-    typed operator policy artifacts, built-in Rust policy evaluation,
-    optional external policy backends such as OPA/Rego or Cedar, sandbox-local
-    egress enforcement for process-capable microVM/browser/agent guests,
-    dynamic versus recreate-required policy lifecycle, OCSF/OpenTelemetry
-    security-event export, and future policy advisor/prover lanes. Research at
-    `docs/plans/research/openshell-competitor-analysis.md`.
-
 ## Archive Policy
 
 Completed plans are stored in `docs/plans/archive/` for historical review, but

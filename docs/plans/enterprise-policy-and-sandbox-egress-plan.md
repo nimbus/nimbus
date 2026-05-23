@@ -1,17 +1,15 @@
 # Plan: Enterprise Policy And Sandbox Egress
 
-Canonical deferred plan for turning the OpenShell competitor review into a
+Canonical active plan for turning the OpenShell competitor review into a
 Nimbus-native enterprise trust surface without giving up single-binary
 simplicity.
 
 ## Status
 
-- **Status:** `deferred`
+- **Status:** `active`
 - **Primary owner:** this plan
-- **Activation gate:** promote when one of these becomes product-critical:
-  operator-authored tenant/sandbox policy, arbitrary microVM/agent/browser
-  guest egress, SIEM-grade security event export, or enterprise policy
-  explain/prove/advisor requirements.
+- **Activation gate:** met on 2026-05-22 for operator-authored
+  tenant/sandbox policy and local policy explain/diff UX.
 - **Research:** `docs/plans/research/openshell-competitor-analysis.md`
 - **Current posture references:** `docs/tenant-isolation.md`,
   `docs/architecture/runtime/permission-model.md`,
@@ -138,9 +136,9 @@ should remain packaged and versioned with Nimbus.
 
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
-| EPS0 | `todo` | Define typed policy artifact schema and ownership boundaries. | Golden YAML fixtures reject unknown fields, unsafe defaults, and invalid wildcard/port/secret/image shapes. |
-| EPS1 | `todo` | Implement built-in policy compiler into `TenantIsolationDecision` inputs. | Unit tests prove compiled decisions match existing tenant isolation decisions and fail closed on malformed policy. |
-| EPS2 | `todo` | Add `nimbus policy validate`, `explain`, and `diff`. | CLI fixtures show stable diagnostics, decision traces, and authority delta summaries. |
+| EPS0 | `done` | Define typed policy artifact schema and ownership boundaries. | `cargo test -p nimbus-server operator_policy -- --nocapture`: golden YAML fixtures reject unknown fields, unsafe defaults, and invalid wildcard/port/secret/image shapes. |
+| EPS1 | `done` | Implement built-in policy compiler into `TenantIsolationDecision` inputs. | `cargo test -p nimbus-server operator_policy -- --nocapture`: compiled decisions use real `TenantIsolationDecision` IDs, runtime admission, audit records, and fail-closed validation. |
+| EPS2 | `done` | Add `nimbus policy validate`, `explain`, and `diff`. | `cargo test -p nimbus-bin policy -- --nocapture`: CLI parse and render fixtures cover stable diagnostics, decision traces, and authority delta summaries. |
 | EPS3 | `todo` | Define dynamic versus recreate-required policy lifecycle. | Tests prove dynamic egress policy can reload, invalid reload keeps last-known-good, and filesystem/process changes require sandbox recreate. |
 | EPS4 | `todo` | Add sandbox-local egress PEP/proxy for process-capable guests. | Linux conformance proves default deny, allowed endpoint success, SSRF denial, wildcard validation, loopback/internal denial, and L7 method/path denial. |
 | EPS5 | `todo` | Add OCSF and OpenTelemetry export mapping. | Fixtures prove tenant/sandbox events redact secrets and map to stable OCSF/OTel records with decision IDs. |
@@ -167,6 +165,25 @@ should remain packaged and versioned with Nimbus.
   sandbox recreation.
 - Operator docs explain when to use in-process runtime grants, `ctx.services`,
   microVM service egress policy, and external policy engines.
+
+## Current Implementation
+
+Batch 1 landed EPS0-EPS2:
+
+- `OperatorPolicyDocument` is the typed, strict YAML artifact. It rejects
+  unknown fields and validates tenant IDs, storage namespaces, service grants,
+  network endpoints, image references, secret handles, quota charges, and audit
+  redaction fields before producing authority.
+- The built-in compiler evaluates each workload through the existing
+  `TenantIsolationContext` and `TenantIsolationDecision` path. Runtime policy
+  admission therefore reuses the existing production routing rule that sends
+  broad Node compatibility grants away from `in_process_untrusted`.
+- `nimbus policy validate`, `nimbus policy explain`, and
+  `nimbus policy diff` provide local policy UX without requiring OPA, Cedar,
+  SPIRE, or a SIEM.
+
+Batch 2 should start at EPS3/EPS4: policy lifecycle classification plus
+sandbox-local egress PEP/proxy design and Linux conformance.
 
 ## Open Questions
 

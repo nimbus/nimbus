@@ -1,0 +1,8 @@
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+    image:
+      reference: "registry.example.com/nimbus/api:latest"
+      digest_required: false

@@ -1,5 +1,5 @@
 use nimbus_core::{Error, PrincipalContext, Result, TenantId};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -17,6 +17,7 @@ use crate::sandbox::SandboxServiceLaunch;
 
 mod audit_events;
 mod image_admission;
+mod operator_policy;
 
 pub use audit_events::{
     TENANT_ISOLATION_EVENT_SCHEMA_VERSION, TenantIsolationEvent, TenantIsolationEventKind,
@@ -25,6 +26,10 @@ pub use audit_events::{
 pub use image_admission::{
     TenantImageAdmission, TenantImageAdmissionSource, TenantImageAttestationEvidence,
     TenantImageSignatureEvidence, TenantImageVerificationEvidence, TenantImageVerificationProvider,
+};
+pub use operator_policy::{
+    OPERATOR_POLICY_SCHEMA_VERSION, OperatorPolicyDecisionEvaluation, OperatorPolicyDiff,
+    OperatorPolicyDiffSummary, OperatorPolicyDocument, OperatorPolicyEvaluation,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +52,7 @@ impl TenantIsolationAuthority {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TenantIsolationMode {
     LocalDevelopment,
@@ -64,7 +69,7 @@ impl TenantIsolationMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeIsolationTier {
     InProcessUntrusted,
@@ -166,7 +171,7 @@ impl TenantIsolationAuthorityDecision {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TenantWorkloadKind {
     RuntimeFunction,
@@ -772,6 +777,11 @@ impl TenantIsolationPolicyInput {
 
     pub fn with_quotas(mut self, quotas: TenantQuotaPolicyDecision) -> Self {
         self.quotas = quotas;
+        self
+    }
+
+    pub fn with_audit_redactions(mut self, audit_redactions: TenantAuditRedactionPolicy) -> Self {
+        self.audit_redactions = audit_redactions;
         self
     }
 }

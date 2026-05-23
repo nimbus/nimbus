@@ -1,0 +1,13 @@
+schema_version: 1
+tenant: tenant-a
+metadata:
+  name: node-route
+workloads:
+  - kind: runtime_function
+    name: "actions:sendEmail"
+    runtime:
+      profile: node22
+      tier: in_process_untrusted
+    services:
+      allow:
+        - mailer

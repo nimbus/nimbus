@@ -1,0 +1,56 @@
+schema_version: 1
+tenant: tenant-a
+metadata:
+  name: enterprise-baseline
+defaults:
+  tenant_isolation_mode: production
+  storage_namespace: tenant
+  audit_redactions:
+    - principal_claims
+    - bearer_claims
+    - secret_handles
+    - raw_credentials
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+    runtime:
+      profile: web_standard
+      tier: in_process_untrusted
+    services:
+      allow:
+        - db
+    network:
+      endpoints:
+        - service: db
+          name: postgres
+          protocol: tcp
+          host: 127.0.0.1
+          host_port: 15432
+          guest_port: 5432
+    storage:
+      namespace: tenant
+    volumes:
+      named:
+        - cache
+    image:
+      reference: "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      allowed_registries:
+        - registry.example.com
+      signature:
+        issuer: https://issuer.example.com
+        subject: repo:nimbus/api
+      provenance:
+        builder_id: https://github.com/nimbus/builder
+        predicates:
+          - https://slsa.dev/provenance/v1
+      sbom_required: true
+    secrets:
+      handles:
+        - prod/db/password
+    quotas:
+      sandbox_charge:
+        active_sandboxes: 1
+        vcpus: 1
+        memory_bytes: 536870912
+        disk_bytes: 10737418240
+        log_bytes: 67108864
