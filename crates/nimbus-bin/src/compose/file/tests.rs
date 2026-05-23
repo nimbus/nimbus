@@ -917,6 +917,36 @@ services:
 }
 
 #[test]
+fn compose_project_rejects_unknown_x_nimbus_egress_fields() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    x-nimbus:
+      egress:
+        allow:
+          - name: stripe-api
+            protocol: https
+            host: api.stripe.com
+            port: 443
+            method:
+              - POST
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose)
+        .expect_err("unknown egress field should fail closed during compose admission");
+    assert!(
+        error.to_string().contains("unknown field") && error.to_string().contains("method"),
+        "error should name the unknown egress field: {error}"
+    );
+}
+
+#[test]
 fn production_compose_admission_rejects_local_builds_without_provenance_policy() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(

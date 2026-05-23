@@ -10,8 +10,9 @@ use nimbus_runtime::{
     RuntimeGrants, RuntimeMode, RuntimePolicy, RuntimePreset, RuntimeTenantBudget,
 };
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackendKind, SandboxEgressAuthorization, SandboxEgressPolicy,
-    SandboxEgressRequest, SandboxResourceCharge, SandboxSpec,
+    CompiledSandboxEgressPolicy, PublishedEndpointProtocol, SandboxBackendKind,
+    SandboxEgressAuthorization, SandboxEgressPolicy, SandboxEgressRequest, SandboxResourceCharge,
+    SandboxSpec,
 };
 
 use crate::sandbox::SandboxServiceLaunch;
@@ -559,7 +560,7 @@ pub struct TenantNetworkPolicyDecision {
     endpoints: Vec<TenantNetworkEndpointDecision>,
     public_exposure_allowed: bool,
     generic_loopback_allowed: bool,
-    sandbox_egress: SandboxEgressPolicy,
+    sandbox_egress: CompiledSandboxEgressPolicy,
 }
 
 impl TenantNetworkPolicyDecision {
@@ -568,7 +569,7 @@ impl TenantNetworkPolicyDecision {
             endpoints: endpoints.into_iter().collect(),
             public_exposure_allowed: false,
             generic_loopback_allowed: false,
-            sandbox_egress: SandboxEgressPolicy::default(),
+            sandbox_egress: CompiledSandboxEgressPolicy::deny_all(),
         }
     }
 
@@ -576,13 +577,15 @@ impl TenantNetworkPolicyDecision {
         &self.endpoints
     }
 
-    pub fn with_sandbox_egress(mut self, sandbox_egress: SandboxEgressPolicy) -> Self {
-        self.sandbox_egress = sandbox_egress;
-        self
+    pub fn with_sandbox_egress(mut self, sandbox_egress: SandboxEgressPolicy) -> Result<Self> {
+        self.sandbox_egress = sandbox_egress.compile().map_err(|message| {
+            Error::InvalidInput(format!("invalid sandbox egress policy: {message}"))
+        })?;
+        Ok(self)
     }
 
     pub fn sandbox_egress(&self) -> &SandboxEgressPolicy {
-        &self.sandbox_egress
+        self.sandbox_egress.policy()
     }
 
     pub fn authorize_sandbox_egress(
@@ -597,7 +600,12 @@ impl TenantNetworkPolicyDecision {
         spec: &SandboxSpec,
         context: &str,
     ) -> Result<()> {
-        if &spec.egress == self.sandbox_egress() {
+        let spec_egress = spec.egress.compile().map_err(|message| {
+            Error::InvalidInput(format!(
+                "tenant network policy rejected invalid sandbox egress policy for {context}: {message}"
+            ))
+        })?;
+        if spec_egress == self.sandbox_egress {
             return Ok(());
         }
         Err(Error::InvalidInput(format!(

@@ -121,7 +121,7 @@ impl OperatorPolicyDocument {
             super::TenantIsolationPolicyInput::new(identity)
                 .with_runtime_policy(&context, &runtime_policy, workload.runtime.tier, mode)
                 .with_services(TenantServiceGrantPolicyDecision::new(services.clone()))
-                .with_network(workload.network.to_decision())
+                .with_network(workload.network.to_decision()?)
                 .with_storage(TenantStoragePolicyDecision::namespace(
                     storage_namespace.clone(),
                 ))
@@ -463,7 +463,7 @@ pub struct OperatorNetworkPolicy {
 }
 
 impl OperatorNetworkPolicy {
-    fn to_decision(&self) -> TenantNetworkPolicyDecision {
+    fn to_decision(&self) -> Result<TenantNetworkPolicyDecision> {
         TenantNetworkPolicyDecision::new(self.normalized_endpoints().into_iter().map(|endpoint| {
             let mut decision = TenantNetworkEndpointDecision::new(
                 endpoint.service.clone(),
@@ -1119,12 +1119,14 @@ impl OperatorPolicyDiffSummary {
         ) {
             lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
         }
-        record_vec_delta(
+        if record_vec_delta(
             &mut changes,
             "sandbox egress",
             &previous.sandbox_egress,
             &next.sandbox_egress,
-        );
+        ) {
+            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
+        }
         if previous.sandbox_backend != next.sandbox_backend {
             changes.push(format!(
                 "sandbox backend changed: {} -> {}",
@@ -1862,20 +1864,20 @@ workloads:
     }
 
     #[test]
-    fn policy_diff_classifies_egress_only_changes_as_dynamic_reload() {
+    fn policy_diff_classifies_egress_only_changes_as_recreate_until_live_reload_exists() {
         let from = parse_policy(EGRESS_DIFF_FROM);
         let to = parse_policy(EGRESS_DIFF_TO);
 
         let diff = OperatorPolicyDiff::between(&from, &to).expect("diff should evaluate");
 
-        assert_eq!(diff.lifecycle(), OperatorPolicyLifecycle::DynamicReload);
+        assert_eq!(diff.lifecycle(), OperatorPolicyLifecycle::RecreateRequired);
         assert_eq!(diff.changed_workloads.len(), 1);
         assert_eq!(
             diff.changed_workloads[0].lifecycle,
-            OperatorPolicyLifecycle::DynamicReload
+            OperatorPolicyLifecycle::RecreateRequired
         );
         let rendered = diff.render_text();
-        assert!(rendered.contains("Lifecycle: dynamic_reload"));
+        assert!(rendered.contains("Lifecycle: recreate_required"));
         assert!(rendered.contains("sandbox egress added: github"));
     }
 
@@ -1891,10 +1893,13 @@ workloads:
             .collect::<Vec<_>>();
 
         let applied = reload.reload(parse_policy(EGRESS_DIFF_TO));
-        assert!(applied.applied, "valid egress change should apply");
+        assert!(
+            applied.applied,
+            "valid egress change should update desired policy"
+        );
         assert_eq!(
             applied.lifecycle,
-            Some(OperatorPolicyLifecycle::DynamicReload)
+            Some(OperatorPolicyLifecycle::RecreateRequired)
         );
 
         let rejected = reload.reload(parse_policy(INVALID_EGRESS_POLICY));

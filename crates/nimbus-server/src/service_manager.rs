@@ -852,7 +852,8 @@ mod tests {
                 .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
                 .with_network(
                     crate::tenant_isolation::TenantNetworkPolicyDecision::default()
-                        .with_sandbox_egress(egress),
+                        .with_sandbox_egress(egress)
+                        .expect("test egress policy should compile"),
                 ),
             )
             .expect("decision with matching egress should admit");

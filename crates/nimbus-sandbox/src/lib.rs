@@ -19,7 +19,8 @@ mod spec;
 
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use egress::{
-    SandboxEgressAuthorization, SandboxEgressPolicy, SandboxEgressRequest, SandboxEgressRule,
+    CompiledSandboxEgressPolicy, SandboxEgressAuthorization, SandboxEgressPolicy,
+    SandboxEgressRequest, SandboxEgressRule,
 };
 pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};

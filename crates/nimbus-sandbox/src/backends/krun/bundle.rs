@@ -234,10 +234,11 @@ pub(crate) fn build_bundle_config(
 
     validate_port_bindings(&spec.port_bindings)?;
     validate_resource_limits(&spec.resources)?;
-    spec.egress
-        .validate()
+    let egress = spec
+        .egress
+        .compile()
         .map_err(|message| SandboxError::InvalidSpec { message })?;
-    let process_env = process_env(spec)?;
+    let process_env = process_env(spec, egress.policy())?;
 
     // krun VMMs always run as root because the crun process needs /dev/kvm access.
     // Any image USER is applied later inside the guest after the VMM is already
@@ -392,7 +393,10 @@ fn process_cwd(process: &SandboxProcessSpec) -> String {
     }
 }
 
-fn process_env(spec: &SandboxSpec) -> Result<Vec<String>> {
+fn process_env(
+    spec: &SandboxSpec,
+    egress: &crate::egress::SandboxEgressPolicy,
+) -> Result<Vec<String>> {
     let mut env = if spec.process.env.is_empty() {
         vec![DEFAULT_PATH_ENV.to_owned()]
     } else {
@@ -400,7 +404,7 @@ fn process_env(spec: &SandboxSpec) -> Result<Vec<String>> {
     };
     env.retain(|entry| env_key(entry).is_none_or(|key| key != EGRESS_POLICY_ENV));
     let rendered =
-        serde_json::to_string(&spec.egress).map_err(|error| SandboxError::OperationFailed {
+        serde_json::to_string(egress).map_err(|error| SandboxError::OperationFailed {
             message: format!("failed to serialize sandbox egress policy: {error}"),
         })?;
     env.push(format!("{EGRESS_POLICY_ENV}={rendered}"));
