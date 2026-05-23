@@ -14,6 +14,10 @@ use super::image_admission::{
     TenantImageVerificationRequest,
 };
 
+mod cosign;
+
+pub use cosign::CosignVerifierBackend;
+
 pub const DEFAULT_ARTIFACT_VERIFIER_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub type ArtifactVerifierResult<T> = std::result::Result<T, ArtifactVerifierError>;

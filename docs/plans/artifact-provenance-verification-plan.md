@@ -14,7 +14,7 @@ verification logic.
 
 ## Status
 
-- **Status:** `AP1` is complete; `AP2` is `in_progress`; `AP0` parser
+- **Status:** `AP1` and `AP2` are complete; `AP3` is `in_progress`; `AP0` parser
   hardening is complete.
 - **Primary owner:** this plan
 - **Activation gate:** `AP0` was promoted as a prerequisite for enterprise
@@ -205,6 +205,25 @@ command to this list and to `scripts/verify-artifact-provenance.sh`.
   credentials, secret handles, registry auth, cookies, bearer values, and
   private key material before they enter errors or policy-facing output.
 
+`AP2` is complete:
+
+- `CosignVerifierBackend` wraps the Cosign CLI through the AP1 command-runner
+  seam. Nimbus does not implement signature, Fulcio/Rekor, or certificate-chain
+  verification.
+- The backend requires an OCI image subject, an immutable `sha256:` digest
+  reference, and explicit certificate issuer plus identity policy before
+  invoking Cosign.
+- The command uses `cosign verify --output json --check-claims=true` with
+  `--certificate-identity` and `--certificate-oidc-issuer`, preserving Cosign as
+  the canonical verification authority.
+- Successful Cosign output is treated as verified evidence only after Nimbus
+  confirms that every returned payload carries the expected manifest digest
+  claim. The normalized evidence records the policy issuer/subject that Cosign
+  verified.
+- Unsigned images, wrong issuer/subject, mutable/tag-only references, wrong
+  digest claims, malformed JSON, missing Cosign binary, unsupported artifact
+  classes, and missing signature policy fail closed with redacted diagnostics.
+
 ## Scope
 
 This plan covers artifact classes that can carry executable or trusted code:
@@ -225,8 +244,8 @@ identity. It feeds verified artifact evidence into those seams.
 | --- | --- | --- | --- |
 | AP0 | `done` | Replace hand-rolled OCI reference parsing at image admission call sites. | `cargo test -p nimbus-server image_admission -- --nocapture` covers Docker Hub defaults, explicit registries, localhost with ports, digest references, tag+digest references, malformed references, allowed-registry matching, and provider canonical-reference input. Compose production admission has focused digest and invalid-reference coverage in `cargo test -p nimbus-bin production_compose_admission -- --nocapture`. |
 | AP1 | `done` | Add verifier command/library adapter contract. | `cargo test -p nimbus-server artifact_provenance -- --nocapture` passed 8 focused adapter tests covering success, non-zero exit, library/backend error, missing executable, malformed output, timeout, unsupported artifact class, and redaction. `cargo test -p nimbus-server image_admission -- --nocapture` passed 12 image admission tests after the request seam widened. |
-| AP2 | `in_progress` | Implement Cosign verifier backend for OCI images. | Signed, unsigned, wrong issuer, wrong subject, mutable/tag-only, wrong digest claim, malformed verifier output, and missing-tool fixtures prove fail-closed behavior and normalized signature evidence. |
-| AP3 | `todo` | Implement SLSA provenance verifier backend for OCI images and file artifacts. | Digest-pinned image and file/bundle fixtures prove builder ID, predicate type, immutable subject, malformed output, timeout, and missing-tool behavior. |
+| AP2 | `done` | Implement Cosign verifier backend for OCI images. | `cargo test -p nimbus-server cosign -- --nocapture` passed 9 focused Cosign adapter tests covering signed, unsigned, wrong issuer/subject, mutable/tag-only, wrong digest claim, malformed verifier output, missing tool, unsupported artifact class, and missing signature policy behavior. |
+| AP3 | `in_progress` | Implement SLSA provenance verifier backend for OCI images and file artifacts. | Digest-pinned image and file/bundle fixtures prove builder ID, predicate type, immutable subject, malformed output, timeout, and missing-tool behavior. |
 | AP4 | `todo` | Extend provenance policy from images to runtime/function bundles and executable guest artifacts. | Bundle admission rejects unsigned, mutable, missing, wrong-digest, wrong-builder, and wrong-predicate artifacts before runtime invocation or sandbox launch. Verified bundle evidence is available to audit/prove output without raw verifier logs. |
 | AP5 | `todo` | Add SBOM evidence backend and operator policy hooks. | SBOM-present, SBOM-missing, malformed SBOM verifier output, and SBOM-required policy fixtures prove policy behavior without parsing secrets into logs or treating SBOM existence as vulnerability clearance. |
 | AP6 | `todo` | Add offline/private-root verification mode. | Local fixture trust material verifies without public network dependencies. Public-network-only mode is not required for offline fixtures, and missing/invalid local trust roots fail closed. |
