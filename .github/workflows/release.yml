@@ -79,29 +79,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        shell: bash
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # CA4: Centralize toolchain + sccache + Swatinem cache + googlesource
+      # bootstrap through the composite action. Release tag builds opt into
+      # `save-cache: always` so per-target caches accumulate across tags;
+      # PR CI keeps the default `auto` (save only on main).
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
         with:
-          # Cache build outputs only. Toolchain-managed executables under
-          # ~/.cargo/bin must not be restored over the runner's cargo shim.
-          key: release-aarch64-unknown-linux-gnu-v4
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "false"
-          cache-bin: "false"
+          shared-key: release-aarch64-unknown-linux-gnu-no-bin-v1
+          save-cache: always
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Build release binary
         run: cargo build --release -p nimbus-bin
@@ -172,19 +159,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Configure googlesource credentials
-        if: env.GOOGLESOURCE_COOKIE != ''
-        env:
-          GOOGLESOURCE_COOKIE: ${{ secrets.GOOGLESOURCE_COOKIE }}
-        shell: bash
-        run: |
-          touch ~/.gitcookies && chmod 0600 ~/.gitcookies
-          git config --global http.cookiefile ~/.gitcookies
-          echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
-          git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      # CA4: Centralize toolchain + sccache + Swatinem cache + googlesource
+      # bootstrap through the composite action. The composite's mold step is
+      # Linux-gated and no-ops on the macOS and Windows matrix entries.
+      # Release tag builds opt into `save-cache: always` so per-target caches
+      # accumulate across tags; PR CI keeps the default `auto` (main only).
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: release-${{ matrix.target }}-no-bin-v1
+          save-cache: always
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Windows Perl
         if: matrix.os == 'windows'
@@ -207,16 +192,6 @@ jobs:
         shell: pwsh
         run: |
           git config --global core.longpaths true
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          # Cache build outputs only. Toolchain-managed executables under
-          # ~/.cargo/bin must not be restored over the runner's cargo shim.
-          key: release-${{ matrix.target }}-v4
-          cache-directories: ~/.cargo/.rusty_v8
-          cache-on-failure: "false"
-          cache-bin: "false"
 
       - name: Build release binary
         run: cargo build --release -p nimbus-bin

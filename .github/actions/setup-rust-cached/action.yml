@@ -39,6 +39,16 @@ inputs:
       the credential-configuration step is skipped.
     required: false
     default: ""
+  save-cache:
+    description: >-
+      When to save the Swatinem rust-cache. "auto" (default) saves only on
+      pushes to main — the CC9 retraction that protects main warm caches
+      from PR cold-cache poisoning. "always" saves on every run — used by
+      release.yml tag builds where each tag is intentional and per-target
+      shared-keys isolate the cache namespace from PR CI. "never" disables
+      saving entirely.
+    required: false
+    default: "auto"
 
 runs:
   using: composite
@@ -95,4 +105,4 @@ runs:
         cache-directories: ~/.cargo/.rusty_v8
         cache-on-failure: "true"
         cache-bin: ${{ inputs.cache-bin }}
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        save-if: ${{ inputs.save-cache == 'always' || (inputs.save-cache == 'auto' && github.ref == 'refs/heads/main') }}
