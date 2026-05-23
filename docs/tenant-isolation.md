@@ -75,7 +75,7 @@ audit redactions, and a deterministic decision ID.
 | In-process runtime cannot widen production host grants. | Runtime admission and `RuntimeExecutionAdmission`. | Runtime policy admission tests. | Unsafe policies need configured fallback executors before they can run outside the in-process tier. |
 | MicroVM service compute is tenant-scoped. | `SandboxServiceManager`, service registry, sandbox backend validation. | Conformance same-service-name and sandbox handle scenarios. | Host-side krun/libkrun process still carries accepted root VMM lifetime risk. |
 | Network exposure is private by default. | Service grants, loopback default, patched krun/libkrun TSI bind address. | Conformance localhost denial and Linux localhost-only proof from the sandbox hardening baseline. | Public exposure policy is intentionally not admitted yet. |
-| Sandbox egress has a typed deny-by-default policy contract. | `SandboxEgressPolicy`, compiled canonical policy checks, operator policy compiler, strict Compose `x-nimbus.egress`, service-manager launch checks, and OCI bundle env materialization. | Sandbox egress unit tests, operator reload tests, service-manager policy mismatch tests, and Compose lowering tests. | Actual guest traffic is not packet/proxy enforced, and egress policy changes require sandbox recreation, until EPS4b lands the sandbox-local proxy or equivalent Linux enforcement path. |
+| Sandbox egress has a typed deny-by-default policy contract. | `SandboxEgressPolicy`, compiled canonical policy checks, `SandboxEgressEnforcementPlan`, operator policy compiler, strict Compose `x-nimbus.egress`, service-manager launch checks, and OCI bundle env materialization. | Sandbox egress unit tests, operator reload tests, service-manager policy mismatch tests, and Compose lowering tests. | Actual guest traffic is not packet/proxy enforced, and egress policy changes require sandbox recreation, until EPS4b1-EPS4b3 land the sandbox-local proxy or equivalent Linux enforcement path. |
 | Storage/API calls cannot cross tenants by caller-supplied tenant IDs. | Server/adapters/runtime HostBridge consume admitted tenant context. | Conformance runtime storage and bearer-swap scenarios. | External storage providers still require correct provider namespace configuration. |
 | Named volumes are tenant-owned and host binds are denied by default. | Compose admission and sandbox mount materialization. | Conformance same-named-volume scenario. | Shared read-only artifact policy is future work. |
 | Images are immutable at the production floor. | Image admission policy and provider seam using maintained OCI reference parsing. | Image admission unit tests plus production Compose admission tests. | Full Sigstore/Cosign/SLSA/SBOM verification is owned by `docs/plans/artifact-provenance-verification-plan.md` and not wired to a concrete provider yet. |
@@ -121,11 +121,13 @@ Accepted for the current baseline:
   through `docs/plans/artifact-provenance-verification-plan.md`.
 - Arbitrary guest egress from process-capable microVM, browser, or agent
   sandboxes now has a typed deny-by-default policy contract and launch
-  materialization seam, but it is not yet packet/proxy enforced. Egress policy
-  changes currently require sandbox recreation because the policy is launch
-  materialized. Current production controls are private-by-default service
-  exposure, tenant-scoped service grants, broad runtime-network rejection, and
-  egress-policy mismatch rejection at sandbox launch. EPS4b in
+  materialization seam, but it is not yet packet/proxy enforced. The
+  materialized contract is `SandboxEgressEnforcementPlan` carried through
+  `NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON`; today's mode is
+  `launch_metadata` with `recreate_required` reload. Current production
+  controls are private-by-default service exposure, tenant-scoped service
+  grants, broad runtime-network rejection, and egress-policy mismatch
+  rejection at sandbox launch. EPS4b1-EPS4b3 in
   `docs/plans/enterprise-policy-and-sandbox-egress-plan.md` owns the
   sandbox-local proxy or equivalent Linux enforcement path.
 - `TenantIsolationEvent` is the canonical internal event schema. OCSF and

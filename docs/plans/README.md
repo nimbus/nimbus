@@ -28,7 +28,8 @@ This directory prefers a small-number-of-plans model with clear ownership.
     complete: policy lifecycle classifies launch-materialized egress and
     static authority changes as recreate-required, and `SandboxEgressPolicy`
     is wired through operator policy, strict Compose `x-nimbus.egress`,
-    service-manager launch checks, and OCI bundle env materialization. EPS4b+
+    service-manager launch checks, OCI bundle env materialization, and the
+    schema-versioned `SandboxEgressEnforcementPlan` launch contract. EPS4b1+
     remain open for the actual sandbox-local proxy/Linux conformance and live
     egress reload, OCSF/OpenTelemetry export, optional external PDP adapters,
     and policy advisor/prover lanes.

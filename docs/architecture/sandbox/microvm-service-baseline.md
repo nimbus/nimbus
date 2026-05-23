@@ -170,9 +170,11 @@ Production tenant isolation requires these additional boundaries:
   typed deny-by-default `SandboxEgressPolicy` contract that validates host
   wildcards, malformed host shapes, internal-IP allowlists, reserved-IP
   targets, and L7 method/path rules, then compiles to a canonical policy before
-  launch comparison/materialization. Egress policy changes require sandbox
-  recreation until a live enforcement path exists. The actual sandbox-local
-  proxy or equivalent Linux enforcement path remains owned by EPS4b in
+  launch comparison/materialization. The launch materialization is the
+  schema-versioned `SandboxEgressEnforcementPlan`; today's mode is
+  `launch_metadata` and its reload policy is `recreate_required`. The actual
+  sandbox-local proxy or equivalent Linux enforcement path remains owned by
+  EPS4b1-EPS4b3 in
   `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
 - **HostBridge and runtime grants:** in-process runtime code receives only the
   invocation tenant and exact grants. It cannot request another tenant's

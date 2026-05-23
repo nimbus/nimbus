@@ -1882,6 +1882,21 @@ workloads:
     }
 
     #[test]
+    fn policy_diff_classifies_no_authority_change_as_dynamic_reload() {
+        let policy = parse_policy(EGRESS_DIFF_FROM);
+
+        let diff = OperatorPolicyDiff::between(&policy, &policy).expect("diff should evaluate");
+
+        assert_eq!(diff.lifecycle(), OperatorPolicyLifecycle::DynamicReload);
+        assert!(diff.added_workloads.is_empty());
+        assert!(diff.removed_workloads.is_empty());
+        assert!(diff.changed_workloads.is_empty());
+        let rendered = diff.render_text();
+        assert!(rendered.contains("Lifecycle: dynamic_reload"));
+        assert!(rendered.contains("No authority changes."));
+    }
+
+    #[test]
     fn policy_reload_keeps_last_known_good_after_invalid_candidate() {
         let mut reload = OperatorPolicyReloadState::new(parse_policy(EGRESS_DIFF_FROM))
             .expect("initial policy should evaluate");
