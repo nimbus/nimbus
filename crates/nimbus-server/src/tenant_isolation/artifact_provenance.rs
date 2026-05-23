@@ -15,8 +15,10 @@ use super::image_admission::{
 };
 
 mod cosign;
+mod slsa;
 
 pub use cosign::CosignVerifierBackend;
+pub use slsa::{SLSA_PROVENANCE_V1_PREDICATE_TYPE, SlsaVerifierBackend};
 
 pub const DEFAULT_ARTIFACT_VERIFIER_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -157,6 +159,21 @@ impl ArtifactVerificationPolicy {
     ) -> Self {
         self.provenance = Some(ArtifactProvenanceRequirement {
             builder_id: Some(builder_id.into()),
+            source_uri: None,
+            predicate_types: predicate_types.into_iter().map(Into::into).collect(),
+        });
+        self
+    }
+
+    pub fn require_provenance_from_source(
+        mut self,
+        builder_id: impl Into<String>,
+        source_uri: impl Into<String>,
+        predicate_types: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.provenance = Some(ArtifactProvenanceRequirement {
+            builder_id: Some(builder_id.into()),
+            source_uri: Some(source_uri.into()),
             predicate_types: predicate_types.into_iter().map(Into::into).collect(),
         });
         self
@@ -193,6 +210,7 @@ impl From<&TenantImageVerificationRequest> for ArtifactVerificationPolicy {
                 .provenance()
                 .map(|provenance| ArtifactProvenanceRequirement {
                     builder_id: provenance.builder_id().map(str::to_string),
+                    source_uri: provenance.source_uri().map(str::to_string),
                     predicate_types: provenance.predicate_types().to_vec(),
                 }),
             sbom_required: request.sbom_required(),
@@ -219,12 +237,17 @@ impl ArtifactSignatureRequirement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactProvenanceRequirement {
     builder_id: Option<String>,
+    source_uri: Option<String>,
     predicate_types: Vec<String>,
 }
 
 impl ArtifactProvenanceRequirement {
     pub fn builder_id(&self) -> Option<&str> {
         self.builder_id.as_deref()
+    }
+
+    pub fn source_uri(&self) -> Option<&str> {
+        self.source_uri.as_deref()
     }
 
     pub fn predicate_types(&self) -> &[String] {

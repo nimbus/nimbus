@@ -152,6 +152,7 @@ impl TenantImageVerificationRequest {
                 .provenance_required
                 .then(|| TenantImageProvenanceRequirement {
                     builder_id: policy.allowed_builder_id.clone(),
+                    source_uri: policy.allowed_source_uri.clone(),
                     predicate_types: policy.required_attestation_predicates.clone(),
                 }),
             sbom_required: policy.sbom_required,
@@ -194,12 +195,17 @@ impl TenantImageSignatureRequirement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TenantImageProvenanceRequirement {
     builder_id: Option<String>,
+    source_uri: Option<String>,
     predicate_types: Vec<String>,
 }
 
 impl TenantImageProvenanceRequirement {
     pub fn builder_id(&self) -> Option<&str> {
         self.builder_id.as_deref()
+    }
+
+    pub fn source_uri(&self) -> Option<&str> {
+        self.source_uri.as_deref()
     }
 
     pub fn predicate_types(&self) -> &[String] {
@@ -242,6 +248,21 @@ impl TenantImagePolicyDecision {
     ) -> Self {
         self.provenance_required = true;
         self.allowed_builder_id = Some(builder_id.into());
+        self.allowed_source_uri = None;
+        self.required_attestation_predicates =
+            predicate_types.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn require_provenance_from_source(
+        mut self,
+        builder_id: impl Into<String>,
+        source_uri: impl Into<String>,
+        predicate_types: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.provenance_required = true;
+        self.allowed_builder_id = Some(builder_id.into());
+        self.allowed_source_uri = Some(source_uri.into());
         self.required_attestation_predicates =
             predicate_types.into_iter().map(Into::into).collect();
         self
