@@ -683,16 +683,24 @@ jobs:
         # line-coverage input, and instrumentation has made it exceed the PR
         # coverage budget.
         #
-        # Keep the instrumented workspace build serialized. GitHub-hosted Linux
-        # runners have shown rust-lld bus errors when multiple large coverage
-        # test binaries link in parallel. CC6 re-tests `-j 2`/`-j 4` once
-        # sccache has reduced cold-build link pressure.
+        # CA2: re-enable parallel link now that CA1 swapped the link path
+        # to mold via setup-rust-cached. The CC6-era serialization existed
+        # because rust-lld bus-errored when large coverage test binaries
+        # linked in parallel on GitHub-hosted Linux runners. mold's separate
+        # process model and faster link path side-step the bus-error class:
+        # `-j 4` matches the runner core count and unblocks the Coverage
+        # critical path (was 24m27s at -j 1 baseline; see ca0-baseline.md).
+        # If bus errors recur under mold, document the disposition in
+        # ca2-coverage-parallelism.md and tag with `CA2-disposition:` in a
+        # comment above this run line; the verifier accepts that as
+        # intentional-keep evidence.
+        #
         # Doc-tests are still executed in the rust-workspace-tests job
         # (`make test-rust-docs`). cargo-llvm-cov excludes doc-tests by
         # default (--doctests is the explicit opt-in, and unstable), so we
         # rely on that default to skip the secondary `--test` harness
         # rebuild that doubled link work under the instrumented profile.
-        run: cargo llvm-cov -j 1 --workspace --exclude nimbus-runtime --lcov --output-path lcov.info
+        run: cargo llvm-cov -j 4 --workspace --exclude nimbus-runtime --lcov --output-path lcov.info
 
       - name: Show sccache stats
         # CC1: telemetry. Captures hit/miss/store counts so cc1-coverage-only-stats.md
