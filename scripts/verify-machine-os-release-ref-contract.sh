@@ -123,8 +123,8 @@ fi
 if grep -F "app-id:" "${workflow_path}" >/dev/null; then
   die "release workflow must not use deprecated actions/create-github-app-token app-id input; use client-id"
 fi
-grep -F "actions/create-github-app-token@v3.2.0" "${workflow_path}" >/dev/null || \
-  die "release workflow must pin actions/create-github-app-token@v3.2.0 so client-id metadata is stable for actionlint and runners"
+grep -E 'actions/create-github-app-token@v3([^.]|$)' "${workflow_path}" >/dev/null || \
+  die "release workflow must pin actions/create-github-app-token@v3 (major-version pin) so Dependabot flows v3.x patches and client-id input stays supported"
 grep -F "MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:" "${workflow_path}" >/dev/null || \
   die "release workflow must set MACHINE_OS_FEDORA_BOOTC_IMAGE to a digest-pinned Fedora bootc image"
 fedora_bootc_refs="$(
