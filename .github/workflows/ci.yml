@@ -12,7 +12,10 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PW3: never cancel main. A cancelled main run aborts the sccache /
+  # Swatinem cache-save side effects, leaving the next run cold. PR
+  # branches still cancel themselves on rapid pushes.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
