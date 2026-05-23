@@ -142,7 +142,7 @@ should remain packaged and versioned with Nimbus.
 | EPS3 | `done` | Define dynamic versus recreate-required policy lifecycle. | `cargo test -p nimbus-server operator_policy -- --nocapture`: launch-materialized egress diffs and static authority changes classify as `recreate_required`, no-op reload stays dynamic, and invalid reload keeps last-known-good. |
 | EPS4a | `done` | Add typed sandbox egress PEP contract and launch materialization seam. | `cargo test -p nimbus-sandbox egress -- --nocapture`, `cargo test -p nimbus-server service_manager -- --nocapture`, and `cargo test -p nimbus-bin x_nimbus_egress -- --nocapture`: default deny, explicit allow, SSRF/internal denial, wildcard validation, L7 method/path denial, service-manager policy mismatch, and Compose lowering. |
 | EPS4b0 | `done` | Add a typed egress enforcement contract for the future sandbox supervisor/proxy. | `cargo test -p nimbus-sandbox egress -- --nocapture`: launch metadata is schema-versioned, default-deny by default, explicit allows compile to canonical policy, invalid raw policy fails closed, and launch metadata cannot claim live reload. |
-| EPS4b1 | `done` | Package a sandbox-local supervisor/proxy entrypoint with Nimbus. | `cargo test -p nimbus-bin sandbox_supervisor -- --nocapture`: hidden `nimbus sandbox-supervisor` entrypoint parses, consumes `SandboxEgressEnforcementPlan`, rejects missing/invalid contracts, and reports validation-only status with `packet_enforcement_active=false`. |
+| EPS4b1 | `done` | Package a sandbox-local supervisor/proxy entrypoint with Nimbus. | `cargo test -p nimbus-bin sandbox_supervisor -- --nocapture`: hidden `nimbus sandbox-supervisor` entrypoint parses, consumes env-backed `SandboxEgressEnforcementPlan`, rejects missing/invalid contracts, and reports validation-only status with `packet_enforcement_active=false`. |
 | EPS4b2 | `todo` | Force process-capable guest egress through the supervisor/proxy or equivalent kernel-enforced path. | Linux integration tests prove guest traffic cannot bypass the egress PEP. |
 | EPS4b3 | `todo` | Add Linux network conformance and live egress reload proof. | Linux conformance proves real guest traffic default deny, allowed endpoint success, SSRF denial after DNS resolution, loopback/internal denial, L7 method/path denial, and egress-only reload through the proxy or kernel-enforced path. |
 | EPS5 | `todo` | Add OCSF and OpenTelemetry export mapping. | Fixtures prove tenant/sandbox events redact secrets and map to stable OCSF/OTel records with decision IDs. |
@@ -231,9 +231,10 @@ Batch 2 landed EPS3 and EPS4a:
 - `nimbus sandbox-supervisor` is a hidden/internal single-binary entrypoint for
   sandbox-local supervisor packaging. It consumes and validates
   `SandboxEgressEnforcementPlan` from
-  `NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON`, or from an inline test contract,
-  and intentionally reports `packet_enforcement_active=false` until EPS4b2
-  wires traffic through the supervisor/proxy or equivalent kernel path.
+  `NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON`; there is no CLI override for the
+  launch-materialized contract. It intentionally reports
+  `packet_enforcement_active=false` until EPS4b2 wires traffic through the
+  supervisor/proxy or equivalent kernel path.
 - Modularity note: `operator_policy.rs` remains the schema/compiler
   composition root and is intentionally under the 2,000-line hard limit.
   Concept-owned policy children now own egress and reload state; future policy

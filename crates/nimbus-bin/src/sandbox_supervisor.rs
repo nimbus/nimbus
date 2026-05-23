@@ -8,10 +8,6 @@ use serde::Serialize;
 #[derive(Debug, Args)]
 #[command(hide = true)]
 pub(crate) struct SandboxSupervisorCommand {
-    /// Inline enforcement contract JSON. Intended for tests and diagnostics.
-    #[arg(long, value_name = "JSON", hide = true)]
-    contract_json: Option<String>,
-
     /// Output format.
     #[arg(short = 'f', long, default_value = "text")]
     format: SandboxSupervisorOutputFormat,
@@ -37,10 +33,7 @@ struct SandboxSupervisorContractReport {
 pub(crate) async fn run_sandbox_supervisor_command(
     command: SandboxSupervisorCommand,
 ) -> nimbus::Result<()> {
-    let plan = load_enforcement_plan(command.contract_json.as_deref(), |key| {
-        std::env::var(key).ok()
-    })?;
-    let report = SandboxSupervisorContractReport::from_plan(&plan)?;
+    let report = evaluate_sandbox_supervisor_command(&command, |key| std::env::var(key).ok())?;
     match command.format {
         SandboxSupervisorOutputFormat::Text => print!("{}", report.render_text()),
         SandboxSupervisorOutputFormat::Json => print_json(&report)?,
@@ -48,29 +41,30 @@ pub(crate) async fn run_sandbox_supervisor_command(
     Ok(())
 }
 
+fn evaluate_sandbox_supervisor_command(
+    _command: &SandboxSupervisorCommand,
+    env: impl FnOnce(&str) -> Option<String>,
+) -> nimbus::Result<SandboxSupervisorContractReport> {
+    let plan = load_enforcement_plan(env)?;
+    SandboxSupervisorContractReport::from_plan(&plan)
+}
+
 fn load_enforcement_plan(
-    contract_json: Option<&str>,
     env: impl FnOnce(&str) -> Option<String>,
 ) -> nimbus::Result<SandboxEgressEnforcementPlan> {
-    let (source, raw) = match contract_json {
-        Some(raw) => ("--contract-json", raw.to_owned()),
-        None => (
-            SANDBOX_EGRESS_ENFORCEMENT_ENV,
-            env(SANDBOX_EGRESS_ENFORCEMENT_ENV).ok_or_else(|| {
-                nimbus::Error::InvalidInput(format!(
-                    "sandbox supervisor requires {SANDBOX_EGRESS_ENFORCEMENT_ENV}"
-                ))
-            })?,
-        ),
-    };
+    let raw = env(SANDBOX_EGRESS_ENFORCEMENT_ENV).ok_or_else(|| {
+        nimbus::Error::InvalidInput(format!(
+            "sandbox supervisor requires {SANDBOX_EGRESS_ENFORCEMENT_ENV}"
+        ))
+    })?;
     let plan: SandboxEgressEnforcementPlan = serde_json::from_str(&raw).map_err(|error| {
         nimbus::Error::InvalidInput(format!(
-            "failed to parse sandbox supervisor enforcement contract from {source}: {error}"
+            "failed to parse sandbox supervisor enforcement contract from {SANDBOX_EGRESS_ENFORCEMENT_ENV}: {error}"
         ))
     })?;
     plan.validate().map_err(|message| {
         nimbus::Error::InvalidInput(format!(
-            "invalid sandbox supervisor enforcement contract from {source}: {message}"
+            "invalid sandbox supervisor enforcement contract from {SANDBOX_EGRESS_ENFORCEMENT_ENV}: {message}"
         ))
     })?;
     Ok(plan)
@@ -138,7 +132,10 @@ mod tests {
         SandboxEgressReloadPolicy,
     };
 
-    use super::{SandboxSupervisorContractReport, load_enforcement_plan};
+    use super::{
+        SandboxSupervisorCommand, SandboxSupervisorContractReport, SandboxSupervisorOutputFormat,
+        evaluate_sandbox_supervisor_command, load_enforcement_plan,
+    };
 
     #[test]
     fn load_enforcement_plan_reads_packaged_env_contract() {
@@ -159,7 +156,7 @@ mod tests {
         })
         .to_string();
 
-        let plan = load_enforcement_plan(None, |key| {
+        let plan = load_enforcement_plan(|key| {
             (key == SANDBOX_EGRESS_ENFORCEMENT_ENV).then_some(contract)
         })
         .expect("env contract should parse");
@@ -175,7 +172,7 @@ mod tests {
     #[test]
     fn load_enforcement_plan_rejects_missing_env_contract() {
         let error =
-            load_enforcement_plan(None, |_| None).expect_err("missing contract should fail closed");
+            load_enforcement_plan(|_| None).expect_err("missing contract should fail closed");
 
         assert!(
             error.to_string().contains(SANDBOX_EGRESS_ENFORCEMENT_ENV),
@@ -193,13 +190,46 @@ mod tests {
         })
         .to_string();
 
-        let error = load_enforcement_plan(Some(&contract), |_| None)
-            .expect_err("false live reload claim should fail closed");
+        let error = load_enforcement_plan(|key| {
+            (key == SANDBOX_EGRESS_ENFORCEMENT_ENV).then_some(contract)
+        })
+        .expect_err("false live reload claim should fail closed");
 
         assert!(
             error.to_string().contains("cannot claim live reload"),
             "invalid contract should surface validation reason: {error}"
         );
+    }
+
+    #[test]
+    fn supervisor_command_evaluates_env_backed_contract() {
+        let contract = serde_json::json!({
+            "schema_version": SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            "mode": "supervisor_proxy",
+            "reload_policy": "recreate_required",
+            "policy": {
+                "allow": [{
+                    "name": "github",
+                    "protocol": "https",
+                    "host": "api.github.com",
+                    "port": 443
+                }]
+            }
+        })
+        .to_string();
+        let command = SandboxSupervisorCommand {
+            format: SandboxSupervisorOutputFormat::Json,
+        };
+
+        let report = evaluate_sandbox_supervisor_command(&command, |key| {
+            (key == SANDBOX_EGRESS_ENFORCEMENT_ENV).then_some(contract)
+        })
+        .expect("command should consume env-backed supervisor contract");
+
+        assert_eq!(report.status, "valid");
+        assert_eq!(report.rule_count, 1);
+        assert_eq!(report.mode, SandboxEgressEnforcementMode::SupervisorProxy);
+        assert!(!report.packet_enforcement_active);
     }
 
     #[test]
