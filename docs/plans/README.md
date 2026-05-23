@@ -13,6 +13,18 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
+- `docs/plans/ci-wall-acceleration-plan.md`
+  - active execution plan for shrinking the PR CI wall time. Reads the
+    post-CA baseline (23.6m on `32951ee7`) and attacks the new poles
+    that CA's success exposed: Server Verification Harness (12.7m),
+    Rust Workspace Tests (15.7m), External Provider Integration Tests
+    (14.6m), warm-sccache itself (10.2m). Coverage is no longer in the
+    top 5. CW0..CW5 stages: scaffold + baseline, verification-harness
+    sharding via `NIMBUS_HARNESS_SHARD=N/M`, workspace-tests sharding
+    via cargo-nextest `--partition`, provider matrix split, warm-
+    sccache shrink (research lane), closeout. Wall target ~12-15m
+    without infra changes. `/goal` control plane gated on
+    `bash scripts/verify-ci-wall-acceleration.sh` (10 conditions).
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
