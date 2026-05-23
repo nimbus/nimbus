@@ -31,6 +31,14 @@ This directory prefers a small-number-of-plans model with clear ownership.
     drafts, advisory/prover fixtures with accepted-risk support, operator docs,
     and the reusable `bash scripts/verify-enterprise-policy-egress.sh`
     conformance gate.
+- `docs/plans/artifact-provenance-verification-plan.md`
+  - active execution plan for production artifact provenance verification.
+    AP0-AP7 are complete: maintained OCI image parsing, typed verifier
+    adapter contract, Cosign image signatures, SLSA image/file provenance,
+    runtime bundle and guest executable admission, SBOM presence evidence,
+    offline/private-root verification fixtures, the reusable
+    `bash scripts/verify-artifact-provenance.sh` conformance gate, and
+    operator docs.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

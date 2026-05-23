@@ -14,8 +14,7 @@ verification logic.
 
 ## Status
 
-- **Status:** `AP1` through `AP6` are complete; `AP7` is `in_progress`;
-  `AP0` parser hardening is complete.
+- **Status:** `AP0` through `AP7` are complete.
 - **Primary owner:** this plan
 - **Activation gate:** `AP0` was promoted as a prerequisite for enterprise
   policy admission on 2026-05-23. `AP1+` is now the next implementation lane
@@ -289,6 +288,18 @@ command to this list and to `scripts/verify-artifact-provenance.sh`.
   root customization remains tool-specific follow-on scope if the selected
   verifier exposes it.
 
+`AP7` is complete:
+
+- `scripts/verify-artifact-provenance.sh` runs the artifact provenance
+  conformance gate without live registry network access.
+- `make verify-artifact-provenance` exposes the same gate through the repo's
+  Makefile, and `proof-helpers` syntax-checks the script.
+- `docs/tenant-isolation.md` now names the concrete Cosign, SLSA, SBOM,
+  offline/private-root, runtime bundle, and guest executable provenance
+  controls plus the evidence command.
+- `docs/plans/README.md` points to this plan as the current provenance
+  verification baseline.
+
 ## Scope
 
 This plan covers artifact classes that can carry executable or trusted code:
@@ -314,7 +325,7 @@ identity. It feeds verified artifact evidence into those seams.
 | AP4 | `done` | Extend provenance policy from images to runtime/function bundles and executable guest artifacts. | `cargo test -p nimbus-server artifact_admission -- --nocapture` passed 4 admission tests covering verified runtime bundles, missing digest, wrong digest, wrong builder, wrong predicate, and guest executable admission. `cargo test -p nimbus-server runtime_invocation_options_admit_bundle_provenance -- --nocapture` passed and proves the runtime invocation option admits provenance before executor entry. |
 | AP5 | `done` | Add SBOM evidence backend and operator policy hooks. | `cargo test -p nimbus-server sbom -- --nocapture` passed 8 SBOM backend/image-admission tests covering SBOM-present, SBOM-missing, empty/malformed output, missing tool, mutable image, missing SBOM policy, redaction, and tenant image admission. `cargo test -p nimbus-server operator_image_policy_sbom_required -- --nocapture` passed and proves the operator policy hook. |
 | AP6 | `done` | Add offline/private-root verification mode. | `cargo test -p nimbus-server offline -- --nocapture` passed local offline/private-root fixtures covering trusted-root command args and missing trusted-root fail-closed behavior. |
-| AP7 | `in_progress` | Publish operator runbook and conformance gate. | `bash scripts/verify-artifact-provenance.sh` and a Makefile target verify image, bundle, SLSA, SBOM, offline/private-root, redaction, timeout, missing-tool, and malformed-output fixtures in one command; docs describe operational use and residual risks. |
+| AP7 | `done` | Publish operator runbook and conformance gate. | `bash scripts/verify-artifact-provenance.sh` passed: 40 artifact provenance fixtures, 1 runtime invocation gate fixture, 13 image admission fixtures, 1 operator SBOM policy hook fixture, and 6 production Compose admission fixtures. Makefile target `verify-artifact-provenance` and docs are updated. |
 
 ## Acceptance Criteria
 
