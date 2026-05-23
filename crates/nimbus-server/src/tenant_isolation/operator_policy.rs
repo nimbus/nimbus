@@ -3,7 +3,10 @@ use std::net::IpAddr;
 
 use nimbus_core::{Error, Result, TenantId};
 use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
-use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge};
+use nimbus_sandbox::{
+    PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge,
+    validate_tenant_volume_name,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -38,7 +41,7 @@ pub struct OperatorPolicyDocument {
 
 impl OperatorPolicyDocument {
     pub fn validate(&self) -> Result<()> {
-        self.validate_shape()
+        self.evaluate().map(|_| ())
     }
 
     pub fn evaluate(&self) -> Result<OperatorPolicyEvaluation> {
@@ -78,14 +81,26 @@ impl OperatorPolicyDocument {
             .as_deref()
             .unwrap_or(self.defaults.storage_namespace.as_str());
         let storage_namespace = storage_namespace_for_policy(storage_namespace, tenant_id);
+        let named_volumes = normalized_strings(&workload.volumes.named);
+        let secret_handles = normalized_strings(&workload.secrets.handles);
         let audit_redactions = workload
             .audit
             .redacted_fields
             .clone()
             .unwrap_or_else(|| self.defaults.audit_redactions.clone());
-        let image_reference = workload.image.reference.clone();
+        let audit_redactions = normalized_strings(&audit_redactions);
+        let image_policy = workload.image.summary();
+        let image_reference = image_policy.reference.clone();
         let endpoint_summaries = workload.network.endpoint_summaries();
-        let trace = workload.trace(mode);
+        let quotas_summary = workload.quotas.summary();
+        let trace = workload.trace(
+            mode,
+            storage_namespace.as_str(),
+            &services,
+            &endpoint_summaries,
+            &named_volumes,
+            secret_handles.len(),
+        );
 
         let mut quotas = TenantQuotaPolicyDecision::default()
             .with_runtime_budget(runtime_policy.tenant_budget());
@@ -101,13 +116,9 @@ impl OperatorPolicyDocument {
                 .with_storage(TenantStoragePolicyDecision::namespace(
                     storage_namespace.clone(),
                 ))
-                .with_volumes(TenantVolumePolicyDecision::new(
-                    workload.volumes.named.clone(),
-                ))
+                .with_volumes(TenantVolumePolicyDecision::new(named_volumes.clone()))
                 .with_image(workload.image.to_decision())
-                .with_secrets(TenantSecretPolicyDecision::handles(
-                    workload.secrets.handles.clone(),
-                ))
+                .with_secrets(TenantSecretPolicyDecision::handles(secret_handles.clone()))
                 .with_quotas(quotas)
                 .with_audit_redactions(TenantAuditRedactionPolicy {
                     redacted_fields: audit_redactions,
@@ -119,12 +130,21 @@ impl OperatorPolicyDocument {
             decision_id: decision.id().as_str().to_string(),
             tenant_id: decision.tenant_id().as_str().to_string(),
             runtime_tier: decision.runtime().tier(),
+            runtime_profile: workload.runtime.profile,
+            tenant_isolation_mode: mode,
             runtime_admission: decision.runtime().admission().clone(),
+            sandbox_backend: workload.sandbox.backend,
+            sandbox_id: workload.sandbox.sandbox_id.clone(),
             services,
             network_endpoints: endpoint_summaries,
             storage_namespace,
+            named_volumes,
+            image_policy,
             image_reference,
-            secret_handle_count: workload.secrets.handles.len(),
+            secret_handle_count: secret_handles.len(),
+            secret_handles,
+            quotas: quotas_summary,
+            audit_redactions: decision.audit_redactions().redacted_fields().to_vec(),
             trace,
             decision,
         })
@@ -272,22 +292,27 @@ impl OperatorPolicyWorkload {
         Ok(())
     }
 
-    fn trace(&self, mode: TenantIsolationMode) -> Vec<String> {
+    fn trace(
+        &self,
+        mode: TenantIsolationMode,
+        storage_namespace: &str,
+        services: &[String],
+        network_endpoint_summaries: &[String],
+        named_volumes: &[String],
+        secret_handle_count: usize,
+    ) -> Vec<String> {
         let mut trace = vec![
             format!("tenant isolation mode: {}", mode.as_str()),
             format!("runtime profile: {}", self.runtime.profile.label()),
             format!("runtime tier: {}", self.runtime.tier.label()),
-            format!("service grants: {}", join_or_none(&self.services.allow)),
+            format!("service grants: {}", join_or_none(services)),
             format!(
                 "network endpoints: {}",
-                join_or_none(&self.network.endpoint_summaries())
+                join_or_none(network_endpoint_summaries)
             ),
-            format!(
-                "storage namespace: {}",
-                self.storage.namespace.as_deref().unwrap_or("tenant")
-            ),
-            format!("named volumes: {}", join_or_none(&self.volumes.named)),
-            format!("secret handles: {}", self.secrets.handles.len()),
+            format!("storage namespace: {storage_namespace}"),
+            format!("named volumes: {}", join_or_none(named_volumes)),
+            format!("secret handles: {secret_handle_count}"),
         ];
         if let Some(image) = &self.image.reference {
             trace.push(format!("image reference: {image}"));
@@ -400,10 +425,7 @@ pub struct OperatorServicePolicy {
 
 impl OperatorServicePolicy {
     fn normalized_services(&self) -> Vec<String> {
-        let mut services = self.allow.clone();
-        services.sort();
-        services.dedup();
-        services
+        normalized_strings(&self.allow)
     }
 
     fn validate(&self, workload_key: &str) -> Result<()> {
@@ -424,7 +446,7 @@ pub struct OperatorNetworkPolicy {
 
 impl OperatorNetworkPolicy {
     fn to_decision(&self) -> TenantNetworkPolicyDecision {
-        TenantNetworkPolicyDecision::new(self.endpoints.iter().map(|endpoint| {
+        TenantNetworkPolicyDecision::new(self.normalized_endpoints().into_iter().map(|endpoint| {
             let mut decision = TenantNetworkEndpointDecision::new(
                 endpoint.service.clone(),
                 endpoint.name.clone(),
@@ -440,10 +462,20 @@ impl OperatorNetworkPolicy {
     }
 
     fn endpoint_summaries(&self) -> Vec<String> {
-        self.endpoints
-            .iter()
+        self.normalized_endpoints()
+            .into_iter()
             .map(OperatorNetworkEndpointPolicy::summary)
             .collect()
+    }
+
+    fn normalized_endpoints(&self) -> Vec<&OperatorNetworkEndpointPolicy> {
+        let mut endpoints: Vec<_> = self.endpoints.iter().collect();
+        endpoints.sort_by(|left, right| {
+            left.service
+                .cmp(&right.service)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        endpoints
     }
 
     fn validate(&self, workload_key: &str, services: &OperatorServicePolicy) -> Result<()> {
@@ -539,7 +571,15 @@ impl OperatorVolumePolicy {
             &self.named,
             &format!("workload `{workload_key}` volumes.named"),
             "volume",
-        )
+        )?;
+        for name in &self.named {
+            validate_tenant_volume_name(name).map_err(|error| {
+                Error::InvalidInput(format!(
+                    "operator policy invalid: workload `{workload_key}` volume `{name}` is invalid: {error}"
+                ))
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -559,6 +599,17 @@ pub struct OperatorImagePolicy {
     pub allow_local_build: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OperatorPolicyImageSummary {
+    pub reference: Option<String>,
+    pub digest_required: bool,
+    pub allowed_registries: Vec<String>,
+    pub signature: Option<OperatorImageSignaturePolicy>,
+    pub provenance: Option<OperatorImageProvenancePolicy>,
+    pub sbom_required: bool,
+    pub allow_local_build: bool,
+}
+
 impl Default for OperatorImagePolicy {
     fn default() -> Self {
         Self {
@@ -575,12 +626,11 @@ impl Default for OperatorImagePolicy {
 
 impl OperatorImagePolicy {
     fn to_decision(&self) -> TenantImagePolicyDecision {
-        let mut decision = self
-            .reference
-            .as_ref()
-            .map(TenantImagePolicyDecision::digest_pinned)
-            .unwrap_or_default();
-        for registry in &self.allowed_registries {
+        let mut decision = TenantImagePolicyDecision::default().require_digest_reference();
+        if let Some(reference) = &self.reference {
+            decision = decision.with_image_reference(reference.clone());
+        }
+        for registry in normalized_strings(&self.allowed_registries) {
             decision = decision.with_allowed_registry(registry.clone());
         }
         if let Some(signature) = &self.signature {
@@ -588,8 +638,10 @@ impl OperatorImagePolicy {
                 decision.require_signature(signature.issuer.clone(), signature.subject.clone());
         }
         if let Some(provenance) = &self.provenance {
-            decision = decision
-                .require_provenance(provenance.builder_id.clone(), provenance.predicates.clone());
+            decision = decision.require_provenance(
+                provenance.builder_id.clone(),
+                normalized_strings(&provenance.predicates),
+            );
         }
         if self.sbom_required {
             decision = decision.require_sbom();
@@ -598,6 +650,24 @@ impl OperatorImagePolicy {
             decision = decision.allow_local_build();
         }
         decision
+    }
+
+    fn summary(&self) -> OperatorPolicyImageSummary {
+        OperatorPolicyImageSummary {
+            reference: self.reference.clone(),
+            digest_required: self.digest_required,
+            allowed_registries: normalized_strings(&self.allowed_registries),
+            signature: self.signature.clone(),
+            provenance: self
+                .provenance
+                .as_ref()
+                .map(|provenance| OperatorImageProvenancePolicy {
+                    builder_id: provenance.builder_id.clone(),
+                    predicates: normalized_strings(&provenance.predicates),
+                }),
+            sbom_required: self.sbom_required,
+            allow_local_build: self.allow_local_build,
+        }
     }
 
     fn validate(&self, workload_key: &str, mode: TenantIsolationMode) -> Result<()> {
@@ -704,6 +774,12 @@ pub struct OperatorQuotaPolicy {
 }
 
 impl OperatorQuotaPolicy {
+    fn summary(&self) -> OperatorPolicyQuotaSummary {
+        OperatorPolicyQuotaSummary {
+            sandbox_charge: self.sandbox_charge,
+        }
+    }
+
     fn validate(&self, workload_key: &str) -> Result<()> {
         if let Some(charge) = self.sandbox_charge
             && (charge.active_sandboxes == 0
@@ -717,6 +793,11 @@ impl OperatorQuotaPolicy {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OperatorPolicyQuotaSummary {
+    pub sandbox_charge: Option<SandboxResourceCharge>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -774,6 +855,14 @@ impl OperatorPolicyEvaluation {
             output.push_str(&format!("\n{}\n", decision.workload_key));
             output.push_str(&format!("  decision_id: {}\n", decision.decision_id));
             output.push_str(&format!(
+                "  tenant_isolation_mode: {}\n",
+                decision.tenant_isolation_mode.as_str()
+            ));
+            output.push_str(&format!(
+                "  runtime_profile: {}\n",
+                decision.runtime_profile.label()
+            ));
+            output.push_str(&format!(
                 "  runtime_tier: {}\n",
                 decision.runtime_tier.label()
             ));
@@ -794,8 +883,24 @@ impl OperatorPolicyEvaluation {
                 decision.storage_namespace
             ));
             output.push_str(&format!(
+                "  named_volumes: {}\n",
+                join_or_none(&decision.named_volumes)
+            ));
+            output.push_str(&format!(
+                "  image_policy: {}\n",
+                image_policy_summary(&decision.image_policy)
+            ));
+            output.push_str(&format!(
                 "  secret_handle_count: {}\n",
                 decision.secret_handle_count
+            ));
+            output.push_str(&format!(
+                "  quotas: {}\n",
+                quota_summary(decision.quotas.sandbox_charge)
+            ));
+            output.push_str(&format!(
+                "  audit_redactions: {}\n",
+                join_or_none(&decision.audit_redactions)
             ));
             for trace in &decision.trace {
                 output.push_str(&format!("  trace: {trace}\n"));
@@ -811,12 +916,22 @@ pub struct OperatorPolicyDecisionEvaluation {
     pub decision_id: String,
     pub tenant_id: String,
     pub runtime_tier: RuntimeIsolationTier,
+    pub runtime_profile: OperatorRuntimeProfile,
+    pub tenant_isolation_mode: TenantIsolationMode,
     pub runtime_admission: TenantRuntimePolicyAdmission,
+    pub sandbox_backend: Option<SandboxBackendKind>,
+    pub sandbox_id: Option<String>,
     pub services: Vec<String>,
     pub network_endpoints: Vec<String>,
     pub storage_namespace: String,
+    pub named_volumes: Vec<String>,
+    pub image_policy: OperatorPolicyImageSummary,
     pub image_reference: Option<String>,
+    #[serde(skip_serializing)]
+    secret_handles: Vec<String>,
     pub secret_handle_count: usize,
+    pub quotas: OperatorPolicyQuotaSummary,
+    pub audit_redactions: Vec<String>,
     pub trace: Vec<String>,
     #[serde(skip_serializing)]
     pub decision: TenantIsolationDecision,
@@ -908,6 +1023,33 @@ impl OperatorPolicyDiffSummary {
         next: &OperatorPolicyDecisionEvaluation,
     ) -> Option<Self> {
         let mut changes = Vec::new();
+        if previous.tenant_id != next.tenant_id {
+            changes.push(format!(
+                "tenant changed: {} -> {}",
+                previous.tenant_id, next.tenant_id
+            ));
+        }
+        if previous.tenant_isolation_mode != next.tenant_isolation_mode {
+            changes.push(format!(
+                "tenant isolation mode changed: {} -> {}",
+                previous.tenant_isolation_mode.as_str(),
+                next.tenant_isolation_mode.as_str()
+            ));
+        }
+        if previous.runtime_profile != next.runtime_profile {
+            changes.push(format!(
+                "runtime profile changed: {} -> {}",
+                previous.runtime_profile.label(),
+                next.runtime_profile.label()
+            ));
+        }
+        if previous.runtime_tier != next.runtime_tier {
+            changes.push(format!(
+                "runtime tier changed: {} -> {}",
+                previous.runtime_tier.label(),
+                next.runtime_tier.label()
+            ));
+        }
         record_vec_delta(&mut changes, "services", &previous.services, &next.services);
         record_vec_delta(
             &mut changes,
@@ -915,31 +1057,64 @@ impl OperatorPolicyDiffSummary {
             &previous.network_endpoints,
             &next.network_endpoints,
         );
+        if previous.sandbox_backend != next.sandbox_backend {
+            changes.push(format!(
+                "sandbox backend changed: {} -> {}",
+                optional_backend_label(previous.sandbox_backend),
+                optional_backend_label(next.sandbox_backend)
+            ));
+        }
+        if previous.sandbox_id != next.sandbox_id {
+            changes.push(format!(
+                "sandbox id changed: {} -> {}",
+                previous.sandbox_id.as_deref().unwrap_or("none"),
+                next.sandbox_id.as_deref().unwrap_or("none")
+            ));
+        }
         if previous.storage_namespace != next.storage_namespace {
             changes.push(format!(
                 "storage namespace changed: {} -> {}",
                 previous.storage_namespace, next.storage_namespace
             ));
         }
-        if previous.image_reference != next.image_reference {
+        record_vec_delta(
+            &mut changes,
+            "volumes",
+            &previous.named_volumes,
+            &next.named_volumes,
+        );
+        record_image_policy_delta(&mut changes, &previous.image_policy, &next.image_policy);
+        if previous.secret_handles != next.secret_handles {
             changes.push(format!(
-                "image reference changed: {} -> {}",
-                previous.image_reference.as_deref().unwrap_or("none"),
-                next.image_reference.as_deref().unwrap_or("none")
-            ));
-        }
-        if previous.secret_handle_count != next.secret_handle_count {
-            changes.push(format!(
-                "secret handle count changed: {} -> {}",
+                "secret handles changed: count {} -> {}",
                 previous.secret_handle_count, next.secret_handle_count
             ));
         }
+        if previous.quotas != next.quotas {
+            changes.push(format!(
+                "quotas changed: {} -> {}",
+                quota_summary(previous.quotas.sandbox_charge),
+                quota_summary(next.quotas.sandbox_charge)
+            ));
+        }
+        record_vec_delta(
+            &mut changes,
+            "audit redactions",
+            &previous.audit_redactions,
+            &next.audit_redactions,
+        );
         if admission_label(&previous.runtime_admission) != admission_label(&next.runtime_admission)
         {
             changes.push(format!(
                 "runtime admission changed: {} -> {}",
                 admission_label(&previous.runtime_admission),
                 admission_label(&next.runtime_admission)
+            ));
+        }
+        if previous.decision_id != next.decision_id && changes.is_empty() {
+            changes.push(format!(
+                "decision authority fingerprint changed: {} -> {}",
+                previous.decision_id, next.decision_id
             ));
         }
         (!changes.is_empty()).then(|| Self {
@@ -960,6 +1135,68 @@ fn record_vec_delta(changes: &mut Vec<String>, label: &str, previous: &[String],
     if !removed.is_empty() {
         changes.push(format!("{label} removed: {}", removed.join(", ")));
     }
+}
+
+fn record_image_policy_delta(
+    changes: &mut Vec<String>,
+    previous: &OperatorPolicyImageSummary,
+    next: &OperatorPolicyImageSummary,
+) {
+    if previous.reference != next.reference {
+        changes.push(format!(
+            "image reference changed: {} -> {}",
+            previous.reference.as_deref().unwrap_or("none"),
+            next.reference.as_deref().unwrap_or("none")
+        ));
+    }
+    if previous.digest_required != next.digest_required {
+        changes.push(format!(
+            "image digest required changed: {} -> {}",
+            bool_label(previous.digest_required),
+            bool_label(next.digest_required)
+        ));
+    }
+    record_vec_delta(
+        changes,
+        "image allowed registries",
+        &previous.allowed_registries,
+        &next.allowed_registries,
+    );
+    if previous.signature != next.signature {
+        changes.push(format!(
+            "image signature policy changed: {} -> {}",
+            signature_summary(previous.signature.as_ref()),
+            signature_summary(next.signature.as_ref())
+        ));
+    }
+    if previous.provenance != next.provenance {
+        changes.push(format!(
+            "image provenance policy changed: {} -> {}",
+            provenance_summary(previous.provenance.as_ref()),
+            provenance_summary(next.provenance.as_ref())
+        ));
+    }
+    if previous.sbom_required != next.sbom_required {
+        changes.push(format!(
+            "image SBOM requirement changed: {} -> {}",
+            bool_label(previous.sbom_required),
+            bool_label(next.sbom_required)
+        ));
+    }
+    if previous.allow_local_build != next.allow_local_build {
+        changes.push(format!(
+            "image local-build permission changed: {} -> {}",
+            bool_label(previous.allow_local_build),
+            bool_label(next.allow_local_build)
+        ));
+    }
+}
+
+fn normalized_strings(values: &[String]) -> Vec<String> {
+    let mut normalized = values.to_vec();
+    normalized.sort();
+    normalized.dedup();
+    normalized
 }
 
 fn default_runtime_tier() -> RuntimeIsolationTier {
@@ -1018,13 +1255,9 @@ fn validate_name_list(values: &[String], field: &str, item_label: &str) -> Resul
 }
 
 fn validate_storage_namespace(namespace: &str, field: &str) -> Result<()> {
-    if namespace.trim().is_empty()
-        || namespace == "*"
-        || namespace.contains('/')
-        || namespace.contains(char::is_whitespace)
-    {
+    if namespace != "tenant" {
         return invalid_policy(format!(
-            "{field} must be `tenant` or a concrete namespace without whitespace, slash, or wildcard"
+            "{field} must be `tenant`; custom storage namespaces are deferred until the storage PEP consumes namespace decisions"
         ));
     }
     Ok(())
@@ -1074,6 +1307,81 @@ fn storage_namespace_for_policy(namespace: &str, tenant_id: &TenantId) -> String
     }
 }
 
+fn optional_backend_label(backend: Option<SandboxBackendKind>) -> String {
+    backend
+        .map(|backend| format!("{backend:?}"))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn bool_label(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
+}
+
+fn image_policy_summary(policy: &OperatorPolicyImageSummary) -> String {
+    let mut parts = vec![format!(
+        "digest_required={}",
+        bool_label(policy.digest_required)
+    )];
+    if let Some(reference) = &policy.reference {
+        parts.push(format!("reference={reference}"));
+    }
+    if !policy.allowed_registries.is_empty() {
+        parts.push(format!(
+            "allowed_registries={}",
+            policy.allowed_registries.join(",")
+        ));
+    }
+    if let Some(signature) = &policy.signature {
+        parts.push(format!("signature={}", signature_summary(Some(signature))));
+    }
+    if let Some(provenance) = &policy.provenance {
+        parts.push(format!(
+            "provenance={}",
+            provenance_summary(Some(provenance))
+        ));
+    }
+    if policy.sbom_required {
+        parts.push("sbom_required=true".to_string());
+    }
+    if policy.allow_local_build {
+        parts.push("allow_local_build=true".to_string());
+    }
+    parts.join("; ")
+}
+
+fn signature_summary(signature: Option<&OperatorImageSignaturePolicy>) -> String {
+    signature
+        .map(|signature| format!("issuer={}, subject={}", signature.issuer, signature.subject))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn provenance_summary(provenance: Option<&OperatorImageProvenancePolicy>) -> String {
+    provenance
+        .map(|provenance| {
+            let predicates = join_or_none(&provenance.predicates);
+            format!(
+                "builder_id={}, predicates={predicates}",
+                provenance.builder_id
+            )
+        })
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn quota_summary(charge: Option<SandboxResourceCharge>) -> String {
+    charge
+        .map(|charge| {
+            format!(
+                "active_sandboxes={}, vcpus={}, memory_bytes={}, disk_bytes={}, log_bytes={}",
+                charge.active_sandboxes,
+                charge.vcpus,
+                charge.memory_bytes,
+                charge.disk_bytes,
+                charge.log_bytes
+            )
+        })
+        .unwrap_or_else(|| "none".to_string())
+}
+
 fn is_sha256_digest_pinned(image_reference: &str) -> bool {
     let Some((_, digest)) = image_reference.rsplit_once("@sha256:") else {
         return false;
@@ -1109,6 +1417,11 @@ fn protocol_label(protocol: PublishedEndpointProtocol) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use crate::tenant_isolation::{
+        TenantImageAdmissionSource, TenantImageVerificationEvidence,
+        TenantImageVerificationProvider,
+    };
+
     use super::*;
 
     const VALID_POLICY: &str = include_str!("../../tests/fixtures/policy/valid-enterprise.yaml");
@@ -1121,6 +1434,90 @@ mod tests {
     const NODE_ROUTE: &str = include_str!("../../tests/fixtures/policy/node-route.yaml");
     const DIFF_FROM: &str = include_str!("../../tests/fixtures/policy/diff-from.yaml");
     const DIFF_TO: &str = include_str!("../../tests/fixtures/policy/diff-to.yaml");
+    const REGISTRY_WIDE_IMAGE_POLICY: &str = r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "images:launch"
+    image:
+      allowed_registries:
+        - registry.example.com
+"#;
+    const INVALID_CUSTOM_STORAGE_NAMESPACE: &str = r#"
+schema_version: 1
+tenant: tenant-a
+defaults:
+  storage_namespace: shared
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+"#;
+    const AUTHORITY_DIFF_FROM: &str = r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+    volumes:
+      named:
+        - cache
+    image:
+      allowed_registries:
+        - registry-a.example.com
+    secrets:
+      handles:
+        - prod/db/password
+    quotas:
+      sandbox_charge:
+        active_sandboxes: 1
+        vcpus: 1
+        memory_bytes: 536870912
+        disk_bytes: 10737418240
+        log_bytes: 67108864
+"#;
+    const AUTHORITY_DIFF_TO: &str = r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+    volumes:
+      named:
+        - data
+    image:
+      allowed_registries:
+        - registry-b.example.com
+      sbom_required: true
+    secrets:
+      handles:
+        - prod/cache/password
+    quotas:
+      sandbox_charge:
+        active_sandboxes: 1
+        vcpus: 1
+        memory_bytes: 1073741824
+        disk_bytes: 10737418240
+        log_bytes: 67108864
+    audit:
+      redacted_fields:
+        - principal_claims
+        - bearer_claims
+        - secret_handles
+        - raw_credentials
+        - query_params
+"#;
+
+    struct NoopImageVerifier;
+
+    impl TenantImageVerificationProvider for NoopImageVerifier {
+        fn verify_registry_image(
+            &self,
+            _image_reference: &str,
+        ) -> Result<TenantImageVerificationEvidence> {
+            Ok(TenantImageVerificationEvidence::new())
+        }
+    }
 
     fn parse_policy(body: &str) -> OperatorPolicyDocument {
         serde_yaml::from_str(body).expect("policy fixture should parse")
@@ -1130,6 +1527,9 @@ mod tests {
     fn valid_policy_fixture_compiles_to_tenant_isolation_decision() {
         let policy = parse_policy(VALID_POLICY);
 
+        policy
+            .validate()
+            .expect("public validate should compile policy");
         let evaluation = policy.evaluate().expect("policy should evaluate");
 
         assert_eq!(evaluation.tenant_id, "tenant-a");
@@ -1163,6 +1563,36 @@ mod tests {
     }
 
     #[test]
+    fn registry_wide_image_policy_still_requires_digest_pinned_launches() {
+        let policy = parse_policy(REGISTRY_WIDE_IMAGE_POLICY);
+
+        let evaluation = policy.evaluate().expect("policy should evaluate");
+        let image = evaluation.decisions[0].decision.image();
+
+        let error = image
+            .admit_image(
+                TenantImageAdmissionSource::registry("registry.example.com/nimbus/api:latest"),
+                &NoopImageVerifier,
+            )
+            .expect_err("registry-wide policy should still reject tag-only references");
+        assert!(
+            error
+                .to_string()
+                .contains("requires an immutable sha256 digest reference"),
+            "tag-only image should be rejected by compiled digest policy: {error}"
+        );
+
+        image
+            .admit_image(
+                TenantImageAdmissionSource::registry(
+                    "registry.example.com/nimbus/api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                ),
+                &NoopImageVerifier,
+            )
+            .expect("digest-pinned image from an allowed registry should pass");
+    }
+
+    #[test]
     fn policy_fixture_rejects_unknown_fields_at_parse_time() {
         let error = serde_yaml::from_str::<OperatorPolicyDocument>(UNKNOWN_FIELD)
             .expect_err("unknown fields should be rejected");
@@ -1192,6 +1622,10 @@ mod tests {
             (INVALID_PORT, "host_port must not be 0"),
             (INVALID_SECRET, "looks like inline secret material"),
             (INVALID_IMAGE, "image.digest_required=false is unsafe"),
+            (
+                INVALID_CUSTOM_STORAGE_NAMESPACE,
+                "custom storage namespaces are deferred",
+            ),
         ];
 
         for (body, expected) in cases {
@@ -1242,5 +1676,28 @@ mod tests {
         assert!(rendered.contains("~ runtime_function/messages:send"));
         assert!(rendered.contains("services added: cache"));
         assert!(rendered.contains("network endpoints added: cache/redis"));
+    }
+
+    #[test]
+    fn policy_diff_reports_every_compiled_authority_delta_without_secret_handle_leaks() {
+        let from = parse_policy(AUTHORITY_DIFF_FROM);
+        let to = parse_policy(AUTHORITY_DIFF_TO);
+
+        let diff = OperatorPolicyDiff::between(&from, &to).expect("diff should evaluate");
+
+        assert_eq!(diff.changed_workloads.len(), 1);
+        let rendered = diff.render_text();
+        assert!(rendered.contains("volumes added: data"));
+        assert!(rendered.contains("volumes removed: cache"));
+        assert!(rendered.contains("image allowed registries added: registry-b.example.com"));
+        assert!(rendered.contains("image allowed registries removed: registry-a.example.com"));
+        assert!(rendered.contains("image SBOM requirement changed: false -> true"));
+        assert!(rendered.contains("secret handles changed: count 1 -> 1"));
+        assert!(rendered.contains("quotas changed:"));
+        assert!(rendered.contains("audit redactions added: query_params"));
+        assert!(
+            !rendered.contains("prod/db/password") && !rendered.contains("prod/cache/password"),
+            "policy diff should not leak raw secret handles: {rendered}"
+        );
     }
 }
