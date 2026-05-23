@@ -48,13 +48,21 @@ Gate 10 also found that:
 - the working cancellation model is a host-owned deadline/cancel handle that
   calls JSC termination, not Bun's watchdog time-limit path
 
+Gate 11 later found that the current non-CLI generated-wrapper VM exposes Bun
+filesystem/process/network/plugin/FFI/env surfaces, process globals,
+Web/network APIs, timers, workers, `eval`, and `new Function` as
+`unsafe_bypass`; `require` and require-based Node/native-addon lanes are
+`absent_by_default`; dynamic `import(...)` syntax is `policy_hook_missing`;
+only the Nimbus proof host-call/generated-wrapper path is
+`policy_hook_available`.
+
 ## Remaining Production Blockers
 
 Bun/JSC is not selectable because these required evidence rows remain open:
 
 | Blocker | Required evidence before promotion |
 | --- | --- |
-| Permission containment | Every host-sensitive Bun, Node, JSC, and package-loading surface is absent, denied, wrapped by Nimbus policy, or the backend is permanently trusted/sandbox-only. |
+| Permission containment | Gate 11 inventory is complete, but containment is not. Every present host-sensitive Bun, Node, JSC, and package-loading surface must become absent, denied, wrapped by Nimbus policy, or the backend must remain permanently trusted/sandbox-only. |
 | Memory behavior | A per-VM heap limit, pressure signal, or discard-on-pressure policy is proven under generated Nimbus invocation load. |
 | Package and module loading | Bun/JSC has explicit artifact metadata, evaluation format, package resolver, and external-package policy. It must not reuse `node_external_packages` as if it were Deno/V8. |
 | VM lifecycle and reuse | Create/invoke/cancel/drop loops prove retained VM reuse is safe, or the backend starts fresh-per-invocation and records the cost. |
@@ -63,44 +71,12 @@ Bun/JSC is not selectable because these required evidence rows remain open:
 
 ## Next Proof Gate
 
-Next gate: **Bun/JSC Gate 11: permission-surface containment inventory**.
+Next gate: **Bun/JSC Gate 12: memory behavior and safe first policy**.
 
-The gate should extend the existing `bun_embed_probe` target, still behind the
-local Bun proof path, and evaluate a table of host-sensitive surfaces in the
-same non-CLI VM shape used by Gate 10.
-
-Minimum surface inventory:
-
-- Bun globals: `Bun`, `Bun.file`, `Bun.write`, `Bun.spawn`, `Bun.serve`,
-  `Bun.listen`, `Bun.connect`, `Bun.plugin`, `Bun.dlopen`
-- Node globals and modules: `process`, `process.env`, `require`,
-  `node:fs`, `fs`, `node:child_process`, `node:worker_threads`, `node:net`,
-  `node:dgram`, `node:ffi` or equivalent native-addon lanes
-- Web/network surfaces: `fetch`, `WebSocket`, socket-like constructors if
-  present in the bare embed path
-- Dynamic code and package paths: dynamic `import(...)`, CommonJS require,
-  node external package descriptors, and Bun package resolver entrypoints
-- Worker/concurrency surfaces: `Worker`, worker-thread APIs, and Bun-specific
-  worker helpers
-
-The proof should classify each surface as:
-
-- `absent_by_default`
-- `denied_by_default`
-- `policy_hook_available`
-- `policy_hook_missing`
-- `unsafe_bypass`
-
-Success criteria:
-
-- The report records exact source snippets, expected outcome, actual outcome,
-  and whether a Nimbus grant could mediate the surface.
-- Any present host-sensitive surface has a concrete hook point or keeps Bun/JSC
-  in `in_process_trusted_only`.
-- The proof keeps using the generated program-wrapper path so it exercises the
-  same artifact shape as Gate 10.
-- No production Nimbus runtime lane, server route, or codegen selector is
-  added.
+The gate should run generated Nimbus invocation loops with memory pressure in
+the same non-CLI generated-wrapper path. It must either prove a per-VM heap
+limit or pressure signal usable by Nimbus, or record `fresh_per_invocation` /
+discard-on-pressure as the only safe first policy for Bun/JSC.
 
 ## Fork Posture
 
