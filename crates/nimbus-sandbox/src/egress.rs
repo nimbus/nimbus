@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::endpoint::PublishedEndpointProtocol;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SandboxEgressPolicy {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allow: Vec<SandboxEgressRule>,
@@ -35,7 +36,12 @@ impl SandboxEgressPolicy {
     }
 
     pub fn validate(&self) -> std::result::Result<(), String> {
+        self.compile().map(|_| ())
+    }
+
+    pub fn compile(&self) -> std::result::Result<CompiledSandboxEgressPolicy, String> {
         let mut names = std::collections::BTreeSet::new();
+        let mut rules = Vec::with_capacity(self.allow.len());
         for rule in &self.allow {
             rule.validate()?;
             if !names.insert(rule.name.as_str()) {
@@ -44,27 +50,57 @@ impl SandboxEgressPolicy {
                     rule.name
                 ));
             }
+            rules.push(rule.canonicalized());
         }
-        Ok(())
+        rules.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(CompiledSandboxEgressPolicy {
+            policy: Self { allow: rules },
+        })
     }
 
     pub fn authorize(&self, request: &SandboxEgressRequest) -> SandboxEgressAuthorization {
-        if let Err(message) = self.validate() {
-            return SandboxEgressAuthorization::deny(format!(
+        match self.compile() {
+            Ok(compiled) => compiled.authorize(request),
+            Err(message) => SandboxEgressAuthorization::deny(format!(
                 "sandbox egress policy invalid: {message}"
-            ));
+            )),
         }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct CompiledSandboxEgressPolicy {
+    policy: SandboxEgressPolicy,
+}
+
+impl CompiledSandboxEgressPolicy {
+    pub fn deny_all() -> Self {
+        Self {
+            policy: SandboxEgressPolicy::deny_all(),
+        }
+    }
+
+    pub fn policy(&self) -> &SandboxEgressPolicy {
+        &self.policy
+    }
+
+    pub fn into_policy(self) -> SandboxEgressPolicy {
+        self.policy
+    }
+
+    pub fn authorize(&self, request: &SandboxEgressRequest) -> SandboxEgressAuthorization {
         let mut matched_but_denied = None;
-        for rule in &self.allow {
+        for rule in &self.policy.allow {
             if !rule.matches_l4(request) {
                 continue;
             }
             if request.targets_internal_address() && !rule.allow_internal_ips {
                 matched_but_denied.get_or_insert_with(|| {
                     format!(
-                    "sandbox egress rule `{}` matched {}, but internal/loopback targets require allow_internal_ips=true",
-                    rule.name,
-                    request.target_summary()
+                        "sandbox egress rule `{}` matched {}, but internal/non-global targets require allow_internal_ips=true",
+                        rule.name,
+                        request.target_summary()
                     )
                 });
                 continue;
@@ -94,6 +130,7 @@ impl SandboxEgressPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SandboxEgressRule {
     pub name: String,
     pub protocol: PublishedEndpointProtocol,
@@ -169,10 +206,28 @@ impl SandboxEgressRule {
         Ok(())
     }
 
+    fn canonicalized(&self) -> Self {
+        let mut methods = self.methods.clone();
+        methods.sort();
+        methods.dedup();
+        let mut path_prefixes = self.path_prefixes.clone();
+        path_prefixes.sort();
+        path_prefixes.dedup();
+        Self {
+            name: self.name.clone(),
+            protocol: self.protocol,
+            host: canonical_host(&self.host),
+            port: self.port,
+            methods,
+            path_prefixes,
+            allow_internal_ips: self.allow_internal_ips,
+        }
+    }
+
     fn matches_l4(&self, request: &SandboxEgressRequest) -> bool {
         self.protocol == request.protocol
             && self.port == request.port
-            && self.host.eq_ignore_ascii_case(request.host.as_str())
+            && self.host == canonical_host(&request.host)
     }
 
     fn matches_l7(&self, request: &SandboxEgressRequest) -> bool {
@@ -243,8 +298,8 @@ impl SandboxEgressRequest {
     fn targets_internal_address(&self) -> bool {
         self.host
             .parse::<IpAddr>()
-            .is_ok_and(is_internal_or_loopback_ip)
-            || self.resolved_ip.is_some_and(is_internal_or_loopback_ip)
+            .is_ok_and(is_non_global_or_internal_ip)
+            || self.resolved_ip.is_some_and(is_non_global_or_internal_ip)
             || is_internal_hostname(&self.host)
     }
 
@@ -313,17 +368,37 @@ fn validate_egress_host(host: &str, allow_internal_ips: bool) -> std::result::Re
             "sandbox egress host `{host}` must be a concrete host without wildcards"
         ));
     }
-    if is_internal_hostname(host) && !allow_internal_ips {
+    if host.contains(char::is_whitespace) {
         return Err(format!(
-            "sandbox egress host `{host}` is internal/loopback and requires allow_internal_ips=true"
+            "sandbox egress host `{host}` must not contain whitespace"
         ));
     }
-    if let Ok(ip) = host.parse::<IpAddr>()
-        && is_internal_or_loopback_ip(ip)
-        && !allow_internal_ips
-    {
+    if host.contains("://") || host.contains('/') || host.contains('\\') || host.contains('@') {
         return Err(format!(
-            "sandbox egress host `{host}` is internal/loopback and requires allow_internal_ips=true"
+            "sandbox egress host `{host}` must be a bare DNS name or IP literal, not a URL or authority"
+        ));
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_non_global_or_internal_ip(ip) && !allow_internal_ips {
+            return Err(format!(
+                "sandbox egress host `{host}` is internal/non-global and requires allow_internal_ips=true"
+            ));
+        }
+        return Ok(());
+    }
+    if host.starts_with('[') || host.ends_with(']') || host.contains(':') {
+        return Err(format!(
+            "sandbox egress host `{host}` must not include brackets, schemes, or ports"
+        ));
+    }
+    if !is_valid_dns_hostname(host) {
+        return Err(format!(
+            "sandbox egress host `{host}` must be a valid DNS hostname"
+        ));
+    }
+    if is_internal_hostname(host) && !allow_internal_ips {
+        return Err(format!(
+            "sandbox egress host `{host}` is internal/non-global and requires allow_internal_ips=true"
         ));
     }
     Ok(())
@@ -352,36 +427,76 @@ fn validate_path_prefix(path_prefix: &str, rule_name: &str) -> std::result::Resu
 }
 
 fn is_internal_hostname(host: &str) -> bool {
-    matches!(
-        host.to_ascii_lowercase().as_str(),
-        "localhost" | "localhost.localdomain"
-    )
+    let host = host.to_ascii_lowercase();
+    matches!(host.as_str(), "localhost" | "localhost.localdomain")
+        || host.ends_with(".localhost")
+        || host.ends_with(".localhost.localdomain")
 }
 
-fn is_internal_or_loopback_ip(ip: IpAddr) -> bool {
+fn is_valid_dns_hostname(host: &str) -> bool {
+    if host.len() > 253 || host.starts_with('.') || host.ends_with('.') {
+        return false;
+    }
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && label
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            && label
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+    })
+}
+
+fn canonical_host(host: &str) -> String {
+    host.parse::<IpAddr>()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| host.to_ascii_lowercase())
+}
+
+fn is_non_global_or_internal_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => is_internal_or_loopback_ipv4(ip),
-        IpAddr::V6(ip) => is_internal_or_loopback_ipv6(ip),
+        IpAddr::V4(ip) => is_non_global_or_internal_ipv4(ip),
+        IpAddr::V6(ip) => is_non_global_or_internal_ipv6(ip),
     }
 }
 
-fn is_internal_or_loopback_ipv4(ip: Ipv4Addr) -> bool {
+fn is_non_global_or_internal_ipv4(ip: Ipv4Addr) -> bool {
+    let [first, second, third, _] = ip.octets();
     ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
         || ip.is_unspecified()
         || ip.is_broadcast()
         || ip.is_multicast()
-        || ip.octets()[0] == 0
-        || ip.octets()[0] == 169 && ip.octets()[1] == 254
+        || first == 0
+        || first == 100 && (64..=127).contains(&second)
+        || first == 169 && second == 254
+        || first == 192 && second == 0 && third == 0
+        || first == 192 && second == 0 && third == 2
+        || first == 198 && matches!(second, 18 | 19)
+        || first == 198 && second == 51 && third == 100
+        || first == 203 && second == 0 && third == 113
+        || first >= 240
 }
 
-fn is_internal_or_loopback_ipv6(ip: Ipv6Addr) -> bool {
+fn is_non_global_or_internal_ipv6(ip: Ipv6Addr) -> bool {
+    if let Some(ipv4_mapped) = ip.to_ipv4_mapped() {
+        return is_non_global_or_internal_ipv4(ipv4_mapped);
+    }
+    let segments = ip.segments();
     ip.is_loopback()
         || ip.is_unspecified()
         || ip.is_unique_local()
         || ip.is_unicast_link_local()
         || ip.is_multicast()
+        || segments[0] == 0x2001 && segments[1] == 0x0db8
 }
 
 #[cfg(test)]
@@ -409,21 +524,23 @@ mod tests {
         let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
             "stripe",
             PublishedEndpointProtocol::Https,
-            "api.stripe.com",
+            "API.Stripe.COM",
             443,
         )
-        .with_methods(["POST"])
-        .with_path_prefixes(["/v1/"])]);
-        policy.validate().expect("policy should validate");
+        .with_methods(["POST", "POST"])
+        .with_path_prefixes(["/v1/", "/v1/"])]);
+        let compiled = policy.compile().expect("policy should compile");
+        assert_eq!(compiled.policy().rules()[0].host, "api.stripe.com");
+        assert_eq!(compiled.policy().rules()[0].methods, vec!["POST"]);
 
-        let allowed = policy.authorize(
+        let allowed = compiled.authorize(
             &SandboxEgressRequest::new(PublishedEndpointProtocol::Https, "api.stripe.com", 443)
                 .with_http("POST", "/v1/charges"),
         );
         assert!(allowed.is_allowed(), "{allowed:?}");
         assert_eq!(allowed.matched_rule(), Some("stripe"));
 
-        let denied = policy.authorize(
+        let denied = compiled.authorize(
             &SandboxEgressRequest::new(PublishedEndpointProtocol::Https, "api.stripe.com", 443)
                 .with_http("GET", "/v1/charges"),
         );
@@ -481,7 +598,7 @@ mod tests {
         );
         assert!(!denied.is_allowed());
         assert!(
-            denied.reason().contains("internal/loopback"),
+            denied.reason().contains("internal/non-global"),
             "SSRF/internal denial should be named: {denied:?}"
         );
 
@@ -501,6 +618,36 @@ mod tests {
             80,
         ));
         assert!(allowed.is_allowed(), "{allowed:?}");
+    }
+
+    #[test]
+    fn sandbox_egress_policy_treats_reserved_and_mapped_addresses_as_internal() {
+        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "reserved-lookalike",
+            PublishedEndpointProtocol::Http,
+            "reserved.example.com",
+            80,
+        )]);
+        policy.validate().expect("policy should validate");
+
+        for resolved_ip in [
+            IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xa9fe, 0xa9fe)),
+        ] {
+            let denied = policy.authorize(
+                &SandboxEgressRequest::new(
+                    PublishedEndpointProtocol::Http,
+                    "reserved.example.com",
+                    80,
+                )
+                .with_resolved_ip(resolved_ip),
+            );
+            assert!(
+                !denied.is_allowed(),
+                "reserved/internal address {resolved_ip} should be denied: {denied:?}"
+            );
+        }
     }
 
     #[test]
@@ -533,5 +680,31 @@ mod tests {
             error.contains("tcp") && error.contains("HTTP methods"),
             "tcp L7 error should be explicit: {error}"
         );
+    }
+
+    #[test]
+    fn sandbox_egress_policy_rejects_malformed_host_shapes() {
+        for host in [
+            "https://api.stripe.com",
+            "api.stripe.com/v1",
+            "api.stripe.com:443",
+            "api stripe com",
+            "[::1]",
+            "-bad.example.com",
+        ] {
+            let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "bad-host",
+                PublishedEndpointProtocol::Https,
+                host,
+                443,
+            )]);
+            let error = policy
+                .validate()
+                .expect_err("malformed egress host should be rejected");
+            assert!(
+                error.contains("host"),
+                "host validation error should name host shape for {host:?}: {error}"
+            );
+        }
     }
 }

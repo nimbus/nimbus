@@ -168,9 +168,11 @@ Production tenant isolation requires these additional boundaries:
   through tenant-scoped service bindings. Non-loopback exposure requires an
   explicit operator policy record. Arbitrary outbound guest egress now has a
   typed deny-by-default `SandboxEgressPolicy` contract that validates host
-  wildcards, internal-IP allowlists, and L7 method/path rules and is
-  materialized into sandbox launch metadata. The actual sandbox-local proxy or
-  equivalent Linux enforcement path remains owned by EPS4b in
+  wildcards, malformed host shapes, internal-IP allowlists, reserved-IP
+  targets, and L7 method/path rules, then compiles to a canonical policy before
+  launch comparison/materialization. Egress policy changes require sandbox
+  recreation until a live enforcement path exists. The actual sandbox-local
+  proxy or equivalent Linux enforcement path remains owned by EPS4b in
   `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
 - **HostBridge and runtime grants:** in-process runtime code receives only the
   invocation tenant and exact grants. It cannot request another tenant's

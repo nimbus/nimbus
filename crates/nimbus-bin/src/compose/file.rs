@@ -192,6 +192,7 @@ pub(crate) struct ComposeVolumeMountPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ComposeNimbusPlan {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) backend: Option<SandboxBackendKind>,
@@ -208,12 +209,14 @@ pub(crate) struct ComposeNimbusPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ComposeNimbusEgressPlan {
     #[serde(default)]
     pub(crate) allow: Vec<ComposeNimbusEgressRulePlan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ComposeNimbusEgressRulePlan {
     pub(crate) name: String,
     pub(crate) protocol: PublishedEndpointProtocol,
