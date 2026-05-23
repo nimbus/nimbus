@@ -30,10 +30,10 @@ pub use artifact_provenance::{
     ArtifactVerifierBackendIdentity, ArtifactVerifierCommandBackend,
     ArtifactVerifierCommandInvocation, ArtifactVerifierCommandOutput,
     ArtifactVerifierCommandRunner, ArtifactVerifierError, ArtifactVerifierErrorKind,
-    ArtifactVerifierResult, CosignVerifierBackend, DEFAULT_ARTIFACT_VERIFIER_TIMEOUT,
-    OfflineVerificationConfig, ProcessArtifactVerifierCommandRunner,
-    SLSA_PROVENANCE_V1_PREDICATE_TYPE, SbomVerifierBackend, SlsaVerifierBackend,
-    admit_guest_executable_artifact, admit_runtime_bundle_artifact,
+    ArtifactVerifierResult, CompositeArtifactVerifierBackend, CosignVerifierBackend,
+    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OfflineVerificationConfig,
+    ProcessArtifactVerifierCommandRunner, SLSA_PROVENANCE_V1_PREDICATE_TYPE, SbomVerifierBackend,
+    SlsaVerifierBackend, admit_guest_executable_artifact, admit_runtime_bundle_artifact,
     redact_artifact_verifier_output,
 };
 pub use audit_events::{

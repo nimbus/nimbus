@@ -13,6 +13,12 @@ impl ConvexRegistry {
             .ok_or_else(|| Error::Internal("convex runtime bundle not loaded".to_string()))
     }
 
+    pub(in crate::adapters::convex) fn runtime_bundle_provenance(
+        &self,
+    ) -> Option<&RuntimeBundleProvenanceConfig> {
+        self.runtime_bundle_provenance.as_ref()
+    }
+
     pub(crate) async fn verify_bearer_token(
         &self,
         token: &str,

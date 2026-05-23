@@ -68,6 +68,21 @@ impl TenantImageVerificationEvidence {
     ) -> Self {
         self.attestations.push(TenantImageAttestationEvidence {
             builder_id: builder_id.into(),
+            source_uri: None,
+            predicate_type: predicate_type.into(),
+        });
+        self
+    }
+
+    pub fn with_attestation_from_source(
+        mut self,
+        builder_id: impl Into<String>,
+        source_uri: impl Into<String>,
+        predicate_type: impl Into<String>,
+    ) -> Self {
+        self.attestations.push(TenantImageAttestationEvidence {
+            builder_id: builder_id.into(),
+            source_uri: Some(source_uri.into()),
             predicate_type: predicate_type.into(),
         });
         self
@@ -110,6 +125,7 @@ impl TenantImageSignatureEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TenantImageAttestationEvidence {
     builder_id: String,
+    source_uri: Option<String>,
     predicate_type: String,
 }
 
@@ -118,12 +134,16 @@ impl TenantImageAttestationEvidence {
         &self.builder_id
     }
 
+    pub fn source_uri(&self) -> Option<&str> {
+        self.source_uri.as_deref()
+    }
+
     pub fn predicate_type(&self) -> &str {
         &self.predicate_type
     }
 }
 
-pub trait TenantImageVerificationProvider {
+pub trait TenantImageVerificationProvider: Send + Sync {
     fn verify_registry_image(
         &self,
         request: &TenantImageVerificationRequest,
@@ -281,7 +301,7 @@ impl TenantImagePolicyDecision {
     pub fn admit_image(
         &self,
         source: TenantImageAdmissionSource,
-        provider: &impl TenantImageVerificationProvider,
+        provider: &(impl TenantImageVerificationProvider + ?Sized),
     ) -> Result<TenantImageAdmission> {
         match &source {
             TenantImageAdmissionSource::LocalBuild { image_name } => {
@@ -390,11 +410,27 @@ impl TenantImagePolicyDecision {
             return Ok(());
         }
         let Some(builder_id) = self.allowed_builder_id.as_deref() else {
-            return Ok(());
+            return Err(Error::PermissionDenied(format!(
+                "tenant image policy requires provenance for `{image_reference}`, but no builder ID is configured"
+            )));
         };
+        let source_uri = self.allowed_source_uri.as_deref();
+        if self.required_attestation_predicates.is_empty()
+            && !evidence.attestations.iter().any(|attestation| {
+                attestation.builder_id == builder_id
+                    && source_uri
+                        .is_none_or(|expected| attestation.source_uri.as_deref() == Some(expected))
+            })
+        {
+            return Err(Error::PermissionDenied(format!(
+                "tenant image policy requires provenance from builder `{builder_id}` for `{image_reference}`"
+            )));
+        }
         for predicate_type in &self.required_attestation_predicates {
             if !evidence.attestations.iter().any(|attestation| {
                 attestation.builder_id == builder_id
+                    && source_uri
+                        .is_none_or(|expected| attestation.source_uri.as_deref() == Some(expected))
                     && attestation.predicate_type == *predicate_type
             }) {
                 return Err(Error::PermissionDenied(format!(
@@ -701,19 +737,47 @@ mod tests {
     }
 
     #[test]
+    fn image_admission_rejects_wrong_provenance_source_uri() {
+        let policy = TenantImagePolicyDecision::digest_pinned(IMAGE)
+            .require_provenance_from_source(
+                "https://github.com/nimbus/nimbus/.github/workflows/release.yml",
+                "github.com/nimbus/nimbus",
+                ["https://slsa.dev/provenance/v1"],
+            );
+        let verifier = StaticImageVerifier::with_evidence(
+            TenantImageVerificationEvidence::new().with_attestation_from_source(
+                "https://github.com/nimbus/nimbus/.github/workflows/release.yml",
+                "github.com/other/project",
+                "https://slsa.dev/provenance/v1",
+            ),
+        );
+
+        let error = policy
+            .admit_image(TenantImageAdmissionSource::registry(IMAGE), &verifier)
+            .expect_err("wrong provenance source should be denied");
+
+        assert!(
+            error.to_string().contains("requires provenance predicate"),
+            "error should name the source-scoped provenance requirement: {error}"
+        );
+    }
+
+    #[test]
     fn image_admission_accepts_matching_signature_provenance_and_sbom() {
         let policy = TenantImagePolicyDecision::digest_pinned(IMAGE)
             .require_signature("https://issuer.example.com", "repo:nimbus/api")
-            .require_provenance(
+            .require_provenance_from_source(
                 "https://github.com/nimbus/nimbus/.github/workflows/release.yml",
+                "github.com/nimbus/nimbus",
                 ["https://slsa.dev/provenance/v1"],
             )
             .require_sbom();
         let verifier = StaticImageVerifier::with_evidence(
             TenantImageVerificationEvidence::new()
                 .with_signature("https://issuer.example.com", "repo:nimbus/api")
-                .with_attestation(
+                .with_attestation_from_source(
                     "https://github.com/nimbus/nimbus/.github/workflows/release.yml",
+                    "github.com/nimbus/nimbus",
                     "https://slsa.dev/provenance/v1",
                 )
                 .with_sbom(),

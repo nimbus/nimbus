@@ -15,8 +15,9 @@ use crate::service_registry::{
     RuntimeServiceBindingFuture, RuntimeServiceRegistry, service_binding_from_handle,
 };
 use crate::tenant_isolation::{
-    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
-    TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
+    TenantImageAdmissionSource, TenantImagePolicyDecision, TenantImageVerificationEvidence,
+    TenantImageVerificationProvider, TenantIsolationContext, TenantIsolationDecision,
+    TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
 };
 
 const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -43,9 +44,22 @@ struct SandboxServiceManagerState {
     activations_in_progress: BTreeSet<TenantServiceKey>,
 }
 
+#[derive(Debug, Default)]
+struct DefaultTenantImageVerificationProvider;
+
+impl TenantImageVerificationProvider for DefaultTenantImageVerificationProvider {
+    fn verify_registry_image(
+        &self,
+        _request: &crate::tenant_isolation::TenantImageVerificationRequest,
+    ) -> nimbus_core::Result<TenantImageVerificationEvidence> {
+        Ok(TenantImageVerificationEvidence::default())
+    }
+}
+
 pub struct SandboxServiceManager {
     service_catalog: Arc<dyn SandboxServiceCatalog>,
     sandbox_backend: Arc<dyn SandboxBackend>,
+    image_verification_provider: Arc<dyn TenantImageVerificationProvider>,
     activation_timeout: Duration,
     activation_poll_interval: Duration,
     state: Mutex<SandboxServiceManagerState>,
@@ -61,6 +75,7 @@ impl SandboxServiceManager {
         Self {
             service_catalog,
             sandbox_backend,
+            image_verification_provider: Arc::new(DefaultTenantImageVerificationProvider),
             activation_timeout: DEFAULT_ACTIVATION_TIMEOUT,
             activation_poll_interval: DEFAULT_ACTIVATION_POLL_INTERVAL,
             state: Mutex::new(SandboxServiceManagerState::default()),
@@ -83,6 +98,22 @@ impl SandboxServiceManager {
 
     pub fn with_activation_poll_interval(mut self, activation_poll_interval: Duration) -> Self {
         self.activation_poll_interval = activation_poll_interval;
+        self
+    }
+
+    pub fn with_image_verification_provider(
+        mut self,
+        provider: impl TenantImageVerificationProvider + 'static,
+    ) -> Self {
+        self.image_verification_provider = Arc::new(provider);
+        self
+    }
+
+    pub fn with_image_verification_provider_arc(
+        mut self,
+        provider: Arc<dyn TenantImageVerificationProvider>,
+    ) -> Self {
+        self.image_verification_provider = provider;
         self
     }
 
@@ -208,6 +239,7 @@ impl SandboxServiceManager {
         decision
             .network()
             .ensure_sandbox_egress_matches(launch.spec(), "sandbox service launch")?;
+        self.admit_launch_image(decision, &launch)?;
 
         let handle = match launch {
             SandboxServiceLaunch::Image(launch) => {
@@ -238,6 +270,25 @@ impl SandboxServiceManager {
             .insert(key.clone(), handle.clone());
         self.record_service_handle(key, &handle).await?;
         Ok(handle)
+    }
+
+    fn admit_launch_image(
+        &self,
+        decision: &TenantIsolationDecision,
+        launch: &SandboxServiceLaunch,
+    ) -> Result<(), Error> {
+        let source = match launch {
+            SandboxServiceLaunch::Image(launch) => {
+                TenantImageAdmissionSource::registry(launch.image_reference.as_str())
+            }
+            SandboxServiceLaunch::Build(launch) => {
+                TenantImageAdmissionSource::local_build(launch.image_name.as_str())
+            }
+        };
+        decision
+            .image()
+            .admit_image(source, self.image_verification_provider.as_ref())?;
+        Ok(())
     }
 
     async fn wait_for_ready_handle_async(
@@ -576,7 +627,8 @@ fn service_activation_decision(
             service_name,
             "activation",
         ))
-        .with_services(TenantServiceGrantPolicyDecision::new([service_name])),
+        .with_services(TenantServiceGrantPolicyDecision::new([service_name]))
+        .with_image(TenantImagePolicyDecision::default().allow_local_build()),
     )
 }
 
@@ -674,6 +726,36 @@ mod tests {
                 status,
                 endpoints,
             )
+        }
+    }
+
+    struct RecordingImageVerifier {
+        evidence: TenantImageVerificationEvidence,
+        calls: AtomicUsize,
+        references: Mutex<Vec<String>>,
+    }
+
+    impl RecordingImageVerifier {
+        fn with_evidence(evidence: TenantImageVerificationEvidence) -> Self {
+            Self {
+                evidence,
+                calls: AtomicUsize::new(0),
+                references: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl TenantImageVerificationProvider for RecordingImageVerifier {
+        fn verify_registry_image(
+            &self,
+            request: &crate::tenant_isolation::TenantImageVerificationRequest,
+        ) -> nimbus_core::Result<TenantImageVerificationEvidence> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.references
+                .lock()
+                .expect("image verifier references should not be poisoned")
+                .push(request.image_reference().to_string());
+            Ok(self.evidence.clone())
         }
     }
 
@@ -908,6 +990,113 @@ mod tests {
             .expect("handle should be returned");
 
         assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_rejects_unverified_image_before_materialization() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let image = "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "api".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("api"),
+                        image,
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        );
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+                    "api",
+                    "activation",
+                ))
+                .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
+                .with_image(
+                    crate::tenant_isolation::TenantImagePolicyDecision::digest_pinned(image)
+                        .require_signature("https://issuer.example.com", "repo:nimbus/api"),
+                ),
+            )
+            .expect("image policy decision should admit");
+
+        let error = manager
+            .start_service_for_decision_async(&decision, "api", HostCallCancellation::default())
+            .await
+            .expect_err("missing signature evidence should fail before image materialization");
+
+        assert!(
+            error.to_string().contains("requires a matching signature"),
+            "image admission failure should be visible: {error}"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            0,
+            "unverified image must not reach sandbox materialization"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_admits_verified_image_before_materialization() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let image = "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let verifier = Arc::new(RecordingImageVerifier::with_evidence(
+            TenantImageVerificationEvidence::new()
+                .with_signature("https://issuer.example.com", "repo:nimbus/api"),
+        ));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "api".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("api"),
+                        image,
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_image_verification_provider_arc(verifier.clone())
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+                    "api",
+                    "activation",
+                ))
+                .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
+                .with_image(
+                    crate::tenant_isolation::TenantImagePolicyDecision::digest_pinned(image)
+                        .require_signature("https://issuer.example.com", "repo:nimbus/api"),
+                ),
+            )
+            .expect("image policy decision should admit");
+
+        manager
+            .start_service_for_decision_async(&decision, "api", HostCallCancellation::default())
+            .await
+            .expect("verified image should start")
+            .expect("handle should be returned");
+
+        assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+        assert_eq!(verifier.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            verifier
+                .references
+                .lock()
+                .expect("image verifier references should not be poisoned")
+                .as_slice(),
+            [image]
+        );
     }
 
     #[tokio::test]

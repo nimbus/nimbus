@@ -33,14 +33,50 @@ pub(crate) struct RuntimeBundleInvocationOptions<'a> {
     pub(crate) cancellation: Option<HostCallCancellation>,
     pub(crate) concurrency_mode: RuntimeConcurrencyMode,
     pub(crate) scope: RuntimeInvocationScope,
-    provenance_gate: Option<RuntimeBundleProvenanceGate<'a>>,
+    provenance_gate: Option<&'a RuntimeBundleProvenanceConfig>,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct RuntimeBundleProvenanceGate<'a> {
-    pub(crate) policy: &'a ArtifactVerificationPolicy,
-    pub(crate) verifier: &'a dyn ArtifactVerifierBackend,
-    pub(crate) context: &'a str,
+#[derive(Clone)]
+pub(crate) struct RuntimeBundleProvenanceConfig {
+    policy: ArtifactVerificationPolicy,
+    verifier: Arc<dyn ArtifactVerifierBackend>,
+    context: String,
+}
+
+impl RuntimeBundleProvenanceConfig {
+    pub(crate) fn new(
+        policy: ArtifactVerificationPolicy,
+        verifier: Arc<dyn ArtifactVerifierBackend>,
+        context: impl Into<String>,
+    ) -> Self {
+        Self {
+            policy,
+            verifier,
+            context: context.into(),
+        }
+    }
+
+    fn policy(&self) -> &ArtifactVerificationPolicy {
+        &self.policy
+    }
+
+    fn verifier(&self) -> &dyn ArtifactVerifierBackend {
+        self.verifier.as_ref()
+    }
+
+    fn context(&self) -> &str {
+        &self.context
+    }
+}
+
+impl std::fmt::Debug for RuntimeBundleProvenanceConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuntimeBundleProvenanceConfig")
+            .field("policy", &self.policy)
+            .field("context", &self.context)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> RuntimeBundleInvocationOptions<'a> {
@@ -76,9 +112,9 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
         .with_runtime_bundle_provenance_gate(None)
     }
 
-    fn with_runtime_bundle_provenance_gate(
+    pub(crate) fn with_runtime_bundle_provenance_gate(
         mut self,
-        gate: Option<RuntimeBundleProvenanceGate<'a>>,
+        gate: Option<&'a RuntimeBundleProvenanceConfig>,
     ) -> Self {
         self.provenance_gate = gate;
         self
@@ -91,7 +127,7 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
         let Some(gate) = self.provenance_gate else {
             return Ok(None);
         };
-        admit_runtime_bundle_artifact(bundle, gate.policy, gate.verifier, gate.context)
+        admit_runtime_bundle_artifact(bundle, gate.policy(), gate.verifier(), gate.context())
             .map(Some)
             .map_err(|error| {
                 NimbusRuntimeError::Contract(format!(
@@ -182,7 +218,11 @@ mod tests {
                 ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
                     "fixture", "test",
                 ))
-                .with_attestation(BUILDER_ID, SLSA_PROVENANCE_V1_PREDICATE_TYPE),
+                .with_attestation_from_source(
+                    BUILDER_ID,
+                    "github.com/nimbus/nimbus",
+                    SLSA_PROVENANCE_V1_PREDICATE_TYPE,
+                ),
             )
         }
     }
@@ -206,17 +246,17 @@ mod tests {
             "github.com/nimbus/nimbus",
             [SLSA_PROVENANCE_V1_PREDICATE_TYPE],
         );
-        let verifier = StaticArtifactVerifier;
+        let gate = RuntimeBundleProvenanceConfig::new(
+            policy,
+            Arc::new(StaticArtifactVerifier),
+            "runtime invocation",
+        );
         let options = RuntimeBundleInvocationOptions::enforcing_policy_limit(
             &tenant_id,
             Some("runtime-request-1"),
             None,
         )
-        .with_runtime_bundle_provenance_gate(Some(RuntimeBundleProvenanceGate {
-            policy: &policy,
-            verifier: &verifier,
-            context: "runtime invocation",
-        }));
+        .with_runtime_bundle_provenance_gate(Some(&gate));
 
         let admission = options
             .admit_runtime_bundle_artifact(&bundle)

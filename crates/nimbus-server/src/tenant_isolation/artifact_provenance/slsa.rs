@@ -139,8 +139,13 @@ impl ArtifactVerifierBackend for SlsaVerifierBackend {
             &required_predicates,
             command_subject.label(),
         )?;
-        Ok(ArtifactVerificationEvidence::new(self.identity.clone())
-            .with_attestation(builder_id, attestation.predicate_type))
+        Ok(
+            ArtifactVerificationEvidence::new(self.identity.clone()).with_attestation_from_source(
+                builder_id,
+                source_uri,
+                attestation.predicate_type,
+            ),
+        )
     }
 }
 
