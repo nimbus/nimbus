@@ -161,6 +161,34 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   gated on `bash scripts/verify-ci-wall-acceleration.sh` (10
   conditions). Promote a new active plan before another PR-wall
   acceleration wave.
+- CI PR-wall sub-15 (post-CW pole attack — libsql image pin +
+  docker-image cache, coverage extraction to its own workflow,
+  branch-conditional concurrency cap, warm-sccache retain-or-retire
+  decision): `docs/operating/ci-pr-wall.md` for the canonical
+  contract, then `docs/plans/archive/ci-pr-wall-sub-15-plan.md` as
+  the completed baseline (PW0..PW6, closed 2026-05-23). The
+  baseline pins
+  `ghcr.io/tursodatabase/libsql-server` to a `vX.Y.Z` tag chosen
+  by probing GHCR directly (the upstream GitHub release list can
+  contain tags that 404 on GHCR), wraps every libsql usage with a
+  three-step `actions/cache@v5` lane keyed on
+  `libsql-image-vX.Y.Z`, extracts the Coverage shards + reducer
+  into `.github/workflows/coverage.yml` on
+  `push.main + schedule + workflow_dispatch` (Coverage is not on
+  `rust-gate-summary.needs:`, so it never gated merge),
+  flips ci.yml's `cancel-in-progress: true` to
+  `${{ github.ref != 'refs/heads/main' }}` so cancelled main runs
+  no longer abandon Swatinem / sccache / libsql-image cache saves
+  mid-flight, and takes the PW4c warm-sccache-retained path with
+  a measurement bundle (libsql shard hits Swatinem 0% on CW5
+  while harness lanes hit 76%+, so retiring warm-sccache would
+  expose the consistently-cold lanes to full cold-compile cost on
+  every PR). `/goal` control plane gated on
+  `bash scripts/verify-ci-pr-wall-sub-15.sh` (10 conditions;
+  condition 8 wall threshold flips between 15m (PW4b retired) and
+  18m (PW4c retained) based on `warm-sccache:` presence in
+  ci.yml). Promote a new active plan before another PR-wall
+  acceleration wave.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,

@@ -1,6 +1,6 @@
 # CI PR-Wall Sub-15 Plan (PW)
 
-Status: active
+Status: complete
 Owner: ci-pr-wall
 Verifier: `scripts/verify-ci-pr-wall-sub-15.sh`
 Target: PR-shaped `ci.yml` wall ≤ 15 minutes, p95 across the next 10
