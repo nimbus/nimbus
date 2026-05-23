@@ -22,8 +22,8 @@ pub use egress::{
     CompiledSandboxEgressPolicy, SANDBOX_EGRESS_ENFORCEMENT_ENV,
     SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION, SANDBOX_EGRESS_LEGACY_POLICY_ENV,
     SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxEgressAuthorization, SandboxEgressEnforcementMode,
-    SandboxEgressEnforcementPlan, SandboxEgressPolicy, SandboxEgressReloadPolicy,
-    SandboxEgressRequest, SandboxEgressRule,
+    SandboxEgressEnforcementPlan, SandboxEgressLaunchEnforcement, SandboxEgressPolicy,
+    SandboxEgressReloadPolicy, SandboxEgressRequest, SandboxEgressRule,
 };
 pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};
