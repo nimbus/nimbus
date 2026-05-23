@@ -1,0 +1,345 @@
+name: Coverage
+
+# PW2: extracted from ci.yml. Coverage is not a merge gate
+# (rust-gate-summary.needs: does not include it), so running it on the
+# PR critical path only added wall-time without protecting `main`.
+# Coverage now runs on:
+#   - every push to main (so codecov has a per-commit lcov.info)
+#   - a weekly schedule (so trends stay populated if main is quiet)
+#   - manual dispatch (so a developer can refresh on demand)
+# Pull requests intentionally do NOT trigger this workflow.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly Monday 08:00 UTC. Pairs with ci.yml's deny audit window.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+# Per-branch concurrency; never cancel main (a cancelled main run abandons
+# the lcov.info upload and Codecov's per-commit history develops gaps).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  ui-artifacts:
+    # Leader job mirroring ci.yml's ui-artifacts: build the nimbus-ui
+    # bundle once so the coverage shards + reducer can reuse it.
+    name: UI Artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build nimbus-ui artifacts
+        run: make build-ui
+
+      - name: Upload nimbus-ui artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-artifacts
+          path: |
+            packages/nimbus-ui/.nimbus/convex
+            packages/nimbus-ui/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  warm-sccache:
+    # Mirrors ci.yml's warm-sccache: prime sccache so coverage shards do
+    # not all cold-compile identical crates in parallel.
+    name: Warm sccache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [ui-artifacts]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-warm-sccache-no-bin-v2
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Warm sccache via workspace check
+        run: cargo check --workspace
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
+
+  # CA3: Coverage is sharded across N parallel lanes plus a dependent
+  # reducer. Each shard runs `cargo llvm-cov --no-report` over its
+  # workspace member group and uploads its profraw artifact;
+  # `coverage-reduce` downloads every shard's profraw, rebuilds the
+  # instrumented workspace via sccache hits, and calls
+  # `cargo llvm-cov report --lcov` to produce the combined lcov.info
+  # consumed by codecov. Critical path is now bounded by
+  # `max(shard wall) + reducer wall` instead of `sum(crates wall)`.
+  coverage:
+    name: Coverage shard (${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [ui-artifacts, warm-sccache]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: server
+            packages: "-p nimbus-server"
+          - shard: engine
+            packages: "-p nimbus-engine -p nimbus-sandbox -p nimbus-machine"
+          - shard: rest
+            packages: "-p nimbus-core -p nimbus-storage -p nimbus-testing -p nimbus-bin -p nimbus"
+    env:
+      NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
+      NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
+      NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
+      NIMBUS_LIBSQL_URL: http://127.0.0.1:18080
+      NIMBUS_LIBSQL_ADMIN_URL: http://127.0.0.1:18081
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-coverage-no-bin-v2
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      # PW1: pin libsql image + cache docker layer.
+      - name: Restore cached libsql docker image
+        id: libsql-image-cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/libsql-image.tar.gz
+          key: libsql-image-v0.24.26
+
+      - name: Load cached libsql docker image
+        if: steps.libsql-image-cache.outputs.cache-hit == 'true'
+        run: docker load --input /tmp/libsql-image.tar.gz
+
+      # v0.24.26
+      - name: Pull and save libsql docker image (cache miss)
+        if: steps.libsql-image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull ghcr.io/tursodatabase/libsql-server:v0.24.26
+          docker save ghcr.io/tursodatabase/libsql-server:v0.24.26 | gzip > /tmp/libsql-image.tar.gz
+
+      # v0.24.26
+      - name: Start libsql provider fixture
+        run: |
+          docker run --detach \
+            --name nimbus-libsql-coverage \
+            --publish 18080:8080 \
+            --publish 18081:8081 \
+            --env SQLD_ADMIN_LISTEN_ADDR=0.0.0.0:8081 \
+            ghcr.io/tursodatabase/libsql-server:v0.24.26 \
+            /bin/sqld --enable-namespaces --no-welcome
+
+      - name: Wait for libsql provider fixture
+        run: |
+          for _ in {1..60}; do
+            if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/nimbus_coverage_probe/create \
+              -H 'content-type: application/json' \
+              --data '{}' >/dev/null; then
+              curl -fsS -X DELETE http://127.0.0.1:18081/v1/namespaces/nimbus_coverage_probe >/dev/null || true
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs nimbus-libsql-coverage
+          exit 1
+
+      - name: Run coverage shard (no report)
+        # CA3: shards use cargo-llvm-cov's `show-env --export-prefix`
+        # mode to set LLVM_PROFILE_FILE/RUSTFLAGS/RUSTC_WRAPPER, then run
+        # `cargo test` directly. Profraws live at `target/nimbus-*.profraw`
+        # (the show-env convention) which the reducer also uses.
+        #
+        # CA2: -j 4 matches the ubuntu-24.04 runner vCPU count under mold.
+        run: |
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo test ${{ matrix.packages }} -j 4
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
+
+      - name: Upload coverage shard profraw
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-profraw-${{ matrix.shard }}
+          path: target/nimbus-*.profraw
+          if-no-files-found: error
+          retention-days: 1
+
+  coverage-reduce:
+    name: Coverage reducer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    needs: [coverage, ui-artifacts]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-coverage-no-bin-v2
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Rebuild instrumented workspace (no run)
+        # cargo-llvm-cov's `report` subcommand needs the instrumented
+        # binaries' coverage maps on the reducer. sccache hits on
+        # per-crate units the shards already populated.
+        run: |
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo test --no-run --workspace --exclude nimbus-runtime -j 4
+
+      - name: Download every shard's profraw
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-profraw-*
+          path: target/
+          merge-multiple: true
+
+      - name: Generate combined coverage report
+        run: |
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+      - name: Summarize coverage
+        if: always()
+        run: |
+          if [ ! -f lcov.info ]; then
+            echo "## Coverage" >> "${GITHUB_STEP_SUMMARY}"
+            echo "" >> "${GITHUB_STEP_SUMMARY}"
+            echo ":warning: lcov.info not produced (reducer failed before report)." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          covered=$(awk -F: '/^LH:/ {sum += $2} END {print sum+0}' lcov.info)
+          total=$(awk -F: '/^LF:/ {sum += $2} END {print sum+0}' lcov.info)
+          if [ "${total}" -eq 0 ]; then
+            pct="n/a"
+          else
+            pct=$(awk -v c="${covered}" -v t="${total}" 'BEGIN {printf "%.2f%%", (c/t)*100}')
+          fi
+          files=$(grep -c '^SF:' lcov.info || echo 0)
+          {
+            echo "## Coverage"
+            echo
+            echo "| metric | value |"
+            echo "|---|---|"
+            echo "| files instrumented | ${files} |"
+            echo "| lines hit | ${covered} |"
+            echo "| lines total | ${total} |"
+            echo "| line coverage | ${pct} |"
+            echo
+            echo "_Codecov upload is best-effort; see the Codecov tab for trend graphs._"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
