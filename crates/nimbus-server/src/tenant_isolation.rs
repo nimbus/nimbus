@@ -30,16 +30,19 @@ pub use image_admission::{
     TenantImageSignatureEvidence, TenantImageVerificationEvidence, TenantImageVerificationProvider,
 };
 pub use operator_policy::{
-    OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy, OperatorImagePolicy,
-    OperatorImageProvenancePolicy, OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy,
-    OperatorNetworkPolicy, OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults,
-    OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDocument,
-    OperatorPolicyEvaluation, OperatorPolicyImageSummary, OperatorPolicyLifecycle,
-    OperatorPolicyMetadata, OperatorPolicyQuotaSummary, OperatorPolicyReloadOutcome,
-    OperatorPolicyReloadState, OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy,
-    OperatorRuntimeProfile, OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy,
-    OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy,
-    OperatorVolumePolicy,
+    OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy, OperatorExternalPolicyBackend,
+    OperatorExternalPolicyBackendError, OperatorExternalPolicyBackendErrorKind,
+    OperatorExternalPolicyBackendIdentity, OperatorExternalPolicyBackendResult,
+    OperatorExternalPolicyDecision, OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome,
+    OperatorExternalPolicyRequest, OperatorImagePolicy, OperatorImageProvenancePolicy,
+    OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy, OperatorNetworkPolicy,
+    OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults, OperatorPolicyDiff,
+    OperatorPolicyDiffSummary, OperatorPolicyDocument, OperatorPolicyEvaluation,
+    OperatorPolicyImageSummary, OperatorPolicyLifecycle, OperatorPolicyMetadata,
+    OperatorPolicyQuotaSummary, OperatorPolicyReloadOutcome, OperatorPolicyReloadState,
+    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorRuntimeProfile,
+    OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy, OperatorSandboxPolicy,
+    OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

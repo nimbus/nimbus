@@ -1,3 +1,8 @@
+use std::sync::{
+    Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+
 use crate::tenant_isolation::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
 };
@@ -169,6 +174,99 @@ fn parse_policy(body: &str) -> OperatorPolicyDocument {
     serde_yaml::from_str(body).expect("policy fixture should parse")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FakeExternalPolicyResponse {
+    Allow,
+    Deny,
+    MalformedOutput,
+    Timeout,
+    Unavailable,
+}
+
+struct FakeExternalPolicyBackend {
+    response: FakeExternalPolicyResponse,
+    name: &'static str,
+    version: &'static str,
+    calls: AtomicUsize,
+    last_request: Mutex<Option<OperatorExternalPolicyRequest>>,
+}
+
+impl FakeExternalPolicyBackend {
+    fn new(
+        response: FakeExternalPolicyResponse,
+        name: &'static str,
+        version: &'static str,
+    ) -> Self {
+        Self {
+            response,
+            name,
+            version,
+            calls: AtomicUsize::new(0),
+            last_request: Mutex::new(None),
+        }
+    }
+
+    fn fake_opa(response: FakeExternalPolicyResponse) -> Self {
+        Self::new(response, "fake-opa", "v0-test")
+    }
+
+    fn fake_cedar(response: FakeExternalPolicyResponse) -> Self {
+        Self::new(response, "fake-cedar", "v0-test")
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    fn last_request(&self) -> OperatorExternalPolicyRequest {
+        self.last_request
+            .lock()
+            .expect("request lock should not be poisoned")
+            .clone()
+            .expect("backend should have received a request")
+    }
+}
+
+impl OperatorExternalPolicyBackend for FakeExternalPolicyBackend {
+    fn evaluate(
+        &self,
+        request: &OperatorExternalPolicyRequest,
+    ) -> OperatorExternalPolicyBackendResult<OperatorExternalPolicyDecision> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.last_request
+            .lock()
+            .expect("request lock should not be poisoned")
+            .replace(request.clone());
+        match self.response {
+            FakeExternalPolicyResponse::Allow => Ok(OperatorExternalPolicyDecision::allow(
+                self.name,
+                self.version,
+                "fixture policy allowed",
+            )),
+            FakeExternalPolicyResponse::Deny => Ok(OperatorExternalPolicyDecision::deny(
+                self.name,
+                self.version,
+                "fixture policy denied",
+            )),
+            FakeExternalPolicyResponse::MalformedOutput => {
+                Ok(OperatorExternalPolicyDecision::allow(
+                    self.name,
+                    "",
+                    "fixture policy returned malformed output",
+                ))
+            }
+            FakeExternalPolicyResponse::Timeout => Err(
+                OperatorExternalPolicyBackendError::timeout("fixture policy deadline exceeded"),
+            ),
+            FakeExternalPolicyResponse::Unavailable => {
+                Err(OperatorExternalPolicyBackendError::unavailable(
+                    "fixture policy backend unavailable",
+                ))
+            }
+        }
+    }
+}
+
 #[test]
 fn valid_policy_fixture_compiles_to_tenant_isolation_decision() {
     let policy = parse_policy(VALID_POLICY);
@@ -213,6 +311,113 @@ fn valid_policy_fixture_compiles_to_tenant_isolation_decision() {
     assert!(rendered.contains("runtime_admission: admit_in_process"));
     assert!(rendered.contains("storage_namespace: tenant-a"));
     assert!(rendered.contains("sandbox_egress: stripe-api"));
+}
+
+#[test]
+fn external_policy_backend_allow_records_decision_evidence() {
+    let policy = parse_policy(VALID_POLICY);
+    let backend = FakeExternalPolicyBackend::fake_opa(FakeExternalPolicyResponse::Allow);
+
+    let evaluation = policy
+        .evaluate_with_external_policy(Some(&backend))
+        .expect("allowing external policy should admit");
+
+    assert_eq!(backend.call_count(), 1);
+    let request = backend.last_request();
+    assert_eq!(request.policy_name.as_deref(), Some("enterprise-baseline"));
+    assert_eq!(request.tenant_id, "tenant-a");
+    assert_eq!(request.workload_key, "runtime_function/messages:send");
+    assert_eq!(request.workload_kind, "runtime_function");
+    assert_eq!(request.workload_name, "messages:send");
+    assert_eq!(request.runtime_tier, "in_process_untrusted");
+    assert_eq!(request.runtime_admission, "admit_in_process");
+    assert_eq!(request.secret_handle_count, 1);
+    assert!(
+        !serde_json::to_string(&request)
+            .expect("external request should serialize")
+            .contains("prod/db/password"),
+        "external policy requests must not carry raw secret handles"
+    );
+
+    let decision = &evaluation.decisions[0];
+    let evidence = decision
+        .external_policy
+        .as_ref()
+        .expect("allowing backend should attach evidence");
+    assert_eq!(evidence.backend.name, "fake-opa");
+    assert_eq!(evidence.backend.version, "v0-test");
+    assert_eq!(evidence.outcome, OperatorExternalPolicyOutcome::Allow);
+    assert_eq!(evidence.reason, "fixture policy allowed");
+    let rendered = evaluation.render_explain_text();
+    assert!(rendered.contains("external_policy: allow via fake-opa@v0-test"));
+    assert!(rendered.contains("trace: external policy: allow via fake-opa@v0-test"));
+}
+
+#[test]
+fn external_policy_backend_deny_fails_closed() {
+    let policy = parse_policy(VALID_POLICY);
+    let backend = FakeExternalPolicyBackend::fake_cedar(FakeExternalPolicyResponse::Deny);
+
+    let error = policy
+        .evaluate_with_external_policy(Some(&backend))
+        .expect_err("external policy deny should fail closed");
+
+    assert_eq!(backend.call_count(), 1);
+    assert!(
+        error.to_string().contains("fake-cedar@v0-test")
+            && error.to_string().contains("denied workload")
+            && error.to_string().contains("fixture policy denied"),
+        "deny error should identify backend and reason: {error}"
+    );
+}
+
+#[test]
+fn external_policy_backend_errors_fail_closed() {
+    for (response, expected) in [
+        (
+            FakeExternalPolicyResponse::MalformedOutput,
+            "malformed_output",
+        ),
+        (FakeExternalPolicyResponse::Timeout, "timeout"),
+        (FakeExternalPolicyResponse::Unavailable, "unavailable"),
+    ] {
+        let policy = parse_policy(VALID_POLICY);
+        let backend = FakeExternalPolicyBackend::fake_opa(response);
+
+        let error = policy
+            .evaluate_with_external_policy(Some(&backend))
+            .expect_err("external policy backend failure should fail closed");
+
+        assert_eq!(backend.call_count(), 1);
+        assert!(
+            error.to_string().contains("failed closed")
+                && error.to_string().contains(expected)
+                && error.to_string().contains("runtime_function/messages:send"),
+            "backend error should be fail-closed and actionable: {error}"
+        );
+    }
+}
+
+#[test]
+fn built_in_hard_deny_precedes_external_policy_backend_allow() {
+    let policy = parse_policy(INVALID_IMAGE);
+    let backend = FakeExternalPolicyBackend::fake_opa(FakeExternalPolicyResponse::Allow);
+
+    let error = policy
+        .evaluate_with_external_policy(Some(&backend))
+        .expect_err("built-in image policy should reject before external allow");
+
+    assert_eq!(
+        backend.call_count(),
+        0,
+        "external policy must not be consulted after a built-in hard deny"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("image.digest_required=false is unsafe"),
+        "built-in hard-deny reason should be preserved: {error}"
+    );
 }
 
 #[test]
