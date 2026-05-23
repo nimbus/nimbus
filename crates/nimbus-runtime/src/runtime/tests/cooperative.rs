@@ -564,6 +564,9 @@ export {};
                 cooperative_startup_snapshot_runtime_test_limits()
             }
             RuntimePoolKind::WarmPool => cooperative_warm_pool_runtime_test_limits(),
+            RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
+                unreachable!("test covers only V8/Deno pool kinds")
+            }
         };
         limits.max_concurrent_runtime_instances = 1;
         limits.worker_threads = 1;
