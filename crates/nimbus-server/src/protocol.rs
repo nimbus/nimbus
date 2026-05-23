@@ -1,7 +1,8 @@
 use nimbus_core::{Document, DurableMutationRecord, Query, Schema};
 use nimbus_engine::{MaterializedJournalSnapshot, TenantEngineDiagnosticsSnapshot};
 use nimbus_runtime::{
-    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
+    RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage,
     RuntimeMetricsSnapshot, RuntimeMode, RuntimeModuleStateSemantics, RuntimePoolKind,
     RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
@@ -102,6 +103,9 @@ pub(crate) struct TenantEngineDiagnosticsResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct RuntimeLimitsResponse {
     pub runtime_backend: RuntimeBackendKind,
+    pub runtime_backend_trust_tier: RuntimeBackendTrustTier,
+    pub runtime_backend_lockdown_profile: RuntimeBackendLockdownProfile,
+    pub runtime_backend_lifecycle_policy: RuntimeBackendLifecyclePolicy,
     pub bundle_content_kind: RuntimeBundleContentKind,
     pub javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     pub compatibility_target: RuntimeCompatibilityTarget,
