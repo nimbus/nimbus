@@ -24,16 +24,21 @@ landed scope or documented deferred follow-up.
      LINKER=mold landed broken; hotfix switched to RUSTFLAGS
      `-fuse-ld=mold`)
    - CA2: `f4dad1b8` — `-j 4` Coverage flip
-   - CA3: `3996dd9a` + hotfix in CA5 — 3-shard Coverage + reducer
-     (initial drop had two CA3 bugs caught by the CA5 CI validation
-     run 26320383660: the upload-artifact `path:` pointed at
+   - CA3: `3996dd9a` + two hotfixes in CA5 — 3-shard Coverage +
+     reducer. The initial drop had two bugs caught by CA5 CI run
+     26320383660: upload-artifact `path:` pointed at
      `target/llvm-cov-target/profraw/` but cargo-llvm-cov writes
      profraw files into `target/llvm-cov-target/` directly, and the
      `engine` shard had `needs-providers: "false"` despite
-     `nimbus-engine` carrying `libsql_replica_provider` tests that
-     require the libsql admin API. The CA5 hotfix corrects both.)
+     `nimbus-engine` carrying `libsql_replica_provider` tests.
+     CA5 hotfix 1 (`0d7b868e`) fixed both. CA5 CI run 26320969712
+     then surfaced a third bug on the `rest` shard:
+     `nimbus-storage` carries its own `libsql_provider` test family
+     that also requires the libsql admin API. CA5 hotfix 2 retires
+     the `needs-providers` flag entirely and makes libsql startup
+     unconditional across all shards.
    - CA4: `d66f85fb` — release.yml composite migration (5 sites)
-   - CA5: `598dd74e` + hotfix (this commit) — closeout + CA3 hotfix
+   - CA5: `598dd74e` + two hotfixes — closeout + CA3 hotfixes
 4. Routing entries:
    - `docs/plans/README.md`: move CA entry from active to archived
      section, point at the archived path.

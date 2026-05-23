@@ -148,9 +148,9 @@ line `10 passed, 0 failed`. The 10 conditions:
 | CA0 | `3e86c329` | scaffold Coverage Acceleration plan + verifier + baseline proof |
 | CA1 | `263f39f7` + `a7afe415` | install mold linker in setup-rust-cached composite (initial LINKER=mold landed broken; hotfix switched to RUSTFLAGS `-fuse-ld=mold`) |
 | CA2 | `f4dad1b8` | retest coverage parallelism, land -j 4 |
-| CA3 | `3996dd9a` + hotfix (this commit) | shard Coverage across 3 parallel lanes with cargo llvm-cov reducer (initial drop landed with two CA3 bugs: profraw path `target/llvm-cov-target/profraw/` did not match cargo-llvm-cov's actual output path `target/llvm-cov-target/*.profraw`, and the engine shard's `needs-providers: "false"` skipped the libsql fixture nimbus-engine's `libsql_replica_provider` tests require; both fixed in CA5) |
+| CA3 | `3996dd9a` + two hotfixes in CA5 | shard Coverage across 3 parallel lanes with cargo llvm-cov reducer. Initial drop had two bugs (profraw path `profraw/` vs `*.profraw`, engine shard libsql gating) fixed in CA5 hotfix 1 (`0d7b868e`). Hotfix 2 (this commit) discovered `nimbus-storage`'s `libsql_provider` tests on the rest shard also need libsql; retires the `needs-providers` flag entirely, making libsql startup unconditional. |
 | CA4 | `d66f85fb` | migrate release.yml to setup-rust-cached composite |
-| CA5 | `598dd74e` + hotfix (this commit) | closeout — promote contract, archive plan, update routing; CA3 hotfix bundled here |
+| CA5 | `598dd74e` + `0d7b868e` + hotfix 2 (this commit) | closeout — promote contract, archive plan, update routing; both CA3 hotfixes bundled in CA5 |
 
 ## Notes on staging order
 

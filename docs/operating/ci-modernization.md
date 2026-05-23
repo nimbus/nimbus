@@ -193,13 +193,10 @@ coverage:
       include:
         - shard: server
           packages: "-p nimbus-server"
-          needs-providers: "true"
         - shard: engine
           packages: "-p nimbus-engine -p nimbus-sandbox -p nimbus-machine"
-          needs-providers: "true"
         - shard: rest
           packages: "-p nimbus-core -p nimbus-storage -p nimbus-testing -p nimbus-bin -p nimbus"
-          needs-providers: "false"
   steps:
     - cargo llvm-cov --no-report -j 4 ${{ matrix.packages }}
     - upload coverage-profraw-${{ matrix.shard }} artifact
@@ -223,37 +220,40 @@ Two CA3 path/dependency details are load-bearing and easy to get wrong:
   `path: target/llvm-cov-target/*.profraw`; download into
   `target/llvm-cov-target/` with `merge-multiple: true` so
   `cargo llvm-cov report` finds them at the path it expects.
-- **The `engine` shard sets `needs-providers: "true"`** because
-  `nimbus-engine`'s `libsql_replica_provider` tests need the libsql
-  admin API. Only the `rest` shard skips libsql startup. The initial
-  CA3 commit landed with `engine` set to `false`, which caused six
-  `libsql_replica_provider` tests to panic with
-  `error sending request for url (http://127.0.0.1:18081/.../create)`;
-  the CA5 hotfix flipped it to `true`.
+- **Every shard runs the libsql fixture.** `nimbus-engine` carries
+  `libsql_replica_provider` tests; `nimbus-storage` carries
+  `libsql_provider` tests. All three shards (`server`, `engine`,
+  `rest`) need the libsql admin API at `127.0.0.1:18081`. CA3 first
+  shipped a per-shard `needs-providers` flag that gated libsql
+  startup on a subset; two follow-up hotfixes converged on
+  always-on libsql. The flag is now retired — the libsql start +
+  wait steps are unconditional.
 
 Shard partition rationale:
 
 | Shard | Crates | Why |
 |-------|--------|-----|
 | `server` | `nimbus-server` | Heaviest single crate; carries the postgres/mysql/libsql integration surface. |
-| `engine` | `nimbus-engine`, `nimbus-sandbox`, `nimbus-machine` | Middle-tier crates with substantial test counts; needs libsql for `nimbus-engine`'s `libsql_replica_provider` tests. |
-| `rest` | `nimbus-core`, `nimbus-storage`, `nimbus-testing`, `nimbus-bin`, `nimbus` | Lightweight tail; combined fits one shard. |
+| `engine` | `nimbus-engine`, `nimbus-sandbox`, `nimbus-machine` | Middle-tier crates with substantial test counts; `nimbus-engine` carries `libsql_replica_provider` tests. |
+| `rest` | `nimbus-core`, `nimbus-storage`, `nimbus-testing`, `nimbus-bin`, `nimbus` | Lightweight tail; `nimbus-storage` carries `libsql_provider` tests. |
 
 `nimbus-runtime` stays excluded workspace-wide — its coverage
 instrumentation budget was retired in CC6.
 
 Provider fixtures (postgres, mysql) run unconditionally on every
 shard because GitHub Actions does not support matrix-conditional
-services. The libsql startup is gated on
-`if: matrix.needs-providers == 'true'`; both `server` and `engine`
-pay the libsql + namespace-probe wait because both carry
-libsql-dependent tests, while `rest` skips it.
+services. The libsql startup also runs on every shard — every
+current shard carries at least one libsql-dependent test family
+(`server` has nimbus-server's integration surface, `engine` has
+`libsql_replica_provider`, `rest` has `libsql_provider` via
+`nimbus-storage`).
 
 When adding a new workspace crate, place it in the shard that
-balances wall-clock best (typically `rest` unless it pulls external
-provider tests, in which case it joins `server`). Do not introduce
-a 4th shard without measuring — the fan-out + reducer overhead has
-diminishing returns past 3 lanes given current per-crate cost.
+balances wall-clock best (typically `rest` unless it pulls a heavy
+provider surface, in which case it joins `server`). Do not
+introduce a 4th shard without measuring — the fan-out + reducer
+overhead has diminishing returns past 3 lanes given current
+per-crate cost.
 
 ### release.yml composite adoption
 

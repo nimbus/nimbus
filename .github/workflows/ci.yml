@@ -598,13 +598,10 @@ jobs:
         include:
           - shard: server
             packages: "-p nimbus-server"
-            needs-providers: "true"
           - shard: engine
             packages: "-p nimbus-engine -p nimbus-sandbox -p nimbus-machine"
-            needs-providers: "true"
           - shard: rest
             packages: "-p nimbus-core -p nimbus-storage -p nimbus-testing -p nimbus-bin -p nimbus"
-            needs-providers: "false"
     env:
       NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
@@ -662,7 +659,6 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Start libsql provider fixture
-        if: matrix.needs-providers == 'true'
         run: |
           docker run --detach \
             --name nimbus-libsql-coverage \
@@ -673,7 +669,6 @@ jobs:
             /bin/sqld --enable-namespaces --no-welcome
 
       - name: Wait for libsql provider fixture
-        if: matrix.needs-providers == 'true'
         run: |
           for _ in {1..60}; do
             if curl -fsS -X POST http://127.0.0.1:18081/v1/namespaces/nimbus_coverage_probe/create \

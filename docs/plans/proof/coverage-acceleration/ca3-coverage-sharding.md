@@ -18,7 +18,7 @@ coverage:
     - upload + codecov
 ```
 
-After CA3 (with CA5 hotfix applied):
+After CA3 (with CA5 hotfixes applied):
 
 ```yaml
 coverage:
@@ -28,13 +28,12 @@ coverage:
     matrix:
       include:
         - shard: server   # nimbus-server (heavy, libsql + postgres/mysql)
-                          # needs-providers: "true"
         - shard: engine   # nimbus-engine + nimbus-sandbox + nimbus-machine
-                          # needs-providers: "true" (libsql_replica_provider tests)
+                          # (libsql_replica_provider tests in nimbus-engine)
         - shard: rest     # nimbus-core + nimbus-storage + nimbus-testing + nimbus-bin + nimbus
-                          # needs-providers: "false"
+                          # (libsql_provider tests in nimbus-storage)
   steps:
-    - setup, services (postgres/mysql), libsql (only when matrix.needs-providers == 'true')
+    - setup, services (postgres/mysql), libsql (unconditional — every shard needs it)
     - cargo llvm-cov --no-report -j 4 ${{ matrix.packages }}
     - upload coverage-profraw-${{ matrix.shard }} artifact
       (path: target/llvm-cov-target/*.profraw)
@@ -50,11 +49,12 @@ coverage-reduce:
     - upload + codecov
 ```
 
-The CA5 hotfix corrected two CA3 errors caught by the first
-post-CA5 CI validation run (26320383660):
+Two CA5 hotfixes converged on the current shape. CA3 originally
+shipped a per-shard `needs-providers` flag gating libsql startup; it
+took two iterations to discover every shard needs libsql.
 
-1. **Profraw upload/download path.** cargo-llvm-cov writes profraw
-   files into the target directory root
+1. **Profraw upload/download path (CA5 hotfix 1, `0d7b868e`).**
+   cargo-llvm-cov writes profraw files into the target directory root
    (`target/llvm-cov-target/nimbus-<pid>-<m>.profraw`), not into a
    `profraw/` subdirectory. The original CA3 commit uploaded from
    `target/llvm-cov-target/profraw/` (which did not exist) and
@@ -62,13 +62,21 @@ post-CA5 CI validation run (26320383660):
    `path: target/llvm-cov-target/*.profraw`; the reducer downloads
    into `target/llvm-cov-target/` directly with `merge-multiple: true`,
    matching the location `cargo llvm-cov report` reads from.
-2. **Engine shard libsql dependency.** `nimbus-engine` carries the
-   `libsql_replica_provider` test family which opens the libsql
-   admin API at `http://127.0.0.1:18081`. The original CA3 commit
-   set `needs-providers: "false"` for the engine shard, gating off
-   the libsql fixture and producing six panics in the
-   `libsql_replica_provider` tests. Both `server` and `engine`
-   shards now run libsql; only `rest` skips it.
+2. **Engine shard libsql dependency (CA5 hotfix 1, `0d7b868e`).**
+   `nimbus-engine` carries the `libsql_replica_provider` test family
+   which opens the libsql admin API at `http://127.0.0.1:18081`. The
+   original CA3 commit set `needs-providers: "false"` for the engine
+   shard, gating off the libsql fixture and producing six panics in
+   the `libsql_replica_provider` tests. Hotfix 1 flipped `engine` to
+   `true`.
+3. **Rest shard libsql dependency (CA5 hotfix 2).** Post-hotfix-1
+   CI surfaced eight more panics on the `rest` shard:
+   `nimbus-storage` carries its own `libsql_provider` test family
+   that also requires the libsql admin API. With every current shard
+   carrying libsql-dependent tests, the `needs-providers` flag is
+   dead weight — hotfix 2 retires the flag and makes libsql startup
+   unconditional. Future shards default to running libsql; only
+   peel it off after measuring that no member crate needs it.
 
 ## Shard partition rationale
 
@@ -76,22 +84,25 @@ Workspace member groups chosen to balance shard wall-clock:
 
 | Shard | Crates | Why |
 |-------|--------|-----|
-| `server` | `nimbus-server` | Heaviest single crate; carries the bulk of the integration test surface that needs postgres/mysql/libsql fixtures. Sharding it off in isolation keeps the fixture-startup cost outside the other lanes. |
-| `engine` | `nimbus-engine`, `nimbus-sandbox`, `nimbus-machine` | Middle-tier crates with substantial test counts but no external provider dependencies. |
-| `rest` | `nimbus-core`, `nimbus-storage`, `nimbus-testing`, `nimbus-bin`, `nimbus` | Lightweight tail — types/validation crate, storage primitives, test helpers, CLI binary, facade. Each individually small; combined fits one shard. |
+| `server` | `nimbus-server` | Heaviest single crate; carries the bulk of the integration test surface that needs postgres/mysql/libsql fixtures. Sharding it off in isolation keeps the per-crate cost outside the other lanes. |
+| `engine` | `nimbus-engine`, `nimbus-sandbox`, `nimbus-machine` | Middle-tier crates with substantial test counts. `nimbus-engine` carries `libsql_replica_provider` tests that need the libsql admin API. |
+| `rest` | `nimbus-core`, `nimbus-storage`, `nimbus-testing`, `nimbus-bin`, `nimbus` | Lightweight tail — types/validation, storage primitives, test helpers, CLI binary, facade. `nimbus-storage` carries `libsql_provider` tests that also need the libsql admin API. |
 
 `nimbus-runtime` stays excluded workspace-wide — its instrumentation
 budget was retired in CC6.
 
-## Provider fixtures: conditional startup
+## Provider fixtures: unconditional startup
 
 The `services:` block (postgres, mysql) runs unconditionally on every
 shard because GitHub Actions doesn't support matrix-conditional
-services. The libsql startup, however, is in `steps:` and is gated by
-`if: matrix.needs-providers == 'true'` — only the `server` shard pays
-the libsql + namespace-probe wait cost.
+services. The libsql startup also runs on every shard — every
+current shard carries at least one libsql-dependent test family.
+CA3 originally tried a `needs-providers` per-shard flag to peel
+libsql off the lighter shards, but two hotfix iterations
+(`engine`, then `rest`) discovered every shard needs it. The flag is
+retired; the libsql start + wait steps are now unconditional.
 
-A future optimization (CA5 follow-up): peel off the provider-bound
+A future optimization: peel off the provider-bound
 test set into a `provider-tests` shard distinct from `server` so most
 shards skip even the postgres/mysql startup. Deferred because the
 current shape is already a substantial improvement and the marginal
