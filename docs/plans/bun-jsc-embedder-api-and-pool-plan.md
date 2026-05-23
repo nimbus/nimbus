@@ -11,7 +11,7 @@ prove deny-by-default containment.
 
 ## Status
 
-- **Status:** active; `BEP0` is complete, `BEP1` is next
+- **Status:** active; `BEP0` and `BEP1` are complete, `BEP2` is next
 - **Primary owner:** this plan
 - **Nimbus worktree:** `/Users/jack/src/github.com/nimbus/nimbus`
 - **Bun worktree:** `/Users/jack/src/github.com/oven-sh/bun`
@@ -56,7 +56,7 @@ must stay backend-owned.
 | Gate | Status | Goal | Verifiable success criteria |
 | --- | --- | --- | --- |
 | BEP0 | `done` | Establish the cross-platform proof baseline. | `scripts/verify-bun-jsc-in-process-lockdown.sh` passes locally and on Debian 13 `minicloud`; Gate 25 records the Linux toolchain, command, result, and Bun proof commit `ce5aa2a389`; no system apt trust changes are required. |
-| BEP1 | `pending` | Write the concrete Bun embedder API proposal. | A checked-in proposal maps every unsafe Bun/JSC surface to a construction profile field, resolver hook, native permission hook, lifecycle hook, or explicit unsupported state; it includes thread stack-bound, termination-state reset, event-loop, worker propagation, and teardown requirements learned from Gate 25. |
+| BEP1 | `done` | Write the concrete Bun embedder API proposal. | `docs/plans/proof/runtime-engine/bun-jsc/gate-26-embedder-api-proposal.md` maps every unsafe Bun/JSC surface to a construction profile field, resolver hook, native permission hook, lifecycle hook, audit contract, or explicit unsupported state; it includes thread stack-bound, termination-state reset, event-loop, worker propagation, and teardown requirements learned from Gate 25. |
 | BEP2 | `pending` | Choose upstream-first versus fork threshold for implementation. | The plan records a decision matrix with required upstream APIs, acceptable local patch surface, release/tag format if a fork becomes necessary, and the exact condition that flips from upstream-first to `nimbus/bun`. |
 | BEP3 | `pending` | Make the Nimbus runtime seam ready for a real Bun pool without enabling it. | Nimbus has typed backend/pool config and diagnostics for `BunJsc` that fail closed by default; tests prove unsupported Bun metadata is rejected before invocation and that Deno/V8 behavior is unchanged. |
 | BEP4 | `pending` | Define and scaffold the dedicated Bun/JSC pool owner. | A concept-owned design/code scaffold exists for Bun pool lifecycle, fresh/discard versus retained trusted reuse, cancellation handles, event-loop progress, teardown, and metrics; it has no Deno/V8 internals in its public envelope and remains disabled until Bun hooks exist. |
@@ -147,6 +147,7 @@ For Linux proof, use the minicloud lane recorded in
 | Date | Gate | Status | Notes | Verification | Next |
 | --- | --- | --- | --- | --- | --- |
 | 2026-05-23 | BEP0 | `done` | Established the cross-platform proof baseline. The Bun proof now passes on macOS and Debian 13 `minicloud`; the Linux fix taught us to avoid host-wide apt trust, use user-local LLVM 21.1.8, seat stack bounds on JSC-touching proof threads, clear termination request state after priming, and avoid a 10 ms cancellation race in debug Linux builds. | `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed on minicloud: 9 runtime tests, 10 registry tests, 2 diagnostics tests, 1 ignored Bun source proof, Bun format, Bun native `check-bun-embed-probe`, and whitespace checks. Bun commit `ce5aa2a389` records the proof-harness source fix. | Start BEP1 by writing the concrete upstream/fork Bun embedder API proposal with every unsafe surface mapped to construction, resolver, permission, lifecycle, or unsupported state. |
+| 2026-05-23 | BEP1 | `done` | Added Gate 26, the concrete embedder API proposal. The proposed API is upstream-first and keeps Nimbus-specific tenant/HostBridge state behind an opaque embedder context while requiring construction profiles, resolver policy, native permission hooks, lifecycle policy, and audit events. | Documentation-only gate; `bash -n scripts/verify-bun-jsc-in-process-lockdown.sh` passed, `cargo fmt --all --check` passed, and `git diff --check` passed. | Start BEP2 by turning the API proposal into an upstream-first versus fork decision matrix with exact fork trigger and tag/release convention. |
 
 ## References
 
@@ -159,5 +160,6 @@ For Linux proof, use the minicloud lane recorded in
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-23-fork-upstream-decision.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-24-closeout.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-25-linux-minicloud-verification.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-26-embedder-api-proposal.md`
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`

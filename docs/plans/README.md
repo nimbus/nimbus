@@ -51,8 +51,8 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Deno/V8, with a dedicated Bun/JSC pool, but not as a product-selectable
     runtime until construction profile, resolver policy, native permission
     hooks, memory, cancellation, teardown, and macOS/Linux verification gates
-    pass. BEP0 is complete; BEP1 starts with the concrete upstream/fork
-    embedder API proposal. Fork posture remains upstream-first; no
+    pass. BEP0-BEP1 are complete; BEP2 starts with the upstream-first versus
+    fork threshold decision. Fork posture remains upstream-first; no
     `nimbus/bun` fork yet.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install

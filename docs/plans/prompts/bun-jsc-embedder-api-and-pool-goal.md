@@ -19,8 +19,8 @@ Autonomy rules:
 Verifiable success criteria:
 
 - `BEP1` has a checked-in Bun embedder API proposal mapping every unsafe
-  surface to construction, resolver, permission, lifecycle, or unsupported
-  state.
+  surface to construction, resolver, permission, lifecycle, audit, or
+  unsupported state.
 - `BEP2` records the upstream-first versus fork threshold, including release
   tag format and the exact trigger for creating `nimbus/bun`.
 - `BEP3` keeps Nimbus typed runtime/backend/pool diagnostics ready but fail
