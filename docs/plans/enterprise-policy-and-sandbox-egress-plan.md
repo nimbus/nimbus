@@ -142,7 +142,7 @@ should remain packaged and versioned with Nimbus.
 | EPS3 | `done` | Define dynamic versus recreate-required policy lifecycle. | `cargo test -p nimbus-server operator_policy -- --nocapture`: launch-materialized egress diffs and static authority changes classify as `recreate_required`, no-op reload stays dynamic, and invalid reload keeps last-known-good. |
 | EPS4a | `done` | Add typed sandbox egress PEP contract and launch materialization seam. | `cargo test -p nimbus-sandbox egress -- --nocapture`, `cargo test -p nimbus-server service_manager -- --nocapture`, and `cargo test -p nimbus-bin x_nimbus_egress -- --nocapture`: default deny, explicit allow, SSRF/internal denial, wildcard validation, L7 method/path denial, service-manager policy mismatch, and Compose lowering. |
 | EPS4b0 | `done` | Add a typed egress enforcement contract for the future sandbox supervisor/proxy. | `cargo test -p nimbus-sandbox egress -- --nocapture`: launch metadata is schema-versioned, default-deny by default, explicit allows compile to canonical policy, invalid raw policy fails closed, and launch metadata cannot claim live reload. |
-| EPS4b1 | `todo` | Package a sandbox-local supervisor/proxy binary with Nimbus. | Binary packaging tests prove the supervisor is versioned with the single Nimbus binary and can consume `SandboxEgressEnforcementPlan`. |
+| EPS4b1 | `done` | Package a sandbox-local supervisor/proxy entrypoint with Nimbus. | `cargo test -p nimbus-bin sandbox_supervisor -- --nocapture`: hidden `nimbus sandbox-supervisor` entrypoint parses, consumes `SandboxEgressEnforcementPlan`, rejects missing/invalid contracts, and reports validation-only status with `packet_enforcement_active=false`. |
 | EPS4b2 | `todo` | Force process-capable guest egress through the supervisor/proxy or equivalent kernel-enforced path. | Linux integration tests prove guest traffic cannot bypass the egress PEP. |
 | EPS4b3 | `todo` | Add Linux network conformance and live egress reload proof. | Linux conformance proves real guest traffic default deny, allowed endpoint success, SSRF denial after DNS resolution, loopback/internal denial, L7 method/path denial, and egress-only reload through the proxy or kernel-enforced path. |
 | EPS5 | `todo` | Add OCSF and OpenTelemetry export mapping. | Fixtures prove tenant/sandbox events redact secrets and map to stable OCSF/OTel records with decision IDs. |
@@ -167,7 +167,7 @@ should remain packaged and versioned with Nimbus.
   parameters, secret handles, or raw bearer claims.
 - Policy reload has last-known-good semantics. Controls that are only
   materialized at launch, including the current egress policy contract, require
-  sandbox recreation until EPS4b1-EPS4b3 land a live enforcement/reload path.
+  sandbox recreation until EPS4b2-EPS4b3 land a live enforcement/reload path.
 - Operator docs explain when to use in-process runtime grants, `ctx.services`,
   microVM service egress policy, and external policy engines.
 
@@ -203,7 +203,7 @@ Batch 2 landed EPS3 and EPS4a:
   authority changes such as runtime, service, endpoint, sandbox identity,
   storage, volume, image, secret, quota, or runtime-admission changes as
   `recreate_required`. Egress-only changes can become `dynamic_reload` only
-  after EPS4b1-EPS4b3 land a live proxy/supervisor or equivalent enforcement
+  after EPS4b2-EPS4b3 land a live proxy/supervisor or equivalent enforcement
   reload path.
 - `OperatorPolicyReloadState` gives reloads last-known-good semantics: valid
   policy candidates update the desired evaluation and report whether recreation
@@ -228,15 +228,21 @@ Batch 2 landed EPS3 and EPS4a:
   policy not present in the admitted `TenantIsolationDecision`.
 - Compose supports `x-nimbus.egress.allow` and validates the same sandbox
   egress policy shape before lowering to `SandboxSpec`.
+- `nimbus sandbox-supervisor` is a hidden/internal single-binary entrypoint for
+  sandbox-local supervisor packaging. It consumes and validates
+  `SandboxEgressEnforcementPlan` from
+  `NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON`, or from an inline test contract,
+  and intentionally reports `packet_enforcement_active=false` until EPS4b2
+  wires traffic through the supervisor/proxy or equivalent kernel path.
 - Modularity note: `operator_policy.rs` remains the schema/compiler
   composition root and is intentionally under the 2,000-line hard limit.
   Concept-owned policy children now own egress and reload state; future policy
   concepts should follow that pattern instead of growing the composition root.
 
-Batch 3 started EPS4b by landing EPS4b0: a typed enforcement contract that
-future supervisor/proxy code can consume without changing the runtime or bundle
-seams again. The remaining EPS4b work is EPS4b1-EPS4b3: package the
-sandbox-local supervisor/proxy, force process-capable guest egress through it
+Batch 3 started EPS4b by landing EPS4b0-EPS4b1: a typed enforcement contract
+and hidden single-binary supervisor entrypoint that can consume it without
+changing the runtime or bundle seams again. The remaining EPS4b work is
+EPS4b2-EPS4b3: force process-capable guest egress through the supervisor/proxy
 or an equivalent kernel-enforced path, and run the Linux conformance proof.
 
 ## Open Questions

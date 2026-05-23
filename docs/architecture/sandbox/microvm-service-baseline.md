@@ -172,9 +172,10 @@ Production tenant isolation requires these additional boundaries:
   targets, and L7 method/path rules, then compiles to a canonical policy before
   launch comparison/materialization. The launch materialization is the
   schema-versioned `SandboxEgressEnforcementPlan`; today's mode is
-  `launch_metadata` and its reload policy is `recreate_required`. The actual
-  sandbox-local proxy or equivalent Linux enforcement path remains owned by
-  EPS4b1-EPS4b3 in
+  `launch_metadata` and its reload policy is `recreate_required`. The hidden
+  `nimbus sandbox-supervisor` entrypoint consumes the contract but remains
+  validation-only until traffic interception lands. The actual sandbox-local
+  proxy or equivalent Linux enforcement path remains owned by EPS4b2-EPS4b3 in
   `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
 - **HostBridge and runtime grants:** in-process runtime code receives only the
   invocation tenant and exact grants. It cannot request another tenant's
