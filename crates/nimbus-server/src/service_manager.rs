@@ -394,6 +394,35 @@ impl SandboxServiceManager {
             .await
     }
 
+    pub async fn reload_service_egress_for_decision_async(
+        &self,
+        tenant_id: &TenantId,
+        decision: &TenantIsolationDecision,
+        service_name: &str,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        if decision.tenant_id() != tenant_id {
+            return Err(Error::InvalidInput(format!(
+                "egress reload decision tenant {} does not match requested tenant {}",
+                decision.tenant_id(),
+                tenant_id
+            )));
+        }
+        let key = TenantServiceKey::new(tenant_id, service_name);
+        decision
+            .service_access(service_name, "sandbox service egress reload")?
+            .ensure_tenant_matches(tenant_id, "sandbox service egress reload")?;
+        let Some(handle) = self.refresh_handle_async(&key).await? else {
+            return Ok(None);
+        };
+        let egress = decision.network().sandbox_egress().clone();
+        self.sandbox_backend
+            .reload_egress_policy(&handle.id, egress)
+            .await
+            .map_err(|error| sandbox_backend_error(&key, "reload egress policy", &error))?;
+        let refreshed = self.refresh_handle_async(&key).await?.unwrap_or(handle);
+        Ok(Some(refreshed))
+    }
+
     fn tenant_handles(&self, tenant_id: &TenantId) -> Vec<(TenantServiceKey, SandboxHandle)> {
         self.state
             .lock()
@@ -588,6 +617,7 @@ mod tests {
         stop_calls: AtomicUsize,
         artifact_cleanup_calls: AtomicUsize,
         inspect_calls: AtomicUsize,
+        egress_reloads: Mutex<Vec<(String, SandboxEgressPolicy)>>,
         ready_after_inspects: usize,
         handle_tenant_override: Option<TenantId>,
         handles: Mutex<BTreeMap<String, SandboxHandle>>,
@@ -601,6 +631,7 @@ mod tests {
                 stop_calls: AtomicUsize::new(0),
                 artifact_cleanup_calls: AtomicUsize::new(0),
                 inspect_calls: AtomicUsize::new(0),
+                egress_reloads: Mutex::new(Vec::new()),
                 ready_after_inspects,
                 handle_tenant_override: None,
                 handles: Mutex::new(BTreeMap::new()),
@@ -710,6 +741,18 @@ mod tests {
                 .lock()
                 .expect("backend lock should not be poisoned")
                 .remove(id.as_str());
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn reload_egress_policy(
+            &self,
+            id: &SandboxId,
+            egress: SandboxEgressPolicy,
+        ) -> SandboxFuture<()> {
+            self.egress_reloads
+                .lock()
+                .expect("backend lock should not be poisoned")
+                .push((id.as_str().to_owned(), egress));
             Box::pin(async move { Ok(()) })
         }
 
@@ -865,6 +908,74 @@ mod tests {
             .expect("handle should be returned");
 
         assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn reload_service_egress_for_decision_updates_active_backend_policy() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db"),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let start_decision = service_activation_decision(&isolation, "db")
+            .expect("db service activation decision should build");
+        let handle = manager
+            .start_service_for_decision_async(
+                &start_decision,
+                "db",
+                HostCallCancellation::default(),
+            )
+            .await
+            .expect("service should start")
+            .expect("handle should exist");
+        let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "stripe",
+            PublishedEndpointProtocol::Https,
+            "api.stripe.com",
+            443,
+        )]);
+        let reload_decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+                    "db",
+                    "egress-reload",
+                ))
+                .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
+                .with_network(
+                    crate::tenant_isolation::TenantNetworkPolicyDecision::default()
+                        .with_sandbox_egress(egress.clone())
+                        .expect("test egress policy should compile"),
+                ),
+            )
+            .expect("reload decision with egress should admit");
+
+        let reloaded = manager
+            .reload_service_egress_for_decision_async(&tenant_id, &reload_decision, "db")
+            .await
+            .expect("egress reload should apply")
+            .expect("active handle should remain");
+
+        assert_eq!(reloaded.id, handle.id);
+        let reloads = backend
+            .egress_reloads
+            .lock()
+            .expect("backend lock should not be poisoned");
+        assert_eq!(reloads.len(), 1);
+        assert_eq!(reloads[0].0, handle.id.as_str());
+        assert_eq!(reloads[0].1, egress);
     }
 
     #[tokio::test]

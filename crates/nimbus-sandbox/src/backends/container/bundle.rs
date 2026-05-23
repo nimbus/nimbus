@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::egress::{
     SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_PROXY_URL_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS,
-    SandboxEgressEnforcementPlan, SandboxEgressLaunchEnforcement,
+    SandboxEgressEnforcementPlan, SandboxEgressReloadPolicy,
 };
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
@@ -104,9 +104,14 @@ pub(crate) fn build_bundle_config(
 
     validate_port_bindings(&spec.port_bindings)?;
     validate_resource_limits(&spec.resources)?;
-    let egress_enforcement = SandboxEgressLaunchEnforcement::ProcessSupervisorProxy
-        .materialize(&spec.egress)
+    let compiled_egress = spec
+        .egress
+        .compile()
         .map_err(|message| SandboxError::InvalidSpec { message })?;
+    let egress_enforcement = SandboxEgressEnforcementPlan::supervisor_proxy(
+        &compiled_egress,
+        SandboxEgressReloadPolicy::LiveReload,
+    );
     let process_user = parse_process_user(image_user)?;
     let process_env = process_env(
         spec,
@@ -525,7 +530,7 @@ mod tests {
         );
         assert_eq!(
             enforcement.reload_policy,
-            SandboxEgressReloadPolicy::RecreateRequired
+            SandboxEgressReloadPolicy::LiveReload
         );
         assert_eq!(enforcement.policy().rules()[0].host, "api.stripe.com");
         enforcement
@@ -604,7 +609,7 @@ mod tests {
         );
         assert_eq!(
             enforcement.reload_policy,
-            SandboxEgressReloadPolicy::RecreateRequired
+            SandboxEgressReloadPolicy::LiveReload
         );
         assert!(
             enforcement.policy().is_deny_all(),

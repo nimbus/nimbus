@@ -1125,7 +1125,7 @@ impl OperatorPolicyDiffSummary {
             &previous.sandbox_egress,
             &next.sandbox_egress,
         ) {
-            lifecycle = lifecycle.max(OperatorPolicyLifecycle::RecreateRequired);
+            lifecycle = lifecycle.max(sandbox_egress_reload_lifecycle(next.sandbox_backend));
         }
         if previous.sandbox_backend != next.sandbox_backend {
             changes.push(format!(
@@ -1249,6 +1249,13 @@ fn record_vec_delta(
         changes.push(format!("{label} removed: {}", removed.join(", ")));
     }
     changed
+}
+
+fn sandbox_egress_reload_lifecycle(backend: Option<SandboxBackendKind>) -> OperatorPolicyLifecycle {
+    match backend {
+        Some(SandboxBackendKind::Container) => OperatorPolicyLifecycle::DynamicReload,
+        Some(SandboxBackendKind::Krun) | None => OperatorPolicyLifecycle::RecreateRequired,
+    }
 }
 
 fn record_image_policy_delta(
@@ -1561,7 +1568,7 @@ workloads:
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
-      backend: krun
+      backend: container
     network:
       egress:
         allow:
@@ -1578,7 +1585,7 @@ workloads:
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
-      backend: krun
+      backend: container
     network:
       egress:
         allow:
@@ -1599,7 +1606,7 @@ workloads:
     name: "worker"
     sandbox:
       sandbox_id: "worker-1"
-      backend: krun
+      backend: container
     network:
       egress:
         allow:
@@ -1864,9 +1871,27 @@ workloads:
     }
 
     #[test]
-    fn policy_diff_classifies_egress_only_changes_as_recreate_until_live_reload_exists() {
+    fn policy_diff_classifies_egress_only_changes_as_dynamic_reload() {
         let from = parse_policy(EGRESS_DIFF_FROM);
         let to = parse_policy(EGRESS_DIFF_TO);
+
+        let diff = OperatorPolicyDiff::between(&from, &to).expect("diff should evaluate");
+
+        assert_eq!(diff.lifecycle(), OperatorPolicyLifecycle::DynamicReload);
+        assert_eq!(diff.changed_workloads.len(), 1);
+        assert_eq!(
+            diff.changed_workloads[0].lifecycle,
+            OperatorPolicyLifecycle::DynamicReload
+        );
+        let rendered = diff.render_text();
+        assert!(rendered.contains("Lifecycle: dynamic_reload"));
+        assert!(rendered.contains("sandbox egress added: github"));
+    }
+
+    #[test]
+    fn policy_diff_keeps_krun_egress_changes_recreate_required() {
+        let from = parse_policy(&EGRESS_DIFF_FROM.replace("backend: container", "backend: krun"));
+        let to = parse_policy(&EGRESS_DIFF_TO.replace("backend: container", "backend: krun"));
 
         let diff = OperatorPolicyDiff::between(&from, &to).expect("diff should evaluate");
 
@@ -1914,7 +1939,7 @@ workloads:
         );
         assert_eq!(
             applied.lifecycle,
-            Some(OperatorPolicyLifecycle::RecreateRequired)
+            Some(OperatorPolicyLifecycle::DynamicReload)
         );
 
         let rejected = reload.reload(parse_policy(INVALID_EGRESS_POLICY));

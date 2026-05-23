@@ -139,13 +139,13 @@ should remain packaged and versioned with Nimbus.
 | EPS0 | `done` | Define typed policy artifact schema and ownership boundaries. | `cargo test -p nimbus-server operator_policy -- --nocapture`: golden YAML fixtures reject unknown fields, unsafe defaults, and invalid wildcard/port/secret/image shapes. |
 | EPS1 | `done` | Implement built-in policy compiler into `TenantIsolationDecision` inputs. | `cargo test -p nimbus-server operator_policy -- --nocapture`: compiled decisions use real `TenantIsolationDecision` IDs, runtime admission, audit records, and fail-closed validation. |
 | EPS2 | `done` | Add `nimbus policy validate`, `explain`, and `diff`. | `cargo test -p nimbus-bin policy -- --nocapture`: CLI parse and render fixtures cover stable diagnostics, decision traces, and authority delta summaries. |
-| EPS3 | `done` | Define dynamic versus recreate-required policy lifecycle. | `cargo test -p nimbus-server operator_policy -- --nocapture`: launch-materialized egress diffs and static authority changes classify as `recreate_required`, no-op reload stays dynamic, and invalid reload keeps last-known-good. |
+| EPS3 | `done` | Define dynamic versus recreate-required policy lifecycle. | `cargo test -p nimbus-server operator_policy -- --nocapture`: backend-aware sandbox egress diffs classify container egress-only changes as `dynamic_reload` and krun egress changes as `recreate_required`; static authority changes classify as `recreate_required`, no-op reload stays dynamic, and invalid reload keeps last-known-good. |
 | EPS4a | `done` | Add typed sandbox egress PEP contract and launch materialization seam. | `cargo test -p nimbus-sandbox egress -- --nocapture`, `cargo test -p nimbus-server service_manager -- --nocapture`, and `cargo test -p nimbus-bin x_nimbus_egress -- --nocapture`: default deny, explicit allow, SSRF/internal denial, wildcard validation, L7 method/path denial, service-manager policy mismatch, and Compose lowering. |
 | EPS4b0 | `done` | Add a typed egress enforcement contract for the future sandbox supervisor/proxy. | `cargo test -p nimbus-sandbox egress -- --nocapture`: launch metadata is schema-versioned, default-deny by default, explicit allows compile to canonical policy, invalid raw policy fails closed, and launch metadata cannot claim live reload. |
 | EPS4b1 | `done` | Package a sandbox-local supervisor/proxy entrypoint with Nimbus. | `cargo test -p nimbus-bin sandbox_supervisor -- --nocapture`: hidden `nimbus sandbox-supervisor` entrypoint parses, consumes env-backed `SandboxEgressEnforcementPlan`, rejects missing/invalid contracts, and reports validation-only status with `packet_enforcement_active=false`. |
-| EPS4b2a | `done` | Select the supervisor/proxy enforcement contract for process-capable sandbox launches. | `cargo test -p nimbus-sandbox egress -- --nocapture` and focused krun/container bundle egress tests prove default-deny and explicit-allow bundles emit `supervisor_proxy` + `recreate_required`, spoofed env is replaced, and invalid egress policy fails closed. |
+| EPS4b2a | `done` | Select the supervisor/proxy enforcement contract for process-capable sandbox launches. | `cargo test -p nimbus-sandbox egress -- --nocapture` and focused krun/container bundle egress tests prove default-deny and explicit-allow bundles emit `supervisor_proxy`, spoofed env is replaced, and invalid egress policy fails closed. Container bundles now advertise `live_reload`; krun bundles remain `recreate_required` while execute-mode is fail-closed. |
 | EPS4b2b | `done` | Force process-capable guest egress through the supervisor/proxy or equivalent kernel-enforced path. | `cargo test -p nimbus-sandbox netavark_request -- --nocapture` and `cargo test -p nimbus-sandbox container_launch_network_config_denies_direct_egress_for_supervised_processes -- --nocapture` prove container execute-mode network intent uses a netavark internal bridge that denies ambient direct egress. Minicloud evidence: `sudo -E NIMBUS_CONTAINER_EGRESS_WORKDIR=/tmp/nimbus-container-egress-proof target/debug/deps/container_linux_egress-* --ignored --nocapture` passed, proving a real BusyBox guest records direct external HTTP egress as `denied`. `cargo test -p nimbus-sandbox krun::vm -- --nocapture` proves krun execute-mode now fails closed before bundle/state artifact materialization until a packet-level libkrun TSI egress PEP exists. |
-| EPS4b3 | `in_progress` | Add Linux network conformance and live egress reload proof. | Current evidence: `cargo test -p nimbus-sandbox egress_proxy -- --nocapture` proves the reusable HTTP egress proxy enforces default deny, allowed endpoint success, DNS-resolved internal/SSRF denial, L7 method/path denial, hop-by-hop proxy header cleanup, and live policy reload without restart. `cargo test -p nimbus-sandbox container -- --nocapture` proves container execute plans inject a bridge-reachable proxy URL, scrub spoofed proxy env, reserve proxy ports without colliding with service ports, stop proxy listeners during cleanup, and reload policy into a running proxy. Remaining evidence: run the Linux guest conformance matrix. |
+| EPS4b3 | `done` | Add Linux network conformance and live egress reload proof. | `cargo test -p nimbus-sandbox egress_proxy -- --nocapture` proves the reusable egress proxy enforces default deny, allowed HTTP endpoint success, HTTPS CONNECT tunneling, HTTPS absolute-URI fail-closed behavior, DNS-resolved internal/SSRF denial, L7 method/path denial, hop-by-hop proxy header cleanup, and live policy reload without restart. `cargo test -p nimbus-sandbox container -- --nocapture` proves container execute plans inject a bridge-reachable proxy URL, scrub spoofed proxy env, reserve proxy ports without colliding with service ports, advertise `live_reload`, stop proxy listeners during cleanup, and reload policy into a running proxy. `cargo test -p nimbus-server operator_policy -- --nocapture` and `cargo test -p nimbus-server service_manager -- --nocapture` prove the control plane classifies container egress-only diffs as dynamic, keeps krun egress recreate-required, and can call the sandbox reload seam for an active service. Minicloud evidence: `sudo -E NIMBUS_CONTAINER_EGRESS_WORKDIR=/tmp/nimbus-container-egress-proof target/debug/deps/container_linux_egress-* --ignored --test-threads=1 --nocapture` passed with 2 Linux root tests, proving direct proxy bypass denial, proxy-allowed endpoint success, loopback/default denial, L7 denial, DNS-resolved internal denial, and live reload inside a real BusyBox guest. |
 | EPS5 | `todo` | Add OCSF and OpenTelemetry export mapping. | Fixtures prove tenant/sandbox events redact secrets and map to stable OCSF/OTel records with decision IDs. |
 | EPS6 | `todo` | Add external policy backend seam without making it mandatory. | Fake OPA/Cedar-style adapters prove allow, deny, malformed output, timeout, and unavailable-backend fail-closed behavior. |
 | EPS7 | `todo` | Add denied-event policy draft workflow. | Denied egress fixtures produce minimal draft policy, never auto-apply, and require explicit approval. |
@@ -167,8 +167,10 @@ should remain packaged and versioned with Nimbus.
   enterprise-ingestable format without leaking tokens, credentials, query
   parameters, secret handles, or raw bearer claims.
 - Policy reload has last-known-good semantics. Controls that are only
-  materialized at launch, including the current egress policy contract, require
-  sandbox recreation until EPS4b3 lands a live enforcement/reload path.
+  materialized at launch require sandbox recreation. Container sandbox egress is
+  dynamically reloadable through the sandbox backend reload seam; krun egress
+  remains recreate-required/fail-closed until a packet-level libkrun TSI PEP
+  exists.
 - Operator docs explain when to use in-process runtime grants, `ctx.services`,
   microVM service egress policy, and external policy engines.
 
@@ -200,12 +202,12 @@ Batch 1 landed EPS0-EPS2:
 
 Batch 2 landed EPS3 and EPS4a:
 
-- Policy diffs now classify launch-materialized egress changes and static
-  authority changes such as runtime, service, endpoint, sandbox identity,
-  storage, volume, image, secret, quota, or runtime-admission changes as
-  `recreate_required`. Egress-only changes can become `dynamic_reload` only
-  after EPS4b2b-EPS4b3 land a live proxy/supervisor or equivalent enforcement
-  reload path.
+- Policy diffs classify static authority changes such as runtime, service,
+  endpoint, sandbox identity, storage, volume, image, secret, quota, or
+  runtime-admission changes as `recreate_required`. After EPS4b3, sandbox
+  egress-only changes are backend-aware: container egress is `dynamic_reload`
+  through the live proxy reload seam, while krun egress remains
+  `recreate_required`.
 - `OperatorPolicyReloadState` gives reloads last-known-good semantics: valid
   policy candidates update the desired evaluation and report whether recreation
   is required, while invalid candidates are rejected without replacing the
@@ -215,19 +217,14 @@ Batch 2 landed EPS3 and EPS4a:
   method, path prefix, and `allow_internal_ips`. Admission and launch seams
   compile the raw policy into a validated canonical policy before comparing or
   authorizing it.
-- The current implementation has an evaluator and materialization seam, plus
-  a container kernel/network deny for ambient direct egress. krun and container
-  OCI bundle generation now use `SandboxEgressLaunchEnforcement` to inject a
-  `NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON` contract. Process-capable launches
-  select `supervisor_proxy` with `recreate_required` reload, which is the
-  intended sandbox-local enforcement path. Container execute-mode launches
-  deny direct bridge egress while the proxy path is completed. krun execute-mode
+- The current implementation has an evaluator and materialization seam, a
+  container kernel/network deny for ambient direct egress, and a live container
+  egress proxy path. krun and container OCI bundle generation inject a
+  `NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON` contract. Container process-capable
+  launches select `supervisor_proxy` with `live_reload`, while krun execute-mode
   fails closed until Nimbus has a packet-level libkrun TSI egress PEP, because
   the current TSI path can proxy outbound guest `connect()` calls on the host
-  side without consulting the Nimbus egress policy. EPS4b3 still owns the
-  broader Linux conformance proof and live reload path. A future
-  supervisor/proxy mode can advertise `live_reload` only after live reload is
-  implemented and proven. The prior
+  side without consulting the Nimbus egress policy. The prior
   `NIMBUS_SANDBOX_EGRESS_POLICY_JSON` name remains reserved and scrubbed but
   is no longer emitted. The
   server service manager rejects sandbox launches whose spec asks for egress
@@ -238,9 +235,9 @@ Batch 2 landed EPS3 and EPS4a:
   sandbox-local supervisor packaging. It consumes and validates
   `SandboxEgressEnforcementPlan` from
   `NIMBUS_SANDBOX_EGRESS_ENFORCEMENT_JSON`; there is no CLI override for the
-  launch-materialized contract. It intentionally reports
-  `packet_enforcement_active=false` until EPS4b2b wires traffic through the
-  supervisor/proxy or equivalent kernel path.
+  launch-materialized contract. The entrypoint itself still reports
+  `packet_enforcement_active=false`; container execute-mode now uses the
+  host-side egress proxy as the proven enforcement path.
 - Modularity note: `operator_policy.rs` remains the schema/compiler
   composition root and is intentionally under the 2,000-line hard limit.
   Concept-owned policy children now own egress and reload state; future policy
@@ -250,12 +247,13 @@ Batch 3 started EPS4b by landing EPS4b0-EPS4b1: a typed enforcement contract
 and hidden single-binary supervisor entrypoint that can consume it without
 changing the runtime or bundle seams again. EPS4b2a then moved process-capable
 krun/container launch contracts onto the `supervisor_proxy` enforcement path
-while keeping `recreate_required` reload semantics. EPS4b2b then made the
+while keeping conservative reload semantics until the backend proof landed.
+EPS4b2b then made the
 existing process-capable execution paths safe to ship: container execute-mode
 gets a netavark internal bridge that denies ambient direct egress, while krun
 execute-mode fails closed until a packet-level libkrun TSI egress PEP exists.
-The remaining EPS4b work is EPS4b3: run the Linux conformance proof for default
-deny, explicit allow, SSRF/internal denial, L7 denial, and reload semantics.
+EPS4b3 then closed the live container proxy proof and kept krun recreate/fail-
+closed until it has its own packet-level PEP.
 
 Batch 4 closed EPS4b2b by making container execute-mode network intent deny
 ambient direct egress before the workload starts and making krun execute-mode
@@ -267,17 +265,18 @@ test, `container_execute_mode_denies_direct_external_egress`, now starts a real
 BusyBox container on minicloud, attempts direct external HTTP, writes the result
 through a tenant volume, and passed with `denied`. `KrunSandboxBackend` refuses
 execute-mode before bundle/state artifact materialization until Nimbus has a
-packet-level egress policy hook for libkrun TSI. EPS4b3 still owns allowed
-endpoint success, SSRF/internal and L7 denial, and reload conformance.
+packet-level egress policy hook for libkrun TSI. EPS4b3 later added the allowed
+endpoint, SSRF/internal, L7 denial, and reload conformance.
 
 Batch 5 started EPS4b3 with the reusable egress proxy enforcement core. The
 proxy listens on loopback by default, parses HTTP forward-proxy absolute URIs
 with the shared typed policy model, resolves DNS before authorization so
 name-based SSRF/internal targets are denied, strips hop-by-hop proxy headers,
-forwards allowed requests in origin-form, and supports live policy reload by
-swapping the compiled policy without restarting the listener. This is the
-product seam needed for the Linux guest matrix, but it is not yet wired into
-container launch or exposed through the sandbox supervisor entrypoint.
+forwards allowed requests in origin-form, supports HTTPS CONNECT tunnels, and
+supports live policy reload by swapping the compiled policy without restarting
+the listener. Unsupported HTTPS absolute-form requests fail closed without
+contacting upstream. This became the product seam consumed by container
+execute-mode in Batch 6 and proven against a Linux guest in Batch 7.
 
 Batch 6 wired the proxy core into container execute-mode. Execute plans now
 assign an internal proxy listener on the container bridge gateway, reserve the
@@ -287,8 +286,18 @@ and keep plan-only bundles free of live proxy claims. The container backend owns
 the live proxy listener handles in a runtime registry, restarts a missing proxy
 from manifest state during inspect, stops the listener during cleanup, and
 offers a reload method that swaps a running proxy to the new compiled egress
-policy while persisting the manifest. EPS4b3 still needs the Linux guest
-conformance matrix before it can be marked done.
+policy while persisting the manifest.
+
+Batch 7 closed EPS4b3. `SandboxBackend` now exposes a live egress reload seam;
+the container backend implements it, and `SandboxServiceManager` can reload an
+active service's admitted egress policy through that seam. Operator policy diff
+classification is backend-aware: container-only egress changes are
+`dynamic_reload`, while krun egress remains `recreate_required` because krun
+execute-mode is still fail-closed pending a libkrun TSI packet-level PEP.
+Container bundles now advertise `live_reload`; krun bundles stay
+`recreate_required`. The minicloud BusyBox conformance matrix proved direct
+proxy bypass denial, default/loopback denial, L7 denial, DNS-resolved internal
+denial, allowed endpoint success, and live reload in a real Linux guest.
 
 ## Open Questions
 
