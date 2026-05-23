@@ -51,7 +51,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Deno/V8, with a dedicated Bun/JSC pool, but not as a product-selectable
     runtime until construction profile, resolver policy, native permission
     hooks, memory, cancellation, teardown, and macOS/Linux verification gates
-    pass. BEP0-BEP6 are complete: BEP3 added typed Bun/JSC pool metadata and
+    pass. BEP0-BEP7 are complete: BEP3 added typed Bun/JSC pool metadata and
     validation that rejects V8/Deno with Bun pool metadata, rejects Bun/JSC
     with V8/Deno pool metadata, and keeps all Bun/JSC product routes blocked;
     BEP4 added the disabled backend-owned Bun/JSC pool scaffold with
@@ -62,14 +62,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     resolution on Bun proof commit `c5bafa6d73`; BEP6 proved a native
     permission deny profile for filesystem, network/server, env/process,
     subprocess, FFI, plugin, worker, timer, fetch/WebSocket, and
-    tenant-visible dynamic-code surfaces on Bun proof commit `0c132cff81`.
-    BEP7 is in progress: macOS verification passes on Bun proof commit
-    `4b5de5ee5d` with before-guest-entry cancellation denied by the
-    owner-side entry gate, after-entry cancellation changed from elapsed-time
-    sleep to host-observed spin-entry acknowledgement, and fresh teardown plus
-    retained trusted reuse named in the proof output; Linux/minicloud
-    verification is still required before BEP7 can be marked complete. Fork
-    posture remains upstream-first; no `nimbus/bun` fork yet.
+    tenant-visible dynamic-code surfaces on Bun proof commit `0c132cff81`;
+    BEP7 proved memory, cancellation, teardown, and retained trusted reuse on
+    Bun proof commit `4b5de5ee5d` with before-guest-entry cancellation denied
+    by the owner-side entry gate, after-entry cancellation changed from
+    elapsed-time sleep to host-observed spin-entry acknowledgement, and fresh
+    teardown plus retained trusted reuse named in the proof output. The reusable
+    `bash scripts/verify-bun-jsc-in-process-lockdown.sh` gate passes locally
+    and on Debian 13 `minicloud` for BEP7. BEP8 is next: integrate Bun/JSC as
+    an optional runtime backend only behind the proven lockdown profile and
+    pool policy. Fork posture remains upstream-first; no `nimbus/bun` fork yet.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

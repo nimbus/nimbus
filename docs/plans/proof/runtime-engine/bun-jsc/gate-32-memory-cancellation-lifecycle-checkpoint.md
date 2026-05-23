@@ -6,8 +6,7 @@ Nimbus plan: `docs/plans/bun-jsc-embedder-api-and-pool-plan.md`
 
 ## Status
 
-Status: macOS proof passed; Linux/minicloud proof still required before
-`BEP7` can be marked complete.
+Status: macOS and Linux/minicloud proof passed; `BEP7` is complete.
 
 Bun proof commit `4b5de5ee5d173975485fd907abe7b6e1457a90c5`
 (`Add Bun embedder pre-entry cancellation gate proof`) strengthens the
@@ -98,21 +97,81 @@ The reusable gate passed all 10 steps locally, including:
 - Bun native `check-bun-embed-probe`
 - Nimbus and Bun whitespace checks
 
-## Linux Verification Status
+## Linux Verification
 
-Linux/minicloud verification has not yet been rerun for Bun proof commit
-`4b5de5ee5d`. The existing minicloud worktrees are detached, and the Nimbus
-worktree there has a local verification-script modification from the earlier
-Gate 25 proof lane. To avoid overwriting remote state, the intended route is
-an isolated minicloud proof worktree created from Git bundles.
+Passed on Debian 13 `minicloud` as `nimbus@192.168.4.29` from isolated proof
+worktrees created from local Git bundles:
 
-The Nimbus bundle transfer completed. The Bun bundle transfer was blocked by
-the approval reviewer because it exports local Bun source changes to another
-machine. Since `minicloud` is a user-owned machine on the same network, this is
-a reasonable verification step only after explicit user approval.
+```text
+Nimbus proof worktree: /home/nimbus/src/github.com/nimbus/nimbus-bep7-proof-20260523180348
+Nimbus proof commit:   84e6fb640127d5985b2920e1edc8be4b6dbc912f
+Bun proof worktree:    /home/nimbus/src/github.com/oven-sh/bun-bep7-proof-20260523180348
+Bun proof commit:      4b5de5ee5d173975485fd907abe7b6e1457a90c5
+```
+
+The Linux command was:
+
+```sh
+cd /home/nimbus/src/github.com/nimbus/nimbus-bep7-proof-20260523180348
+. "$HOME/.cargo/env"
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
+nvm use --lts >/dev/null
+export PROOF_ROOT="$HOME/.cache/nimbus-proof"
+mkdir -p "$PROOF_ROOT/tmp" \
+  "$PROOF_ROOT/bun-embed-native" \
+  "$PROOF_ROOT/bun-cache" \
+  "$PROOF_ROOT/bun-rust-only" \
+  "$PROOF_ROOT/bun-cargo-target"
+export TMPDIR="$PROOF_ROOT/tmp"
+export PATH="$HOME/.local/toolchains/LLVM-21.1.8-Linux-X64/bin:$HOME/.bun/bin:$PATH"
+NIMBUS_BUN_REPO=/home/nimbus/src/github.com/oven-sh/bun-bep7-proof-20260523180348 \
+NIMBUS_BUN_BUILD_DIR="$PROOF_ROOT/bun-embed-native" \
+NIMBUS_BUN_CACHE_DIR="$PROOF_ROOT/bun-cache" \
+NIMBUS_BUN_RUST_ONLY_BUILD_DIR="$PROOF_ROOT/bun-rust-only" \
+NIMBUS_BUN_CARGO_TARGET_DIR="$PROOF_ROOT/bun-cargo-target" \
+bash scripts/verify-bun-jsc-in-process-lockdown.sh
+```
+
+The reusable gate passed all 10 Linux steps, including:
+
+- 10 Nimbus runtime policy tests
+- 4 Bun/JSC pool scaffold tests
+- 10 registry/runtime metadata rejection tests
+- 2 runtime diagnostics tests
+- 1 ignored Bun source proof test
+- Bun `cargo fmt --all --check`
+- Bun native `check-bun-embed-probe`
+- Nimbus and Bun whitespace checks
+
+The Linux native probe produced the same BEP7 lifecycle result:
+
+```text
+nimbus bun embed cancellation policy:
+  before_guest_entry: owner_entry_gate_denied_and_recovered
+  after_guest_entry_sync_loop: spin_entered_ack
+  recovery_after_deadline_cancel: ok
+  recovery_after_external_cancel: ok
+  cancellation_timing_policy: state_ack_not_sleep
+
+nimbus bun embed lifecycle reuse stress:
+  fresh_vm_create_invoke_destroy_iterations: 4
+  retained_vm_invocations_before_cancel: 8
+  external_cancel_recovery_iterations: 3
+  external_cancel_trigger: spin_entered_ack
+  cancellation_timing_policy: state_ack_not_sleep
+  normal_completion_before_cancel: retained_invocations_ok
+  promise_microtask_progress: async_host_bridge_ok
+  teardown_loop: fresh_vm_create_invoke_destroy_ok
+  retained_vm_post_cancel_invocation: ok
+  retained_vm_reuse: trusted_generated_wrapper_ok
+  product_first_policy: fresh_vm_or_discard_with_outer_quota_required
+```
 
 ## Outcome
 
-`BEP7` remains in progress. It can be marked complete only after the
-Linux/minicloud lane passes with the same Bun proof head and the plan records
-that evidence.
+`BEP7` is complete. Bun/JSC memory, cancellation, teardown, retained trusted
+reuse, and fresh/discard policy are proven locally on macOS and on Debian 13
+`minicloud` for Bun proof head `4b5de5ee5d`. The product policy remains
+conservative: untrusted Bun/JSC must start as fresh/discard with an outer quota
+unless a hard per-VM heap boundary lands.
