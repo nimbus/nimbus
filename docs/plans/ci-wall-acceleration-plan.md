@@ -153,7 +153,7 @@ line `10 passed, 0 failed`. The 10 conditions:
 | CW0 | `31e88d01` | scaffold CI Wall Acceleration plan + verifier + baseline proof |
 | CW1 | `523834cb` | shard verification-harness corpus across N shards per surface |
 | CW2 | `bacab0e1` | shard Rust Workspace Tests via nextest --partition |
-| CW3 | _pending_ | split External Provider Integration Tests by provider |
+| CW3 | `74e0ef8c` | split External Provider Integration Tests by provider |
 | CW4 | _pending_ | warm-sccache optimization (selected lane) |
 | CW5 | _pending_ | closeout — promote contract, archive plan, update routing |
 
