@@ -10,6 +10,8 @@ pub(crate) enum PolicyCommand {
     Validate(PolicyFileCommand),
     /// Explain the tenant-isolation decisions produced by a policy file.
     Explain(PolicyFileCommand),
+    /// Prove policy advisories and accepted-risk status.
+    Prove(PolicyFileCommand),
     /// Show authority changes between two policy files.
     Diff(PolicyDiffCommand),
 }
@@ -48,6 +50,7 @@ pub(crate) async fn run_policy_command(command: PolicyCommand) -> nimbus::Result
     match command {
         PolicyCommand::Validate(command) => run_validate_command(command),
         PolicyCommand::Explain(command) => run_explain_command(command),
+        PolicyCommand::Prove(command) => run_prove_command(command),
         PolicyCommand::Diff(command) => run_diff_command(command),
     }
 }
@@ -68,6 +71,16 @@ fn run_explain_command(command: PolicyFileCommand) -> nimbus::Result<()> {
     match command.format {
         PolicyOutputFormat::Text => print!("{}", evaluation.render_explain_text()),
         PolicyOutputFormat::Json => print_json(&evaluation)?,
+    }
+    Ok(())
+}
+
+fn run_prove_command(command: PolicyFileCommand) -> nimbus::Result<()> {
+    let document = load_policy_document(&command.file)?;
+    let report = document.prove()?;
+    match command.format {
+        PolicyOutputFormat::Text => print!("{}", report.render_text()),
+        PolicyOutputFormat::Json => print_json(&report)?,
     }
     Ok(())
 }
@@ -144,5 +157,10 @@ mod tests {
         let explanation = evaluation.render_explain_text();
         assert!(explanation.contains("runtime_admission: admit_in_process"));
         assert!(explanation.contains("network_endpoints: db/postgres"));
+
+        let proof = document.prove().expect("policy proof should run");
+        let proof_text = proof.render_text();
+        assert!(proof_text.contains("Policy prove"));
+        assert!(proof_text.contains("Advisories:"));
     }
 }

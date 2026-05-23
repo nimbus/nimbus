@@ -22,6 +22,7 @@ use super::{
 mod draft;
 mod egress;
 mod external;
+mod prove;
 mod reload;
 
 pub use draft::{
@@ -35,6 +36,11 @@ pub use external::{
     OperatorExternalPolicyBackendErrorKind, OperatorExternalPolicyBackendIdentity,
     OperatorExternalPolicyBackendResult, OperatorExternalPolicyDecision,
     OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome, OperatorExternalPolicyRequest,
+};
+use prove::validate_accepted_risks;
+pub use prove::{
+    OperatorPolicyAcceptedRisk, OperatorPolicyAdvisory, OperatorPolicyAdvisoryKind,
+    OperatorPolicyAdvisorySeverity, OperatorPolicyProofReport,
 };
 pub use reload::{OperatorPolicyReloadOutcome, OperatorPolicyReloadState};
 
@@ -54,6 +60,8 @@ pub struct OperatorPolicyDocument {
     pub tenant: String,
     #[serde(default)]
     pub metadata: OperatorPolicyMetadata,
+    #[serde(default)]
+    pub accepted_risks: Vec<OperatorPolicyAcceptedRisk>,
     #[serde(default)]
     pub defaults: OperatorPolicyDefaults,
     pub workloads: Vec<OperatorPolicyWorkload>,
@@ -206,6 +214,7 @@ impl OperatorPolicyDocument {
         TenantId::new(self.tenant.clone()).map_err(|error| {
             Error::InvalidInput(format!("operator policy tenant is invalid: {error}"))
         })?;
+        validate_accepted_risks(&self.accepted_risks)?;
         validate_storage_namespace(
             &self.defaults.storage_namespace,
             "defaults.storage_namespace",

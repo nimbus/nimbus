@@ -139,6 +139,13 @@ mod tests {
             "policy validate should parse as a first-class root command"
         );
 
+        let cli = Cli::parse_from(["nimbus", "policy", "prove", "--file", "nimbus.policy.yaml"]);
+
+        assert!(
+            matches!(cli.command, Command::Policy(PolicyCommand::Prove(_))),
+            "policy prove should parse as a first-class root command"
+        );
+
         let cli = Cli::parse_from([
             "nimbus",
             "policy",
