@@ -747,9 +747,16 @@ jobs:
       - name: Rebuild instrumented workspace (no run)
         # cargo-llvm-cov's `report` subcommand needs the instrumented
         # binaries' coverage maps on the reducer. Build them without
-        # running tests; sccache should hit on the per-crate compilation
-        # units the shards already populated, so this is fast.
-        run: cargo llvm-cov --no-run --workspace --exclude nimbus-runtime -j 4
+        # running tests. `cargo llvm-cov --no-run` is deprecated and now
+        # tries to merge profile data instead of just building, so we
+        # use the explicit show-env + cargo test --no-run pattern: pull
+        # the LLVM_PROFILE_FILE/RUSTFLAGS env that llvm-cov would set,
+        # then compile the test binaries with that instrumentation.
+        # sccache should hit on per-crate units the shards already
+        # populated, so this is fast.
+        run: |
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo test --no-run --workspace --exclude nimbus-runtime -j 4
 
       - name: Download every shard's profraw
         # cargo-llvm-cov's report mode reads profraw files from the
