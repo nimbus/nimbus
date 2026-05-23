@@ -77,10 +77,22 @@ no transitive rebuild kicks in.
 
 ### `warm-sccache`
 
-Runs `cargo check --workspace --tests` once with sccache wired, so
-every workspace crate (and its dev-deps) gets rustc'd into the shared
+Runs `cargo check --workspace` once with sccache wired, so every
+workspace crate's lib/bin dep graph gets rustc'd into the shared
 sccache pool. Downstream parallel Rust jobs then hit on the same push
 instead of cold-compiling identical deps in parallel.
+
+CW4 dropped `--tests` from this command. The test-binary rustc
+invocations had marginal sccache reuse downstream (each integration
+test binary is its own rustc call with its own dev-dep mix) while
+adding wall minutes to the critical-path warm pass. Test-bin compile
+now lands inline in the downstream test jobs, which were already
+sharded by CW1 (harness) and CA3 (coverage) so the test-bin work is
+parallelized across runners rather than serialized on the warm leader.
+The dep-graph compile that *does* benefit from cross-job reuse (lib
+crates + their transitive deps) is unchanged because lib/bin rustc
+calls produce the same sccache keys downstream test jobs hit when
+they cargo-test those same crates.
 
 Consumers (`needs: [warm-sccache]`):
 

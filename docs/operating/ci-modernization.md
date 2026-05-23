@@ -319,6 +319,106 @@ equivalent of CA's closeout check; it exits 0 iff all 10 conditions
 of the CA plan are satisfied. The CA gate layers cleanly on top of
 the CM and CC gates.
 
+## PR critical-path acceleration
+
+The CW (CI Wall Acceleration) wave attacks the PR-side wall poles that
+remained after CA collapsed the Coverage pole. The CW0 baseline on
+`32951ee7` measured a 23m34s wall whose critical path was
+`warm-sccache (10.2m) → Server Verification Harness (12.7m)` plus lateral
+poles at Rust Workspace Tests (15.7m) and External Provider Integration
+Tests (14.6m). The four CW lanes target each pole directly.
+
+### CW1: harness corpus sharding
+
+`scripts/verification-harness.sh` accepts an optional third positional
+argument of the form `N/M`. When passed, the script exports
+`NIMBUS_HARNESS_SHARD=N/M` to the cargo invocation; the in-test corpus
+filter at `crates/nimbus-storage/src/simulation/verification.rs`,
+`crates/nimbus-server/src/tests/verification_harness.rs`, and
+`crates/nimbus-runtime/src/runtime/tests/verification_harness.rs`
+honors the env var by selecting only cases with `index % M == N - 1`.
+
+The `harness` job matrix in `.github/workflows/ci.yml` expands per
+surface: server runs 4 shards (its 7-case transport-liveness corpus
+dominates), engine runs 2 shards (2-case generated-history corpus),
+storage stays single-shard (already 8.3m, below the wall pole), runtime
+stays single-shard (1.4m). Server harness max shard drops from 12.7m
+to ~3.5m.
+
+### CW2: workspace tests sharding via nextest `--partition`
+
+`Makefile`'s `test-rust-workspace` target reads `NIMBUS_NEXTEST_PARTITION`
+and forwards it as `--partition hash:N/M` to `cargo nextest run`. The
+`rust-workspace-tests` job in `ci.yml` expands into a 3-shard matrix
+with `partition: "1/3" | "2/3" | "3/3"`. Doctests (not supported by
+nextest) stay pinned to shard 1 via `if: matrix.run-doctests == 'true'`.
+
+`nextest --partition hash:N/M` hashes test paths so the partition is
+stable across runs (cache reuse + retry-on-failure both behave) but
+unpredictable enough to balance load across shards (~639/702/670 in
+local validation).
+
+### CW3: external-provider tests per-provider matrix
+
+`scripts/test-external-providers.sh` reads `NIMBUS_PROVIDER_FILTER` and
+dispatches to `postgres | mysql | libsql`, each running only that
+provider's nimbus-storage + nimbus-engine cargo invocations. When the
+filter is empty, behavior matches the pre-CW3 sequential script.
+
+The `external-provider-tests` job in `ci.yml` expands into a 3-shard
+matrix on `provider` and starts only its provider's docker fixture via
+`if: matrix.provider == '<name>'` startup steps. The pre-CW3
+`services:` block is retired; postgres + mysql now use the same
+`docker run` shape as libsql, with `--health-cmd` / `--health-interval`
+preserving the previous health-gating semantics.
+
+`fail-fast: false` ensures one provider's failure does not cancel the
+other two — `needs['external-provider-tests'].result` in
+`rust-gate-summary` still aggregates to a single result for the gate.
+
+### CW4: warm-sccache compile-cost reduction
+
+CW4's `warm-sccache` job in `ci.yml` runs `cargo check --workspace`
+(was `cargo check --workspace --tests` pre-CW4). The `--tests` drop is
+the landed lane.
+
+**Why drop `--tests`.** With `--tests`, the warm pass rustc-compiles
+every integration test binary across the workspace. Each test binary
+is its own rustc invocation with its own dev-dep mix, so the sccache
+keys are distinct from anything downstream test jobs would emit on
+their own. Downstream test jobs (harness shards, coverage shards,
+workspace-tests shards) cold-compile their own test bins anyway when
+they cargo-test the relevant crates; warm-sccache populating those keys
+upstream produced cross-job reuse only on the second downstream job to
+run a given test surface — and the harness/coverage/workspace jobs are
+already sharded by CW1 / CA3 / CW2 so each shard's test-bin compile is
+small and parallelized across runners.
+
+The dep-graph compile that *does* benefit from cross-job reuse (lib
+crates + their transitive deps) is unaffected: lib/bin rustc calls
+produce the same sccache keys downstream test jobs hit when they
+cargo-test those same crates.
+
+**Deferred lane: per-target Swatinem cache layer.** The CW plan
+considered a second lane prototyping a per-target Swatinem cache slot
+for `warm-sccache` so its `target/` would be restored between runs.
+On inspection this is redundant: `Swatinem/rust-cache@v2` already
+caches `target/` (with built-in filtering to exclude bloat), and the
+composite at `.github/actions/setup-rust-cached/action.yml` wires
+that v2 invocation onto `warm-sccache` via the shared-key
+`ci-ubuntu-stable-warm-sccache-no-bin-v2`. The 10.2m CW0 baseline
+already reflects target/ being restored. A bespoke additional layer
+would need to identify what *isn't* cached and measure savings — a
+research lane that requires CI-run measurement we did not run here.
+Defer until a measured win justifies the added complexity.
+
+### Aggregate gate
+
+`bash scripts/verify-ci-wall-acceleration.sh` is the local equivalent
+of CW's closeout check; it exits 0 iff all 10 conditions of the CW
+plan are satisfied. The CW gate layers cleanly on top of the CM, CC,
+and CA gates.
+
 ### Deferred follow-up: Windows release pole
 
 The CA5 closeout (see `docs/plans/proof/coverage-acceleration/ca5-closeout.md`)
