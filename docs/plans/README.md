@@ -51,13 +51,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Deno/V8, with a dedicated Bun/JSC pool, but not as a product-selectable
     runtime until construction profile, resolver policy, native permission
     hooks, memory, cancellation, teardown, and macOS/Linux verification gates
-    pass. BEP0-BEP4 are complete: BEP3 added typed Bun/JSC pool metadata and
+    pass. BEP0-BEP5 are complete: BEP3 added typed Bun/JSC pool metadata and
     validation that rejects V8/Deno with Bun pool metadata, rejects Bun/JSC
     with V8/Deno pool metadata, and keeps all Bun/JSC product routes blocked;
     BEP4 added the disabled backend-owned Bun/JSC pool scaffold with
     state/ack-driven lifecycle, fresh/discard versus trusted-retained policy
-    modes, and no V8/Deno internals in the public pool envelope. BEP5 starts
-    resolver/package policy proof work in Bun. Fork posture remains
+    modes, and no V8/Deno internals in the public pool envelope; BEP5 proved
+    a native Bun embedder resolver denial hook for dynamic import,
+    `Bun.resolve*`, package roots, plugin-style specifiers, and native addon
+    resolution on Bun proof commit `c5bafa6d73`. BEP6 starts native
+    permission denial/hookability proof work in Bun. Fork posture remains
     upstream-first; no `nimbus/bun` fork yet.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
