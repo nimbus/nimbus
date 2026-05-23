@@ -130,6 +130,17 @@ pub trait TenantImageVerificationProvider {
 }
 
 impl TenantImagePolicyDecision {
+    pub fn require_digest_reference(mut self) -> Self {
+        self.digest_required = true;
+        self
+    }
+
+    pub fn with_image_reference(mut self, image_reference: impl Into<String>) -> Self {
+        self.image_reference = Some(image_reference.into());
+        self.digest_required = true;
+        self
+    }
+
     pub fn with_allowed_registry(mut self, registry: impl Into<String>) -> Self {
         self.allowed_registries.push(registry.into());
         self

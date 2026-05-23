@@ -38,9 +38,9 @@ This plan owns:
 - a typed operator policy artifact that compiles into
   `TenantIsolationDecision` inputs
 - policy validation, explain, and diff commands
-- built-in Rust policy evaluator semantics for tenant isolation, sandbox
-  egress, service grants, network endpoints, image/secret/volume policy, quota
-  classes, and audit redaction
+- built-in Rust policy evaluator semantics for tenant isolation, tenant-scoped
+  storage, sandbox egress, service grants, network endpoints, image/secret/volume
+  policy, quota classes, and audit redaction
 - optional external policy backend seam for OPA/Rego, Cedar, or future customer
   PDPs after the built-in evaluator is stable
 - sandbox-local egress enforcement for `microvm_service`, browser-service, and
@@ -178,6 +178,16 @@ Batch 1 landed EPS0-EPS2:
   `TenantIsolationContext` and `TenantIsolationDecision` path. Runtime policy
   admission therefore reuses the existing production routing rule that sends
   broad Node compatibility grants away from `in_process_untrusted`.
+- `image.digest_required` is a real compiled default even when the policy admits
+  a registry instead of one concrete image reference. Registry-wide policy still
+  rejects tag-only launches.
+- `storage.namespace` is intentionally restricted to `tenant` until the storage
+  PEP consumes namespace decisions. Custom storage namespace syntax should not
+  appear policy-valid before it is enforceable.
+- `policy diff` compares the compiled authority surface rather than only a small
+  display subset. Volume grants, quota charges, audit redactions, image policy,
+  runtime profile/tier/mode, sandbox identity, and same-count secret-handle
+  changes are covered without printing raw secret handles.
 - `nimbus policy validate`, `nimbus policy explain`, and
   `nimbus policy diff` provide local policy UX without requiring OPA, Cedar,
   SPIRE, or a SIEM.

@@ -176,7 +176,9 @@ Current command taxonomy:
   shipped local policy UX for strict typed operator policy artifacts.
   `validate` proves the file parses and compiles into tenant-isolation
   decisions, `explain` renders decision IDs and grant traces, and `diff`
-  summarizes authority changes between two policy files.
+  summarizes authority changes between two policy files. `storage.namespace`
+  is currently restricted to `tenant` so policy output cannot imply custom
+  namespace enforcement before the storage PEP consumes it.
 - `nimbus start`
   shipped explicit server-start verb
 - `nimbus compose ...`

@@ -28,8 +28,14 @@ pub use image_admission::{
     TenantImageSignatureEvidence, TenantImageVerificationEvidence, TenantImageVerificationProvider,
 };
 pub use operator_policy::{
-    OPERATOR_POLICY_SCHEMA_VERSION, OperatorPolicyDecisionEvaluation, OperatorPolicyDiff,
-    OperatorPolicyDiffSummary, OperatorPolicyDocument, OperatorPolicyEvaluation,
+    OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy, OperatorImagePolicy,
+    OperatorImageProvenancePolicy, OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy,
+    OperatorNetworkPolicy, OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults,
+    OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDocument,
+    OperatorPolicyEvaluation, OperatorPolicyImageSummary, OperatorPolicyMetadata,
+    OperatorPolicyQuotaSummary, OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy,
+    OperatorRuntimeProfile, OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy,
+    OperatorStoragePolicy, OperatorVolumePolicy,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -909,6 +915,14 @@ impl TenantIsolationDecision {
 
     pub fn volumes(&self) -> &TenantVolumePolicyDecision {
         &self.volumes
+    }
+
+    pub fn image(&self) -> &TenantImagePolicyDecision {
+        &self.image
+    }
+
+    pub fn quotas(&self) -> &TenantQuotaPolicyDecision {
+        &self.quotas
     }
 
     pub fn audit_redactions(&self) -> &TenantAuditRedactionPolicy {
