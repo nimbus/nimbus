@@ -14,7 +14,7 @@ verification logic.
 
 ## Status
 
-- **Status:** `ready_for_execution` for `AP1` through `AP7`; `AP0` parser
+- **Status:** `AP1` is complete; `AP2` is `in_progress`; `AP0` parser
   hardening is complete.
 - **Primary owner:** this plan
 - **Activation gate:** `AP0` was promoted as a prerequisite for enterprise
@@ -186,6 +186,25 @@ command to this list and to `scripts/verify-artifact-provenance.sh`.
 - Compose production image admission uses the same maintained parser class for
   its digest-pinned provenance floor.
 
+`AP1` is complete:
+
+- Artifact verification now has a typed Nimbus-owned adapter boundary for
+  executable artifact requests, policy requirements, normalized evidence,
+  backend identity, command invocation, and fail-closed verifier errors.
+- Image admission now passes a typed `TenantImageVerificationRequest` carrying
+  canonical image reference plus signature, provenance, and SBOM requirements,
+  so real Cosign/SLSA adapters do not have to recover policy context from
+  global state.
+- `ArtifactImageVerificationProvider` bridges artifact verifier backends into
+  the existing tenant image admission seam and keeps policy evaluation in
+  Nimbus.
+- The command adapter accepts normalized verifier output only. Non-zero exits,
+  backend/library errors, missing executables, malformed output, timeouts, and
+  unsupported artifact classes fail closed.
+- Verifier stdout/stderr and backend errors are redacted for tokens,
+  credentials, secret handles, registry auth, cookies, bearer values, and
+  private key material before they enter errors or policy-facing output.
+
 ## Scope
 
 This plan covers artifact classes that can carry executable or trusted code:
@@ -205,8 +224,8 @@ identity. It feeds verified artifact evidence into those seams.
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
 | AP0 | `done` | Replace hand-rolled OCI reference parsing at image admission call sites. | `cargo test -p nimbus-server image_admission -- --nocapture` covers Docker Hub defaults, explicit registries, localhost with ports, digest references, tag+digest references, malformed references, allowed-registry matching, and provider canonical-reference input. Compose production admission has focused digest and invalid-reference coverage in `cargo test -p nimbus-bin production_compose_admission -- --nocapture`. |
-| AP1 | `todo` | Add verifier command/library adapter contract. | Focused tests prove success, non-zero exit/library error, missing executable, malformed output, timeout, unsupported artifact class, and redaction of stdout/stderr containing tokens, credentials, secret handles, and registry auth material. |
-| AP2 | `todo` | Implement Cosign verifier backend for OCI images. | Signed, unsigned, wrong issuer, wrong subject, mutable/tag-only, wrong digest claim, malformed verifier output, and missing-tool fixtures prove fail-closed behavior and normalized signature evidence. |
+| AP1 | `done` | Add verifier command/library adapter contract. | `cargo test -p nimbus-server artifact_provenance -- --nocapture` passed 8 focused adapter tests covering success, non-zero exit, library/backend error, missing executable, malformed output, timeout, unsupported artifact class, and redaction. `cargo test -p nimbus-server image_admission -- --nocapture` passed 12 image admission tests after the request seam widened. |
+| AP2 | `in_progress` | Implement Cosign verifier backend for OCI images. | Signed, unsigned, wrong issuer, wrong subject, mutable/tag-only, wrong digest claim, malformed verifier output, and missing-tool fixtures prove fail-closed behavior and normalized signature evidence. |
 | AP3 | `todo` | Implement SLSA provenance verifier backend for OCI images and file artifacts. | Digest-pinned image and file/bundle fixtures prove builder ID, predicate type, immutable subject, malformed output, timeout, and missing-tool behavior. |
 | AP4 | `todo` | Extend provenance policy from images to runtime/function bundles and executable guest artifacts. | Bundle admission rejects unsigned, mutable, missing, wrong-digest, wrong-builder, and wrong-predicate artifacts before runtime invocation or sandbox launch. Verified bundle evidence is available to audit/prove output without raw verifier logs. |
 | AP5 | `todo` | Add SBOM evidence backend and operator policy hooks. | SBOM-present, SBOM-missing, malformed SBOM verifier output, and SBOM-required policy fixtures prove policy behavior without parsing secrets into logs or treating SBOM existence as vulnerability clearance. |
