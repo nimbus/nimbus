@@ -26,16 +26,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     bundle provenance hook propagation, source-scoped provenance enforcement,
     and composite signature/provenance/SBOM verifier chaining.
 - `docs/plans/bun-jsc-runtime-proof-plan.md`
-  - active execution plan for the next Bun/JSC proof wave. Starts from the
-    completed runtime engine seam and execution-isolation baselines, keeps
-    Bun/JSC proof-only and `in_process_trusted_only`, records Gate 10 on Bun
-    `c57f7e58c0`, Gate 11 permission inventory on Bun `9e20ac28a2`, and Gate
-    12 memory behavior on Bun `f6c87be47e`, Gate 13 package/module policy on
-    Bun `f0cee692c0`, and Gate 14 lifecycle/reuse stress on Bun
-    `65cdc97796`; BJ5 added explicit JavaScript evaluation-format metadata and
-    server/codegen rejection of unsupported Bun combinations; BJ6 records the
-    hold/no-fork/no-upstream-yet decision against the current local Bun delta,
-    and drives BJ7 closeout.
+  - completed Bun/JSC proof wave. Starts from the completed runtime engine
+    seam and execution-isolation baselines, keeps Bun/JSC proof-only and
+    `in_process_trusted_only`, records Gate 10 on Bun `c57f7e58c0`, Gate 11
+    permission inventory on Bun `9e20ac28a2`, Gate 12 memory behavior on Bun
+    `f6c87be47e`, Gate 13 package/module policy on Bun `f0cee692c0`, and Gate
+    14 lifecycle/reuse stress on Bun `65cdc97796`; BJ5 added explicit
+    JavaScript evaluation-format metadata and server/codegen rejection of
+    unsupported Bun combinations; BJ6 records the hold/no-fork/no-upstream-yet
+    decision against the current local Bun delta; BJ7 closed the plan with
+    final verification. Bun remains not selectable.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

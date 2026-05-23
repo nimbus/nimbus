@@ -7,7 +7,7 @@ justified only after the remaining production blockers are measured.
 
 ## Status
 
-- **Status:** in execution; `BJ0` through `BJ6` are complete and `BJ7` is next.
+- **Status:** complete; `BJ0` through `BJ7` are complete.
 - **Primary owner:** this plan
 - **Current trust tier:** `in_process_trusted_only`
 - **Current product posture:** proof-only, not selectable, no production route
@@ -73,6 +73,9 @@ The local proof chain has shown:
 - BJ6 reviewed the current local Bun delta against upstream: 10 proof commits,
   12 files changed, 2731 insertions, and 22 deletions. The decision remains
   hold-only: do not fork Bun and do not upstream yet.
+- BJ7 closed the plan with final verification. Bun/JSC remains proof-only,
+  `in_process_trusted_only`, and rejected before invocation in product
+  metadata.
 
 Fresh verification after the local Bun pull on 2026-05-23:
 
@@ -182,6 +185,28 @@ Result: reviewed Bun `main...origin/main [ahead 10]` from upstream base
 `f161e0311d` to local proof commit `65cdc97796`; the local delta is 12 files,
 2731 insertions, and 22 deletions.
 
+BJ7 verification on 2026-05-23:
+
+```sh
+cd /Users/jack/src/github.com/nimbus/nimbus
+cargo fmt --all --check
+cargo clippy -p nimbus-runtime -p nimbus-server -p nimbus-bin -- -D warnings
+cargo test -p nimbus-runtime --test engine_proofs \
+  bun_jsc_build_gate_reproduces_from_bun_build_graph \
+  -- --ignored --nocapture
+git diff --check
+
+cd /Users/jack/src/github.com/oven-sh/bun
+bun scripts/build.ts --profile=debug-no-asan \
+  --build-dir=/private/tmp/nimbus-bun-embed-native \
+  --cache-dir=/private/tmp/nimbus-bun-cache \
+  --target=check-bun-embed-probe
+```
+
+Result: passed. The ignored Cargo test passed 1 test. The Bun native embed
+proof printed the Gate 11 through Gate 14 proof summaries and emitted
+`[build] check-bun-embed-probe done`.
+
 ## Remaining Blockers
 
 Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
@@ -205,7 +230,8 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 - production routing remains absent by design: Gate 15 now rejects unsupported
   Bun combinations before invocation, but a real Bun product route would still
   require permission, resolver, memory, lifecycle, and fork/upstream gates
-- closeout documentation and final verification
+- production promotion remains intentionally blocked until permission,
+  resolver, memory, sandbox/CI, and upstream/fork criteria are satisfied
 
 ## Execution Gates
 
@@ -218,7 +244,7 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 | BJ4 | `done` | Gate 14: lifecycle, reuse, teardown, and stress. | Bun proof commit `65cdc97796` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_lifecycle_reuse_stress()`. It creates/invokes/destroys four fresh VMs, runs eight retained generated `messages:sendAndSchedule` invocations, interrupts generated `messages:spinForever` through three external cancellation/recovery cycles, and successfully invokes once more after cancellation; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
 | BJ5 | `done` | Gate 15: Nimbus artifact metadata and server rejection. | Added `RuntimeJavaScriptEvaluationFormat`, emitted `runtime_javascript_evaluation_format: "es_module"` from codegen, made runtime diagnostics/cache keys/tenant decisions carry the format, recognized `bun_jsc` as a named proof-only backend, and added tests proving V8 rejects `program_wrapper` and the Convex registry rejects Bun/JSC manifests before invocation; `cargo test -p nimbus-runtime limits::tests --lib`, `cargo test -p nimbus-server registry_and_license::registry --lib`, `npm run test --workspace @nimbus/codegen`, `cargo check -p nimbus-runtime -p nimbus-server`, `cargo fmt --all --check`, and `git diff --check` passed on 2026-05-23. |
 | BJ6 | `done` | Gate 16: fork, upstream, or hold decision. | Reviewed the current local Bun proof chain against `origin/main`: 10 commits, 12 files changed, 2731 insertions, 22 deletions. Decision: hold local proof delta, do not fork Bun, and do not upstream yet; maintenance cost, upstreamable candidates, non-upstreamable proof code, fork triggers, and required CI are recorded in Gate 16. |
-| BJ7 | `todo` | Closeout and next implementation handoff. | Update proof docs, this plan, `docs/plans/README.md`, and runtime architecture references; all verification commands pass; Bun remains proof-only unless every promotion gate is satisfied. |
+| BJ7 | `done` | Closeout and next implementation handoff. | Proof docs, this plan, `docs/plans/README.md`, and runtime architecture references are updated; final Nimbus and Bun verification passed; Bun remains proof-only and rejected before invocation unless a future plan satisfies every promotion gate. |
 
 ## BJ1 Permission Inventory
 
@@ -312,6 +338,16 @@ harness and policy results should stay local. A fork becomes reasonable only
 after Nimbus explicitly chooses a Bun product backend and the containment APIs,
 resolver policy, memory policy, and CI lane are specified.
 
+## BJ7 Closeout
+
+Status: complete. Full evidence lives in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-17-closeout.md`.
+
+BJ7 result: the plan is closed. The product answer is no Bun fork, no Bun
+product selector, and no Bun production route. The architectural seam is better
+defined because runtime engine, content kind, JavaScript evaluation format,
+compatibility target, and package resolution are explicit metadata axes.
+
 ## Fork Criteria
 
 Keep holding the local Bun patch unless all of these become true:
@@ -334,13 +370,15 @@ Before closing this plan:
 ```sh
 cargo fmt --all --check
 cargo clippy -p nimbus-runtime -p nimbus-server -p nimbus-bin -- -D warnings
-cargo test -p nimbus-runtime --test engine_proofs bun_jsc_build_gate_reproduces_from_bun_build_graph --ignored -- --nocapture
+cargo test -p nimbus-runtime --test engine_proofs bun_jsc_build_gate_reproduces_from_bun_build_graph -- --ignored --nocapture
 bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe
 git diff --check
 ```
 
 The Bun build command runs in `/Users/jack/src/github.com/oven-sh/bun`. Nimbus
 commands run in `/Users/jack/src/github.com/nimbus/nimbus`.
+
+Closeout result on 2026-05-23: passed.
 
 ## References
 
@@ -357,3 +395,4 @@ commands run in `/Users/jack/src/github.com/nimbus/nimbus`.
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-17-closeout.md`

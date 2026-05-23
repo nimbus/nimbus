@@ -90,6 +90,10 @@ mostly an opt-in embed proof target plus Nimbus proof harness. The decision is
 to keep holding the proof delta, not fork Bun, and not open an upstream proposal
 until product containment APIs are specified.
 
+Gate 17 closed the proof wave with final Nimbus and Bun verification. Bun/JSC
+remains proof-only, `in_process_trusted_only`, and rejected before invocation
+in product metadata.
+
 ## Remaining Production Blockers
 
 Bun/JSC is not selectable because these required evidence rows remain open:
@@ -105,11 +109,9 @@ Bun/JSC is not selectable because these required evidence rows remain open:
 
 ## Next Proof Gate
 
-Next gate: **Bun/JSC closeout**.
-
-The closeout should update the plan ledger, active plan index, runtime
-architecture references, and final verification record. Bun/JSC remains
-proof-only and rejected in product metadata.
+Next gate: none in this plan. Any future Bun/JSC product work needs a new plan
+that starts from permission containment, package resolver policy, memory/sandbox
+limits, and CI.
 
 ## Fork Posture
 
@@ -150,7 +152,7 @@ Required hooks before an upstream or fork proposal is concrete:
 ## Verification
 
 Decision documentation updated after the Gate 11, Gate 12, Gate 13, Gate 14,
-Gate 15, and Gate 16 proof work.
+Gate 15, Gate 16, and Gate 17 proof work.
 
 Reviewed:
 
@@ -164,6 +166,7 @@ Reviewed:
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-17-closeout.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/permission-model.md`
@@ -179,5 +182,6 @@ git diff --check -- \
   docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md \
-  docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md
+  docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md \
+  docs/plans/proof/runtime-engine/bun-jsc/gate-17-closeout.md
 ```
