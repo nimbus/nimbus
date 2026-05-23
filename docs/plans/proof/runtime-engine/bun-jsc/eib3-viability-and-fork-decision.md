@@ -7,9 +7,10 @@ Nimbus plan:
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
 
-Bun proof commit: `ea677357e3` (`Add Bun embed timeout cancel proof`)
+Bun proof commit: `f6c87be47e` (`Add Bun embed memory behavior proof`)
 
-Nimbus proof baseline: `docs/plans/proof/runtime-engine/bun-jsc/gate-10-timeout-cancel.md`
+Nimbus proof baseline:
+`docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`
 
 ## Decision
 
@@ -56,6 +57,14 @@ Web/network APIs, timers, workers, `eval`, and `new Function` as
 only the Nimbus proof host-call/generated-wrapper path is
 `policy_hook_available`.
 
+Gate 12 later found that the same non-CLI generated-wrapper VM exposes a
+usable memory pressure signal through `VM::heap_size()` and sync GC, but no
+hard per-VM heap limit. Under 16 generated Nimbus invocations with retained
+allocation load, heap samples grew from `221431` bytes after setup GC to
+`5499474` bytes after retained sync GC, then dropped to `285224` bytes after
+release GC and `195847` bytes after `shrink_footprint()` under the JSC API
+lock.
+
 ## Remaining Production Blockers
 
 Bun/JSC is not selectable because these required evidence rows remain open:
@@ -63,7 +72,7 @@ Bun/JSC is not selectable because these required evidence rows remain open:
 | Blocker | Required evidence before promotion |
 | --- | --- |
 | Permission containment | Gate 11 inventory is complete, but containment is not. Every present host-sensitive Bun, Node, JSC, and package-loading surface must become absent, denied, wrapped by Nimbus policy, or the backend must remain permanently trusted/sandbox-only. |
-| Memory behavior | A per-VM heap limit, pressure signal, or discard-on-pressure policy is proven under generated Nimbus invocation load. |
+| Memory behavior | Gate 12 proved a pressure signal, but no hard per-VM heap limit. A product backend must use fresh VM or discard-on-pressure plus an outer process/sandbox hard quota rather than retained in-process tenant memory isolation. |
 | Package and module loading | Bun/JSC has explicit artifact metadata, evaluation format, package resolver, and external-package policy. It must not reuse `node_external_packages` as if it were Deno/V8. |
 | VM lifecycle and reuse | Create/invoke/cancel/drop loops prove retained VM reuse is safe, or the backend starts fresh-per-invocation and records the cost. |
 | Reproducible artifacts | Required Bun generated/native artifacts are reproduced by documented commands without untracked local build products. |
@@ -71,12 +80,12 @@ Bun/JSC is not selectable because these required evidence rows remain open:
 
 ## Next Proof Gate
 
-Next gate: **Bun/JSC Gate 12: memory behavior and safe first policy**.
+Next gate: **Bun/JSC Gate 13: package/module loading and resolver policy**.
 
-The gate should run generated Nimbus invocation loops with memory pressure in
-the same non-CLI generated-wrapper path. It must either prove a per-VM heap
-limit or pressure signal usable by Nimbus, or record `fresh_per_invocation` /
-discard-on-pressure as the only safe first policy for Bun/JSC.
+The gate should prove the selected Bun artifact shape, decide whether the next
+lane keeps using the generated program wrapper or shifts to an ESM-shaped
+artifact, reject Node external packages by default, and identify any explicit
+Bun package resolver API Nimbus would need before a product backend exists.
 
 ## Fork Posture
 
@@ -116,14 +125,16 @@ Required hooks before an upstream or fork proposal is concrete:
 
 ## Verification
 
-Decision-only documentation update. No Bun or Nimbus code changed for EIB3.
+Decision documentation updated after the Gate 11 and Gate 12 Bun proof commits.
 
 Reviewed:
 
-- Bun commit `ea677357e3`
+- Bun commit `f6c87be47e`
 - `src/embed_probe/lib.rs`
 - `src/embed_probe/nimbus_generated_program_bundle.js`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-10-timeout-cancel.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/permission-model.md`
@@ -133,5 +144,7 @@ Verification command:
 ```sh
 git diff --check -- \
   docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md \
-  docs/plans/archive/execution-isolation-and-runtime-backends-plan.md
+  docs/plans/bun-jsc-runtime-proof-plan.md \
+  docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md \
+  docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md
 ```

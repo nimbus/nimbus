@@ -29,8 +29,9 @@ This directory prefers a small-number-of-plans model with clear ownership.
   - active execution plan for the next Bun/JSC proof wave. Starts from the
     completed runtime engine seam and execution-isolation baselines, keeps
     Bun/JSC proof-only and `in_process_trusted_only`, records Gate 10 on Bun
-    `c57f7e58c0` and Gate 11 permission inventory on Bun `9e20ac28a2`, and
-    drives BJ2-BJ7: memory behavior, package/module loading, lifecycle/reuse,
+    `c57f7e58c0`, Gate 11 permission inventory on Bun `9e20ac28a2`, and Gate
+    12 memory behavior on Bun `f6c87be47e`, and drives BJ3-BJ7:
+    package/module loading, lifecycle/reuse,
     artifact metadata and server rejection, fork/upstream/hold decision, and
     closeout.
 - `docs/plans/distribution-plan.md`

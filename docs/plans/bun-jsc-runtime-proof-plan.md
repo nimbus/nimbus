@@ -7,13 +7,13 @@ justified only after the remaining production blockers are measured.
 
 ## Status
 
-- **Status:** in execution; `BJ0` and `BJ1` are complete and `BJ2` is next.
+- **Status:** in execution; `BJ0` through `BJ2` are complete and `BJ3` is next.
 - **Primary owner:** this plan
 - **Current trust tier:** `in_process_trusted_only`
 - **Current product posture:** proof-only, not selectable, no production route
 - **Bun worktree:** `/Users/jack/src/github.com/oven-sh/bun`
-- **Current local Bun proof commit:** `9e20ac28a2`
-  (`Add Bun embed permission inventory proof`)
+- **Current local Bun proof commit:** `f6c87be47e`
+  (`Add Bun embed memory behavior proof`)
 - **Current upstream base in local Bun worktree:** `f161e0311d`
   (`shell: wrap only component-leading ! when neutralizing glob metachars (#31272)`)
 
@@ -48,6 +48,11 @@ The local proof chain has shown:
   are `absent_by_default`; dynamic `import(...)` syntax is
   `policy_hook_missing`; the Nimbus proof host hooks and generated wrapper are
   `policy_hook_available`.
+- The generated-wrapper proof now records BJ2 memory behavior: 16 generated
+  Nimbus invocations produced a measurable JSC heap pressure signal through
+  `VM::heap_size()` and sync GC, retained memory dropped after releasing the
+  retained graph and shrinking the footprint, and no hard per-VM heap limit was
+  observed in the embed path.
 
 Fresh verification after the local Bun pull on 2026-05-23:
 
@@ -79,13 +84,32 @@ Result: passed against Bun proof commit `9e20ac28a2`. The native proof printed
 the Gate 11 inventory recorded in
 `docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md`.
 
+BJ2 verification on 2026-05-23:
+
+```sh
+cd /Users/jack/src/github.com/oven-sh/bun
+cargo fmt --all --check
+bun scripts/build.ts --profile=debug-no-asan \
+  --build-dir=/private/tmp/nimbus-bun-embed-native \
+  --cache-dir=/private/tmp/nimbus-bun-cache \
+  --target=check-bun-embed-probe
+git diff --check
+```
+
+Result: passed against Bun proof commit `f6c87be47e`. The native proof printed
+the Gate 12 memory sample recorded in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`.
+
 ## Remaining Blockers
 
 Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 
 - permission containment for Bun, Node, Web, package-loading, worker,
   subprocess, FFI, native-addon, filesystem, network, and environment surfaces
-- memory behavior under generated Nimbus invocation load
+- memory enforcement if Bun/JSC is ever promoted: Gate 12 found a usable
+  pressure signal but no hard per-VM heap limit, so the safe first product
+  policy is fresh VM or discard-on-pressure plus an outer sandbox/process hard
+  limit
 - package and module loading contract, including explicit Bun resolver policy
 - VM lifecycle policy: retained reuse versus fresh-per-invocation discard
 - reproducible artifact strategy for generated and native Bun build products
@@ -99,7 +123,7 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 | --- | --- | --- | --- |
 | BJ0 | `done` | Reconcile current proof evidence, local Bun delta, and merge baseline. | `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed on 2026-05-23 after the local Bun pull against Bun `c57f7e58c0` on upstream base `f161e0311d`; Nimbus `main` contains merge `8c5f2697`. |
 | BJ1 | `done` | Gate 11: permission-surface containment inventory. | Bun proof commit `9e20ac28a2` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_permission_surface_inventory()` and records each Bun, Node, Web/network, package-loading, worker/concurrency, subprocess, FFI/native-addon, filesystem, network, and environment surface as `absent_by_default`, `policy_hook_available`, `policy_hook_missing`, or `unsafe_bypass`; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
-| BJ2 | `todo` | Gate 12: memory behavior and safe first policy. | Run generated Nimbus invocation loops with memory pressure; prove a per-VM heap limit or pressure signal, or record `fresh_per_invocation`/discard-on-pressure as the only safe policy. |
+| BJ2 | `done` | Gate 12: memory behavior and safe first policy. | Bun proof commit `f6c87be47e` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_memory_behavior()`. It runs 16 generated Nimbus invocations under retained allocation load, records `VM::heap_size()` / sync-GC pressure samples, observes no hard per-VM heap limit, and sets the safe first policy to fresh VM or discard-on-pressure; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
 | BJ3 | `todo` | Gate 13: package/module loading and resolver policy. | Prove the selected Bun artifact shape, decide ESM versus program wrapper for the next lane, reject Node external packages by default, and identify any explicit Bun package resolver API needed. |
 | BJ4 | `todo` | Gate 14: lifecycle, reuse, teardown, and stress. | Run create/invoke/cancel/drop loops and retained-VM reuse loops; decide whether the product path can reuse VMs or must start fresh per invocation. |
 | BJ5 | `todo` | Gate 15: Nimbus artifact metadata and server rejection. | Add or verify explicit engine/content/evaluation-format metadata and tests that registries reject unsupported Bun combinations before invocation. No production Bun route may be added. |
@@ -135,6 +159,19 @@ Success criteria:
 BJ1 result: Bun/JSC stays `in_process_trusted_only`. Present unhooked
 host-sensitive surfaces dominate the current VM. The only policy-hooked row is
 the Nimbus proof host-call/generated-wrapper path.
+
+## BJ2 Memory Behavior
+
+Status: complete. Full evidence lives in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`.
+
+BJ2 result: Bun/JSC still stays `in_process_trusted_only` and proof-only. The
+embed path exposes a pressure signal through `VM::heap_size()` and
+`VirtualMachine::garbage_collect(true)`, but the proof did not find a hard
+per-VM heap limit. If this backend is ever promoted, Nimbus must treat
+Bun/JSC memory containment as an outer process/sandbox quota plus
+fresh-per-invocation or discard-on-pressure VM lifecycle policy, not a
+retained in-process tenant-isolation guarantee.
 
 ## Fork Criteria
 
@@ -176,3 +213,4 @@ commands run in `/Users/jack/src/github.com/nimbus/nimbus`.
 - `docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-10-timeout-cancel.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`
