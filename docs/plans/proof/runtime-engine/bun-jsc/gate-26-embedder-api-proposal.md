@@ -219,8 +219,16 @@ Required semantics:
   Bun/WebKit stack bounds before touching JSC
 - owner-thread termination-exception priming must be paired with explicit
   termination-request reset before normal evaluation resumes
+- product cancellation must not depend on elapsed-time sleeps; the Bun pool
+  must drive cancellation through explicit lifecycle state and acknowledgement
+  transitions such as `Created`, `BootstrapReady`, `GuestEntered`,
+  `CancelRequested`, `Terminated`, `ResetOrDiscarded`, and `TeardownComplete`
 - cancellation must be host-owned, deterministic on macOS and Linux, and
   recoverable only when the lifecycle policy says the VM can be reused
+- cancellation proofs must cover before guest entry, after guest entry, sync
+  CPU loops, promise/microtask work, in-flight HostBridge calls, normal
+  completion, teardown, retained trusted reuse, and fresh/discard untrusted
+  policy
 - pending promises, timers, workers, sockets, subprocesses, and native handles
   must be absent, closed, or tied to invocation teardown
 - untrusted Bun/JSC starts at `FreshDiscard` plus an outer hard memory quota
@@ -260,7 +268,8 @@ The API is not sufficient until the Bun proof target can demonstrate:
 - workers denied or launched only with child profile propagation
 - tenant-visible `eval`, `Function`, Node `vm`, and REPL compilation denied
 - timers are either absent or bound to invocation cancellation/teardown
-- cancellation and recovery pass on macOS and Linux
+- cancellation and recovery pass on macOS and Linux without relying on
+  elapsed-time sleeps as the product mechanism
 - retained VM reuse remains trusted-only unless hard memory and cleanup
   guarantees are proven
 

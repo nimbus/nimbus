@@ -22,19 +22,23 @@ Verifiable success criteria:
   surface to construction, resolver, permission, lifecycle, audit, or
   unsupported state.
 - `BEP2` records the upstream-first versus fork threshold, including release
-  tag format and the exact trigger for creating `nimbus/bun`.
+  tag format, no-fork conditions, and the exact trigger for creating
+  `nimbus/bun`.
 - `BEP3` keeps Nimbus typed runtime/backend/pool diagnostics ready but fail
   closed for Bun/JSC by default.
 - `BEP4` defines or scaffolds a dedicated Bun/JSC pool owner with lifecycle,
-  cancellation, teardown, metrics, and no Deno/V8 internals in the public
-  envelope.
+  state/ack-driven cancellation, teardown, metrics, and no Deno/V8 internals
+  in the public envelope; product cancellation does not rely on elapsed-time
+  sleeps.
 - `BEP5` proves resolver/package policy denial or hookability in the Bun proof
   target.
 - `BEP6` proves native permission denial or hookability for filesystem,
   network, env/process, subprocess, FFI, plugin, worker, timer, fetch/WebSocket,
   and dynamic-code surfaces.
 - `BEP7` proves memory, cancellation, teardown, and reuse policy on macOS and
-  Linux, or keeps untrusted Bun on fresh/discard with an outer quota.
+  Linux, including cancellation before/after guest entry, during sync loops,
+  promise/microtask work, HostBridge in-flight work, normal completion, and
+  teardown, or keeps untrusted Bun on fresh/discard with an outer quota.
 - `BEP8` integrates Bun/JSC as optional only after the proven lockdown profile
   and pool policy exist; V8/Deno remains default.
 - `BEP9` closes with repeatable local and Linux verification, updated docs,
