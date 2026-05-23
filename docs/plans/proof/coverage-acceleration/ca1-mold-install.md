@@ -19,10 +19,38 @@ on its next run.
   run: |
     sudo apt-get update
     sudo apt-get install -y --no-install-recommends mold
-    echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=mold" >> "${GITHUB_ENV}"
-    echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=mold" >> "${GITHUB_ENV}"
+    echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "${GITHUB_ENV}"
+    echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "${GITHUB_ENV}"
     mold --version
 ```
+
+## Invocation pattern: RUSTFLAGS, not LINKER
+
+The first CA1 attempt (commit `263f39f7`) used
+`CARGO_TARGET_*_LINKER=mold` directly. CI failed on every Rust job
+that hit the composite with:
+
+```
+mold: fatal: unknown -m argument: 64
+```
+
+`CARGO_TARGET_*_LINKER=mold` makes rustc invoke `mold` *directly* via
+the gcc-wrapper protocol, which passes `-m64` to the linker. mold
+rejects `-m64` because it is a gcc-driver flag, not a linker flag.
+
+The canonical Rust mold invocation pattern (documented at
+`rui314/mold` and reproduced in every Rust+mold rollout in the wild)
+is to keep the default `cc` driver as rustc's linker and tell cc to
+*use* mold via `-fuse-ld=mold`:
+
+```
+CARGO_TARGET_<TARGET>_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+```
+
+This keeps cc handling all gcc-driver flags (including `-m64`) and
+only swaps the linker binary cc selects. `.cargo/config.toml` already
+has commented-out `# rustflags = ["-C", "link-arg=-fuse-ld=lld"]`
+lines proving the repo's prior linker swaps used the same shape.
 
 ## Why mold
 
