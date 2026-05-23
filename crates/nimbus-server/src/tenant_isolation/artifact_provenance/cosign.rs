@@ -8,8 +8,8 @@ use super::{
     ArtifactVerificationEvidence, ArtifactVerificationRequest, ArtifactVerificationSubject,
     ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierCommandInvocation,
     ArtifactVerifierCommandRunner, ArtifactVerifierError, ArtifactVerifierResult,
-    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, ProcessArtifactVerifierCommandRunner,
-    redact_artifact_verifier_output,
+    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OfflineVerificationConfig,
+    ProcessArtifactVerifierCommandRunner, redact_artifact_verifier_output,
 };
 use crate::tenant_isolation::image_admission::{has_sha256_digest, parse_oci_image_reference};
 
@@ -18,6 +18,7 @@ pub struct CosignVerifierBackend {
     identity: ArtifactVerifierBackendIdentity,
     timeout: Duration,
     runner: Arc<dyn ArtifactVerifierCommandRunner>,
+    offline: Option<OfflineVerificationConfig>,
 }
 
 impl CosignVerifierBackend {
@@ -27,6 +28,7 @@ impl CosignVerifierBackend {
             identity: ArtifactVerifierBackendIdentity::new("cosign", "cli"),
             timeout: DEFAULT_ARTIFACT_VERIFIER_TIMEOUT,
             runner: Arc::new(ProcessArtifactVerifierCommandRunner),
+            offline: None,
         }
     }
 
@@ -54,6 +56,14 @@ impl CosignVerifierBackend {
         self.runner = runner;
         self
     }
+
+    pub fn with_offline_trusted_root(
+        mut self,
+        trusted_root_path: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        self.offline = Some(OfflineVerificationConfig::new(trusted_root_path));
+        self
+    }
 }
 
 impl Default for CosignVerifierBackend {
@@ -69,6 +79,7 @@ impl std::fmt::Debug for CosignVerifierBackend {
             .field("program", &self.program)
             .field("identity", &self.identity)
             .field("timeout", &self.timeout)
+            .field("offline", &self.offline)
             .finish_non_exhaustive()
     }
 }
@@ -119,20 +130,33 @@ impl ArtifactVerifierBackend for CosignVerifierBackend {
                 "cosign verifier requires non-empty certificate issuer and identity policy",
             ));
         }
+        if let Some(offline) = &self.offline {
+            offline.validate("cosign verifier")?;
+        }
         let canonical_reference = parsed_reference.whole();
+        let mut args = vec![
+            "verify".to_string(),
+            "--output".to_string(),
+            "json".to_string(),
+            "--check-claims=true".to_string(),
+        ];
+        if let Some(offline) = &self.offline {
+            args.extend([
+                "--offline=true".to_string(),
+                "--trusted-root".to_string(),
+                offline.trusted_root_path().display().to_string(),
+            ]);
+        }
+        args.extend([
+            "--certificate-identity".to_string(),
+            subject.to_string(),
+            "--certificate-oidc-issuer".to_string(),
+            issuer.to_string(),
+            canonical_reference.clone(),
+        ]);
         let invocation = ArtifactVerifierCommandInvocation {
             program: self.program.clone(),
-            args: vec![
-                "verify".to_string(),
-                "--output".to_string(),
-                "json".to_string(),
-                "--check-claims=true".to_string(),
-                "--certificate-identity".to_string(),
-                subject.to_string(),
-                "--certificate-oidc-issuer".to_string(),
-                issuer.to_string(),
-                canonical_reference.clone(),
-            ],
+            args,
             timeout: self.timeout,
             stdin: None,
         };
@@ -311,6 +335,17 @@ mod tests {
                 "test",
             ))
             .with_runner(runner)
+    }
+
+    fn trusted_root_fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let path = temp.path().join("trusted_root.json");
+        std::fs::write(
+            &path,
+            r#"{"mediaType":"application/vnd.dev.sigstore.trustedroot+json"}"#,
+        )
+        .expect("trusted root fixture should write");
+        (temp, path)
     }
 
     #[test]
@@ -506,6 +541,48 @@ mod tests {
         assert!(
             error.to_string().contains("signature policy"),
             "missing signature policy should be explicit: {error}"
+        );
+    }
+
+    #[test]
+    fn cosign_backend_offline_private_root_passes_trusted_root_without_network() {
+        let (_temp, trusted_root) = trusted_root_fixture();
+        let runner = Arc::new(StaticCommandRunner::success(signed_payload(DIGEST)));
+        let backend = backend(Arc::clone(&runner)).with_offline_trusted_root(&trusted_root);
+
+        backend
+            .verify_artifact(&request(IMAGE))
+            .expect("offline cosign verification with local trusted root should verify");
+
+        let invocations = runner.invocations();
+        let args = invocations[0].args();
+        let trusted_root_arg = trusted_root.display().to_string();
+        assert!(
+            args.windows(3).any(|window| {
+                window[0] == "--offline=true"
+                    && window[1] == "--trusted-root"
+                    && window[2] == trusted_root_arg
+            }),
+            "offline verification should pass local trusted root args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn cosign_backend_offline_private_root_missing_file_fails_closed_before_command() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let missing_root = temp.path().join("missing-trusted-root.json");
+        let runner = Arc::new(StaticCommandRunner::success(signed_payload(DIGEST)));
+        let backend = backend(Arc::clone(&runner)).with_offline_trusted_root(missing_root);
+
+        let error = backend
+            .verify_artifact(&request(IMAGE))
+            .expect_err("missing local trusted root should fail closed");
+
+        assert_eq!(error.kind, ArtifactVerifierErrorKind::BackendError);
+        assert!(error.to_string().contains("trusted root"));
+        assert!(
+            runner.invocations().is_empty(),
+            "missing trusted roots should fail before invoking cosign"
         );
     }
 }
