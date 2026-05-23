@@ -23,15 +23,17 @@ mod image_admission;
 mod operator_policy;
 
 pub use artifact_provenance::{
-    ArtifactAttestationEvidence, ArtifactImageVerificationProvider, ArtifactProvenanceRequirement,
-    ArtifactSignatureEvidence, ArtifactSignatureRequirement, ArtifactVerificationEvidence,
-    ArtifactVerificationPolicy, ArtifactVerificationRequest, ArtifactVerificationSubject,
-    ArtifactVerificationSubjectKind, ArtifactVerifierBackend, ArtifactVerifierBackendIdentity,
-    ArtifactVerifierCommandBackend, ArtifactVerifierCommandInvocation,
-    ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, ArtifactVerifierError,
-    ArtifactVerifierErrorKind, ArtifactVerifierResult, CosignVerifierBackend,
-    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, ProcessArtifactVerifierCommandRunner,
-    SLSA_PROVENANCE_V1_PREDICATE_TYPE, SlsaVerifierBackend, redact_artifact_verifier_output,
+    ArtifactAdmission, ArtifactAttestationEvidence, ArtifactImageVerificationProvider,
+    ArtifactProvenanceRequirement, ArtifactSignatureEvidence, ArtifactSignatureRequirement,
+    ArtifactVerificationEvidence, ArtifactVerificationPolicy, ArtifactVerificationRequest,
+    ArtifactVerificationSubject, ArtifactVerificationSubjectKind, ArtifactVerifierBackend,
+    ArtifactVerifierBackendIdentity, ArtifactVerifierCommandBackend,
+    ArtifactVerifierCommandInvocation, ArtifactVerifierCommandOutput,
+    ArtifactVerifierCommandRunner, ArtifactVerifierError, ArtifactVerifierErrorKind,
+    ArtifactVerifierResult, CosignVerifierBackend, DEFAULT_ARTIFACT_VERIFIER_TIMEOUT,
+    ProcessArtifactVerifierCommandRunner, SLSA_PROVENANCE_V1_PREDICATE_TYPE, SlsaVerifierBackend,
+    admit_guest_executable_artifact, admit_runtime_bundle_artifact,
+    redact_artifact_verifier_output,
 };
 pub use audit_events::{
     TENANT_ISOLATION_EVENT_SCHEMA_VERSION, TenantIsolationEvent, TenantIsolationEventKind,

@@ -67,15 +67,16 @@ pub use sandbox::{
 };
 pub use service_manager::SandboxServiceManager;
 pub use tenant_isolation::{
-    ArtifactAttestationEvidence, ArtifactImageVerificationProvider, ArtifactProvenanceRequirement,
-    ArtifactSignatureEvidence, ArtifactSignatureRequirement, ArtifactVerificationEvidence,
-    ArtifactVerificationPolicy, ArtifactVerificationRequest, ArtifactVerificationSubject,
-    ArtifactVerificationSubjectKind, ArtifactVerifierBackend, ArtifactVerifierBackendIdentity,
-    ArtifactVerifierCommandBackend, ArtifactVerifierCommandInvocation,
-    ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, ArtifactVerifierError,
-    ArtifactVerifierErrorKind, ArtifactVerifierResult, CosignVerifierBackend,
-    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy,
-    OperatorDeniedEgressEvent, OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,
+    ArtifactAdmission, ArtifactAttestationEvidence, ArtifactImageVerificationProvider,
+    ArtifactProvenanceRequirement, ArtifactSignatureEvidence, ArtifactSignatureRequirement,
+    ArtifactVerificationEvidence, ArtifactVerificationPolicy, ArtifactVerificationRequest,
+    ArtifactVerificationSubject, ArtifactVerificationSubjectKind, ArtifactVerifierBackend,
+    ArtifactVerifierBackendIdentity, ArtifactVerifierCommandBackend,
+    ArtifactVerifierCommandInvocation, ArtifactVerifierCommandOutput,
+    ArtifactVerifierCommandRunner, ArtifactVerifierError, ArtifactVerifierErrorKind,
+    ArtifactVerifierResult, CosignVerifierBackend, DEFAULT_ARTIFACT_VERIFIER_TIMEOUT,
+    OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy, OperatorDeniedEgressEvent,
+    OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,
     OperatorExternalPolicyBackendErrorKind, OperatorExternalPolicyBackendIdentity,
     OperatorExternalPolicyBackendResult, OperatorExternalPolicyDecision,
     OperatorExternalPolicyEngine, OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome,
@@ -105,6 +106,7 @@ pub use tenant_isolation::{
     TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
     TenantStoragePolicyDecision, TenantVolumePolicyDecision, TenantWorkloadIdentity,
     TenantWorkloadKind, TenantWorkloadLocation, TenantWorkloadStableIdentity,
+    admit_guest_executable_artifact, admit_runtime_bundle_artifact,
     redact_artifact_verifier_output,
 };
 pub use tenant_isolation_drift::{
