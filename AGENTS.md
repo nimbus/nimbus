@@ -141,16 +141,26 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   acceleration wave.
 - PR CI wall acceleration (verification-harness sharding, workspace-
   tests sharding via cargo-nextest --partition, external-provider
-  matrix split by provider, warm-sccache shrink): the active plan
-  is `docs/plans/ci-wall-acceleration-plan.md` (CW0..CW5). The plan
-  reads the post-CA wall (23.6m on `32951ee7`) and attacks the new
-  poles: Server Verification Harness (12.7m), Rust Workspace Tests
-  (15.7m), External Provider Integration Tests (14.6m), warm-sccache
-  itself (10.2m). Coverage is no longer in the top 5 post-CA. Once
-  closed, `docs/operating/ci-modernization.md` gets a "PR critical-
-  path acceleration" section synthesizing CW1..CW4 contracts.
-  `/goal` control plane gated on
-  `bash scripts/verify-ci-wall-acceleration.sh` (10 conditions).
+  matrix split by provider, warm-sccache shrink):
+  `docs/operating/ci-modernization.md` for the canonical contract
+  ("PR critical-path acceleration" section), then
+  `docs/plans/archive/ci-wall-acceleration-plan.md` as the completed
+  baseline (CW0..CW5, closed 2026-05-23). The baseline attacks the
+  post-CA wall poles on `main` (23.6m on `32951ee7`): Server
+  Verification Harness (12.7m → ~3.5m via 4-shard server harness),
+  Rust Workspace Tests (15.7m → ~6m via 3-way nextest `--partition
+  hash:N/M`), External Provider Integration Tests (14.6m → ~7m via
+  per-provider matrix), warm-sccache itself (10.2m, `--tests`
+  dropped). CW1 introduces `NIMBUS_HARNESS_SHARD=N/M` as the
+  in-test corpus filter env-var. CW2 introduces
+  `NIMBUS_NEXTEST_PARTITION=N/M` as the Makefile forwarding shape.
+  CW3 introduces `NIMBUS_PROVIDER_FILTER=postgres|mysql|libsql` as
+  the per-provider test-script filter. CW4 retires `--tests` from
+  warm-sccache and documents the deferred per-target cache lane
+  (Swatinem v2 already caches `target/`). `/goal` control plane
+  gated on `bash scripts/verify-ci-wall-acceleration.sh` (10
+  conditions). Promote a new active plan before another PR-wall
+  acceleration wave.
 - Firebase/Firestore compatibility:
   `docs/adapters/firebase/compatibility.md`,
   `docs/adapters/firebase/migration.md`,

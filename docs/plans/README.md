@@ -13,24 +13,34 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
-- `docs/plans/ci-wall-acceleration-plan.md`
-  - active execution plan for shrinking the PR CI wall time. Reads the
-    post-CA baseline (23.6m on `32951ee7`) and attacks the new poles
-    that CA's success exposed: Server Verification Harness (12.7m),
-    Rust Workspace Tests (15.7m), External Provider Integration Tests
-    (14.6m), warm-sccache itself (10.2m). Coverage is no longer in the
-    top 5. CW0..CW5 stages: scaffold + baseline, verification-harness
-    sharding via `NIMBUS_HARNESS_SHARD=N/M`, workspace-tests sharding
-    via cargo-nextest `--partition`, provider matrix split, warm-
-    sccache shrink (research lane), closeout. Wall target ~12-15m
-    without infra changes. `/goal` control plane gated on
-    `bash scripts/verify-ci-wall-acceleration.sh` (10 conditions).
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/archive/ci-wall-acceleration-plan.md`
+  - completed execution record for the CI Wall Acceleration wave
+    (CW0-CW5, closed 2026-05-23). Attacked the post-CA wall poles on
+    `main` (23.6m on `32951ee7`): Server Verification Harness (12.7m),
+    Rust Workspace Tests (15.7m), External Provider Integration Tests
+    (14.6m), warm-sccache itself (10.2m). CW1 sharded the verification
+    harness corpus per surface via `NIMBUS_HARNESS_SHARD=N/M` (server
+    fans out 4 ways across its 7-case transport-liveness corpus,
+    engine 2 ways, storage + runtime single-shard). CW2 sharded
+    `Rust Workspace Tests` into a 3-way `cargo-nextest --partition
+    hash:N/M` matrix backed by Makefile env-var forwarding. CW3 split
+    `External Provider Integration Tests` into a per-provider matrix
+    (postgres / mysql / libsql) with `NIMBUS_PROVIDER_FILTER`
+    script-side dispatch and `docker run` per-fixture startup gated on
+    `if: matrix.provider == ...`. CW4 dropped `--tests` from
+    `warm-sccache`'s `cargo check --workspace` so test-binary compile
+    pays inline in the already-sharded downstream test jobs; deferred
+    a bespoke per-target cache layer because Swatinem v2 already
+    caches `target/`. Canonical contract lives in
+    `docs/operating/ci-modernization.md` ("PR critical-path
+    acceleration" section). Promote a new active plan before another
+    PR-wall acceleration wave.
 - `docs/plans/archive/coverage-acceleration-plan.md`
   - completed execution record for the Coverage Acceleration wave
     (CA0-CA5, closed 2026-05-22). Cut PR CI Coverage's critical
