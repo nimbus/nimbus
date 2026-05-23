@@ -96,6 +96,10 @@ else
 fi
 
 # 4. Composite action installs mold and exports the linker env var (CA1).
+#    Accept either CARGO_TARGET_*_LINKER=mold or
+#    CARGO_TARGET_*_RUSTFLAGS=-C link-arg=-fuse-ld=mold (the canonical
+#    Rust mold invocation pattern — see composite-action comment for why
+#    LINKER=mold trips `mold: fatal: unknown -m argument: 64`).
 step 4 "Composite action installs mold + exports linker env"
 if [ -f "${COMPOSITE_ACTION}" ]; then
   has_mold=0
@@ -104,6 +108,8 @@ if [ -f "${COMPOSITE_ACTION}" ]; then
     has_mold=1
   fi
   if grep -qE 'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER[[:space:]]*[:=][[:space:]]*"?mold"?' "${COMPOSITE_ACTION}"; then
+    has_linker_env=1
+  elif grep -qE 'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS[[:space:]]*[:=][^"]*-fuse-ld=mold' "${COMPOSITE_ACTION}"; then
     has_linker_env=1
   fi
   if [ "${has_mold}" = "1" ] && [ "${has_linker_env}" = "1" ]; then
