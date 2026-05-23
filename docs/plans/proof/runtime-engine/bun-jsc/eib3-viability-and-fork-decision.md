@@ -10,7 +10,7 @@ Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
 Bun proof commit: `65cdc97796` (`Add Bun embed lifecycle reuse proof`)
 
 Nimbus proof baseline:
-`docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`
+`docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md`
 
 ## Decision
 
@@ -84,6 +84,12 @@ The current V8 lanes emit and accept `es_module`; Bun/JSC proof artifacts map
 to `program_wrapper`, but `bun_jsc` is recognized only so server and runtime
 policy construction can reject it clearly before invocation.
 
+Gate 16 later reviewed the current local Bun delta against upstream. The local
+proof branch is 10 commits ahead of `origin/main`, touches 12 files, and is
+mostly an opt-in embed proof target plus Nimbus proof harness. The decision is
+to keep holding the proof delta, not fork Bun, and not open an upstream proposal
+until product containment APIs are specified.
+
 ## Remaining Production Blockers
 
 Bun/JSC is not selectable because these required evidence rows remain open:
@@ -99,12 +105,11 @@ Bun/JSC is not selectable because these required evidence rows remain open:
 
 ## Next Proof Gate
 
-Next gate: **Bun/JSC Gate 16: fork, upstream, or hold decision**.
+Next gate: **Bun/JSC closeout**.
 
-The gate should compare the current local Bun proof delta with the remaining
-promotion blockers and record whether Nimbus should keep holding the proof
-patch, propose upstream APIs, or prepare a Nimbus-maintained fork. It must
-include maintenance cost and CI requirements.
+The closeout should update the plan ledger, active plan index, runtime
+architecture references, and final verification record. Bun/JSC remains
+proof-only and rejected in product metadata.
 
 ## Fork Posture
 
@@ -145,7 +150,7 @@ Required hooks before an upstream or fork proposal is concrete:
 ## Verification
 
 Decision documentation updated after the Gate 11, Gate 12, Gate 13, Gate 14,
-and Gate 15 proof work.
+Gate 15, and Gate 16 proof work.
 
 Reviewed:
 
@@ -158,6 +163,7 @@ Reviewed:
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/permission-model.md`
@@ -172,5 +178,6 @@ git diff --check -- \
   docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md \
-  docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md
+  docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md \
+  docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md
 ```

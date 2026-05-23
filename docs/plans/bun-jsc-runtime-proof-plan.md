@@ -7,7 +7,7 @@ justified only after the remaining production blockers are measured.
 
 ## Status
 
-- **Status:** in execution; `BJ0` through `BJ5` are complete and `BJ6` is next.
+- **Status:** in execution; `BJ0` through `BJ6` are complete and `BJ7` is next.
 - **Primary owner:** this plan
 - **Current trust tier:** `in_process_trusted_only`
 - **Current product posture:** proof-only, not selectable, no production route
@@ -70,6 +70,9 @@ The local proof chain has shown:
   target, and package-resolution policy are explicit, `bun_jsc` is a named but
   proof-only backend, V8 rejects `program_wrapper`, and Bun/JSC manifests are
   rejected by registry or policy construction before invocation.
+- BJ6 reviewed the current local Bun delta against upstream: 10 proof commits,
+  12 files changed, 2731 insertions, and 22 deletions. The decision remains
+  hold-only: do not fork Bun and do not upstream yet.
 
 Fresh verification after the local Bun pull on 2026-05-23:
 
@@ -165,6 +168,20 @@ Result: passed. Runtime policy tests passed 9 tests, server registry tests
 passed 10 tests, codegen selftest passed, and the runtime/server compilation
 check passed.
 
+BJ6 verification on 2026-05-23:
+
+```sh
+cd /Users/jack/src/github.com/oven-sh/bun
+git log --oneline --decorate origin/main..HEAD
+git diff --stat origin/main..HEAD
+git diff --name-status origin/main..HEAD
+git status --short --branch
+```
+
+Result: reviewed Bun `main...origin/main [ahead 10]` from upstream base
+`f161e0311d` to local proof commit `65cdc97796`; the local delta is 12 files,
+2731 insertions, and 22 deletions.
+
 ## Remaining Blockers
 
 Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
@@ -188,7 +205,7 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 - production routing remains absent by design: Gate 15 now rejects unsupported
   Bun combinations before invocation, but a real Bun product route would still
   require permission, resolver, memory, lifecycle, and fork/upstream gates
-- final fork/upstream/hold decision with maintenance cost recorded
+- closeout documentation and final verification
 
 ## Execution Gates
 
@@ -200,7 +217,7 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 | BJ3 | `done` | Gate 13: package/module loading and resolver policy. | Bun proof commit `f0cee692c0` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_package_module_policy()`. It records `self_contained_program_wrapper` via `Bun__REPL__evaluate` as the selected next lane, proves static ESM import is rejected in that evaluator, proves `require` is absent by default, proves generated Node builtin and external-package empty maps deny missing entries by default, and records dynamic `import("node:fs")` plus `Bun.resolve` / `Bun.resolveSync` as unsafe resolver bypasses requiring a Nimbus-owned Bun package resolver; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
 | BJ4 | `done` | Gate 14: lifecycle, reuse, teardown, and stress. | Bun proof commit `65cdc97796` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_lifecycle_reuse_stress()`. It creates/invokes/destroys four fresh VMs, runs eight retained generated `messages:sendAndSchedule` invocations, interrupts generated `messages:spinForever` through three external cancellation/recovery cycles, and successfully invokes once more after cancellation; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
 | BJ5 | `done` | Gate 15: Nimbus artifact metadata and server rejection. | Added `RuntimeJavaScriptEvaluationFormat`, emitted `runtime_javascript_evaluation_format: "es_module"` from codegen, made runtime diagnostics/cache keys/tenant decisions carry the format, recognized `bun_jsc` as a named proof-only backend, and added tests proving V8 rejects `program_wrapper` and the Convex registry rejects Bun/JSC manifests before invocation; `cargo test -p nimbus-runtime limits::tests --lib`, `cargo test -p nimbus-server registry_and_license::registry --lib`, `npm run test --workspace @nimbus/codegen`, `cargo check -p nimbus-runtime -p nimbus-server`, `cargo fmt --all --check`, and `git diff --check` passed on 2026-05-23. |
-| BJ6 | `todo` | Gate 16: fork, upstream, or hold decision. | Compare required hooks against the current Bun delta and upstream shape; record no-fork, upstream-proposal, or Nimbus-fork decision with maintenance cost and CI requirements. |
+| BJ6 | `done` | Gate 16: fork, upstream, or hold decision. | Reviewed the current local Bun proof chain against `origin/main`: 10 commits, 12 files changed, 2731 insertions, 22 deletions. Decision: hold local proof delta, do not fork Bun, and do not upstream yet; maintenance cost, upstreamable candidates, non-upstreamable proof code, fork triggers, and required CI are recorded in Gate 16. |
 | BJ7 | `todo` | Closeout and next implementation handoff. | Update proof docs, this plan, `docs/plans/README.md`, and runtime architecture references; all verification commands pass; Bun remains proof-only unless every promotion gate is satisfied. |
 
 ## BJ1 Permission Inventory
@@ -283,6 +300,18 @@ V8 lanes emit and accept `es_module`; Bun/JSC proof artifacts are modeled as
 a clear proof-only error. This keeps unsupported Bun combinations out of
 runtime invocation while preserving a clean metadata seam for future engines.
 
+## BJ6 Fork Upstream Hold Decision
+
+Status: complete. Full evidence lives in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md`.
+
+BJ6 result: no fork yet. The current Bun delta is a useful local proof chain,
+not a product dependency. The plausible upstreamable pieces are the embeddable
+target/link-bridge/build-plumbing shapes, but the Nimbus-specific proof
+harness and policy results should stay local. A fork becomes reasonable only
+after Nimbus explicitly chooses a Bun product backend and the containment APIs,
+resolver policy, memory policy, and CI lane are specified.
+
 ## Fork Criteria
 
 Keep holding the local Bun patch unless all of these become true:
@@ -327,3 +356,4 @@ commands run in `/Users/jack/src/github.com/nimbus/nimbus`.
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-16-fork-upstream-hold-decision.md`
