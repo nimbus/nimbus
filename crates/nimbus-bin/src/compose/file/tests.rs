@@ -789,6 +789,164 @@ services:
 }
 
 #[test]
+fn production_compose_admission_accepts_docker_hub_short_digest_references() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let digest = "1111111111111111111111111111111111111111111111111111111111111111";
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        &format!(
+            r#"
+services:
+  api:
+    image: busybox@sha256:{digest}
+"#
+        ),
+    );
+
+    let project = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(compose),
+        ComposeAdmissionMode::Production,
+    )
+    .expect("Docker Hub short digest image should pass production admission");
+    let api = project.services.get("api").expect("api should load");
+    assert_eq!(
+        api.source,
+        ComposeLaunchPlan::Image {
+            image_reference: format!("busybox@sha256:{digest}"),
+        }
+    );
+}
+
+#[test]
+fn production_compose_admission_rejects_invalid_oci_references() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: ":justtag"
+"#,
+    );
+
+    let error = ComposeProjectPlan::load_selection_with_admission(
+        &ResolvedComposeSelection::explicit(compose),
+        ComposeAdmissionMode::Production,
+    )
+    .expect_err("invalid OCI reference should fail production admission");
+    assert!(
+        error.to_string().contains("invalid OCI image reference"),
+        "expected parser failure, got: {error}"
+    );
+}
+
+#[test]
+fn compose_project_lowers_x_nimbus_egress_policy_into_sandbox_spec() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    x-nimbus:
+      egress:
+        allow:
+          - name: stripe-api
+            protocol: https
+            host: api.stripe.com
+            port: 443
+            methods:
+              - POST
+            path_prefixes:
+              - /v1/
+"#,
+    );
+
+    let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
+    let catalog = ComposeProjectPlan::load(&compose)
+        .expect("compose file should resolve")
+        .into_service_catalog()
+        .expect("compose project should lower into a service catalog");
+    let launch = catalog
+        .sandbox_service_for_tenant(&tenant_id, "api")
+        .expect("api launch should exist");
+
+    match launch {
+        SandboxServiceLaunch::Image(launch) => {
+            assert_eq!(launch.spec.egress.rules().len(), 1);
+            let rule = &launch.spec.egress.rules()[0];
+            assert_eq!(rule.name, "stripe-api");
+            assert_eq!(rule.host, "api.stripe.com");
+            assert_eq!(rule.methods, vec!["POST".to_string()]);
+            assert_eq!(rule.path_prefixes, vec!["/v1/".to_string()]);
+        }
+        SandboxServiceLaunch::Build(_) => panic!("api should lower as an image-backed launch"),
+    }
+}
+
+#[test]
+fn compose_project_rejects_invalid_x_nimbus_egress_policy() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    x-nimbus:
+      egress:
+        allow:
+          - name: all
+            protocol: https
+            host: "*.example.com"
+            port: 443
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose)
+        .expect_err("wildcard egress policy should fail during compose admission");
+    assert!(
+        error.to_string().contains("x-nimbus.egress") && error.to_string().contains("wildcards"),
+        "error should name the invalid egress shape: {error}"
+    );
+}
+
+#[test]
+fn compose_project_rejects_unknown_x_nimbus_egress_fields() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    x-nimbus:
+      egress:
+        allow:
+          - name: stripe-api
+            protocol: https
+            host: api.stripe.com
+            port: 443
+            method:
+              - POST
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose)
+        .expect_err("unknown egress field should fail closed during compose admission");
+    assert!(
+        error.to_string().contains("unknown field") && error.to_string().contains("method"),
+        "error should name the unknown egress field: {error}"
+    );
+}
+
+#[test]
 fn production_compose_admission_rejects_local_builds_without_provenance_policy() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(

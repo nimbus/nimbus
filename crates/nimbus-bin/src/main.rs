@@ -14,6 +14,8 @@ mod local_server_client;
 mod machine;
 mod node;
 mod path_boundary;
+mod policy;
+mod sandbox_supervisor;
 mod start;
 #[cfg(test)]
 mod test_support;
@@ -28,6 +30,8 @@ use crate::dev::{DevCommand, run_dev_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
 use crate::init::{InitCommand, run_init_command};
 use crate::machine::{MachineCommand, run_machine_command};
+use crate::policy::{PolicyCommand, run_policy_command};
+use crate::sandbox_supervisor::{SandboxSupervisorCommand, run_sandbox_supervisor_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
 use crate::token::{TokenCommand, run_token_command};
 use crate::ui::{UiCommand, run_ui_command};
@@ -71,9 +75,15 @@ enum Command {
     /// Compose-backed local service lifecycle commands.
     #[command(name = "compose")]
     Compose(ComposeCommand),
+    /// Validate and explain Nimbus operator policy files.
+    #[command(subcommand)]
+    Policy(PolicyCommand),
     /// Encryption admin commands.
     #[command(subcommand)]
     Encryption(EncryptionCommand),
+    /// Internal sandbox-local supervisor entrypoint.
+    #[command(name = "sandbox-supervisor", hide = true)]
+    SandboxSupervisor(SandboxSupervisorCommand),
 }
 
 #[tokio::main]
@@ -97,11 +107,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 persistence_config_from_start_command(&StartCommand::default())?;
             run_compose_command(command, &persistence_config).await?;
         }
+        Command::Policy(command) => run_policy_command(command).await?,
         Command::Encryption(command) => {
             let persistence_config =
                 persistence_config_from_start_command(&StartCommand::default())?;
             run_encryption_command(command, &persistence_config).await?;
         }
+        Command::SandboxSupervisor(command) => run_sandbox_supervisor_command(command).await?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_subcommands_parse() {
+        let cli = Cli::parse_from([
+            "nimbus",
+            "policy",
+            "validate",
+            "--file",
+            "nimbus.policy.yaml",
+            "-f",
+            "json",
+        ]);
+
+        assert!(
+            matches!(cli.command, Command::Policy(PolicyCommand::Validate(_))),
+            "policy validate should parse as a first-class root command"
+        );
+
+        let cli = Cli::parse_from(["nimbus", "policy", "prove", "--file", "nimbus.policy.yaml"]);
+
+        assert!(
+            matches!(cli.command, Command::Policy(PolicyCommand::Prove(_))),
+            "policy prove should parse as a first-class root command"
+        );
+
+        let cli = Cli::parse_from([
+            "nimbus",
+            "policy",
+            "diff",
+            "--from",
+            "before.yaml",
+            "--to",
+            "after.yaml",
+        ]);
+
+        assert!(
+            matches!(cli.command, Command::Policy(PolicyCommand::Diff(_))),
+            "policy diff should parse as a first-class root command"
+        );
+    }
+
+    #[test]
+    fn sandbox_supervisor_command_parses_as_hidden_internal_entrypoint() {
+        let cli = Cli::parse_from(["nimbus", "sandbox-supervisor", "-f", "json"]);
+
+        assert!(
+            matches!(cli.command, Command::SandboxSupervisor(_)),
+            "sandbox-supervisor should parse as the packaged internal entrypoint"
+        );
+    }
 }

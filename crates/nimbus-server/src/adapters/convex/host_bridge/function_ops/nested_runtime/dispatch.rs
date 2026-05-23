@@ -156,7 +156,8 @@ impl ConvexHostBridge {
                 self.tenant_id(),
                 self.server_request_id(),
                 Some(cancellation.clone()),
-            ),
+            )
+            .with_runtime_bundle_provenance_gate(self.registry().runtime_bundle_provenance()),
         )
         .await
         .map_err(runtime_error_to_core)?;
@@ -186,7 +187,8 @@ impl ConvexHostBridge {
                 self.tenant_id(),
                 self.server_request_id(),
                 Some(cancellation.clone()),
-            ),
+            )
+            .with_runtime_bundle_provenance_gate(self.registry().runtime_bundle_provenance()),
         )
         .map_err(runtime_error_to_core)?;
         let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)

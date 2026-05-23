@@ -282,7 +282,8 @@ fn execute_http_target(
             decision.tenant_id(),
             Some(server_request_id.as_str()),
             None,
-        ),
+        )
+        .with_runtime_bundle_provenance_gate(registry.runtime_bundle_provenance()),
     )
     .map_err(runtime_error_to_core)?;
     let response = build_http_response(runtime_response)?;

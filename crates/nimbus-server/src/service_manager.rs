@@ -15,8 +15,9 @@ use crate::service_registry::{
     RuntimeServiceBindingFuture, RuntimeServiceRegistry, service_binding_from_handle,
 };
 use crate::tenant_isolation::{
-    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
-    TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
+    TenantImageAdmissionSource, TenantImagePolicyDecision, TenantImageVerificationEvidence,
+    TenantImageVerificationProvider, TenantIsolationContext, TenantIsolationDecision,
+    TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
 };
 
 const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -43,9 +44,22 @@ struct SandboxServiceManagerState {
     activations_in_progress: BTreeSet<TenantServiceKey>,
 }
 
+#[derive(Debug, Default)]
+struct DefaultTenantImageVerificationProvider;
+
+impl TenantImageVerificationProvider for DefaultTenantImageVerificationProvider {
+    fn verify_registry_image(
+        &self,
+        _request: &crate::tenant_isolation::TenantImageVerificationRequest,
+    ) -> nimbus_core::Result<TenantImageVerificationEvidence> {
+        Ok(TenantImageVerificationEvidence::default())
+    }
+}
+
 pub struct SandboxServiceManager {
     service_catalog: Arc<dyn SandboxServiceCatalog>,
     sandbox_backend: Arc<dyn SandboxBackend>,
+    image_verification_provider: Arc<dyn TenantImageVerificationProvider>,
     activation_timeout: Duration,
     activation_poll_interval: Duration,
     state: Mutex<SandboxServiceManagerState>,
@@ -61,6 +75,7 @@ impl SandboxServiceManager {
         Self {
             service_catalog,
             sandbox_backend,
+            image_verification_provider: Arc::new(DefaultTenantImageVerificationProvider),
             activation_timeout: DEFAULT_ACTIVATION_TIMEOUT,
             activation_poll_interval: DEFAULT_ACTIVATION_POLL_INTERVAL,
             state: Mutex::new(SandboxServiceManagerState::default()),
@@ -83,6 +98,22 @@ impl SandboxServiceManager {
 
     pub fn with_activation_poll_interval(mut self, activation_poll_interval: Duration) -> Self {
         self.activation_poll_interval = activation_poll_interval;
+        self
+    }
+
+    pub fn with_image_verification_provider(
+        mut self,
+        provider: impl TenantImageVerificationProvider + 'static,
+    ) -> Self {
+        self.image_verification_provider = Arc::new(provider);
+        self
+    }
+
+    pub fn with_image_verification_provider_arc(
+        mut self,
+        provider: Arc<dyn TenantImageVerificationProvider>,
+    ) -> Self {
+        self.image_verification_provider = provider;
         self
     }
 
@@ -205,6 +236,10 @@ impl SandboxServiceManager {
         let service_access =
             decision.service_access(&key.service_name, "sandbox service launch")?;
         service_access.ensure_sandbox_launch_matches(&launch, actual_backend)?;
+        decision
+            .network()
+            .ensure_sandbox_egress_matches(launch.spec(), "sandbox service launch")?;
+        self.admit_launch_image(decision, &launch)?;
 
         let handle = match launch {
             SandboxServiceLaunch::Image(launch) => {
@@ -235,6 +270,25 @@ impl SandboxServiceManager {
             .insert(key.clone(), handle.clone());
         self.record_service_handle(key, &handle).await?;
         Ok(handle)
+    }
+
+    fn admit_launch_image(
+        &self,
+        decision: &TenantIsolationDecision,
+        launch: &SandboxServiceLaunch,
+    ) -> Result<(), Error> {
+        let source = match launch {
+            SandboxServiceLaunch::Image(launch) => {
+                TenantImageAdmissionSource::registry(launch.image_reference.as_str())
+            }
+            SandboxServiceLaunch::Build(launch) => {
+                TenantImageAdmissionSource::local_build(launch.image_name.as_str())
+            }
+        };
+        decision
+            .image()
+            .admit_image(source, self.image_verification_provider.as_ref())?;
+        Ok(())
     }
 
     async fn wait_for_ready_handle_async(
@@ -391,6 +445,35 @@ impl SandboxServiceManager {
             .await
     }
 
+    pub async fn reload_service_egress_for_decision_async(
+        &self,
+        tenant_id: &TenantId,
+        decision: &TenantIsolationDecision,
+        service_name: &str,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        if decision.tenant_id() != tenant_id {
+            return Err(Error::InvalidInput(format!(
+                "egress reload decision tenant {} does not match requested tenant {}",
+                decision.tenant_id(),
+                tenant_id
+            )));
+        }
+        let key = TenantServiceKey::new(tenant_id, service_name);
+        decision
+            .service_access(service_name, "sandbox service egress reload")?
+            .ensure_tenant_matches(tenant_id, "sandbox service egress reload")?;
+        let Some(handle) = self.refresh_handle_async(&key).await? else {
+            return Ok(None);
+        };
+        let egress = decision.network().sandbox_egress().clone();
+        self.sandbox_backend
+            .reload_egress_policy(&handle.id, egress)
+            .await
+            .map_err(|error| sandbox_backend_error(&key, "reload egress policy", &error))?;
+        let refreshed = self.refresh_handle_async(&key).await?.unwrap_or(handle);
+        Ok(Some(refreshed))
+    }
+
     fn tenant_handles(&self, tenant_id: &TenantId) -> Vec<(TenantServiceKey, SandboxHandle)> {
         self.state
             .lock()
@@ -544,7 +627,8 @@ fn service_activation_decision(
             service_name,
             "activation",
         ))
-        .with_services(TenantServiceGrantPolicyDecision::new([service_name])),
+        .with_services(TenantServiceGrantPolicyDecision::new([service_name]))
+        .with_image(TenantImagePolicyDecision::default().allow_local_build()),
     )
 }
 
@@ -557,8 +641,8 @@ mod tests {
     use axum::http::StatusCode;
     use nimbus_sandbox::{
         PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxBuildLaunchSpec,
-        SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
-        SandboxProcessSpec, SandboxSpec,
+        SandboxEgressPolicy, SandboxEgressRule, SandboxFilesystemSpec, SandboxFuture,
+        SandboxHandle, SandboxId, SandboxImageLaunchSpec, SandboxProcessSpec, SandboxSpec,
     };
     use nimbus_testing::ServerFixture;
     use serde_json::json;
@@ -585,6 +669,7 @@ mod tests {
         stop_calls: AtomicUsize,
         artifact_cleanup_calls: AtomicUsize,
         inspect_calls: AtomicUsize,
+        egress_reloads: Mutex<Vec<(String, SandboxEgressPolicy)>>,
         ready_after_inspects: usize,
         handle_tenant_override: Option<TenantId>,
         handles: Mutex<BTreeMap<String, SandboxHandle>>,
@@ -598,6 +683,7 @@ mod tests {
                 stop_calls: AtomicUsize::new(0),
                 artifact_cleanup_calls: AtomicUsize::new(0),
                 inspect_calls: AtomicUsize::new(0),
+                egress_reloads: Mutex::new(Vec::new()),
                 ready_after_inspects,
                 handle_tenant_override: None,
                 handles: Mutex::new(BTreeMap::new()),
@@ -640,6 +726,36 @@ mod tests {
                 status,
                 endpoints,
             )
+        }
+    }
+
+    struct RecordingImageVerifier {
+        evidence: TenantImageVerificationEvidence,
+        calls: AtomicUsize,
+        references: Mutex<Vec<String>>,
+    }
+
+    impl RecordingImageVerifier {
+        fn with_evidence(evidence: TenantImageVerificationEvidence) -> Self {
+            Self {
+                evidence,
+                calls: AtomicUsize::new(0),
+                references: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl TenantImageVerificationProvider for RecordingImageVerifier {
+        fn verify_registry_image(
+            &self,
+            request: &crate::tenant_isolation::TenantImageVerificationRequest,
+        ) -> nimbus_core::Result<TenantImageVerificationEvidence> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.references
+                .lock()
+                .expect("image verifier references should not be poisoned")
+                .push(request.image_reference().to_string());
+            Ok(self.evidence.clone())
         }
     }
 
@@ -710,6 +826,18 @@ mod tests {
             Box::pin(async move { Ok(()) })
         }
 
+        fn reload_egress_policy(
+            &self,
+            id: &SandboxId,
+            egress: SandboxEgressPolicy,
+        ) -> SandboxFuture<()> {
+            self.egress_reloads
+                .lock()
+                .expect("backend lock should not be poisoned")
+                .push((id.as_str().to_owned(), egress));
+            Box::pin(async move { Ok(()) })
+        }
+
         fn remove_tenant_artifacts(&self, _tenant_id: TenantId) -> SandboxFuture<()> {
             self.artifact_cleanup_calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move { Ok(()) })
@@ -767,6 +895,276 @@ mod tests {
             0,
             "unadmitted service should fail before the sandbox backend is called"
         );
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_rejects_unadmitted_sandbox_egress_before_launch() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "stripe",
+            PublishedEndpointProtocol::Https,
+            "api.stripe.com",
+            443,
+        )]);
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db").with_egress_policy(egress),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        );
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = service_activation_decision(&isolation, "db")
+            .expect("db service activation decision should build");
+
+        let error = manager
+            .start_service_for_decision_async(&decision, "db", HostCallCancellation::default())
+            .await
+            .expect_err("decision must reject unadmitted sandbox egress policy");
+
+        assert!(
+            error
+                .to_string()
+                .contains("did not authorize sandbox egress policy"),
+            "error should name the egress-policy mismatch: {error}"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            0,
+            "unadmitted egress should fail before the sandbox backend is called"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_accepts_matching_sandbox_egress_policy() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "stripe",
+            PublishedEndpointProtocol::Https,
+            "api.stripe.com",
+            443,
+        )]);
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db").with_egress_policy(egress.clone()),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+                    "db",
+                    "activation",
+                ))
+                .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
+                .with_network(
+                    crate::tenant_isolation::TenantNetworkPolicyDecision::default()
+                        .with_sandbox_egress(egress)
+                        .expect("test egress policy should compile"),
+                ),
+            )
+            .expect("decision with matching egress should admit");
+
+        manager
+            .start_service_for_decision_async(&decision, "db", HostCallCancellation::default())
+            .await
+            .expect("matching egress policy should start")
+            .expect("handle should be returned");
+
+        assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_rejects_unverified_image_before_materialization() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let image = "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "api".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("api"),
+                        image,
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        );
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+                    "api",
+                    "activation",
+                ))
+                .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
+                .with_image(
+                    crate::tenant_isolation::TenantImagePolicyDecision::digest_pinned(image)
+                        .require_signature("https://issuer.example.com", "repo:nimbus/api"),
+                ),
+            )
+            .expect("image policy decision should admit");
+
+        let error = manager
+            .start_service_for_decision_async(&decision, "api", HostCallCancellation::default())
+            .await
+            .expect_err("missing signature evidence should fail before image materialization");
+
+        assert!(
+            error.to_string().contains("requires a matching signature"),
+            "image admission failure should be visible: {error}"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            0,
+            "unverified image must not reach sandbox materialization"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_service_for_decision_admits_verified_image_before_materialization() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let image = "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let verifier = Arc::new(RecordingImageVerifier::with_evidence(
+            TenantImageVerificationEvidence::new()
+                .with_signature("https://issuer.example.com", "repo:nimbus/api"),
+        ));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "api".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("api"),
+                        image,
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_image_verification_provider_arc(verifier.clone())
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+                    "api",
+                    "activation",
+                ))
+                .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
+                .with_image(
+                    crate::tenant_isolation::TenantImagePolicyDecision::digest_pinned(image)
+                        .require_signature("https://issuer.example.com", "repo:nimbus/api"),
+                ),
+            )
+            .expect("image policy decision should admit");
+
+        manager
+            .start_service_for_decision_async(&decision, "api", HostCallCancellation::default())
+            .await
+            .expect("verified image should start")
+            .expect("handle should be returned");
+
+        assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+        assert_eq!(verifier.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            verifier
+                .references
+                .lock()
+                .expect("image verifier references should not be poisoned")
+                .as_slice(),
+            [image]
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_service_egress_for_decision_updates_active_backend_policy() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = SandboxServiceManager::new(
+            Arc::new(StubSandboxServiceCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
+                        sparse_image_spec("db"),
+                        "postgres:16",
+                    )),
+                )]),
+            }),
+            backend.clone(),
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1));
+        let isolation =
+            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+        let start_decision = service_activation_decision(&isolation, "db")
+            .expect("db service activation decision should build");
+        let handle = manager
+            .start_service_for_decision_async(
+                &start_decision,
+                "db",
+                HostCallCancellation::default(),
+            )
+            .await
+            .expect("service should start")
+            .expect("handle should exist");
+        let egress = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "stripe",
+            PublishedEndpointProtocol::Https,
+            "api.stripe.com",
+            443,
+        )]);
+        let reload_decision = isolation
+            .admit_decision(
+                TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
+                    "db",
+                    "egress-reload",
+                ))
+                .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
+                .with_network(
+                    crate::tenant_isolation::TenantNetworkPolicyDecision::default()
+                        .with_sandbox_egress(egress.clone())
+                        .expect("test egress policy should compile"),
+                ),
+            )
+            .expect("reload decision with egress should admit");
+
+        let reloaded = manager
+            .reload_service_egress_for_decision_async(&tenant_id, &reload_decision, "db")
+            .await
+            .expect("egress reload should apply")
+            .expect("active handle should remain");
+
+        assert_eq!(reloaded.id, handle.id);
+        let reloads = backend
+            .egress_reloads
+            .lock()
+            .expect("backend lock should not be poisoned");
+        assert_eq!(reloads.len(), 1);
+        assert_eq!(reloads[0].0, handle.id.as_str());
+        assert_eq!(reloads[0].1, egress);
     }
 
     #[tokio::test]

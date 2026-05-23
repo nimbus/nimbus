@@ -5,6 +5,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::egress::{
+    SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxEgressEnforcementPlan,
+    SandboxEgressLaunchEnforcement,
+};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 
@@ -233,6 +237,10 @@ pub(crate) fn build_bundle_config(
 
     validate_port_bindings(&spec.port_bindings)?;
     validate_resource_limits(&spec.resources)?;
+    let egress_enforcement = SandboxEgressLaunchEnforcement::ProcessSupervisorProxy
+        .materialize(&spec.egress)
+        .map_err(|message| SandboxError::InvalidSpec { message })?;
+    let process_env = process_env(spec, &egress_enforcement)?;
 
     // krun VMMs always run as root because the crun process needs /dev/kvm access.
     // Any image USER is applied later inside the guest after the VMM is already
@@ -280,7 +288,7 @@ pub(crate) fn build_bundle_config(
             "noNewPrivileges": true,
             "capabilities": krun_process_capabilities(),
             "args": spec.process.args,
-            "env": process_env(&spec.process),
+            "env": process_env,
             "cwd": process_cwd(&spec.process),
         },
         "root": {
@@ -387,12 +395,30 @@ fn process_cwd(process: &SandboxProcessSpec) -> String {
     }
 }
 
-fn process_env(process: &SandboxProcessSpec) -> Vec<String> {
-    if process.env.is_empty() {
-        return vec![DEFAULT_PATH_ENV.to_owned()];
-    }
+fn process_env(
+    spec: &SandboxSpec,
+    egress_enforcement: &SandboxEgressEnforcementPlan,
+) -> Result<Vec<String>> {
+    let mut env = if spec.process.env.is_empty() {
+        vec![DEFAULT_PATH_ENV.to_owned()]
+    } else {
+        spec.process.env.clone()
+    };
+    env.retain(|entry| {
+        env_key(entry).is_none_or(|key| !SANDBOX_EGRESS_RESERVED_ENV_KEYS.contains(&key))
+    });
+    let rendered = serde_json::to_string(egress_enforcement).map_err(|error| {
+        SandboxError::OperationFailed {
+            message: format!("failed to serialize sandbox egress enforcement plan: {error}"),
+        }
+    })?;
+    env.push(format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}={rendered}"));
+    Ok(env)
+}
 
-    process.env.clone()
+fn env_key(entry: &str) -> Option<&str> {
+    let (key, _) = entry.split_once('=')?;
+    (!key.is_empty()).then_some(key)
 }
 
 fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
@@ -528,11 +554,36 @@ mod tests {
         write_bundle_config,
     };
     use crate::backend::SandboxBackendKind;
+    use crate::egress::{
+        SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+        SANDBOX_EGRESS_LEGACY_POLICY_ENV, SandboxEgressEnforcementMode,
+        SandboxEgressEnforcementPlan, SandboxEgressPolicy, SandboxEgressReloadPolicy,
+        SandboxEgressRule,
+    };
     use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{
         SandboxFilesystemSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits,
         SandboxSpec,
     };
+
+    fn egress_enforcement_from_config(config: &serde_json::Value) -> SandboxEgressEnforcementPlan {
+        let env = config["process"]["env"]
+            .as_array()
+            .expect("env should be an array");
+        let enforcement_prefix = format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}=");
+        let enforcement_entries = env
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(|entry| entry.strip_prefix(&enforcement_prefix))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            enforcement_entries.len(),
+            1,
+            "bundle generation should emit exactly one egress enforcement env value"
+        );
+        serde_json::from_str(enforcement_entries[0])
+            .expect("egress enforcement env should contain JSON")
+    }
 
     #[test]
     fn bundle_config_sets_krun_handler_and_port_map() {
@@ -638,6 +689,121 @@ mod tests {
         assert_eq!(
             config["process"]["noNewPrivileges"], true,
             "krun VMM process should not be able to gain new privileges through exec"
+        );
+    }
+
+    #[test]
+    fn bundle_config_materializes_sandbox_egress_enforcement_contract_env() {
+        let mut spec =
+            sample_spec().with_egress_policy(SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "stripe",
+                PublishedEndpointProtocol::Https,
+                "api.stripe.com",
+                443,
+            )
+            .with_methods(["POST"])
+            .with_path_prefixes(["/v1/"])]));
+        spec.process.env = vec![
+            "PATH=/usr/bin".to_owned(),
+            format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}={{\"schema_version\":0}}"),
+            format!("{SANDBOX_EGRESS_LEGACY_POLICY_ENV}={{\"allow\":[]}}"),
+        ];
+
+        let config = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect("bundle config should build");
+
+        let env = config["process"]["env"]
+            .as_array()
+            .expect("env should be an array");
+        let enforcement_prefix = format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}=");
+        let legacy_policy_prefix = format!("{SANDBOX_EGRESS_LEGACY_POLICY_ENV}=");
+        let enforcement_entries = env
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(|entry| entry.strip_prefix(&enforcement_prefix))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            enforcement_entries.len(),
+            1,
+            "bundle generation should replace spoofed egress enforcement env values"
+        );
+        assert!(
+            env.iter()
+                .filter_map(serde_json::Value::as_str)
+                .all(|entry| !entry.starts_with(&legacy_policy_prefix)),
+            "bundle generation should remove spoofed legacy egress policy env values"
+        );
+        let enforcement: SandboxEgressEnforcementPlan =
+            serde_json::from_str(enforcement_entries[0])
+                .expect("egress enforcement env should contain JSON");
+        assert_eq!(
+            enforcement.schema_version,
+            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            enforcement.mode,
+            SandboxEgressEnforcementMode::SupervisorProxy
+        );
+        assert_eq!(
+            enforcement.reload_policy,
+            SandboxEgressReloadPolicy::RecreateRequired
+        );
+        assert_eq!(enforcement.policy().rules().len(), 1);
+        assert_eq!(enforcement.policy().rules()[0].name, "stripe");
+        assert_eq!(
+            enforcement.policy().rules()[0].methods,
+            vec!["POST".to_string()]
+        );
+        enforcement
+            .validate()
+            .expect("materialized egress enforcement contract should validate");
+    }
+
+    #[test]
+    fn bundle_config_materializes_default_deny_supervisor_proxy_egress_contract_env() {
+        let config =
+            build_bundle_config("nimbus-db", &sample_spec(), &KrunBundleOptions::default())
+                .expect("bundle config should build");
+
+        let enforcement = egress_enforcement_from_config(&config);
+
+        assert_eq!(
+            enforcement.schema_version,
+            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            enforcement.mode,
+            SandboxEgressEnforcementMode::SupervisorProxy
+        );
+        assert_eq!(
+            enforcement.reload_policy,
+            SandboxEgressReloadPolicy::RecreateRequired
+        );
+        assert!(
+            enforcement.policy().is_deny_all(),
+            "default sandbox egress should remain deny-all"
+        );
+        enforcement
+            .validate()
+            .expect("default supervisor egress contract should validate");
+    }
+
+    #[test]
+    fn bundle_config_rejects_invalid_sandbox_egress_policy() {
+        let spec =
+            sample_spec().with_egress_policy(SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "wildcard",
+                PublishedEndpointProtocol::Https,
+                "*",
+                443,
+            )]));
+
+        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect_err("invalid sandbox egress policy should fail bundle generation");
+
+        assert!(
+            error.to_string().contains("wildcards"),
+            "bundle generation should expose the invalid egress policy error: {error}"
         );
     }
 

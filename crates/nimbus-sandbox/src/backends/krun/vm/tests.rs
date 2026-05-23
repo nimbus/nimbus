@@ -37,6 +37,53 @@ use crate::spec::{
 };
 
 #[test]
+fn execute_backend_fails_closed_until_krun_tsi_egress_pep_exists() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+
+    let error = block_on(backend.start(sample_spec()))
+        .expect_err("krun execute-mode should fail closed before launch planning");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("krun execute-mode is fail-closed")
+            && message.contains("libkrun TSI")
+            && message.contains("packet-level egress enforcement"),
+        "expected fail-closed egress error, got: {error}"
+    );
+    assert!(
+        !temp_dir.path().join("bundles").exists() && !temp_dir.path().join("state").exists(),
+        "krun execute-mode should fail before materializing launch artifacts"
+    );
+}
+
+#[test]
+fn execute_image_launch_fails_closed_before_image_materialization() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+
+    let error = block_on(backend.start_from_image(SandboxImageLaunchSpec::new(
+        sparse_image_spec("blocked-image-launch"),
+        "registry.example.com/acme/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )))
+    .expect_err("krun execute-mode image launch should fail before image materialization");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("krun execute-mode is fail-closed"),
+        "expected fail-closed egress error, got: {error}"
+    );
+    assert!(
+        !temp_dir.path().join("bundles").exists() && !temp_dir.path().join("state").exists(),
+        "krun execute-mode image launch should fail before pulling or materializing an image"
+    );
+}
+
+#[test]
 fn plan_only_backend_lowers_through_generic_trait_surface() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(

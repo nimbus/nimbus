@@ -1,0 +1,15 @@
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+    services:
+      allow:
+        - db
+    network:
+      endpoints:
+        - service: db
+          name: postgres
+          protocol: tcp
+          host: "*"
+          host_port: 15432

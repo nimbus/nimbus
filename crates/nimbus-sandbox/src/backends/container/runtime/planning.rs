@@ -1,5 +1,7 @@
 use super::support::*;
 
+use crate::backends::oci::network::OciNetworkDirectEgress;
+use crate::egress::SANDBOX_EGRESS_PROXY_URL_ENV;
 use tempfile::TempDir;
 
 #[test]
@@ -18,6 +20,112 @@ fn plan_only_backend_persists_a_container_manifest() {
         &handle.id,
     );
     assert!(manifest_path.is_file(), "manifest should be written");
+}
+
+#[test]
+fn container_launch_network_config_denies_direct_egress_for_supervised_processes() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend = sample_plan_only_backend(temp_dir.path());
+
+    let network_config = backend.network_config();
+
+    assert_eq!(
+        network_config.direct_egress,
+        OciNetworkDirectEgress::Deny,
+        "process-capable container launches must not keep ambient bridge egress"
+    );
+}
+
+#[test]
+fn execute_plan_assigns_bridge_reachable_egress_proxy_and_injects_proxy_env() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    config.published_port_range = 15000..=15002;
+    let backend = ContainerSandboxBackend::new(config);
+
+    let plan = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id(), None, None)
+        .expect("execute plan should lower");
+
+    let egress_proxy = plan
+        .manifest
+        .egress_proxy
+        .as_ref()
+        .expect("execute launch should assign an egress proxy");
+    assert_eq!(egress_proxy.host, "10.89.0.1");
+    assert_eq!(egress_proxy.port, 15000);
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&plan.manifest.bundle_layout.config_path).unwrap())
+            .expect("bundle config should parse");
+    let env = config["process"]["env"]
+        .as_array()
+        .expect("env should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("env entries should be strings"))
+        .collect::<Vec<_>>();
+    assert!(
+        env.contains(&"HTTP_PROXY=http://10.89.0.1:15000")
+            && env.contains(&"http_proxy=http://10.89.0.1:15000")
+            && env.contains(&"NO_PROXY=")
+            && env.contains(&"no_proxy="),
+        "execute bundle should steer proxy-aware tools through the egress proxy: {env:?}"
+    );
+    assert!(
+        env.contains(&format!("{SANDBOX_EGRESS_PROXY_URL_ENV}=http://10.89.0.1:15000").as_str()),
+        "execute bundle should expose Nimbus egress proxy metadata: {env:?}"
+    );
+}
+
+#[test]
+fn execute_plan_allocates_egress_proxy_port_after_existing_guest_bindings() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    config.published_port_range = 15000..=15002;
+    let backend = ContainerSandboxBackend::new(config);
+
+    let plan = backend
+        .plan_start_with_id(
+            &sample_spec().with_port_binding(SandboxPortBinding::tcp("http", 15000, 8080)),
+            &sandbox_id(),
+            None,
+            None,
+        )
+        .expect("execute plan should lower");
+
+    assert_eq!(
+        plan.manifest.egress_proxy.as_ref().map(|proxy| proxy.port),
+        Some(15001),
+        "egress proxy must not collide with published service ports"
+    );
+}
+
+#[test]
+fn plan_only_launches_do_not_materialize_live_proxy_env() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend = sample_plan_only_backend(temp_dir.path());
+
+    let plan = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id(), None, None)
+        .expect("plan-only launch should lower");
+
+    assert!(
+        plan.manifest.egress_proxy.is_none(),
+        "plan-only launches should not claim a live egress proxy"
+    );
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&plan.manifest.bundle_layout.config_path).unwrap())
+            .expect("bundle config should parse");
+    let env = config["process"]["env"]
+        .as_array()
+        .expect("env should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("env entries should be strings"))
+        .collect::<Vec<_>>();
+    assert!(
+        env.iter()
+            .all(|entry| !entry.starts_with("HTTP_PROXY=") && !entry.starts_with("http_proxy=")),
+        "plan-only bundles should keep live proxy env absent: {env:?}"
+    );
 }
 
 #[test]
