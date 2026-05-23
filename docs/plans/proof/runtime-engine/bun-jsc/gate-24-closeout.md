@@ -73,7 +73,21 @@ Reusable gate:
 bash scripts/verify-bun-jsc-in-process-lockdown.sh
 ```
 
-Result: passed all nine script steps.
+Result: passed all ten script steps.
+
+Linux/minicloud:
+
+```sh
+NIMBUS_BUN_REPO=~/src/github.com/oven-sh/bun \
+NIMBUS_BUN_BUILD_DIR=~/.cache/nimbus-proof/bun-embed-native \
+NIMBUS_BUN_CACHE_DIR=~/.cache/nimbus-proof/bun-cache \
+NIMBUS_BUN_RUST_ONLY_BUILD_DIR=~/.cache/nimbus-proof/bun-rust-only \
+NIMBUS_BUN_CARGO_TARGET_DIR=~/.cache/nimbus-proof/bun-cargo-target \
+bash scripts/verify-bun-jsc-in-process-lockdown.sh
+```
+
+Result: passed all ten script steps on Debian 13 `minicloud` with Bun proof
+commit `ce5aa2a389`.
 
 ## Residual Work
 
@@ -87,4 +101,6 @@ of:
   Nimbus explicitly chooses a maintained fork.
 
 Linux/minicloud verification of `scripts/verify-bun-jsc-in-process-lockdown.sh`
-is required before product promotion or any fork dependency.
+has passed for the proof baseline. Product promotion or any fork dependency
+still requires the follow-on embedder API and Bun pool plan to close the
+resolver, native permission, memory, cancellation, and teardown gates.

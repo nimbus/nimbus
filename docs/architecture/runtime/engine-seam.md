@@ -16,6 +16,7 @@ It complements:
 - [Node compatibility surface matrix](node-compat-surface-matrix.md)
 - [New runtime engine proof harness](new-engine-proof-harness.md)
 - [Bun/JSC in-process lockdown plan](../../plans/bun-jsc-in-process-lockdown-plan.md)
+- [Bun/JSC embedder API and pool plan](../../plans/bun-jsc-embedder-api-and-pool-plan.md)
 - [Archived execution isolation and runtime backends plan](../../plans/archive/execution-isolation-and-runtime-backends-plan.md)
 - [Archived runtime engine seam plan](../../plans/archive/runtime-engine-seam-plan.md)
 
@@ -53,6 +54,12 @@ The runtime engine seam therefore separates these axes:
 | Permission policy | The host resources the invocation may access. | Runtime mode plus `RuntimeGrants`; independent of engine and compatibility target. |
 | Backend trust tier | Whether the backend is proof-only, trusted in-process only, or suitable for untrusted in-process tenant code. | `proof_only`, `in_process_trusted_only`, `in_process_untrusted`. |
 | Lockdown profile | The concrete backend-specific containment profile whose hooks are actually enforced. | `v8_deno_core` today; Bun/JSC profiles remain rejected until proven. |
+
+Current Bun/JSC product direction is an optional backend candidate with its own
+Bun pool beside Deno/V8. That pool is owned by the active
+`bun-jsc-embedder-api-and-pool-plan`; it must stay disabled until Bun exposes
+or Nimbus maintains construction-profile, resolver, native permission, memory,
+cancellation, and teardown controls that pass on macOS and Linux.
 
 ## Layering Rules
 

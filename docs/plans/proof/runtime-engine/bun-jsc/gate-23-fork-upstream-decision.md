@@ -15,7 +15,7 @@ Inputs:
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
 
-Bun local proof head: `65cdc97796` (`Add Bun embed lifecycle reuse proof`)
+Bun local proof head: `ce5aa2a389` (`Stabilize Bun embed cancellation proof on Linux`)
 
 Bun upstream base in local worktree: `f161e0311d`
 (`shell: wrap only component-leading ! when neutralizing glob metachars (#31272)`)
@@ -51,7 +51,7 @@ stable embedder API with these parts:
 | Native loading policy | Keep FFI, `dlopen`, N-API, and native addons absent for untrusted tenants. |
 | Worker policy | Default deny; if ever granted, propagate runtime identity, HostBridge policy, cancellation, teardown, memory, and audit into child contexts. |
 | Dynamic code policy | Separate host-authored generated wrapper compilation from tenant-visible `eval`, `Function`, Node `vm`, and REPL evaluation. |
-| Lifecycle/pool API | Dedicated Bun/JSC pool ownership over concurrency, event-loop progress, cancellation, VM teardown, discard-on-pressure, and outer quota coordination. |
+| Lifecycle/pool API | Dedicated Bun/JSC pool ownership over concurrency, event-loop progress, cancellation, VM teardown, discard-on-pressure, outer quota coordination, thread stack-bound initialization, and termination-state reset. |
 
 ## Maintenance Burden
 
@@ -117,3 +117,8 @@ belong in Nimbus proof harnesses.
 is justified only if Nimbus commits to a selectable Bun/JSC backend, the needed
 embedder APIs cannot land upstream, and the patch surface remains small enough
 to continuously verify across macOS and Linux.
+
+The 2026-05-23 Linux/minicloud pass did not change this decision. It reduced
+proof uncertainty around native Linux linking, JSC thread stack bounds,
+termination-state reset, and timing-sensitive cancellation, but it did not add
+the resolver or native permission hooks required for untrusted tenant code.
