@@ -61,7 +61,9 @@ Bun pool beside Deno/V8. That pool is owned by the active
 or Nimbus maintains construction-profile, resolver, native permission, memory,
 cancellation, and teardown controls that pass on macOS and Linux.
 Nimbus policy metadata can now name the future Bun/JSC pool shapes, but
-validation still rejects every Bun/JSC product route.
+validation still rejects every Bun/JSC product route. The disabled
+`backends::bun_jsc` scaffold owns Bun/JSC pool policy and lifecycle types
+without sharing Deno/V8 VM internals.
 
 ## Layering Rules
 
@@ -340,6 +342,8 @@ not as the generic runtime abstraction. Step 0 for runtime extensions is:
 - make runtime policy validation describe supported engine, compatibility,
   execution, and pooling combinations; Bun/JSC pool metadata exists, but is not
   selectable until the Bun-side containment gates pass
+- keep the disabled Bun/JSC pool scaffold backend-owned while resolver,
+  permission, memory, cancellation, and teardown hooks are proven
 - separate bundle/content metadata from V8 module-specifier and code-cache
   state
 - update generated artifacts and server lane selection before adding a second

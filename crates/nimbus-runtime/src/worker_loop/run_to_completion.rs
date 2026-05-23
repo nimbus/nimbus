@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use crate::backends::v8::V8RuntimeBackendFactory;
-use crate::backends::{RuntimeBackend, RuntimeBackendFactory, RuntimeBackendInvocation};
+use crate::backends::{
+    RuntimeBackend, RuntimeBackendInvocation, create_runtime_backend_for_policy,
+};
 use crate::error::NimbusRuntimeError;
 use crate::executor::{
     RuntimeWorkerQueue, RuntimeWorkerShutdown, SharedInvocationPermit, run_invocation_lifecycle,
@@ -21,7 +22,6 @@ pub(crate) trait WorkerLoop: 'static {
 }
 
 pub(crate) struct RunToCompletionWorkerLoopFactory {
-    backend_factory: Arc<dyn RuntimeBackendFactory>,
     watchdog: WatchdogTimer,
     #[cfg(test)]
     test_state: Option<Arc<crate::executor::RuntimeExecutorTestState>>,
@@ -30,7 +30,6 @@ pub(crate) struct RunToCompletionWorkerLoopFactory {
 impl RunToCompletionWorkerLoopFactory {
     pub(crate) fn new(watchdog: WatchdogTimer) -> Self {
         Self {
-            backend_factory: Arc::new(V8RuntimeBackendFactory),
             watchdog,
             #[cfg(test)]
             test_state: None,
@@ -51,9 +50,9 @@ impl WorkerLoopFactory for RunToCompletionWorkerLoopFactory {
     fn create(&self, worker_id: usize, policy: Arc<RuntimePolicy>) -> Box<dyn WorkerLoop> {
         Box::new(RunToCompletionWorkerLoop::new(
             worker_id,
-            policy,
+            policy.clone(),
             self.watchdog.clone(),
-            self.backend_factory.create(),
+            create_runtime_backend_for_policy(&policy),
             #[cfg(test)]
             self.test_state.clone(),
         ))

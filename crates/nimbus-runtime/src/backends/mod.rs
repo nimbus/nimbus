@@ -8,10 +8,11 @@ use crate::RuntimeInvocationContext;
 use crate::error::Result;
 use crate::executor::SharedInvocationPermit;
 use crate::host::HostCallCancellation;
-use crate::limits::RuntimePolicy;
+use crate::limits::{RuntimeBackendKind, RuntimePolicy};
 use crate::runtime::{InvocationRequest, RuntimeBundle, RuntimeHost};
 use crate::watchdog::WatchdogTimer;
 
+pub(crate) mod bun_jsc;
 pub(crate) mod v8;
 
 pub(crate) trait RuntimeBackendFactory: Send + Sync + 'static {
@@ -34,4 +35,11 @@ pub(crate) trait RuntimeBackend: 'static {
         &'a mut self,
         invocation: RuntimeBackendInvocation,
     ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>>;
+}
+
+pub(crate) fn create_runtime_backend_for_policy(policy: &RuntimePolicy) -> Box<dyn RuntimeBackend> {
+    match policy.limits().backend_kind {
+        RuntimeBackendKind::V8 => v8::V8RuntimeBackendFactory.create(),
+        RuntimeBackendKind::BunJsc => bun_jsc::BunJscRuntimeBackendFactory.create(),
+    }
 }

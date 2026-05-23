@@ -40,6 +40,7 @@ make build-ui
 
 printf '\n[3/10] Nimbus runtime/backend policy tests\n'
 cargo test -p nimbus-runtime limits::tests --lib
+cargo test -p nimbus-runtime backends::bun_jsc --lib
 
 printf '\n[4/10] Nimbus registry/runtime metadata rejection tests\n'
 cargo test -p nimbus-server registry_and_license::registry --lib
