@@ -154,7 +154,7 @@ line `10 passed, 0 failed`. The 10 conditions:
 | CW1 | `523834cb` | shard verification-harness corpus across N shards per surface |
 | CW2 | `bacab0e1` | shard Rust Workspace Tests via nextest --partition |
 | CW3 | `74e0ef8c` | split External Provider Integration Tests by provider |
-| CW4 | _pending_ | warm-sccache optimization (selected lane) |
+| CW4 | `b58024e0` | warm-sccache --tests drop (lane (a) landed; lane (b) deferred) |
 | CW5 | _pending_ | closeout — promote contract, archive plan, update routing |
 
 ## Notes on staging order
