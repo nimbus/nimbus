@@ -54,6 +54,24 @@ runs:
         echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
         git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
+    # CA1: Replace the system bfd/lld linker on Linux runners with mold.
+    # mold is 3-10x faster than the GNU linker on large instrumented binaries
+    # and was the prerequisite for unlocking `cargo llvm-cov -j > 1` in the
+    # Coverage job (see ci.yml's coverage step and the CC6 deferral). The
+    # env vars persist via $GITHUB_ENV so every subsequent cargo invocation
+    # in the job uses mold without per-call wrapper plumbing.
+    # macOS/Windows branches keep their system linker; this gate exists so
+    # the composite remains portable once CA4 migrates release.yml onto it.
+    - name: Install mold linker (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends mold
+        echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=mold" >> "${GITHUB_ENV}"
+        echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=mold" >> "${GITHUB_ENV}"
+        mold --version
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       with:
