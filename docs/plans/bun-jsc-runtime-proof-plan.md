@@ -7,13 +7,13 @@ justified only after the remaining production blockers are measured.
 
 ## Status
 
-- **Status:** in execution; `BJ0` through `BJ2` are complete and `BJ3` is next.
+- **Status:** in execution; `BJ0` through `BJ3` are complete and `BJ4` is next.
 - **Primary owner:** this plan
 - **Current trust tier:** `in_process_trusted_only`
 - **Current product posture:** proof-only, not selectable, no production route
 - **Bun worktree:** `/Users/jack/src/github.com/oven-sh/bun`
-- **Current local Bun proof commit:** `f6c87be47e`
-  (`Add Bun embed memory behavior proof`)
+- **Current local Bun proof commit:** `f0cee692c0`
+  (`Add Bun embed package module policy proof`)
 - **Current upstream base in local Bun worktree:** `f161e0311d`
   (`shell: wrap only component-leading ! when neutralizing glob metachars (#31272)`)
 
@@ -53,6 +53,12 @@ The local proof chain has shown:
   `VM::heap_size()` and sync GC, retained memory dropped after releasing the
   retained graph and shrinking the footprint, and no hard per-VM heap limit was
   observed in the embed path.
+- The generated-wrapper proof now records BJ3 package/module behavior:
+  self-contained program wrapper remains the selected next lane, static ESM
+  import is rejected by the program evaluator, `require` is absent by default,
+  generated Node builtin and external-package maps deny missing entries by
+  default, but dynamic `import("node:fs")` fulfills and `Bun.resolve` /
+  `Bun.resolveSync` are exposed as unmediated resolver authority.
 
 Fresh verification after the local Bun pull on 2026-05-23:
 
@@ -100,6 +106,22 @@ Result: passed against Bun proof commit `f6c87be47e`. The native proof printed
 the Gate 12 memory sample recorded in
 `docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`.
 
+BJ3 verification on 2026-05-23:
+
+```sh
+cd /Users/jack/src/github.com/oven-sh/bun
+cargo fmt --all --check
+bun scripts/build.ts --profile=debug-no-asan \
+  --build-dir=/private/tmp/nimbus-bun-embed-native \
+  --cache-dir=/private/tmp/nimbus-bun-cache \
+  --target=check-bun-embed-probe
+git diff --check
+```
+
+Result: passed against Bun proof commit `f0cee692c0`. The native proof printed
+the Gate 13 package/module policy sample recorded in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`.
+
 ## Remaining Blockers
 
 Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
@@ -110,7 +132,11 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
   pressure signal but no hard per-VM heap limit, so the safe first product
   policy is fresh VM or discard-on-pressure plus an outer sandbox/process hard
   limit
-- package and module loading contract, including explicit Bun resolver policy
+- package and module loading enforcement if Bun/JSC is ever promoted: Gate 13
+  selected program-wrapper as the safe next artifact lane and proved generated
+  Node package maps deny missing entries by default, but dynamic `node:fs`
+  import and `Bun.resolve*` remain unmediated without a Nimbus-owned Bun
+  resolver policy
 - VM lifecycle policy: retained reuse versus fresh-per-invocation discard
 - reproducible artifact strategy for generated and native Bun build products
 - explicit runtime artifact metadata and server/codegen rejection of unsupported
@@ -124,7 +150,7 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 | BJ0 | `done` | Reconcile current proof evidence, local Bun delta, and merge baseline. | `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed on 2026-05-23 after the local Bun pull against Bun `c57f7e58c0` on upstream base `f161e0311d`; Nimbus `main` contains merge `8c5f2697`. |
 | BJ1 | `done` | Gate 11: permission-surface containment inventory. | Bun proof commit `9e20ac28a2` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_permission_surface_inventory()` and records each Bun, Node, Web/network, package-loading, worker/concurrency, subprocess, FFI/native-addon, filesystem, network, and environment surface as `absent_by_default`, `policy_hook_available`, `policy_hook_missing`, or `unsafe_bypass`; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
 | BJ2 | `done` | Gate 12: memory behavior and safe first policy. | Bun proof commit `f6c87be47e` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_memory_behavior()`. It runs 16 generated Nimbus invocations under retained allocation load, records `VM::heap_size()` / sync-GC pressure samples, observes no hard per-VM heap limit, and sets the safe first policy to fresh VM or discard-on-pressure; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
-| BJ3 | `todo` | Gate 13: package/module loading and resolver policy. | Prove the selected Bun artifact shape, decide ESM versus program wrapper for the next lane, reject Node external packages by default, and identify any explicit Bun package resolver API needed. |
+| BJ3 | `done` | Gate 13: package/module loading and resolver policy. | Bun proof commit `f0cee692c0` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_package_module_policy()`. It records `self_contained_program_wrapper` via `Bun__REPL__evaluate` as the selected next lane, proves static ESM import is rejected in that evaluator, proves `require` is absent by default, proves generated Node builtin and external-package empty maps deny missing entries by default, and records dynamic `import("node:fs")` plus `Bun.resolve` / `Bun.resolveSync` as unsafe resolver bypasses requiring a Nimbus-owned Bun package resolver; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
 | BJ4 | `todo` | Gate 14: lifecycle, reuse, teardown, and stress. | Run create/invoke/cancel/drop loops and retained-VM reuse loops; decide whether the product path can reuse VMs or must start fresh per invocation. |
 | BJ5 | `todo` | Gate 15: Nimbus artifact metadata and server rejection. | Add or verify explicit engine/content/evaluation-format metadata and tests that registries reject unsupported Bun combinations before invocation. No production Bun route may be added. |
 | BJ6 | `todo` | Gate 16: fork, upstream, or hold decision. | Compare required hooks against the current Bun delta and upstream shape; record no-fork, upstream-proposal, or Nimbus-fork decision with maintenance cost and CI requirements. |
@@ -173,6 +199,19 @@ Bun/JSC memory containment as an outer process/sandbox quota plus
 fresh-per-invocation or discard-on-pressure VM lifecycle policy, not a
 retained in-process tenant-isolation guarantee.
 
+## BJ3 Package And Module Policy
+
+Status: complete. Full evidence lives in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`.
+
+BJ3 result: Bun/JSC still stays `in_process_trusted_only` and proof-only. The
+next proof lane should keep using the self-contained generated program wrapper,
+not a Bun ESM artifact, until a safe Bun module-loader API exists. Generated
+Node builtin and external-package helper maps deny missing entries by default,
+but dynamic `import("node:fs")` and `Bun.resolve*` are available without a
+Nimbus resolver hook, so a product backend needs a first-class
+`nimbus_owned_bun_package_resolver` before tenant code can load packages.
+
 ## Fork Criteria
 
 Keep holding the local Bun patch unless all of these become true:
@@ -214,3 +253,4 @@ commands run in `/Users/jack/src/github.com/nimbus/nimbus`.
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-10-timeout-cancel.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`

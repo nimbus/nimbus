@@ -7,10 +7,10 @@ Nimbus plan:
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
 
-Bun proof commit: `f6c87be47e` (`Add Bun embed memory behavior proof`)
+Bun proof commit: `f0cee692c0` (`Add Bun embed package module policy proof`)
 
 Nimbus proof baseline:
-`docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`
+`docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`
 
 ## Decision
 
@@ -65,6 +65,13 @@ allocation load, heap samples grew from `221431` bytes after setup GC to
 release GC and `195847` bytes after `shrink_footprint()` under the JSC API
 lock.
 
+Gate 13 later found that the self-contained generated program wrapper remains
+the right next artifact lane. Static ESM import is rejected by the program
+evaluator and `require` remains absent by default. The generated wrapper denies
+missing Node builtin and external package map entries by default. However,
+dynamic `import("node:fs")` fulfilled, and `Bun.resolve` plus
+`Bun.resolveSync` are exposed as unmediated resolver authority.
+
 ## Remaining Production Blockers
 
 Bun/JSC is not selectable because these required evidence rows remain open:
@@ -73,19 +80,19 @@ Bun/JSC is not selectable because these required evidence rows remain open:
 | --- | --- |
 | Permission containment | Gate 11 inventory is complete, but containment is not. Every present host-sensitive Bun, Node, JSC, and package-loading surface must become absent, denied, wrapped by Nimbus policy, or the backend must remain permanently trusted/sandbox-only. |
 | Memory behavior | Gate 12 proved a pressure signal, but no hard per-VM heap limit. A product backend must use fresh VM or discard-on-pressure plus an outer process/sandbox hard quota rather than retained in-process tenant memory isolation. |
-| Package and module loading | Bun/JSC has explicit artifact metadata, evaluation format, package resolver, and external-package policy. It must not reuse `node_external_packages` as if it were Deno/V8. |
+| Package and module loading | Gate 13 selected program-wrapper as the safe next artifact lane and proved generated maps deny missing Node package entries by default, but dynamic `node:fs` import and `Bun.resolve*` remain unmediated. A product backend needs a Nimbus-owned Bun resolver policy and must not reuse `node_external_packages` as if it were Deno/V8. |
 | VM lifecycle and reuse | Create/invoke/cancel/drop loops prove retained VM reuse is safe, or the backend starts fresh-per-invocation and records the cost. |
 | Reproducible artifacts | Required Bun generated/native artifacts are reproduced by documented commands without untracked local build products. |
 | Server/codegen routing | Nimbus registries reject unsupported Bun/content/target/package combinations before invocation. |
 
 ## Next Proof Gate
 
-Next gate: **Bun/JSC Gate 13: package/module loading and resolver policy**.
+Next gate: **Bun/JSC Gate 14: lifecycle, reuse, teardown, and stress**.
 
-The gate should prove the selected Bun artifact shape, decide whether the next
-lane keeps using the generated program wrapper or shifts to an ESM-shaped
-artifact, reject Node external packages by default, and identify any explicit
-Bun package resolver API Nimbus would need before a product backend exists.
+The gate should run create/invoke/cancel/drop loops and retained-VM reuse loops
+in the same non-CLI generated-wrapper path. It must decide whether a Bun/JSC
+product path can reuse VMs or must start fresh per invocation and discard on
+timeout, cancellation, memory pressure, or package-loader use.
 
 ## Fork Posture
 
@@ -125,16 +132,18 @@ Required hooks before an upstream or fork proposal is concrete:
 
 ## Verification
 
-Decision documentation updated after the Gate 11 and Gate 12 Bun proof commits.
+Decision documentation updated after the Gate 11, Gate 12, and Gate 13 Bun
+proof commits.
 
 Reviewed:
 
-- Bun commit `f6c87be47e`
+- Bun commit `f0cee692c0`
 - `src/embed_probe/lib.rs`
 - `src/embed_probe/nimbus_generated_program_bundle.js`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-10-timeout-cancel.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/permission-model.md`
@@ -146,5 +155,6 @@ git diff --check -- \
   docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md \
   docs/plans/bun-jsc-runtime-proof-plan.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md \
-  docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md
+  docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md \
+  docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md
 ```
