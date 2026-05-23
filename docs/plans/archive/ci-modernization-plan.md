@@ -52,7 +52,7 @@ Out of scope:
 | CM5 | Emit `$GITHUB_STEP_SUMMARY` markdown from high-value jobs: the CC verifier-equivalent reports, `cargo deny` output, coverage summary, the desktop UI smoke walk. Each job appends a structured markdown block (pass/fail counts, top advisories, link to artifacts) so the run summary page is informative without raw-log diving. Verifier asserts at least N (TBD; ≥4) jobs reference `GITHUB_STEP_SUMMARY`. | done |
 | CM6 | Add `.github/workflows/codeql.yml` using GitHub's CodeQL template configured for the languages we ship (Rust via custom build, JavaScript/TypeScript). Standard schedule (weekly) + on PR. Verifier asserts the workflow exists and references `github/codeql-action`. | done |
 | CM7 | Audit the dependabot PR queue (`gh pr list --author dependabot`). Confirm the github-actions ecosystem is firing on its schedule; if pending PRs exist for any action we just bumped, close them as superseded with a comment. Document findings in proof. Verifier is a doc-presence check at `docs/plans/proof/ci-modernization/cm7-dependabot-audit.md`. | done |
-| CM8 | Closeout. Flip every ledger row to `done`, append Execution Log with actual SHAs, move plan to `docs/plans/archive/`, promote `docs/operating/ci-modernization.md` (synthesis of CM1-CM6 contracts), update routing in `docs/plans/README.md` + `AGENTS.md` to the archived path. Verifier's plan-file regex accepts both active and archived paths. | pending |
+| CM8 | Closeout. Flip every ledger row to `done`, append Execution Log with actual SHAs, move plan to `docs/plans/archive/`, promote `docs/operating/ci-modernization.md` (synthesis of CM1-CM6 contracts), update routing in `docs/plans/README.md` + `AGENTS.md` to the archived path. Verifier's plan-file regex accepts both active and archived paths. | done |
 
 ## Completion Gate
 
@@ -97,10 +97,17 @@ Out of scope:
 
 ## Execution Log
 
-Will be appended as each CM lands on main.
-
 | CM  | Commit(s) | Subject |
 |-----|-----------|---------|
+| CM0 | `fbffa233` | scaffold CI Modernization plan + verifier + baseline proof |
+| CM1 | `15303b4e`, `faa9ffd2` | extract setup-rust-cached composite action, migrate 12 sites; hotfix drop secrets expression from composite description |
+| CM2 | `dedfd034` | SHA-pin every third-party action with version-name comment |
+| CM3 | `167b6f68` | pin ubuntu runners to ubuntu-24.04 |
+| CM4 | `6ed996e4` | bump actions/create-github-app-token v3.2.0 -> v3 |
+| CM5 | `ab10aa4f` | emit job summaries from 4 high-value CI jobs |
+| CM6 | `50e7dade`, `624e5ec5` | add CodeQL SAST workflow for Rust + JavaScript/TypeScript; hotfix SHA-pin codeql-action + accept nested action paths in verifier |
+| CM7 | `5b464a14` | dependabot configuration + PR-queue audit (2026-05-22) |
+| CM8 | (this commit) | closeout — promote contract, archive plan, update routing |
 
 ## Notes on staging order
 

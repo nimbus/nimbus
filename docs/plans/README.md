@@ -13,23 +13,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
     binary release, Homebrew/cask, and Linux package mirror lanes are in
     flight under this plan.
-- `docs/plans/ci-modernization-plan.md`
-  - active execution plan covering CI infrastructure modernization that
-    sits alongside the archived CC caching baseline. Extracts the
-    duplicated Rust + sccache + Swatinem bootstrap into a composite
-    action at `.github/actions/setup-rust-cached/` so the next
-    sccache-action pin bump becomes a 1-line change (root cause of
-    CC9's 12-site blast radius). SHA-pins every third-party action
-    with a version-name comment, pins `runs-on: ubuntu-latest` →
-    `ubuntu-24.04` for runner determinism, fixes the
-    `actions/create-github-app-token@v3.2.0` patch over-pin, emits
-    `$GITHUB_STEP_SUMMARY` markdown from high-value jobs
-    (verifier/deny/coverage/desktop-ui), adds a CodeQL workflow, and
-    audits the dependabot PR queue. `/goal` control plane gated on
-    `bash scripts/verify-ci-modernization.sh` (twelve conditions).
-    Once the plan closes, `docs/operating/ci-modernization.md`
-    becomes the canonical infrastructure contract alongside
-    `docs/operating/ci-caching.md`.
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
@@ -102,6 +85,28 @@ archived plans only when you need historical execution detail.
     conditions). Proof bundle at
     `docs/plans/proof/ci-caching-canonicalization/`. Future CI caching
     / sccache / Swatinem waves must promote a new active plan.
+- `docs/plans/archive/ci-modernization-plan.md`
+  - completed execution record for the CI modernization wave (CM0-CM8,
+    closed 2026-05-22). Extracted the duplicated Rust toolchain +
+    sccache + Swatinem cache + googlesource bootstrap into a single
+    composite action at `.github/actions/setup-rust-cached/` so the
+    next sccache-action pin bump becomes a 1-line edit instead of
+    the 12-site sweep CC9 had to do. SHA-pinned every non-`actions/*`
+    `uses:` reference (including the codeql-action sub-path refs) with
+    a `# vX.Y.Z` version-name comment, pinned every `runs-on:
+    ubuntu-latest` to `ubuntu-24.04`, dropped the
+    `actions/create-github-app-token@v3.2.0` patch over-pin to `@v3`,
+    instrumented four high-value jobs (deny, coverage,
+    rust-gate-summary, desktop-ui) with structured
+    `$GITHUB_STEP_SUMMARY` markdown, and shipped
+    `.github/workflows/codeql.yml` for static analysis coverage of
+    Rust + JavaScript/TypeScript. Canonical contract is
+    `docs/operating/ci-modernization.md` alongside
+    `docs/operating/ci-caching.md`. `/goal` control plane gated on
+    `bash scripts/verify-ci-modernization.sh` (twelve conditions).
+    Proof bundle at `docs/plans/proof/ci-modernization/`. Future CI
+    infrastructure / SAST / composite-action waves must promote a
+    new active plan.
 - `docs/plans/archive/sandbox-microvm-hardening-plan.md`
   - completed execution record for closing the microVM service exposure
     blockers from `docs/plans/security/sandbox-isolation-audit.md`: krun OCI
