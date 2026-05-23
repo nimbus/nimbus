@@ -605,7 +605,7 @@ shipped the item plus a one-line "what landed" note.)
 | PW1  | e79bbfc54a6841bc08f8585b057a876b5f650d8b | libsql tag pin + docker-image cache |
 | PW2  | 333d398eb2714fcc9039653729e2d2753d445d40 | coverage.yml extraction; PR coverage gone |
 | PW3  | 4ebe916dd8609dec2a5e3ea1b93646273696082b | concurrency cap: branch-conditional cancel |
-| PW4  | TBD | warm-sccache retain (PW4c) or retire (PW4b) |
+| PW4  | 09d3a290c20b257d1488815282c3aef11b06f614 | warm-sccache retained (PW4c path) |
 | PW5  | TBD | sub-15 PR wall green proof bundle |
 | PW6  | TBD | contract promoted, plan archived, routing updated |
 
