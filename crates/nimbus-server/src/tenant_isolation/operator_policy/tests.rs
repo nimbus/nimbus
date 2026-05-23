@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::tenant_isolation::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
+    TenantImageVerificationRequest,
 };
 use nimbus_sandbox::PublishedEndpointProtocol;
 
@@ -231,7 +232,7 @@ struct NoopImageVerifier;
 impl TenantImageVerificationProvider for NoopImageVerifier {
     fn verify_registry_image(
         &self,
-        _image_reference: &str,
+        _request: &TenantImageVerificationRequest,
     ) -> Result<TenantImageVerificationEvidence> {
         Ok(TenantImageVerificationEvidence::new())
     }

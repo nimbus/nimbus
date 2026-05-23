@@ -126,8 +126,85 @@ impl TenantImageAttestationEvidence {
 pub trait TenantImageVerificationProvider {
     fn verify_registry_image(
         &self,
-        image_reference: &str,
+        request: &TenantImageVerificationRequest,
     ) -> Result<TenantImageVerificationEvidence>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantImageVerificationRequest {
+    image_reference: String,
+    signature: Option<TenantImageSignatureRequirement>,
+    provenance: Option<TenantImageProvenanceRequirement>,
+    sbom_required: bool,
+}
+
+impl TenantImageVerificationRequest {
+    fn from_policy(image_reference: impl Into<String>, policy: &TenantImagePolicyDecision) -> Self {
+        Self {
+            image_reference: image_reference.into(),
+            signature: policy
+                .signature_required
+                .then(|| TenantImageSignatureRequirement {
+                    issuer: policy.allowed_signature_issuer.clone(),
+                    subject: policy.allowed_signature_subject.clone(),
+                }),
+            provenance: policy
+                .provenance_required
+                .then(|| TenantImageProvenanceRequirement {
+                    builder_id: policy.allowed_builder_id.clone(),
+                    predicate_types: policy.required_attestation_predicates.clone(),
+                }),
+            sbom_required: policy.sbom_required,
+        }
+    }
+
+    pub fn image_reference(&self) -> &str {
+        &self.image_reference
+    }
+
+    pub fn signature(&self) -> Option<&TenantImageSignatureRequirement> {
+        self.signature.as_ref()
+    }
+
+    pub fn provenance(&self) -> Option<&TenantImageProvenanceRequirement> {
+        self.provenance.as_ref()
+    }
+
+    pub fn sbom_required(&self) -> bool {
+        self.sbom_required
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantImageSignatureRequirement {
+    issuer: Option<String>,
+    subject: Option<String>,
+}
+
+impl TenantImageSignatureRequirement {
+    pub fn issuer(&self) -> Option<&str> {
+        self.issuer.as_deref()
+    }
+
+    pub fn subject(&self) -> Option<&str> {
+        self.subject.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantImageProvenanceRequirement {
+    builder_id: Option<String>,
+    predicate_types: Vec<String>,
+}
+
+impl TenantImageProvenanceRequirement {
+    pub fn builder_id(&self) -> Option<&str> {
+        self.builder_id.as_deref()
+    }
+
+    pub fn predicate_types(&self) -> &[String] {
+        &self.predicate_types
+    }
 }
 
 impl TenantImagePolicyDecision {
@@ -197,7 +274,11 @@ impl TenantImagePolicyDecision {
                 let parsed_reference = self.admit_registry_image_reference(image_reference)?;
                 let canonical_image_reference = parsed_reference.whole();
                 let verification = if self.requires_provider_verification() {
-                    provider.verify_registry_image(&canonical_image_reference)?
+                    let request = TenantImageVerificationRequest::from_policy(
+                        &canonical_image_reference,
+                        self,
+                    );
+                    provider.verify_registry_image(&request)?
                 } else {
                     TenantImageVerificationEvidence::default()
                 };
@@ -379,13 +460,13 @@ mod tests {
     impl TenantImageVerificationProvider for StaticImageVerifier {
         fn verify_registry_image(
             &self,
-            image_reference: &str,
+            request: &TenantImageVerificationRequest,
         ) -> Result<TenantImageVerificationEvidence> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.seen_references
                 .lock()
                 .expect("seen reference list should not be poisoned")
-                .push(image_reference.to_string());
+                .push(request.image_reference().to_string());
             Ok(self.evidence.clone())
         }
     }

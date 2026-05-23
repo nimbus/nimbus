@@ -17,17 +17,30 @@ use nimbus_sandbox::{
 
 use crate::sandbox::SandboxServiceLaunch;
 
+mod artifact_provenance;
 mod audit_events;
 mod image_admission;
 mod operator_policy;
 
+pub use artifact_provenance::{
+    ArtifactAttestationEvidence, ArtifactImageVerificationProvider, ArtifactProvenanceRequirement,
+    ArtifactSignatureEvidence, ArtifactSignatureRequirement, ArtifactVerificationEvidence,
+    ArtifactVerificationPolicy, ArtifactVerificationRequest, ArtifactVerificationSubject,
+    ArtifactVerificationSubjectKind, ArtifactVerifierBackend, ArtifactVerifierBackendIdentity,
+    ArtifactVerifierCommandBackend, ArtifactVerifierCommandInvocation,
+    ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, ArtifactVerifierError,
+    ArtifactVerifierErrorKind, ArtifactVerifierResult, DEFAULT_ARTIFACT_VERIFIER_TIMEOUT,
+    ProcessArtifactVerifierCommandRunner, redact_artifact_verifier_output,
+};
 pub use audit_events::{
     TENANT_ISOLATION_EVENT_SCHEMA_VERSION, TenantIsolationEvent, TenantIsolationEventKind,
     TenantIsolationEventResult, TenantIsolationEventValue,
 };
 pub use image_admission::{
     TenantImageAdmission, TenantImageAdmissionSource, TenantImageAttestationEvidence,
-    TenantImageSignatureEvidence, TenantImageVerificationEvidence, TenantImageVerificationProvider,
+    TenantImageProvenanceRequirement, TenantImageSignatureEvidence,
+    TenantImageSignatureRequirement, TenantImageVerificationEvidence,
+    TenantImageVerificationProvider, TenantImageVerificationRequest,
 };
 pub use operator_policy::{
     OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy, OperatorDeniedEgressEvent,
