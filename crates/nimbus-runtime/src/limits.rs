@@ -13,6 +13,7 @@ pub enum RuntimeBackendKind {
     #[default]
     #[serde(rename = "v8")]
     V8,
+    BunJsc,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -22,6 +23,14 @@ pub enum RuntimeBundleContentKind {
     #[default]
     JavaScript,
     WasmComponent,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeJavaScriptEvaluationFormat {
+    #[default]
+    EsModule,
+    ProgramWrapper,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -255,6 +264,7 @@ pub struct RuntimeResetCapabilities {
 pub struct RuntimeLimits {
     pub backend_kind: RuntimeBackendKind,
     pub bundle_content_kind: RuntimeBundleContentKind,
+    pub javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     pub compatibility_target: RuntimeCompatibilityTarget,
     pub execution_model: RuntimeExecutionModel,
     pub mode: RuntimeMode,
@@ -484,6 +494,7 @@ impl RuntimeLimits {
         Self {
             backend_kind: self.backend_kind,
             bundle_content_kind: self.bundle_content_kind,
+            javascript_evaluation_format: self.javascript_evaluation_format,
             compatibility_target: self.compatibility_target,
             execution_model: self.execution_model,
             mode: self.mode,
@@ -527,6 +538,18 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                     limits.bundle_content_kind
                 );
             }
+            if !matches!(
+                limits.javascript_evaluation_format,
+                RuntimeJavaScriptEvaluationFormat::EsModule
+            ) {
+                panic!(
+                    "V8 runtime backend requires ES module evaluation format, got {:?}",
+                    limits.javascript_evaluation_format
+                );
+            }
+        }
+        RuntimeBackendKind::BunJsc => {
+            panic!("Bun/JSC runtime backend is proof-only and is not selectable")
         }
     }
 }
@@ -572,6 +595,7 @@ impl Default for RuntimeLimits {
         Self {
             backend_kind: RuntimeBackendKind::V8,
             bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+            javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::EsModule,
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
             execution_model: RuntimeExecutionModel::CooperativeLocker,
             mode: RuntimeMode::Standard,
@@ -882,6 +906,10 @@ mod tests {
                 run_to_completion.limits().bundle_content_kind,
                 RuntimeBundleContentKind::JavaScript
             );
+            assert_eq!(
+                run_to_completion.limits().javascript_evaluation_format,
+                RuntimeJavaScriptEvaluationFormat::EsModule
+            );
 
             let cooperative_snapshot = RuntimePolicy::new(RuntimeLimits {
                 backend_kind: RuntimeBackendKind::V8,
@@ -966,6 +994,38 @@ mod tests {
         assert!(
             wasm_on_v8.is_err(),
             "V8 must reject non-JavaScript bundle content"
+        );
+
+        let program_wrapper_on_v8 = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::V8,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+                compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
+                execution_model: RuntimeExecutionModel::CooperativeLocker,
+                runtime_pool_kind: RuntimePoolKind::WarmPool,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            program_wrapper_on_v8.is_err(),
+            "V8 must reject Bun/JSC program-wrapper evaluation"
+        );
+
+        let bun_jsc_backend = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::BunJsc,
+                bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+                javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+                compatibility_target: RuntimeCompatibilityTarget::Node22,
+                execution_model: RuntimeExecutionModel::RunToCompletion,
+                runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            bun_jsc_backend.is_err(),
+            "Bun/JSC must remain proof-only and non-selectable"
         );
     }
 
