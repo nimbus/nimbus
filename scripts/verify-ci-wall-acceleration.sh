@@ -163,15 +163,27 @@ else
 fi
 
 # 6. CW2: rust-workspace-tests uses nextest --partition + matrix.
+#    The partition can be either inline in ci.yml (`--partition hash:N/M`) or
+#    forwarded through Makefile via the NIMBUS_NEXTEST_PARTITION env var that
+#    ci.yml sets per shard. Both are valid wirings.
 step 6 "rust-workspace-tests uses nextest --partition with matrix"
 if [ -f "${CI_WF}" ]; then
   WORKSPACE_BLOCK="$(job_block rust-workspace-tests "${CI_WF}")"
   has_partition=0
   has_workspace_shard_matrix=0
-  if printf '%s\n' "${WORKSPACE_BLOCK}" | grep -qE 'nextest run.*--partition'; then
+  if printf '%s\n' "${WORKSPACE_BLOCK}" | grep -qE 'nextest run.*--partition|NIMBUS_NEXTEST_PARTITION'; then
     has_partition=1
   fi
-  if printf '%s\n' "${WORKSPACE_BLOCK}" | grep -qE '^[[:space:]]+shard:|^[[:space:]]+partition:'; then
+  if [ "${has_partition}" = "1" ]; then
+    # Also ensure the Makefile actually forwards the env var to nextest.
+    if ! grep -qE 'NIMBUS_NEXTEST_PARTITION.*--partition|--partition.*NIMBUS_NEXTEST_PARTITION|partition hash:\$\(NIMBUS_NEXTEST_PARTITION' Makefile 2>/dev/null; then
+      # Allow inline --partition in ci.yml without Makefile coupling.
+      if ! printf '%s\n' "${WORKSPACE_BLOCK}" | grep -qE 'nextest run.*--partition'; then
+        has_partition=0
+      fi
+    fi
+  fi
+  if printf '%s\n' "${WORKSPACE_BLOCK}" | grep -qE '^[[:space:]]+shard:|^[[:space:]]+partition:|^[[:space:]]+-[[:space:]]+partition:|^[[:space:]]+-[[:space:]]+shard:'; then
     has_workspace_shard_matrix=1
   fi
   if [ "${has_partition}" = "1" ] && [ "${has_workspace_shard_matrix}" = "1" ]; then

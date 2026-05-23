@@ -153,12 +153,32 @@ jobs:
         run: make test-rust-runtime
 
   rust-workspace-tests:
-    name: Rust Workspace Tests
+    # CW2: Rust Workspace Tests is sharded across N partitions via
+    # cargo-nextest's `--partition hash:N/M`. nextest hashes the test path to
+    # produce a deterministic assignment that stays stable across runs (so
+    # cache reuse and rerun-on-failure both behave). Shard 1 also runs the
+    # workspace doctests because nextest does not support doc tests; the
+    # doctest pass is small (~30s) so its placement on a single shard does
+    # not move the wall.
+    name: Rust Workspace Tests (shard ${{ matrix.partition }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
     env:
       NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - partition: "1/3"
+            shard-id: "1"
+            run-doctests: "true"
+          - partition: "2/3"
+            shard-id: "2"
+            run-doctests: "false"
+          - partition: "3/3"
+            shard-id: "3"
+            run-doctests: "false"
 
     steps:
       - name: Check out repository
@@ -189,15 +209,19 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Run workspace test lane
+      - name: Run workspace test lane (shard ${{ matrix.partition }})
         # Verification-harness corpus tests are ignored by default and run in
         # the dedicated harness matrix below, so this lane stays focused on the
         # main workspace suite outside the runtime crate.
+        env:
+          NIMBUS_NEXTEST_PARTITION: ${{ matrix.partition }}
         run: make test-rust-workspace
 
       - name: Run workspace doctests
+        if: matrix.run-doctests == 'true'
         # nextest intentionally does not run doctests, so keep this explicit
         # libtest pass to preserve the coverage of the previous cargo test lane.
+        # Pinned to shard 1 so it runs exactly once across the matrix.
         run: make test-rust-docs
 
   external-provider-tests:
