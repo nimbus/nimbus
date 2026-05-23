@@ -101,13 +101,21 @@ if [ -f "${HARNESS_SCRIPT}" ]; then
   if grep -qE 'NIMBUS_HARNESS_SHARD' "${HARNESS_SCRIPT}"; then
     has_env_propagation=1
   fi
-  if grep -qE '\<\$\{?3\}?\>|shard[[:space:]]*=|^[[:space:]]*shard=' "${HARNESS_SCRIPT}"; then
+  # Portable check (BSD grep on macOS lacks `\<`/`\>` anchors): the script
+  # must reference a third positional arg ($3 or "$3" or ${3:-}) inside the
+  # required|nightly branch or call validate_shard_spec.
+  if grep -qE 'validate_shard_spec|"\$3"|\$\{3' "${HARNESS_SCRIPT}"; then
     has_shard_arg=1
   fi
   has_corpus_filter=0
-  if grep -rqE 'NIMBUS_HARNESS_SHARD' crates/nimbus-testing/src 2>/dev/null; then
-    has_corpus_filter=1
-  fi
+  for src in \
+    crates/nimbus-storage/src/simulation/verification.rs \
+    crates/nimbus-server/src/tests/verification_harness.rs \
+    crates/nimbus-runtime/src/runtime/tests/verification_harness.rs; do
+    if [ -f "${src}" ] && grep -qE 'NIMBUS_HARNESS_SHARD|VERIFICATION_SHARD_ENV' "${src}"; then
+      has_corpus_filter=1
+    fi
+  done
   if [ "${has_shard_arg}" = "1" ] && [ "${has_env_propagation}" = "1" ] && [ "${has_corpus_filter}" = "1" ]; then
     pass "Harness script accepts shard arg, propagates NIMBUS_HARNESS_SHARD, corpus filter present"
   else
@@ -117,27 +125,38 @@ else
   fail "${HARNESS_SCRIPT} missing"
 fi
 
+# Helper: extract a single top-level job block from ci.yml. Uses a flag so the
+# end-pattern doesn't match the start line (BSD awk range patterns include the
+# start in the end test, which collapses the range to one line when both
+# patterns shape the same).
+job_block() {
+  local job="$1"
+  local file="$2"
+  awk -v job="^  ${job}:$" '
+    $0 ~ job {flag=1; print; next}
+    flag && /^  [a-z][a-z-]*:[[:space:]]*$/ {flag=0}
+    flag {print}
+  ' "${file}"
+}
+
 # 5. CW1: harness job matrix in ci.yml has per-surface shard expansion.
 step 5 "harness job matrix includes per-surface shard expansion"
 if [ -f "${CI_WF}" ]; then
-  # Look for a `shard:` axis in the harness matrix or shard entries in matrix.include.
+  HARNESS_BLOCK="$(job_block harness "${CI_WF}")"
   has_shard_axis=0
-  if awk '/^  harness:/,/^  [a-z][a-z-]*:/' "${CI_WF}" | grep -qE '^[[:space:]]+shard:'; then
+  if printf '%s\n' "${HARNESS_BLOCK}" | grep -qE '^[[:space:]]+shard:'; then
     has_shard_axis=1
   fi
   has_shard_include=0
-  if awk '/^  harness:/,/^  [a-z][a-z-]*:/' "${CI_WF}" | grep -cE '^[[:space:]]+-[[:space:]]+surface:' >/tmp/cw_harness_surface_count.$$ 2>/dev/null; then
-    surface_entries=$(cat /tmp/cw_harness_surface_count.$$)
-    rm -f /tmp/cw_harness_surface_count.$$
-    # If we have ≥ 6 surface entries (was 4 pre-CW1, ≥6 post-CW1 with at least one shard added), assume shard expansion.
-    if [ "${surface_entries}" -ge 6 ] 2>/dev/null; then
-      has_shard_include=1
-    fi
+  surface_entries=$(printf '%s\n' "${HARNESS_BLOCK}" | grep -cE '^[[:space:]]+-[[:space:]]+surface:' || true)
+  surface_entries=${surface_entries// /}
+  if [ "${surface_entries}" -ge 6 ] 2>/dev/null; then
+    has_shard_include=1
   fi
   if [ "${has_shard_axis}" = "1" ] || [ "${has_shard_include}" = "1" ]; then
-    pass "harness matrix includes per-surface shard expansion"
+    pass "harness matrix includes per-surface shard expansion (${surface_entries} surface entries)"
   else
-    fail "harness matrix not yet expanded with shard entries" "shard_axis=${has_shard_axis} expanded_surface_count=${has_shard_include}"
+    fail "harness matrix not yet expanded with shard entries" "shard_axis=${has_shard_axis} expanded_surface_count=${surface_entries}"
   fi
 else
   fail "${CI_WF} missing"
@@ -146,12 +165,13 @@ fi
 # 6. CW2: rust-workspace-tests uses nextest --partition + matrix.
 step 6 "rust-workspace-tests uses nextest --partition with matrix"
 if [ -f "${CI_WF}" ]; then
+  WORKSPACE_BLOCK="$(job_block rust-workspace-tests "${CI_WF}")"
   has_partition=0
   has_workspace_shard_matrix=0
-  if awk '/^  rust-workspace-tests:/,/^  [a-z][a-z-]*:/' "${CI_WF}" | grep -qE 'nextest run.*--partition'; then
+  if printf '%s\n' "${WORKSPACE_BLOCK}" | grep -qE 'nextest run.*--partition'; then
     has_partition=1
   fi
-  if awk '/^  rust-workspace-tests:/,/^  [a-z][a-z-]*:/' "${CI_WF}" | grep -qE '^[[:space:]]+shard:|^[[:space:]]+partition:'; then
+  if printf '%s\n' "${WORKSPACE_BLOCK}" | grep -qE '^[[:space:]]+shard:|^[[:space:]]+partition:'; then
     has_workspace_shard_matrix=1
   fi
   if [ "${has_partition}" = "1" ] && [ "${has_workspace_shard_matrix}" = "1" ]; then
@@ -166,9 +186,12 @@ fi
 # 7. CW3: external-provider-tests job has provider matrix axis with ≥ 3 entries.
 step 7 "external-provider-tests job has provider matrix with ≥ 3 entries"
 if [ -f "${CI_WF}" ]; then
-  # Find the external-provider job and check its matrix has a provider axis.
-  PROVIDER_AXIS_COUNT=$(awk '/external-provider-tests:|external-provider:/,/^  [a-z][a-z-]*:/' "${CI_WF}" \
-    | grep -cE '^[[:space:]]+-[[:space:]]+provider:[[:space:]]+[a-z]+' || true)
+  # Try both common job names.
+  PROVIDER_BLOCK="$(job_block external-provider-tests "${CI_WF}")"
+  if [ -z "${PROVIDER_BLOCK}" ]; then
+    PROVIDER_BLOCK="$(job_block external-provider "${CI_WF}")"
+  fi
+  PROVIDER_AXIS_COUNT=$(printf '%s\n' "${PROVIDER_BLOCK}" | grep -cE '^[[:space:]]+-[[:space:]]+provider:[[:space:]]+[a-z]+' || true)
   PROVIDER_AXIS_COUNT=${PROVIDER_AXIS_COUNT// /}
   if [ "${PROVIDER_AXIS_COUNT}" -ge 3 ] 2>/dev/null; then
     pass "external-provider job has provider matrix axis with ${PROVIDER_AXIS_COUNT} entries"
@@ -187,17 +210,15 @@ if [ -f "${MODERN_DOC}" ]; then
     has_doc=1
   fi
   has_landing=0
+  WARM_BLOCK="$(job_block warm-sccache "${CI_WF}")"
   # Lane (a): --tests dropped from warm-sccache's cargo invocation.
-  if awk '/^  warm-sccache:/,/^  [a-z][a-z-]*:/' "${CI_WF}" 2>/dev/null \
-    | grep -qE 'cargo check[[:space:]]+--workspace[[:space:]]*$|cargo check[[:space:]]+--workspace[[:space:]]+[^-]'; then
-    # `cargo check --workspace` without `--tests` is lane (a) landed
-    if ! awk '/^  warm-sccache:/,/^  [a-z][a-z-]*:/' "${CI_WF}" | grep -qE 'cargo check[[:space:]]+--workspace[[:space:]]+--tests'; then
+  if printf '%s\n' "${WARM_BLOCK}" | grep -qE 'cargo check[[:space:]]+--workspace[[:space:]]*$|cargo check[[:space:]]+--workspace[[:space:]]+[^-]'; then
+    if ! printf '%s\n' "${WARM_BLOCK}" | grep -qE 'cargo check[[:space:]]+--workspace[[:space:]]+--tests'; then
       has_landing=1
     fi
   fi
   # Lane (b): warm-sccache job has a `target/` cache restore step beyond Swatinem's default.
-  if awk '/^  warm-sccache:/,/^  [a-z][a-z-]*:/' "${CI_WF}" 2>/dev/null \
-    | grep -qiE 'actions/cache.*target/|target-cache|warm-target-cache'; then
+  if printf '%s\n' "${WARM_BLOCK}" | grep -qiE 'actions/cache.*target/|target-cache|warm-target-cache'; then
     has_landing=1
   fi
   if [ "${has_doc}" = "1" ] && [ "${has_landing}" = "1" ]; then

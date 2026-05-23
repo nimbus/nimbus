@@ -7,15 +7,35 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/verification-harness.sh required [storage|engine|server|runtime|all]
-  bash scripts/verification-harness.sh nightly [storage|engine|server|runtime|all]
+  bash scripts/verification-harness.sh required [storage|engine|server|runtime|all] [N/M]
+  bash scripts/verification-harness.sh nightly [storage|engine|server|runtime|all] [N/M]
   bash scripts/verification-harness.sh repro <storage|engine|server|runtime> <required|nightly> <case-id>
+
+The optional N/M shard argument restricts the corpus to the Nth shard of M
+total shards (1 <= N <= M). It is forwarded via NIMBUS_HARNESS_SHARD so the
+corpus filter runs at the test-harness level rather than truncating cases at
+the test name.
 
 Examples:
   bash scripts/verification-harness.sh required
   bash scripts/verification-harness.sh nightly engine
+  bash scripts/verification-harness.sh required server 1/2
   bash scripts/verification-harness.sh repro server nightly adversarial-long-tail-131
 EOF
+}
+
+validate_shard_spec() {
+  local spec="$1"
+  if [[ ! "$spec" =~ ^[0-9]+/[0-9]+$ ]]; then
+    echo "shard spec must be of the form N/M (got '$spec')" >&2
+    exit 1
+  fi
+  local n="${spec%/*}"
+  local m="${spec#*/}"
+  if (( n < 1 || m < 1 || n > m )); then
+    echo "shard spec must satisfy 1 <= N <= M (got '$spec')" >&2
+    exit 1
+  fi
 }
 
 surface_package() {
@@ -95,6 +115,7 @@ run_surface_filter() {
   local selected
   local list_output
   local cargo_args
+  local key_suffix=""
   package="$(surface_package "$surface")"
   if ! list_output="$(cargo test -p "$package" "$test_name" -- --ignored --list 2>&1)"; then
     echo "verification harness ${mode}/${surface} failed while listing tests for filter ${test_name}" >&2
@@ -113,8 +134,11 @@ run_surface_filter() {
     # failures cannot hide the actual deterministic campaign result.
     cargo_args+=(--test-threads=1)
   fi
+  if [[ -n "${NIMBUS_HARNESS_SHARD:-}" ]]; then
+    key_suffix="-shard-${NIMBUS_HARNESS_SHARD//\//-of-}"
+  fi
   bash "${SCRIPT_DIR}/single-flight.sh" \
-    --key "verify-harness-${mode}-${surface}" \
+    --key "verify-harness-${mode}-${surface}${key_suffix}" \
     -- "${cargo_args[@]}"
 }
 
@@ -167,6 +191,10 @@ main() {
   local command="${1:-}"
   case "$command" in
     required|nightly)
+      if [[ $# -ge 3 && -n "${3:-}" ]]; then
+        validate_shard_spec "$3"
+        export NIMBUS_HARNESS_SHARD="$3"
+      fi
       run_mode "$command" "${2:-all}"
       ;;
     repro)

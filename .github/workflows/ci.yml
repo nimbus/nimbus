@@ -408,23 +408,53 @@ jobs:
         run: sccache --show-stats
 
   harness:
-    name: ${{ matrix.surface-label }} Verification Harness
+    name: ${{ matrix.surface-label }} Verification Harness${{ matrix.shard-label }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: github.event_name != 'schedule'
     needs: [ui-artifacts, warm-sccache]
     strategy:
       fail-fast: false
+      # CW1: server + engine surfaces are sharded across the harness corpus
+      # via NIMBUS_HARNESS_SHARD=N/M. Server has 7 transport-liveness cases
+      # so sharding into 4 lanes drops the post-CW0 pole; engine + storage
+      # generated-history corpora have 2 cases so we cap at 2 shards there
+      # (storage stays unsharded because its 8.3m duration is already well
+      # below the wall pole). Runtime is fast enough to stay single-shard.
       matrix:
         include:
           - surface: storage
             surface-label: Storage
+            shard: ""
+            shard-label: ""
           - surface: engine
             surface-label: Engine
+            shard: "1/2"
+            shard-label: " (shard 1/2)"
+          - surface: engine
+            surface-label: Engine
+            shard: "2/2"
+            shard-label: " (shard 2/2)"
           - surface: server
             surface-label: Server
+            shard: "1/4"
+            shard-label: " (shard 1/4)"
+          - surface: server
+            surface-label: Server
+            shard: "2/4"
+            shard-label: " (shard 2/4)"
+          - surface: server
+            surface-label: Server
+            shard: "3/4"
+            shard-label: " (shard 3/4)"
+          - surface: server
+            surface-label: Server
+            shard: "4/4"
+            shard-label: " (shard 4/4)"
           - surface: runtime
             surface-label: Runtime
+            shard: ""
+            shard-label: ""
 
     steps:
       - name: Check out repository
@@ -452,7 +482,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Run required verification harness corpus
-        run: bash scripts/verification-harness.sh required ${{ matrix.surface }}
+        run: bash scripts/verification-harness.sh required ${{ matrix.surface }} ${{ matrix.shard }}
 
   harness-nightly:
     name: Nightly ${{ matrix.surface-label }} Verification Harness
