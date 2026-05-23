@@ -148,7 +148,7 @@ should remain packaged and versioned with Nimbus.
 | EPS4b3 | `done` | Add Linux network conformance and live egress reload proof. | `cargo test -p nimbus-sandbox egress_proxy -- --nocapture` proves the reusable egress proxy enforces default deny, allowed HTTP endpoint success, HTTPS CONNECT tunneling, HTTPS absolute-URI fail-closed behavior, DNS-resolved internal/SSRF denial, L7 method/path denial, hop-by-hop proxy header cleanup, and live policy reload without restart. `cargo test -p nimbus-sandbox container -- --nocapture` proves container execute plans inject a bridge-reachable proxy URL, scrub spoofed proxy env, reserve proxy ports without colliding with service ports, advertise `live_reload`, stop proxy listeners during cleanup, and reload policy into a running proxy. `cargo test -p nimbus-server operator_policy -- --nocapture` and `cargo test -p nimbus-server service_manager -- --nocapture` prove the control plane classifies container egress-only diffs as dynamic, keeps krun egress recreate-required, and can call the sandbox reload seam for an active service. Minicloud evidence: `sudo -E NIMBUS_CONTAINER_EGRESS_WORKDIR=/tmp/nimbus-container-egress-proof target/debug/deps/container_linux_egress-* --ignored --test-threads=1 --nocapture` passed with 2 Linux root tests, proving direct proxy bypass denial, proxy-allowed endpoint success, loopback/default denial, L7 denial, DNS-resolved internal denial, and live reload inside a real BusyBox guest. |
 | EPS5 | `done` | Add OCSF and OpenTelemetry export mapping. | `cargo test -p nimbus-server audit_events -- --nocapture`: fixtures prove tenant isolation events export stable OCSF Base Event and OpenTelemetry log-record shaped JSON with decision IDs, trace/span correlation, namespaced Nimbus attributes, and redactions for tokens, credentials, query parameters, secret handles, authorization values, and raw bearer claims. |
 | EPS6 | `done` | Add external policy backend seam without making it mandatory. | `cargo test -p nimbus-server operator_policy -- --nocapture`: fake OPA/Cedar-style adapters prove allow evidence, deny fail-closed, malformed output fail-closed, timeout fail-closed, unavailable-backend fail-closed, no raw secret handles in backend requests, and built-in hard-deny precedence before external allow. |
-| EPS7 | `todo` | Add denied-event policy draft workflow. | Denied egress fixtures produce minimal draft policy, never auto-apply, and require explicit approval. |
+| EPS7 | `done` | Add denied-event policy draft workflow. | `cargo test -p nimbus-server operator_policy -- --nocapture`: denied egress fixtures produce minimal review-required draft policy, strip query parameters from suggested paths, never mutate the source policy, reject tenant/workload mismatches, fail apply without explicit approval, and apply only to a cloned policy after approval. |
 | EPS8 | `todo` | Add policy prove/advisory lane after policy schema stabilizes. | Prover fixtures detect broad egress, write-bypass, secret exposure, or cross-tenant policy regressions with accepted-risk support. |
 | EPS9 | `todo` | Publish operator docs and conformance runbook. | One command proves policy validation, egress enforcement, export redaction, external-backend fail-closed, and drift behavior. |
 
@@ -327,8 +327,23 @@ producing an admitted evaluation. Requests carry counts and summaries, not raw
 secret handles. Modularity note: `operator_policy.rs` is still a composition
 root and is intentionally kept below the 2,000-line hard limit; EPS6 split its
 tests into `operator_policy/tests.rs` and put the external backend seam in
-`operator_policy/external.rs`, leaving the remaining 1,599-line root as the
-schema/compiler/diff coordinator for this active plan.
+`operator_policy/external.rs`, leaving the root as the schema/compiler/diff
+coordinator for this active plan.
+
+Batch 10 closed EPS7. `OperatorDeniedEgressEvent` can now generate an
+`OperatorPolicyDraft` for sandbox egress allow-list changes. Draft generation
+is intentionally review-first: the draft is marked `review_required`, records
+`requires_explicit_approval=true`, sets `auto_apply=false`, and leaves the
+source `OperatorPolicyDocument` unchanged. The generated rule is minimal: it
+uses the denied protocol, host, port, HTTP method when present, and a sanitized
+path prefix with query and fragment data stripped so denial evidence cannot
+persist tokens or other query secrets into policy text. Applying a draft
+requires an `OperatorPolicyDraftApproval`; without approval it fails closed,
+and with approval it returns a cloned updated policy that must still pass the
+normal policy evaluator. Tenant and workload mismatches are rejected before a
+draft is produced. Modularity note: `operator_policy.rs` is now a 1,604-line
+composition root over concept-owned children `egress.rs`, `external.rs`,
+`draft.rs`, `reload.rs`, and `tests.rs`.
 
 ## Open Questions
 
