@@ -11,12 +11,12 @@ prove deny-by-default containment.
 
 ## Status
 
-- **Status:** active; `BEP0` through `BEP5` are complete, `BEP6` is next
+- **Status:** active; `BEP0` through `BEP6` are complete, `BEP7` is next
 - **Primary owner:** this plan
 - **Nimbus worktree:** `/Users/jack/src/github.com/nimbus/nimbus`
 - **Bun worktree:** `/Users/jack/src/github.com/oven-sh/bun`
-- **Current Bun proof head:** `c5bafa6d73`
-  (`Add Bun embedder resolver denial proof`)
+- **Current Bun proof head:** `0c132cff81`
+  (`Add Bun embedder native permission deny profile proof`)
 - **Product posture:** optional backend candidate; not selectable
 - **Fork posture:** upstream-first; no Nimbus Bun fork yet
 - **Completed predecessor:** `docs/plans/bun-jsc-in-process-lockdown-plan.md`
@@ -61,7 +61,7 @@ must stay backend-owned.
 | BEP3 | `done` | Make the Nimbus runtime seam ready for a real Bun pool without enabling it. | Nimbus has typed backend/pool config and diagnostics for `BunJsc` that fail closed by default; tests prove unsupported Bun metadata is rejected before invocation and that Deno/V8 behavior is unchanged. |
 | BEP4 | `done` | Define and scaffold the dedicated Bun/JSC pool owner. | A concept-owned design/code scaffold exists for Bun pool lifecycle, fresh/discard versus retained trusted reuse, cancellation handles, explicit lifecycle state/ack transitions, event-loop progress, teardown, and metrics; it has no Deno/V8 internals in its public envelope and remains disabled until Bun hooks exist. Product cancellation must not rely on elapsed-time sleeps. |
 | BEP5 | `done` | Prove resolver/package policy denial or hookability. | The Bun proof target demonstrates policy control over dynamic import, `Bun.resolve*`, CommonJS if enabled, Node builtins, package roots, plugins, and native addons; Nimbus docs and tests keep Bun package resolution separate from Node external packages. |
-| BEP6 | `pending` | Prove native permission denial or hookability. | Filesystem, network, env/process, subprocess, FFI, plugin, worker, timer, fetch/WebSocket, and dynamic-code surfaces are absent, denied by default, or routed through a typed Nimbus policy hook with audit evidence; unsafe bypasses fail the gate. |
+| BEP6 | `done` | Prove native permission denial or hookability. | Filesystem, network, env/process, subprocess, FFI, plugin, worker, timer, fetch/WebSocket, and dynamic-code surfaces are absent, denied by default, or routed through a typed Nimbus policy hook with audit evidence; unsafe bypasses fail the gate. |
 | BEP7 | `pending` | Prove memory, cancellation, teardown, and reuse policy. | The proof records hard memory boundaries or keeps untrusted Bun on fresh/discard with an outer quota; cancellation interrupts runaway code through state/ack-driven lifecycle control rather than sleep timing, recovery is deterministic on macOS and Linux, retained reuse stays trusted-only unless hard isolation is proven, and teardown loops pass. |
 | BEP8 | `pending` | Integrate Bun/JSC as an optional runtime backend only after containment passes. | Runtime admission can select Bun/JSC only with the proven lockdown profile and pool policy; generated artifact metadata is explicit; server/registry/codegen tests cover accepted and rejected combinations; V8/Deno remains the default. |
 | BEP9 | `pending` | Add repeatable CI/operator lanes and close the plan. | A reusable verification command covers Nimbus tests plus Bun proof lanes on macOS and Linux; docs record local and minicloud evidence, residual risks, fork status, and the exact product go/no-go decision. |
@@ -157,6 +157,7 @@ For Linux proof, use the minicloud lane recorded in
 | 2026-05-23 | BEP3 | `done` | Added typed Bun/JSC pool metadata to the Nimbus runtime seam: `BunJscTrustedRetained` and `BunJscFreshDiscard`. Validation now rejects V8/Deno with Bun pool metadata, rejects Bun/JSC with V8/Deno pool metadata, and requires Bun trust, lockdown, lifecycle, and pool profiles to match before reaching the existing non-selectable gates. | `cargo fmt --all --check` passed; `cargo test -p nimbus-runtime limits::tests --lib` passed 10 tests; `cargo test -p nimbus-server registry_and_license::registry --lib` passed 10 tests; `cargo test -p nimbus-server registry_and_license::runtime_metrics --lib` passed 2 tests; `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed; `git diff --check` passed. | Start BEP4 by defining and scaffolding the dedicated Bun/JSC pool owner without enabling a product runtime route. |
 | 2026-05-23 | BEP4 | `done` | Added `crates/nimbus-runtime/src/backends/bun_jsc/`, a disabled backend-owned Bun/JSC pool scaffold with policy modes, lifecycle state/ack transitions, event-loop progress metrics, cancellation metrics, teardown metrics, and a backend factory that returns a contract error if reached before the containment gates pass. The runtime backend factory selection can now name V8/Deno or Bun/JSC without sharing VM internals. | `cargo test -p nimbus-runtime backends::bun_jsc --lib` passed 4 tests; `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed with the BEP4 scaffold tests added to step 3; `git diff --check` passed. | Start BEP5 by proving resolver/package policy denial or hookability in the Bun proof target. |
 | 2026-05-23 | BEP5 | `done` | Added Bun proof commit `c5bafa6d73`, a native embedder resolver denial hook that is called before dynamic import, lower module-loader import/evaluate paths, `Bun.resolve`, `Bun.resolveSync`, `require.resolve`, `import.meta.resolve`, package roots, plugin-style virtual specifiers, and native addon resolution. The proof target now reports `denied_by_resolver_policy` for those paths while keeping generated Node builtin/external-package wrappers separate from Bun package resolution. | In Bun: `cargo fmt --all --check` passed; `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed; `git diff --check` passed. In Nimbus: `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed end to end. | Start BEP6 by proving native permission denial or hookability for filesystem, network, env/process, subprocess, FFI, plugin, worker, timer, fetch/WebSocket, and dynamic-code surfaces. |
+| 2026-05-23 | BEP6 | `done` | Added Bun proof commit `0c132cff81`, a native deny-profile proof helper that marks policy-owned Bun/process/FFI objects, denies filesystem, network/server, subprocess, plugin, timer, worker, fetch/WebSocket, and FFI entry points, hides env surfaces, and disables tenant-visible dynamic code through JSC `setEvalEnabled(false, ...)`. The permission inventory is now a hard gate: `policy_hook_missing` or `unsafe_bypass` classifications fail the target. | In Bun: `cargo fmt --all --check` passed; `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed; `git diff --check` passed. In Nimbus: `cargo fmt --all --check` passed; `git diff --check` passed; `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed end to end. | Start BEP7 by proving memory, cancellation, teardown, retained-trusted reuse, and fresh/discard policy on macOS and Linux. |
 
 ## References
 
@@ -174,5 +175,6 @@ For Linux proof, use the minicloud lane recorded in
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-28-runtime-seam-bun-pool-readiness.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-29-bun-pool-owner-scaffold.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-30-resolver-package-policy.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-31-native-permission-profile.md`
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`
