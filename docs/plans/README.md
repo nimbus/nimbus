@@ -496,7 +496,9 @@ archived plans only when you need historical execution detail.
     SBOM evidence, offline/private-root verification, and extension from
     service images to runtime/function bundles and machine images. Nimbus
     owns policy evaluation and evidence normalization, not cryptographic
-    verification. Dependency review at
+    verification. AP0 parser hardening is complete: image admission and
+    Compose production admission use the maintained `oci-client::Reference`
+    parser for the digest-pinned provenance floor. Dependency review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
 ## Archive Policy
 

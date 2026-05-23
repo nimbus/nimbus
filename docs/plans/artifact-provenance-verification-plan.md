@@ -14,11 +14,13 @@ verification logic.
 
 ## Status
 
-- **Status:** `deferred`
+- **Status:** `deferred` for verifier backends; `AP0` parser hardening is
+  complete.
 - **Primary owner:** this plan
-- **Activation gate:** promote when production deployment needs signed images,
-  signed runtime/function bundles, signed machine images, SBOM enforcement, or
-  SLSA provenance beyond digest pinning.
+- **Activation gate:** `AP0` was promoted as a prerequisite for enterprise
+  policy admission on 2026-05-23. Promote `AP1+` when production deployment
+  needs signed images, signed runtime/function bundles, signed machine images,
+  SBOM enforcement, or SLSA provenance beyond digest pinning.
 - **Current policy seam:** `TenantImageVerificationProvider` in
   `crates/nimbus-server/src/tenant_isolation/image_admission.rs`
 - **Current posture reference:** `docs/tenant-isolation.md`
@@ -78,6 +80,26 @@ promoting implementation.
 - Keep verifier credentials and registry tokens out of gossip, audit payloads,
   and process output captured in failure events.
 
+## Current Implementation
+
+`AP0` is complete:
+
+- Tenant image admission parses registry references with `oci-client::Reference`
+  instead of hand-splitting `@sha256:` or registry prefixes.
+- The parser path accepts Docker Hub short names, explicit registries,
+  localhost registries with ports, and tag-plus-digest references according to
+  the maintained OCI parser.
+- Digest-required policy specifically requires a `sha256:` digest on the parsed
+  reference. Tag-only references, malformed references, unsupported digest
+  algorithms, and wrong registries fail closed before verifier evidence can
+  authorize them.
+- `TenantImageVerificationProvider` receives the canonical OCI reference string
+  without transport prefixes such as `docker://`. Nimbus still only normalizes
+  policy and evidence; Cosign, SLSA, SBOM, Fulcio/Rekor, in-toto, and OCI
+  referrer verification remain future backend responsibilities.
+- Compose production image admission uses the same maintained parser class for
+  its digest-pinned provenance floor.
+
 ## Scope
 
 This plan covers artifact classes that can carry executable or trusted code:
@@ -96,7 +118,7 @@ identity. It feeds verified artifact evidence into those seams.
 
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
-| AP0 | `todo` | Replace hand-rolled OCI reference parsing at image admission call sites. | Unit tests cover Docker Hub defaults, explicit registries, localhost, ports, digest references, tag+digest references, and malformed references. |
+| AP0 | `done` | Replace hand-rolled OCI reference parsing at image admission call sites. | `cargo test -p nimbus-server image_admission -- --nocapture` covers Docker Hub defaults, explicit registries, localhost with ports, digest references, tag+digest references, malformed references, allowed-registry matching, and provider canonical-reference input. Compose production admission has focused digest and invalid-reference coverage in `cargo test -p nimbus-bin production_compose_admission -- --nocapture`. |
 | AP1 | `todo` | Add verifier command/library adapter contract. | Tests prove verifier process/library failures fail closed and redact command output in audit events. |
 | AP2 | `todo` | Implement Cosign verifier backend. | Signed/unsigned/wrong-identity fixtures prove issuer/subject and digest-claim enforcement. |
 | AP3 | `todo` | Implement SLSA provenance verifier backend. | Digest-pinned image and file/bundle fixtures prove builder ID and predicate type enforcement. |
