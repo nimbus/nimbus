@@ -52,5 +52,6 @@ Before CM6:
 After CM6:
 
 - Condition 8: PASS — file present and references
-  `github/codeql-action/init@v3` and
-  `github/codeql-action/analyze@v3`.
+  `github/codeql-action/init` and `github/codeql-action/analyze`
+  (both SHA-pinned to commit `7211b7c8077ea37d8641b6271f6a365a22a5fbfa`
+  / `v4`, per CM2's third-party SHA-pin contract).
