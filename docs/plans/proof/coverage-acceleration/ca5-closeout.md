@@ -24,7 +24,7 @@ landed scope or documented deferred follow-up.
      LINKER=mold landed broken; hotfix switched to RUSTFLAGS
      `-fuse-ld=mold`)
    - CA2: `f4dad1b8` — `-j 4` Coverage flip
-   - CA3: `3996dd9a` + two hotfixes in CA5 — 3-shard Coverage +
+   - CA3: `3996dd9a` + three hotfixes in CA5 — 3-shard Coverage +
      reducer. The initial drop had two bugs caught by CA5 CI run
      26320383660: upload-artifact `path:` pointed at
      `target/llvm-cov-target/profraw/` but cargo-llvm-cov writes
@@ -32,13 +32,19 @@ landed scope or documented deferred follow-up.
      `engine` shard had `needs-providers: "false"` despite
      `nimbus-engine` carrying `libsql_replica_provider` tests.
      CA5 hotfix 1 (`0d7b868e`) fixed both. CA5 CI run 26320969712
-     then surfaced a third bug on the `rest` shard:
+     surfaced a third bug on the `rest` shard:
      `nimbus-storage` carries its own `libsql_provider` test family
-     that also requires the libsql admin API. CA5 hotfix 2 retires
-     the `needs-providers` flag entirely and makes libsql startup
-     unconditional across all shards.
+     that also requires the libsql admin API. CA5 hotfix 2
+     (`e86e75c2`) retires the `needs-providers` flag entirely and
+     makes libsql startup unconditional. CA5 CI run 26321565127
+     then surfaced a fourth bug: the reducer's `Rebuild
+     instrumented workspace (no run)` step used the deprecated
+     `cargo llvm-cov --no-run`, which now tries to merge profile
+     data instead of just building. CA5 hotfix 3 switches to
+     `source <(cargo llvm-cov show-env --export-prefix); cargo test
+     --no-run --workspace --exclude nimbus-runtime`.
    - CA4: `d66f85fb` — release.yml composite migration (5 sites)
-   - CA5: `598dd74e` + two hotfixes — closeout + CA3 hotfixes
+   - CA5: `598dd74e` + three hotfixes — closeout + CA3 hotfixes
 4. Routing entries:
    - `docs/plans/README.md`: move CA entry from active to archived
      section, point at the archived path.

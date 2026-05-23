@@ -49,9 +49,11 @@ coverage-reduce:
     - upload + codecov
 ```
 
-Two CA5 hotfixes converged on the current shape. CA3 originally
-shipped a per-shard `needs-providers` flag gating libsql startup; it
-took two iterations to discover every shard needs libsql.
+Three CA5 hotfixes converged on the current shape. CA3 originally
+shipped a per-shard `needs-providers` flag gating libsql startup,
+and the reducer used the deprecated `cargo llvm-cov --no-run`
+incantation; three iterations were needed to fully unbreak the
+shard pipeline.
 
 1. **Profraw upload/download path (CA5 hotfix 1, `0d7b868e`).**
    cargo-llvm-cov writes profraw files into the target directory root
@@ -77,6 +79,20 @@ took two iterations to discover every shard needs libsql.
    dead weight — hotfix 2 retires the flag and makes libsql startup
    unconditional. Future shards default to running libsql; only
    peel it off after measuring that no member crate needs it.
+4. **Reducer rebuild incantation (CA5 hotfix 3).** Post-hotfix-2
+   CI run 26321565127 had all three shards green but failed on the
+   reducer's `Rebuild instrumented workspace (no run)` step.
+   `cargo llvm-cov --no-run --workspace --exclude nimbus-runtime`
+   produced `error: failed to merge profile data: not found
+   *.profraw files in target/llvm-cov-target`. Current cargo-llvm-cov
+   deprecates the `--no-run` flag and now interprets it as "merge
+   already-collected profile data," not "just build." Hotfix 3
+   switches to the documented pattern:
+   `source <(cargo llvm-cov show-env --export-prefix); cargo test
+   --no-run --workspace --exclude nimbus-runtime -j 4`. This exports
+   the `LLVM_PROFILE_FILE`/`RUSTFLAGS` env that llvm-cov sets
+   internally and lets `cargo test --no-run` build the instrumented
+   binaries without attempting any merge.
 
 ## Shard partition rationale
 
@@ -115,18 +131,33 @@ gain from peeling services is small relative to the link-time savings.
 1. The instrumented binaries with their LLVM coverage map sections.
 2. The `.profraw` files emitted at test runtime.
 
-(1) is rebuilt on the reducer via `cargo llvm-cov --no-run --workspace`.
-With sccache hits on every per-crate compilation unit (the shards
-already populated the GHA-backed sccache for the same shared-key), this
+(1) is rebuilt on the reducer with the show-env + cargo-test
+pattern:
+
+```sh
+source <(cargo llvm-cov show-env --export-prefix)
+cargo test --no-run --workspace --exclude nimbus-runtime -j 4
+```
+
+`cargo llvm-cov --no-run` is deprecated in current cargo-llvm-cov
+and now tries to merge profile data instead of just building, which
+fails on the reducer because the profraws are downloaded *after*
+the rebuild step. The show-env approach exports the
+`LLVM_PROFILE_FILE`/`RUSTFLAGS` env that cargo-llvm-cov would
+otherwise set internally and lets `cargo test --no-run` build the
+instrumented binaries without attempting any merge. With sccache
+hits on every per-crate compilation unit (the shards already
+populated the GHA-backed sccache for the same shared-key), this
 step is cheap — most crates resolve to cache hits.
 
 (2) is downloaded from every shard's `coverage-profraw-${shard}`
-artifact into the reducer's `target/llvm-cov-target/profraw/`
-directory. `actions/download-artifact@v8` with `pattern:
-coverage-profraw-*` and `merge-multiple: true` flattens every shard's
-profraw files into the same target directory; cargo-llvm-cov's report
-mode picks up every `.profraw` file in that directory and merges
-their counts.
+artifact into the reducer's `target/llvm-cov-target/` directory
+(not a `profraw/` subdirectory; profraws live in the target dir
+root). `actions/download-artifact@v8` with `pattern:
+coverage-profraw-*` and `merge-multiple: true` flattens every
+shard's profraw files into the same target directory;
+cargo-llvm-cov's report mode picks up every `.profraw` file in
+that directory and merges their counts.
 
 The `--lcov --output-path lcov.info` then emits the unified lcov fragment
 that codecov consumes downstream.

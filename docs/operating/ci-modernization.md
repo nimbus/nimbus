@@ -205,14 +205,15 @@ coverage:
 coverage-reduce:
   needs: [coverage, ui-artifacts]
   steps:
-    - cargo llvm-cov --no-run --workspace --exclude nimbus-runtime
+    - source <(cargo llvm-cov show-env --export-prefix)
+    - cargo test --no-run --workspace --exclude nimbus-runtime -j 4
     - download coverage-profraw-* artifacts (merge-multiple: true)
       to target/llvm-cov-target/
     - cargo llvm-cov report --lcov --output-path lcov.info
     - upload + codecov
 ```
 
-Two CA3 path/dependency details are load-bearing and easy to get wrong:
+Three CA3 path/dependency details are load-bearing and easy to get wrong:
 
 - **Profraw files live in `target/llvm-cov-target/` directly**, not in
   a `profraw/` subdirectory. `cargo llvm-cov --no-report` writes them
@@ -228,6 +229,15 @@ Two CA3 path/dependency details are load-bearing and easy to get wrong:
   startup on a subset; two follow-up hotfixes converged on
   always-on libsql. The flag is now retired — the libsql start +
   wait steps are unconditional.
+- **The reducer rebuilds with `show-env` + `cargo test --no-run`**,
+  not `cargo llvm-cov --no-run`. The latter is deprecated in current
+  cargo-llvm-cov and now tries to merge profraw data instead of just
+  building, which fails on the reducer because the profraws are
+  downloaded *after* the rebuild step. The supported pattern is to
+  source the `LLVM_PROFILE_FILE`/`RUSTFLAGS` env via
+  `cargo llvm-cov show-env --export-prefix` and then run
+  `cargo test --no-run`, which compiles the instrumented binaries
+  without attempting any merge.
 
 Shard partition rationale:
 
