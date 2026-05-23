@@ -14,9 +14,13 @@ use super::image_admission::{
     TenantImageVerificationRequest,
 };
 
+mod admission;
 mod cosign;
 mod slsa;
 
+pub use admission::{
+    ArtifactAdmission, admit_guest_executable_artifact, admit_runtime_bundle_artifact,
+};
 pub use cosign::CosignVerifierBackend;
 pub use slsa::{SLSA_PROVENANCE_V1_PREDICATE_TYPE, SlsaVerifierBackend};
 
@@ -194,6 +198,10 @@ impl ArtifactVerificationPolicy {
 
     pub fn sbom_required(&self) -> bool {
         self.sbom_required
+    }
+
+    pub fn requires_verification(&self) -> bool {
+        self.signature.is_some() || self.provenance.is_some() || self.sbom_required
     }
 }
 

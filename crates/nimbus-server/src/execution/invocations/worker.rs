@@ -7,6 +7,7 @@ pub(crate) async fn invoke_runtime_bundle_on_worker(
     request: InvocationRequest,
     options: RuntimeBundleInvocationOptions<'_>,
 ) -> std::result::Result<serde_json::Value, NimbusRuntimeError> {
+    options.admit_runtime_bundle_artifact(&bundle)?;
     runtime_executor
         .invoke_on_worker(
             runtime,
