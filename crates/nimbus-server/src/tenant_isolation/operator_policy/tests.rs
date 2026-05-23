@@ -159,6 +159,70 @@ workloads:
         - raw_credentials
         - query_params
 "#;
+const PROVE_RISK_POLICY: &str = r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "risky:send"
+    runtime:
+      tier: in_process_untrusted
+    services:
+      allow:
+        - db
+    network:
+      endpoints:
+        - service: db
+          name: postgres
+          protocol: tcp
+          host: 10.0.0.20
+          host_port: 15432
+          guest_port: 5432
+      egress:
+        allow:
+          - name: github
+            protocol: https
+            host: api.github.com
+            port: 443
+    secrets:
+      handles:
+        - tenant-b/db/password
+        - prod/api/key
+"#;
+const PROVE_ACCEPTED_RISK_POLICY: &str = r#"
+schema_version: 1
+tenant: tenant-a
+accepted_risks:
+  - advisory_id: broad_egress:runtime_function/risky:send:github
+    approved_by: security-review
+    reason: GitHub metadata endpoint accepted during bootstrap
+workloads:
+  - kind: runtime_function
+    name: "risky:send"
+    runtime:
+      tier: in_process_untrusted
+    services:
+      allow:
+        - db
+    network:
+      endpoints:
+        - service: db
+          name: postgres
+          protocol: tcp
+          host: 10.0.0.20
+          host_port: 15432
+          guest_port: 5432
+      egress:
+        allow:
+          - name: github
+            protocol: https
+            host: api.github.com
+            port: 443
+    secrets:
+      handles:
+        - tenant-b/db/password
+        - prod/api/key
+"#;
 
 struct NoopImageVerifier;
 
@@ -554,6 +618,92 @@ fn denied_egress_draft_rejects_mismatched_tenant_and_unknown_workload() {
     assert!(
         error.to_string().contains("is not present in policy"),
         "unknown workload should be explicit: {error}"
+    );
+}
+
+#[test]
+fn policy_prove_detects_enterprise_risk_advisories() {
+    let policy = parse_policy(PROVE_RISK_POLICY);
+
+    let report = policy.prove().expect("prove should evaluate policy");
+
+    assert_eq!(report.checked_workloads, 1);
+    assert_eq!(report.accepted_count, 0);
+    assert_eq!(report.unaccepted_count, report.advisory_count);
+    for kind in [
+        OperatorPolicyAdvisoryKind::BroadEgress,
+        OperatorPolicyAdvisoryKind::WriteBypass,
+        OperatorPolicyAdvisoryKind::SecretExposure,
+        OperatorPolicyAdvisoryKind::CrossTenantRegression,
+    ] {
+        assert!(
+            report
+                .advisories
+                .iter()
+                .any(|advisory| advisory.kind == kind),
+            "expected advisory kind {kind:?}: {:?}",
+            report.advisories
+        );
+    }
+    let rendered = report.render_text();
+    assert!(rendered.contains("Policy prove"));
+    assert!(rendered.contains("broad_egress:runtime_function/risky:send:github"));
+    assert!(rendered.contains("write_bypass:runtime_function/risky:send:db/postgres"));
+    assert!(rendered.contains("secret_exposure:runtime_function/risky:send:in_process_untrusted"));
+    assert!(rendered.contains("cross_tenant_regression:runtime_function/risky:send:tenant-b"));
+    assert!(rendered.contains("unaccepted"));
+}
+
+#[test]
+fn policy_prove_marks_accepted_risks_without_hiding_regressions() {
+    let policy = parse_policy(PROVE_ACCEPTED_RISK_POLICY);
+
+    let report = policy.prove().expect("prove should evaluate policy");
+
+    let broad = report
+        .advisories
+        .iter()
+        .find(|advisory| advisory.id == "broad_egress:runtime_function/risky:send:github")
+        .expect("broad egress advisory should exist");
+    assert!(
+        broad.accepted_risk.is_some(),
+        "accepted risk should attach to matching advisory"
+    );
+    assert_eq!(report.accepted_count, 1);
+    assert!(
+        report.unaccepted_count >= 3,
+        "accepted risk should not suppress other advisories: {:?}",
+        report.advisories
+    );
+    let rendered = report.render_text();
+    assert!(rendered.contains("accepted_by: security-review"));
+    assert!(rendered.contains("write_bypass"));
+    assert!(rendered.contains("unaccepted"));
+}
+
+#[test]
+fn policy_prove_rejects_malformed_accepted_risks() {
+    let policy = parse_policy(
+        r#"
+schema_version: 1
+tenant: tenant-a
+accepted_risks:
+  - advisory_id: broad_egress:runtime_function/foo:github
+    approved_by: ""
+    reason: missing reviewer
+workloads:
+  - kind: runtime_function
+    name: "foo"
+"#,
+    );
+
+    let error = policy
+        .prove()
+        .expect_err("malformed accepted risk should reject");
+
+    assert!(
+        error.to_string().contains("requires approved_by"),
+        "accepted risk validation should be actionable: {error}"
     );
 }
 

@@ -149,7 +149,7 @@ should remain packaged and versioned with Nimbus.
 | EPS5 | `done` | Add OCSF and OpenTelemetry export mapping. | `cargo test -p nimbus-server audit_events -- --nocapture`: fixtures prove tenant isolation events export stable OCSF Base Event and OpenTelemetry log-record shaped JSON with decision IDs, trace/span correlation, namespaced Nimbus attributes, and redactions for tokens, credentials, query parameters, secret handles, authorization values, and raw bearer claims. |
 | EPS6 | `done` | Add external policy backend seam without making it mandatory. | `cargo test -p nimbus-server operator_policy -- --nocapture`: fake OPA/Cedar-style adapters prove allow evidence, deny fail-closed, malformed output fail-closed, timeout fail-closed, unavailable-backend fail-closed, no raw secret handles in backend requests, and built-in hard-deny precedence before external allow. |
 | EPS7 | `done` | Add denied-event policy draft workflow. | `cargo test -p nimbus-server operator_policy -- --nocapture`: denied egress fixtures produce minimal review-required draft policy, strip query parameters from suggested paths, never mutate the source policy, reject tenant/workload mismatches, fail apply without explicit approval, and apply only to a cloned policy after approval. |
-| EPS8 | `todo` | Add policy prove/advisory lane after policy schema stabilizes. | Prover fixtures detect broad egress, write-bypass, secret exposure, or cross-tenant policy regressions with accepted-risk support. |
+| EPS8 | `done` | Add policy prove/advisory lane after policy schema stabilizes. | `cargo test -p nimbus-server operator_policy -- --nocapture` and `cargo test -p nimbus-bin policy -- --nocapture`: prover fixtures detect broad egress, write-bypass, secret exposure, and cross-tenant policy regressions; accepted risks mark matching advisories without hiding unaccepted regressions; malformed accepted-risk records fail closed; `nimbus policy prove` parses and renders. |
 | EPS9 | `todo` | Publish operator docs and conformance runbook. | One command proves policy validation, egress enforcement, export redaction, external-backend fail-closed, and drift behavior. |
 
 ## Success Criteria
@@ -341,9 +341,24 @@ persist tokens or other query secrets into policy text. Applying a draft
 requires an `OperatorPolicyDraftApproval`; without approval it fails closed,
 and with approval it returns a cloned updated policy that must still pass the
 normal policy evaluator. Tenant and workload mismatches are rejected before a
-draft is produced. Modularity note: `operator_policy.rs` is now a 1,604-line
+draft is produced. Modularity note: after EPS7, `operator_policy.rs` was a
+1,604-line
 composition root over concept-owned children `egress.rs`, `external.rs`,
 `draft.rs`, `reload.rs`, and `tests.rs`.
+
+Batch 11 closed EPS8. `OperatorPolicyDocument::prove()` now provides the
+custom Rust advisory lane we chose before introducing solver dependencies. It
+evaluates the same typed policy artifact, emits stable advisory IDs, and
+detects four enterprise-risk classes: broad sandbox egress, direct
+write-capable endpoint bypass for runtime workloads, secret-handle exposure to
+in-process untrusted workloads, and cross-tenant-looking secret handle
+namespaces. The report separates accepted and unaccepted advisories, and
+top-level `accepted_risks` records require advisory ID, reviewer, and reason.
+Accepted risks attach to matching advisories but do not suppress unrelated
+regressions. `nimbus policy prove` exposes the lane through the CLI in text and
+JSON formats. Modularity note: `operator_policy.rs` is now a 1,613-line
+composition root over concept-owned children `egress.rs`, `external.rs`,
+`draft.rs`, `prove.rs`, `reload.rs`, and `tests.rs`.
 
 ## Open Questions
 
