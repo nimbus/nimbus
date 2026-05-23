@@ -437,12 +437,18 @@ jobs:
 
   warm-sccache:
     # CC5: warm the per-rustc-call sccache before downstream parallel Rust
-    # jobs fan out. `cargo check --workspace --tests` rustc's every
-    # workspace crate and dev-dep once, populating sccache so concurrent
-    # downstream jobs hit instead of all cold-compiling identical deps in
-    # parallel. The job consumes ui-artifacts because nimbus-server's
-    # include_str!s of the convex codegen output and rust-embed of the SPA
-    # dist must be present for the workspace to type-check.
+    # jobs fan out. `cargo check --workspace` rustc's every workspace
+    # crate and its lib/bin dep graph once, populating sccache so
+    # concurrent downstream jobs hit instead of all cold-compiling
+    # identical deps in parallel. CW4 dropped `--tests` from this command:
+    # the test-binary rustc invocations had marginal sccache reuse benefit
+    # downstream (each integration test bin is its own rustc call) while
+    # adding minutes to the wall-pole warm pass. Test-bin compile is now
+    # paid inline in the downstream test jobs (harness shards, coverage
+    # shards), which were already sharded by CW1 and CA3 respectively.
+    # The job consumes ui-artifacts because nimbus-server's include_str!s
+    # of the convex codegen output and rust-embed of the SPA dist must be
+    # present for the workspace to type-check.
     name: Warm sccache
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -469,7 +475,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Warm sccache via workspace check
-        run: cargo check --workspace --tests
+        run: cargo check --workspace
 
       - name: Show sccache stats
         if: always()
