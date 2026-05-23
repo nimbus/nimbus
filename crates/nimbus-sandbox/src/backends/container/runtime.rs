@@ -896,6 +896,18 @@ impl SandboxBackend for ContainerSandboxBackend {
         Box::pin(async move { backend.stop_sync(&sandbox_id) })
     }
 
+    fn reload_egress_policy(
+        &self,
+        id: &SandboxId,
+        egress: SandboxEgressPolicy,
+    ) -> SandboxFuture<()> {
+        let backend = self.clone();
+        let sandbox_id = id.clone();
+        Box::pin(async move {
+            ContainerSandboxBackend::reload_egress_policy(&backend, &sandbox_id, egress)
+        })
+    }
+
     fn remove_tenant_artifacts(&self, tenant_id: nimbus_core::TenantId) -> SandboxFuture<()> {
         let backend = self.clone();
         Box::pin(async move { backend.remove_tenant_artifacts_sync(&tenant_id) })

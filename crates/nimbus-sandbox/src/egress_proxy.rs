@@ -1,5 +1,5 @@
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, Ordering},
@@ -171,11 +171,17 @@ struct ParsedProxyRequest {
     egress_request: SandboxEgressRequest,
     upstream_host: String,
     upstream_port: u16,
-    origin_form: String,
+    mode: ProxyRequestMode,
     method: String,
     version: String,
     header_lines: Vec<String>,
     body_offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProxyRequestMode {
+    ForwardHttp { origin_form: String },
+    ConnectTunnel,
 }
 
 fn handle_client(
@@ -231,13 +237,21 @@ fn handle_client(
     }
 
     let mut upstream = TcpStream::connect_timeout(&upstream_addr, connect_timeout)?;
+    upstream.set_nonblocking(false)?;
     upstream.set_read_timeout(Some(io_timeout))?;
     upstream.set_write_timeout(Some(io_timeout))?;
-    let request = render_upstream_request(&parsed);
-    upstream.write_all(request.as_bytes())?;
-    upstream.write_all(&buffer[parsed.body_offset..])?;
-    io::copy(&mut upstream, &mut client)?;
-    Ok(())
+    match &parsed.mode {
+        ProxyRequestMode::ForwardHttp { .. } => {
+            let request = render_upstream_request(&parsed);
+            upstream.write_all(request.as_bytes())?;
+            upstream.write_all(&buffer[parsed.body_offset..])?;
+            io::copy(&mut upstream, &mut client)?;
+            Ok(())
+        }
+        ProxyRequestMode::ConnectTunnel => {
+            tunnel_connect(client, upstream, &buffer[parsed.body_offset..])
+        }
+    }
 }
 
 fn read_http_headers(client: &mut TcpStream, buffer: &mut Vec<u8>) -> io::Result<()> {
@@ -293,9 +307,20 @@ fn parse_proxy_request(
         ));
     }
     if method.eq_ignore_ascii_case("CONNECT") {
-        return Err(HttpProxyResponse::not_implemented(
-            "sandbox egress proxy CONNECT support has not landed yet",
-        ));
+        let (host, port) = parse_connect_authority(target)?;
+        let egress_request =
+            SandboxEgressRequest::new(PublishedEndpointProtocol::Https, host.clone(), port)
+                .with_http("CONNECT", "");
+        return Ok(ParsedProxyRequest {
+            egress_request,
+            upstream_host: host,
+            upstream_port: port,
+            mode: ProxyRequestMode::ConnectTunnel,
+            method: method.to_owned(),
+            version: version.to_owned(),
+            header_lines: lines.map(ToOwned::to_owned).collect(),
+            body_offset,
+        });
     }
     let url = Url::parse(target).map_err(|_| {
         HttpProxyResponse::bad_request("sandbox egress proxy target must be an absolute URI")
@@ -304,7 +329,7 @@ fn parse_proxy_request(
         "http" => PublishedEndpointProtocol::Http,
         "https" => {
             return Err(HttpProxyResponse::not_implemented(
-                "sandbox egress proxy HTTPS support requires CONNECT tunnel handling",
+                "sandbox egress proxy HTTPS requests must use CONNECT",
             ));
         }
         _ => {
@@ -339,7 +364,7 @@ fn parse_proxy_request(
         egress_request,
         upstream_host: host,
         upstream_port: port,
-        origin_form,
+        mode: ProxyRequestMode::ForwardHttp { origin_form },
         method: method.to_owned(),
         version: version.to_owned(),
         header_lines,
@@ -348,16 +373,84 @@ fn parse_proxy_request(
 }
 
 fn render_upstream_request(parsed: &ParsedProxyRequest) -> String {
-    let mut rendered = format!(
-        "{} {} {}\r\n",
-        parsed.method, parsed.origin_form, parsed.version
-    );
+    let ProxyRequestMode::ForwardHttp { origin_form } = &parsed.mode else {
+        return String::new();
+    };
+    let mut rendered = format!("{} {} {}\r\n", parsed.method, origin_form, parsed.version);
     for line in &parsed.header_lines {
         rendered.push_str(line);
         rendered.push_str("\r\n");
     }
     rendered.push_str("Connection: close\r\n\r\n");
     rendered
+}
+
+fn tunnel_connect(
+    mut client: TcpStream,
+    mut upstream: TcpStream,
+    buffered_client_bytes: &[u8],
+) -> io::Result<()> {
+    client.write_all(b"HTTP/1.1 200 Connection Established\r\nConnection: close\r\n\r\n")?;
+    if !buffered_client_bytes.is_empty() {
+        upstream.write_all(buffered_client_bytes)?;
+    }
+    let mut upstream_reader = upstream.try_clone()?;
+    let mut client_writer = client.try_clone()?;
+    let upstream_to_client = thread::spawn(move || {
+        let _ = io::copy(&mut upstream_reader, &mut client_writer);
+        let _ = client_writer.shutdown(Shutdown::Write);
+    });
+    let _ = io::copy(&mut client, &mut upstream);
+    let _ = upstream.shutdown(Shutdown::Write);
+    let _ = upstream_to_client.join();
+    Ok(())
+}
+
+fn parse_connect_authority(target: &str) -> std::result::Result<(String, u16), HttpProxyResponse> {
+    if target.contains("://") || target.contains('/') || target.contains('@') {
+        return Err(HttpProxyResponse::bad_request(
+            "sandbox egress proxy CONNECT target must be host:port",
+        ));
+    }
+    let (host, port) = if let Some(rest) = target.strip_prefix('[') {
+        let Some((host, suffix)) = rest.split_once(']') else {
+            return Err(HttpProxyResponse::bad_request(
+                "sandbox egress proxy CONNECT IPv6 target needs closing bracket",
+            ));
+        };
+        let Some(port) = suffix.strip_prefix(':') else {
+            return Err(HttpProxyResponse::bad_request(
+                "sandbox egress proxy CONNECT target needs a port",
+            ));
+        };
+        (host.to_owned(), port)
+    } else {
+        let Some((host, port)) = target.rsplit_once(':') else {
+            return Err(HttpProxyResponse::bad_request(
+                "sandbox egress proxy CONNECT target needs a port",
+            ));
+        };
+        if host.contains(':') {
+            return Err(HttpProxyResponse::bad_request(
+                "sandbox egress proxy CONNECT IPv6 target must use brackets",
+            ));
+        }
+        (host.to_owned(), port)
+    };
+    if host.is_empty() {
+        return Err(HttpProxyResponse::bad_request(
+            "sandbox egress proxy CONNECT target needs a host",
+        ));
+    }
+    let port = port.parse::<u16>().map_err(|_| {
+        HttpProxyResponse::bad_request("sandbox egress proxy CONNECT port must be a number")
+    })?;
+    if port == 0 {
+        return Err(HttpProxyResponse::bad_request(
+            "sandbox egress proxy CONNECT port must not be 0",
+        ));
+    }
+    Ok((host, port))
 }
 
 fn origin_form(url: &Url) -> String {
@@ -430,6 +523,7 @@ fn write_http_response(client: &mut TcpStream, response: HttpProxyResponse) -> i
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
+    use std::time::Instant;
 
     use super::*;
     use crate::egress::{SandboxEgressPolicy, SandboxEgressRule};
@@ -656,7 +750,7 @@ mod tests {
         });
         SandboxEgressProxy::start(
             SandboxEgressProxyConfig::new(policy)
-                .with_timeouts(Duration::from_secs(1), Duration::from_secs(1))
+                .with_timeouts(Duration::from_secs(5), Duration::from_secs(5))
                 .with_resolver(resolver),
         )
         .expect("proxy should start")
@@ -681,6 +775,34 @@ mod tests {
             .read_to_string(&mut response)
             .expect("client should read response");
         response
+    }
+
+    fn read_until_contains(stream: &mut TcpStream, expected: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut response = Vec::new();
+        while Instant::now() < deadline {
+            let mut chunk = [0_u8; 128];
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => {
+                    response.extend_from_slice(&chunk[..read]);
+                    let rendered = String::from_utf8_lossy(&response);
+                    if rendered.contains(expected) {
+                        return rendered.to_string();
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("client should read CONNECT tunnel response: {error}"),
+            }
+        }
+        String::from_utf8_lossy(&response).to_string()
     }
 
     struct TestHttpServer {
@@ -746,7 +868,49 @@ mod tests {
     }
 
     #[test]
-    fn egress_proxy_rejects_https_until_connect_tunnel_lands() {
+    fn egress_proxy_allows_https_connect_tunnel() {
+        let upstream = TestTcpServer::start(b"pong");
+        let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
+            "allowed-https",
+            PublishedEndpointProtocol::Https,
+            "allowed.test",
+            upstream.addr.port(),
+        )
+        .allow_internal_ips(true)]));
+
+        let mut stream =
+            TcpStream::connect(proxy.local_addr()).expect("client should connect to proxy");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout should set");
+        stream
+            .write_all(
+                format!(
+                    "CONNECT allowed.test:{} HTTP/1.1\r\nHost: allowed.test:{}\r\n\r\nping",
+                    upstream.addr.port(),
+                    upstream.addr.port()
+                )
+                .as_bytes(),
+            )
+            .expect("CONNECT request should write");
+        let upstream_payload = upstream
+            .request
+            .recv_timeout(Duration::from_secs(1))
+            .expect("upstream should receive tunneled bytes");
+        assert_eq!(upstream_payload, "ping");
+        let response = read_until_contains(&mut stream, "pong");
+        assert!(
+            response.starts_with("HTTP/1.1 200 Connection Established"),
+            "CONNECT should establish a tunnel, got: {response}"
+        );
+        assert!(
+            response.contains("pong"),
+            "CONNECT tunnel should relay upstream payload, got: {response}"
+        );
+    }
+
+    #[test]
+    fn egress_proxy_rejects_https_absolute_uri_without_connect() {
         let upstream = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
         let proxy = start_test_proxy(allow_policy([SandboxEgressRule::new(
             "allowed-https",
@@ -766,7 +930,7 @@ mod tests {
 
         assert!(
             response.starts_with("HTTP/1.1 501 Not Implemented")
-                && response.contains("CONNECT tunnel"),
+                && response.contains("must use CONNECT"),
             "HTTPS without CONNECT should fail closed, got: {response}"
         );
         assert!(
@@ -776,5 +940,33 @@ mod tests {
                 .is_err(),
             "unsupported HTTPS requests must not contact upstream"
         );
+    }
+
+    struct TestTcpServer {
+        addr: SocketAddr,
+        request: mpsc::Receiver<String>,
+    }
+
+    impl TestTcpServer {
+        fn start(response: &'static [u8]) -> Self {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test upstream should bind");
+            let addr = listener
+                .local_addr()
+                .expect("upstream address should resolve");
+            let (request_tx, request_rx) = mpsc::channel();
+            thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut request = [0_u8; 4];
+                    if stream.read_exact(&mut request).is_ok() {
+                        let _ = request_tx.send(String::from_utf8_lossy(&request).to_string());
+                        let _ = stream.write_all(response);
+                    }
+                }
+            });
+            Self {
+                addr,
+                request: request_rx,
+            }
+        }
     }
 }
