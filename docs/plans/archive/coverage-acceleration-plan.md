@@ -148,9 +148,9 @@ line `10 passed, 0 failed`. The 10 conditions:
 | CA0 | `3e86c329` | scaffold Coverage Acceleration plan + verifier + baseline proof |
 | CA1 | `263f39f7` + `a7afe415` | install mold linker in setup-rust-cached composite (initial LINKER=mold landed broken; hotfix switched to RUSTFLAGS `-fuse-ld=mold`) |
 | CA2 | `f4dad1b8` | retest coverage parallelism, land -j 4 |
-| CA3 | `3996dd9a` | shard Coverage across 3 parallel lanes with cargo llvm-cov reducer |
+| CA3 | `3996dd9a` + hotfix (this commit) | shard Coverage across 3 parallel lanes with cargo llvm-cov reducer (initial drop landed with two CA3 bugs: profraw path `target/llvm-cov-target/profraw/` did not match cargo-llvm-cov's actual output path `target/llvm-cov-target/*.profraw`, and the engine shard's `needs-providers: "false"` skipped the libsql fixture nimbus-engine's `libsql_replica_provider` tests require; both fixed in CA5) |
 | CA4 | `d66f85fb` | migrate release.yml to setup-rust-cached composite |
-| CA5 | (this commit) | closeout — promote contract, archive plan, update routing |
+| CA5 | `598dd74e` + hotfix (this commit) | closeout — promote contract, archive plan, update routing; CA3 hotfix bundled here |
 
 ## Notes on staging order
 

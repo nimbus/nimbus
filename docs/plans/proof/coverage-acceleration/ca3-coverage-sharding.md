@@ -18,7 +18,7 @@ coverage:
     - upload + codecov
 ```
 
-After CA3:
+After CA3 (with CA5 hotfix applied):
 
 ```yaml
 coverage:
@@ -27,23 +27,48 @@ coverage:
     fail-fast: false
     matrix:
       include:
-        - shard: server   # nimbus-server (heavy, external provider tests)
+        - shard: server   # nimbus-server (heavy, libsql + postgres/mysql)
+                          # needs-providers: "true"
         - shard: engine   # nimbus-engine + nimbus-sandbox + nimbus-machine
+                          # needs-providers: "true" (libsql_replica_provider tests)
         - shard: rest     # nimbus-core + nimbus-storage + nimbus-testing + nimbus-bin + nimbus
+                          # needs-providers: "false"
   steps:
-    - setup, services, libsql (only when matrix.needs-providers == 'true')
+    - setup, services (postgres/mysql), libsql (only when matrix.needs-providers == 'true')
     - cargo llvm-cov --no-report -j 4 ${{ matrix.packages }}
     - upload coverage-profraw-${{ matrix.shard }} artifact
+      (path: target/llvm-cov-target/*.profraw)
 
 coverage-reduce:
   needs: [coverage, ui-artifacts]
   steps:
     - setup (same shared-key, warm sccache hits)
     - cargo llvm-cov --no-run --workspace --exclude nimbus-runtime
-    - download every coverage-profraw-* artifact into target/llvm-cov-target/profraw/
+    - download every coverage-profraw-* artifact into target/llvm-cov-target/
+      (merge-multiple: true)
     - cargo llvm-cov report --lcov --output-path lcov.info
     - upload + codecov
 ```
+
+The CA5 hotfix corrected two CA3 errors caught by the first
+post-CA5 CI validation run (26320383660):
+
+1. **Profraw upload/download path.** cargo-llvm-cov writes profraw
+   files into the target directory root
+   (`target/llvm-cov-target/nimbus-<pid>-<m>.profraw`), not into a
+   `profraw/` subdirectory. The original CA3 commit uploaded from
+   `target/llvm-cov-target/profraw/` (which did not exist) and
+   downloaded into the same nonexistent path. Upload now uses
+   `path: target/llvm-cov-target/*.profraw`; the reducer downloads
+   into `target/llvm-cov-target/` directly with `merge-multiple: true`,
+   matching the location `cargo llvm-cov report` reads from.
+2. **Engine shard libsql dependency.** `nimbus-engine` carries the
+   `libsql_replica_provider` test family which opens the libsql
+   admin API at `http://127.0.0.1:18081`. The original CA3 commit
+   set `needs-providers: "false"` for the engine shard, gating off
+   the libsql fixture and producing six panics in the
+   `libsql_replica_provider` tests. Both `server` and `engine`
+   shards now run libsql; only `rest` skips it.
 
 ## Shard partition rationale
 

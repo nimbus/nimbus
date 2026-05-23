@@ -24,9 +24,16 @@ landed scope or documented deferred follow-up.
      LINKER=mold landed broken; hotfix switched to RUSTFLAGS
      `-fuse-ld=mold`)
    - CA2: `f4dad1b8` — `-j 4` Coverage flip
-   - CA3: `3996dd9a` — 3-shard Coverage + reducer
+   - CA3: `3996dd9a` + hotfix in CA5 — 3-shard Coverage + reducer
+     (initial drop had two CA3 bugs caught by the CA5 CI validation
+     run 26320383660: the upload-artifact `path:` pointed at
+     `target/llvm-cov-target/profraw/` but cargo-llvm-cov writes
+     profraw files into `target/llvm-cov-target/` directly, and the
+     `engine` shard had `needs-providers: "false"` despite
+     `nimbus-engine` carrying `libsql_replica_provider` tests that
+     require the libsql admin API. The CA5 hotfix corrects both.)
    - CA4: `d66f85fb` — release.yml composite migration (5 sites)
-   - CA5: (this commit) — closeout
+   - CA5: `598dd74e` + hotfix (this commit) — closeout + CA3 hotfix
 4. Routing entries:
    - `docs/plans/README.md`: move CA entry from active to archived
      section, point at the archived path.

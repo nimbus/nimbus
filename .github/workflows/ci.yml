@@ -601,7 +601,7 @@ jobs:
             needs-providers: "true"
           - shard: engine
             packages: "-p nimbus-engine -p nimbus-sandbox -p nimbus-machine"
-            needs-providers: "false"
+            needs-providers: "true"
           - shard: rest
             packages: "-p nimbus-core -p nimbus-storage -p nimbus-testing -p nimbus-bin -p nimbus"
             needs-providers: "false"
@@ -707,14 +707,15 @@ jobs:
         run: sccache --show-stats
 
       - name: Upload coverage shard profraw
-        # cargo-llvm-cov writes profraw files to
-        # target/llvm-cov-target/profraw/. Upload only that subset so the
+        # cargo-llvm-cov writes profraw files directly into the target
+        # directory (target/llvm-cov-target/*.profraw) — there is no
+        # `profraw/` subdirectory. Upload just the .profraw files so the
         # artifact stays small (test binaries are rebuilt in the reducer
         # via warm sccache hits).
         uses: actions/upload-artifact@v7
         with:
           name: coverage-profraw-${{ matrix.shard }}
-          path: target/llvm-cov-target/profraw/
+          path: target/llvm-cov-target/*.profraw
           if-no-files-found: error
           retention-days: 1
 
@@ -756,10 +757,14 @@ jobs:
         run: cargo llvm-cov --no-run --workspace --exclude nimbus-runtime -j 4
 
       - name: Download every shard's profraw
+        # cargo-llvm-cov's report mode reads profraw files from the
+        # target dir root (target/llvm-cov-target/), not from a
+        # `profraw/` subdirectory. Flatten every shard's artifact into
+        # that directory so `cargo llvm-cov report` finds the files.
         uses: actions/download-artifact@v8
         with:
           pattern: coverage-profraw-*
-          path: target/llvm-cov-target/profraw/
+          path: target/llvm-cov-target/
           merge-multiple: true
 
       - name: Generate combined coverage report
