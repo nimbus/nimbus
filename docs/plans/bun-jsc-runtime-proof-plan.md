@@ -7,7 +7,7 @@ justified only after the remaining production blockers are measured.
 
 ## Status
 
-- **Status:** in execution; `BJ0` through `BJ4` are complete and `BJ5` is next.
+- **Status:** in execution; `BJ0` through `BJ5` are complete and `BJ6` is next.
 - **Primary owner:** this plan
 - **Current trust tier:** `in_process_trusted_only`
 - **Current product posture:** proof-only, not selectable, no production route
@@ -65,6 +65,11 @@ The local proof chain has shown:
   cancellation cycles, then invokes successfully once more after cancellation.
   This proves trusted generated-wrapper reuse is viable, while product posture
   remains fresh VM or discard until containment is solved.
+- Nimbus now records BJ5 artifact metadata and rejection behavior: runtime
+  engine, bundle content kind, JavaScript evaluation format, compatibility
+  target, and package-resolution policy are explicit, `bun_jsc` is a named but
+  proof-only backend, V8 rejects `program_wrapper`, and Bun/JSC manifests are
+  rejected by registry or policy construction before invocation.
 
 Fresh verification after the local Bun pull on 2026-05-23:
 
@@ -144,6 +149,22 @@ Result: passed against Bun proof commit `65cdc97796`. The native proof printed
 the Gate 14 lifecycle/reuse stress sample recorded in
 `docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md`.
 
+BJ5 verification on 2026-05-23:
+
+```sh
+cd /Users/jack/src/github.com/nimbus/nimbus
+cargo test -p nimbus-runtime limits::tests --lib
+cargo test -p nimbus-server registry_and_license::registry --lib
+npm run test --workspace @nimbus/codegen
+cargo check -p nimbus-runtime -p nimbus-server
+cargo fmt --all --check
+git diff --check
+```
+
+Result: passed. Runtime policy tests passed 9 tests, server registry tests
+passed 10 tests, codegen selftest passed, and the runtime/server compilation
+check passed.
+
 ## Remaining Blockers
 
 Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
@@ -164,8 +185,9 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
   safe first product policy remains fresh VM or discard until permission and
   resolver containment are enforced
 - reproducible artifact strategy for generated and native Bun build products
-- explicit runtime artifact metadata and server/codegen rejection of unsupported
-  Bun combinations
+- production routing remains absent by design: Gate 15 now rejects unsupported
+  Bun combinations before invocation, but a real Bun product route would still
+  require permission, resolver, memory, lifecycle, and fork/upstream gates
 - final fork/upstream/hold decision with maintenance cost recorded
 
 ## Execution Gates
@@ -177,7 +199,7 @@ Bun/JSC cannot become a selectable Nimbus backend until these are resolved:
 | BJ2 | `done` | Gate 12: memory behavior and safe first policy. | Bun proof commit `f6c87be47e` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_memory_behavior()`. It runs 16 generated Nimbus invocations under retained allocation load, records `VM::heap_size()` / sync-GC pressure samples, observes no hard per-VM heap limit, and sets the safe first policy to fresh VM or discard-on-pressure; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
 | BJ3 | `done` | Gate 13: package/module loading and resolver policy. | Bun proof commit `f0cee692c0` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_package_module_policy()`. It records `self_contained_program_wrapper` via `Bun__REPL__evaluate` as the selected next lane, proves static ESM import is rejected in that evaluator, proves `require` is absent by default, proves generated Node builtin and external-package empty maps deny missing entries by default, and records dynamic `import("node:fs")` plus `Bun.resolve` / `Bun.resolveSync` as unsafe resolver bypasses requiring a Nimbus-owned Bun package resolver; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
 | BJ4 | `done` | Gate 14: lifecycle, reuse, teardown, and stress. | Bun proof commit `65cdc97796` extends the non-CLI `bun_embed_probe` with `nimbus_bun_embed_probe_lifecycle_reuse_stress()`. It creates/invokes/destroys four fresh VMs, runs eight retained generated `messages:sendAndSchedule` invocations, interrupts generated `messages:spinForever` through three external cancellation/recovery cycles, and successfully invokes once more after cancellation; `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed on 2026-05-23. |
-| BJ5 | `todo` | Gate 15: Nimbus artifact metadata and server rejection. | Add or verify explicit engine/content/evaluation-format metadata and tests that registries reject unsupported Bun combinations before invocation. No production Bun route may be added. |
+| BJ5 | `done` | Gate 15: Nimbus artifact metadata and server rejection. | Added `RuntimeJavaScriptEvaluationFormat`, emitted `runtime_javascript_evaluation_format: "es_module"` from codegen, made runtime diagnostics/cache keys/tenant decisions carry the format, recognized `bun_jsc` as a named proof-only backend, and added tests proving V8 rejects `program_wrapper` and the Convex registry rejects Bun/JSC manifests before invocation; `cargo test -p nimbus-runtime limits::tests --lib`, `cargo test -p nimbus-server registry_and_license::registry --lib`, `npm run test --workspace @nimbus/codegen`, `cargo check -p nimbus-runtime -p nimbus-server`, `cargo fmt --all --check`, and `git diff --check` passed on 2026-05-23. |
 | BJ6 | `todo` | Gate 16: fork, upstream, or hold decision. | Compare required hooks against the current Bun delta and upstream shape; record no-fork, upstream-proposal, or Nimbus-fork decision with maintenance cost and CI requirements. |
 | BJ7 | `todo` | Closeout and next implementation handoff. | Update proof docs, this plan, `docs/plans/README.md`, and runtime architecture references; all verification commands pass; Bun remains proof-only unless every promotion gate is satisfied. |
 
@@ -250,6 +272,17 @@ or Gate 13 resolver exposure. The safe first product policy remains fresh VM
 or discard on pressure, timeout, cancellation, or package-loader use until
 containment is enforced.
 
+## BJ5 Artifact Metadata And Server Rejection
+
+Status: complete. Full evidence lives in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`.
+
+BJ5 result: Nimbus has an explicit JavaScript evaluation-format axis. Current
+V8 lanes emit and accept `es_module`; Bun/JSC proof artifacts are modeled as
+`program_wrapper`, but `bun_jsc` is recognized only so it can be rejected with
+a clear proof-only error. This keeps unsupported Bun combinations out of
+runtime invocation while preserving a clean metadata seam for future engines.
+
 ## Fork Criteria
 
 Keep holding the local Bun patch unless all of these become true:
@@ -293,3 +326,4 @@ commands run in `/Users/jack/src/github.com/nimbus/nimbus`.
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`

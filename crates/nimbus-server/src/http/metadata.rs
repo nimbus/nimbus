@@ -37,6 +37,7 @@ pub(crate) async fn runtime_diagnostics(
         limits: Some(RuntimeLimitsResponse {
             runtime_backend: limits.backend_kind,
             bundle_content_kind: limits.bundle_content_kind,
+            javascript_evaluation_format: limits.javascript_evaluation_format,
             compatibility_target: limits.compatibility_target,
             execution_model: limits.execution_model,
             runtime_mode: limits.mode,

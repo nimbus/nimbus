@@ -126,6 +126,10 @@ be invalidated by content hash plus engine configuration, not by path alone.
 If two JavaScript engines consume different evaluation formats, generated
 artifacts must name that format explicitly instead of letting a generic
 `javascript` content kind imply both ESM module loading and program evaluation.
+The current implementation carries that distinction as
+`runtime_javascript_evaluation_format`: V8 accepts `es_module`, while
+`program_wrapper` is reserved for proof lanes such as Bun/JSC and is rejected
+by production registry loading unless a backend explicitly supports it.
 
 Do not overload the existing Node fields in generated artifacts to select a new
 engine. A Bun-backed target needs explicit artifact metadata; a wasmtime

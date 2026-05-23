@@ -10,7 +10,7 @@ Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
 Bun proof commit: `65cdc97796` (`Add Bun embed lifecycle reuse proof`)
 
 Nimbus proof baseline:
-`docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md`
+`docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`
 
 ## Decision
 
@@ -79,6 +79,11 @@ again after cancellation. This is positive lifecycle evidence, but it does not
 change product posture because permission containment and resolver containment
 remain unresolved.
 
+Gate 15 later added explicit Nimbus metadata for JavaScript evaluation format.
+The current V8 lanes emit and accept `es_module`; Bun/JSC proof artifacts map
+to `program_wrapper`, but `bun_jsc` is recognized only so server and runtime
+policy construction can reject it clearly before invocation.
+
 ## Remaining Production Blockers
 
 Bun/JSC is not selectable because these required evidence rows remain open:
@@ -90,16 +95,16 @@ Bun/JSC is not selectable because these required evidence rows remain open:
 | Package and module loading | Gate 13 selected program-wrapper as the safe next artifact lane and proved generated maps deny missing Node package entries by default, but dynamic `node:fs` import and `Bun.resolve*` remain unmediated. A product backend needs a Nimbus-owned Bun resolver policy and must not reuse `node_external_packages` as if it were Deno/V8. |
 | VM lifecycle and reuse | Gate 14 proves retained reuse is viable for trusted generated-wrapper proof code, including post-cancel recovery. Product reuse is still blocked until permission and resolver containment are enforced; first product policy remains fresh/discard. |
 | Reproducible artifacts | Required Bun generated/native artifacts are reproduced by documented commands without untracked local build products. |
-| Server/codegen routing | Nimbus registries reject unsupported Bun/content/target/package combinations before invocation. |
+| Server/codegen routing | Gate 15 proves unsupported Bun/content/evaluation-format/target combinations are rejected before invocation. A production Bun route remains absent by design and would require positive containment evidence before selection. |
 
 ## Next Proof Gate
 
-Next gate: **Bun/JSC Gate 15: artifact metadata and server rejection**.
+Next gate: **Bun/JSC Gate 16: fork, upstream, or hold decision**.
 
-The gate should verify that Nimbus names runtime engine, content kind,
-compatibility target, package-resolution mode, and JavaScript evaluation format
-explicitly, and that server/codegen paths reject unsupported Bun combinations
-before invocation. It must not add a production Bun route or selector.
+The gate should compare the current local Bun proof delta with the remaining
+promotion blockers and record whether Nimbus should keep holding the proof
+patch, propose upstream APIs, or prepare a Nimbus-maintained fork. It must
+include maintenance cost and CI requirements.
 
 ## Fork Posture
 
@@ -139,8 +144,8 @@ Required hooks before an upstream or fork proposal is concrete:
 
 ## Verification
 
-Decision documentation updated after the Gate 11, Gate 12, Gate 13, and Gate
-14 Bun proof commits.
+Decision documentation updated after the Gate 11, Gate 12, Gate 13, Gate 14,
+and Gate 15 proof work.
 
 Reviewed:
 
@@ -152,6 +157,7 @@ Reviewed:
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md`
 - `docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md`
+- `docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md`
 - `docs/architecture/runtime/new-engine-proof-harness.md`
 - `docs/architecture/runtime/engine-seam.md`
 - `docs/architecture/runtime/permission-model.md`
@@ -165,5 +171,6 @@ git diff --check -- \
   docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md \
-  docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md
+  docs/plans/proof/runtime-engine/bun-jsc/gate-14-lifecycle-reuse-stress.md \
+  docs/plans/proof/runtime-engine/bun-jsc/gate-15-artifact-metadata-server-rejection.md
 ```

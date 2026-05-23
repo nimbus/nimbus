@@ -80,6 +80,10 @@ impl ConvexRegistry {
                 ..
             })
             | None => (self.runtime_executor(), self.runtime_policy()),
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::BunJsc,
+                ..
+            }) => unreachable!("Bun/JSC manifests are rejected at registry load"),
         }
     }
 

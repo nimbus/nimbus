@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 use crate::backends::v8::embedder::ModuleSpecifier;
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::{
-    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget, RuntimeLimits,
+    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
 };
 use crate::module_loader::BundleModuleCodeCache;
 
@@ -53,6 +54,7 @@ struct RuntimeBundleShared {
 struct RuntimeBundleEngineCacheKey {
     backend_kind: RuntimeBackendKind,
     content_kind: RuntimeBundleContentKind,
+    javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     compatibility_target: RuntimeCompatibilityTarget,
 }
 
@@ -61,6 +63,7 @@ impl RuntimeBundleEngineCacheKey {
         Self {
             backend_kind: limits.backend_kind,
             content_kind: limits.bundle_content_kind,
+            javascript_evaluation_format: limits.javascript_evaluation_format,
             compatibility_target: limits.compatibility_target,
         }
     }

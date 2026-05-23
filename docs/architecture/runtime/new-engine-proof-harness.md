@@ -83,6 +83,12 @@ not route Bun-backed functions through `node_external_packages`, and do not
 label a Bun-backed target as `Node22` unless the manifest also names the Bun
 engine and the measured compatibility target separately.
 
+Current production metadata uses `runtime_engine: "v8"` and
+`runtime_javascript_evaluation_format: "es_module"`. Bun/JSC proof metadata is
+modeled as `runtime_engine: "bun_jsc"` plus
+`runtime_javascript_evaluation_format: "program_wrapper"`, and registry loading
+must reject that combination until the remaining Bun gates promote it.
+
 ## Wasmtime-Specific Gate
 
 A wasmtime proof is a different guest ABI, not a JavaScript compatibility

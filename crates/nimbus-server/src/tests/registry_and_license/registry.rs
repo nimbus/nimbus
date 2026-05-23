@@ -1,6 +1,7 @@
 use super::*;
 use nimbus_runtime::{
-    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget, RuntimeLimits,
+    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
 };
 
 #[test]
@@ -73,6 +74,7 @@ fn convex_registry_selects_node_runtime_lane_from_manifest_metadata() {
                     "runtime_environment": "default",
                     "runtime_engine": "v8",
                     "runtime_bundle_content_kind": "javascript",
+                    "runtime_javascript_evaluation_format": "es_module",
                     "runtime_compatibility_target": "web_standard_isolate",
                     "runtime_package_resolution": "bundled",
                     "runtime_handler": null,
@@ -85,6 +87,7 @@ fn convex_registry_selects_node_runtime_lane_from_manifest_metadata() {
                     "runtime_environment": "node",
                     "runtime_engine": "v8",
                     "runtime_bundle_content_kind": "javascript",
+                    "runtime_javascript_evaluation_format": "es_module",
                     "runtime_compatibility_target": "node24",
                     "runtime_package_resolution": "node_external_packages",
                     "node_runtime_target": "node24",
@@ -112,6 +115,10 @@ fn convex_registry_selects_node_runtime_lane_from_manifest_metadata() {
         RuntimeBundleContentKind::JavaScript
     );
     assert_eq!(
+        default_limits.javascript_evaluation_format,
+        RuntimeJavaScriptEvaluationFormat::EsModule
+    );
+    assert_eq!(
         default_limits.compatibility_target,
         RuntimeCompatibilityTarget::WebStandardIsolate
     );
@@ -120,6 +127,10 @@ fn convex_registry_selects_node_runtime_lane_from_manifest_metadata() {
     assert_eq!(
         node_limits.bundle_content_kind,
         RuntimeBundleContentKind::JavaScript
+    );
+    assert_eq!(
+        node_limits.javascript_evaluation_format,
+        RuntimeJavaScriptEvaluationFormat::EsModule
     );
     assert_eq!(
         node_limits.compatibility_target,
@@ -164,6 +175,94 @@ fn convex_registry_rejects_unsupported_runtime_content_before_invocation() {
         .expect_err("unsupported runtime bundle content should fail manifest loading");
     assert!(
         error.to_string().contains("V8 supports only JavaScript"),
+        "unexpected registry error: {error}"
+    );
+}
+
+#[test]
+fn convex_registry_rejects_v8_program_wrapper_before_invocation() {
+    let tempdir = tempdir().expect("convex manifest tempdir should build");
+    let convex_dir = tempdir.path().join(".nimbus").join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+    fs::write(
+        convex_dir.join("functions.json"),
+        serde_json::to_vec_pretty(&json!({
+            "functions": [
+                {
+                    "name": "messages:list",
+                    "kind": "query",
+                    "visibility": "public",
+                    "runtime_environment": "default",
+                    "runtime_engine": "v8",
+                    "runtime_bundle_content_kind": "javascript",
+                    "runtime_javascript_evaluation_format": "program_wrapper",
+                    "runtime_compatibility_target": "web_standard_isolate",
+                    "runtime_package_resolution": "bundled",
+                    "runtime_handler": "() => null",
+                    "plan": null
+                }
+            ]
+        }))
+        .expect("convex manifest json should serialize"),
+    )
+    .expect("convex manifest should write");
+    fs::write(
+        convex_dir.join("http_routes.json"),
+        serde_json::to_vec_pretty(&json!({ "routes": [] }))
+            .expect("convex http route manifest should serialize"),
+    )
+    .expect("convex http route manifest should write");
+
+    let error = ConvexRegistry::from_app_dir(tempdir.path())
+        .expect_err("V8 program-wrapper metadata should fail manifest loading");
+    assert!(
+        error
+            .to_string()
+            .contains("V8 supports only ES module evaluation"),
+        "unexpected registry error: {error}"
+    );
+}
+
+#[test]
+fn convex_registry_rejects_bun_jsc_before_invocation() {
+    let tempdir = tempdir().expect("convex manifest tempdir should build");
+    let convex_dir = tempdir.path().join(".nimbus").join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+    fs::write(
+        convex_dir.join("functions.json"),
+        serde_json::to_vec_pretty(&json!({
+            "functions": [
+                {
+                    "name": "messages:bunProof",
+                    "kind": "action",
+                    "visibility": "public",
+                    "runtime_environment": "node",
+                    "runtime_engine": "bun_jsc",
+                    "runtime_bundle_content_kind": "javascript",
+                    "runtime_javascript_evaluation_format": "program_wrapper",
+                    "runtime_compatibility_target": "node22",
+                    "runtime_package_resolution": "node_external_packages",
+                    "runtime_handler": "() => null",
+                    "plan": null
+                }
+            ]
+        }))
+        .expect("convex manifest json should serialize"),
+    )
+    .expect("convex manifest should write");
+    fs::write(
+        convex_dir.join("http_routes.json"),
+        serde_json::to_vec_pretty(&json!({ "routes": [] }))
+            .expect("convex http route manifest should serialize"),
+    )
+    .expect("convex http route manifest should write");
+
+    let error = ConvexRegistry::from_app_dir(tempdir.path())
+        .expect_err("Bun/JSC runtime metadata should fail manifest loading");
+    assert!(
+        error
+            .to_string()
+            .contains("Bun/JSC is proof-only and is not selectable"),
         "unexpected registry error: {error}"
     );
 }

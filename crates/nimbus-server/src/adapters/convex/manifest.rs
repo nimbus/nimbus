@@ -2,7 +2,10 @@ use super::*;
 use std::collections::HashMap;
 
 use nimbus_core::{FieldSchema, FieldType, IndexDefinition, Schema, TableName, TableSchema};
-use nimbus_runtime::{RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget};
+use nimbus_runtime::{
+    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeJavaScriptEvaluationFormat,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct ConvexManifest {
@@ -69,6 +72,8 @@ pub(super) struct ConvexFunctionDefinition {
     #[serde(default)]
     pub(super) runtime_bundle_content_kind: RuntimeBundleContentKind,
     #[serde(default)]
+    pub(super) runtime_javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
+    #[serde(default)]
     pub(super) runtime_compatibility_target: Option<RuntimeCompatibilityTarget>,
     #[serde(default)]
     pub(super) runtime_package_resolution: Option<ConvexRuntimePackageResolution>,
@@ -99,6 +104,7 @@ impl ConvexFunctionDefinition {
         ConvexRuntimeSelection {
             engine: self.runtime_engine,
             bundle_content_kind: self.runtime_bundle_content_kind,
+            javascript_evaluation_format: self.runtime_javascript_evaluation_format,
             compatibility_target,
             package_resolution,
         }
@@ -127,6 +133,21 @@ impl ConvexFunctionDefinition {
                         self.name, selection.bundle_content_kind
                     ));
                 }
+                if !matches!(
+                    selection.javascript_evaluation_format,
+                    RuntimeJavaScriptEvaluationFormat::EsModule
+                ) {
+                    return Err(format!(
+                        "function {} selects V8 with {:?} JavaScript evaluation format; V8 supports only ES module evaluation",
+                        self.name, selection.javascript_evaluation_format
+                    ));
+                }
+            }
+            RuntimeBackendKind::BunJsc => {
+                return Err(format!(
+                    "function {} selects Bun/JSC runtime backend; Bun/JSC is proof-only and is not selectable",
+                    self.name
+                ));
             }
         }
 
@@ -177,6 +198,7 @@ impl ConvexFunctionDefinition {
 pub(super) struct ConvexRuntimeSelection {
     pub(super) engine: RuntimeBackendKind,
     pub(super) bundle_content_kind: RuntimeBundleContentKind,
+    pub(super) javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     pub(super) compatibility_target: RuntimeCompatibilityTarget,
     pub(super) package_resolution: ConvexRuntimePackageResolution,
 }

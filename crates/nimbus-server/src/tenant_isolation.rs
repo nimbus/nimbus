@@ -7,7 +7,8 @@ use std::net::IpAddr;
 
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBundle, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeGrants, RuntimeMode, RuntimePolicy, RuntimePreset, RuntimeTenantBudget,
+    RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeMode, RuntimePolicy, RuntimePreset,
+    RuntimeTenantBudget,
 };
 use nimbus_sandbox::{
     CompiledSandboxEgressPolicy, PublishedEndpointProtocol, SandboxBackendKind,
@@ -500,6 +501,7 @@ pub struct TenantRuntimePolicyDecision {
     tenant_isolation_mode: TenantIsolationMode,
     backend_kind: RuntimeBackendKind,
     bundle_content_kind: RuntimeBundleContentKind,
+    javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     compatibility_target: RuntimeCompatibilityTarget,
     runtime_mode: RuntimeMode,
     preset: RuntimePreset,
@@ -531,6 +533,7 @@ impl TenantRuntimePolicyDecision {
             tenant_isolation_mode,
             backend_kind: limits.backend_kind,
             bundle_content_kind: limits.bundle_content_kind,
+            javascript_evaluation_format: limits.javascript_evaluation_format,
             compatibility_target: limits.compatibility_target,
             runtime_mode: limits.mode,
             preset: limits.preset,
@@ -1452,6 +1455,7 @@ fn identity_path_segment(value: &str) -> String {
 fn runtime_backend_label(kind: RuntimeBackendKind) -> &'static str {
     match kind {
         RuntimeBackendKind::V8 => "v8",
+        RuntimeBackendKind::BunJsc => "bun_jsc",
     }
 }
 
@@ -1536,6 +1540,11 @@ fn validate_production_in_process_untrusted_policy(
 ) -> std::result::Result<(), ProductionRuntimePolicyRejection> {
     match limits.backend_kind {
         RuntimeBackendKind::V8 => {}
+        RuntimeBackendKind::BunJsc => {
+            return Err(ProductionRuntimePolicyRejection::trusted_only(
+                "uses proof-only Bun/JSC runtime backend",
+            ));
+        }
     }
     if !matches!(
         limits.bundle_content_kind,

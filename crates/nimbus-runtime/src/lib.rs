@@ -33,9 +33,9 @@ pub use host::{
 };
 pub use limits::{
     RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeExecutionModel, RuntimeGrants, RuntimeLanguage, RuntimeLimits, RuntimeMode,
-    RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind, RuntimePreset,
-    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeTenantBudget,
+    RuntimeExecutionModel, RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage,
+    RuntimeLimits, RuntimeMode, RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind,
+    RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeTenantBudget,
 };
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,

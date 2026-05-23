@@ -2,9 +2,9 @@ use nimbus_core::{Document, DurableMutationRecord, Query, Schema};
 use nimbus_engine::{MaterializedJournalSnapshot, TenantEngineDiagnosticsSnapshot};
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeExecutionModel, RuntimeGrants, RuntimeLanguage, RuntimeMetricsSnapshot, RuntimeMode,
-    RuntimeModuleStateSemantics, RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities,
-    RuntimeRoutingAffinity,
+    RuntimeExecutionModel, RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage,
+    RuntimeMetricsSnapshot, RuntimeMode, RuntimeModuleStateSemantics, RuntimePoolKind,
+    RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -103,6 +103,7 @@ pub(crate) struct TenantEngineDiagnosticsResponse {
 pub(crate) struct RuntimeLimitsResponse {
     pub runtime_backend: RuntimeBackendKind,
     pub bundle_content_kind: RuntimeBundleContentKind,
+    pub javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat,
     pub compatibility_target: RuntimeCompatibilityTarget,
     pub execution_model: RuntimeExecutionModel,
     pub runtime_mode: RuntimeMode,
