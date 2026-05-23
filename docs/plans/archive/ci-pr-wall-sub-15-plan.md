@@ -606,8 +606,8 @@ shipped the item plus a one-line "what landed" note.)
 | PW2  | 333d398eb2714fcc9039653729e2d2753d445d40 | coverage.yml extraction; PR coverage gone |
 | PW3  | 4ebe916dd8609dec2a5e3ea1b93646273696082b | concurrency cap: branch-conditional cancel |
 | PW4  | 09d3a290c20b257d1488815282c3aef11b06f614 | warm-sccache retained (PW4c path) |
-| PW5  | TBD | sub-15 PR wall green proof bundle |
-| PW6  | TBD | contract promoted, plan archived, routing updated |
+| PW5  | a4e35d359c3da172be4e958c827a977dcbf70a50 | libsql repin v0.24.26 → v0.24.33 (the actual Pole-1 fix) |
+| PW6  | 401dd4d485fe75a889bf212232ed97aa24cabb4e | contract promoted, plan archived, routing updated |
 
 ## Quick links
 
