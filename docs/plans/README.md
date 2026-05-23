@@ -25,6 +25,14 @@ This directory prefers a small-number-of-plans model with clear ownership.
     docs, real sandbox service-image admission, Convex/Cloud Functions runtime
     bundle provenance hook propagation, source-scoped provenance enforcement,
     and composite signature/provenance/SBOM verifier chaining.
+- `docs/plans/bun-jsc-runtime-proof-plan.md`
+  - active execution plan for the next Bun/JSC proof wave. Starts from the
+    completed runtime engine seam and execution-isolation baselines, keeps
+    Bun/JSC proof-only and `in_process_trusted_only`, records the fresh
+    Gate 10 proof on Bun `ea677357e3`, and drives BJ1-BJ7: permission
+    containment, memory behavior, package/module loading, lifecycle/reuse,
+    artifact metadata and server rejection, fork/upstream/hold decision, and
+    closeout.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
