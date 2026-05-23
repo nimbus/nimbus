@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::egress::{
     SANDBOX_EGRESS_ENFORCEMENT_ENV, SANDBOX_EGRESS_RESERVED_ENV_KEYS, SandboxEgressEnforcementPlan,
+    SandboxEgressLaunchEnforcement,
 };
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
@@ -236,11 +237,9 @@ pub(crate) fn build_bundle_config(
 
     validate_port_bindings(&spec.port_bindings)?;
     validate_resource_limits(&spec.resources)?;
-    let egress = spec
-        .egress
-        .compile()
+    let egress_enforcement = SandboxEgressLaunchEnforcement::ProcessSupervisorProxy
+        .materialize(&spec.egress)
         .map_err(|message| SandboxError::InvalidSpec { message })?;
-    let egress_enforcement = SandboxEgressEnforcementPlan::launch_metadata(&egress);
     let process_env = process_env(spec, &egress_enforcement)?;
 
     // krun VMMs always run as root because the crun process needs /dev/kvm access.
@@ -567,6 +566,25 @@ mod tests {
         SandboxSpec,
     };
 
+    fn egress_enforcement_from_config(config: &serde_json::Value) -> SandboxEgressEnforcementPlan {
+        let env = config["process"]["env"]
+            .as_array()
+            .expect("env should be an array");
+        let enforcement_prefix = format!("{SANDBOX_EGRESS_ENFORCEMENT_ENV}=");
+        let enforcement_entries = env
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(|entry| entry.strip_prefix(&enforcement_prefix))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            enforcement_entries.len(),
+            1,
+            "bundle generation should emit exactly one egress enforcement env value"
+        );
+        serde_json::from_str(enforcement_entries[0])
+            .expect("egress enforcement env should contain JSON")
+    }
+
     #[test]
     fn bundle_config_sets_krun_handler_and_port_map() {
         let spec = sample_spec();
@@ -724,7 +742,7 @@ mod tests {
         );
         assert_eq!(
             enforcement.mode,
-            SandboxEgressEnforcementMode::LaunchMetadata
+            SandboxEgressEnforcementMode::SupervisorProxy
         );
         assert_eq!(
             enforcement.reload_policy,
@@ -739,6 +757,54 @@ mod tests {
         enforcement
             .validate()
             .expect("materialized egress enforcement contract should validate");
+    }
+
+    #[test]
+    fn bundle_config_materializes_default_deny_supervisor_proxy_egress_contract_env() {
+        let config =
+            build_bundle_config("nimbus-db", &sample_spec(), &KrunBundleOptions::default())
+                .expect("bundle config should build");
+
+        let enforcement = egress_enforcement_from_config(&config);
+
+        assert_eq!(
+            enforcement.schema_version,
+            SANDBOX_EGRESS_ENFORCEMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            enforcement.mode,
+            SandboxEgressEnforcementMode::SupervisorProxy
+        );
+        assert_eq!(
+            enforcement.reload_policy,
+            SandboxEgressReloadPolicy::RecreateRequired
+        );
+        assert!(
+            enforcement.policy().is_deny_all(),
+            "default sandbox egress should remain deny-all"
+        );
+        enforcement
+            .validate()
+            .expect("default supervisor egress contract should validate");
+    }
+
+    #[test]
+    fn bundle_config_rejects_invalid_sandbox_egress_policy() {
+        let spec =
+            sample_spec().with_egress_policy(SandboxEgressPolicy::new([SandboxEgressRule::new(
+                "wildcard",
+                PublishedEndpointProtocol::Https,
+                "*",
+                443,
+            )]));
+
+        let error = build_bundle_config("nimbus-db", &spec, &KrunBundleOptions::default())
+            .expect_err("invalid sandbox egress policy should fail bundle generation");
+
+        assert!(
+            error.to_string().contains("wildcards"),
+            "bundle generation should expose the invalid egress policy error: {error}"
+        );
     }
 
     #[test]

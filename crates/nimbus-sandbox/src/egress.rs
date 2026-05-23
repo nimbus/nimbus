@@ -284,6 +284,12 @@ pub enum SandboxEgressReloadPolicy {
     LiveReload,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxEgressLaunchEnforcement {
+    LaunchMetadata,
+    ProcessSupervisorProxy,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxEgressEnforcementPlan {
@@ -356,6 +362,22 @@ impl SandboxEgressEnforcementPlan {
             }
         }
         self.policy.compile()
+    }
+}
+
+impl SandboxEgressLaunchEnforcement {
+    pub fn materialize(
+        self,
+        policy: &SandboxEgressPolicy,
+    ) -> std::result::Result<SandboxEgressEnforcementPlan, String> {
+        let compiled = policy.compile()?;
+        Ok(match self {
+            Self::LaunchMetadata => SandboxEgressEnforcementPlan::launch_metadata(&compiled),
+            Self::ProcessSupervisorProxy => SandboxEgressEnforcementPlan::supervisor_proxy(
+                &compiled,
+                SandboxEgressReloadPolicy::RecreateRequired,
+            ),
+        })
     }
 }
 
@@ -697,6 +719,48 @@ mod tests {
         assert_eq!(plan.policy().rules()[0].host, "api.stripe.com");
         assert_eq!(plan.policy().rules()[0].methods, vec!["POST"]);
         assert_eq!(plan.policy().rules()[0].path_prefixes, vec!["/v1/"]);
+    }
+
+    #[test]
+    fn sandbox_egress_launch_enforcement_selects_supervisor_proxy_for_process_launches() {
+        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "github",
+            PublishedEndpointProtocol::Https,
+            "API.GitHub.COM",
+            443,
+        )]);
+
+        let plan = SandboxEgressLaunchEnforcement::ProcessSupervisorProxy
+            .materialize(&policy)
+            .expect("process launch egress policy should materialize");
+
+        assert_eq!(plan.mode, SandboxEgressEnforcementMode::SupervisorProxy);
+        assert_eq!(
+            plan.reload_policy,
+            SandboxEgressReloadPolicy::RecreateRequired
+        );
+        assert_eq!(plan.policy().rules()[0].host, "api.github.com");
+        plan.validate()
+            .expect("process launch supervisor contract should validate");
+    }
+
+    #[test]
+    fn sandbox_egress_launch_enforcement_fails_closed_for_invalid_raw_policy() {
+        let policy = SandboxEgressPolicy::new([SandboxEgressRule::new(
+            "wildcard",
+            PublishedEndpointProtocol::Https,
+            "*",
+            443,
+        )]);
+
+        let error = SandboxEgressLaunchEnforcement::ProcessSupervisorProxy
+            .materialize(&policy)
+            .expect_err("invalid process launch egress policy should fail closed");
+
+        assert!(
+            error.contains("wildcards"),
+            "invalid egress policy should expose the policy error: {error}"
+        );
     }
 
     #[test]
