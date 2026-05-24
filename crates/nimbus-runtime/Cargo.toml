@@ -39,6 +39,7 @@ deno_web.workspace = true
 deno_webidl.workspace = true
 deno_websocket.workspace = true
 libc.workspace = true
+libloading.workspace = true
 node_resolver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

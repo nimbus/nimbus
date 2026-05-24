@@ -11,9 +11,9 @@ mod lifecycle;
 mod linked;
 mod pool;
 
-use self::adapter::{
-    BunJscExecutionAdapter, BunJscExecutionAdapterFactory, BunJscNoLinkExecutionAdapterFactory,
-};
+#[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]
+use self::adapter::BunJscNoLinkExecutionAdapterFactory;
+use self::adapter::{BunJscExecutionAdapter, BunJscExecutionAdapterFactory};
 use self::lifecycle::BunJscLifecycleAck;
 use self::pool::{BunJscPool, BunJscPoolPolicy};
 
@@ -22,8 +22,13 @@ pub(crate) struct BunJscRuntimeBackendFactory;
 
 impl RuntimeBackendFactory for BunJscRuntimeBackendFactory {
     fn create(&self) -> Box<dyn RuntimeBackend> {
+        #[cfg(feature = "bun-jsc-linked-adapter")]
+        let factory = &linked::BunJscLinkedExecutionAdapterFactory;
+        #[cfg(not(feature = "bun-jsc-linked-adapter"))]
+        let factory = &BunJscNoLinkExecutionAdapterFactory;
+
         Box::new(BunJscRuntimeBackend::with_execution_adapter_factory(
-            &BunJscNoLinkExecutionAdapterFactory,
+            factory,
         ))
     }
 }
@@ -278,8 +283,9 @@ mod tests {
         );
     }
 
+    #[cfg(not(nimbus_bun_jsc_shared_adapter))]
     #[test]
-    fn bun_jsc_default_runtime_fails_closed_without_linked_adapter() {
+    fn bun_jsc_default_runtime_fails_closed_without_loaded_shared_adapter() {
         let policy = bun_policy();
         let runtime = NimbusRuntime::with_policy(Arc::new(NoopHost), policy);
         let request = InvocationRequest {
@@ -298,10 +304,12 @@ mod tests {
             )
             .expect_err("default Bun/JSC runtime must fail closed until an adapter is linked");
 
+        #[cfg(feature = "bun-jsc-linked-adapter")]
+        let expected_error = "set NIMBUS_BUN_EMBED_SHARED_LIBRARY";
+        #[cfg(not(feature = "bun-jsc-linked-adapter"))]
+        let expected_error = "does not link a Bun embedder execution adapter yet";
         assert!(
-            error
-                .to_string()
-                .contains("does not link a Bun embedder execution adapter yet"),
+            error.to_string().contains(expected_error),
             "unexpected error: {error}"
         );
     }
@@ -362,12 +370,12 @@ mod tests {
     fn bun_jsc_linked_adapter_feature_names_reproducible_bun_source() {
         let contract = linked::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
         assert_eq!(contract.repository, "https://github.com/nimbus/bun");
-        assert_eq!(contract.source_ref, "bun-v1.4.0-nimbus.1");
+        assert_eq!(contract.source_ref, "bun-v1.4.0-nimbus.3");
         assert_eq!(
             contract.git_revision,
-            "5ba54ccecdfabd857a7ca362c14c0f614d25b21b"
+            "ed8d05f17ee2803520440a07bcc7f6f47f2f68b8"
         );
-        assert_eq!(contract.proof_target, "check-bun-embed-probe");
+        assert_eq!(contract.proof_target, "check-bun-embed-shared");
         assert_eq!(contract.simdutf_namespace, "nimbus_bun_simdutf");
         assert_eq!(contract.required_exports.len(), 10);
         assert!(
@@ -389,27 +397,20 @@ mod tests {
 
     #[cfg(feature = "bun-jsc-linked-adapter")]
     #[test]
-    fn bun_jsc_linked_adapter_feature_compiles_without_replacing_default_backend() {
-        let default_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
-            &BunJscNoLinkExecutionAdapterFactory,
-        );
-        assert_eq!(
-            default_backend.execution_adapter_state(),
-            RuntimeExecutionAdapterState::NotLinked
-        );
-
+    fn bun_jsc_linked_adapter_feature_reports_shared_library_gated_link_state() {
         let linked_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
             &linked::BunJscLinkedExecutionAdapterFactory,
         );
-        assert_eq!(
-            linked_backend.execution_adapter_state(),
-            RuntimeExecutionAdapterState::Linked
-        );
+        #[cfg(nimbus_bun_jsc_shared_adapter)]
+        let expected_state = RuntimeExecutionAdapterState::Linked;
+        #[cfg(not(nimbus_bun_jsc_shared_adapter))]
+        let expected_state = RuntimeExecutionAdapterState::NotLinked;
+        assert_eq!(linked_backend.execution_adapter_state(), expected_state);
     }
 
-    #[cfg(all(feature = "bun-jsc-linked-adapter", not(nimbus_bun_jsc_linked_ffi)))]
+    #[cfg(all(feature = "bun-jsc-linked-adapter", not(nimbus_bun_jsc_shared_adapter)))]
     #[test]
-    fn bun_jsc_linked_adapter_feature_requires_explicit_bun_link_manifest_for_execution() {
+    fn bun_jsc_linked_adapter_feature_requires_explicit_shared_library_for_execution() {
         let policy = bun_policy();
         let mut linked_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
             &linked::BunJscLinkedExecutionAdapterFactory,
@@ -419,16 +420,16 @@ mod tests {
             .build()
             .expect("test runtime should build")
             .block_on(linked_backend.invoke(bun_invocation(policy)))
-            .expect_err("linked Bun/JSC execution must require an explicit Bun link manifest");
+            .expect_err("linked Bun/JSC execution must require an explicit shared library");
         assert!(
             error
                 .to_string()
-                .contains("compiled without NIMBUS_BUN_EMBED_LINK_ARGS"),
+                .contains("set NIMBUS_BUN_EMBED_SHARED_LIBRARY"),
             "unexpected error: {error}"
         );
     }
 
-    #[cfg(all(feature = "bun-jsc-linked-adapter", nimbus_bun_jsc_linked_ffi))]
+    #[cfg(all(feature = "bun-jsc-linked-adapter", nimbus_bun_jsc_shared_adapter))]
     #[test]
     fn bun_jsc_linked_adapter_executes_pure_program_wrapper_json_through_pool() {
         let temp_dir = tempfile::tempdir().expect("temp dir should be created");
@@ -507,6 +508,123 @@ globalThis.__nimbusInvoke = async function(request) {
         assert_eq!(metrics.admitted_invocations, 1);
         assert_eq!(metrics.disabled_invocations, 0);
         assert_eq!(metrics.teardown_completions, 1);
+    }
+
+    #[cfg(all(feature = "bun-jsc-linked-adapter", nimbus_bun_jsc_shared_adapter))]
+    #[test]
+    fn bun_jsc_linked_adapter_coexists_with_v8_backend_in_same_process() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let v8_bundle_path = temp_dir.path().join("v8-bundle.mjs");
+        std::fs::write(
+            &v8_bundle_path,
+            r#"
+globalThis.__nimbusInvoke = async function(request) {
+  return {
+    engine: "v8",
+    functionName: request.function_name,
+    body: request.args.body,
+  };
+};
+
+export {};
+"#,
+        )
+        .expect("V8 bundle should be written");
+        let bun_bundle_path = temp_dir.path().join("bun-program-wrapper.js");
+        std::fs::write(
+            &bun_bundle_path,
+            r#"
+globalThis.__nimbusInvoke = async function(request) {
+  return {
+    status: "ok",
+    value: {
+      engine: "bun_jsc",
+      functionName: request.function_name,
+      body: request.args.body,
+    },
+  };
+};
+"#,
+        )
+        .expect("Bun/JSC bundle should be written");
+
+        let v8_policy = Arc::new(crate::limits::RuntimePolicy::new(
+            RuntimeLimits::application_web_standard(),
+        ));
+        let v8_runtime = NimbusRuntime::with_policy(Arc::new(NoopHost), v8_policy);
+        let v8_request = |body: &str| InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:v8Proof".to_string(),
+            args: json!({ "body": body }),
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: BTreeMap::new(),
+        };
+
+        let first_v8_result = v8_runtime
+            .invoke_bundle_blocking(&RuntimeBundle::new(&v8_bundle_path), &v8_request("before"))
+            .expect("V8 invocation before Bun/JSC should run");
+        assert_eq!(
+            first_v8_result,
+            json!({
+                "engine": "v8",
+                "functionName": "messages:v8Proof",
+                "body": "before",
+            })
+        );
+
+        let bun_policy = bun_policy();
+        let bun_request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:bunProof".to_string(),
+            args: json!({ "body": "between" }),
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: BTreeMap::new(),
+        };
+        let mut bun_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
+            &linked::BunJscLinkedExecutionAdapterFactory,
+        );
+        let bun_result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build")
+            .block_on(bun_backend.invoke(RuntimeBackendInvocation {
+                watchdog: WatchdogTimer::new(),
+                host: RuntimeHost::new(Arc::new(NoopHost)),
+                policy: bun_policy.clone(),
+                bundle: RuntimeBundle::new(&bun_bundle_path),
+                request: bun_request.clone(),
+                context: RuntimeInvocationContext::top_level(&bun_request),
+                cancellation: None,
+                permit: SharedInvocationPermit::new(bun_policy, None, None, true, None),
+            }))
+            .expect("linked Bun/JSC invocation should run after V8");
+        assert_eq!(
+            bun_result,
+            json!({
+                "status": "ok",
+                "value": {
+                    "engine": "bun_jsc",
+                    "functionName": "messages:bunProof",
+                    "body": "between",
+                },
+            })
+        );
+
+        let second_v8_result = v8_runtime
+            .invoke_bundle_blocking(&RuntimeBundle::new(&v8_bundle_path), &v8_request("after"))
+            .expect("V8 invocation after Bun/JSC should still run");
+        assert_eq!(
+            second_v8_result,
+            json!({
+                "engine": "v8",
+                "functionName": "messages:v8Proof",
+                "body": "after",
+            })
+        );
     }
 
     #[test]

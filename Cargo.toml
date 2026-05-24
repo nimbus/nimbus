@@ -74,6 +74,7 @@ http = "1"
 signal-hook-registry = "1"
 libsql = { version = "0.9.30", default-features = false, features = ["remote"] }
 libc = "0.2"
+libloading = "0.8"
 mysql_async = "0.36"
 native-tls = { version = "0.2", features = ["vendored"] }
 parking_lot = "0.12"
