@@ -30,6 +30,7 @@ fn main() {
         if arg.is_empty() || arg.starts_with('#') {
             continue;
         }
+        reject_unsafe_bun_link_arg(arg, manifest);
         if arg.ends_with("libbun_embed_probe.a") {
             emit_required_static_archive_symbol();
         }
@@ -43,6 +44,15 @@ fn emit_required_static_archive_symbol() {
         println!("cargo:rustc-link-arg=-Wl,-u,_{BUN_EMBED_INVOKE_SYMBOL}");
     } else {
         println!("cargo:rustc-link-arg=-Wl,-u,{BUN_EMBED_INVOKE_SYMBOL}");
+    }
+}
+
+fn reject_unsafe_bun_link_arg(arg: &str, manifest: &Path) {
+    if arg.contains("--allow-multiple-definition") || arg.contains("muldefs") {
+        panic!(
+            "unsafe Bun/JSC link argument `{arg}` in {}; BJA4L forbids duplicate-symbol link workarounds",
+            manifest.display()
+        );
     }
 }
 

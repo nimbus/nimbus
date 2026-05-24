@@ -15,15 +15,21 @@ const BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct BunJscLinkedAdapterSourceContract {
+    pub(crate) repository: &'static str,
+    pub(crate) source_ref: &'static str,
     pub(crate) git_revision: &'static str,
     pub(crate) proof_target: &'static str,
+    pub(crate) simdutf_namespace: &'static str,
     pub(crate) required_exports: &'static [&'static str],
 }
 
 pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSourceContract =
     BunJscLinkedAdapterSourceContract {
-        git_revision: "a409f596e8e1394d8860e2cd8b2bb558ff1afcac",
+        repository: "https://github.com/nimbus/bun",
+        source_ref: "bun-v1.4.0-nimbus.1",
+        git_revision: "5ba54ccecdfabd857a7ca362c14c0f614d25b21b",
         proof_target: "check-bun-embed-probe",
+        simdutf_namespace: "nimbus_bun_simdutf",
         required_exports: &[
             "nimbus_bun_embed_probe_construct_and_destroy_vm",
             "nimbus_bun_embed_probe_sync_host_call",
