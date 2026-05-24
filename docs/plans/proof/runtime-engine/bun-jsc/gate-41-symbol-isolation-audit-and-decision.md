@@ -173,12 +173,11 @@ enterprise source-ownership story.
 | --- | --- | --- | --- |
 | Namespace V8/rusty_v8 `simdutf` | Could preserve one final binary and keep Bun/WebKit closer to upstream. | V8 core targets depend on `//third_party/simdutf`, not only Rusty V8's optional wrapper. A safe rename would need broad V8/Chromium build propagation plus Rust wrapper renames. Deno currently uses `v8::simdutf`. | Not first. Keep as fallback only if the Bun-side path fails. |
 | Namespace Bun/WebKit `simdutf` | Preserves one final binary and isolates the optional backend instead of changing the default V8/Deno lane. | Requires Nimbus-owned Bun/WebKit source ownership or prebuilt WebKit releases. WebKit is a large fork surface, and Bun's Rust/C wrapper names must also change. | Viable fallback for a strict single-file product, but heavier than needed for the next proof. |
-| In-process dynamic Bun adapter | Keeps the process boundary in-process, exposes only the Nimbus Bun C ABI, and avoids static ODR collision by giving Bun/WebKit a hidden/local dynamic object namespace. This is a common plugin boundary for large native runtimes. | Adds an adjacent runtime artifact unless we later implement packaging/extraction. Current Bun/WebKit release objects are non-PIC, so this path first needs a PIC-capable dynamic artifact proof. | Selected for BJA4L2 feasibility and implementation. Roll back if PIC build cost or packaging breaks the product contract. |
+| In-process dynamic Bun adapter | Keeps the process boundary in-process, exposes only the Nimbus Bun C ABI, and avoids static ODR collision by giving Bun/WebKit a hidden/local dynamic object namespace. This is a common plugin boundary for large native runtimes. | Adds an adjacent runtime artifact unless we later implement packaging/extraction. Current Bun/WebKit release objects are non-PIC, so this path first needs a PIC-capable dynamic artifact proof. | Selected first for BJA4L2 feasibility. Gate 42 rejected the current release-object path, so implementation rolls back to static Bun/WebKit namespace isolation unless Nimbus later chooses to own PIC WebKit/Bun artifacts. |
 
 ## Decision
 
-BJA4L2 will first prove, then implement, the in-process dynamic Bun adapter
-path:
+BJA4L2 first attempted the in-process dynamic Bun adapter path:
 
 ```text
 Nimbus process
@@ -188,26 +187,34 @@ Nimbus process
   -> Bun/JSC/WebKit symbols hidden inside the dynamic object
 ```
 
-This keeps the runtime execution model in-process, preserves the default
-single-binary no-link DX, and avoids invasive changes to the existing
-Deno/V8/Node lane while we prove Bun/JSC execution. If this cannot satisfy the
-final product packaging contract, the fallback is a Nimbus-owned Bun/WebKit
-namespace fork that preserves a static same-binary link.
+That path would keep execution in-process and avoid invasive changes to the
+existing Deno/V8/Node lane, but it depends on a PIC-capable Bun/WebKit dynamic
+artifact. Gate 42 proved the current release manifest cannot be repurposed as
+a shared library: WebKit's bmalloc archive contains non-PIC TLS relocations
+that lld rejects for `-shared`.
 
-The proof must not assume the current release manifest can be repurposed as a
-shared library. The first implementation checkpoint is a PIC-capable dynamic
-artifact with an export audit. If that checkpoint fails or makes WebKit source
-ownership more expensive than a static namespace fork, the plan rolls back to
-the Bun/WebKit namespace fork.
+Therefore BJA4L2 rolls back to the source-owned static namespace path:
+
+```text
+Nimbus process
+  -> same-binary Bun/JSC static link
+  -> Nimbus-owned Bun/WebKit namespace isolation
+  -> explicit nimbus_bun_embed_* C ABI
+```
+
+This better matches Nimbus' single-binary product preference. The dynamic
+adapter remains a future fallback only if Nimbus decides to own PIC WebKit/Bun
+artifacts.
 
 The linked gate has also been hardened to reject
 `--allow-multiple-definition` and `-z muldefs` before running proof work.
 
 ## Next
 
-- BJA4L2: build a Bun embedder dynamic artifact that exports only the
-  `nimbus_bun_embed_*` ABI and hides WebKit/Bun native symbols.
+- BJA4L2: implement source-owned Bun/WebKit namespace isolation for
+  `simdutf::` and Bun's `simdutf__` wrappers while preserving the static
+  same-binary link.
 - BJA4L3: extend the linked gate with an exported-symbol audit for that
-  dynamic artifact.
+  static artifact.
 - BJA4L4: add a same-process Nimbus test that invokes the existing V8 lane and
   the Bun/JSC lane in one process on Debian 13 `minicloud`.
