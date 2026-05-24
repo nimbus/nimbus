@@ -229,6 +229,13 @@ unsafe extern "C" fn bun_jsc_host_bridge_call_json(
             .call_cancellable(request, &context.cancellation)
         {
             Ok(value) => json!({ "status": "ok", "value": value }),
+            Err(NimbusRuntimeError::Cancelled) => json!({
+                "status": "error",
+                "error": {
+                    "code": "cancelled",
+                    "message": "Bun/JSC host call was cancelled",
+                },
+            }),
             Err(error) => json!({
                 "status": "error",
                 "error": {
