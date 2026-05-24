@@ -110,10 +110,16 @@ The gate verified:
 
 ## Result
 
-`BJA4` is complete locally. The old adapter-not-linked error remains for
-no-manifest builds, while manifest-backed linked builds can execute a pure
+`BJA4` is complete locally on macOS. The old adapter-not-linked error remains
+for no-manifest builds, while manifest-backed linked builds can execute a pure
 self-contained Bun/JSC program wrapper through the Bun pool.
 
-Next: prove the same gate on Debian 13 `minicloud`, then continue `BJA5` by
-wiring Nimbus HostBridge grants and tenant-scoped identity through the linked
-Bun/JSC adapter.
+Debian 13 `minicloud` found a platform blocker before BJA5: static co-linking
+the current Deno/V8 stack and Bun/WebKit stack in one Linux binary collides on
+native `simdutf` symbols. A diagnostic `--allow-multiple-definition` retry
+linked but crashed with `SIGSEGV`, so that workaround is rejected. Evidence and
+the updated decision are recorded in
+`docs/plans/proof/runtime-engine/bun-jsc/gate-40-linux-static-colink-symbol-collision.md`.
+
+Next: add a BJA4 symbol-isolation subgate, then continue `BJA5` only after the
+linked Linux proof passes without unsafe duplicate-symbol linker policy.

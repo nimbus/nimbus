@@ -12,7 +12,7 @@ fresh/discard lifecycle controls.
 
 ## Status
 
-- **Status:** active; `BJA5` is next
+- **Status:** active; `BJA4L` symbol isolation is next
 - **Primary owner:** this plan
 - **Nimbus worktree:** `/Users/jack/src/github.com/nimbus/nimbus`
 - **Bun worktree:** `/Users/jack/src/github.com/oven-sh/bun`
@@ -23,6 +23,8 @@ fresh/discard lifecycle controls.
 - **Predecessor:** `docs/plans/bun-jsc-embedder-api-and-pool-plan.md`
 - **Default posture:** Deno/V8 remains the default runtime; Bun/JSC remains
   optional and fail-closed unless a verified adapter is linked
+- **Linux finding:** current static co-linking of V8 and Bun/WebKit archives
+  collides on native `simdutf` symbols and is unsafe without symbol isolation
 
 ## Product Shape
 
@@ -88,11 +90,58 @@ Nimbus-owned Bun fork/tag rather than relying on `~/src/github.com/oven-sh/bun`.
 | BJA1 | `done` | Introduce a real Bun/JSC execution-adapter boundary while preserving fail-closed defaults. | `crates/nimbus-runtime/src/backends/bun_jsc/adapter.rs` contains the concept-owned adapter trait/factory and default no-link adapter. `RuntimeExecutionAdapterState` is runtime-owned and shared by Convex diagnostics. Default builds keep `execution_adapter_state = "not_linked"` and return the existing contract error. Tests prove default failure, fake-linked dispatch through the seam, lazy lane diagnostics, and no Bun/JSC embedder symbols in the default envelope. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-36-linked-adapter-seam.md`. |
 | BJA2 | `done` | Prove or implement the Bun-side embedder execution API. | Bun proof head `2f09ba33b1` exposes the native `check-bun-embed-probe` target and configures the StackCheck entry root before constructing the VM outside the Bun CLI path. The target constructs the locked-down VM, executes the self-contained program wrapper, returns JSON, emits resolver/permission/lifecycle evidence, and fails unsafe surfaces. The proof target passed locally and on Debian 13 `minicloud` with home-backed temp/cache paths. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-37-embedder-execution-api.md`. |
 | BJA3 | `done` | Make Nimbus build with an optional linked Bun/JSC adapter without regressing default builds. | Default `cargo check --workspace` and `make verify-bun-jsc-runtime-contract` still pass without Bun. `nimbus-runtime` now exposes the opt-in `bun-jsc-linked-adapter` feature, which compiles the linked-source adapter contract against Bun proof head `2f09ba33b184a541e2ade24bf6e46bebc971a262` without replacing the default no-link backend. `make verify-bun-jsc-linked-adapter` verifies the default contract, feature tests, exact Bun source revision, required proof exports, Bun format, native `check-bun-embed-probe`, and diff checks. CI/docs name both the default no-link lane and linked proof lane. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-38-linked-adapter-build-lane.md`. |
-| BJA4 | `done` | Execute pure Bun/JSC functions through the Bun pool. | Bun proof head `a409f596e8e1394d8860e2cd8b2bb558ff1afcac` exports `nimbus_bun_embed_invoke_program_wrapper_json` and a release-profile link manifest. Nimbus consumes that manifest only when `NIMBUS_BUN_EMBED_LINK_ARGS` is set, links the Bun/JSC ABI, invokes a self-contained program wrapper with JSON args, receives JSON output, and records pool lifecycle transitions through teardown. No-manifest builds still fail closed. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-39-linked-pure-invocation.md`. |
+| BJA4 | `in_progress` | Execute pure Bun/JSC functions through the Bun pool. | Bun proof head `a409f596e8e1394d8860e2cd8b2bb558ff1afcac` exports `nimbus_bun_embed_invoke_program_wrapper_json` and a release-profile link manifest. Nimbus consumes that manifest only when `NIMBUS_BUN_EMBED_LINK_ARGS` is set, links the Bun/JSC ABI, invokes a self-contained program wrapper with JSON args, receives JSON output, and records pool lifecycle transitions through teardown. No-manifest builds still fail closed. Local macOS evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-39-linked-pure-invocation.md`. Linux evidence found an unsafe static co-link blocker recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-40-linux-static-colink-symbol-collision.md`; BJA4 cannot close until BJA4L passes. |
+| BJA4L | `pending` | Prove Linux in-process symbol isolation for Bun/JSC beside Deno/V8. | Debian 13 `minicloud` can run the linked pure invocation gate without `--allow-multiple-definition`, without duplicate `simdutf` linker errors, and without runtime crashes. The chosen design is one of: a Nimbus-owned Bun/WebKit or `rusty_v8` symbol-namespace fork, or an in-process dynamic-library adapter with hidden/local native symbols and explicit Nimbus C ABI. Evidence must prove both the existing V8 lane and the Bun/JSC lane can coexist in the same product process shape. |
 | BJA5 | `pending` | Wire Nimbus HostBridge, tenant identity, and permission grants through Bun/JSC. | Bun/JSC functions can perform explicitly granted HostBridge operations through the same service/engine path as V8, and denied operations fail with audited, tenant-scoped errors. Tests cover allowed operation, denied operation, forged tenant/context attempt, and no raw host token exposure inside Bun/JSC guest code. |
 | BJA6 | `pending` | Enforce cancellation, teardown, and memory policy for untrusted Bun/JSC. | Tests cover before-entry cancellation, after-entry sync loop cancellation, promise/microtask progress, in-flight HostBridge cancellation, normal completion, teardown, fresh/discard after each untrusted invocation, and outer memory quota behavior. Evidence passes locally and on `minicloud`. |
 | BJA7 | `pending` | Promote Bun/JSC selection into product metadata only after linked execution is real. | Codegen/server artifacts can express function-level Bun selection only when the linked adapter gate is available; no-link builds continue to reject selection clearly. `/debug/runtime/metrics` and the operator UI show `linked` only for linked builds, executor started only after actual invocation, and Bun/JSC memory as `outer_quota_required`. |
 | BJA8 | `pending` | Close the plan with reproducible verification, CI, docs, and source ownership. | A reusable gate such as `make verify-bun-jsc-linked-adapter` runs the linked adapter tests, default no-link contract tests, Bun source proof, and UI/API diagnostics checks. The gate passes locally and on Debian 13 `minicloud`. Docs record the final upstream-or-fork source, tag/revision, residual risks, and exact operator/product behavior. The plan is updated to `complete` only after a clean commit records the implementation and evidence. |
+
+## BJA4L Symbol-Isolation Work Plan
+
+BJA4L is the current execution slice. It exists because Linux proved that the
+current static same-binary link is not a safe product shape: V8 and Bun/WebKit
+both export native `simdutf` symbols, and forcing the linker through with
+`--allow-multiple-definition` caused a crash.
+
+Do not start BJA5 until this slice either proves an in-process isolation design
+or records that same-binary Bun/JSC is not maintainable.
+
+| Step | Status | Goal | Verifiable success criteria |
+| --- | --- | --- | --- |
+| BJA4L0 | `pending` | Audit the colliding symbol set and owning build artifacts. | A proof doc records the exact V8/rusty_v8 and Bun/WebKit archives that export `simdutf`, the duplicate symbol families, the link order, and why `--allow-multiple-definition` and similar interposition workarounds are disallowed. Evidence includes `nm`/linker output from `minicloud`. |
+| BJA4L1 | `pending` | Choose the least risky in-process isolation strategy. | The plan compares: namespacing or hiding `simdutf` in a Nimbus-owned Bun/WebKit fork, namespacing or hiding it in `nimbus/rusty_v8`, and an in-process dynamic-library Bun adapter with hidden/local native symbols plus an explicit Nimbus C ABI. The selected path has a written rationale, source-ownership rule, and rollback trigger. |
+| BJA4L2 | `pending` | Implement the smallest source-owned isolation change. | The selected fork or adapter build produces artifacts that expose only the expected Nimbus Bun C ABI and do not expose global `simdutf` symbols into the Nimbus product link. The implementation is reproducible from a committed source revision or tag, not local edits. |
+| BJA4L3 | `pending` | Harden the linked verification gate against unsafe symbol fixes. | `scripts/verify-bun-jsc-linked-adapter.sh` or its `make` wrapper rejects `--allow-multiple-definition`, records the selected source revision, audits exported symbols, and fails if unsafe duplicate symbol families are present. |
+| BJA4L4 | `pending` | Prove V8 and Bun/JSC coexist in the same product process shape. | A focused Nimbus test invokes an existing V8-backed lane and the linked Bun/JSC lane in one test binary/process. The test passes locally where supported and on Debian 13 `minicloud` without duplicate-symbol link errors or runtime crashes. |
+| BJA4L5 | `pending` | Preserve default DX and enterprise diagnostics. | Default no-link builds still pass `make verify-bun-jsc-runtime-contract`; linked builds report Bun/JSC as `linked`, retain `outer_quota_required`, and record lifecycle acknowledgements. Operator-visible diagnostics remain accurate for V8, Node LTS lanes, and Bun/JSC. |
+| BJA4L6 | `pending` | Checkpoint the decision and unblock or stop the plan. | If symbol isolation passes, mark BJA4 and BJA4L done and resume BJA5. If it does not pass, record the blocker and keep Bun/JSC as an external sandbox workload rather than claiming same-binary runtime support. The checkpoint commit includes the implementation, proof docs, and updated plan state. |
+
+### BJA4L Goal Prompt
+
+Complete BJA4L in `docs/plans/bun-jsc-linked-adapter-plan.md`
+autonomously. Treat the plan file, proof docs, and focused commits as the
+control plane. Do not proceed to BJA5 HostBridge work until a Linux-safe
+in-process symbol-isolation strategy is selected, implemented, and verified.
+
+Required BJA4L completion evidence:
+
+- The colliding V8/rusty_v8 and Bun/WebKit symbols are audited with
+  reproducible `minicloud` evidence.
+- The plan records a selected isolation strategy and why rejected alternatives
+  are less appropriate for Nimbus' single-binary and enterprise-trust goals.
+- The selected implementation is source-owned by an upstream release/tag or a
+  Nimbus fork/tag.
+- The linked gate fails closed if `--allow-multiple-definition` or another
+  unsafe duplicate-symbol workaround is used.
+- A same-process test proves an existing V8 lane and the linked Bun/JSC lane
+  can coexist.
+- The linked gate passes on Debian 13 `minicloud` using home-backed
+  temp/cache paths and without duplicate-symbol linker errors or crashes.
+- `make verify-bun-jsc-runtime-contract`, `cargo fmt --all --check`,
+  `npm run typecheck`, and `git diff --check` pass before the checkpoint
+  commit, unless a command is explicitly recorded as blocked by the unresolved
+  symbol-isolation decision.
 
 ## Verification Baseline
 
@@ -122,6 +171,8 @@ That target should prove, at minimum:
 - cancellation and teardown are deterministic
 - outer-quota memory policy is visible in diagnostics
 - V8/Node lanes do not inherit Bun/JSC backend axes
+- Linux symbol isolation is explicit; the gate must not use
+  `--allow-multiple-definition` to paper over V8/Bun native symbol collisions
 
 When Bun source changes are part of a batch, run in
 `/Users/jack/src/github.com/oven-sh/bun` or the selected Nimbus Bun fork:
@@ -143,6 +194,12 @@ TMPDIR=$HOME/.cache/nimbus-bun-proof/tmp
 NIMBUS_BUN_BUILD_DIR=$HOME/.cache/nimbus-bun-proof/embed-native
 NIMBUS_BUN_CACHE_DIR=$HOME/.cache/nimbus-bun-proof/cache
 NIMBUS_BUN_CARGO_TARGET_DIR=$HOME/.cache/nimbus-bun-proof/cargo-target
+```
+
+Noninteractive `minicloud` sessions also need the user-local tool paths:
+
+```sh
+PATH=$HOME/.cargo/bin:$HOME/.bun/bin:$PATH
 ```
 
 ## Autonomous Goal Prompt
@@ -175,4 +232,4 @@ Required completion evidence:
 | 2026-05-24 | BJA1 | `done` | Added `BunJscExecutionAdapterFactory`, `BunJscExecutionAdapter`, and the default `BunJscNoLinkExecutionAdapter` under `crates/nimbus-runtime/src/backends/bun_jsc/adapter.rs`. `BunJscRuntimeBackend` now dispatches through that seam, records disabled invocations only for `not_linked`, and has fake-linked test coverage proving the future linked adapter gets the invocation after policy/scaffold checks. `RuntimeExecutionAdapterState` moved to the runtime crate so Convex diagnostics and HTTP metadata share the same state vocabulary. | `make verify-bun-jsc-runtime-contract` passed outside the Codex filesystem sandbox: 11 runtime policy tests, 7 Bun/JSC pool/adapter seam tests, 13 Convex registry tests, 2 runtime diagnostics tests, 1 tenant-admission test, and 2 UI test files / 5 tests. `cargo test -p nimbus-server registry_and_license::registry --lib` passed 13 tests; `cargo test -p nimbus-server registry_and_license::runtime_metrics --lib` passed 2 tests; `cargo fmt --all --check` passed; `git diff --check` passed. | Start BJA2 by proving or productizing the Bun-side embedder execution API behind this linked-adapter seam. |
 | 2026-05-24 | BJA2 | `done` | Bun proof head advanced to `2f09ba33b1` with `bun_core::StackCheck::configure_thread()` in the native embed probe root, matching the CLI entry-root requirement before `VirtualMachine` construction. The `check-bun-embed-probe` target now proves the Bun-side execution API shape needed by Nimbus: locked-down VM construction, generated program-wrapper evaluation, JSON result transport, resolver/package denial, native permission denial, cancellation recovery, memory pressure evidence, and fresh/discard lifecycle policy. | In `/Users/jack/src/github.com/oven-sh/bun`, `cargo fmt --all --check`, `bun scripts/build.ts --profile=debug-no-asan --build-dir=/private/tmp/nimbus-bun-embed-native --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe`, and `git diff --check` passed. On Debian 13 `minicloud` at `/home/nimbus/src/github.com/oven-sh/bun`, the same proof passed with `clang-21`, `ld.lld-21`, `TMPDIR=$HOME/.cache/nimbus-bun-proof/tmp`, `CARGO_TARGET_DIR=$HOME/.cache/nimbus-bun-proof/cargo-target`, build dir `$HOME/.cache/nimbus-bun-proof/embed-native`, and cache dir `$HOME/.cache/nimbus-bun-proof/cache`. | Start BJA3 by wiring an optional linked adapter build path in Nimbus while preserving the default no-link build and diagnostics contract. |
 | 2026-05-24 | BJA3 | `done` | Added the opt-in `nimbus-runtime/bun-jsc-linked-adapter` feature, `crates/nimbus-runtime/src/backends/bun_jsc/linked.rs`, and `make verify-bun-jsc-linked-adapter`. The feature compiles the linked-source adapter contract and required Bun proof export declarations, but default `BunJscRuntimeBackendFactory` still constructs the no-link adapter and reports `not_linked`. The feature-owned adapter factory is guarded with a BJA4 execution error so no product build can silently claim working Bun/JSC execution before end-to-end invocation lands. CI syntax-checks the linked proof script and docs now name the default no-link lane plus the opt-in linked proof lane. | `cargo test -p nimbus-runtime --lib backends::bun_jsc` passed 7 tests. `cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc` passed 9 tests. `make verify-bun-jsc-linked-adapter` passed outside the Codex filesystem sandbox: default runtime contract, linked feature tests, exact Bun source revision, nine required proof exports, Bun format, native `check-bun-embed-probe`, Nimbus diff check, and Bun diff check. `cargo check --workspace` passed. | Start BJA4 by wiring the first real pure-function Bun/JSC invocation path through the Bun pool while keeping the old adapter-not-linked error for no-link builds. |
-| 2026-05-24 | BJA4 | `done` | Bun proof head advanced to `a409f596e8` with the `nimbus_bun_embed_invoke_program_wrapper_json` ABI and release-profile link-manifest generation. Nimbus now compiles a manifest-backed `nimbus_bun_jsc_linked_ffi` variant, requires the Bun static-archive symbol explicitly, links the platform C++ runtime for Rust's `-nodefaultlibs` link, validates bundle integrity/content kind, serializes `InvocationRequest`, calls Bun/JSC, parses JSON output, and records linked pool lifecycle through teardown. | In `/Users/jack/src/github.com/oven-sh/bun`, `cargo fmt --all --check`, `git diff --check`, and `CARGO_TARGET_DIR=/private/tmp/nimbus-bun-proof-target-release bun scripts/build.ts --profile=release --build-dir=/private/tmp/nimbus-bun-linked-adapter-release --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed. In Nimbus, the focused linked invocation test passed 1 test. `bash scripts/verify-bun-jsc-linked-adapter.sh` passed locally: default no-link contract, 10 no-manifest linked tests, exact Bun revision/export checks, release native probe, linked pure invocation, and diff checks. | Prove the linked gate on Debian 13 `minicloud`, then start BJA5 by wiring HostBridge grants, tenant identity, denied-operation auditing, and forged-context rejection through the Bun/JSC adapter. |
+| 2026-05-24 | BJA4 | `local-done; linux-needs-symbol-isolation` | Bun proof head advanced to `a409f596e8` with the `nimbus_bun_embed_invoke_program_wrapper_json` ABI and release-profile link-manifest generation. Nimbus now compiles a manifest-backed `nimbus_bun_jsc_linked_ffi` variant, requires the Bun static-archive symbol explicitly, links the platform C++ runtime for Rust's `-nodefaultlibs` link, validates bundle integrity/content kind, serializes `InvocationRequest`, calls Bun/JSC, parses JSON output, and records linked pool lifecycle through teardown. Debian 13 `minicloud` proved the current static co-link is unsafe because V8 and Bun/WebKit both export `simdutf` symbols. | In `/Users/jack/src/github.com/oven-sh/bun`, `cargo fmt --all --check`, `git diff --check`, and `CARGO_TARGET_DIR=/private/tmp/nimbus-bun-proof-target-release bun scripts/build.ts --profile=release --build-dir=/private/tmp/nimbus-bun-linked-adapter-release --cache-dir=/private/tmp/nimbus-bun-cache --target=check-bun-embed-probe` passed. In Nimbus, the focused linked invocation test passed 1 test. `bash scripts/verify-bun-jsc-linked-adapter.sh` passed locally: default no-link contract, 10 no-manifest linked tests, exact Bun revision/export checks, release native probe, linked pure invocation, and diff checks. On `minicloud`, the gate passed default no-link contract, linked no-manifest tests, export checks, Bun format, and native probe, then failed linking the Bun/JSC FFI test with duplicate `simdutf` symbols from `libv8-*.rlib` and `libWTF.a`. A diagnostic `--allow-multiple-definition` retry linked but crashed with `SIGSEGV`, so that workaround is rejected. | Add and pass BJA4L: a Linux symbol-isolated in-process Bun/JSC adapter proof. Do not start BJA5 HostBridge product work on top of unsafe static co-linking. |
