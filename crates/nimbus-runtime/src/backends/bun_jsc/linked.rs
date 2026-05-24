@@ -1,12 +1,14 @@
+use std::ffi::c_void;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::backends::RuntimeBackendInvocation;
 use crate::error::{NimbusRuntimeError, Result};
+use crate::host::{HostBridge, HostCallCancellation, HostCallRequest};
 use crate::limits::RuntimeExecutionAdapterState;
 
 use super::adapter::{BunJscExecutionAdapter, BunJscExecutionAdapterFactory};
@@ -30,8 +32,8 @@ pub(crate) struct BunJscLinkedAdapterSourceContract {
 pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSourceContract =
     BunJscLinkedAdapterSourceContract {
         repository: "https://github.com/nimbus/bun",
-        source_ref: "bun-v1.4.0-nimbus.3",
-        git_revision: "ed8d05f17ee2803520440a07bcc7f6f47f2f68b8",
+        source_ref: "bun-v1.4.0-nimbus.4",
+        git_revision: "7c6dd4312e437c67a6c4c8cbb252f0d7ae898db8",
         proof_target: "check-bun-embed-shared",
         simdutf_namespace: "nimbus_bun_simdutf",
         required_exports: &[
@@ -45,6 +47,7 @@ pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSour
             "nimbus_bun_embed_probe_package_module_policy",
             "nimbus_bun_embed_probe_lifecycle_reuse_stress",
             "nimbus_bun_embed_invoke_program_wrapper_json",
+            "nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge",
         ],
     };
 
@@ -58,11 +61,30 @@ type BunJscInvokeProgramWrapperJsonFn = unsafe extern "C" fn(
     output_cap: usize,
     output_len: *mut usize,
 ) -> i32;
+type BunJscHostCallJsonFn = unsafe extern "C" fn(
+    context: *mut c_void,
+    request_ptr: *const u8,
+    request_len: usize,
+    output_ptr: *mut u8,
+    output_cap: usize,
+    output_len: *mut usize,
+) -> i32;
+type BunJscInvokeProgramWrapperJsonWithHostBridgeFn = unsafe extern "C" fn(
+    bundle_ptr: *const u8,
+    bundle_len: usize,
+    request_ptr: *const u8,
+    request_len: usize,
+    output_ptr: *mut u8,
+    output_cap: usize,
+    output_len: *mut usize,
+    host_context: *mut c_void,
+    host_call_json: Option<BunJscHostCallJsonFn>,
+) -> i32;
 
 #[derive(Debug)]
 struct BunJscSharedAdapterLibrary {
     _library: libloading::Library,
-    invoke_program_wrapper_json: BunJscInvokeProgramWrapperJsonFn,
+    invoke_program_wrapper_json_with_host_bridge: BunJscInvokeProgramWrapperJsonWithHostBridgeFn,
 }
 
 static BUN_JSC_SHARED_ADAPTER_LIBRARY: OnceLock<
@@ -111,6 +133,7 @@ fn invoke_program_wrapper_json(
         bundle,
         request,
         cancellation,
+        host,
         ..
     } = invocation;
 
@@ -134,9 +157,13 @@ fn invoke_program_wrapper_json(
     let request_json = serde_json::to_vec(&request)?;
     let mut output = vec![0_u8; BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP];
     let mut output_len = 0_usize;
+    let host_context = BunJscHostBridgeCallContext {
+        host: host.bridge(),
+        cancellation: cancellation.unwrap_or_default(),
+    };
 
     let status = unsafe {
-        (shared_library.invoke_program_wrapper_json)(
+        (shared_library.invoke_program_wrapper_json_with_host_bridge)(
             bundle_source.as_ptr(),
             bundle_source.len(),
             request_json.as_ptr(),
@@ -144,6 +171,8 @@ fn invoke_program_wrapper_json(
             output.as_mut_ptr(),
             output.len(),
             &mut output_len,
+            &host_context as *const BunJscHostBridgeCallContext as *mut c_void,
+            Some(bun_jsc_host_bridge_call_json),
         )
     };
 
@@ -171,6 +200,70 @@ fn invoke_program_wrapper_json(
     serde_json::from_slice(&output[..output_len]).map_err(NimbusRuntimeError::from)
 }
 
+struct BunJscHostBridgeCallContext {
+    host: Arc<dyn HostBridge>,
+    cancellation: HostCallCancellation,
+}
+
+unsafe extern "C" fn bun_jsc_host_bridge_call_json(
+    context: *mut c_void,
+    request_ptr: *const u8,
+    request_len: usize,
+    output_ptr: *mut u8,
+    output_cap: usize,
+    output_len: *mut usize,
+) -> i32 {
+    if context.is_null() || request_ptr.is_null() || output_ptr.is_null() || output_len.is_null() {
+        return 300;
+    }
+
+    // SAFETY: Bun calls this callback synchronously while the Nimbus invocation
+    // owns the context stack frame. The callback never stores the reference.
+    let context = unsafe { &*(context as *const BunJscHostBridgeCallContext) };
+    // SAFETY: Bun passes an immutable request buffer for the duration of this
+    // callback. The slice is deserialized before the function returns.
+    let request = unsafe { std::slice::from_raw_parts(request_ptr, request_len) };
+    let response = match serde_json::from_slice::<HostCallRequest>(request) {
+        Ok(request) => match context
+            .host
+            .call_cancellable(request, &context.cancellation)
+        {
+            Ok(value) => json!({ "status": "ok", "value": value }),
+            Err(error) => json!({
+                "status": "error",
+                "error": {
+                    "code": "host_bridge_denied",
+                    "message": error.to_string(),
+                },
+            }),
+        },
+        Err(error) => json!({
+            "status": "error",
+            "error": {
+                "code": "invalid_host_bridge_request",
+                "message": error.to_string(),
+            },
+        }),
+    };
+
+    let response = match serde_json::to_vec(&response) {
+        Ok(response) => response,
+        Err(_) => return 312,
+    };
+    unsafe {
+        *output_len = response.len();
+    }
+    if response.len() > output_cap {
+        return 307;
+    }
+    // SAFETY: `output_ptr` was validated non-null and the capacity check bounds
+    // the copy into the caller-provided ABI buffer.
+    unsafe {
+        std::ptr::copy_nonoverlapping(response.as_ptr(), output_ptr, response.len());
+    }
+    0
+}
+
 fn embedder_status_name(status: i32) -> &'static str {
     match status {
         1 => "vm_init_failed",
@@ -182,6 +275,11 @@ fn embedder_status_name(status: i32) -> &'static str {
         305 => "result_json_stringify_failed",
         306 => "result_json_dead_string",
         307 => "output_buffer_too_small",
+        308 => "missing_host_bridge_callback",
+        309 => "host_bridge_transport_evaluation_failed",
+        310 => "host_bridge_transport_initialization_failed",
+        311 => "host_bridge_not_installed",
+        312 => "host_bridge_response_json_failed",
         _ => "unknown",
     }
 }
@@ -211,12 +309,18 @@ fn load_shared_adapter_library() -> std::result::Result<BunJscSharedAdapterLibra
     ] {
         let _: BunJscProbeFn = unsafe { load_required_symbol(&library, symbol)? };
     }
-    let invoke_program_wrapper_json =
+    let _: BunJscInvokeProgramWrapperJsonFn =
         unsafe { load_required_symbol(&library, "nimbus_bun_embed_invoke_program_wrapper_json")? };
+    let invoke_program_wrapper_json_with_host_bridge = unsafe {
+        load_required_symbol(
+            &library,
+            "nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge",
+        )?
+    };
 
     Ok(BunJscSharedAdapterLibrary {
         _library: library,
-        invoke_program_wrapper_json,
+        invoke_program_wrapper_json_with_host_bridge,
     })
 }
 

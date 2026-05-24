@@ -370,14 +370,14 @@ mod tests {
     fn bun_jsc_linked_adapter_feature_names_reproducible_bun_source() {
         let contract = linked::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
         assert_eq!(contract.repository, "https://github.com/nimbus/bun");
-        assert_eq!(contract.source_ref, "bun-v1.4.0-nimbus.3");
+        assert_eq!(contract.source_ref, "bun-v1.4.0-nimbus.4");
         assert_eq!(
             contract.git_revision,
-            "ed8d05f17ee2803520440a07bcc7f6f47f2f68b8"
+            "7c6dd4312e437c67a6c4c8cbb252f0d7ae898db8"
         );
         assert_eq!(contract.proof_target, "check-bun-embed-shared");
         assert_eq!(contract.simdutf_namespace, "nimbus_bun_simdutf");
-        assert_eq!(contract.required_exports.len(), 10);
+        assert_eq!(contract.required_exports.len(), 11);
         assert!(
             contract
                 .required_exports
@@ -392,6 +392,11 @@ mod tests {
             contract
                 .required_exports
                 .contains(&"nimbus_bun_embed_invoke_program_wrapper_json")
+        );
+        assert!(
+            contract
+                .required_exports
+                .contains(&"nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge")
         );
     }
 
