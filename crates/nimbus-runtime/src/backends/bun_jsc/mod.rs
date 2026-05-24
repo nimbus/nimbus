@@ -47,7 +47,8 @@ mod tests {
     use super::*;
     use crate::limits::{
         RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
-        RuntimeBackendTrustTier, RuntimeJavaScriptEvaluationFormat, RuntimeLimits, RuntimePoolKind,
+        RuntimeBackendTrustTier, RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
+        RuntimeMemoryEnforcement, RuntimePoolKind,
     };
 
     fn bun_limits_for(
@@ -62,6 +63,7 @@ mod tests {
             backend_lockdown_profile: lockdown_profile,
             backend_lifecycle_policy: lifecycle_policy,
             javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+            memory_enforcement: RuntimeMemoryEnforcement::OuterQuotaRequired,
             runtime_pool_kind,
             ..RuntimeLimits::default()
         }

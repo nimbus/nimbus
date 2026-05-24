@@ -73,7 +73,7 @@ impl<'a> RuntimeInvocationContext<'a> {
         let invocation_kind = request.kind.clone();
         let (runtime_executor, runtime_policy) = self
             .registry
-            .runtime_lane_for_function(&request.function_name);
+            .runtime_lane_for_function(&request.function_name)?;
         let decision = admit_runtime_invocation_decision(
             &self.isolation,
             &request.function_name,

@@ -2,7 +2,8 @@ use super::*;
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeJavaScriptEvaluationFormat, RuntimeLimits, RuntimePoolKind,
+    RuntimeExecutionModel, RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
+    RuntimeMemoryEnforcement, RuntimePoolKind,
 };
 
 #[test]
@@ -279,6 +280,10 @@ fn convex_registry_selects_bun_jsc_lane_from_manifest_metadata() {
         RuntimePoolKind::BunJscFreshDiscard
     );
     assert_eq!(
+        bun_limits.memory_enforcement,
+        RuntimeMemoryEnforcement::OuterQuotaRequired
+    );
+    assert_eq!(
         bun_limits.bundle_content_kind,
         RuntimeBundleContentKind::JavaScript
     );
@@ -289,6 +294,103 @@ fn convex_registry_selects_bun_jsc_lane_from_manifest_metadata() {
     assert_eq!(
         bun_limits.compatibility_target,
         RuntimeCompatibilityTarget::BunJsc
+    );
+    let diagnostics = registry.runtime_lane_diagnostics();
+    let bun_diagnostics = diagnostics
+        .iter()
+        .find(|lane| lane.lane_name == "bun_jsc")
+        .expect("Bun/JSC lane diagnostics should be present");
+    assert!(!bun_diagnostics.executor_started);
+    assert_eq!(
+        bun_diagnostics.execution_adapter_state,
+        crate::adapters::convex::ConvexRuntimeExecutionAdapterState::NotLinked
+    );
+    assert_eq!(
+        bun_diagnostics.limits.memory_enforcement,
+        RuntimeMemoryEnforcement::OuterQuotaRequired
+    );
+}
+
+#[test]
+fn convex_registry_runtime_limit_overrides_do_not_leak_backend_axes_across_lanes() {
+    let mut bun_shaped_override = RuntimeLimits::application_bun_jsc();
+    bun_shaped_override.max_heap_mb = 96;
+    bun_shaped_override.initial_heap_mb = 4;
+    bun_shaped_override.execution_timeout = std::time::Duration::from_secs(7);
+    bun_shaped_override.max_concurrent_runtime_instances = 2;
+    bun_shaped_override.worker_threads = 3;
+
+    let registry = ConvexRegistry::empty().with_runtime_limits(bun_shaped_override);
+
+    let default_limits = registry.runtime_limits();
+    assert_eq!(default_limits.backend_kind, RuntimeBackendKind::V8);
+    assert_eq!(
+        default_limits.compatibility_target,
+        RuntimeCompatibilityTarget::WebStandardIsolate
+    );
+    assert_eq!(
+        default_limits.memory_enforcement,
+        RuntimeMemoryEnforcement::V8IsolateHeapLimit
+    );
+    assert_eq!(default_limits.max_heap_mb, 96);
+    assert_eq!(
+        default_limits.execution_timeout,
+        std::time::Duration::from_secs(7)
+    );
+
+    let diagnostics = registry.runtime_lane_diagnostics();
+    let node22 = diagnostics
+        .iter()
+        .find(|lane| lane.lane_name == "node22")
+        .expect("Node 22 lane diagnostics should be present");
+    assert_eq!(node22.limits.backend_kind, RuntimeBackendKind::V8);
+    assert_eq!(
+        node22.limits.compatibility_target,
+        RuntimeCompatibilityTarget::Node22
+    );
+    assert_eq!(
+        node22.limits.memory_enforcement,
+        RuntimeMemoryEnforcement::V8IsolateHeapLimit
+    );
+    assert_eq!(node22.limits.max_heap_mb, 96);
+
+    let bun = diagnostics
+        .iter()
+        .find(|lane| lane.lane_name == "bun_jsc")
+        .expect("Bun/JSC lane diagnostics should be present");
+    assert_eq!(bun.limits.backend_kind, RuntimeBackendKind::BunJsc);
+    assert_eq!(
+        bun.limits.memory_enforcement,
+        RuntimeMemoryEnforcement::OuterQuotaRequired
+    );
+    assert_eq!(bun.limits.max_heap_mb, 96);
+    assert!(!bun.executor_started);
+}
+
+#[test]
+fn convex_registry_preserves_default_runtime_execution_model_override() {
+    let registry = ConvexRegistry::empty()
+        .with_runtime_limits(run_to_completion_snapshot_runtime_test_limits());
+
+    let default_limits = registry.runtime_limits();
+    assert_eq!(
+        default_limits.execution_model,
+        RuntimeExecutionModel::RunToCompletion
+    );
+    assert_eq!(
+        default_limits.runtime_pool_kind,
+        RuntimePoolKind::StartupSnapshotCache
+    );
+
+    let node22 = registry
+        .runtime_lane_diagnostics()
+        .into_iter()
+        .find(|lane| lane.lane_name == "node22")
+        .expect("Node 22 lane diagnostics should be present");
+    assert_eq!(node22.limits.backend_kind, RuntimeBackendKind::V8);
+    assert_eq!(
+        node22.limits.compatibility_target,
+        RuntimeCompatibilityTarget::Node22
     );
 }
 

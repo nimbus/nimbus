@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use axum::body::Bytes;
 use axum::extract::OriginalUri;
@@ -18,7 +18,8 @@ use nimbus_runtime::HostCallOperation;
 use nimbus_runtime::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationAuth,
     InvocationKind, InvocationRequest, NimbusRuntimeError, RuntimeBundle,
-    RuntimeCompatibilityTarget, RuntimeExecutor, RuntimeLimits, RuntimePolicy, RuntimePreset,
+    RuntimeCompatibilityTarget, RuntimeExecutor, RuntimeLimits, RuntimeMetricsSnapshot,
+    RuntimePolicy, RuntimeResetCapabilities,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -63,6 +64,78 @@ use crate::protocol::ServerMessage;
 use crate::state::{AppError, AppState};
 
 #[derive(Debug, Clone)]
+struct ConvexRuntimeLane {
+    policy: Arc<RuntimePolicy>,
+    executor: Arc<OnceLock<Arc<RuntimeExecutor>>>,
+    execution_adapter_state: ConvexRuntimeExecutionAdapterState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConvexRuntimeExecutionAdapterState {
+    Linked,
+    NotLinked,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConvexRuntimeLaneDiagnostics {
+    pub lane_name: &'static str,
+    pub default_lane: bool,
+    pub executor_started: bool,
+    pub execution_adapter_state: ConvexRuntimeExecutionAdapterState,
+    pub limits: RuntimeLimits,
+    pub reset_capabilities: RuntimeResetCapabilities,
+    pub metrics: RuntimeMetricsSnapshot,
+}
+
+impl ConvexRuntimeLane {
+    fn from_limits(
+        limits: RuntimeLimits,
+        execution_adapter_state: ConvexRuntimeExecutionAdapterState,
+    ) -> Self {
+        Self {
+            policy: Arc::new(RuntimePolicy::new(limits)),
+            executor: Arc::new(OnceLock::new()),
+            execution_adapter_state,
+        }
+    }
+
+    fn policy(&self) -> Arc<RuntimePolicy> {
+        self.policy.clone()
+    }
+
+    fn executor(&self) -> Option<Arc<RuntimeExecutor>> {
+        match self.execution_adapter_state {
+            ConvexRuntimeExecutionAdapterState::Linked => Some(
+                self.executor
+                    .get_or_init(|| Arc::new(RuntimeExecutor::new(self.policy.clone())))
+                    .clone(),
+            ),
+            ConvexRuntimeExecutionAdapterState::NotLinked => None,
+        }
+    }
+
+    fn limits(&self) -> &RuntimeLimits {
+        self.policy.limits()
+    }
+
+    fn diagnostics(
+        &self,
+        lane_name: &'static str,
+        default_lane: bool,
+    ) -> ConvexRuntimeLaneDiagnostics {
+        ConvexRuntimeLaneDiagnostics {
+            lane_name,
+            default_lane,
+            executor_started: self.executor.get().is_some(),
+            execution_adapter_state: self.execution_adapter_state,
+            limits: self.policy.limits().clone(),
+            reset_capabilities: self.policy.limits().reset_capabilities(),
+            metrics: self.policy.metrics_snapshot(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ConvexRegistry {
     functions: HashMap<String, ConvexFunctionDefinition>,
     http_routes: Vec<ConvexHttpRouteDefinition>,
@@ -70,31 +143,24 @@ pub struct ConvexRegistry {
     runtime_bundle: Option<RuntimeBundle>,
     artifact_guard: Option<Arc<tempfile::TempDir>>,
     auth_verifier: Arc<auth::ConvexAuthVerifier>,
-    runtime_policy: Arc<RuntimePolicy>,
-    runtime_executor: Arc<RuntimeExecutor>,
-    node20_runtime_policy: Arc<RuntimePolicy>,
-    node20_runtime_executor: Arc<RuntimeExecutor>,
-    node22_runtime_policy: Arc<RuntimePolicy>,
-    node22_runtime_executor: Arc<RuntimeExecutor>,
-    node24_runtime_policy: Arc<RuntimePolicy>,
-    node24_runtime_executor: Arc<RuntimeExecutor>,
-    bun_jsc_runtime_policy: Arc<RuntimePolicy>,
-    bun_jsc_runtime_executor: Arc<RuntimeExecutor>,
+    runtime_lane: ConvexRuntimeLane,
+    node20_runtime_lane: ConvexRuntimeLane,
+    node22_runtime_lane: ConvexRuntimeLane,
+    node24_runtime_lane: ConvexRuntimeLane,
+    bun_jsc_runtime_lane: ConvexRuntimeLane,
     runtime_bundle_provenance: Option<RuntimeBundleProvenanceConfig>,
 }
 
 impl Default for ConvexRegistry {
     fn default() -> Self {
-        let runtime_policy = Arc::new(RuntimePolicy::default());
-        let runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy.clone()));
-        let (node20_runtime_policy, node20_runtime_executor) =
+        let runtime_lane = convex_default_runtime_lane(RuntimeLimits::default());
+        let node20_runtime_lane =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node20);
-        let (node22_runtime_policy, node22_runtime_executor) =
+        let node22_runtime_lane =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node22);
-        let (node24_runtime_policy, node24_runtime_executor) =
+        let node24_runtime_lane =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node24);
-        let (bun_jsc_runtime_policy, bun_jsc_runtime_executor) =
-            convex_bun_jsc_runtime_lane(RuntimeLimits::default());
+        let bun_jsc_runtime_lane = convex_bun_jsc_runtime_lane(RuntimeLimits::default());
         Self {
             functions: HashMap::new(),
             http_routes: Vec::new(),
@@ -102,53 +168,42 @@ impl Default for ConvexRegistry {
             runtime_bundle: None,
             artifact_guard: None,
             auth_verifier: Arc::new(auth::ConvexAuthVerifier::empty()),
-            runtime_policy,
-            runtime_executor,
-            node20_runtime_policy,
-            node20_runtime_executor,
-            node22_runtime_policy,
-            node22_runtime_executor,
-            node24_runtime_policy,
-            node24_runtime_executor,
-            bun_jsc_runtime_policy,
-            bun_jsc_runtime_executor,
+            runtime_lane,
+            node20_runtime_lane,
+            node22_runtime_lane,
+            node24_runtime_lane,
+            bun_jsc_runtime_lane,
             runtime_bundle_provenance: None,
         }
     }
 }
 
-fn convex_node_runtime_lane(
-    mut base_limits: RuntimeLimits,
-    target: RuntimeCompatibilityTarget,
-) -> (Arc<RuntimePolicy>, Arc<RuntimeExecutor>) {
-    base_limits.compatibility_target = target;
-    base_limits.preset = RuntimePreset::Application;
-    base_limits.grants = nimbus_runtime::RuntimeGrants::application_node();
-    let policy = Arc::new(RuntimePolicy::new(base_limits));
-    let executor = Arc::new(RuntimeExecutor::new(policy.clone()));
-    (policy, executor)
+fn convex_default_runtime_lane(base_limits: RuntimeLimits) -> ConvexRuntimeLane {
+    let mut limits = RuntimeLimits::default();
+    if matches!(
+        base_limits.backend_kind,
+        nimbus_runtime::RuntimeBackendKind::V8
+    ) {
+        limits = base_limits;
+    } else {
+        limits.apply_resource_overrides_from(&base_limits);
+    }
+    ConvexRuntimeLane::from_limits(limits, ConvexRuntimeExecutionAdapterState::Linked)
 }
 
-fn convex_bun_jsc_runtime_lane(
-    mut base_limits: RuntimeLimits,
-) -> (Arc<RuntimePolicy>, Arc<RuntimeExecutor>) {
-    let bun_defaults = RuntimeLimits::application_bun_jsc();
-    base_limits.backend_kind = bun_defaults.backend_kind;
-    base_limits.backend_trust_tier = bun_defaults.backend_trust_tier;
-    base_limits.backend_lockdown_profile = bun_defaults.backend_lockdown_profile;
-    base_limits.backend_lifecycle_policy = bun_defaults.backend_lifecycle_policy;
-    base_limits.bundle_content_kind = bun_defaults.bundle_content_kind;
-    base_limits.javascript_evaluation_format = bun_defaults.javascript_evaluation_format;
-    base_limits.compatibility_target = bun_defaults.compatibility_target;
-    base_limits.execution_model = bun_defaults.execution_model;
-    base_limits.mode = bun_defaults.mode;
-    base_limits.language = bun_defaults.language;
-    base_limits.preset = bun_defaults.preset;
-    base_limits.grants = bun_defaults.grants;
-    base_limits.runtime_pool_kind = bun_defaults.runtime_pool_kind;
-    let policy = Arc::new(RuntimePolicy::new(base_limits));
-    let executor = Arc::new(RuntimeExecutor::new(policy.clone()));
-    (policy, executor)
+fn convex_node_runtime_lane(
+    base_limits: RuntimeLimits,
+    target: RuntimeCompatibilityTarget,
+) -> ConvexRuntimeLane {
+    let mut limits = RuntimeLimits::application_node(target);
+    limits.apply_resource_overrides_from(&base_limits);
+    ConvexRuntimeLane::from_limits(limits, ConvexRuntimeExecutionAdapterState::Linked)
+}
+
+fn convex_bun_jsc_runtime_lane(base_limits: RuntimeLimits) -> ConvexRuntimeLane {
+    let mut limits = RuntimeLimits::application_bun_jsc();
+    limits.apply_resource_overrides_from(&base_limits);
+    ConvexRuntimeLane::from_limits(limits, ConvexRuntimeExecutionAdapterState::NotLinked)
 }
 
 impl ApplicationAuthVerifier for ConvexRegistry {

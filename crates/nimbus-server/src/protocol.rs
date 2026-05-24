@@ -4,8 +4,8 @@ use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage,
-    RuntimeMetricsSnapshot, RuntimeMode, RuntimeModuleStateSemantics, RuntimePoolKind,
-    RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeMemoryEnforcement, RuntimeMetricsSnapshot, RuntimeMode, RuntimeModuleStateSemantics,
+    RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -92,6 +92,25 @@ pub(crate) struct RuntimeDiagnosticsResponse {
     pub limits: Option<RuntimeLimitsResponse>,
     pub reset_capabilities: Option<RuntimeResetCapabilities>,
     pub metrics: Option<RuntimeMetricsSnapshot>,
+    pub lanes: Vec<RuntimeLaneDiagnosticsResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeLaneDiagnosticsResponse {
+    pub lane_name: String,
+    pub default_lane: bool,
+    pub executor_started: bool,
+    pub execution_adapter_state: RuntimeExecutionAdapterState,
+    pub limits: RuntimeLimitsResponse,
+    pub reset_capabilities: RuntimeResetCapabilities,
+    pub metrics: RuntimeMetricsSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RuntimeExecutionAdapterState {
+    Linked,
+    NotLinked,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +134,7 @@ pub(crate) struct RuntimeLimitsResponse {
     pub runtime_preset: RuntimePreset,
     pub runtime_grants: RuntimeGrants,
     pub runtime_pool_kind: RuntimePoolKind,
+    pub memory_enforcement: RuntimeMemoryEnforcement,
     pub module_state_semantics: RuntimeModuleStateSemantics,
     pub routing_affinity: RuntimeRoutingAffinity,
     pub routing_affinity_max_entries: usize,
@@ -139,6 +159,7 @@ pub(crate) struct RuntimeTenantBudgetResponse {
     pub max_queued_top_level_invocations: usize,
     pub max_worker_thread_slots: usize,
     pub max_heap_mb_per_runtime: usize,
+    pub memory_enforcement: RuntimeMemoryEnforcement,
     pub max_active_heap_mb: usize,
     pub execution_timeout_ms: u64,
     pub max_nested_runtime_invocations_per_top_level: usize,
