@@ -10,6 +10,17 @@ BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/oven-sh/bun}"
 EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-a409f596e8e1394d8860e2cd8b2bb558ff1afcac}"
 BUN_PROFILE="${NIMBUS_BUN_PROFILE:-release}"
 
+reject_unsafe_linker_policy() {
+  local flags="${RUSTFLAGS:-} ${CARGO_ENCODED_RUSTFLAGS:-}"
+  case "${flags}" in
+    *--allow-multiple-definition* | *"-z muldefs"* | *"-z,muldefs"*)
+      printf 'unsafe linker policy detected in RUSTFLAGS/CARGO_ENCODED_RUSTFLAGS\n' >&2
+      printf 'BJA4L forbids --allow-multiple-definition and -z muldefs because the Linux proof linked with that policy and then crashed with SIGSEGV.\n' >&2
+      exit 1
+      ;;
+  esac
+}
+
 if [[ -d /private/tmp ]]; then
   BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-/private/tmp/nimbus-bun-linked-adapter-${BUN_PROFILE}}"
   BUN_CACHE_DIR="${NIMBUS_BUN_CACHE_DIR:-/private/tmp/nimbus-bun-cache}"
@@ -35,6 +46,8 @@ REQUIRED_EXPORTS=(
 )
 
 cd "${REPO_ROOT}"
+
+reject_unsafe_linker_policy
 
 printf 'Bun/JSC linked adapter gate\n'
 printf 'Nimbus repo: %s\n' "${REPO_ROOT}"
