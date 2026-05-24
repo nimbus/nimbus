@@ -150,6 +150,12 @@ impl ConvexRegistry {
             .filter(|bundle_path| bundle_path.is_file())
             .map(|bundle_path| load_runtime_bundle(&bundle_path))
             .transpose()?;
+        let bun_jsc_runtime_bundle = path
+            .parent()
+            .map(|directory| directory.join("bun_program_bundle.js"))
+            .filter(|bundle_path| bundle_path.is_file())
+            .map(|bundle_path| load_runtime_bundle(&bundle_path))
+            .transpose()?;
         let auth_verifier = path
             .parent()
             .map(|directory| directory.join("auth.config.json"))
@@ -172,6 +178,7 @@ impl ConvexRegistry {
             http_routes,
             schema,
             runtime_bundle,
+            bun_jsc_runtime_bundle,
             artifact_guard: None,
             auth_verifier,
             runtime_lane,

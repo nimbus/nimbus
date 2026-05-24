@@ -54,10 +54,13 @@ impl<'a> RuntimeInvocationContext<'a> {
             .snapshot_for_tenant(self.isolation.tenant_id())
     }
 
-    pub(in crate::adapters::convex) fn required_runtime_bundle(
+    pub(in crate::adapters::convex) fn required_runtime_bundle_for_function(
         &self,
+        function_name: &str,
     ) -> Result<RuntimeBundle, Error> {
-        let bundle = self.registry.required_runtime_bundle()?;
+        let bundle = self
+            .registry
+            .required_runtime_bundle_for_function(function_name)?;
         self.isolation
             .ensure_runtime_bundle_matches(&bundle, "convex runtime bundle")?;
         Ok(bundle)
@@ -69,7 +72,7 @@ impl<'a> RuntimeInvocationContext<'a> {
         cancellation: HostCallCancellation,
         server_request_id: Option<String>,
     ) -> Result<(Value, RuntimeReadSet), Error> {
-        let bundle = self.required_runtime_bundle()?;
+        let bundle = self.required_runtime_bundle_for_function(&request.function_name)?;
         let invocation_kind = request.kind.clone();
         let (runtime_executor, runtime_policy) = self
             .registry

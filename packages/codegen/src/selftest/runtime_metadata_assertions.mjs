@@ -22,6 +22,17 @@ function assertNodeRuntimeMetadata(definition, { nodeVersion, runtimeTarget }) {
   assert.equal(definition.node_runtime_target, runtimeTarget);
 }
 
+function assertBunJscRuntimeMetadata(definition) {
+  assert.equal(definition.runtime_environment, "bun");
+  assert.equal(definition.runtime_engine, "bun_jsc");
+  assert.equal(definition.runtime_bundle_content_kind, "javascript");
+  assert.equal(definition.runtime_javascript_evaluation_format, "program_wrapper");
+  assert.equal(definition.runtime_compatibility_target, "bun_jsc");
+  assert.equal(definition.runtime_package_resolution, "bun_self_contained");
+  assert.equal(definition.node_version, null);
+  assert.equal(definition.node_runtime_target, null);
+}
+
 function assertRuntimeLanes(manifest, selectedNode) {
   assert.deepEqual(manifest.runtime_lanes, {
     default: {
@@ -64,6 +75,7 @@ function assertRuntimeLanes(manifest, selectedNode) {
 }
 
 export {
+  assertBunJscRuntimeMetadata,
   assertDefaultRuntimeMetadata,
   assertNodeRuntimeMetadata,
   assertRuntimeLanes,

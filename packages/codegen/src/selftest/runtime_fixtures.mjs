@@ -12,6 +12,7 @@ import {
   runCli,
 } from "./helpers.mjs";
 import {
+  assertBunJscRuntimeMetadata,
   assertDefaultRuntimeMetadata,
   assertRuntimeLanes,
 } from "./runtime_metadata_assertions.mjs";
@@ -22,6 +23,7 @@ async function runRuntimeFixtures() {
   await testRuntimeOnlyPaginatedQueryFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
   await testRuntimeProgramBundleCandidateFixture();
+  await testBunRuntimeProgramBundleFixture();
   testRuntimeProgramBundleRejectsNodeRuntimeImports();
   await testImportedServerValidatorsFixture();
   await testUnsupportedPatchWithoutIdValidatorFixture();
@@ -310,6 +312,53 @@ export const sendAndSchedule = mutation({
   assert.deepEqual(JSON.parse(JSON.stringify(scheduledCall?.args)), {
     body: "hello later",
   });
+}
+
+async function testBunRuntimeProgramBundleFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+"use bun";
+
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const send = mutation({
+  args: {
+    body: v.string(),
+  },
+  handler: async (ctx, { body }) => {
+    return await ctx.db.insert("messages", { body: body.trim() });
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[0].name, "messages:send");
+  assert.equal(manifest.functions[0].plan, null);
+  assertBunJscRuntimeMetadata(manifest.functions[0]);
+  assertRuntimeLanes(manifest, "node22");
+
+  const bunProgramBundle = await readConvexFile(appDir, "bun_program_bundle.js");
+  const bunProgramBundleHash = await readConvexFile(appDir, "bun_program_bundle.sha256");
+  assert.match(bunProgramBundle, /globalThis\.__nimbusInvoke/);
+  assert.match(bunProgramBundle, /runtimeHandlersByName/);
+  assert.doesNotMatch(bunProgramBundle, /^import\s/m);
+  assert.doesNotMatch(bunProgramBundle, /^export\s/m);
+  assert.match(bunProgramBundle, /"runtime_environment": "bun"/);
+  assert.equal(
+    bunProgramBundleHash.trim().length,
+    64,
+    "Bun/JSC program bundle should have a sha256 sidecar",
+  );
+
+  const defaultBundle = await readConvexFile(appDir, "bundle.mjs");
+  assert.match(defaultBundle, /^export \{\};$/m);
+  assert.doesNotMatch(defaultBundle, /"runtime_environment": "bun"/);
+  assert.doesNotMatch(defaultBundle, /"messages:send"/);
 }
 
 function testRuntimeProgramBundleRejectsNodeRuntimeImports() {

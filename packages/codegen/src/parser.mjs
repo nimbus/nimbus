@@ -43,7 +43,13 @@ function detectModuleRuntimeEnvironment(source) {
     /^(?:\s|\/\/[^\n\r]*(?:\r?\n|$)|\/\*[\s\S]*?\*\/)*/,
     "",
   );
-  return /^["']use node["'];?/.test(withoutLeadingTrivia) ? "node" : "default";
+  if (/^["']use node["'];?/.test(withoutLeadingTrivia)) {
+    return "node";
+  }
+  if (/^["']use bun["'];?/.test(withoutLeadingTrivia)) {
+    return "bun";
+  }
+  return "default";
 }
 
 function validateRuntimeEnvironment(filePath, runtimeEnvironment, functions) {

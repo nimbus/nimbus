@@ -12,6 +12,9 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+bun-jsc-linked-adapter = ["nimbus-runtime/bun-jsc-linked-adapter"]
+
 [dependencies]
 axum.workspace = true
 base64.workspace = true

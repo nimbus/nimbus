@@ -11,7 +11,10 @@ import {
 import { loadAuthConfig } from "./auth_config.mjs";
 import { generateCloudFunctionsArtifacts } from "./cloud_functions.mjs";
 import { generateApiFile, generateDataModelFile, generateScheduledFunctionsFile, generateServerFile } from "./emit/generated_files.mjs";
-import { generateRuntimeBundle } from "./emit/runtime_bundle.mjs";
+import {
+  generateRuntimeBundle,
+  generateRuntimeProgramBundle,
+} from "./emit/runtime_bundle.mjs";
 import {
   collectNodeApiDiagnostics,
   formatNodeApiDiagnostics,
@@ -139,8 +142,10 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
     "utf8",
   );
 
+  const bunRuntimeFunctions = manifest.filter((definition) => definition.runtime_environment === "bun");
+  const v8RuntimeFunctions = manifest.filter((definition) => definition.runtime_environment !== "bun");
   const runtimeBundle = generateRuntimeBundle({
-    functions: manifest,
+    functions: v8RuntimeFunctions,
     routes: httpRoutes,
   });
   await fs.writeFile(path.join(internalDir, "bundle.mjs"), runtimeBundle, "utf8");
@@ -149,6 +154,20 @@ async function generateConvexArtifacts({ appDir, sourceRoot, debugNodeApis = fal
     `${sha256Hex(runtimeBundle)}\n`,
     "utf8",
   );
+
+  const bunProgramBundlePath = path.join(internalDir, "bun_program_bundle.js");
+  const bunProgramBundleHashPath = path.join(internalDir, "bun_program_bundle.sha256");
+  if (bunRuntimeFunctions.length > 0) {
+    const bunProgramBundle = generateRuntimeProgramBundle({
+      functions: bunRuntimeFunctions,
+      routes: [],
+    });
+    await fs.writeFile(bunProgramBundlePath, bunProgramBundle, "utf8");
+    await fs.writeFile(bunProgramBundleHashPath, `${sha256Hex(bunProgramBundle)}\n`, "utf8");
+  } else {
+    await fs.rm(bunProgramBundlePath, { force: true });
+    await fs.rm(bunProgramBundleHashPath, { force: true });
+  }
 
   return {
     appDir,

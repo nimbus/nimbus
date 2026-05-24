@@ -15,6 +15,10 @@ mod test_support;
 mod watchdog;
 mod worker_loop;
 
+pub fn bun_jsc_execution_adapter_state() -> RuntimeExecutionAdapterState {
+    backends::bun_jsc::execution_adapter_state()
+}
+
 pub use context::RuntimeInvocationContext;
 pub use error::{NimbusRuntimeError, Result};
 pub use executor::RuntimeExecutor;

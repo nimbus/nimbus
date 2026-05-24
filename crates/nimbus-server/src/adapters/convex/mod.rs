@@ -135,6 +135,7 @@ pub struct ConvexRegistry {
     http_routes: Vec<ConvexHttpRouteDefinition>,
     schema: Option<Schema>,
     runtime_bundle: Option<RuntimeBundle>,
+    bun_jsc_runtime_bundle: Option<RuntimeBundle>,
     artifact_guard: Option<Arc<tempfile::TempDir>>,
     auth_verifier: Arc<auth::ConvexAuthVerifier>,
     runtime_lane: ConvexRuntimeLane,
@@ -160,6 +161,7 @@ impl Default for ConvexRegistry {
             http_routes: Vec::new(),
             schema: None,
             runtime_bundle: None,
+            bun_jsc_runtime_bundle: None,
             artifact_guard: None,
             auth_verifier: Arc::new(auth::ConvexAuthVerifier::empty()),
             runtime_lane,
@@ -197,7 +199,7 @@ fn convex_node_runtime_lane(
 fn convex_bun_jsc_runtime_lane(base_limits: RuntimeLimits) -> ConvexRuntimeLane {
     let mut limits = RuntimeLimits::application_bun_jsc();
     limits.apply_resource_overrides_from(&base_limits);
-    ConvexRuntimeLane::from_limits(limits, RuntimeExecutionAdapterState::NotLinked)
+    ConvexRuntimeLane::from_limits(limits, nimbus_runtime::bun_jsc_execution_adapter_state())
 }
 
 impl ApplicationAuthVerifier for ConvexRegistry {

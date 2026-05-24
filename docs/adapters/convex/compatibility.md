@@ -125,6 +125,38 @@ For the product-facing Node.js runtime guide, including selectable versions,
 specifier rules, package staging, compatibility evidence, and current limits,
 see `docs/runtimes/nodejs/`.
 
+## Bun/JSC Runtime Configuration
+
+Nimbus supports an explicit Bun/JSC metadata lane for modules that start with
+`"use bun";`.
+
+```ts
+"use bun";
+
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const send = mutation({
+  args: { body: v.string() },
+  handler: async (ctx, { body }) => {
+    return await ctx.db.insert("messages", { body });
+  },
+});
+```
+
+Codegen emits these functions with `runtime_environment: "bun"`,
+`runtime_engine: "bun_jsc"`, `runtime_compatibility_target: "bun_jsc"`,
+`runtime_javascript_evaluation_format: "program_wrapper"`, and
+`runtime_package_resolution: "bun_self_contained"`. It also writes a separate
+`.nimbus/convex/bun_program_bundle.js` plus SHA-256 sidecar for the Bun/JSC
+program-wrapper path. The default V8/Node ESM bundle remains
+`.nimbus/convex/bundle.mjs`.
+
+Default builds still fail closed before guest execution because the optional
+Bun/JSC shared adapter is not linked. Operator diagnostics expose the Bun/JSC
+lane as `not_linked` or `linked`; no-link builds reject a Bun-selected function
+with an adapter-not-linked error instead of falling back to V8 or Node.
+
 ## Supported Areas
 
 - generated refs for the supported declarative subset
@@ -143,6 +175,9 @@ see `docs/runtimes/nodejs/`.
 - Convex-compatible Node action `node.externalPackages` explicit and `["*"]`
   configuration backed by local package validation, generated staging, runtime
   bindings, and package evidence metadata
+- Convex-compatible `"use bun"` modules backed by explicit Bun/JSC artifact
+  metadata and a separate program-wrapper bundle, fail-closed unless the
+  optional linked Bun/JSC adapter is loaded
 - scheduled Convex mutation execution through `runAfter` and `runAt`
 - live query subscriptions over the Convex WebSocket transport
 - runtime-backed dependency tracking that is narrower than plain table-level

@@ -99,9 +99,11 @@ modeled as `runtime_engine: "bun_jsc"` plus
 `runtime_javascript_evaluation_format: "program_wrapper"`. Registry loading
 accepts that combination only with `runtime_environment: "bun"`,
 `runtime_compatibility_target: "bun_jsc"`, and
-`runtime_package_resolution: "bun_self_contained"`. Other Bun/V8/Node
-cross-combinations must still reject before invocation, and execution must
-fail closed unless the build links the Bun embedder adapter.
+`runtime_package_resolution: "bun_self_contained"`. Codegen-selected
+`"use bun"` functions are emitted into a dedicated `bun_program_bundle.js`
+plus SHA-256 sidecar instead of the V8/Node ESM `bundle.mjs`. Other
+Bun/V8/Node cross-combinations must still reject before invocation, and
+execution must fail closed unless the build links the Bun embedder adapter.
 
 ## Wasmtime-Specific Gate
 

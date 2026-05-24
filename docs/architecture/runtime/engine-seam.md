@@ -212,8 +212,11 @@ engine becomes selectable:
 The default Deno/V8 lane remains unchanged. Bun/JSC metadata is admitted only
 for the proven fresh/discard profile and fails closed at execution time unless
 a Bun embedder adapter is linked. Codegen publishes top-level `bunJsc` lane
-metadata for explicit artifacts, but function-level `"use bun"` selection
-stays withheld until that adapter exists.
+metadata and function-level `"use bun"` selection as an explicit opt-in:
+selected functions emit `runtime_environment = "bun"`, use
+`program_wrapper` evaluation, and are packaged into a separate
+`bun_program_bundle.js` artifact so the V8/Node ESM bundle contract does not
+silently bleed into the Bun/JSC lane.
 
 Convex runtime lanes are policy-first and executor-lazy: default V8, Node20,
 Node22, Node24, and Bun/JSC policies can be inspected through runtime
