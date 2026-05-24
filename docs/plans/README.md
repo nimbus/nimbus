@@ -83,6 +83,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     no `nimbus/bun` fork yet. The next wave should link a verified Bun embedder
     execution adapter, implement the Bun pool execution path, and add
     end-to-end invocation tests for the admitted profile.
+- `docs/plans/bun-jsc-linked-adapter-plan.md`
+  - active execution plan for the linked in-process Bun/JSC backend wave.
+    Starts from the fail-closed Bun/JSC lane and diagnostics contract at
+    Nimbus `40d1a8ea` and Bun proof head `4b5de5ee5d`. BJA0-BJA8 own the
+    linked adapter boundary, reproducible upstream-or-fork Bun source,
+    optional no-link versus linked build lanes, pure Bun/JSC invocation,
+    HostBridge and tenant identity propagation, cancellation/teardown/memory
+    proof, product metadata selection, CI, docs, and minicloud verification.
+    Completion requires a reproducible Bun source tag or Nimbus fork tag; it
+    cannot depend on an uncommitted local Bun checkout.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
