@@ -395,6 +395,14 @@ The heavier `scripts/verify-bun-jsc-in-process-lockdown.sh` gate still owns
 the Bun source proof and must pass on macOS and Linux/minicloud before product
 promotion.
 
+The linked-adapter lane is intentionally opt-in while Bun/JSC remains outside
+the default product build. `make verify-bun-jsc-linked-adapter` verifies the
+default no-link contract, compiles the `nimbus-runtime/bun-jsc-linked-adapter`
+feature, checks the Bun proof checkout against the expected source revision,
+and runs Bun's native `check-bun-embed-probe` target. CI syntax-checks the
+script, but does not run the heavy external Bun proof until the Bun source is
+owned by an upstream release/tag or Nimbus fork/tag.
+
 ### CW4: warm-sccache compile-cost reduction
 
 CW4's `warm-sccache` job in `ci.yml` runs `cargo check --workspace`

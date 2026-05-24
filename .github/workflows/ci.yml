@@ -720,6 +720,7 @@ jobs:
           bash -n scripts/collect-nimbus-homebrew-cask-proof.sh
           bash -n scripts/verify-bun-jsc-runtime-contract.sh
           bash -n scripts/verify-bun-jsc-in-process-lockdown.sh
+          bash -n scripts/verify-bun-jsc-linked-adapter.sh
           bash -n scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
           bash -n scripts/verify-nimbus-machine-guest-proof-helper.sh
           bash -n scripts/verify-nimbus-machine-service-proof-helper.sh
