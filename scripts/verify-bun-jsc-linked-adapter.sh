@@ -7,8 +7,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/nimbus/bun}"
-EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-bun-v1.4.0-nimbus.3}"
-EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-ed8d05f17ee2803520440a07bcc7f6f47f2f68b8}"
+EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-bun-v1.4.0-nimbus.4}"
+EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-7c6dd4312e437c67a6c4c8cbb252f0d7ae898db8}"
 BUN_SIMDUTF_NAMESPACE="${NIMBUS_BUN_SIMDUTF_NAMESPACE:-nimbus_bun_simdutf}"
 
 host_triple="$(rustc -vV | awk '/^host:/ { print $2 }')"
@@ -288,6 +288,7 @@ REQUIRED_EXPORTS=(
   nimbus_bun_embed_probe_package_module_policy
   nimbus_bun_embed_probe_lifecycle_reuse_stress
   nimbus_bun_embed_invoke_program_wrapper_json
+  nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge
 )
 
 cd "${REPO_ROOT}"
