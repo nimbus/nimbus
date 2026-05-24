@@ -376,6 +376,25 @@ preserving the previous health-gating semantics.
 other two — `needs['external-provider-tests'].result` in
 `rust-gate-summary` still aggregates to a single result for the gate.
 
+### Bun/JSC optional backend contract gate
+
+The `bun-runtime-contract` job runs
+`make verify-bun-jsc-runtime-contract`. It is intentionally a Nimbus-side
+contract gate, not the full Bun source proof. The lane verifies that:
+
+- Bun/JSC lane metadata is admitted only for the proven fresh/discard,
+  outer-quota-required profile.
+- Bun/JSC executors stay lazy and `execution_adapter_state` remains
+  `not_linked` until a real adapter is linked.
+- V8 and Node compatibility lanes keep `v8_isolate_heap_limit` memory
+  semantics and do not inherit Bun/JSC backend axes from resource overrides.
+- `/debug/runtime/metrics` and the operator settings UI render the same lane
+  order and memory-enforcement contract.
+
+The heavier `scripts/verify-bun-jsc-in-process-lockdown.sh` gate still owns
+the Bun source proof and must pass on macOS and Linux/minicloud before product
+promotion.
+
 ### CW4: warm-sccache compile-cost reduction
 
 CW4's `warm-sccache` job in `ci.yml` runs `cargo check --workspace`

@@ -63,26 +63,71 @@ export type EncryptionStatus = {
   descriptor?: Record<string, unknown> | null;
 };
 
-export type RuntimeDiagnostics = {
-  limits?: {
-    runtime_backend?: string;
-    compatibility_target?: string;
-    execution_model?: string;
-    runtime_mode?: string;
-    runtime_language?: string;
-    runtime_preset?: string;
-    runtime_pool_kind?: string;
-    max_heap_mb?: number;
-    initial_heap_mb?: number;
-    execution_timeout_ms?: number;
-    max_concurrent_runtime_instances?: number;
-    worker_threads?: number;
-    max_active_top_level_invocations_per_tenant?: number;
-    max_in_flight_top_level_invocations_per_tenant?: number;
-    max_queued_top_level_invocations_per_tenant?: number;
-    max_nested_runtime_invocations?: number;
-  };
+export type RuntimeTenantBudget = {
+  max_active_runtime_slots?: number;
+  max_in_flight_top_level_invocations?: number;
+  max_queued_top_level_invocations?: number;
+  max_worker_thread_slots?: number;
+  max_heap_mb_per_runtime?: number;
+  memory_enforcement?: string;
+  max_active_heap_mb?: number;
+  execution_timeout_ms?: number;
+  max_nested_runtime_invocations_per_top_level?: number;
+};
+
+export type RuntimeLimits = {
+  runtime_backend?: string;
+  runtime_backend_trust_tier?: string;
+  runtime_backend_lockdown_profile?: string;
+  runtime_backend_lifecycle_policy?: string;
+  bundle_content_kind?: string;
+  javascript_evaluation_format?: string;
+  compatibility_target?: string;
+  execution_model?: string;
+  runtime_mode?: string;
+  runtime_language?: string;
+  runtime_preset?: string;
+  runtime_grants?: Record<string, unknown>;
+  runtime_pool_kind?: string;
+  memory_enforcement?: string;
+  module_state_semantics?: string;
+  routing_affinity?: string;
+  routing_affinity_max_entries?: number;
+  max_warm_pool_entries_per_worker?: number;
+  max_warm_reuses?: number;
+  max_heap_mb?: number;
+  initial_heap_mb?: number;
+  execution_timeout_ms?: number;
+  max_concurrent_runtime_instances?: number;
+  worker_threads?: number;
+  max_active_top_level_invocations_per_tenant?: number;
+  max_in_flight_top_level_invocations_per_tenant?: number;
+  max_queued_top_level_invocations_per_tenant?: number;
+  max_nested_runtime_invocations?: number;
+  tenant_budget?: RuntimeTenantBudget;
+};
+
+export type RuntimeResetCapabilities = {
+  op_state_per_invocation?: boolean;
+  bootstrap_state_per_invocation?: boolean;
+  user_module_state_per_invocation?: boolean;
+};
+
+export type RuntimeLaneDiagnostics = {
+  lane_name: string;
+  default_lane?: boolean;
+  executor_started?: boolean;
+  execution_adapter_state?: string;
+  limits?: RuntimeLimits;
+  reset_capabilities?: RuntimeResetCapabilities;
   metrics?: Record<string, unknown>;
+};
+
+export type RuntimeDiagnostics = {
+  limits?: RuntimeLimits | null;
+  reset_capabilities?: RuntimeResetCapabilities | null;
+  metrics?: Record<string, unknown> | null;
+  lanes?: RuntimeLaneDiagnostics[];
 };
 
 export type AsyncSnapshot<T> = T | "loading" | "error";

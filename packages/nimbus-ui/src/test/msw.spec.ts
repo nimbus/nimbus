@@ -1,7 +1,11 @@
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { defaultTenants, handlers } from "./handlers";
+import {
+  defaultRuntimeDiagnostics,
+  defaultTenants,
+  handlers,
+} from "./handlers";
 
 const server = setupServer(...handlers);
 
@@ -37,9 +41,30 @@ describe("msw handlers", () => {
     expect(await res.json()).toEqual({ id: "demo" });
   });
 
-  it("GET /debug/runtime/metrics returns the runtime profile", async () => {
+  it("GET /debug/runtime/metrics returns the runtime lane contract", async () => {
     const res = await fetch("http://nimbus.test/debug/runtime/metrics");
-    const body = (await res.json()) as { engine: string };
-    expect(body.engine).toBe("v8");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as typeof defaultRuntimeDiagnostics;
+
+    expect(body.limits?.runtime_backend).toBe("v8");
+    expect(body.limits?.memory_enforcement).toBe("v8_isolate_heap_limit");
+    expect(body.lanes?.map((lane) => lane.lane_name)).toEqual([
+      "default",
+      "node20",
+      "node22",
+      "node24",
+      "bun_jsc",
+    ]);
+    expect(body.lanes?.every((lane) => lane.executor_started === false)).toBe(
+      true,
+    );
+
+    const bunLane = body.lanes?.find((lane) => lane.lane_name === "bun_jsc");
+    expect(bunLane?.execution_adapter_state).toBe("not_linked");
+    expect(bunLane?.limits?.runtime_backend).toBe("bun_jsc");
+    expect(bunLane?.limits?.memory_enforcement).toBe("outer_quota_required");
+    expect(bunLane?.limits?.tenant_budget?.memory_enforcement).toBe(
+      "outer_quota_required",
+    );
   });
 });

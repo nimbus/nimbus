@@ -36,9 +36,9 @@ cleaner design is preferred.
 - named runtime queries, mutations, actions, and HTTP routes
 - runtime-backed live subscriptions with narrower dependency tracking than
   coarse table-level invalidation
-- runtime diagnostics at `GET /debug/runtime/metrics` when Convex support is
-  enabled, including per-lane runtime state for default V8, Node, and optional
-  Bun/JSC metadata lanes
+- runtime diagnostics at `GET /debug/runtime/metrics` with a stable empty
+  response before an app generation is active, and per-lane runtime state for
+  default V8, Node, and optional Bun/JSC metadata lanes after activation
 
 See the dedicated references for detail:
 

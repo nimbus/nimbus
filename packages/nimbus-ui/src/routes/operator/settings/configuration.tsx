@@ -5,6 +5,7 @@ import type {
   AsyncSnapshot,
   LicenseSnapshot,
   RuntimeDiagnostics,
+  RuntimeLaneDiagnostics,
   SystemStatusDoc,
 } from "./types";
 
@@ -21,6 +22,10 @@ export function ConfigurationSection({
     diagnostics === "loading" || diagnostics === "error"
       ? null
       : (diagnostics.limits ?? null);
+  const lanes =
+    diagnostics === "loading" || diagnostics === "error"
+      ? []
+      : (diagnostics.lanes ?? []);
   const details = (status?.details ?? {}) as Record<string, unknown>;
   const authProvider =
     typeof details.authProvider === "string"
@@ -43,10 +48,10 @@ export function ConfigurationSection({
     <SectionCard
       title="Configuration"
       testid="settings-configuration"
-      description="Runtime limits, license entitlements, auth provider, adapter enablement, and storage topology."
+      description="Runtime limits, runtime lanes, license entitlements, auth provider, adapter enablement, and storage topology."
     >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div>
+        <div className="space-y-4">
           <h3 className="mb-2 text-xs uppercase tracking-[0.14em] text-muted">
             Runtime limits
           </h3>
@@ -79,6 +84,14 @@ export function ConfigurationSection({
               <Definition label="Mode">
                 <span className="font-mono text-xs">
                   {limits.runtime_mode ?? "—"}
+                </span>
+              </Definition>
+              <Definition label="Memory">
+                <span
+                  className="font-mono text-xs"
+                  data-testid="settings-runtime-memory-enforcement"
+                >
+                  {limits.memory_enforcement ?? "—"}
                 </span>
               </Definition>
               <Definition label="Heap (MB)">
@@ -115,6 +128,22 @@ export function ConfigurationSection({
               </Definition>
             </DefinitionList>
           )}
+          <div>
+            <h3 className="mb-2 text-xs uppercase tracking-[0.14em] text-muted">
+              Runtime lanes
+            </h3>
+            {diagnostics === "loading" ? (
+              <p className="text-sm text-muted">Loading runtime lanes…</p>
+            ) : diagnostics === "error" ? (
+              <p className="text-sm text-danger">Runtime lanes unavailable.</p>
+            ) : lanes.length === 0 ? (
+              <p className="text-sm text-muted">
+                No runtime lanes advertised yet.
+              </p>
+            ) : (
+              <RuntimeLaneTable lanes={lanes} />
+            )}
+          </div>
         </div>
         <div>
           <h3 className="mb-2 text-xs uppercase tracking-[0.14em] text-muted">
@@ -195,4 +224,79 @@ export function ConfigurationSection({
       </div>
     </SectionCard>
   );
+}
+
+function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
+  return (
+    <div
+      className="overflow-x-auto rounded-md border border-app"
+      data-testid="settings-runtime-lanes"
+    >
+      <table className="min-w-full border-collapse text-left text-xs">
+        <thead className="bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+          <tr>
+            <th className="px-2 py-2 font-normal">Lane</th>
+            <th className="px-2 py-2 font-normal">Backend</th>
+            <th className="px-2 py-2 font-normal">Adapter</th>
+            <th className="px-2 py-2 font-normal">Executor</th>
+            <th className="px-2 py-2 font-normal">Memory</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lanes.map((lane) => {
+            const limits = lane.limits ?? {};
+            return (
+              <tr
+                key={lane.lane_name}
+                data-testid={`settings-runtime-lane-${testIdPart(lane.lane_name)}`}
+                className="border-t border-app"
+              >
+                <td className="px-2 py-2 align-top">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-mono text-xs text-default">
+                      {lane.lane_name}
+                    </span>
+                    {lane.default_lane ? (
+                      <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+                        default lane
+                      </span>
+                    ) : null}
+                  </div>
+                </td>
+                <td className="px-2 py-2 align-top">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-mono text-xs text-default">
+                      {limits.runtime_backend ?? "—"}
+                    </span>
+                    <span className="font-mono text-[10px] text-muted">
+                      {limits.compatibility_target ?? "—"}
+                    </span>
+                  </div>
+                </td>
+                <td className="px-2 py-2 align-top">
+                  <span className="font-mono text-xs text-default">
+                    {lane.execution_adapter_state ?? "—"}
+                  </span>
+                </td>
+                <td className="px-2 py-2 align-top">
+                  <span className="font-mono text-xs text-default">
+                    {lane.executor_started ? "started" : "lazy"}
+                  </span>
+                </td>
+                <td className="px-2 py-2 align-top">
+                  <span className="font-mono text-xs text-default">
+                    {limits.memory_enforcement ?? "—"}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function testIdPart(value: string) {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
 }

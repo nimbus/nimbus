@@ -155,6 +155,36 @@ jobs:
         # CLAUDE.md) so this lane intentionally has no Node/UI prerequisites.
         run: make test-rust-runtime
 
+  bun-runtime-contract:
+    name: Bun/JSC Runtime Contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-bun-runtime-contract-no-bin-v2
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      # This lane touches nimbus-server runtime diagnostics and the operator UI
+      # contract, so it needs the same Node/UI prerequisites as workspace lanes.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Run Bun/JSC runtime contract gate
+        run: make verify-bun-jsc-runtime-contract
+
   rust-workspace-tests:
     # CW2: Rust Workspace Tests is sharded across N partitions via
     # cargo-nextest's `--partition hash:N/M`. nextest hashes the test path to
@@ -385,6 +415,7 @@ jobs:
       - rust-clippy
       - deny
       - rust-runtime-tests
+      - bun-runtime-contract
       - rust-workspace-tests
       - external-provider-tests
 
@@ -395,6 +426,7 @@ jobs:
           CLIPPY_RESULT: ${{ needs['rust-clippy'].result }}
           DEPENDENCY_AUDIT_RESULT: ${{ needs['deny'].result }}
           RUNTIME_TEST_RESULT: ${{ needs['rust-runtime-tests'].result }}
+          BUN_RUNTIME_CONTRACT_RESULT: ${{ needs['bun-runtime-contract'].result }}
           WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
           EXTERNAL_PROVIDER_TEST_RESULT: ${{ needs['external-provider-tests'].result }}
         run: |
@@ -402,6 +434,7 @@ jobs:
           printf 'clippy=%s\n' "${CLIPPY_RESULT}"
           printf 'dependency-audit=%s\n' "${DEPENDENCY_AUDIT_RESULT}"
           printf 'runtime-test=%s\n' "${RUNTIME_TEST_RESULT}"
+          printf 'bun-runtime-contract=%s\n' "${BUN_RUNTIME_CONTRACT_RESULT}"
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
           printf 'external-provider-test=%s\n' "${EXTERNAL_PROVIDER_TEST_RESULT}"
           icon() {
@@ -422,6 +455,7 @@ jobs:
             echo "| rust-clippy | $(icon "${CLIPPY_RESULT}") ${CLIPPY_RESULT} |"
             echo "| deny | $(icon "${DEPENDENCY_AUDIT_RESULT}") ${DEPENDENCY_AUDIT_RESULT} |"
             echo "| rust-runtime-tests | $(icon "${RUNTIME_TEST_RESULT}") ${RUNTIME_TEST_RESULT} |"
+            echo "| bun-runtime-contract | $(icon "${BUN_RUNTIME_CONTRACT_RESULT}") ${BUN_RUNTIME_CONTRACT_RESULT} |"
             echo "| rust-workspace-tests | $(icon "${WORKSPACE_TEST_RESULT}") ${WORKSPACE_TEST_RESULT} |"
             echo "| external-provider-tests | $(icon "${EXTERNAL_PROVIDER_TEST_RESULT}") ${EXTERNAL_PROVIDER_TEST_RESULT} |"
           } >> "${GITHUB_STEP_SUMMARY}"
@@ -429,6 +463,7 @@ jobs:
           test "${CLIPPY_RESULT}" = success
           test "${DEPENDENCY_AUDIT_RESULT}" = success
           test "${RUNTIME_TEST_RESULT}" = success
+          test "${BUN_RUNTIME_CONTRACT_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
           test "${EXTERNAL_PROVIDER_TEST_RESULT}" = success
 
@@ -683,6 +718,8 @@ jobs:
           bash -n scripts/collect-nimbus-machine-guest-proof.sh
           bash -n scripts/collect-nimbus-machine-service-proof.sh
           bash -n scripts/collect-nimbus-homebrew-cask-proof.sh
+          bash -n scripts/verify-bun-jsc-runtime-contract.sh
+          bash -n scripts/verify-bun-jsc-in-process-lockdown.sh
           bash -n scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
           bash -n scripts/verify-nimbus-machine-guest-proof-helper.sh
           bash -n scripts/verify-nimbus-machine-service-proof-helper.sh

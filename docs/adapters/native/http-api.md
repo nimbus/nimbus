@@ -12,10 +12,41 @@ routes return `404` before a generation is active.
 | --- | --- | --- |
 | `GET` | `/health` | health check |
 | `GET` | `/debug/license/status` | current license snapshot and usage state |
+| `GET` | `/debug/runtime/metrics` | default runtime limits, per-lane runtime diagnostics, and live runtime metrics |
 | `GET` | `/debug/tenants/{tenant_id}/engine/metrics` | per-tenant engine durability, worker, serving, and provider-specific diagnostics such as `libsql` replica freshness |
 | `POST` | `/api/admin/deploy` | deploy admin API; disabled unless `NIMBUS_DEPLOY_TOKEN` was configured at startup |
 | `GET` | `/demos` | redirects to the demo index |
 | `GET` | `/demos/` | serves the demo directory |
+
+### Runtime Diagnostics Shape
+
+`GET /debug/runtime/metrics` always returns `200`. Before a Convex-compatible
+app generation is active, `limits`, `reset_capabilities`, and `metrics` are
+`null`, and `lanes` is empty. After a generation is active, the response names
+the default V8 lane plus the Node 20/22/24 compatibility lanes and the optional
+Bun/JSC lane.
+
+The Bun/JSC lane must remain explicit while the adapter is not linked:
+
+```json
+{
+  "lane_name": "bun_jsc",
+  "default_lane": false,
+  "executor_started": false,
+  "execution_adapter_state": "not_linked",
+  "limits": {
+    "runtime_backend": "bun_jsc",
+    "memory_enforcement": "outer_quota_required",
+    "tenant_budget": {
+      "memory_enforcement": "outer_quota_required"
+    }
+  }
+}
+```
+
+The default V8/Node lanes continue to report
+`"memory_enforcement": "v8_isolate_heap_limit"`. CI verifies this contract with
+`make verify-bun-jsc-runtime-contract`.
 
 ## Tenant Routes
 
@@ -79,7 +110,6 @@ app generation from `--app-dir` or deploy activation.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/debug/runtime/metrics` | default runtime limits, per-lane runtime diagnostics, and live runtime metrics |
 | `POST` | `/convex/{tenant_id}/query` | Convex-style query dispatch |
 | `POST` | `/convex/{tenant_id}/query/paginated` | Convex-style paginated query dispatch |
 | `POST` | `/convex/{tenant_id}/mutation` | Convex-style mutation dispatch |
