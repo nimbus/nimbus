@@ -94,10 +94,14 @@ label a Bun-backed target as `Node22` unless the manifest also names the Bun
 engine and the measured compatibility target separately.
 
 Current production metadata uses `runtime_engine: "v8"` and
-`runtime_javascript_evaluation_format: "es_module"`. Bun/JSC proof metadata is
+`runtime_javascript_evaluation_format: "es_module"`. Bun/JSC metadata is
 modeled as `runtime_engine: "bun_jsc"` plus
-`runtime_javascript_evaluation_format: "program_wrapper"`, and registry loading
-must reject that combination until the remaining Bun gates promote it.
+`runtime_javascript_evaluation_format: "program_wrapper"`. Registry loading
+accepts that combination only with `runtime_environment: "bun"`,
+`runtime_compatibility_target: "bun_jsc"`, and
+`runtime_package_resolution: "bun_self_contained"`. Other Bun/V8/Node
+cross-combinations must still reject before invocation, and execution must
+fail closed unless the build links the Bun embedder adapter.
 
 ## Wasmtime-Specific Gate
 

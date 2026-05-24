@@ -78,6 +78,8 @@ pub struct ConvexRegistry {
     node22_runtime_executor: Arc<RuntimeExecutor>,
     node24_runtime_policy: Arc<RuntimePolicy>,
     node24_runtime_executor: Arc<RuntimeExecutor>,
+    bun_jsc_runtime_policy: Arc<RuntimePolicy>,
+    bun_jsc_runtime_executor: Arc<RuntimeExecutor>,
     runtime_bundle_provenance: Option<RuntimeBundleProvenanceConfig>,
 }
 
@@ -91,6 +93,8 @@ impl Default for ConvexRegistry {
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node22);
         let (node24_runtime_policy, node24_runtime_executor) =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node24);
+        let (bun_jsc_runtime_policy, bun_jsc_runtime_executor) =
+            convex_bun_jsc_runtime_lane(RuntimeLimits::default());
         Self {
             functions: HashMap::new(),
             http_routes: Vec::new(),
@@ -106,6 +110,8 @@ impl Default for ConvexRegistry {
             node22_runtime_executor,
             node24_runtime_policy,
             node24_runtime_executor,
+            bun_jsc_runtime_policy,
+            bun_jsc_runtime_executor,
             runtime_bundle_provenance: None,
         }
     }
@@ -118,6 +124,28 @@ fn convex_node_runtime_lane(
     base_limits.compatibility_target = target;
     base_limits.preset = RuntimePreset::Application;
     base_limits.grants = nimbus_runtime::RuntimeGrants::application_node();
+    let policy = Arc::new(RuntimePolicy::new(base_limits));
+    let executor = Arc::new(RuntimeExecutor::new(policy.clone()));
+    (policy, executor)
+}
+
+fn convex_bun_jsc_runtime_lane(
+    mut base_limits: RuntimeLimits,
+) -> (Arc<RuntimePolicy>, Arc<RuntimeExecutor>) {
+    let bun_defaults = RuntimeLimits::application_bun_jsc();
+    base_limits.backend_kind = bun_defaults.backend_kind;
+    base_limits.backend_trust_tier = bun_defaults.backend_trust_tier;
+    base_limits.backend_lockdown_profile = bun_defaults.backend_lockdown_profile;
+    base_limits.backend_lifecycle_policy = bun_defaults.backend_lifecycle_policy;
+    base_limits.bundle_content_kind = bun_defaults.bundle_content_kind;
+    base_limits.javascript_evaluation_format = bun_defaults.javascript_evaluation_format;
+    base_limits.compatibility_target = bun_defaults.compatibility_target;
+    base_limits.execution_model = bun_defaults.execution_model;
+    base_limits.mode = bun_defaults.mode;
+    base_limits.language = bun_defaults.language;
+    base_limits.preset = bun_defaults.preset;
+    base_limits.grants = bun_defaults.grants;
+    base_limits.runtime_pool_kind = bun_defaults.runtime_pool_kind;
     let policy = Arc::new(RuntimePolicy::new(base_limits));
     let executor = Arc::new(RuntimeExecutor::new(policy.clone()));
     (policy, executor)

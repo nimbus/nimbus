@@ -9,7 +9,7 @@ Nimbus models runtime execution with separate axes:
 | Permission mode | `Restricted`, `Standard`, `Privileged` | The permission ceiling. |
 | Grants | read/write roots, net, env, secret, identity, service, run, sys, ffi, worker, tool | The exact resource surface. |
 | Runtime language | `JavaScript` | Other languages are future work. |
-| Compatibility target | `WebStandardIsolate`, `Node20`, `Node22`, `Node24` | JavaScript/API compatibility, not permission. |
+| Compatibility target | `WebStandardIsolate`, `Node20`, `Node22`, `Node24`, `BunJsc` | JavaScript/API compatibility, not permission. |
 | Runtime preset | `Application`, `Tooling`, `Oracle`, `Operator`, `Code` | Internal workload bundles that lower to mode plus grants. |
 
 ## Execution Trust Tiers
@@ -22,8 +22,8 @@ before runtime mode and grants answer "which exact resources may it use?"
 
 | Tier | Boundary | Intended workloads | Current status |
 | --- | --- | --- | --- |
-| `in_process_untrusted` | Same Nimbus process, engine-enforced permissions, runtime watchdog, and host-call ABI. | Tenant/application functions whose engine has proven permission enforcement, cancellation, memory policy, and teardown behavior. | Deno/V8 JavaScript lanes may run here when grants stay within the accepted subset below. |
-| `in_process_trusted_only` | Same Nimbus process, but the workload is trusted because the engine or grant set cannot prove the untrusted contract yet. | Operator-owned tooling, Nimbus-owned code, proof harnesses, or future engines with incomplete containment. | Bun/JSC retained-VM reuse is proof-only here until permission, resolver/package, hard memory quota, cancellation, teardown, and lifecycle gates pass. Privileged in-process code also belongs here. |
+| `in_process_untrusted` | Same Nimbus process, engine-enforced permissions, runtime watchdog, and host-call ABI. | Tenant/application functions whose engine has proven permission enforcement, cancellation, memory policy, and teardown behavior. | Deno/V8 JavaScript lanes may run here when grants stay within the accepted subset below. Bun/JSC's fresh/discard profile is admitted here only with empty host-sensitive grants and an outer quota requirement; current builds still fail closed before guest execution unless a Bun embedder adapter is linked. |
+| `in_process_trusted_only` | Same Nimbus process, but the workload is trusted because the engine or grant set cannot prove the untrusted contract yet. | Operator-owned tooling, Nimbus-owned code, proof harnesses, or future engines with incomplete containment. | Bun/JSC retained-VM reuse and proof-only profiles stay here until a later plan promotes them. Privileged in-process code also belongs here. |
 | `wasm_capability_sandbox` | Same Nimbus process, WASM Component Model boundary, typed WIT imports, Store resource limits, and fuel/epoch interruption. | Future WASM components and tightly scoped agent extensions that receive only imported capabilities. | Deferred until the wasmtime backend proves WIT imports, Store lifecycle, interruption, and resource limits. |
 | `microvm_service` | Separate sandbox lifecycle, usually a krun-backed microVM on Linux, with host exposure controlled through service bindings and endpoint policy. | Services or agents that need broader OS behavior, subprocesses, native dependencies, or crash/security isolation beyond an in-process engine. | Current service-control and sandbox seam. Security audit routing is owned by the execution-isolation plan. |
 
@@ -35,8 +35,8 @@ the current `in_process_untrusted` gate and its canonical routing fallbacks:
 
 ### Tier Admission Rules
 
-- Engine selection does not grant permission. `V8`, future `Bun/JSC`, and
-  future `wasmtime` are implementation choices below the tier.
+- Engine selection does not grant permission. `V8`, `Bun/JSC`, and future
+  `wasmtime` are implementation choices below the tier.
 - Compatibility target does not grant permission. `Node22` means API shape,
   not filesystem, network, subprocess, secret, identity, native addon, or tool
   authority.
@@ -73,7 +73,8 @@ the current `in_process_untrusted` gate and its canonical routing fallbacks:
 | Deno/V8 `WebStandardIsolate` application functions | `in_process_untrusted` | Production default when policy normalization keeps grants within the untrusted subset. |
 | Deno/V8 `Node20`, `Node22`, and `Node24` application functions | `in_process_untrusted` | Node compatibility target is API shape only. Host-sensitive Node APIs still depend on `RuntimeGrants` and runtime enforcement. |
 | Deno/V8 tooling or operator workloads with `run`, `tool`, `identity`, or `Privileged` grants | `in_process_trusted_only` | These are trusted workload classes even when the engine is V8. |
-| Bun/JSC proof backend | `in_process_trusted_only` | Remains proof-only until permission containment, memory policy, package loading, VM reuse, artifact metadata, and fork posture are resolved. |
+| Bun/JSC fresh/discard application profile | `in_process_untrusted` | Admitted only as `RuntimeBackendKind::BunJsc`, `RuntimeCompatibilityTarget::BunJsc`, `BackendOwnedEventLoop`, `bun_jsc_in_process_untrusted`, `bun_jsc_fresh_discard_pool_outer_quota_required`, and `bun_jsc_fresh_discard`. Execution remains adapter-not-linked in current builds. |
+| Bun/JSC proof or retained-VM profiles | `in_process_trusted_only` | Retained reuse is trusted-only until a hard isolation boundary and deliberate promotion exist. |
 | Future wasmtime components | `wasm_capability_sandbox` | Deferred. Must prove typed imports, interruption, Store resource limits, and bundle metadata before selection. |
 | Future WASI agent capabilities | `wasm_capability_sandbox` with additional imported agent capabilities | Deferred until wasmtime host interfaces are stable. Filesystem/process/HTTP are not inherited by ordinary WASM functions. |
 | krun/container-backed services | `microvm_service` or local-dev container equivalent | Runtime code reaches them through service bindings; sandbox lifecycle and endpoint policy are separate from runtime engine policy. |

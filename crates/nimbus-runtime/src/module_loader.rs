@@ -52,6 +52,9 @@ impl RestrictedModuleLoader {
             RuntimeCompatibilityTarget::WebStandardIsolate => {
                 "node: imports are unavailable under RuntimeCompatibilityTarget::WebStandardIsolate"
             }
+            RuntimeCompatibilityTarget::BunJsc => {
+                "Bun/JSC package resolution is owned by the Bun/JSC backend and is unavailable through the V8 module loader"
+            }
             RuntimeCompatibilityTarget::Node20
             | RuntimeCompatibilityTarget::Node22
             | RuntimeCompatibilityTarget::Node24 => {

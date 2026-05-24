@@ -31,6 +31,12 @@ impl NimbusRuntime {
             RuntimeCompatibilityTarget::Node20 => &NODE20_BOOTSTRAP_SNAPSHOT,
             RuntimeCompatibilityTarget::Node22 => &NODE22_BOOTSTRAP_SNAPSHOT,
             RuntimeCompatibilityTarget::Node24 => &NODE24_BOOTSTRAP_SNAPSHOT,
+            RuntimeCompatibilityTarget::BunJsc => {
+                return Err(NimbusRuntimeError::Contract(
+                    "Bun/JSC compatibility target cannot use the V8 bootstrap snapshot path"
+                        .to_string(),
+                ));
+            }
         };
         match snapshot.get_or_init(|| {
             Self::create_bootstrap_snapshot(self.policy.limits().compatibility_target)

@@ -91,11 +91,11 @@ mod tests {
         assert_eq!(untrusted.mode, BunJscPoolMode::FreshDiscardOuterQuota);
         assert!(!untrusted.retained_vm_reuse_allowed);
         assert!(untrusted.outer_quota_required);
-        assert!(!untrusted.product_selectable);
+        assert!(untrusted.product_selectable);
     }
 
     #[test]
-    fn bun_jsc_pool_policy_rejects_profile_mismatches_without_productizing_backend() {
+    fn bun_jsc_pool_policy_rejects_profile_mismatches_before_backend_execution() {
         let mismatch = BunJscPoolPolicy::from_limits(&bun_limits_for(
             RuntimeBackendTrustTier::InProcessUntrusted,
             RuntimeBackendLockdownProfile::BunJscInProcessUntrusted,
@@ -104,18 +104,19 @@ mod tests {
         ));
         assert!(mismatch.is_err());
 
-        let product_policy = std::panic::catch_unwind(|| {
-            crate::limits::RuntimePolicy::new(bun_limits_for(
+        let product_policy = crate::limits::RuntimePolicy::new(crate::RuntimeLimits {
+            execution_model: crate::RuntimeExecutionModel::BackendOwnedEventLoop,
+            compatibility_target: crate::RuntimeCompatibilityTarget::BunJsc,
+            ..bun_limits_for(
                 RuntimeBackendTrustTier::InProcessUntrusted,
                 RuntimeBackendLockdownProfile::BunJscInProcessUntrusted,
                 RuntimeBackendLifecyclePolicy::BunJscFreshDiscardPoolOuterQuotaRequired,
                 RuntimePoolKind::BunJscFreshDiscard,
-            ))
+            )
         });
-        assert!(
-            product_policy.is_err(),
-            "Bun/JSC pool scaffold must not make the backend selectable"
-        );
+        let policy = BunJscPoolPolicy::from_limits(product_policy.limits())
+            .expect("proven untrusted Bun/JSC profile should be admissible");
+        assert!(policy.product_selectable);
     }
 
     #[test]

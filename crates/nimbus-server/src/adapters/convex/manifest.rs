@@ -92,6 +92,7 @@ impl ConvexFunctionDefinition {
             .unwrap_or(match self.runtime_environment {
                 ConvexRuntimeEnvironment::Default => RuntimeCompatibilityTarget::WebStandardIsolate,
                 ConvexRuntimeEnvironment::Node => RuntimeCompatibilityTarget::Node22,
+                ConvexRuntimeEnvironment::Bun => RuntimeCompatibilityTarget::BunJsc,
             });
         let package_resolution =
             self.runtime_package_resolution
@@ -99,6 +100,9 @@ impl ConvexFunctionDefinition {
                     ConvexRuntimeEnvironment::Default => ConvexRuntimePackageResolution::Bundled,
                     ConvexRuntimeEnvironment::Node => {
                         ConvexRuntimePackageResolution::NodeExternalPackages
+                    }
+                    ConvexRuntimeEnvironment::Bun => {
+                        ConvexRuntimePackageResolution::BunSelfContained
                     }
                 });
         ConvexRuntimeSelection {
@@ -144,15 +148,53 @@ impl ConvexFunctionDefinition {
                 }
             }
             RuntimeBackendKind::BunJsc => {
-                return Err(format!(
-                    "function {} selects Bun/JSC runtime backend; Bun/JSC is proof-only and is not selectable",
-                    self.name
-                ));
+                if !matches!(
+                    selection.bundle_content_kind,
+                    RuntimeBundleContentKind::JavaScript
+                ) {
+                    return Err(format!(
+                        "function {} selects Bun/JSC with {:?} bundle content; Bun/JSC supports only JavaScript program-wrapper bundles",
+                        self.name, selection.bundle_content_kind
+                    ));
+                }
+                if !matches!(
+                    selection.javascript_evaluation_format,
+                    RuntimeJavaScriptEvaluationFormat::ProgramWrapper
+                ) {
+                    return Err(format!(
+                        "function {} selects Bun/JSC with {:?} JavaScript evaluation format; Bun/JSC supports only program-wrapper evaluation",
+                        self.name, selection.javascript_evaluation_format
+                    ));
+                }
+                if !matches!(
+                    selection.compatibility_target,
+                    RuntimeCompatibilityTarget::BunJsc
+                ) {
+                    return Err(format!(
+                        "function {} selects Bun/JSC with {:?} compatibility target; Bun/JSC must not be labeled as a Node runtime target",
+                        self.name, selection.compatibility_target
+                    ));
+                }
+                if !matches!(
+                    selection.package_resolution,
+                    ConvexRuntimePackageResolution::BunSelfContained
+                ) {
+                    return Err(format!(
+                        "function {} selects Bun/JSC with {:?} package resolution; Bun/JSC supports only bun_self_contained package resolution",
+                        self.name, selection.package_resolution
+                    ));
+                }
             }
         }
 
         match self.runtime_environment {
             ConvexRuntimeEnvironment::Default => {
+                if !matches!(selection.engine, RuntimeBackendKind::V8) {
+                    return Err(format!(
+                        "function {} uses the default runtime but selects {:?}; default runtime functions must use the V8 engine",
+                        self.name, selection.engine
+                    ));
+                }
                 if !matches!(
                     selection.compatibility_target,
                     RuntimeCompatibilityTarget::WebStandardIsolate
@@ -173,6 +215,12 @@ impl ConvexFunctionDefinition {
                 }
             }
             ConvexRuntimeEnvironment::Node => {
+                if !matches!(selection.engine, RuntimeBackendKind::V8) {
+                    return Err(format!(
+                        "function {} uses the Node runtime but selects {:?}; Node runtime functions must use the V8 engine",
+                        self.name, selection.engine
+                    ));
+                }
                 if !selection.compatibility_target.is_node() {
                     return Err(format!(
                         "function {} uses the Node runtime but selects {:?}; Node runtime functions must use a Node compatibility target",
@@ -185,6 +233,32 @@ impl ConvexFunctionDefinition {
                 ) {
                     return Err(format!(
                         "function {} uses the Node runtime but selects {:?} package resolution; Node runtime functions must use node_external_packages",
+                        self.name, selection.package_resolution
+                    ));
+                }
+            }
+            ConvexRuntimeEnvironment::Bun => {
+                if !matches!(selection.engine, RuntimeBackendKind::BunJsc) {
+                    return Err(format!(
+                        "function {} uses the Bun runtime but selects {:?}; Bun runtime functions must use the Bun/JSC engine",
+                        self.name, selection.engine
+                    ));
+                }
+                if !matches!(
+                    selection.compatibility_target,
+                    RuntimeCompatibilityTarget::BunJsc
+                ) {
+                    return Err(format!(
+                        "function {} uses the Bun runtime but selects {:?}; Bun runtime functions must use BunJsc compatibility target",
+                        self.name, selection.compatibility_target
+                    ));
+                }
+                if !matches!(
+                    selection.package_resolution,
+                    ConvexRuntimePackageResolution::BunSelfContained
+                ) {
+                    return Err(format!(
+                        "function {} uses the Bun runtime but selects {:?} package resolution; Bun runtime functions must use bun_self_contained",
                         self.name, selection.package_resolution
                     ));
                 }
@@ -275,6 +349,7 @@ pub(super) enum ConvexRuntimeEnvironment {
     #[serde(rename = "default")]
     Default,
     Node,
+    Bun,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -282,6 +357,7 @@ pub(super) enum ConvexRuntimeEnvironment {
 pub(super) enum ConvexRuntimePackageResolution {
     Bundled,
     NodeExternalPackages,
+    BunSelfContained,
 }
 
 #[derive(Debug, Clone, Deserialize)]

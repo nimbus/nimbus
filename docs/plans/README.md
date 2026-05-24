@@ -48,12 +48,9 @@ This directory prefers a small-number-of-plans model with clear ownership.
 - `docs/plans/bun-jsc-embedder-api-and-pool-plan.md`
   - active execution plan for the next product-moving Bun/JSC wave. Nimbus is
     now pursuing Bun/JSC as an optional in-process backend candidate beside
-    Deno/V8, with a dedicated Bun/JSC pool, but not as a product-selectable
-    runtime until construction profile, resolver policy, native permission
-    hooks, memory, cancellation, teardown, and macOS/Linux verification gates
-    pass. BEP0-BEP7 are complete: BEP3 added typed Bun/JSC pool metadata and
-    validation that rejects V8/Deno with Bun pool metadata, rejects Bun/JSC
-    with V8/Deno pool metadata, and keeps all Bun/JSC product routes blocked;
+    Deno/V8, with a dedicated Bun/JSC pool. BEP0-BEP8 are complete: BEP3
+    added typed Bun/JSC pool metadata and validation that rejects V8/Deno with
+    Bun pool metadata and rejects Bun/JSC with V8/Deno pool metadata;
     BEP4 added the disabled backend-owned Bun/JSC pool scaffold with
     state/ack-driven lifecycle, fresh/discard versus trusted-retained policy
     modes, and no V8/Deno internals in the public pool envelope; BEP5 proved
@@ -69,9 +66,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     elapsed-time sleep to host-observed spin-entry acknowledgement, and fresh
     teardown plus retained trusted reuse named in the proof output. The reusable
     `bash scripts/verify-bun-jsc-in-process-lockdown.sh` gate passes locally
-    and on Debian 13 `minicloud` for BEP7. BEP8 is next: integrate Bun/JSC as
-    an optional runtime backend only behind the proven lockdown profile and
-    pool policy. Fork posture remains upstream-first; no `nimbus/bun` fork yet.
+    and on Debian 13 `minicloud` for BEP7. BEP8 added the optional Bun/JSC
+    backend admission baseline: a separate `BunJsc` compatibility target,
+    backend-owned event-loop execution model, Convex `bun` runtime lane,
+    codegen `bunJsc` metadata, and admission only for the proven untrusted
+    fresh/discard profile with `bun_self_contained` package resolution. Current
+    builds still fail closed before Bun/JSC guest execution unless a Bun
+    embedder adapter is linked, so function-level `"use bun"` codegen remains
+    withheld. BEP9 is next: close the plan with repeatable
+    local/minicloud evidence, residual risks, fork status, and product go/no-go.
+    Fork posture remains upstream-first; no `nimbus/bun` fork yet.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

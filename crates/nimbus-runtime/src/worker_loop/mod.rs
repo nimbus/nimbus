@@ -17,7 +17,7 @@ pub(crate) fn create_worker_loop_factory(
     #[cfg(test)] test_state: Arc<crate::executor::RuntimeExecutorTestState>,
 ) -> Arc<dyn WorkerLoopFactory> {
     match policy.limits().execution_model {
-        RuntimeExecutionModel::RunToCompletion => {
+        RuntimeExecutionModel::RunToCompletion | RuntimeExecutionModel::BackendOwnedEventLoop => {
             let factory = RunToCompletionWorkerLoopFactory::new(watchdog);
             #[cfg(test)]
             let factory = factory.with_test_state(test_state);

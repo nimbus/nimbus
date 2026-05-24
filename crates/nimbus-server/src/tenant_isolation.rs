@@ -1546,12 +1546,7 @@ fn validate_production_in_process_untrusted_policy(
     limits: &nimbus_runtime::RuntimeLimits,
 ) -> std::result::Result<(), ProductionRuntimePolicyRejection> {
     match limits.backend_kind {
-        RuntimeBackendKind::V8 => {}
-        RuntimeBackendKind::BunJsc => {
-            return Err(ProductionRuntimePolicyRejection::trusted_only(
-                "uses proof-only Bun/JSC runtime backend",
-            ));
-        }
+        RuntimeBackendKind::V8 | RuntimeBackendKind::BunJsc => {}
     }
     if !matches!(
         limits.bundle_content_kind,
@@ -2440,6 +2435,22 @@ mod tests {
             ),
             RuntimePolicyAdmission::AdmitInProcess,
             "web-standard application grants should be production-admissible"
+        );
+    }
+
+    #[test]
+    fn production_untrusted_runtime_admission_allows_bun_jsc_fresh_discard_policy() {
+        let context = test_application_context();
+        let policy = RuntimePolicy::new(RuntimeLimits::application_bun_jsc());
+
+        assert_eq!(
+            context.admit_runtime_policy(
+                &policy,
+                RuntimeIsolationTier::InProcessUntrusted,
+                TenantIsolationMode::Production,
+            ),
+            RuntimePolicyAdmission::AdmitInProcess,
+            "Bun/JSC fresh/discard policy is the proven in-process admission profile"
         );
     }
 

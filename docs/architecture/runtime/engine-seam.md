@@ -48,22 +48,22 @@ The runtime engine seam therefore separates these axes:
 | Axis | Meaning | Examples |
 | --- | --- | --- |
 | Engine | The embedded execution implementation and VM ownership model. | Deno/V8 today; Bun/JSC or wasmtime later. |
-| Compatibility target | The JavaScript or guest API contract exposed to user code. | `WebStandardIsolate`, `Node20`, `Node22`, `Node24`, future Bun-compatible target. |
+| Compatibility target | The JavaScript or guest API contract exposed to user code. | `WebStandardIsolate`, `Node20`, `Node22`, `Node24`, `BunJsc`, future component targets. |
 | Execution model | How a worker drives progress and scheduling. | run-to-completion, cooperative V8 Locker, future fuel/epoch or engine-specific cooperative loops. |
 | Pooling model | What is retained between invocations. | V8 `startup_snapshot_cache` / `warm_pool`; Bun/JSC `bun_jsc_trusted_retained` / `bun_jsc_fresh_discard`; component cache. |
 | Permission policy | The host resources the invocation may access. | Runtime mode plus `RuntimeGrants`; independent of engine and compatibility target. |
 | Backend trust tier | Whether the backend is proof-only, trusted in-process only, or suitable for untrusted in-process tenant code. | `proof_only`, `in_process_trusted_only`, `in_process_untrusted`. |
-| Lockdown profile | The concrete backend-specific containment profile whose hooks are actually enforced. | `v8_deno_core` today; Bun/JSC profiles remain rejected until proven. |
+| Lockdown profile | The concrete backend-specific containment profile whose hooks are actually enforced. | `v8_deno_core`; `bun_jsc_in_process_untrusted` only with the fresh/discard Bun pool profile. |
 
-Current Bun/JSC product direction is an optional backend candidate with its own
-Bun pool beside Deno/V8. That pool is owned by the active
-`bun-jsc-embedder-api-and-pool-plan`; it must stay disabled until Bun exposes
-or Nimbus maintains construction-profile, resolver, native permission, memory,
-cancellation, and teardown controls that pass on macOS and Linux.
-Nimbus policy metadata can now name the future Bun/JSC pool shapes, but
-validation still rejects every Bun/JSC product route. The disabled
-`backends::bun_jsc` scaffold owns Bun/JSC pool policy and lifecycle types
-without sharing Deno/V8 VM internals.
+Current Bun/JSC product direction is an optional backend beside Deno/V8, with
+its own Bun pool and `BunJsc` compatibility target. BEP8 admits exactly one
+untrusted in-process profile: `bun_jsc_in_process_untrusted` with
+`bun_jsc_fresh_discard_pool_outer_quota_required` and
+`bun_jsc_fresh_discard`. All retained/proof profiles remain non-product
+routes. The current `backends::bun_jsc` scaffold owns Bun/JSC pool policy and
+lifecycle types without sharing Deno/V8 VM internals, but execution still
+returns a contract error unless the build links a Bun embedder execution
+adapter.
 
 ## Layering Rules
 
@@ -150,8 +150,11 @@ artifacts must name that format explicitly instead of letting a generic
 `javascript` content kind imply both ESM module loading and program evaluation.
 The current implementation carries that distinction as
 `runtime_javascript_evaluation_format`: V8 accepts `es_module`, while
-`program_wrapper` is reserved for proof lanes such as Bun/JSC and is rejected
-by production registry loading unless a backend explicitly supports it.
+`program_wrapper` is accepted only for the explicit Bun/JSC lane. Bun-backed
+artifacts must also declare `runtime_engine: "bun_jsc"`,
+`runtime_compatibility_target: "bun_jsc"`, and
+`runtime_package_resolution: "bun_self_contained"`; Node package resolution
+metadata remains rejected for Bun.
 
 Do not overload the existing Node fields in generated artifacts to select a new
 engine. A Bun-backed target needs explicit artifact metadata; a wasmtime
@@ -191,7 +194,8 @@ Node-specific: `"use node"` modules emit `runtime_environment = "node"` plus a
 `node_runtime_target`, and the server routes those functions to Node20, Node22,
 or Node24 runtime lanes.
 
-Before a new engine becomes selectable:
+Bun/JSC is the first non-V8 lane to cross this boundary. Before any additional
+engine becomes selectable:
 
 - codegen must emit explicit engine or content-kind metadata rather than
   overloading `runtime_environment = "node"`
@@ -204,8 +208,11 @@ Before a new engine becomes selectable:
 - operator and metadata APIs must expose the selected engine and compatibility
   target honestly
 
-The default Deno/V8 lane remains unchanged while Bun/JSC metadata stays
-diagnostic-only and fail-closed.
+The default Deno/V8 lane remains unchanged. Bun/JSC metadata is admitted only
+for the proven fresh/discard profile and fails closed at execution time unless
+a Bun embedder adapter is linked. Codegen publishes top-level `bunJsc` lane
+metadata for explicit artifacts, but function-level `"use bun"` selection
+stays withheld until that adapter exists.
 
 ## RuntimeEngine Responsibilities
 
@@ -271,10 +278,10 @@ past an experimental backend:
 Engine defaults are not security policy. Nimbus grants are the policy.
 The runtime policy also carries `RuntimeBackendTrustTier`,
 `RuntimeBackendLockdownProfile`, and `RuntimeBackendLifecyclePolicy` so product
-state is explicit in diagnostics and cache keys. For Bun/JSC, those values are
-names for proof and future admission states only; every Bun/JSC profile remains
-non-selectable until the in-process lockdown plan proves the corresponding
-permission, resolver, memory, cancellation, reuse, and teardown hooks.
+state is explicit in diagnostics and cache keys. For Bun/JSC, only the proven
+fresh/discard untrusted profile is product-admissible; retained VM reuse and
+proof-only profiles remain blocked until a future plan deliberately promotes
+them.
 
 ## Compatibility Rules
 
@@ -282,8 +289,9 @@ Compatibility target and engine are separate choices.
 
 - `Node20`, `Node22`, and `Node24` currently mean the measured Nimbus
   Node-compatible API surface implemented through Deno/V8.
-- A future Bun-backed target should be explicit. Do not silently treat Bun as
-  `Node22` only because Bun implements a Node-compatible API surface.
+- A Bun-backed target is explicit: `runtime_engine = "bun_jsc"` with
+  `RuntimeCompatibilityTarget::BunJsc`. Do not silently treat Bun as `Node22`
+  only because Bun implements a Node-compatible API surface.
 - A future wasmtime backend is not a JavaScript compatibility target. It is a
   different guest ABI and should not use JavaScript runtime target names.
 
@@ -340,14 +348,14 @@ not as the generic runtime abstraction. Step 0 for runtime extensions is:
 - move Deno/V8 state ownership below a Deno/V8 engine/backend boundary
 - extract the engine-neutral JavaScript context contract away from Deno ops
 - make runtime policy validation describe supported engine, compatibility,
-  execution, and pooling combinations; Bun/JSC pool metadata exists, but is not
-  selectable until the Bun-side containment gates pass
-- keep the disabled Bun/JSC pool scaffold backend-owned while resolver,
-  permission, memory, cancellation, and teardown hooks are proven
+  execution, and pooling combinations; Bun/JSC is admitted only for the
+  fresh/discard untrusted profile proven by the active Bun plan
+- keep the disabled Bun/JSC pool scaffold backend-owned until a linked Bun
+  embedder execution adapter exists
 - separate bundle/content metadata from V8 module-specifier and code-cache
   state
-- update generated artifacts and server lane selection before adding a second
-  selectable JavaScript engine
+- keep generated artifacts and server lane selection explicit for every
+  JavaScript engine
 
 Once that is true, Bun/JSC or wasmtime work can start as isolated backend
 proofs instead of changing the existing V8 path while discovering the seam.
