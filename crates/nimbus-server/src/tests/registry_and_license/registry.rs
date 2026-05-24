@@ -303,7 +303,7 @@ fn convex_registry_selects_bun_jsc_lane_from_manifest_metadata() {
     assert!(!bun_diagnostics.executor_started);
     assert_eq!(
         bun_diagnostics.execution_adapter_state,
-        crate::adapters::convex::ConvexRuntimeExecutionAdapterState::NotLinked
+        nimbus_runtime::RuntimeExecutionAdapterState::NotLinked
     );
     assert_eq!(
         bun_diagnostics.limits.memory_enforcement,
