@@ -2,7 +2,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::backends::{RuntimeBackend, RuntimeBackendFactory, RuntimeBackendInvocation};
-use crate::error::Result;
+use crate::error::{NimbusRuntimeError, Result};
+use crate::host::HostCallCancellation;
 use crate::limits::RuntimeExecutionAdapterState;
 
 mod adapter;
@@ -65,6 +66,13 @@ impl RuntimeBackend for BunJscRuntimeBackend {
         Box::pin(async move {
             let pool_policy = pool_policy?;
             BunJscPool::verify_scaffold_contract()?;
+            if invocation
+                .cancellation
+                .as_ref()
+                .is_some_and(HostCallCancellation::is_cancelled)
+            {
+                return Err(NimbusRuntimeError::Cancelled);
+            }
             if !matches!(adapter_state, RuntimeExecutionAdapterState::Linked) {
                 return self.execution_adapter.invoke(invocation, pool_policy).await;
             }
@@ -73,6 +81,9 @@ impl RuntimeBackend for BunJscRuntimeBackend {
             self.pool.acknowledge(BunJscLifecycleAck::BootstrapReady)?;
             self.pool.acknowledge(BunJscLifecycleAck::GuestEntered)?;
             let result = self.execution_adapter.invoke(invocation, pool_policy).await;
+            if matches!(result, Err(NimbusRuntimeError::Cancelled)) {
+                self.pool.request_cancellation()?;
+            }
             let teardown = (|| {
                 self.pool.acknowledge(BunJscLifecycleAck::Terminated)?;
                 self.pool
@@ -104,7 +115,7 @@ mod tests {
     use super::*;
     use crate::RuntimeInvocationContext;
     use crate::executor::SharedInvocationPermit;
-    use crate::host::{HostBridge, HostCallRequest};
+    use crate::host::{HostBridge, HostCallCancellation, HostCallRequest};
     use crate::limits::{
         RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
         RuntimeBackendTrustTier, RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
@@ -151,6 +162,13 @@ mod tests {
     }
 
     fn bun_invocation(policy: Arc<crate::limits::RuntimePolicy>) -> RuntimeBackendInvocation {
+        bun_invocation_with_cancellation(policy, None)
+    }
+
+    fn bun_invocation_with_cancellation(
+        policy: Arc<crate::limits::RuntimePolicy>,
+        cancellation: Option<HostCallCancellation>,
+    ) -> RuntimeBackendInvocation {
         let request = InvocationRequest {
             kind: InvocationKind::Query,
             function_name: "messages:bunProof".to_string(),
@@ -167,7 +185,7 @@ mod tests {
             bundle: RuntimeBundle::new("unused-bun-jsc-proof-bundle.mjs"),
             request: request.clone(),
             context: RuntimeInvocationContext::top_level(&request),
-            cancellation: None,
+            cancellation,
             permit: SharedInvocationPermit::new(policy, None, None, true, None),
         }
     }
@@ -363,6 +381,107 @@ mod tests {
             .block_on(backend.invoke(bun_invocation(policy)))
             .expect("fake linked adapter should run");
         assert_eq!(result, json!({ "adapter": "linked" }));
+    }
+
+    #[test]
+    fn bun_jsc_linked_backend_rejects_pre_cancelled_invocation_before_guest_entry() {
+        #[derive(Debug, Default)]
+        struct PanicIfInvokedAdapterFactory;
+
+        impl BunJscExecutionAdapterFactory for PanicIfInvokedAdapterFactory {
+            fn create(&self) -> Box<dyn BunJscExecutionAdapter> {
+                Box::new(PanicIfInvokedAdapter)
+            }
+        }
+
+        #[derive(Debug)]
+        struct PanicIfInvokedAdapter;
+
+        impl BunJscExecutionAdapter for PanicIfInvokedAdapter {
+            fn state(&self) -> RuntimeExecutionAdapterState {
+                RuntimeExecutionAdapterState::Linked
+            }
+
+            fn invoke<'a>(
+                &'a mut self,
+                _invocation: RuntimeBackendInvocation,
+                _pool_policy: BunJscPoolPolicy,
+            ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>> {
+                panic!("pre-cancelled Bun/JSC invocation must not enter the adapter")
+            }
+        }
+
+        let cancellation = HostCallCancellation::default();
+        cancellation.cancel();
+        let policy = bun_policy();
+        let mut backend =
+            BunJscRuntimeBackend::with_execution_adapter_factory(&PanicIfInvokedAdapterFactory);
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build")
+            .block_on(backend.invoke(bun_invocation_with_cancellation(policy, Some(cancellation))))
+            .expect_err("pre-cancelled invocation should fail before guest entry");
+
+        assert!(matches!(error, NimbusRuntimeError::Cancelled));
+        assert_eq!(
+            backend.pool.lifecycle_state(),
+            BunJscLifecycleState::Created
+        );
+        assert_eq!(backend.pool.lifecycle_transition_count(), 0);
+        let metrics = backend.pool.metrics_snapshot();
+        assert_eq!(metrics.admitted_invocations, 1);
+        assert_eq!(metrics.cancellation_requests, 0);
+        assert_eq!(metrics.teardown_completions, 0);
+    }
+
+    #[test]
+    fn bun_jsc_linked_backend_records_cancelled_adapter_then_tears_down() {
+        #[derive(Debug, Default)]
+        struct CancellingAdapterFactory;
+
+        impl BunJscExecutionAdapterFactory for CancellingAdapterFactory {
+            fn create(&self) -> Box<dyn BunJscExecutionAdapter> {
+                Box::new(CancellingAdapter)
+            }
+        }
+
+        #[derive(Debug)]
+        struct CancellingAdapter;
+
+        impl BunJscExecutionAdapter for CancellingAdapter {
+            fn state(&self) -> RuntimeExecutionAdapterState {
+                RuntimeExecutionAdapterState::Linked
+            }
+
+            fn invoke<'a>(
+                &'a mut self,
+                _invocation: RuntimeBackendInvocation,
+                _pool_policy: BunJscPoolPolicy,
+            ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>> {
+                Box::pin(async { Err(NimbusRuntimeError::Cancelled) })
+            }
+        }
+
+        let policy = bun_policy();
+        let mut backend =
+            BunJscRuntimeBackend::with_execution_adapter_factory(&CancellingAdapterFactory);
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build")
+            .block_on(backend.invoke(bun_invocation(policy)))
+            .expect_err("cancelled adapter result should surface as cancellation");
+
+        assert!(matches!(error, NimbusRuntimeError::Cancelled));
+        assert_eq!(
+            backend.pool.lifecycle_state(),
+            BunJscLifecycleState::TeardownComplete
+        );
+        assert_eq!(backend.pool.lifecycle_transition_count(), 6);
+        let metrics = backend.pool.metrics_snapshot();
+        assert_eq!(metrics.cancellation_requests, 1);
+        assert_eq!(metrics.teardown_completions, 1);
     }
 
     #[cfg(feature = "bun-jsc-linked-adapter")]
