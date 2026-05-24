@@ -14,6 +14,7 @@ mod pool;
 use self::adapter::{
     BunJscExecutionAdapter, BunJscExecutionAdapterFactory, BunJscNoLinkExecutionAdapterFactory,
 };
+use self::lifecycle::BunJscLifecycleAck;
 use self::pool::{BunJscPool, BunJscPoolPolicy};
 
 #[derive(Debug, Default)]
@@ -51,17 +52,36 @@ impl RuntimeBackend for BunJscRuntimeBackend {
         invocation: RuntimeBackendInvocation,
     ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value>> + 'a>> {
         let pool_policy = BunJscPoolPolicy::from_limits(invocation.policy.limits());
+        let adapter_state = self.execution_adapter_state();
         self.pool.record_admission();
-        if matches!(
-            self.execution_adapter_state(),
-            RuntimeExecutionAdapterState::NotLinked
-        ) {
+        if matches!(adapter_state, RuntimeExecutionAdapterState::NotLinked) {
             self.pool.record_disabled_invocation();
         }
         Box::pin(async move {
             let pool_policy = pool_policy?;
             BunJscPool::verify_scaffold_contract()?;
-            self.execution_adapter.invoke(invocation, pool_policy).await
+            if !matches!(adapter_state, RuntimeExecutionAdapterState::Linked) {
+                return self.execution_adapter.invoke(invocation, pool_policy).await;
+            }
+
+            self.pool.begin_invocation();
+            self.pool.acknowledge(BunJscLifecycleAck::BootstrapReady)?;
+            self.pool.acknowledge(BunJscLifecycleAck::GuestEntered)?;
+            let result = self.execution_adapter.invoke(invocation, pool_policy).await;
+            let teardown = (|| {
+                self.pool.acknowledge(BunJscLifecycleAck::Terminated)?;
+                self.pool
+                    .acknowledge(BunJscLifecycleAck::ResetOrDiscarded)?;
+                self.pool
+                    .acknowledge(BunJscLifecycleAck::TeardownComplete)?;
+                Ok(())
+            })();
+
+            match (result, teardown) {
+                (Ok(value), Ok(())) => Ok(value),
+                (Err(error), _) => Err(error),
+                (Ok(_), Err(error)) => Err(error),
+            }
         })
     }
 }
@@ -343,10 +363,10 @@ mod tests {
         let contract = linked::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
         assert_eq!(
             contract.git_revision,
-            "2f09ba33b184a541e2ade24bf6e46bebc971a262"
+            "a409f596e8e1394d8860e2cd8b2bb558ff1afcac"
         );
         assert_eq!(contract.proof_target, "check-bun-embed-probe");
-        assert_eq!(contract.required_exports.len(), 9);
+        assert_eq!(contract.required_exports.len(), 10);
         assert!(
             contract
                 .required_exports
@@ -356,6 +376,11 @@ mod tests {
             contract
                 .required_exports
                 .contains(&"nimbus_bun_embed_probe_lifecycle_reuse_stress")
+        );
+        assert!(
+            contract
+                .required_exports
+                .contains(&"nimbus_bun_embed_invoke_program_wrapper_json")
         );
     }
 
@@ -370,27 +395,115 @@ mod tests {
             RuntimeExecutionAdapterState::NotLinked
         );
 
-        let policy = bun_policy();
-        let mut linked_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
+        let linked_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
             &linked::BunJscLinkedExecutionAdapterFactory,
         );
         assert_eq!(
             linked_backend.execution_adapter_state(),
             RuntimeExecutionAdapterState::Linked
         );
+    }
 
+    #[cfg(all(feature = "bun-jsc-linked-adapter", not(nimbus_bun_jsc_linked_ffi)))]
+    #[test]
+    fn bun_jsc_linked_adapter_feature_requires_explicit_bun_link_manifest_for_execution() {
+        let policy = bun_policy();
+        let mut linked_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
+            &linked::BunJscLinkedExecutionAdapterFactory,
+        );
         let error = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("test runtime should build")
             .block_on(linked_backend.invoke(bun_invocation(policy)))
-            .expect_err("BJA3 linked build lane should still guard execution until BJA4");
+            .expect_err("linked Bun/JSC execution must require an explicit Bun link manifest");
         assert!(
             error
                 .to_string()
-                .contains("BJA4 has not wired Bun/JSC execution yet"),
+                .contains("compiled without NIMBUS_BUN_EMBED_LINK_ARGS"),
             "unexpected error: {error}"
         );
+    }
+
+    #[cfg(all(feature = "bun-jsc-linked-adapter", nimbus_bun_jsc_linked_ffi))]
+    #[test]
+    fn bun_jsc_linked_adapter_executes_pure_program_wrapper_json_through_pool() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let bundle_path = temp_dir.path().join("bun-pure-program-wrapper.js");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__nimbusInvoke = async function(request) {
+  return {
+    status: "ok",
+    value: {
+      engine: "bun_jsc",
+      kind: request.kind,
+      functionName: request.function_name,
+      body: request.args.body,
+      nested: request.args.nested.value,
+    },
+  };
+};
+"#,
+        )
+        .expect("bundle should be written");
+
+        let policy = bun_policy();
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "messages:bunProof".to_string(),
+            args: json!({
+                "body": "hello from linked bun",
+                "nested": { "value": 42 },
+            }),
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: BTreeMap::new(),
+        };
+        let mut backend = BunJscRuntimeBackend::with_execution_adapter_factory(
+            &linked::BunJscLinkedExecutionAdapterFactory,
+        );
+
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build")
+            .block_on(backend.invoke(RuntimeBackendInvocation {
+                watchdog: WatchdogTimer::new(),
+                host: RuntimeHost::new(Arc::new(NoopHost)),
+                policy: policy.clone(),
+                bundle: RuntimeBundle::new(&bundle_path),
+                request: request.clone(),
+                context: RuntimeInvocationContext::top_level(&request),
+                cancellation: None,
+                permit: SharedInvocationPermit::new(policy, None, None, true, None),
+            }))
+            .expect("linked Bun/JSC pure invocation should run");
+
+        assert_eq!(
+            result,
+            json!({
+                "status": "ok",
+                "value": {
+                    "engine": "bun_jsc",
+                    "kind": "query",
+                    "functionName": "messages:bunProof",
+                    "body": "hello from linked bun",
+                    "nested": 42,
+                },
+            })
+        );
+        assert_eq!(
+            backend.pool.lifecycle_state(),
+            BunJscLifecycleState::TeardownComplete
+        );
+        assert_eq!(backend.pool.lifecycle_transition_count(), 5);
+        let metrics = backend.pool.metrics_snapshot();
+        assert_eq!(metrics.admitted_invocations, 1);
+        assert_eq!(metrics.disabled_invocations, 0);
+        assert_eq!(metrics.teardown_completions, 1);
     }
 
     #[test]
