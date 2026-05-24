@@ -334,24 +334,24 @@ if [[ -n "${bun_status}" ]]; then
   exit 1
 fi
 
-printf '[1/10] Default no-link runtime contract\n'
+printf '[1/11] Default no-link runtime contract\n'
 make verify-bun-jsc-runtime-contract
 
-printf '\n[2/10] Linked adapter feature compile and no-shared-library unit contract\n'
+printf '\n[2/11] Linked adapter feature compile and no-shared-library unit contract\n'
 env -u NIMBUS_BUN_EMBED_LINK_ARGS -u NIMBUS_BUN_EMBED_SHARED_LIBRARY \
   cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc
 
-printf '\n[3/10] Bun proof source exports\n'
+printf '\n[3/11] Bun proof source exports\n'
 for export in "${REQUIRED_EXPORTS[@]}"; do
   git -C "${BUN_REPO}" grep -q --fixed-strings "${export}" -- \
     src/embed_probe/lib.rs scripts/build/bun.ts
   printf '  %s\n' "${export}"
 done
 
-printf '\n[4/10] Bun Rust format\n'
+printf '\n[4/11] Bun Rust format\n'
 (cd "${BUN_REPO}" && cargo fmt --all --check)
 
-printf '\n[5/10] Bun native shared adapter build\n'
+printf '\n[5/11] Bun native shared adapter build\n'
 mkdir -p "${BUN_BUILD_DIR}" "${BUN_CACHE_DIR}" "${BUN_CARGO_TARGET_DIR}"
 BUN_BUILD_ARGS=(
   bun scripts/build.ts
@@ -372,10 +372,10 @@ if [[ ! -f "${SHARED_LIBRARY}" ]]; then
   exit 1
 fi
 
-printf '\n[6/10] Generated build graph safety policy\n'
+printf '\n[6/11] Generated build graph safety policy\n'
 reject_unsafe_generated_build_graph "${BUN_BUILD_DIR}/build.ninja"
 
-printf '\n[7/10] Bun/JSC shared adapter export audit and symbol audit\n'
+printf '\n[7/11] Bun/JSC shared adapter export audit and symbol audit\n'
 audit_shared_adapter_exports "${SHARED_LIBRARY}"
 audit_simdutf_symbols
 
@@ -420,7 +420,7 @@ case "${host_triple}" in
     ;;
 esac
 
-printf '\n[8/10] Bun embedder FFI and same-process V8+Bun/JSC proof\n'
+printf '\n[8/11] Bun embedder FFI and same-process V8+Bun/JSC proof\n'
 LINKED_CARGO_JOBS="${NIMBUS_BUN_LINKED_CARGO_JOBS:-1}"
 NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
   CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
@@ -431,10 +431,17 @@ NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
   cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --test \
     bun_jsc_linked_adapter -- --nocapture
 
-printf '\n[9/10] Nimbus whitespace diff check\n'
+printf '\n[9/11] Server linked-lane diagnostics proof\n'
+NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
+  CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
+  cargo test -p nimbus-server --features bun-jsc-linked-adapter \
+    registry_and_license::registry::convex_registry_bun_jsc_lane_diagnostics_reflect_runtime_adapter_state \
+    -- --nocapture
+
+printf '\n[10/11] Nimbus whitespace diff check\n'
 git diff --check
 
-printf '\n[10/10] Bun whitespace diff check\n'
+printf '\n[11/11] Bun whitespace diff check\n'
 (cd "${BUN_REPO}" && git diff --check)
 
 printf '\nBun/JSC linked adapter gate: pass\n'

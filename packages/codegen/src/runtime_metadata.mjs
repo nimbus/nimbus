@@ -10,9 +10,18 @@ const BUNDLED_PACKAGE_RESOLUTION = "bundled";
 const BUN_JSC_PACKAGE_RESOLUTION = "bun_self_contained";
 
 function runtimeMetadataForFunction({ runtimeEnvironment, projectConfig }) {
-  const runtimeCompatibilityTarget = runtimeEnvironment === "node"
-    ? projectConfig.node.runtimeTarget
-    : DEFAULT_COMPATIBILITY_TARGET;
+  if (runtimeEnvironment === "bun") {
+    return {
+      runtime_engine: BUN_JSC_RUNTIME_ENGINE,
+      runtime_bundle_content_kind: RUNTIME_BUNDLE_CONTENT_KIND,
+      runtime_javascript_evaluation_format: BUN_JSC_JAVASCRIPT_EVALUATION_FORMAT,
+      runtime_compatibility_target: BUN_JSC_COMPATIBILITY_TARGET,
+      runtime_package_resolution: BUN_JSC_PACKAGE_RESOLUTION,
+    };
+  }
+
+  const runtimeCompatibilityTarget =
+    runtimeEnvironment === "node" ? projectConfig.node.runtimeTarget : DEFAULT_COMPATIBILITY_TARGET;
   return {
     runtime_engine: RUNTIME_ENGINE,
     runtime_bundle_content_kind: RUNTIME_BUNDLE_CONTENT_KIND,

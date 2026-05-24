@@ -23,7 +23,9 @@ pub(crate) async fn mutation(
         ConvexMutationRequest::Raw { .. } => RunTrace::new("<raw-mutation>", "mutation"),
     };
     let result = match request {
-        ConvexMutationRequest::Named(request) if registry.runtime_bundle().is_some() => {
+        ConvexMutationRequest::Named(request)
+            if registry.has_runtime_bundle_for_function(&request.name) =>
+        {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
             let context = RuntimeInvocationContext::new(

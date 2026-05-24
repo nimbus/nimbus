@@ -5,12 +5,43 @@ impl ConvexRegistry {
         self.runtime_bundle.as_ref()
     }
 
+    pub(crate) fn has_runtime_bundle_for_function(&self, function_name: &str) -> bool {
+        if matches!(
+            self.selected_runtime_lane(function_name)
+                .limits()
+                .backend_kind,
+            nimbus_runtime::RuntimeBackendKind::BunJsc
+        ) {
+            return self.bun_jsc_runtime_bundle.is_some();
+        }
+        self.runtime_bundle.is_some()
+    }
+
     pub(in crate::adapters::convex) fn required_runtime_bundle(
         &self,
     ) -> Result<RuntimeBundle, Error> {
         self.runtime_bundle()
             .cloned()
             .ok_or_else(|| Error::Internal("convex runtime bundle not loaded".to_string()))
+    }
+
+    pub(crate) fn required_runtime_bundle_for_function(
+        &self,
+        function_name: &str,
+    ) -> Result<RuntimeBundle, Error> {
+        if matches!(
+            self.selected_runtime_lane(function_name)
+                .limits()
+                .backend_kind,
+            nimbus_runtime::RuntimeBackendKind::BunJsc
+        ) {
+            return self.bun_jsc_runtime_bundle.clone().ok_or_else(|| {
+                Error::Internal(
+                    "convex Bun/JSC program bundle not loaded for Bun runtime function".to_string(),
+                )
+            });
+        }
+        self.required_runtime_bundle()
     }
 
     pub(in crate::adapters::convex) fn runtime_bundle_provenance(
@@ -140,5 +171,71 @@ impl ConvexRegistry {
             ConvexFunctionKind::Query | ConvexFunctionKind::PaginatedQuery => Some(definition.kind),
             ConvexFunctionKind::Mutation | ConvexFunctionKind::Action => None,
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "bun-jsc-linked-adapter")))]
+mod tests {
+    use super::*;
+    use nimbus_runtime::RuntimeBundle;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn bun_jsc_function_fails_closed_when_adapter_is_not_linked() {
+        let tempdir = tempdir().expect("convex manifest tempdir should build");
+        let convex_dir = tempdir.path().join(".nimbus").join("convex");
+        fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+        fs::write(
+            convex_dir.join("functions.json"),
+            serde_json::to_vec_pretty(&json!({
+                "functions": [
+                    {
+                        "name": "messages:bunProof",
+                        "kind": "mutation",
+                        "visibility": "public",
+                        "runtime_environment": "bun",
+                        "runtime_engine": "bun_jsc",
+                        "runtime_bundle_content_kind": "javascript",
+                        "runtime_javascript_evaluation_format": "program_wrapper",
+                        "runtime_compatibility_target": "bun_jsc",
+                        "runtime_package_resolution": "bun_self_contained",
+                        "runtime_handler": "async () => ({ ok: true })",
+                        "plan": null
+                    }
+                ]
+            }))
+            .expect("convex manifest json should serialize"),
+        )
+        .expect("convex manifest should write");
+        fs::write(
+            convex_dir.join("http_routes.json"),
+            serde_json::to_vec_pretty(&json!({ "routes": [] }))
+                .expect("convex http route manifest should serialize"),
+        )
+        .expect("convex http route manifest should write");
+        let bun_bundle_path = convex_dir.join("bun_program_bundle.js");
+        fs::write(
+            &bun_bundle_path,
+            "globalThis.__nimbusInvoke = async function () { return { status: \"ok\", value: \"bun\" }; };",
+        )
+        .expect("Bun/JSC runtime program bundle should write");
+        let bun_hash = RuntimeBundle::compute_sha256_for_path(&bun_bundle_path)
+            .expect("Bun/JSC bundle hash should compute");
+        fs::write(bun_bundle_path.with_extension("sha256"), bun_hash)
+            .expect("Bun/JSC runtime program bundle hash should write");
+
+        let registry = ConvexRegistry::from_app_dir(tempdir.path())
+            .expect("convex registry should load Bun/JSC runtime metadata and program bundle");
+        let error = registry
+            .runtime_lane_for_function("messages:bunProof")
+            .expect_err("default build should fail closed before starting a Bun/JSC executor");
+        assert!(
+            error
+                .to_string()
+                .contains("Bun/JSC execution adapter is not linked"),
+            "unexpected Bun/JSC no-link error: {error}"
+        );
     }
 }

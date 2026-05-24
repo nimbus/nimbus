@@ -23,7 +23,9 @@ pub(crate) async fn action(
         ConvexActionRequest::Raw { .. } => RunTrace::new("<raw-action>", "action"),
     };
     let result = match request {
-        ConvexActionRequest::Named(request) if registry.runtime_bundle().is_some() => {
+        ConvexActionRequest::Named(request)
+            if registry.has_runtime_bundle_for_function(&request.name) =>
+        {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
             let context = RuntimeInvocationContext::new(

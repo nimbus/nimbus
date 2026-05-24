@@ -23,7 +23,9 @@ pub(crate) async fn query(
         ConvexQueryRequest::Raw { .. } => RunTrace::new("<raw-query>", "query"),
     };
     let result = match request {
-        ConvexQueryRequest::Named(request) if registry.runtime_bundle().is_some() => {
+        ConvexQueryRequest::Named(request)
+            if registry.has_runtime_bundle_for_function(&request.name) =>
+        {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
             let context = RuntimeInvocationContext::new(
@@ -106,7 +108,9 @@ pub(crate) async fn paginated_query(
         ConvexPaginatedQueryRequest::Raw { .. } => RunTrace::new("<raw-paginated-query>", "query"),
     };
     let result = match request {
-        ConvexPaginatedQueryRequest::Named(request) if registry.runtime_bundle().is_some() => {
+        ConvexPaginatedQueryRequest::Named(request)
+            if registry.has_runtime_bundle_for_function(&request.name) =>
+        {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
             let context = RuntimeInvocationContext::new(

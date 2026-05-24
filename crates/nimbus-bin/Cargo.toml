@@ -10,6 +10,12 @@ license-file.workspace = true
 [lints]
 workspace = true
 
+[features]
+bun-jsc-linked-adapter = [
+    "nimbus/bun-jsc-linked-adapter",
+    "nimbus-server/bun-jsc-linked-adapter",
+]
+
 [[bin]]
 name = "nimbus"
 path = "src/main.rs"

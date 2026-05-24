@@ -34,6 +34,19 @@ impl RuntimeBackendFactory for BunJscRuntimeBackendFactory {
     }
 }
 
+pub(crate) fn execution_adapter_state() -> RuntimeExecutionAdapterState {
+    #[cfg(feature = "bun-jsc-linked-adapter")]
+    {
+        let factory = &linked::BunJscLinkedExecutionAdapterFactory;
+        let adapter = factory.create();
+        adapter.state()
+    }
+    #[cfg(not(feature = "bun-jsc-linked-adapter"))]
+    {
+        RuntimeExecutionAdapterState::NotLinked
+    }
+}
+
 struct BunJscRuntimeBackend {
     pool: BunJscPool,
     execution_adapter: Box<dyn BunJscExecutionAdapter>,

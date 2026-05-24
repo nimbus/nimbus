@@ -11,6 +11,10 @@ workspace = true
 
 [features]
 aws-kms = ["nimbus-engine/aws-kms", "nimbus-storage/aws-kms"]
+bun-jsc-linked-adapter = [
+    "nimbus-runtime/bun-jsc-linked-adapter",
+    "nimbus-server/bun-jsc-linked-adapter",
+]
 
 [dependencies]
 nimbus-runtime = { path = "../nimbus-runtime" }

@@ -1,7 +1,7 @@
 use super::*;
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
-    RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeBackendTrustTier, RuntimeBundle, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
     RuntimeMemoryEnforcement, RuntimePoolKind,
 };
@@ -308,6 +308,84 @@ fn convex_registry_selects_bun_jsc_lane_from_manifest_metadata() {
     assert_eq!(
         bun_diagnostics.limits.memory_enforcement,
         RuntimeMemoryEnforcement::OuterQuotaRequired
+    );
+}
+
+#[test]
+fn convex_registry_loads_bun_jsc_program_bundle_from_artifact_metadata() {
+    let tempdir = tempdir().expect("convex manifest tempdir should build");
+    let convex_dir = tempdir.path().join(".nimbus").join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+    fs::write(
+        convex_dir.join("functions.json"),
+        serde_json::to_vec_pretty(&json!({
+            "functions": [
+                {
+                    "name": "messages:bunProof",
+                    "kind": "mutation",
+                    "visibility": "public",
+                    "runtime_environment": "bun",
+                    "runtime_engine": "bun_jsc",
+                    "runtime_bundle_content_kind": "javascript",
+                    "runtime_javascript_evaluation_format": "program_wrapper",
+                    "runtime_compatibility_target": "bun_jsc",
+                    "runtime_package_resolution": "bun_self_contained",
+                    "runtime_handler": "async () => ({ ok: true })",
+                    "plan": null
+                }
+            ]
+        }))
+        .expect("convex manifest json should serialize"),
+    )
+    .expect("convex manifest should write");
+    fs::write(
+        convex_dir.join("http_routes.json"),
+        serde_json::to_vec_pretty(&json!({ "routes": [] }))
+            .expect("convex http route manifest should serialize"),
+    )
+    .expect("convex http route manifest should write");
+    let default_bundle_path = convex_dir.join("bundle.mjs");
+    fs::write(
+        &default_bundle_path,
+        "globalThis.__nimbusInvoke = async function () { return { status: \"ok\", value: null }; }; export {};",
+    )
+    .expect("default runtime bundle should write");
+    let default_hash = RuntimeBundle::compute_sha256_for_path(&default_bundle_path)
+        .expect("default bundle hash should compute");
+    fs::write(default_bundle_path.with_extension("sha256"), default_hash)
+        .expect("default runtime bundle hash should write");
+    let bun_bundle_path = convex_dir.join("bun_program_bundle.js");
+    fs::write(
+        &bun_bundle_path,
+        "globalThis.__nimbusInvoke = async function () { return { status: \"ok\", value: \"bun\" }; };",
+    )
+    .expect("Bun/JSC runtime program bundle should write");
+    let bun_hash = RuntimeBundle::compute_sha256_for_path(&bun_bundle_path)
+        .expect("Bun/JSC bundle hash should compute");
+    fs::write(bun_bundle_path.with_extension("sha256"), bun_hash)
+        .expect("Bun/JSC runtime program bundle hash should write");
+
+    let registry = ConvexRegistry::from_app_dir(tempdir.path())
+        .expect("convex registry should load Bun/JSC runtime metadata and program bundle");
+
+    assert!(registry.has_runtime_bundle_for_function("messages:bunProof"));
+    let loaded_bundle = registry
+        .required_runtime_bundle_for_function("messages:bunProof")
+        .expect("Bun/JSC runtime function should use the Bun program bundle");
+    assert_eq!(loaded_bundle.entrypoint(), bun_bundle_path.as_path());
+}
+
+#[test]
+fn convex_registry_bun_jsc_lane_diagnostics_reflect_runtime_adapter_state() {
+    let registry = ConvexRegistry::empty();
+    let diagnostics = registry.runtime_lane_diagnostics();
+    let bun = diagnostics
+        .iter()
+        .find(|lane| lane.lane_name == "bun_jsc")
+        .expect("Bun/JSC lane diagnostics should be present");
+    assert_eq!(
+        bun.execution_adapter_state,
+        nimbus_runtime::bun_jsc_execution_adapter_state()
     );
 }
 
