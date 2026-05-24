@@ -40,6 +40,16 @@ describe("ConfigurationSection runtime diagnostics", () => {
     expect(within(defaultLane).getByText("v8_isolate_heap_limit"))
       .toBeInTheDocument();
 
+    for (const laneName of ["node20", "node22", "node24"]) {
+      const nodeLane = screen.getByTestId(`settings-runtime-lane-${laneName}`);
+      expect(within(nodeLane).getAllByText(laneName).length).toBeGreaterThan(0);
+      expect(within(nodeLane).getByText("v8")).toBeInTheDocument();
+      expect(within(nodeLane).getByText("linked")).toBeInTheDocument();
+      expect(within(nodeLane).getByText("lazy")).toBeInTheDocument();
+      expect(within(nodeLane).getByText("v8_isolate_heap_limit"))
+        .toBeInTheDocument();
+    }
+
     const bunLane = screen.getByTestId("settings-runtime-lane-bun_jsc");
     expect(within(bunLane).getAllByText("bun_jsc").length).toBeGreaterThan(0);
     expect(within(bunLane).getByText("not_linked")).toBeInTheDocument();
