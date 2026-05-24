@@ -18,6 +18,7 @@ async fn runtime_metrics_route_returns_null_fields_without_convex_support() {
     assert!(body["limits"].is_null());
     assert!(body["reset_capabilities"].is_null());
     assert!(body["metrics"].is_null());
+    assert_eq!(body["lanes"], json!([]));
 }
 
 #[tokio::test]
@@ -60,6 +61,10 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     );
     assert_eq!(body["limits"]["runtime_pool_kind"], json!("warm_pool"));
     assert_eq!(
+        body["limits"]["memory_enforcement"],
+        json!("v8_isolate_heap_limit")
+    );
+    assert_eq!(
         body["limits"]["module_state_semantics"],
         json!("warm_per_bundle")
     );
@@ -91,6 +96,10 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(
         body["limits"]["tenant_budget"]["max_heap_mb_per_runtime"],
         json!(128)
+    );
+    assert_eq!(
+        body["limits"]["tenant_budget"]["memory_enforcement"],
+        json!("v8_isolate_heap_limit")
     );
     assert!(body["limits"]["tenant_budget"]["max_active_runtime_slots"].is_u64());
     assert!(body["limits"]["tenant_budget"]["max_worker_thread_slots"].is_u64());
@@ -139,5 +148,39 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     assert_eq!(
         body["metrics"]["fallback_cross_runtime_dispatches"],
         json!(0)
+    );
+
+    let lanes = body["lanes"].as_array().expect("lanes should be an array");
+    assert_eq!(lanes.len(), 5);
+    let lane_names = lanes
+        .iter()
+        .map(|lane| lane["lane_name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lane_names,
+        ["default", "node20", "node22", "node24", "bun_jsc"]
+    );
+    assert!(
+        lanes
+            .iter()
+            .all(|lane| lane["executor_started"] == json!(false))
+    );
+    assert_eq!(lanes[0]["default_lane"], json!(true));
+    assert_eq!(lanes[0]["execution_adapter_state"], json!("linked"));
+    assert_eq!(lanes[0]["limits"]["runtime_backend"], json!("v8"));
+    assert_eq!(
+        lanes[0]["metrics"]["worker_dispatched_invocations"],
+        json!(0)
+    );
+    assert_eq!(lanes[4]["default_lane"], json!(false));
+    assert_eq!(lanes[4]["execution_adapter_state"], json!("not_linked"));
+    assert_eq!(lanes[4]["limits"]["runtime_backend"], json!("bun_jsc"));
+    assert_eq!(
+        lanes[4]["limits"]["memory_enforcement"],
+        json!("outer_quota_required")
+    );
+    assert_eq!(
+        lanes[4]["limits"]["tenant_budget"]["memory_enforcement"],
+        json!("outer_quota_required")
     );
 }

@@ -297,6 +297,14 @@ pub enum RuntimePoolKind {
     BunJscFreshDiscard,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMemoryEnforcement {
+    #[default]
+    V8IsolateHeapLimit,
+    OuterQuotaRequired,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeModuleStateSemantics {
@@ -328,6 +336,7 @@ pub struct RuntimeLimits {
     pub preset: RuntimePreset,
     pub grants: RuntimeGrants,
     pub runtime_pool_kind: RuntimePoolKind,
+    pub memory_enforcement: RuntimeMemoryEnforcement,
     pub routing_affinity: RuntimeRoutingAffinity,
     pub routing_affinity_max_entries: usize,
     pub max_warm_pool_entries_per_worker: usize,
@@ -351,6 +360,7 @@ pub struct RuntimeTenantBudget {
     pub max_queued_top_level_invocations: usize,
     pub max_worker_thread_slots: usize,
     pub max_heap_mb_per_runtime: usize,
+    pub memory_enforcement: RuntimeMemoryEnforcement,
     pub max_active_heap_mb: usize,
     pub execution_timeout: Duration,
     pub max_nested_runtime_invocations_per_top_level: usize,
@@ -428,6 +438,7 @@ impl RuntimeLimits {
             preset: RuntimePreset::Application,
             grants: RuntimeGrants::restricted(),
             runtime_pool_kind: RuntimePoolKind::BunJscFreshDiscard,
+            memory_enforcement: RuntimeMemoryEnforcement::OuterQuotaRequired,
             ..Self::default()
         }
     }
@@ -487,6 +498,7 @@ impl RuntimeLimits {
                 .worker_threads
                 .min(self.max_active_top_level_invocations_per_tenant),
             max_heap_mb_per_runtime: self.max_heap_mb,
+            memory_enforcement: self.memory_enforcement,
             max_active_heap_mb: self
                 .max_heap_mb
                 .saturating_mul(self.max_active_top_level_invocations_per_tenant),
@@ -589,6 +601,7 @@ impl RuntimeLimits {
             preset: self.preset,
             grants,
             runtime_pool_kind: self.runtime_pool_kind,
+            memory_enforcement: self.memory_enforcement,
             routing_affinity: self.routing_affinity,
             routing_affinity_max_entries: self.routing_affinity_max_entries.max(1),
             max_warm_pool_entries_per_worker: self.max_warm_pool_entries_per_worker.max(1),
@@ -604,6 +617,25 @@ impl RuntimeLimits {
                 .max_queued_top_level_invocations_per_tenant,
             max_nested_runtime_invocations: self.max_nested_runtime_invocations,
         }
+    }
+
+    pub fn apply_resource_overrides_from(&mut self, source: &Self) {
+        self.routing_affinity = source.routing_affinity;
+        self.routing_affinity_max_entries = source.routing_affinity_max_entries;
+        self.max_warm_pool_entries_per_worker = source.max_warm_pool_entries_per_worker;
+        self.max_warm_reuses = source.max_warm_reuses;
+        self.max_heap_mb = source.max_heap_mb;
+        self.initial_heap_mb = source.initial_heap_mb;
+        self.execution_timeout = source.execution_timeout;
+        self.max_concurrent_runtime_instances = source.max_concurrent_runtime_instances;
+        self.worker_threads = source.worker_threads;
+        self.max_active_top_level_invocations_per_tenant =
+            source.max_active_top_level_invocations_per_tenant;
+        self.max_in_flight_top_level_invocations_per_tenant =
+            source.max_in_flight_top_level_invocations_per_tenant;
+        self.max_queued_top_level_invocations_per_tenant =
+            source.max_queued_top_level_invocations_per_tenant;
+        self.max_nested_runtime_invocations = source.max_nested_runtime_invocations;
     }
 }
 
@@ -688,6 +720,15 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                     limits.javascript_evaluation_format
                 );
             }
+            if !matches!(
+                limits.memory_enforcement,
+                RuntimeMemoryEnforcement::V8IsolateHeapLimit
+            ) {
+                panic!(
+                    "V8 runtime backend requires V8 isolate heap-limit enforcement, got {:?}",
+                    limits.memory_enforcement
+                );
+            }
         }
         RuntimeBackendKind::BunJsc => {
             if !matches!(
@@ -724,6 +765,15 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                 panic!(
                     "Bun/JSC runtime backend requires backend-owned event-loop execution model, got {:?}",
                     limits.execution_model
+                );
+            }
+            if !matches!(
+                limits.memory_enforcement,
+                RuntimeMemoryEnforcement::OuterQuotaRequired
+            ) {
+                panic!(
+                    "Bun/JSC runtime backend requires outer quota memory enforcement, got {:?}",
+                    limits.memory_enforcement
                 );
             }
             match (
@@ -819,6 +869,7 @@ impl Default for RuntimeLimits {
             preset: RuntimePreset::Application,
             grants: RuntimeGrants::application_web_standard(),
             runtime_pool_kind: RuntimePoolKind::WarmPool,
+            memory_enforcement: RuntimeMemoryEnforcement::V8IsolateHeapLimit,
             routing_affinity: RuntimeRoutingAffinity::Tenant,
             routing_affinity_max_entries,
             max_warm_pool_entries_per_worker: 4,
@@ -1200,6 +1251,10 @@ mod tests {
             limits.runtime_pool_kind,
             RuntimePoolKind::BunJscFreshDiscard
         );
+        assert_eq!(
+            limits.memory_enforcement,
+            RuntimeMemoryEnforcement::OuterQuotaRequired
+        );
         assert!(limits.grants.run.is_empty());
         assert!(limits.grants.ffi.is_empty());
         assert!(limits.grants.net_connect.is_empty());
@@ -1223,6 +1278,14 @@ mod tests {
         assert_eq!(
             serde_json::to_value(RuntimePoolKind::BunJscFreshDiscard).unwrap(),
             serde_json::json!("bun_jsc_fresh_discard")
+        );
+        assert_eq!(
+            serde_json::to_value(RuntimeMemoryEnforcement::V8IsolateHeapLimit).unwrap(),
+            serde_json::json!("v8_isolate_heap_limit")
+        );
+        assert_eq!(
+            serde_json::to_value(RuntimeMemoryEnforcement::OuterQuotaRequired).unwrap(),
+            serde_json::json!("outer_quota_required")
         );
 
         let bun_trusted_retained = RuntimeLimits {
@@ -1279,6 +1342,10 @@ mod tests {
         assert_eq!(budget.max_queued_top_level_invocations, 7);
         assert_eq!(budget.max_worker_thread_slots, 3);
         assert_eq!(budget.max_heap_mb_per_runtime, 256);
+        assert_eq!(
+            budget.memory_enforcement,
+            RuntimeMemoryEnforcement::V8IsolateHeapLimit
+        );
         assert_eq!(budget.max_active_heap_mb, 768);
         assert_eq!(budget.execution_timeout, Duration::from_secs(9));
         assert_eq!(budget.max_nested_runtime_invocations_per_top_level, 11);
@@ -1374,6 +1441,18 @@ mod tests {
             "V8 must reject Bun/JSC compatibility target"
         );
 
+        let outer_quota_on_v8 = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::V8,
+                memory_enforcement: RuntimeMemoryEnforcement::OuterQuotaRequired,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            outer_quota_on_v8.is_err(),
+            "V8 must reject outer-quota-only memory enforcement"
+        );
+
         let bun_jsc_without_matching_profile = std::panic::catch_unwind(|| {
             RuntimePolicy::new(RuntimeLimits {
                 backend_kind: RuntimeBackendKind::BunJsc,
@@ -1447,6 +1526,17 @@ mod tests {
         assert!(
             bun_jsc_untrusted_wrong_target.is_err(),
             "Bun/JSC in-process-untrusted profile must not be labeled as a Node target"
+        );
+
+        let bun_jsc_untrusted_without_outer_quota_memory = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                memory_enforcement: RuntimeMemoryEnforcement::V8IsolateHeapLimit,
+                ..RuntimeLimits::application_bun_jsc()
+            })
+        });
+        assert!(
+            bun_jsc_untrusted_without_outer_quota_memory.is_err(),
+            "Bun/JSC in-process-untrusted profile must require outer-quota memory enforcement"
         );
 
         let bun_jsc_untrusted_missing_outer_quota_lifecycle = std::panic::catch_unwind(|| {

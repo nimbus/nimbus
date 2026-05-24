@@ -37,7 +37,8 @@ cleaner design is preferred.
 - runtime-backed live subscriptions with narrower dependency tracking than
   coarse table-level invalidation
 - runtime diagnostics at `GET /debug/runtime/metrics` when Convex support is
-  enabled
+  enabled, including per-lane runtime state for default V8, Node, and optional
+  Bun/JSC metadata lanes
 
 See the dedicated references for detail:
 

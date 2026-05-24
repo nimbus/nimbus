@@ -59,11 +59,12 @@ Current Bun/JSC product direction is an optional backend beside Deno/V8, with
 its own Bun pool and `BunJsc` compatibility target. BEP8 admits exactly one
 untrusted in-process profile: `bun_jsc_in_process_untrusted` with
 `bun_jsc_fresh_discard_pool_outer_quota_required` and
-`bun_jsc_fresh_discard`. All retained/proof profiles remain non-product
-routes. The current `backends::bun_jsc` scaffold owns Bun/JSC pool policy and
-lifecycle types without sharing Deno/V8 VM internals, but execution still
-returns a contract error unless the build links a Bun embedder execution
-adapter.
+`bun_jsc_fresh_discard`, with `outer_quota_required` memory enforcement
+instead of V8 isolate heap-limit enforcement. All retained/proof profiles
+remain non-product routes. The current `backends::bun_jsc` scaffold owns
+Bun/JSC pool policy and lifecycle types without sharing Deno/V8 VM internals,
+but execution still returns a contract error unless the build links a Bun
+embedder execution adapter.
 
 ## Layering Rules
 
@@ -213,6 +214,13 @@ for the proven fresh/discard profile and fails closed at execution time unless
 a Bun embedder adapter is linked. Codegen publishes top-level `bunJsc` lane
 metadata for explicit artifacts, but function-level `"use bun"` selection
 stays withheld until that adapter exists.
+
+Convex runtime lanes are policy-first and executor-lazy: default V8, Node20,
+Node22, Node24, and Bun/JSC policies can be inspected through runtime
+diagnostics without starting worker threads. The diagnostics surface reports
+per-lane executor-started state, adapter link state, reset capabilities, metrics,
+and memory-enforcement semantics so the optional Bun/JSC lane cannot be hidden
+inside the default V8 numbers.
 
 ## RuntimeEngine Responsibilities
 

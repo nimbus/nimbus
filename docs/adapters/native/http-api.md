@@ -79,7 +79,7 @@ app generation from `--app-dir` or deploy activation.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/debug/runtime/metrics` | runtime limits and live runtime metrics |
+| `GET` | `/debug/runtime/metrics` | default runtime limits, per-lane runtime diagnostics, and live runtime metrics |
 | `POST` | `/convex/{tenant_id}/query` | Convex-style query dispatch |
 | `POST` | `/convex/{tenant_id}/query/paginated` | Convex-style paginated query dispatch |
 | `POST` | `/convex/{tenant_id}/mutation` | Convex-style mutation dispatch |

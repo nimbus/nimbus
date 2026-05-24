@@ -29,64 +29,88 @@ pub(crate) async fn runtime_diagnostics(
             limits: None,
             reset_capabilities: None,
             metrics: None,
+            lanes: Vec::new(),
         }));
     };
     let limits = registry.runtime_limits();
-    let tenant_budget = limits.tenant_budget();
     Ok(Json(RuntimeDiagnosticsResponse {
-        limits: Some(RuntimeLimitsResponse {
-            runtime_backend: limits.backend_kind,
-            runtime_backend_trust_tier: limits.backend_trust_tier,
-            runtime_backend_lockdown_profile: limits.backend_lockdown_profile,
-            runtime_backend_lifecycle_policy: limits.backend_lifecycle_policy,
-            bundle_content_kind: limits.bundle_content_kind,
-            javascript_evaluation_format: limits.javascript_evaluation_format,
-            compatibility_target: limits.compatibility_target,
-            execution_model: limits.execution_model,
-            runtime_mode: limits.mode,
-            runtime_language: limits.language,
-            runtime_preset: limits.preset,
-            runtime_grants: limits.grants.clone(),
-            runtime_pool_kind: limits.runtime_pool_kind,
-            module_state_semantics: limits.module_state_semantics(),
-            routing_affinity: limits.routing_affinity,
-            routing_affinity_max_entries: limits.routing_affinity_max_entries,
-            max_warm_pool_entries_per_worker: limits.max_warm_pool_entries_per_worker,
-            max_warm_reuses: limits.max_warm_reuses,
-            max_heap_mb: limits.max_heap_mb,
-            initial_heap_mb: limits.initial_heap_mb,
-            execution_timeout_ms: limits
-                .execution_timeout
-                .as_millis()
-                .min(u128::from(u64::MAX)) as u64,
-            max_concurrent_runtime_instances: limits.max_concurrent_runtime_instances,
-            worker_threads: limits.worker_threads,
-            max_active_top_level_invocations_per_tenant: limits
-                .max_active_top_level_invocations_per_tenant,
-            max_in_flight_top_level_invocations_per_tenant: limits
-                .max_in_flight_top_level_invocations_per_tenant,
-            max_queued_top_level_invocations_per_tenant: limits
-                .max_queued_top_level_invocations_per_tenant,
-            max_nested_runtime_invocations: limits.max_nested_runtime_invocations,
-            tenant_budget: RuntimeTenantBudgetResponse {
-                max_active_runtime_slots: tenant_budget.max_active_runtime_slots,
-                max_in_flight_top_level_invocations: tenant_budget
-                    .max_in_flight_top_level_invocations,
-                max_queued_top_level_invocations: tenant_budget.max_queued_top_level_invocations,
-                max_worker_thread_slots: tenant_budget.max_worker_thread_slots,
-                max_heap_mb_per_runtime: tenant_budget.max_heap_mb_per_runtime,
-                max_active_heap_mb: tenant_budget.max_active_heap_mb,
-                execution_timeout_ms: tenant_budget
-                    .execution_timeout
-                    .as_millis()
-                    .min(u128::from(u64::MAX)) as u64,
-                max_nested_runtime_invocations_per_top_level: tenant_budget
-                    .max_nested_runtime_invocations_per_top_level,
-            },
-        }),
+        limits: Some(runtime_limits_response(&limits)),
         reset_capabilities: Some(limits.reset_capabilities()),
         metrics: Some(registry.runtime_metrics_snapshot()),
+        lanes: registry
+            .runtime_lane_diagnostics()
+            .into_iter()
+            .map(|lane| RuntimeLaneDiagnosticsResponse {
+                lane_name: lane.lane_name.to_string(),
+                default_lane: lane.default_lane,
+                executor_started: lane.executor_started,
+                execution_adapter_state: match lane.execution_adapter_state {
+                    crate::adapters::convex::ConvexRuntimeExecutionAdapterState::Linked => {
+                        RuntimeExecutionAdapterState::Linked
+                    }
+                    crate::adapters::convex::ConvexRuntimeExecutionAdapterState::NotLinked => {
+                        RuntimeExecutionAdapterState::NotLinked
+                    }
+                },
+                limits: runtime_limits_response(&lane.limits),
+                reset_capabilities: lane.reset_capabilities,
+                metrics: lane.metrics,
+            })
+            .collect(),
     }))
+}
+
+fn runtime_limits_response(limits: &nimbus_runtime::RuntimeLimits) -> RuntimeLimitsResponse {
+    let tenant_budget = limits.tenant_budget();
+    RuntimeLimitsResponse {
+        runtime_backend: limits.backend_kind,
+        runtime_backend_trust_tier: limits.backend_trust_tier,
+        runtime_backend_lockdown_profile: limits.backend_lockdown_profile,
+        runtime_backend_lifecycle_policy: limits.backend_lifecycle_policy,
+        bundle_content_kind: limits.bundle_content_kind,
+        javascript_evaluation_format: limits.javascript_evaluation_format,
+        compatibility_target: limits.compatibility_target,
+        execution_model: limits.execution_model,
+        runtime_mode: limits.mode,
+        runtime_language: limits.language,
+        runtime_preset: limits.preset,
+        runtime_grants: limits.grants.clone(),
+        runtime_pool_kind: limits.runtime_pool_kind,
+        memory_enforcement: limits.memory_enforcement,
+        module_state_semantics: limits.module_state_semantics(),
+        routing_affinity: limits.routing_affinity,
+        routing_affinity_max_entries: limits.routing_affinity_max_entries,
+        max_warm_pool_entries_per_worker: limits.max_warm_pool_entries_per_worker,
+        max_warm_reuses: limits.max_warm_reuses,
+        max_heap_mb: limits.max_heap_mb,
+        initial_heap_mb: limits.initial_heap_mb,
+        execution_timeout_ms: duration_millis_u64(limits.execution_timeout),
+        max_concurrent_runtime_instances: limits.max_concurrent_runtime_instances,
+        worker_threads: limits.worker_threads,
+        max_active_top_level_invocations_per_tenant: limits
+            .max_active_top_level_invocations_per_tenant,
+        max_in_flight_top_level_invocations_per_tenant: limits
+            .max_in_flight_top_level_invocations_per_tenant,
+        max_queued_top_level_invocations_per_tenant: limits
+            .max_queued_top_level_invocations_per_tenant,
+        max_nested_runtime_invocations: limits.max_nested_runtime_invocations,
+        tenant_budget: RuntimeTenantBudgetResponse {
+            max_active_runtime_slots: tenant_budget.max_active_runtime_slots,
+            max_in_flight_top_level_invocations: tenant_budget.max_in_flight_top_level_invocations,
+            max_queued_top_level_invocations: tenant_budget.max_queued_top_level_invocations,
+            max_worker_thread_slots: tenant_budget.max_worker_thread_slots,
+            max_heap_mb_per_runtime: tenant_budget.max_heap_mb_per_runtime,
+            memory_enforcement: tenant_budget.memory_enforcement,
+            max_active_heap_mb: tenant_budget.max_active_heap_mb,
+            execution_timeout_ms: duration_millis_u64(tenant_budget.execution_timeout),
+            max_nested_runtime_invocations_per_top_level: tenant_budget
+                .max_nested_runtime_invocations_per_top_level,
+        },
+    }
+}
+
+fn duration_millis_u64(duration: std::time::Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 /// Returns per-tenant engine durability, worker, and serving diagnostics.

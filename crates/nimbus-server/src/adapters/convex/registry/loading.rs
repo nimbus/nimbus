@@ -159,16 +159,14 @@ impl ConvexRegistry {
             .map(Arc::new)
             .unwrap_or_else(|| Arc::new(ConvexAuthVerifier::empty()));
 
-        let runtime_policy = Arc::new(RuntimePolicy::default());
-        let runtime_executor = Arc::new(RuntimeExecutor::new(runtime_policy.clone()));
-        let (node20_runtime_policy, node20_runtime_executor) =
+        let runtime_lane = convex_default_runtime_lane(RuntimeLimits::default());
+        let node20_runtime_lane =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node20);
-        let (node22_runtime_policy, node22_runtime_executor) =
+        let node22_runtime_lane =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node22);
-        let (node24_runtime_policy, node24_runtime_executor) =
+        let node24_runtime_lane =
             convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node24);
-        let (bun_jsc_runtime_policy, bun_jsc_runtime_executor) =
-            convex_bun_jsc_runtime_lane(RuntimeLimits::default());
+        let bun_jsc_runtime_lane = convex_bun_jsc_runtime_lane(RuntimeLimits::default());
         Ok(Self {
             functions,
             http_routes,
@@ -176,39 +174,24 @@ impl ConvexRegistry {
             runtime_bundle,
             artifact_guard: None,
             auth_verifier,
-            runtime_policy,
-            runtime_executor,
-            node20_runtime_policy,
-            node20_runtime_executor,
-            node22_runtime_policy,
-            node22_runtime_executor,
-            node24_runtime_policy,
-            node24_runtime_executor,
-            bun_jsc_runtime_policy,
-            bun_jsc_runtime_executor,
+            runtime_lane,
+            node20_runtime_lane,
+            node22_runtime_lane,
+            node24_runtime_lane,
+            bun_jsc_runtime_lane,
             runtime_bundle_provenance: None,
         })
     }
 
     pub fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
-        let policy = Arc::new(RuntimePolicy::new(limits.clone()));
-        self.runtime_policy = policy.clone();
-        self.runtime_executor = Arc::new(RuntimeExecutor::new(policy));
-        let (node20_policy, node20_executor) =
+        self.runtime_lane = convex_default_runtime_lane(limits.clone());
+        self.node20_runtime_lane =
             convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node20);
-        self.node20_runtime_policy = node20_policy;
-        self.node20_runtime_executor = node20_executor;
-        let (node22_policy, node22_executor) =
+        self.node22_runtime_lane =
             convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node22);
-        self.node22_runtime_policy = node22_policy;
-        self.node22_runtime_executor = node22_executor;
-        let (node24_policy, node24_executor) =
+        self.node24_runtime_lane =
             convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node24);
-        self.node24_runtime_policy = node24_policy;
-        self.node24_runtime_executor = node24_executor;
-        let (bun_jsc_policy, bun_jsc_executor) = convex_bun_jsc_runtime_lane(limits);
-        self.bun_jsc_runtime_policy = bun_jsc_policy;
-        self.bun_jsc_runtime_executor = bun_jsc_executor;
+        self.bun_jsc_runtime_lane = convex_bun_jsc_runtime_lane(limits);
         self
     }
 

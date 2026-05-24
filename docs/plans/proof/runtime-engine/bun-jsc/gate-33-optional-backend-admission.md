@@ -41,12 +41,18 @@ profile, but this Nimbus build does not link a Bun embedder execution adapter ye
   Node/V8 instead of overloading a Node target.
 - `RuntimeLimits::application_bun_jsc()` names the only product-admissible
   profile: untrusted in-process, fresh/discard, outer quota required, no
-  host-sensitive grants.
+  host-sensitive grants. `RuntimeMemoryEnforcement` now makes that explicit:
+  V8 lanes report `v8_isolate_heap_limit`, while Bun/JSC reports
+  `outer_quota_required` until a hard per-VM heap boundary exists.
 - Runtime policy validation accepts that exact profile and still rejects V8
   with Bun targets, Bun/JSC with V8/Node targets, proof-only profiles,
-  retained trusted profiles, and profile mismatches.
+  retained trusted profiles, memory-enforcement mismatches, and profile
+  mismatches.
 - The Convex registry owns a separate Bun/JSC runtime lane beside default V8
-  and Node20/22/24 V8 lanes.
+  and Node20/22/24 V8 lanes. Runtime policies are constructed eagerly for
+  diagnostics, but executors are lazy; the Bun/JSC lane remains
+  `not_linked`, so selecting it for execution fails closed instead of
+  starting V8 worker threads with Bun-shaped policy.
 - Convex manifest validation accepts only `runtime_environment: "bun"` with
   `runtime_engine: "bun_jsc"`, target `bun_jsc`, program-wrapper evaluation,
   and `bun_self_contained` package resolution.
@@ -58,6 +64,10 @@ profile, but this Nimbus build does not link a Bun embedder execution adapter ye
 - Architecture docs now describe the exact BEP8 state: admitted profile,
   fail-closed execution adapter boundary, and retained/proof profiles still
   blocked.
+- `/debug/runtime/metrics` now exposes per-lane diagnostics for default V8,
+  Node20/22/24, and Bun/JSC, including executor-started state, adapter link
+  state, metrics, reset capabilities, memory-enforcement semantics, and the
+  default-lane compatibility fields.
 
 ## Rejected Shapes
 
@@ -68,7 +78,9 @@ The BEP8 tests keep these combinations fail-closed before invocation:
 - Bun/JSC with `node_external_packages`
 - Bun/JSC proof-only or retained trusted pool profiles as product routes
 - Bun/JSC with V8/Deno execution model or pool metadata
+- Bun/JSC with V8 isolate heap-limit memory semantics
 - V8 with Bun/JSC program-wrapper metadata
+- V8 with Bun/JSC outer-quota-only memory semantics
 
 ## Local Verification
 
