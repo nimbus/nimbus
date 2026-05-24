@@ -76,6 +76,11 @@ impl ConvexRegistry {
             ),
             Some(ConvexRuntimeSelection {
                 engine: nimbus_runtime::RuntimeBackendKind::V8,
+                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                ..
+            }) => unreachable!("V8/BunJsc target manifests are rejected at registry load"),
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::V8,
                 compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
                 ..
             })
@@ -83,7 +88,10 @@ impl ConvexRegistry {
             Some(ConvexRuntimeSelection {
                 engine: nimbus_runtime::RuntimeBackendKind::BunJsc,
                 ..
-            }) => unreachable!("Bun/JSC manifests are rejected at registry load"),
+            }) => (
+                self.bun_jsc_runtime_executor.clone(),
+                self.bun_jsc_runtime_policy.clone(),
+            ),
         }
     }
 

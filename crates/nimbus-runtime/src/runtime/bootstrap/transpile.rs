@@ -119,7 +119,7 @@ pub(crate) fn extension_transpiler_for_target(
     target: RuntimeCompatibilityTarget,
 ) -> Option<Rc<RuntimeExtensionTranspiler>> {
     match target {
-        RuntimeCompatibilityTarget::WebStandardIsolate => None,
+        RuntimeCompatibilityTarget::WebStandardIsolate | RuntimeCompatibilityTarget::BunJsc => None,
         RuntimeCompatibilityTarget::Node20
         | RuntimeCompatibilityTarget::Node22
         | RuntimeCompatibilityTarget::Node24 => Some(Rc::new(maybe_transpile_source)),

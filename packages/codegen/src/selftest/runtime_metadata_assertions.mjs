@@ -52,6 +52,13 @@ function assertRuntimeLanes(manifest, selectedNode) {
       runtime_compatibility_target: "node24",
       runtime_package_resolution: "node_external_packages",
     },
+    bunJsc: {
+      runtime_engine: "bun_jsc",
+      runtime_bundle_content_kind: "javascript",
+      runtime_javascript_evaluation_format: "program_wrapper",
+      runtime_compatibility_target: "bun_jsc",
+      runtime_package_resolution: "bun_self_contained",
+    },
     selectedNode,
   });
 }

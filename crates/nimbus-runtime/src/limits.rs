@@ -71,6 +71,7 @@ pub enum RuntimeJavaScriptEvaluationFormat {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeCompatibilityTarget {
     WebStandardIsolate,
+    BunJsc,
     Node20,
     Node22,
     Node24,
@@ -86,7 +87,7 @@ impl RuntimeCompatibilityTarget {
             Self::Node20 => Some(20),
             Self::Node22 => Some(22),
             Self::Node24 => Some(24),
-            Self::WebStandardIsolate => None,
+            Self::WebStandardIsolate | Self::BunJsc => None,
         }
     }
 
@@ -95,7 +96,7 @@ impl RuntimeCompatibilityTarget {
             Self::Node20 => Some("v20.0.0-nimbus"),
             Self::Node22 => Some("v22.0.0-nimbus"),
             Self::Node24 => Some("v24.0.0-nimbus"),
-            Self::WebStandardIsolate => None,
+            Self::WebStandardIsolate | Self::BunJsc => None,
         }
     }
 }
@@ -105,6 +106,11 @@ impl RuntimeCompatibilityTarget {
 pub enum RuntimeExecutionModel {
     RunToCompletion,
     CooperativeLocker,
+    /// Backend-owned event-loop and API-lock lifecycle. This is not the V8
+    /// cooperative locker model; it is for engines such as Bun/JSC where the
+    /// backend pool owns guest-entry acknowledgement, event-loop progress,
+    /// cancellation, and teardown.
+    BackendOwnedEventLoop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -406,6 +412,26 @@ impl RuntimeLimits {
         }
     }
 
+    pub fn application_bun_jsc() -> Self {
+        Self {
+            backend_kind: RuntimeBackendKind::BunJsc,
+            backend_trust_tier: RuntimeBackendTrustTier::InProcessUntrusted,
+            backend_lockdown_profile: RuntimeBackendLockdownProfile::BunJscInProcessUntrusted,
+            backend_lifecycle_policy:
+                RuntimeBackendLifecyclePolicy::BunJscFreshDiscardPoolOuterQuotaRequired,
+            bundle_content_kind: RuntimeBundleContentKind::JavaScript,
+            javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
+            compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+            execution_model: RuntimeExecutionModel::BackendOwnedEventLoop,
+            mode: RuntimeMode::Standard,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Application,
+            grants: RuntimeGrants::restricted(),
+            runtime_pool_kind: RuntimePoolKind::BunJscFreshDiscard,
+            ..Self::default()
+        }
+    }
+
     pub fn tooling_node22() -> Self {
         Self {
             compatibility_target: RuntimeCompatibilityTarget::Node22,
@@ -620,6 +646,24 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                     limits.runtime_pool_kind
                 );
             }
+            if matches!(
+                limits.compatibility_target,
+                RuntimeCompatibilityTarget::BunJsc
+            ) {
+                panic!(
+                    "V8 runtime backend cannot use Bun/JSC compatibility target {:?}",
+                    limits.compatibility_target
+                );
+            }
+            if !matches!(
+                limits.execution_model,
+                RuntimeExecutionModel::RunToCompletion | RuntimeExecutionModel::CooperativeLocker
+            ) {
+                panic!(
+                    "V8 runtime backend requires a V8/Deno execution model, got {:?}",
+                    limits.execution_model
+                );
+            }
             if !matches!(limits.language, RuntimeLanguage::JavaScript) {
                 panic!(
                     "V8 runtime backend requires JavaScript runtime language, got {:?}",
@@ -664,6 +708,24 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                     limits.javascript_evaluation_format
                 );
             }
+            if !matches!(
+                limits.compatibility_target,
+                RuntimeCompatibilityTarget::BunJsc
+            ) {
+                panic!(
+                    "Bun/JSC runtime backend requires Bun/JSC compatibility target, got {:?}",
+                    limits.compatibility_target
+                );
+            }
+            if !matches!(
+                limits.execution_model,
+                RuntimeExecutionModel::BackendOwnedEventLoop
+            ) {
+                panic!(
+                    "Bun/JSC runtime backend requires backend-owned event-loop execution model, got {:?}",
+                    limits.execution_model
+                );
+            }
             match (
                 limits.backend_trust_tier,
                 limits.backend_lockdown_profile,
@@ -693,9 +755,7 @@ fn validate_backend_policy_axes(limits: &RuntimeLimits) {
                     RuntimeBackendLockdownProfile::BunJscInProcessUntrusted,
                     RuntimeBackendLifecyclePolicy::BunJscFreshDiscardPoolOuterQuotaRequired,
                     RuntimePoolKind::BunJscFreshDiscard,
-                ) => {
-                    panic!("Bun/JSC in-process-untrusted lockdown profile is not implemented")
-                }
+                ) => {}
                 (trust_tier, lockdown_profile, lifecycle_policy, runtime_pool_kind) => {
                     panic!(
                         "Bun/JSC runtime backend requires matching lockdown, lifecycle, and pool profiles for {:?}, got {:?}, {:?}, and {:?}",
@@ -1108,6 +1168,45 @@ mod tests {
     }
 
     #[test]
+    fn runtime_policy_accepts_bun_jsc_only_with_proven_lockdown_profile() {
+        let policy = RuntimePolicy::new(RuntimeLimits::application_bun_jsc());
+        let limits = policy.limits();
+        assert_eq!(limits.backend_kind, RuntimeBackendKind::BunJsc);
+        assert_eq!(
+            limits.backend_trust_tier,
+            RuntimeBackendTrustTier::InProcessUntrusted
+        );
+        assert_eq!(
+            limits.backend_lockdown_profile,
+            RuntimeBackendLockdownProfile::BunJscInProcessUntrusted
+        );
+        assert_eq!(
+            limits.backend_lifecycle_policy,
+            RuntimeBackendLifecyclePolicy::BunJscFreshDiscardPoolOuterQuotaRequired
+        );
+        assert_eq!(
+            limits.javascript_evaluation_format,
+            RuntimeJavaScriptEvaluationFormat::ProgramWrapper
+        );
+        assert_eq!(
+            limits.compatibility_target,
+            RuntimeCompatibilityTarget::BunJsc
+        );
+        assert_eq!(
+            limits.execution_model,
+            RuntimeExecutionModel::BackendOwnedEventLoop
+        );
+        assert_eq!(
+            limits.runtime_pool_kind,
+            RuntimePoolKind::BunJscFreshDiscard
+        );
+        assert!(limits.grants.run.is_empty());
+        assert!(limits.grants.ffi.is_empty());
+        assert!(limits.grants.net_connect.is_empty());
+        assert!(limits.grants.net_listen.is_empty());
+    }
+
+    #[test]
     fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
         assert_eq!(
             serde_json::to_value(RuntimePoolKind::StartupSnapshotCache).unwrap(),
@@ -1263,13 +1362,25 @@ mod tests {
             );
         }
 
+        let bun_target_on_v8 = std::panic::catch_unwind(|| {
+            RuntimePolicy::new(RuntimeLimits {
+                backend_kind: RuntimeBackendKind::V8,
+                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                ..RuntimeLimits::default()
+            })
+        });
+        assert!(
+            bun_target_on_v8.is_err(),
+            "V8 must reject Bun/JSC compatibility target"
+        );
+
         let bun_jsc_without_matching_profile = std::panic::catch_unwind(|| {
             RuntimePolicy::new(RuntimeLimits {
                 backend_kind: RuntimeBackendKind::BunJsc,
                 bundle_content_kind: RuntimeBundleContentKind::JavaScript,
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
-                compatibility_target: RuntimeCompatibilityTarget::Node22,
-                execution_model: RuntimeExecutionModel::RunToCompletion,
+                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                execution_model: RuntimeExecutionModel::BackendOwnedEventLoop,
                 runtime_pool_kind: RuntimePoolKind::BunJscTrustedRetained,
                 ..RuntimeLimits::default()
             })
@@ -1287,8 +1398,8 @@ mod tests {
                 backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
                 bundle_content_kind: RuntimeBundleContentKind::JavaScript,
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
-                compatibility_target: RuntimeCompatibilityTarget::Node22,
-                execution_model: RuntimeExecutionModel::RunToCompletion,
+                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                execution_model: RuntimeExecutionModel::BackendOwnedEventLoop,
                 runtime_pool_kind: RuntimePoolKind::BunJscTrustedRetained,
                 ..RuntimeLimits::default()
             })
@@ -1307,8 +1418,8 @@ mod tests {
                 backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
                 bundle_content_kind: RuntimeBundleContentKind::JavaScript,
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
-                compatibility_target: RuntimeCompatibilityTarget::Node22,
-                execution_model: RuntimeExecutionModel::RunToCompletion,
+                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                execution_model: RuntimeExecutionModel::BackendOwnedEventLoop,
                 runtime_pool_kind: RuntimePoolKind::BunJscTrustedRetained,
                 ..RuntimeLimits::default()
             })
@@ -1318,7 +1429,7 @@ mod tests {
             "Bun/JSC trusted-only generated-wrapper profile must not create a product route"
         );
 
-        let bun_jsc_untrusted = std::panic::catch_unwind(|| {
+        let bun_jsc_untrusted_wrong_target = std::panic::catch_unwind(|| {
             RuntimePolicy::new(RuntimeLimits {
                 backend_kind: RuntimeBackendKind::BunJsc,
                 backend_trust_tier: RuntimeBackendTrustTier::InProcessUntrusted,
@@ -1328,14 +1439,14 @@ mod tests {
                 bundle_content_kind: RuntimeBundleContentKind::JavaScript,
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
                 compatibility_target: RuntimeCompatibilityTarget::Node22,
-                execution_model: RuntimeExecutionModel::RunToCompletion,
+                execution_model: RuntimeExecutionModel::BackendOwnedEventLoop,
                 runtime_pool_kind: RuntimePoolKind::BunJscFreshDiscard,
                 ..RuntimeLimits::default()
             })
         });
         assert!(
-            bun_jsc_untrusted.is_err(),
-            "Bun/JSC in-process-untrusted profile must remain blocked until lockdown exists"
+            bun_jsc_untrusted_wrong_target.is_err(),
+            "Bun/JSC in-process-untrusted profile must not be labeled as a Node target"
         );
 
         let bun_jsc_untrusted_missing_outer_quota_lifecycle = std::panic::catch_unwind(|| {
@@ -1346,8 +1457,8 @@ mod tests {
                 backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
                 bundle_content_kind: RuntimeBundleContentKind::JavaScript,
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
-                compatibility_target: RuntimeCompatibilityTarget::Node22,
-                execution_model: RuntimeExecutionModel::RunToCompletion,
+                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                execution_model: RuntimeExecutionModel::BackendOwnedEventLoop,
                 runtime_pool_kind: RuntimePoolKind::BunJscFreshDiscard,
                 ..RuntimeLimits::default()
             })
@@ -1366,8 +1477,8 @@ mod tests {
                 backend_lifecycle_policy: RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
                 bundle_content_kind: RuntimeBundleContentKind::JavaScript,
                 javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
-                compatibility_target: RuntimeCompatibilityTarget::Node22,
-                execution_model: RuntimeExecutionModel::RunToCompletion,
+                compatibility_target: RuntimeCompatibilityTarget::BunJsc,
+                execution_model: RuntimeExecutionModel::BackendOwnedEventLoop,
                 runtime_pool_kind: RuntimePoolKind::StartupSnapshotCache,
                 ..RuntimeLimits::default()
             })

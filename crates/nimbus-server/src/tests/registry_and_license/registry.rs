@@ -1,7 +1,8 @@
 use super::*;
 use nimbus_runtime::{
-    RuntimeBackendKind, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
+    RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
+    RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
+    RuntimeJavaScriptEvaluationFormat, RuntimeLimits, RuntimePoolKind,
 };
 
 #[test]
@@ -224,7 +225,7 @@ fn convex_registry_rejects_v8_program_wrapper_before_invocation() {
 }
 
 #[test]
-fn convex_registry_rejects_bun_jsc_before_invocation() {
+fn convex_registry_selects_bun_jsc_lane_from_manifest_metadata() {
     let tempdir = tempdir().expect("convex manifest tempdir should build");
     let convex_dir = tempdir.path().join(".nimbus").join("convex");
     fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
@@ -236,11 +237,79 @@ fn convex_registry_rejects_bun_jsc_before_invocation() {
                     "name": "messages:bunProof",
                     "kind": "action",
                     "visibility": "public",
-                    "runtime_environment": "node",
+                    "runtime_environment": "bun",
                     "runtime_engine": "bun_jsc",
                     "runtime_bundle_content_kind": "javascript",
                     "runtime_javascript_evaluation_format": "program_wrapper",
-                    "runtime_compatibility_target": "node22",
+                    "runtime_compatibility_target": "bun_jsc",
+                    "runtime_package_resolution": "bun_self_contained",
+                    "runtime_handler": "() => null",
+                    "plan": null
+                }
+            ]
+        }))
+        .expect("convex manifest json should serialize"),
+    )
+    .expect("convex manifest should write");
+    fs::write(
+        convex_dir.join("http_routes.json"),
+        serde_json::to_vec_pretty(&json!({ "routes": [] }))
+            .expect("convex http route manifest should serialize"),
+    )
+    .expect("convex http route manifest should write");
+
+    let registry = ConvexRegistry::from_app_dir(tempdir.path())
+        .expect("convex registry should load Bun/JSC runtime metadata");
+    let bun_limits = registry.runtime_limits_for_function("messages:bunProof");
+    assert_eq!(bun_limits.backend_kind, RuntimeBackendKind::BunJsc);
+    assert_eq!(
+        bun_limits.backend_trust_tier,
+        RuntimeBackendTrustTier::InProcessUntrusted
+    );
+    assert_eq!(
+        bun_limits.backend_lockdown_profile,
+        RuntimeBackendLockdownProfile::BunJscInProcessUntrusted
+    );
+    assert_eq!(
+        bun_limits.backend_lifecycle_policy,
+        RuntimeBackendLifecyclePolicy::BunJscFreshDiscardPoolOuterQuotaRequired
+    );
+    assert_eq!(
+        bun_limits.runtime_pool_kind,
+        RuntimePoolKind::BunJscFreshDiscard
+    );
+    assert_eq!(
+        bun_limits.bundle_content_kind,
+        RuntimeBundleContentKind::JavaScript
+    );
+    assert_eq!(
+        bun_limits.javascript_evaluation_format,
+        RuntimeJavaScriptEvaluationFormat::ProgramWrapper
+    );
+    assert_eq!(
+        bun_limits.compatibility_target,
+        RuntimeCompatibilityTarget::BunJsc
+    );
+}
+
+#[test]
+fn convex_registry_rejects_bun_jsc_node_package_resolution_before_invocation() {
+    let tempdir = tempdir().expect("convex manifest tempdir should build");
+    let convex_dir = tempdir.path().join(".nimbus").join("convex");
+    fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+    fs::write(
+        convex_dir.join("functions.json"),
+        serde_json::to_vec_pretty(&json!({
+            "functions": [
+                {
+                    "name": "messages:bunProof",
+                    "kind": "action",
+                    "visibility": "public",
+                    "runtime_environment": "bun",
+                    "runtime_engine": "bun_jsc",
+                    "runtime_bundle_content_kind": "javascript",
+                    "runtime_javascript_evaluation_format": "program_wrapper",
+                    "runtime_compatibility_target": "bun_jsc",
                     "runtime_package_resolution": "node_external_packages",
                     "runtime_handler": "() => null",
                     "plan": null
@@ -258,11 +327,9 @@ fn convex_registry_rejects_bun_jsc_before_invocation() {
     .expect("convex http route manifest should write");
 
     let error = ConvexRegistry::from_app_dir(tempdir.path())
-        .expect_err("Bun/JSC runtime metadata should fail manifest loading");
+        .expect_err("Bun/JSC node package metadata should fail manifest loading");
     assert!(
-        error
-            .to_string()
-            .contains("Bun/JSC is proof-only and is not selectable"),
+        error.to_string().contains("bun_self_contained"),
         "unexpected registry error: {error}"
     );
 }

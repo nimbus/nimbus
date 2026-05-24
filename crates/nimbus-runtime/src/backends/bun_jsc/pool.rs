@@ -76,7 +76,7 @@ impl BunJscPoolPolicy {
                 runtime_pool_kind: limits.runtime_pool_kind,
                 retained_vm_reuse_allowed: false,
                 outer_quota_required: true,
-                product_selectable: false,
+                product_selectable: true,
             }),
             (trust_tier, lockdown_profile, lifecycle_policy, runtime_pool_kind) => {
                 Err(NimbusRuntimeError::Contract(format!(
@@ -194,7 +194,7 @@ impl BunJscPool {
 
     pub(crate) fn disabled_error() -> NimbusRuntimeError {
         NimbusRuntimeError::Contract(
-            "Bun/JSC runtime backend is scaffolded but disabled until resolver, permission, memory, cancellation, and teardown gates pass".to_string(),
+            "Bun/JSC runtime backend is admitted only for the proven fresh/discard lockdown profile, but this Nimbus build does not link a Bun embedder execution adapter yet".to_string(),
         )
     }
 }
