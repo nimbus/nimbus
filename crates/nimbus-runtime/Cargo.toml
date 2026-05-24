@@ -9,6 +9,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+bun-jsc-linked-adapter = []
+
 [dependencies]
 base64.workspace = true
 deno_ast.workspace = true

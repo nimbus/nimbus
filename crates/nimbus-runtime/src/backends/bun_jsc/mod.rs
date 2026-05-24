@@ -7,6 +7,8 @@ use crate::limits::RuntimeExecutionAdapterState;
 
 mod adapter;
 mod lifecycle;
+#[cfg(feature = "bun-jsc-linked-adapter")]
+mod linked;
 mod pool;
 
 use self::adapter::{
@@ -333,6 +335,62 @@ mod tests {
             .block_on(backend.invoke(bun_invocation(policy)))
             .expect("fake linked adapter should run");
         assert_eq!(result, json!({ "adapter": "linked" }));
+    }
+
+    #[cfg(feature = "bun-jsc-linked-adapter")]
+    #[test]
+    fn bun_jsc_linked_adapter_feature_names_reproducible_bun_source() {
+        let contract = linked::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
+        assert_eq!(
+            contract.git_revision,
+            "2f09ba33b184a541e2ade24bf6e46bebc971a262"
+        );
+        assert_eq!(contract.proof_target, "check-bun-embed-probe");
+        assert_eq!(contract.required_exports.len(), 9);
+        assert!(
+            contract
+                .required_exports
+                .contains(&"nimbus_bun_embed_probe_program_bundle_host_calls")
+        );
+        assert!(
+            contract
+                .required_exports
+                .contains(&"nimbus_bun_embed_probe_lifecycle_reuse_stress")
+        );
+    }
+
+    #[cfg(feature = "bun-jsc-linked-adapter")]
+    #[test]
+    fn bun_jsc_linked_adapter_feature_compiles_without_replacing_default_backend() {
+        let default_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
+            &BunJscNoLinkExecutionAdapterFactory,
+        );
+        assert_eq!(
+            default_backend.execution_adapter_state(),
+            RuntimeExecutionAdapterState::NotLinked
+        );
+
+        let policy = bun_policy();
+        let mut linked_backend = BunJscRuntimeBackend::with_execution_adapter_factory(
+            &linked::BunJscLinkedExecutionAdapterFactory,
+        );
+        assert_eq!(
+            linked_backend.execution_adapter_state(),
+            RuntimeExecutionAdapterState::Linked
+        );
+
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build")
+            .block_on(linked_backend.invoke(bun_invocation(policy)))
+            .expect_err("BJA3 linked build lane should still guard execution until BJA4");
+        assert!(
+            error
+                .to_string()
+                .contains("BJA4 has not wired Bun/JSC execution yet"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

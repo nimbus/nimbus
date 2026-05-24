@@ -11,10 +11,11 @@ BUN_RUST_ONLY_BUILD_DIR="${NIMBUS_BUN_RUST_ONLY_BUILD_DIR:-/private/tmp/nimbus-b
 BUN_CARGO_TARGET_DIR="${NIMBUS_BUN_CARGO_TARGET_DIR:-/private/tmp/nimbus-bun-proof-target}"
 
 if [[ ! -d /private/tmp ]]; then
-  BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-/tmp/nimbus-bun-embed-native}"
-  BUN_CACHE_DIR="${NIMBUS_BUN_CACHE_DIR:-/tmp/nimbus-bun-cache}"
-  BUN_RUST_ONLY_BUILD_DIR="${NIMBUS_BUN_RUST_ONLY_BUILD_DIR:-/tmp/nimbus-bun-rust-only}"
-  BUN_CARGO_TARGET_DIR="${NIMBUS_BUN_CARGO_TARGET_DIR:-/tmp/nimbus-bun-proof-target}"
+  BUN_PROOF_ROOT="${NIMBUS_BUN_PROOF_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/nimbus-bun-proof}"
+  BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-${BUN_PROOF_ROOT}/bun-embed-native}"
+  BUN_CACHE_DIR="${NIMBUS_BUN_CACHE_DIR:-${BUN_PROOF_ROOT}/bun-cache}"
+  BUN_RUST_ONLY_BUILD_DIR="${NIMBUS_BUN_RUST_ONLY_BUILD_DIR:-${BUN_PROOF_ROOT}/bun-rust-only}"
+  BUN_CARGO_TARGET_DIR="${NIMBUS_BUN_CARGO_TARGET_DIR:-${BUN_PROOF_ROOT}/bun-cargo-target}"
 fi
 
 cd "${REPO_ROOT}"
