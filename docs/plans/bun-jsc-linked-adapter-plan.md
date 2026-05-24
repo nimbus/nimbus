@@ -12,7 +12,7 @@ fresh/discard lifecycle controls.
 
 ## Status
 
-- **Status:** active; `BJA0` is next
+- **Status:** active; `BJA1` is next
 - **Primary owner:** this plan
 - **Nimbus worktree:** `/Users/jack/src/github.com/nimbus/nimbus`
 - **Bun worktree:** `/Users/jack/src/github.com/oven-sh/bun`
@@ -84,7 +84,7 @@ Nimbus-owned Bun fork/tag rather than relying on `~/src/github.com/oven-sh/bun`.
 
 | Gate | Status | Goal | Verifiable success criteria |
 | --- | --- | --- | --- |
-| BJA0 | `pending` | Rebaseline the linked-adapter architecture against current Nimbus and Bun. | A proof note under `docs/plans/proof/runtime-engine/bun-jsc/` records current Nimbus commit, Bun commit/tag, Bun local dirty state, required Bun-side APIs, whether upstream current Bun is enough, and the exact fork trigger. `git diff --check`, `cargo fmt --all --check`, and `make verify-bun-jsc-runtime-contract` pass. |
+| BJA0 | `done` | Rebaseline the linked-adapter architecture against current Nimbus and Bun. | `docs/plans/proof/runtime-engine/bun-jsc/gate-35-linked-adapter-rebaseline.md` records current Nimbus commit, Bun commit/tag, Bun local dirty state, required Bun-side APIs, whether upstream current Bun is enough, and the exact fork trigger. `git diff --check`, `cargo fmt --all --check`, and `make verify-bun-jsc-runtime-contract` passed. |
 | BJA1 | `pending` | Introduce a real Bun/JSC execution-adapter boundary while preserving fail-closed defaults. | `crates/nimbus-runtime/src/backends/bun_jsc/` contains a concept-owned adapter trait/factory that separates `linked` from `not_linked`; default builds keep `execution_adapter_state = "not_linked"` and return the existing contract error; tests prove executors remain lazy and no Bun/JSC code is linked or started by default. |
 | BJA2 | `pending` | Prove or implement the Bun-side embedder execution API. | Bun exposes a native proof target or crate/API that constructs the locked-down VM, executes a self-contained program wrapper, returns JSON, emits resolver/permission/lifecycle evidence, and fails on unsafe surfaces. The Bun proof target passes locally and on Debian 13 `minicloud` with home-backed temp/cache paths. |
 | BJA3 | `pending` | Make Nimbus build with an optional linked Bun/JSC adapter without regressing default builds. | Default `cargo check --workspace` and `make verify-bun-jsc-runtime-contract` still pass without Bun. A linked build path, feature, or source override compiles the adapter from a reproducible Bun source. CI/docs name both the default no-link lane and linked proof lane. |
@@ -166,3 +166,9 @@ Required completion evidence:
   diagnostics.
 - `cargo fmt --all --check`, `npm run typecheck`, and `git diff --check` pass.
 - The implementation and plan evidence are committed in focused commits.
+
+## Progress Log
+
+| Date | Gate | Status | Notes | Verification | Next |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05-23 | BJA0 | `done` | Added Gate 35, the linked-adapter rebaseline. Current Nimbus is `9b575308`; local Bun proof head is `4b5de5ee5d`, clean and 16 commits ahead of upstream `origin/main` at `f161e0311d`. Current upstream Bun is not sufficient for product source ownership because the embed probe, resolver denial, native permission denial, host-call, lifecycle, and cancellation proof surfaces exist only in the local proof delta. The fork trigger for this wave is product dependency ownership, not merely the existence of local proof commits. | `cargo fmt --all --check` passed; `make verify-bun-jsc-runtime-contract` passed outside the Codex filesystem sandbox: 11 runtime policy tests, 4 Bun/JSC pool scaffold tests, 13 Convex registry tests, 2 runtime diagnostics tests, 1 tenant-admission test, and 2 UI test files / 5 tests; `git diff --check` passed. | Start BJA1 by introducing the explicit `BunJscExecutionAdapter` boundary while preserving default no-link behavior. |
