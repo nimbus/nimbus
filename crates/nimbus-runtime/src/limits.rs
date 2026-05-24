@@ -16,6 +16,13 @@ pub enum RuntimeBackendKind {
     BunJsc,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeExecutionAdapterState {
+    Linked,
+    NotLinked,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeBackendTrustTier {

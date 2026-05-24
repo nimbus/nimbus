@@ -3,9 +3,10 @@ use nimbus_engine::{MaterializedJournalSnapshot, TenantEngineDiagnosticsSnapshot
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeExecutionModel, RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage,
-    RuntimeMemoryEnforcement, RuntimeMetricsSnapshot, RuntimeMode, RuntimeModuleStateSemantics,
-    RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeExecutionAdapterState, RuntimeExecutionModel, RuntimeGrants,
+    RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeMemoryEnforcement,
+    RuntimeMetricsSnapshot, RuntimeMode, RuntimeModuleStateSemantics, RuntimePoolKind,
+    RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -104,13 +105,6 @@ pub(crate) struct RuntimeLaneDiagnosticsResponse {
     pub limits: RuntimeLimitsResponse,
     pub reset_capabilities: RuntimeResetCapabilities,
     pub metrics: RuntimeMetricsSnapshot,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum RuntimeExecutionAdapterState {
-    Linked,
-    NotLinked,
 }
 
 #[derive(Debug, Serialize)]

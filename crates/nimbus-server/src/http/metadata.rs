@@ -44,14 +44,7 @@ pub(crate) async fn runtime_diagnostics(
                 lane_name: lane.lane_name.to_string(),
                 default_lane: lane.default_lane,
                 executor_started: lane.executor_started,
-                execution_adapter_state: match lane.execution_adapter_state {
-                    crate::adapters::convex::ConvexRuntimeExecutionAdapterState::Linked => {
-                        RuntimeExecutionAdapterState::Linked
-                    }
-                    crate::adapters::convex::ConvexRuntimeExecutionAdapterState::NotLinked => {
-                        RuntimeExecutionAdapterState::NotLinked
-                    }
-                },
+                execution_adapter_state: lane.execution_adapter_state,
                 limits: runtime_limits_response(&lane.limits),
                 reset_capabilities: lane.reset_capabilities,
                 metrics: lane.metrics,

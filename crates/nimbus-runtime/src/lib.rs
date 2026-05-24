@@ -34,10 +34,10 @@ pub use host::{
 pub use limits::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeExecutionModel, RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage,
-    RuntimeLimits, RuntimeMemoryEnforcement, RuntimeMode, RuntimeModuleStateSemantics,
-    RuntimePolicy, RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities,
-    RuntimeRoutingAffinity, RuntimeTenantBudget,
+    RuntimeExecutionAdapterState, RuntimeExecutionModel, RuntimeGrants,
+    RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeLimits, RuntimeMemoryEnforcement,
+    RuntimeMode, RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind, RuntimePreset,
+    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeTenantBudget,
 };
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,
