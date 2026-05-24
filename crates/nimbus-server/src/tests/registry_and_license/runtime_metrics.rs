@@ -152,35 +152,77 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
 
     let lanes = body["lanes"].as_array().expect("lanes should be an array");
     assert_eq!(lanes.len(), 5);
-    let lane_names = lanes
-        .iter()
-        .map(|lane| lane["lane_name"].as_str().unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        lane_names,
-        ["default", "node20", "node22", "node24", "bun_jsc"]
-    );
-    assert!(
-        lanes
-            .iter()
-            .all(|lane| lane["executor_started"] == json!(false))
-    );
-    assert_eq!(lanes[0]["default_lane"], json!(true));
-    assert_eq!(lanes[0]["execution_adapter_state"], json!("linked"));
-    assert_eq!(lanes[0]["limits"]["runtime_backend"], json!("v8"));
-    assert_eq!(
-        lanes[0]["metrics"]["worker_dispatched_invocations"],
-        json!(0)
-    );
-    assert_eq!(lanes[4]["default_lane"], json!(false));
-    assert_eq!(lanes[4]["execution_adapter_state"], json!("not_linked"));
-    assert_eq!(lanes[4]["limits"]["runtime_backend"], json!("bun_jsc"));
-    assert_eq!(
-        lanes[4]["limits"]["memory_enforcement"],
-        json!("outer_quota_required")
-    );
-    assert_eq!(
-        lanes[4]["limits"]["tenant_budget"]["memory_enforcement"],
-        json!("outer_quota_required")
-    );
+    let expected_lanes = [
+        (
+            "default",
+            true,
+            "v8",
+            "web_standard_isolate",
+            "linked",
+            "v8_isolate_heap_limit",
+        ),
+        (
+            "node20",
+            false,
+            "v8",
+            "node20",
+            "linked",
+            "v8_isolate_heap_limit",
+        ),
+        (
+            "node22",
+            false,
+            "v8",
+            "node22",
+            "linked",
+            "v8_isolate_heap_limit",
+        ),
+        (
+            "node24",
+            false,
+            "v8",
+            "node24",
+            "linked",
+            "v8_isolate_heap_limit",
+        ),
+        (
+            "bun_jsc",
+            false,
+            "bun_jsc",
+            "bun_jsc",
+            "not_linked",
+            "outer_quota_required",
+        ),
+    ];
+    for (lane, expected) in lanes.iter().zip(expected_lanes) {
+        let (
+            lane_name,
+            default_lane,
+            runtime_backend,
+            compatibility_target,
+            execution_adapter_state,
+            memory_enforcement,
+        ) = expected;
+        assert_eq!(lane["lane_name"], json!(lane_name));
+        assert_eq!(lane["default_lane"], json!(default_lane));
+        assert_eq!(lane["executor_started"], json!(false));
+        assert_eq!(
+            lane["execution_adapter_state"],
+            json!(execution_adapter_state)
+        );
+        assert_eq!(lane["limits"]["runtime_backend"], json!(runtime_backend));
+        assert_eq!(
+            lane["limits"]["compatibility_target"],
+            json!(compatibility_target)
+        );
+        assert_eq!(
+            lane["limits"]["memory_enforcement"],
+            json!(memory_enforcement)
+        );
+        assert_eq!(
+            lane["limits"]["tenant_budget"]["memory_enforcement"],
+            json!(memory_enforcement)
+        );
+        assert_eq!(lane["metrics"]["worker_dispatched_invocations"], json!(0));
+    }
 }

@@ -55,16 +55,41 @@ describe("msw handlers", () => {
       "node24",
       "bun_jsc",
     ]);
-    expect(body.lanes?.every((lane) => lane.executor_started === false)).toBe(
-      true,
-    );
-
-    const bunLane = body.lanes?.find((lane) => lane.lane_name === "bun_jsc");
-    expect(bunLane?.execution_adapter_state).toBe("not_linked");
-    expect(bunLane?.limits?.runtime_backend).toBe("bun_jsc");
-    expect(bunLane?.limits?.memory_enforcement).toBe("outer_quota_required");
-    expect(bunLane?.limits?.tenant_budget?.memory_enforcement).toBe(
-      "outer_quota_required",
-    );
+    const expectedLanes = [
+      [
+        "default",
+        "v8",
+        "web_standard_isolate",
+        "linked",
+        "v8_isolate_heap_limit",
+      ],
+      ["node20", "v8", "node20", "linked", "v8_isolate_heap_limit"],
+      ["node22", "v8", "node22", "linked", "v8_isolate_heap_limit"],
+      ["node24", "v8", "node24", "linked", "v8_isolate_heap_limit"],
+      [
+        "bun_jsc",
+        "bun_jsc",
+        "bun_jsc",
+        "not_linked",
+        "outer_quota_required",
+      ],
+    ] as const;
+    for (const [
+      laneName,
+      runtimeBackend,
+      compatibilityTarget,
+      executionAdapterState,
+      memoryEnforcement,
+    ] of expectedLanes) {
+      const lane = body.lanes?.find((item) => item.lane_name === laneName);
+      expect(lane?.executor_started).toBe(false);
+      expect(lane?.execution_adapter_state).toBe(executionAdapterState);
+      expect(lane?.limits?.runtime_backend).toBe(runtimeBackend);
+      expect(lane?.limits?.compatibility_target).toBe(compatibilityTarget);
+      expect(lane?.limits?.memory_enforcement).toBe(memoryEnforcement);
+      expect(lane?.limits?.tenant_budget?.memory_enforcement).toBe(
+        memoryEnforcement,
+      );
+    }
   });
 });

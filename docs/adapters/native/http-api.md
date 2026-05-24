@@ -26,6 +26,16 @@ app generation is active, `limits`, `reset_capabilities`, and `metrics` are
 the default V8 lane plus the Node 20/22/24 compatibility lanes and the optional
 Bun/JSC lane.
 
+The lane contract is stable and order-sensitive for operator diagnostics:
+
+| Lane | Default | Runtime backend | Compatibility target | Adapter state | Executor | Memory enforcement |
+| --- | --- | --- | --- | --- | --- | --- |
+| `default` | yes | `v8` | `web_standard_isolate` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `node20` | no | `v8` | `node20` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `node22` | no | `v8` | `node22` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `node24` | no | `v8` | `node24` | `linked` | lazy until invoked | `v8_isolate_heap_limit` |
+| `bun_jsc` | no | `bun_jsc` | `bun_jsc` | `not_linked` unless the optional shared adapter is verified and loaded | lazy until invoked | `outer_quota_required` |
+
 The Bun/JSC lane must remain explicit while the adapter is not linked:
 
 ```json
@@ -45,8 +55,11 @@ The Bun/JSC lane must remain explicit while the adapter is not linked:
 ```
 
 The default V8/Node lanes continue to report
-`"memory_enforcement": "v8_isolate_heap_limit"`. CI verifies this contract with
-`make verify-bun-jsc-runtime-contract`.
+`"memory_enforcement": "v8_isolate_heap_limit"`. Bun/JSC always reports
+`"outer_quota_required"` until a stronger backend-owned memory limit is proven.
+CI verifies this contract with `make verify-bun-jsc-runtime-contract`, including
+lane names, `execution_adapter_state`, `executor_started`, compatibility
+target, runtime backend, and tenant-budget memory semantics.
 
 ## Tenant Routes
 
