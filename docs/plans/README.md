@@ -46,9 +46,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
     gate passes locally and on Debian 13 `minicloud` with Bun proof commit
     `ce5aa2a389`.
 - `docs/plans/bun-jsc-embedder-api-and-pool-plan.md`
-  - active execution plan for the next product-moving Bun/JSC wave. Nimbus is
+  - completed execution plan for the product-moving Bun/JSC embedder API and
+    pool wave. Nimbus is
     now pursuing Bun/JSC as an optional in-process backend candidate beside
-    Deno/V8, with a dedicated Bun/JSC pool. BEP0-BEP8 are complete: BEP3
+    Deno/V8, with a dedicated Bun/JSC pool. BEP0-BEP9 are complete: BEP3
     added typed Bun/JSC pool metadata and validation that rejects V8/Deno with
     Bun pool metadata and rejects Bun/JSC with V8/Deno pool metadata;
     BEP4 added the disabled backend-owned Bun/JSC pool scaffold with
@@ -73,9 +74,15 @@ This directory prefers a small-number-of-plans model with clear ownership.
     fresh/discard profile with `bun_self_contained` package resolution. Current
     builds still fail closed before Bun/JSC guest execution unless a Bun
     embedder adapter is linked, so function-level `"use bun"` codegen remains
-    withheld. BEP9 is next: close the plan with repeatable
-    local/minicloud evidence, residual risks, fork status, and product go/no-go.
-    Fork posture remains upstream-first; no `nimbus/bun` fork yet.
+    withheld. BEP9 closed the wave with repeatable local/minicloud evidence:
+    the reusable `bash scripts/verify-bun-jsc-in-process-lockdown.sh` gate
+    passed locally at Nimbus `3b6c27bc` and on Debian 13 `minicloud` from the
+    isolated proof checkout
+    `/home/nimbus/src/github.com/nimbus/nimbus-bep9-proof-20260523191300`
+    against Bun proof head `4b5de5ee5d`. Fork posture remains upstream-first;
+    no `nimbus/bun` fork yet. The next wave should link a verified Bun embedder
+    execution adapter, implement the Bun pool execution path, and add
+    end-to-end invocation tests for the admitted profile.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
