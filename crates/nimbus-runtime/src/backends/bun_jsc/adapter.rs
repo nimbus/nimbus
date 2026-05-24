@@ -7,7 +7,9 @@ use crate::backends::RuntimeBackendInvocation;
 use crate::error::Result;
 use crate::limits::RuntimeExecutionAdapterState;
 
-use super::pool::{BunJscPool, BunJscPoolPolicy};
+#[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]
+use super::pool::BunJscPool;
+use super::pool::BunJscPoolPolicy;
 
 pub(crate) trait BunJscExecutionAdapterFactory:
     std::fmt::Debug + Send + Sync + 'static
@@ -26,8 +28,10 @@ pub(crate) trait BunJscExecutionAdapter: std::fmt::Debug + 'static {
 }
 
 #[derive(Debug, Default)]
+#[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]
 pub(crate) struct BunJscNoLinkExecutionAdapterFactory;
 
+#[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]
 impl BunJscExecutionAdapterFactory for BunJscNoLinkExecutionAdapterFactory {
     fn create(&self) -> Box<dyn BunJscExecutionAdapter> {
         Box::<BunJscNoLinkExecutionAdapter>::default()
@@ -35,8 +39,10 @@ impl BunJscExecutionAdapterFactory for BunJscNoLinkExecutionAdapterFactory {
 }
 
 #[derive(Debug, Default)]
+#[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]
 struct BunJscNoLinkExecutionAdapter;
 
+#[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]
 impl BunJscExecutionAdapter for BunJscNoLinkExecutionAdapter {
     fn state(&self) -> RuntimeExecutionAdapterState {
         RuntimeExecutionAdapterState::NotLinked

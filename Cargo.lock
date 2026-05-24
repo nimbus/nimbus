@@ -5739,6 +5739,7 @@ dependencies = [
  "deno_webidl",
  "deno_websocket",
  "libc",
+ "libloading 0.8.9",
  "node_resolver",
  "serde",
  "serde_json",

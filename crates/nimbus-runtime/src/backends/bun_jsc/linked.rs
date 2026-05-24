@@ -1,5 +1,7 @@
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::OnceLock;
 
 use serde_json::Value;
 
@@ -10,10 +12,11 @@ use crate::limits::RuntimeExecutionAdapterState;
 use super::adapter::{BunJscExecutionAdapter, BunJscExecutionAdapterFactory};
 use super::pool::BunJscPoolPolicy;
 
-#[cfg(nimbus_bun_jsc_linked_ffi)]
+pub(crate) const BUN_JSC_SHARED_LIBRARY_ENV: &str = "NIMBUS_BUN_EMBED_SHARED_LIBRARY";
 const BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) struct BunJscLinkedAdapterSourceContract {
     pub(crate) repository: &'static str,
     pub(crate) source_ref: &'static str,
@@ -23,12 +26,13 @@ pub(crate) struct BunJscLinkedAdapterSourceContract {
     pub(crate) required_exports: &'static [&'static str],
 }
 
+#[cfg(test)]
 pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSourceContract =
     BunJscLinkedAdapterSourceContract {
         repository: "https://github.com/nimbus/bun",
-        source_ref: "bun-v1.4.0-nimbus.1",
-        git_revision: "5ba54ccecdfabd857a7ca362c14c0f614d25b21b",
-        proof_target: "check-bun-embed-probe",
+        source_ref: "bun-v1.4.0-nimbus.3",
+        git_revision: "ed8d05f17ee2803520440a07bcc7f6f47f2f68b8",
+        proof_target: "check-bun-embed-shared",
         simdutf_namespace: "nimbus_bun_simdutf",
         required_exports: &[
             "nimbus_bun_embed_probe_construct_and_destroy_vm",
@@ -44,29 +48,26 @@ pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSour
         ],
     };
 
-#[allow(dead_code)]
-mod ffi {
-    unsafe extern "C" {
-        pub(crate) fn nimbus_bun_embed_probe_construct_and_destroy_vm() -> i32;
-        pub(crate) fn nimbus_bun_embed_probe_sync_host_call() -> i32;
-        pub(crate) fn nimbus_bun_embed_probe_async_host_call() -> i32;
-        pub(crate) fn nimbus_bun_embed_probe_program_bundle_host_calls() -> i32;
-        pub(crate) fn nimbus_bun_embed_probe_timeout_and_cancel() -> i32;
-        pub(crate) fn nimbus_bun_embed_probe_permission_surface_inventory() -> i32;
-        pub(crate) fn nimbus_bun_embed_probe_memory_behavior() -> i32;
-        pub(crate) fn nimbus_bun_embed_probe_package_module_policy() -> i32;
-        pub(crate) fn nimbus_bun_embed_probe_lifecycle_reuse_stress() -> i32;
-        pub(crate) fn nimbus_bun_embed_invoke_program_wrapper_json(
-            bundle_ptr: *const u8,
-            bundle_len: usize,
-            request_ptr: *const u8,
-            request_len: usize,
-            output_ptr: *mut u8,
-            output_cap: usize,
-            output_len: *mut usize,
-        ) -> i32;
-    }
+type BunJscProbeFn = unsafe extern "C" fn() -> i32;
+type BunJscInvokeProgramWrapperJsonFn = unsafe extern "C" fn(
+    bundle_ptr: *const u8,
+    bundle_len: usize,
+    request_ptr: *const u8,
+    request_len: usize,
+    output_ptr: *mut u8,
+    output_cap: usize,
+    output_len: *mut usize,
+) -> i32;
+
+#[derive(Debug)]
+struct BunJscSharedAdapterLibrary {
+    _library: libloading::Library,
+    invoke_program_wrapper_json: BunJscInvokeProgramWrapperJsonFn,
 }
+
+static BUN_JSC_SHARED_ADAPTER_LIBRARY: OnceLock<
+    std::result::Result<BunJscSharedAdapterLibrary, String>,
+> = OnceLock::new();
 
 #[derive(Debug, Default)]
 pub(crate) struct BunJscLinkedExecutionAdapterFactory;
@@ -82,7 +83,11 @@ struct BunJscLinkedExecutionAdapter;
 
 impl BunJscExecutionAdapter for BunJscLinkedExecutionAdapter {
     fn state(&self) -> RuntimeExecutionAdapterState {
-        RuntimeExecutionAdapterState::Linked
+        if shared_adapter_library().is_ok() {
+            RuntimeExecutionAdapterState::Linked
+        } else {
+            RuntimeExecutionAdapterState::NotLinked
+        }
     }
 
     fn invoke<'a>(
@@ -94,11 +99,13 @@ impl BunJscExecutionAdapter for BunJscLinkedExecutionAdapter {
     }
 }
 
-#[cfg(nimbus_bun_jsc_linked_ffi)]
 fn invoke_program_wrapper_json(
     invocation: RuntimeBackendInvocation,
     pool_policy: BunJscPoolPolicy,
 ) -> Result<Value> {
+    let shared_library = shared_adapter_library().map_err(|error| {
+        NimbusRuntimeError::Contract(format!("Bun/JSC shared adapter is not linked: {error}"))
+    })?;
     let RuntimeBackendInvocation {
         policy,
         bundle,
@@ -129,7 +136,7 @@ fn invoke_program_wrapper_json(
     let mut output_len = 0_usize;
 
     let status = unsafe {
-        ffi::nimbus_bun_embed_invoke_program_wrapper_json(
+        (shared_library.invoke_program_wrapper_json)(
             bundle_source.as_ptr(),
             bundle_source.len(),
             request_json.as_ptr(),
@@ -164,19 +171,6 @@ fn invoke_program_wrapper_json(
     serde_json::from_slice(&output[..output_len]).map_err(NimbusRuntimeError::from)
 }
 
-#[cfg(not(nimbus_bun_jsc_linked_ffi))]
-fn invoke_program_wrapper_json(
-    invocation: RuntimeBackendInvocation,
-    pool_policy: BunJscPoolPolicy,
-) -> Result<Value> {
-    drop(invocation);
-    let _ = pool_policy;
-    Err(NimbusRuntimeError::Contract(
-        "Bun/JSC linked adapter feature was compiled without NIMBUS_BUN_EMBED_LINK_ARGS; run the linked gate after building Bun's embedder link manifest".to_string(),
-    ))
-}
-
-#[cfg(nimbus_bun_jsc_linked_ffi)]
 fn embedder_status_name(status: i32) -> &'static str {
     match status {
         1 => "vm_init_failed",
@@ -190,4 +184,81 @@ fn embedder_status_name(status: i32) -> &'static str {
         307 => "output_buffer_too_small",
         _ => "unknown",
     }
+}
+
+fn shared_adapter_library() -> std::result::Result<&'static BunJscSharedAdapterLibrary, &'static str>
+{
+    match BUN_JSC_SHARED_ADAPTER_LIBRARY.get_or_init(load_shared_adapter_library) {
+        Ok(library) => Ok(library),
+        Err(error) => Err(error.as_str()),
+    }
+}
+
+fn load_shared_adapter_library() -> std::result::Result<BunJscSharedAdapterLibrary, String> {
+    let library_path = shared_adapter_library_path()?;
+    let library = open_shared_adapter_library(&library_path)?;
+
+    for symbol in [
+        "nimbus_bun_embed_probe_construct_and_destroy_vm",
+        "nimbus_bun_embed_probe_sync_host_call",
+        "nimbus_bun_embed_probe_async_host_call",
+        "nimbus_bun_embed_probe_program_bundle_host_calls",
+        "nimbus_bun_embed_probe_timeout_and_cancel",
+        "nimbus_bun_embed_probe_permission_surface_inventory",
+        "nimbus_bun_embed_probe_memory_behavior",
+        "nimbus_bun_embed_probe_package_module_policy",
+        "nimbus_bun_embed_probe_lifecycle_reuse_stress",
+    ] {
+        let _: BunJscProbeFn = unsafe { load_required_symbol(&library, symbol)? };
+    }
+    let invoke_program_wrapper_json =
+        unsafe { load_required_symbol(&library, "nimbus_bun_embed_invoke_program_wrapper_json")? };
+
+    Ok(BunJscSharedAdapterLibrary {
+        _library: library,
+        invoke_program_wrapper_json,
+    })
+}
+
+fn shared_adapter_library_path() -> std::result::Result<PathBuf, String> {
+    let Some(path) = std::env::var_os(BUN_JSC_SHARED_LIBRARY_ENV) else {
+        return Err(format!(
+            "set {BUN_JSC_SHARED_LIBRARY_ENV} to libnimbus_bun_jsc_embedder.so/dylib"
+        ));
+    };
+    let path = PathBuf::from(path);
+    if path.as_os_str().is_empty() {
+        return Err(format!("{BUN_JSC_SHARED_LIBRARY_ENV} is empty"));
+    }
+    if !path.is_file() {
+        return Err(format!(
+            "{BUN_JSC_SHARED_LIBRARY_ENV} points to {}, which is not a file",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+#[cfg(unix)]
+fn open_shared_adapter_library(path: &Path) -> std::result::Result<libloading::Library, String> {
+    use libloading::os::unix::{Library, RTLD_LOCAL, RTLD_NOW};
+
+    let library = unsafe { Library::open(Some(path), RTLD_NOW | RTLD_LOCAL) }
+        .map_err(|error| format!("failed to load {}: {error}", path.display()))?;
+    Ok(library.into())
+}
+
+#[cfg(not(unix))]
+fn open_shared_adapter_library(path: &Path) -> std::result::Result<libloading::Library, String> {
+    let _ = path;
+    Err("Bun/JSC shared adapter loading is currently implemented only for Unix targets".to_string())
+}
+
+unsafe fn load_required_symbol<T: Copy>(
+    library: &libloading::Library,
+    symbol: &'static str,
+) -> std::result::Result<T, String> {
+    let loaded = unsafe { library.get::<T>(symbol.as_bytes()) }
+        .map_err(|error| format!("missing Bun/JSC shared adapter symbol {symbol}: {error}"))?;
+    Ok(*loaded)
 }

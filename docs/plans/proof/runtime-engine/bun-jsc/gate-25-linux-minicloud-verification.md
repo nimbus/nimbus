@@ -35,6 +35,74 @@ release artifact.
 | LLVM asset digest | `sha256:b3b7f2801d15d50736acea3c73982994d025b01c2f035b91ae3b49d1b575732b` |
 | Scratch root | `~/.cache/nimbus-proof` |
 
+## Fresh Debian 13 Bootstrap Notes
+
+This section records what was needed to bootstrap the fresh Debian 13
+`minicloud` host for this proof. It is evidence for the Bun/JSC proof lane, not
+a general Nimbus installer contract.
+
+Base packages came from Bun's current Debian development dependency list and
+used only Debian's normal package repositories:
+
+```sh
+sudo apt update
+sudo apt install curl wget lsb-release software-properties-common cmake git \
+  golang libtool ninja-build pkg-config ruby-full xz-utils ca-certificates \
+  unzip
+```
+
+Rust was installed with user-local `rustup`, not Debian's `rustc` or `cargo`,
+so Bun's pinned nightly toolchain could be selected by `rust-toolchain.toml`:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
+rustup default stable
+```
+
+Node/npm were installed user-locally with `nvm`, and the Bun CLI was installed
+under `~/.bun/bin` because Bun's build graph uses Bun for code generation:
+
+```sh
+export NVM_DIR="$HOME/.nvm"
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+. "$NVM_DIR/nvm.sh"
+nvm install --lts
+nvm use --lts
+curl -fsSL https://bun.com/install | bash
+```
+
+The important Linux lesson is that Debian 13's default `clang 19.1.7` was not
+accepted by Bun's native build. Bun currently requires LLVM 21.1.8. For this
+proof we deliberately avoided `apt.llvm.org` and host-wide apt trust changes;
+instead, LLVM was installed as a user-local toolchain from the official
+`llvmorg-21.1.8` release asset and verified before extraction:
+
+```sh
+mkdir -p "$HOME/.local/toolchains" "$HOME/.cache/nimbus-proof/downloads"
+cd "$HOME/.cache/nimbus-proof/downloads"
+curl -LO \
+  https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz
+printf '%s  %s\n' \
+  'b3b7f2801d15d50736acea3c73982994d025b01c2f035b91ae3b49d1b575732b' \
+  'LLVM-21.1.8-Linux-X64.tar.xz' | sha256sum -c -
+tar -xJf LLVM-21.1.8-Linux-X64.tar.xz -C "$HOME/.local/toolchains"
+export PATH="$HOME/.local/toolchains/LLVM-21.1.8-Linux-X64/bin:$HOME/.bun/bin:$PATH"
+```
+
+The proof also needed a home-backed scratch root. On this host, `/tmp` was a
+small tmpfs-backed volume and was a poor native-build scratch location:
+
+```sh
+export PROOF_ROOT="$HOME/.cache/nimbus-proof"
+mkdir -p "$PROOF_ROOT/tmp" \
+  "$PROOF_ROOT/bun-embed-native" \
+  "$PROOF_ROOT/bun-cache" \
+  "$PROOF_ROOT/bun-rust-only" \
+  "$PROOF_ROOT/bun-cargo-target"
+export TMPDIR="$PROOF_ROOT/tmp"
+```
+
 ## Command
 
 ```sh

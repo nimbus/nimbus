@@ -196,6 +196,7 @@ impl BunJscPool {
         Ok(())
     }
 
+    #[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]
     pub(crate) fn disabled_error() -> NimbusRuntimeError {
         NimbusRuntimeError::Contract(
             "Bun/JSC runtime backend is admitted only for the proven fresh/discard lockdown profile, but this Nimbus build does not link a Bun embedder execution adapter yet".to_string(),

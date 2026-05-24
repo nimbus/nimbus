@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Verifies the opt-in Bun/JSC linked-adapter build lane. This gate keeps the
 # default Nimbus build fail-closed while checking the exact Bun proof source
-# and native embedder target that a future BJA4 execution adapter will call.
+# and source-owned shared adapter that the BJA4 execution adapter loads.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/nimbus/bun}"
-EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-bun-v1.4.0-nimbus.1}"
-EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-5ba54ccecdfabd857a7ca362c14c0f614d25b21b}"
+EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-bun-v1.4.0-nimbus.3}"
+EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-ed8d05f17ee2803520440a07bcc7f6f47f2f68b8}"
 BUN_SIMDUTF_NAMESPACE="${NIMBUS_BUN_SIMDUTF_NAMESPACE:-nimbus_bun_simdutf}"
 
 host_triple="$(rustc -vV | awk '/^host:/ { print $2 }')"
@@ -17,17 +17,29 @@ case "${host_triple}" in
     DEFAULT_BUN_PROFILE=release-local
     DEFAULT_ENABLE_SIMDUTF_NAMESPACE=1
     DEFAULT_REQUIRE_SYMBOL_AUDIT=1
+    SHARED_LIBRARY_BASENAME=libnimbus_bun_jsc_embedder.so
+    DEFAULT_SHARED_ARTIFACT_AUDIT=1
+    ;;
+  *-apple-darwin)
+    DEFAULT_BUN_PROFILE=release-local
+    DEFAULT_ENABLE_SIMDUTF_NAMESPACE=1
+    DEFAULT_REQUIRE_SYMBOL_AUDIT=0
+    SHARED_LIBRARY_BASENAME=libnimbus_bun_jsc_embedder.dylib
+    DEFAULT_SHARED_ARTIFACT_AUDIT=1
     ;;
   *)
     DEFAULT_BUN_PROFILE=release
     DEFAULT_ENABLE_SIMDUTF_NAMESPACE=0
     DEFAULT_REQUIRE_SYMBOL_AUDIT=0
+    SHARED_LIBRARY_BASENAME=libnimbus_bun_jsc_embedder.so
+    DEFAULT_SHARED_ARTIFACT_AUDIT=0
     ;;
 esac
 
 BUN_PROFILE="${NIMBUS_BUN_PROFILE:-${DEFAULT_BUN_PROFILE}}"
 BUN_ENABLE_SIMDUTF_NAMESPACE="${NIMBUS_BUN_ENABLE_SIMDUTF_NAMESPACE:-${DEFAULT_ENABLE_SIMDUTF_NAMESPACE}}"
 BUN_REQUIRE_SYMBOL_AUDIT="${NIMBUS_BUN_REQUIRE_SYMBOL_AUDIT:-${DEFAULT_REQUIRE_SYMBOL_AUDIT}}"
+BUN_REQUIRE_SHARED_ARTIFACT_AUDIT="${NIMBUS_BUN_REQUIRE_SHARED_ARTIFACT_AUDIT:-${DEFAULT_SHARED_ARTIFACT_AUDIT}}"
 
 is_enabled() {
   case "${1}" in
@@ -52,6 +64,24 @@ reject_unsafe_linker_manifest() {
   if grep -E -- '--allow-multiple-definition|muldefs' "${manifest}" >/dev/null; then
     printf 'unsafe linker policy detected in Bun link manifest: %s\n' "${manifest}" >&2
     printf 'BJA4L forbids --allow-multiple-definition and muldefs because the Linux proof linked with that policy and then crashed with SIGSEGV.\n' >&2
+    exit 1
+  fi
+}
+
+reject_unsafe_generated_build_graph() {
+  local build_graph="${1}"
+  if [[ ! -f "${build_graph}" ]]; then
+    printf 'missing Bun generated build graph: %s\n' "${build_graph}" >&2
+    exit 1
+  fi
+  if grep -E -- '--allow-multiple-definition|muldefs' "${build_graph}" >/dev/null; then
+    printf 'unsafe linker policy detected in Bun generated build graph: %s\n' "${build_graph}" >&2
+    printf 'BJA4L forbids --allow-multiple-definition and muldefs because the Linux proof linked with that policy and then crashed with SIGSEGV.\n' >&2
+    exit 1
+  fi
+  if grep -E -- '-ftls-model=(initial-exec|local-exec)' "${build_graph}" >/dev/null; then
+    printf 'unsafe static TLS model detected in Bun generated build graph: %s\n' "${build_graph}" >&2
+    printf 'BJA4L shared adapters must be dlopen-safe after V8/Deno startup; use local-dynamic/global-dynamic TLS instead.\n' >&2
     exit 1
   fi
 }
@@ -119,8 +149,9 @@ audit_simdutf_symbols() {
     exit 1
   fi
 
+  local cargo_target_dir="${CARGO_TARGET_DIR:-target}"
   mapfile -t v8_artifacts < <(
-    find target/debug/gn_out/obj target/debug/deps \
+    find "${cargo_target_dir}/debug/gn_out/obj" "${cargo_target_dir}/debug/deps" \
       \( -name 'librusty_v8.a' -o -name 'libv8-*.rlib' \) 2>/dev/null | sort
   )
   if [[ "${#v8_artifacts[@]}" -eq 0 ]]; then
@@ -148,6 +179,80 @@ audit_simdutf_symbols() {
   done
 }
 
+list_shared_adapter_exports() {
+  local shared_library="${1}"
+  case "${host_triple}" in
+    *-apple-darwin)
+      nm -gU "${shared_library}" 2>/dev/null |
+        awk '{ print $3 }' |
+        sed -E 's/^_//; s/@.*$//' |
+        sort -u
+      ;;
+    *)
+      nm -D --defined-only -C "${shared_library}" 2>/dev/null |
+        awk '{ print $3 }' |
+        sed -E 's/@@.*$//; s/@.*$//' |
+        sort -u
+      ;;
+  esac
+}
+
+audit_shared_adapter_exports() {
+  local shared_library="${1}"
+  if ! is_enabled "${BUN_REQUIRE_SHARED_ARTIFACT_AUDIT}"; then
+    printf 'shared artifact audit skipped for host %s; set NIMBUS_BUN_REQUIRE_SHARED_ARTIFACT_AUDIT=1 to require it\n' "${host_triple}"
+    return
+  fi
+  if [[ ! -f "${shared_library}" ]]; then
+    printf 'missing Bun/JSC shared adapter artifact: %s\n' "${shared_library}" >&2
+    exit 1
+  fi
+
+  local expected_file actual_file leaked_count
+  local leak_pattern='v8::|hwy::|rust_eh_personality|simdutf::|simdutf__|nimbus_bun_simdutf::|nimbus_bun_simdutf__'
+  expected_file="$(mktemp)"
+  actual_file="$(mktemp)"
+  trap 'rm -f "${expected_file}" "${actual_file}"' RETURN
+  printf '%s\n' "${REQUIRED_EXPORTS[@]}" | sort -u >"${expected_file}"
+  list_shared_adapter_exports "${shared_library}" >"${actual_file}"
+
+  printf '  shared adapter artifact: %s\n' "${shared_library}"
+  printf '  defined dynamic exports:\n'
+  sed 's/^/    /' "${actual_file}"
+
+  if ! diff -u "${expected_file}" "${actual_file}"; then
+    printf 'Bun/JSC shared adapter export set drifted\n' >&2
+    exit 1
+  fi
+
+  case "${host_triple}" in
+    *-apple-darwin)
+      leaked_count="$(nm -gU -C "${shared_library}" 2>/dev/null |
+        awk -v pattern="${leak_pattern}" '$0 ~ pattern { count++ } END { print count + 0 }')"
+      ;;
+    *)
+      leaked_count="$(nm -D --defined-only -C "${shared_library}" 2>/dev/null |
+        awk -v pattern="${leak_pattern}" '$0 ~ pattern { count++ } END { print count + 0 }')"
+      if command -v readelf >/dev/null 2>&1 &&
+        readelf -d "${shared_library}" 2>/dev/null | grep -q TEXTREL; then
+        printf 'Bun/JSC shared adapter has TEXTREL dynamic entries\n' >&2
+        exit 1
+      fi
+      if command -v readelf >/dev/null 2>&1 &&
+        readelf -d "${shared_library}" 2>/dev/null | grep -q STATIC_TLS; then
+        printf 'Bun/JSC shared adapter has STATIC_TLS and is not safe for late dlopen\n' >&2
+        exit 1
+      fi
+      ;;
+  esac
+
+  printf '  leaked native defined symbols: %s\n' "${leaked_count}"
+  if [[ "${leaked_count}" -ne 0 ]]; then
+    printf 'Bun/JSC shared adapter exported bundled native implementation symbols\n' >&2
+    exit 1
+  fi
+}
+
 if is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}" && [[ -z "${BUN_WEBKIT_PATH:-}" ]]; then
   if [[ -d "${HOME}/src/github.com/oven-sh/WebKit" ]]; then
     export BUN_WEBKIT_PATH="${HOME}/src/github.com/oven-sh/WebKit"
@@ -155,21 +260,22 @@ if is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}" && [[ -z "${BUN_WEBKIT_PATH:-}" 
 fi
 
 if [[ -d /private/tmp ]] && ! is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}"; then
-  BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-/private/tmp/nimbus-bun-linked-adapter-${BUN_PROFILE}}"
+  BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-/private/tmp/nimbus-bun-shared-adapter-${BUN_PROFILE}}"
   BUN_CACHE_DIR="${NIMBUS_BUN_CACHE_DIR:-/private/tmp/nimbus-bun-cache}"
   BUN_CARGO_TARGET_DIR="${NIMBUS_BUN_CARGO_TARGET_DIR:-/private/tmp/nimbus-bun-proof-target-${BUN_PROFILE}}"
 else
   BUN_PROOF_ROOT="${NIMBUS_BUN_PROOF_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/nimbus-bun-proof}"
   if is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}"; then
-    BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-${BUN_PROOF_ROOT}/configure-namespaced}"
-    BUN_CACHE_DIR="${NIMBUS_BUN_CACHE_DIR:-${BUN_PROOF_ROOT}/cache-namespaced}"
-    BUN_CARGO_TARGET_DIR="${NIMBUS_BUN_CARGO_TARGET_DIR:-${BUN_PROOF_ROOT}/bun-cargo-target-${BUN_PROFILE}-namespaced}"
+    BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-${BUN_PROOF_ROOT}/shared-adapter-${BUN_PROFILE}-namespaced}"
+    BUN_CACHE_DIR="${NIMBUS_BUN_CACHE_DIR:-${BUN_PROOF_ROOT}/cache-shared}"
+    BUN_CARGO_TARGET_DIR="${NIMBUS_BUN_CARGO_TARGET_DIR:-${BUN_PROOF_ROOT}/bun-cargo-target-${BUN_PROFILE}-shared}"
   else
-    BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-${BUN_PROOF_ROOT}/linked-adapter-${BUN_PROFILE}}"
+    BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-${BUN_PROOF_ROOT}/shared-adapter-${BUN_PROFILE}}"
     BUN_CACHE_DIR="${NIMBUS_BUN_CACHE_DIR:-${BUN_PROOF_ROOT}/bun-cache}"
     BUN_CARGO_TARGET_DIR="${NIMBUS_BUN_CARGO_TARGET_DIR:-${BUN_PROOF_ROOT}/bun-cargo-target-${BUN_PROFILE}}"
   fi
 fi
+SHARED_LIBRARY="${NIMBUS_BUN_EMBED_SHARED_LIBRARY:-${BUN_BUILD_DIR}/${SHARED_LIBRARY_BASENAME}}"
 
 REQUIRED_EXPORTS=(
   nimbus_bun_embed_probe_construct_and_destroy_vm
@@ -196,6 +302,8 @@ printf 'Bun rev:     %s\n' "${EXPECTED_BUN_REV}"
 printf 'Bun profile: %s\n' "${BUN_PROFILE}"
 printf 'Bun simdutf namespace enabled: %s\n' "${BUN_ENABLE_SIMDUTF_NAMESPACE}"
 printf 'Bun symbol audit required: %s\n\n' "${BUN_REQUIRE_SYMBOL_AUDIT}"
+printf 'Bun shared artifact audit required: %s\n' "${BUN_REQUIRE_SHARED_ARTIFACT_AUDIT}"
+printf 'Bun shared library: %s\n\n' "${SHARED_LIBRARY}"
 
 if [[ ! -f "${BUN_REPO}/src/embed_probe/lib.rs" ]]; then
   printf 'missing Bun checkout: expected %s/src/embed_probe/lib.rs\n' "${BUN_REPO}" >&2
@@ -228,8 +336,8 @@ fi
 printf '[1/10] Default no-link runtime contract\n'
 make verify-bun-jsc-runtime-contract
 
-printf '\n[2/10] Linked adapter feature compile and no-manifest unit contract\n'
-env -u NIMBUS_BUN_EMBED_LINK_ARGS \
+printf '\n[2/10] Linked adapter feature compile and no-shared-library unit contract\n'
+env -u NIMBUS_BUN_EMBED_LINK_ARGS -u NIMBUS_BUN_EMBED_SHARED_LIBRARY \
   cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc
 
 printf '\n[3/10] Bun proof source exports\n'
@@ -242,30 +350,32 @@ done
 printf '\n[4/10] Bun Rust format\n'
 (cd "${BUN_REPO}" && cargo fmt --all --check)
 
-printf '\n[5/10] Bun native embed probe and link manifest\n'
+printf '\n[5/10] Bun native shared adapter build\n'
 mkdir -p "${BUN_BUILD_DIR}" "${BUN_CACHE_DIR}" "${BUN_CARGO_TARGET_DIR}"
 BUN_BUILD_ARGS=(
   bun scripts/build.ts
   "--profile=${BUN_PROFILE}"
+  "--webkit=local"
+  "--embedder-shared=on"
   "--build-dir=${BUN_BUILD_DIR}"
   "--cache-dir=${BUN_CACHE_DIR}"
-  "--target=check-bun-embed-probe"
+  "--target=check-bun-embed-shared"
 )
 if is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}"; then
   BUN_BUILD_ARGS+=("--simdutf-namespace=${BUN_SIMDUTF_NAMESPACE}")
 fi
 (cd "${BUN_REPO}" && CARGO_TARGET_DIR="${BUN_CARGO_TARGET_DIR}" "${BUN_BUILD_ARGS[@]}")
 
-LINK_ARGS="${BUN_BUILD_DIR}/nimbus-bun-embed-link-args.txt"
-if [[ ! -s "${LINK_ARGS}" ]]; then
-  printf 'missing Bun embedder link manifest: %s\n' "${LINK_ARGS}" >&2
+if [[ ! -f "${SHARED_LIBRARY}" ]]; then
+  printf 'missing Bun/JSC shared adapter artifact: %s\n' "${SHARED_LIBRARY}" >&2
   exit 1
 fi
 
-printf '\n[6/10] Link manifest safety policy\n'
-reject_unsafe_linker_manifest "${LINK_ARGS}"
+printf '\n[6/10] Generated build graph safety policy\n'
+reject_unsafe_generated_build_graph "${BUN_BUILD_DIR}/build.ninja"
 
-printf '\n[7/10] Bun/WebKit/V8 simdutf symbol audit\n'
+printf '\n[7/10] Bun/JSC shared adapter export audit and symbol audit\n'
+audit_shared_adapter_exports "${SHARED_LIBRARY}"
 audit_simdutf_symbols
 
 case "${host_triple}" in
@@ -297,13 +407,28 @@ case "${host_triple}" in
         export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$(command -v c++)"
       fi
     fi
+    if command -v ld.lld >/dev/null 2>&1; then
+      linux_rustflags="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS:-}"
+      case " ${linux_rustflags} " in
+        *" -C link-arg=-fuse-ld="*) ;;
+        *)
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="${linux_rustflags:+${linux_rustflags} }-C link-arg=-fuse-ld=lld"
+          ;;
+      esac
+    fi
     ;;
 esac
 
-printf '\n[8/10] Linked adapter pure invocation through Bun/JSC FFI\n'
-NIMBUS_BUN_EMBED_LINK_ARGS="${LINK_ARGS}" \
+printf '\n[8/10] Bun embedder FFI and same-process V8+Bun/JSC proof\n'
+LINKED_CARGO_JOBS="${NIMBUS_BUN_LINKED_CARGO_JOBS:-1}"
+NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
+  CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
   cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib \
-    bun_jsc_linked_adapter_executes_pure_program_wrapper_json -- --nocapture
+    backends::bun_jsc -- --nocapture
+NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
+  CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
+  cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --test \
+    bun_jsc_linked_adapter -- --nocapture
 
 printf '\n[9/10] Nimbus whitespace diff check\n'
 git diff --check
