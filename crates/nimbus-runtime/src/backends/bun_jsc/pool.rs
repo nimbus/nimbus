@@ -120,6 +120,10 @@ impl BunJscPool {
         self.metrics
     }
 
+    pub(crate) fn begin_invocation(&mut self) {
+        self.lifecycle = BunJscLifecycleTrace::new();
+    }
+
     pub(crate) fn record_admission(&mut self) {
         self.metrics.admitted_invocations = self.metrics.admitted_invocations.saturating_add(1);
     }
