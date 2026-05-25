@@ -18,7 +18,7 @@ on:
       bun_source_ref:
         description: "Bun source ref or tag"
         required: true
-        default: "bun-v1.4.0-nimbus.5"
+        default: "nimbus-bun-jsc-proof-main-20260525"
       bun_source_revision:
         description: "Expected Bun source commit"
         required: true

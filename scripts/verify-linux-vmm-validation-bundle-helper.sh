@@ -23,12 +23,12 @@ chmod 0755 "${fake_crun_asset}"
 
 fake_libkrun_root="${tmp_dir}/nimbus-libkrun"
 mkdir -p "${fake_libkrun_root}/lib/pkgconfig" "${fake_libkrun_root}/include"
-printf 'stub libkrun\n' > "${fake_libkrun_root}/lib/libkrun.so.1.17.4"
+printf 'stub libkrun\n' > "${fake_libkrun_root}/lib/libkrun.so.1.18.1"
 printf 'stub libkrunfw\n' > "${fake_libkrun_root}/lib/libkrunfw.so.5.3.0"
-ln -s libkrun.so.1.17.4 "${fake_libkrun_root}/lib/libkrun.so.1"
+ln -s libkrun.so.1.18.1 "${fake_libkrun_root}/lib/libkrun.so.1"
 ln -s libkrunfw.so.5.3.0 "${fake_libkrun_root}/lib/libkrunfw.so.5"
 printf 'void krun_set_port_map_with_bind_address(void);\n' > "${fake_libkrun_root}/include/libkrun.h"
-printf 'nimbus-libkrun=v1.17.4-nimbus.1\n' > "${fake_libkrun_root}/NIMBUS_LIBKRUN_RELEASE.txt"
+printf 'nimbus-libkrun=v1.18.1-nimbus.1\n' > "${fake_libkrun_root}/NIMBUS_LIBKRUN_RELEASE.txt"
 COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar -czf "${fake_libkrun_archive}" -C "${fake_libkrun_root}" .
 
 bash "${repo_root}/scripts/prepare-linux-vmm-validation-bundle.sh" \

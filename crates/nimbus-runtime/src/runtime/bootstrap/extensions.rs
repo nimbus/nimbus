@@ -73,6 +73,7 @@ pub(crate) fn execution_extensions(
             deno_web::deno_web::init(
                 Default::default(),
                 Default::default(),
+                false,
                 InMemoryBroadcastChannel::default(),
             ),
             deno_crypto::deno_crypto::init(None),
