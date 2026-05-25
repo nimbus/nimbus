@@ -58,6 +58,15 @@ function runtimeLimits(overrides: Partial<RuntimeLimits> = {}): RuntimeLimits {
   };
 }
 
+const v8AdapterArtifact = {
+  status: "linked",
+  source: "built_in",
+  reason_code: "v8_builtin",
+  install_hint: null,
+  expected: null,
+  manifest: null,
+};
+
 export const defaultRuntimeDiagnostics: RuntimeDiagnostics = {
   limits: runtimeLimits(),
   reset_capabilities: {
@@ -77,6 +86,7 @@ export const defaultRuntimeDiagnostics: RuntimeDiagnostics = {
       default_lane: true,
       executor_started: false,
       execution_adapter_state: "linked",
+      execution_adapter_artifact: v8AdapterArtifact,
       limits: runtimeLimits({
         compatibility_target: "web_standard_isolate",
       }),
@@ -86,6 +96,7 @@ export const defaultRuntimeDiagnostics: RuntimeDiagnostics = {
       default_lane: false,
       executor_started: false,
       execution_adapter_state: "linked",
+      execution_adapter_artifact: v8AdapterArtifact,
       limits: runtimeLimits({ compatibility_target: "node20" }),
     },
     {
@@ -93,6 +104,7 @@ export const defaultRuntimeDiagnostics: RuntimeDiagnostics = {
       default_lane: false,
       executor_started: false,
       execution_adapter_state: "linked",
+      execution_adapter_artifact: v8AdapterArtifact,
       limits: runtimeLimits({ compatibility_target: "node22" }),
     },
     {
@@ -100,6 +112,7 @@ export const defaultRuntimeDiagnostics: RuntimeDiagnostics = {
       default_lane: false,
       executor_started: false,
       execution_adapter_state: "linked",
+      execution_adapter_artifact: v8AdapterArtifact,
       limits: runtimeLimits({ compatibility_target: "node24" }),
     },
     {
@@ -107,6 +120,33 @@ export const defaultRuntimeDiagnostics: RuntimeDiagnostics = {
       default_lane: false,
       executor_started: false,
       execution_adapter_state: "not_linked",
+      execution_adapter_artifact: {
+        status: "not_linked",
+        source: "build_feature_disabled",
+        reason_code: "linked_adapter_feature_disabled",
+        install_hint:
+          "install the optional nimbus-bun-jsc-adapter package, set NIMBUS_BUN_JSC_ADAPTER_MANIFEST to a verified nimbus-bun-jsc-adapter.json, or set NIMBUS_BUN_EMBED_SHARED_LIBRARY for a development proof",
+        expected: {
+          kind: "nimbus.bun_jsc.adapter",
+          schema_version: 1,
+          source_repository: "https://github.com/nimbus/bun",
+          source_ref: "bun-v1.4.0-nimbus.5",
+          source_revision: "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57",
+          target_triple: "x86_64-unknown-linux-gnu",
+          platform: "linux",
+          manifest_file: "nimbus-bun-jsc-adapter.json",
+          library_file: "libnimbus_bun_jsc_embedder.so",
+          readme_file: "README.md",
+          abi_name: "nimbus-bun-jsc-embedder",
+          abi_version: 1,
+          memory_enforcement: "outer_quota_required",
+          lifecycle: "fresh_discard",
+          proof_target: "check-bun-embed-shared",
+          simdutf_namespace: "nimbus_bun_simdutf",
+          required_export_count: 11,
+        },
+        manifest: null,
+      },
       limits: runtimeLimits({
         runtime_backend: "bun_jsc",
         runtime_backend_lockdown_profile: "bun_jsc_in_process_untrusted",

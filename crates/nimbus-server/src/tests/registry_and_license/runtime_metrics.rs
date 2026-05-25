@@ -210,6 +210,10 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
             lane["execution_adapter_state"],
             json!(execution_adapter_state)
         );
+        assert_eq!(
+            lane["execution_adapter_artifact"]["status"],
+            json!(execution_adapter_state)
+        );
         assert_eq!(lane["limits"]["runtime_backend"], json!(runtime_backend));
         assert_eq!(
             lane["limits"]["compatibility_target"],
@@ -225,4 +229,21 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
         );
         assert_eq!(lane["metrics"]["worker_dispatched_invocations"], json!(0));
     }
+    let bun_lane = lanes
+        .iter()
+        .find(|lane| lane["lane_name"] == json!("bun_jsc"))
+        .expect("bun_jsc lane should be present");
+    assert_eq!(
+        bun_lane["execution_adapter_artifact"]["source"],
+        json!("build_feature_disabled")
+    );
+    assert_eq!(
+        bun_lane["execution_adapter_artifact"]["reason_code"],
+        json!("linked_adapter_feature_disabled")
+    );
+    assert_eq!(
+        bun_lane["execution_adapter_artifact"]["expected"]["source_ref"],
+        json!("bun-v1.4.0-nimbus.5")
+    );
+    assert!(bun_lane["execution_adapter_artifact"]["manifest"].is_null());
 }

@@ -238,6 +238,7 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
             <th className="px-2 py-2 font-normal">Lane</th>
             <th className="px-2 py-2 font-normal">Backend</th>
             <th className="px-2 py-2 font-normal">Adapter</th>
+            <th className="px-2 py-2 font-normal">Artifact</th>
             <th className="px-2 py-2 font-normal">Executor</th>
             <th className="px-2 py-2 font-normal">Memory</th>
           </tr>
@@ -245,6 +246,9 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
         <tbody>
           {lanes.map((lane) => {
             const limits = lane.limits ?? {};
+            const artifact = lane.execution_adapter_artifact;
+            const artifactRef =
+              artifact?.manifest?.source_ref ?? artifact?.expected?.source_ref;
             return (
               <tr
                 key={lane.lane_name}
@@ -277,6 +281,21 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
                   <span className="font-mono text-xs text-default">
                     {lane.execution_adapter_state ?? "—"}
                   </span>
+                </td>
+                <td className="px-2 py-2 align-top">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-mono text-xs text-default">
+                      {artifact?.status ?? "—"}
+                    </span>
+                    <span className="font-mono text-[10px] text-muted">
+                      {artifact?.source ?? "—"}
+                    </span>
+                    {artifactRef ? (
+                      <span className="font-mono text-[10px] text-muted">
+                        {artifactRef}
+                      </span>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="px-2 py-2 align-top">
                   <span className="font-mono text-xs text-default">

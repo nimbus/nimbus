@@ -84,6 +84,9 @@ describe("msw handlers", () => {
       const lane = body.lanes?.find((item) => item.lane_name === laneName);
       expect(lane?.executor_started).toBe(false);
       expect(lane?.execution_adapter_state).toBe(executionAdapterState);
+      expect(lane?.execution_adapter_artifact?.status).toBe(
+        executionAdapterState,
+      );
       expect(lane?.limits?.runtime_backend).toBe(runtimeBackend);
       expect(lane?.limits?.compatibility_target).toBe(compatibilityTarget);
       expect(lane?.limits?.memory_enforcement).toBe(memoryEnforcement);
@@ -91,5 +94,12 @@ describe("msw handlers", () => {
         memoryEnforcement,
       );
     }
+    const bunLane = body.lanes?.find((item) => item.lane_name === "bun_jsc");
+    expect(bunLane?.execution_adapter_artifact?.source).toBe(
+      "build_feature_disabled",
+    );
+    expect(bunLane?.execution_adapter_artifact?.expected?.source_ref).toBe(
+      "bun-v1.4.0-nimbus.5",
+    );
   });
 });

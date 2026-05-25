@@ -45,6 +45,7 @@ pub(crate) async fn runtime_diagnostics(
                 default_lane: lane.default_lane,
                 executor_started: lane.executor_started,
                 execution_adapter_state: lane.execution_adapter_state,
+                execution_adapter_artifact: lane.execution_adapter_artifact,
                 limits: runtime_limits_response(&lane.limits),
                 reset_capabilities: lane.reset_capabilities,
                 metrics: lane.metrics,

@@ -18,8 +18,9 @@ use nimbus_runtime::HostCallOperation;
 use nimbus_runtime::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationAuth,
     InvocationKind, InvocationRequest, NimbusRuntimeError, RuntimeBundle,
-    RuntimeCompatibilityTarget, RuntimeExecutionAdapterState, RuntimeExecutor, RuntimeLimits,
-    RuntimeMetricsSnapshot, RuntimePolicy, RuntimeResetCapabilities,
+    RuntimeCompatibilityTarget, RuntimeExecutionAdapterArtifactDiagnostics,
+    RuntimeExecutionAdapterState, RuntimeExecutor, RuntimeLimits, RuntimeMetricsSnapshot,
+    RuntimePolicy, RuntimeResetCapabilities,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,6 +69,7 @@ struct ConvexRuntimeLane {
     policy: Arc<RuntimePolicy>,
     executor: Arc<OnceLock<Arc<RuntimeExecutor>>>,
     execution_adapter_state: RuntimeExecutionAdapterState,
+    execution_adapter_artifact: RuntimeExecutionAdapterArtifactDiagnostics,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +78,7 @@ pub(crate) struct ConvexRuntimeLaneDiagnostics {
     pub default_lane: bool,
     pub executor_started: bool,
     pub execution_adapter_state: RuntimeExecutionAdapterState,
+    pub execution_adapter_artifact: RuntimeExecutionAdapterArtifactDiagnostics,
     pub limits: RuntimeLimits,
     pub reset_capabilities: RuntimeResetCapabilities,
     pub metrics: RuntimeMetricsSnapshot,
@@ -85,11 +88,13 @@ impl ConvexRuntimeLane {
     fn from_limits(
         limits: RuntimeLimits,
         execution_adapter_state: RuntimeExecutionAdapterState,
+        execution_adapter_artifact: RuntimeExecutionAdapterArtifactDiagnostics,
     ) -> Self {
         Self {
             policy: Arc::new(RuntimePolicy::new(limits)),
             executor: Arc::new(OnceLock::new()),
             execution_adapter_state,
+            execution_adapter_artifact,
         }
     }
 
@@ -122,6 +127,7 @@ impl ConvexRuntimeLane {
             default_lane,
             executor_started: self.executor.get().is_some(),
             execution_adapter_state: self.execution_adapter_state,
+            execution_adapter_artifact: self.execution_adapter_artifact.clone(),
             limits: self.policy.limits().clone(),
             reset_capabilities: self.policy.limits().reset_capabilities(),
             metrics: self.policy.metrics_snapshot(),
@@ -184,7 +190,11 @@ fn convex_default_runtime_lane(base_limits: RuntimeLimits) -> ConvexRuntimeLane 
     } else {
         limits.apply_resource_overrides_from(&base_limits);
     }
-    ConvexRuntimeLane::from_limits(limits, RuntimeExecutionAdapterState::Linked)
+    ConvexRuntimeLane::from_limits(
+        limits,
+        RuntimeExecutionAdapterState::Linked,
+        RuntimeExecutionAdapterArtifactDiagnostics::built_in("v8_builtin"),
+    )
 }
 
 fn convex_node_runtime_lane(
@@ -193,13 +203,21 @@ fn convex_node_runtime_lane(
 ) -> ConvexRuntimeLane {
     let mut limits = RuntimeLimits::application_node(target);
     limits.apply_resource_overrides_from(&base_limits);
-    ConvexRuntimeLane::from_limits(limits, RuntimeExecutionAdapterState::Linked)
+    ConvexRuntimeLane::from_limits(
+        limits,
+        RuntimeExecutionAdapterState::Linked,
+        RuntimeExecutionAdapterArtifactDiagnostics::built_in("v8_builtin"),
+    )
 }
 
 fn convex_bun_jsc_runtime_lane(base_limits: RuntimeLimits) -> ConvexRuntimeLane {
     let mut limits = RuntimeLimits::application_bun_jsc();
     limits.apply_resource_overrides_from(&base_limits);
-    ConvexRuntimeLane::from_limits(limits, nimbus_runtime::bun_jsc_execution_adapter_state())
+    ConvexRuntimeLane::from_limits(
+        limits,
+        nimbus_runtime::bun_jsc_execution_adapter_state(),
+        nimbus_runtime::bun_jsc_adapter_artifact_diagnostics(),
+    )
 }
 
 impl ApplicationAuthVerifier for ConvexRegistry {

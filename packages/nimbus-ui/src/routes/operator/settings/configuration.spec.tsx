@@ -35,7 +35,10 @@ describe("ConfigurationSection runtime diagnostics", () => {
     expect(within(defaultLane).getByText("default")).toBeInTheDocument();
     expect(within(defaultLane).getByText("default lane")).toBeInTheDocument();
     expect(within(defaultLane).getByText("v8")).toBeInTheDocument();
-    expect(within(defaultLane).getByText("linked")).toBeInTheDocument();
+    expect(within(defaultLane).getAllByText("linked").length).toBeGreaterThan(
+      0,
+    );
+    expect(within(defaultLane).getByText("built_in")).toBeInTheDocument();
     expect(within(defaultLane).getByText("lazy")).toBeInTheDocument();
     expect(within(defaultLane).getByText("v8_isolate_heap_limit"))
       .toBeInTheDocument();
@@ -44,7 +47,10 @@ describe("ConfigurationSection runtime diagnostics", () => {
       const nodeLane = screen.getByTestId(`settings-runtime-lane-${laneName}`);
       expect(within(nodeLane).getAllByText(laneName).length).toBeGreaterThan(0);
       expect(within(nodeLane).getByText("v8")).toBeInTheDocument();
-      expect(within(nodeLane).getByText("linked")).toBeInTheDocument();
+      expect(within(nodeLane).getAllByText("linked").length).toBeGreaterThan(
+        0,
+      );
+      expect(within(nodeLane).getByText("built_in")).toBeInTheDocument();
       expect(within(nodeLane).getByText("lazy")).toBeInTheDocument();
       expect(within(nodeLane).getByText("v8_isolate_heap_limit"))
         .toBeInTheDocument();
@@ -52,7 +58,13 @@ describe("ConfigurationSection runtime diagnostics", () => {
 
     const bunLane = screen.getByTestId("settings-runtime-lane-bun_jsc");
     expect(within(bunLane).getAllByText("bun_jsc").length).toBeGreaterThan(0);
-    expect(within(bunLane).getByText("not_linked")).toBeInTheDocument();
+    expect(within(bunLane).getAllByText("not_linked").length).toBeGreaterThan(
+      0,
+    );
+    expect(within(bunLane).getByText("build_feature_disabled"))
+      .toBeInTheDocument();
+    expect(within(bunLane).getByText("bun-v1.4.0-nimbus.5"))
+      .toBeInTheDocument();
     expect(within(bunLane).getByText("lazy")).toBeInTheDocument();
     expect(within(bunLane).getByText("outer_quota_required"))
       .toBeInTheDocument();

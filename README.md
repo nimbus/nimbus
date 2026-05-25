@@ -256,7 +256,7 @@ real-time subscriptions.
 
 **Storage** — Document storage with optional schemas, indexed queries, cursor-based pagination. Pluggable backends: SQLite (default), Postgres, MySQL, libSQL, redb. Tenant isolation built into the storage layer. See the [storage backends guide](docs/operating/storage-backends.md).
 
-**Compute** — V8 JavaScript runtime for server-side queries, mutations, actions, and HTTP routes. Durable scheduling with `runAfter`, `runAt`, and cron jobs that survive restarts.
+**Compute** — V8 JavaScript runtime for server-side queries, mutations, actions, and HTTP routes, with Node compatibility lanes and an optional fail-closed Bun/JSC lane behind a verified adapter artifact. Durable scheduling with `runAfter`, `runAt`, and cron jobs that survive restarts.
 
 **Networking** — Reactive WebSocket subscriptions, five compatibility adapters, JWT/JWKS authentication with any standards-compliant identity provider.
 
@@ -291,6 +291,13 @@ runtime stack: `nimbus-libkrun` from
 [`nimbus/nimbus-crun`](https://github.com/nimbus/nimbus-crun). The install
 script installs those release artifacts under `/usr/libexec/nimbus` and does
 not depend on distro `libkrun` for Nimbus service execution.
+
+The in-process Bun/JSC runtime is optional and separate from the default
+Deno/V8/Node lanes. Linux direct installs can opt in with `install.sh
+--with-bun-jsc`, which installs the verified `nimbus-bun-jsc-adapter` artifact
+beside the main binary. Without that verified adapter, `/debug/runtime/metrics`
+reports the Bun/JSC lane as `not_linked` and Bun-selected functions fail
+closed.
 
 ### Build from source
 

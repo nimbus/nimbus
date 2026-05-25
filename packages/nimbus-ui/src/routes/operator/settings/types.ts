@@ -113,11 +113,58 @@ export type RuntimeResetCapabilities = {
   user_module_state_per_invocation?: boolean;
 };
 
+export type RuntimeExecutionAdapterExpectedArtifact = {
+  kind?: string;
+  schema_version?: number;
+  source_repository?: string;
+  source_ref?: string;
+  source_revision?: string;
+  target_triple?: string;
+  platform?: string;
+  manifest_file?: string;
+  library_file?: string;
+  readme_file?: string;
+  abi_name?: string;
+  abi_version?: number;
+  memory_enforcement?: string;
+  lifecycle?: string;
+  proof_target?: string;
+  simdutf_namespace?: string;
+  required_export_count?: number;
+};
+
+export type RuntimeExecutionAdapterManifestArtifact = {
+  adapter_version?: string;
+  nimbus_version?: string;
+  source_repository?: string;
+  source_ref?: string;
+  source_revision?: string;
+  target_triple?: string;
+  platform?: string;
+  library_file?: string;
+  library_sha256?: string;
+  abi_name?: string;
+  abi_version?: number;
+  checksum_file?: string;
+  sbom?: string;
+  slsa?: string;
+};
+
+export type RuntimeExecutionAdapterArtifactDiagnostics = {
+  status?: string;
+  source?: string;
+  reason_code?: string;
+  install_hint?: string | null;
+  expected?: RuntimeExecutionAdapterExpectedArtifact | null;
+  manifest?: RuntimeExecutionAdapterManifestArtifact | null;
+};
+
 export type RuntimeLaneDiagnostics = {
   lane_name: string;
   default_lane?: boolean;
   executor_started?: boolean;
   execution_adapter_state?: string;
+  execution_adapter_artifact?: RuntimeExecutionAdapterArtifactDiagnostics;
   limits?: RuntimeLimits;
   reset_capabilities?: RuntimeResetCapabilities;
   metrics?: Record<string, unknown>;
