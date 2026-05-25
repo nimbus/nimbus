@@ -720,7 +720,12 @@ jobs:
           bash -n scripts/collect-nimbus-homebrew-cask-proof.sh
           bash -n scripts/verify-bun-jsc-runtime-contract.sh
           bash -n scripts/verify-bun-jsc-in-process-lockdown.sh
+          bash -n scripts/bun-jsc-adapter-contract.sh
           bash -n scripts/verify-bun-jsc-linked-adapter.sh
+          bash -n scripts/build-bun-jsc-adapter-artifacts.sh
+          bash -n scripts/package-bun-jsc-adapter.sh
+          bash -n scripts/verify-bun-jsc-adapter-package.sh
+          bash -n scripts/verify-bun-jsc-adapter-package-helper.sh
           bash -n scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
           bash -n scripts/verify-nimbus-machine-guest-proof-helper.sh
           bash -n scripts/verify-nimbus-machine-service-proof-helper.sh
@@ -755,6 +760,9 @@ jobs:
 
       - name: Verify machine-os release ref contract helper
         run: bash scripts/verify-machine-os-release-ref-contract-helper.sh
+
+      - name: Verify Bun/JSC adapter package helper
+        run: bash scripts/verify-bun-jsc-adapter-package-helper.sh
 
       - name: Verify install script helper
         run: bash scripts/verify-install-helper.sh

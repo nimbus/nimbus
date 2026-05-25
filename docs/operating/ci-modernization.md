@@ -403,6 +403,21 @@ and runs Bun's native `check-bun-embed-probe` target. CI syntax-checks the
 script, but does not run the heavy external Bun proof until the Bun source is
 owned by an upstream release/tag or Nimbus fork/tag.
 
+The distributable adapter archive has its own default-CI fixture gate and a
+manual source-backed artifact workflow:
+
+- Default PR CI runs `bash scripts/verify-bun-jsc-adapter-package-helper.sh`
+  from `proof-helpers`. This validates the package/archive verifier against
+  deterministic fixtures and rejection cases without rebuilding Bun/WebKit.
+- `.github/workflows/bun-jsc-adapter.yml` is the heavy manual artifact lane for
+  Linux x86_64 and macOS arm64. It checks out the recorded `nimbus/bun` tag,
+  runs `scripts/build-bun-jsc-adapter-artifacts.sh`, uploads
+  `nimbus-bun-jsc-adapter-<platform>.tar.gz`, the manifest, checksums, and
+  proof logs.
+- The workflow does not hide an unpinned curl installer. It expects a pinned
+  Bun CLI on the runner, or an explicit `install_bun_with_npm` dispatch input
+  that installs the requested `bun` npm package version before the source build.
+
 ### CW4: warm-sccache compile-cost reduction
 
 CW4's `warm-sccache` job in `ci.yml` runs `cargo check --workspace`

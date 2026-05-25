@@ -11,6 +11,7 @@ BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/nimbus/bun}"
 EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-${BUN_JSC_ADAPTER_SOURCE_REF}}"
 EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-${BUN_JSC_ADAPTER_SOURCE_REVISION}}"
 BUN_SIMDUTF_NAMESPACE="${NIMBUS_BUN_SIMDUTF_NAMESPACE:-${BUN_JSC_ADAPTER_SIMDUTF_NAMESPACE}}"
+BUN_EXECUTABLE="${NIMBUS_BUN_EXECUTABLE:-bun}"
 
 host_triple="$(rustc -vV | awk '/^host:/ { print $2 }')"
 case "${host_triple}" in
@@ -285,12 +286,23 @@ REQUIRED_EXPORTS=(
 cd "${REPO_ROOT}"
 
 reject_unsafe_linker_policy
+if [[ "${BUN_EXECUTABLE}" == */* ]]; then
+  if [[ ! -x "${BUN_EXECUTABLE}" ]]; then
+    printf 'Bun executable is not executable: %s\n' "${BUN_EXECUTABLE}" >&2
+    exit 1
+  fi
+elif ! command -v "${BUN_EXECUTABLE}" >/dev/null 2>&1; then
+  printf 'Bun executable not found: %s\n' "${BUN_EXECUTABLE}" >&2
+  printf 'set NIMBUS_BUN_EXECUTABLE to a pinned Bun CLI for source-backed adapter builds\n' >&2
+  exit 1
+fi
 
 printf 'Bun/JSC linked adapter gate\n'
 printf 'Nimbus repo: %s\n' "${REPO_ROOT}"
 printf 'Bun repo:    %s\n' "${BUN_REPO}"
 printf 'Bun ref:     %s\n' "${EXPECTED_BUN_REF}"
 printf 'Bun rev:     %s\n' "${EXPECTED_BUN_REV}"
+printf 'Bun CLI:     %s\n' "${BUN_EXECUTABLE}"
 printf 'Bun profile: %s\n' "${BUN_PROFILE}"
 printf 'Bun simdutf namespace enabled: %s\n' "${BUN_ENABLE_SIMDUTF_NAMESPACE}"
 printf 'Bun symbol audit required: %s\n\n' "${BUN_REQUIRE_SYMBOL_AUDIT}"
@@ -345,7 +357,7 @@ printf '\n[4/11] Bun Rust format\n'
 printf '\n[5/11] Bun native shared adapter build\n'
 mkdir -p "${BUN_BUILD_DIR}" "${BUN_CACHE_DIR}" "${BUN_CARGO_TARGET_DIR}"
 BUN_BUILD_ARGS=(
-  bun scripts/build.ts
+  "${BUN_EXECUTABLE}" scripts/build.ts
   "--profile=${BUN_PROFILE}"
   "--webkit=local"
   "--embedder-shared=on"
