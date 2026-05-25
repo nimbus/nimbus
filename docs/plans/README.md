@@ -14,6 +14,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
     preserving historical evidence. Includes an upstream impact audit that
     requires Deno/rusty_v8, Bun, and crun/libkrun port work to reuse upstream
     fixes and APIs when they now cover older Nimbus-local deltas.
+- `docs/plans/final-nimbus-release-readiness-plan.md`
+  - ready execution plan for tying the standardized fork releases back into
+    the final `nimbus/nimbus` product release. Gates on live fork health,
+    released fork pins, clean release worktree, version/changelog/lockfile
+    consistency, full local Nimbus verification, local release binary proof,
+    tag-driven GitHub release workflow success, downloaded artifact
+    verification, and post-release install/runtime posture evidence.
 - `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
   - active execution plan for OpenShell-informed enterprise trust work.
     EPS0-EPS8 are complete: strict typed operator policy artifacts,
