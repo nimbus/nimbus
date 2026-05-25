@@ -10,8 +10,10 @@ documentation are all current. This progress record captures the broad local
 verification completed after the `BJA7` product-metadata checkpoint and the
 `BJA8` disk/cache preflight.
 
-This gate is not yet the closeout. The local source-backed linked-adapter gate
-still requires a local WebKit checkout or `BUN_WEBKIT_PATH`.
+This gate is not the closeout. It is superseded by Gate 56, which installs the
+local WebKit source prerequisite, fixes the macOS shared-adapter link/export
+issues in the Nimbus Bun fork, and records passing local plus Debian linked
+gates.
 
 ## Baseline
 
@@ -111,9 +113,6 @@ commit is documentation only.
 
 ## Decision
 
-`BJA8` is in progress but not complete. Broad local gates are green, and the
-Debian source-backed linked proof is green. The remaining completion blocker is
-the explicit local linked-adapter gate requirement: either install or point
-`BUN_WEBKIT_PATH` at a local WebKit checkout, or change the plan/goal criteria
-to accept Debian source-backed linked proof as the loaded-adapter evidence for
-this machine.
+`BJA8` was not complete at this checkpoint. Broad local gates were green, and
+the Debian source-backed linked proof was green. Gate 56 supersedes this result
+by resolving the local linked-adapter gate requirement and closing BJA8.

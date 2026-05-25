@@ -502,10 +502,10 @@ mod tests {
     fn bun_jsc_linked_adapter_feature_names_reproducible_bun_source() {
         let contract = linked::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
         assert_eq!(contract.repository, "https://github.com/nimbus/bun");
-        assert_eq!(contract.source_ref, "bun-v1.4.0-nimbus.4");
+        assert_eq!(contract.source_ref, "bun-v1.4.0-nimbus.5");
         assert_eq!(
             contract.git_revision,
-            "7c6dd4312e437c67a6c4c8cbb252f0d7ae898db8"
+            "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57"
         );
         assert_eq!(contract.proof_target, "check-bun-embed-shared");
         assert_eq!(contract.simdutf_namespace, "nimbus_bun_simdutf");
