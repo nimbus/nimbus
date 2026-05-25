@@ -7,7 +7,7 @@ usage: verify-bun-jsc-adapter-package.sh --archive <path> [options]
 
 Verify a packaged Nimbus Bun/JSC shared adapter archive without rebuilding
 Bun/WebKit. This checks the archive layout, manifest contract, checksums,
-dynamic export set, and native symbol leak policy.
+SBOM/provenance evidence, dynamic export set, and native symbol leak policy.
 
 Required:
   --archive <path>             Adapter archive produced by package-bun-jsc-adapter.sh
@@ -71,12 +71,27 @@ library_basename="$(bun_jsc_adapter_library_basename_for_triple "${target_triple
 
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-bun-jsc-adapter-package.XXXXXX")"
 trap 'rm -rf "${tmp_root}"' EXIT
-tar -xzf "${archive_path}" -C "${tmp_root}"
+extract_root="${tmp_root}/extract"
+mkdir -p "${extract_root}"
+entries_path="${tmp_root}/archive-entries.txt"
+tar -tzf "${archive_path}" >"${entries_path}"
+while IFS= read -r entry; do
+  case "${entry}" in
+    ""|/*|../*|*"/../"*|*".."*|*/*)
+      die "unsafe Bun/JSC adapter archive entry: ${entry}"
+      ;;
+  esac
+done <"${entries_path}"
+duplicate_entry="$(sort "${entries_path}" | uniq -d | head -n 1 || true)"
+if [[ -n "${duplicate_entry}" ]]; then
+  die "duplicate Bun/JSC adapter archive entry: ${duplicate_entry}"
+fi
+tar -xzf "${archive_path}" -C "${extract_root}"
 
-manifest_path="${tmp_root}/${BUN_JSC_ADAPTER_MANIFEST_FILE}"
-library_path="${tmp_root}/${library_basename}"
-checksums_path="${tmp_root}/${BUN_JSC_ADAPTER_CHECKSUMS_FILE}"
-readme_path="${tmp_root}/${BUN_JSC_ADAPTER_README_FILE}"
+manifest_path="${extract_root}/${BUN_JSC_ADAPTER_MANIFEST_FILE}"
+library_path="${extract_root}/${library_basename}"
+checksums_path="${extract_root}/${BUN_JSC_ADAPTER_CHECKSUMS_FILE}"
+readme_path="${extract_root}/${BUN_JSC_ADAPTER_README_FILE}"
 
 [[ -f "${manifest_path}" ]] || die "missing ${BUN_JSC_ADAPTER_MANIFEST_FILE} in ${archive_path}"
 [[ -f "${library_path}" ]] || die "missing ${library_basename} in ${archive_path}"
@@ -86,12 +101,17 @@ readme_path="${tmp_root}/${BUN_JSC_ADAPTER_README_FILE}"
 library_sha256="$(bun_jsc_adapter_sha256_file "${library_path}")"
 manifest_sha256="$(bun_jsc_adapter_sha256_file "${manifest_path}")"
 readme_sha256="$(bun_jsc_adapter_sha256_file "${readme_path}")"
-grep -F "${library_sha256}  ${library_basename}" "${checksums_path}" >/dev/null ||
-  die "checksums file does not contain matching ${library_basename} digest"
-grep -F "${manifest_sha256}  ${BUN_JSC_ADAPTER_MANIFEST_FILE}" "${checksums_path}" >/dev/null ||
-  die "checksums file does not contain matching manifest digest"
-grep -F "${readme_sha256}  ${BUN_JSC_ADAPTER_README_FILE}" "${checksums_path}" >/dev/null ||
-  die "checksums file does not contain matching README digest"
+
+verify_checksum_entry() {
+  local subject_name="$1"
+  local digest="$2"
+  grep -F "${digest}  ${subject_name}" "${checksums_path}" >/dev/null ||
+    die "checksums file does not contain matching ${subject_name} digest"
+}
+
+verify_checksum_entry "${library_basename}" "${library_sha256}"
+verify_checksum_entry "${BUN_JSC_ADAPTER_MANIFEST_FILE}" "${manifest_sha256}"
+verify_checksum_entry "${BUN_JSC_ADAPTER_README_FILE}" "${readme_sha256}"
 
 required_exports_file="${tmp_root}/expected-exports.txt"
 actual_exports_file="${tmp_root}/actual-exports.txt"
@@ -107,6 +127,8 @@ export BUN_JSC_ADAPTER_ABI_NAME
 export BUN_JSC_ADAPTER_ABI_VERSION
 export BUN_JSC_ADAPTER_MEMORY_ENFORCEMENT
 export BUN_JSC_ADAPTER_LIFECYCLE
+export BUN_JSC_ADAPTER_MANIFEST_FILE
+export BUN_JSC_ADAPTER_README_FILE
 export BUN_JSC_ADAPTER_SOURCE_REPOSITORY
 export BUN_JSC_ADAPTER_SOURCE_REF
 export BUN_JSC_ADAPTER_SOURCE_REVISION
@@ -116,6 +138,8 @@ export platform
 export library_basename
 export library_sha256
 export required_exports_json
+evidence_files_path="${tmp_root}/evidence-files.txt"
+export evidence_files_path
 
 python3 - "${manifest_path}" <<'PY'
 import json
@@ -182,15 +206,101 @@ if abi.get("required_exports") != expected_exports:
     raise SystemExit("manifest abi.required_exports mismatch")
 
 provenance = manifest.get("provenance")
-if provenance is not None:
-    if not isinstance(provenance, dict):
-        raise SystemExit("manifest provenance must be an object")
-    allowed_provenance = {"checksum_file", "sbom", "slsa"}
-    unknown_provenance = set(provenance) - allowed_provenance
-    if unknown_provenance:
-        raise SystemExit(f"unknown provenance fields: {sorted(unknown_provenance)}")
-    if provenance.get("checksum_file") != os.environ["BUN_JSC_ADAPTER_CHECKSUMS_FILE"]:
-        raise SystemExit("manifest provenance.checksum_file mismatch")
+if not isinstance(provenance, dict):
+    raise SystemExit("manifest provenance must be an object")
+allowed_provenance = {"checksum_file", "sbom", "slsa"}
+unknown_provenance = set(provenance) - allowed_provenance
+if unknown_provenance:
+    raise SystemExit(f"unknown provenance fields: {sorted(unknown_provenance)}")
+if provenance.get("checksum_file") != os.environ["BUN_JSC_ADAPTER_CHECKSUMS_FILE"]:
+    raise SystemExit("manifest provenance.checksum_file mismatch")
+reserved = {
+    os.environ["library_basename"],
+    os.environ["BUN_JSC_ADAPTER_MANIFEST_FILE"],
+    os.environ["BUN_JSC_ADAPTER_README_FILE"],
+    os.environ["BUN_JSC_ADAPTER_CHECKSUMS_FILE"],
+}
+evidence_files = []
+for key in ("sbom", "slsa"):
+    value = provenance.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(f"manifest provenance.{key} must be a non-empty filename")
+    if value in {".", ".."} or "/" in value or "\\" in value or ".." in value:
+        raise SystemExit(f"manifest provenance.{key} must be a single safe filename")
+    if value in reserved:
+        raise SystemExit(f"manifest provenance.{key} collides with required archive file")
+    evidence_files.append(value)
+pathlib.Path(os.environ["evidence_files_path"]).write_text("\n".join(evidence_files) + "\n")
+PY
+
+expected_entries="${tmp_root}/expected-entries.txt"
+{
+  printf '%s\n' "${library_basename}"
+  printf '%s\n' "${BUN_JSC_ADAPTER_MANIFEST_FILE}"
+  printf '%s\n' "${BUN_JSC_ADAPTER_README_FILE}"
+  printf '%s\n' "${BUN_JSC_ADAPTER_CHECKSUMS_FILE}"
+  cat "${evidence_files_path}"
+} | sort -u >"${expected_entries}"
+sort -u "${entries_path}" >"${tmp_root}/actual-entries.txt"
+if ! diff -u "${expected_entries}" "${tmp_root}/actual-entries.txt" >"${tmp_root}/entry-diff.txt"; then
+  cat "${tmp_root}/entry-diff.txt" >&2
+  die "Bun/JSC adapter archive entries do not match manifest provenance contract"
+fi
+
+sbom_file="$(sed -n '1p' "${evidence_files_path}")"
+slsa_file="$(sed -n '2p' "${evidence_files_path}")"
+for evidence_file in "${sbom_file}" "${slsa_file}"; do
+  evidence_path="${extract_root}/${evidence_file}"
+  [[ -f "${evidence_path}" ]] || die "missing provenance evidence file: ${evidence_file}"
+  verify_checksum_entry "${evidence_file}" "$(bun_jsc_adapter_sha256_file "${evidence_path}")"
+done
+
+python3 - "${extract_root}/${sbom_file}" "${extract_root}/${slsa_file}" "${library_basename}" "${library_sha256}" <<'PY'
+import json
+import pathlib
+import sys
+
+sbom_path = pathlib.Path(sys.argv[1])
+slsa_path = pathlib.Path(sys.argv[2])
+library_name = sys.argv[3]
+library_sha256 = sys.argv[4]
+
+sbom = json.loads(sbom_path.read_text())
+if sbom.get("bomFormat") != "CycloneDX":
+    raise SystemExit("SBOM evidence must be CycloneDX JSON")
+if not isinstance(sbom.get("components"), list):
+    raise SystemExit("SBOM evidence must contain components")
+component_names = {component.get("name") for component in sbom["components"] if isinstance(component, dict)}
+if library_name not in component_names:
+    raise SystemExit("SBOM evidence must identify the adapter shared library")
+if "bun" not in component_names:
+    raise SystemExit("SBOM evidence must identify the Bun source component")
+if library_sha256 not in json.dumps(sbom, sort_keys=True):
+    raise SystemExit("SBOM evidence must contain the adapter shared library SHA-256")
+
+statements = [
+    json.loads(line)
+    for line in slsa_path.read_text().splitlines()
+    if line.strip()
+]
+if len(statements) != 1:
+    raise SystemExit("SLSA evidence must contain exactly one JSON statement")
+statement = statements[0]
+if statement.get("_type") != "https://in-toto.io/Statement/v1":
+    raise SystemExit("SLSA evidence must be an in-toto statement")
+if statement.get("predicateType") != "https://slsa.dev/provenance/v1":
+    raise SystemExit("SLSA evidence must use the SLSA provenance v1 predicate")
+subjects = statement.get("subject")
+if not isinstance(subjects, list):
+    raise SystemExit("SLSA evidence must contain subjects")
+matched = False
+for subject in subjects:
+    if not isinstance(subject, dict):
+        continue
+    if subject.get("name") == library_name and subject.get("digest", {}).get("sha256") == library_sha256:
+        matched = True
+if not matched:
+    raise SystemExit("SLSA evidence must bind the adapter shared library SHA-256")
 PY
 
 list_shared_adapter_exports() {
@@ -239,4 +349,4 @@ if ! diff -u "${required_exports_file}" "${actual_exports_file}"; then
   die "Bun/JSC adapter archive export set drifted"
 fi
 
-printf 'verified: Bun/JSC adapter package archive matches manifest, checksum, export, and native-symbol contracts\n'
+printf 'verified: Bun/JSC adapter package archive matches manifest, checksum, SBOM/provenance, export, and native-symbol contracts\n'

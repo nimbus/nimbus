@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 pub(crate) const BUN_JSC_SHARED_LIBRARY_ENV: &str = "NIMBUS_BUN_EMBED_SHARED_LIBRARY";
 pub(crate) const BUN_JSC_ADAPTER_MANIFEST_ENV: &str = "NIMBUS_BUN_JSC_ADAPTER_MANIFEST";
 const BUN_JSC_ADAPTER_MANIFEST_FILE: &str = "nimbus-bun-jsc-adapter.json";
+const BUN_JSC_ADAPTER_README_FILE: &str = "README.md";
 const BUN_JSC_ADAPTER_KIND: &str = "nimbus.bun_jsc.adapter";
 const BUN_JSC_ADAPTER_SCHEMA_VERSION: u32 = 1;
 const BUN_JSC_ADAPTER_ABI_NAME: &str = "nimbus-bun-jsc-embedder";
@@ -77,8 +78,8 @@ struct BunJscAdapterAbiManifest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BunJscAdapterProvenanceManifest {
-    sbom: Option<String>,
-    slsa: Option<String>,
+    sbom: String,
+    slsa: String,
     checksum_file: String,
 }
 
@@ -181,7 +182,7 @@ pub(crate) fn validate_adapter_manifest_path(
         .map_err(|error| format!("invalid Bun/JSC adapter manifest JSON: {error}"))?;
     validate_manifest_contract(&manifest)?;
 
-    let library_component = single_relative_component(&manifest.library)?;
+    let library_component = single_relative_component("library", &manifest.library)?;
     let library_path = manifest_dir.join(library_component);
     if !library_path.is_file() {
         return Err(format!(
@@ -212,6 +213,13 @@ pub(crate) fn validate_adapter_manifest_path(
             actual_sha256
         ));
     }
+    validate_manifest_provenance_files(
+        &manifest,
+        &manifest_dir,
+        &manifest_bytes,
+        &library_path,
+        &actual_sha256,
+    )?;
 
     Ok(library_path)
 }
@@ -268,15 +276,13 @@ fn validate_manifest_contract(manifest: &BunJscAdapterManifest) -> std::result::
         BUN_JSC_MEMORY_ENFORCEMENT,
     )?;
     expect_string("lifecycle", &manifest.lifecycle, BUN_JSC_LIFECYCLE)?;
-    if let Some(provenance) = &manifest.provenance {
-        expect_non_empty("provenance.checksum_file", &provenance.checksum_file)?;
-        if let Some(sbom) = &provenance.sbom {
-            expect_non_empty("provenance.sbom", sbom)?;
-        }
-        if let Some(slsa) = &provenance.slsa {
-            expect_non_empty("provenance.slsa", slsa)?;
-        }
-    }
+    let provenance = manifest
+        .provenance
+        .as_ref()
+        .ok_or_else(|| "Bun/JSC adapter manifest provenance must be present".to_string())?;
+    expect_non_empty("provenance.checksum_file", &provenance.checksum_file)?;
+    expect_non_empty("provenance.sbom", &provenance.sbom)?;
+    expect_non_empty("provenance.slsa", &provenance.slsa)?;
     if manifest.schema_version != BUN_JSC_ADAPTER_SCHEMA_VERSION {
         return Err(format!(
             "Bun/JSC adapter manifest schema_version must be {}, got {}",
@@ -284,6 +290,129 @@ fn validate_manifest_contract(manifest: &BunJscAdapterManifest) -> std::result::
         ));
     }
     Ok(())
+}
+
+fn validate_manifest_provenance_files(
+    manifest: &BunJscAdapterManifest,
+    manifest_dir: &Path,
+    manifest_bytes: &[u8],
+    library_path: &Path,
+    library_sha256: &str,
+) -> std::result::Result<(), String> {
+    let provenance = manifest
+        .provenance
+        .as_ref()
+        .ok_or_else(|| "Bun/JSC adapter manifest provenance must be present".to_string())?;
+    let checksum_component =
+        single_relative_component("provenance.checksum_file", &provenance.checksum_file)?;
+    let checksum_path = manifest_dir.join(checksum_component);
+    if !checksum_path.is_file() {
+        return Err(format!(
+            "Bun/JSC adapter manifest provenance.checksum_file {} does not exist beside the manifest",
+            checksum_path.display()
+        ));
+    }
+    let checksum_path = checksum_path.canonicalize().map_err(|error| {
+        format!(
+            "failed to canonicalize Bun/JSC adapter checksum file {}: {error}",
+            checksum_path.display()
+        )
+    })?;
+    if !checksum_path.starts_with(manifest_dir) {
+        return Err(format!(
+            "Bun/JSC adapter checksum file {} escapes manifest directory {}",
+            checksum_path.display(),
+            manifest_dir.display()
+        ));
+    }
+    validate_packaged_path_safety(&checksum_path, "Bun/JSC adapter checksum file")?;
+    let checksums = std::fs::read_to_string(&checksum_path).map_err(|error| {
+        format!(
+            "failed to read Bun/JSC adapter checksum file {}: {error}",
+            checksum_path.display()
+        )
+    })?;
+
+    verify_checksum_manifest_entry(&checksums, &manifest.library, library_sha256)?;
+    verify_checksum_manifest_entry(
+        &checksums,
+        BUN_JSC_ADAPTER_MANIFEST_FILE,
+        &compute_sha256_hex(manifest_bytes),
+    )?;
+
+    for (field, file_name) in [
+        ("provenance.sbom", &provenance.sbom),
+        ("provenance.slsa", &provenance.slsa),
+    ] {
+        if file_name == &manifest.library
+            || file_name == BUN_JSC_ADAPTER_MANIFEST_FILE
+            || file_name == BUN_JSC_ADAPTER_README_FILE
+            || file_name == &provenance.checksum_file
+        {
+            return Err(format!(
+                "Bun/JSC adapter manifest {field} must not collide with required archive file {file_name:?}"
+            ));
+        }
+        let evidence_component = single_relative_component(field, file_name)?;
+        let evidence_path = manifest_dir.join(evidence_component);
+        if !evidence_path.is_file() {
+            return Err(format!(
+                "Bun/JSC adapter manifest {field} {} does not exist beside the manifest",
+                evidence_path.display()
+            ));
+        }
+        let evidence_path = evidence_path.canonicalize().map_err(|error| {
+            format!(
+                "failed to canonicalize Bun/JSC adapter {field} {}: {error}",
+                evidence_path.display()
+            )
+        })?;
+        if !evidence_path.starts_with(manifest_dir) {
+            return Err(format!(
+                "Bun/JSC adapter {field} {} escapes manifest directory {}",
+                evidence_path.display(),
+                manifest_dir.display()
+            ));
+        }
+        validate_packaged_path_safety(&evidence_path, "Bun/JSC adapter provenance file")?;
+        verify_checksum_manifest_entry(
+            &checksums,
+            file_name,
+            &compute_sha256_for_path(&evidence_path)?,
+        )?;
+    }
+
+    if !library_path.starts_with(manifest_dir) {
+        return Err(format!(
+            "Bun/JSC adapter library {} escapes manifest directory {}",
+            library_path.display(),
+            manifest_dir.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn verify_checksum_manifest_entry(
+    checksums: &str,
+    file_name: &str,
+    expected_sha256: &str,
+) -> std::result::Result<(), String> {
+    for line in checksums.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(digest) = parts.next() else {
+            continue;
+        };
+        let Some(subject) = parts.next() else {
+            continue;
+        };
+        if subject == file_name && digest.eq_ignore_ascii_case(expected_sha256) {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "Bun/JSC adapter checksum file must contain SHA-256 {expected_sha256} for {file_name}"
+    ))
 }
 
 fn expect_non_empty(name: &str, actual: &str) -> std::result::Result<(), String> {
@@ -302,13 +431,16 @@ fn expect_string(name: &str, actual: &str, expected: &str) -> std::result::Resul
     ))
 }
 
-fn single_relative_component(value: &str) -> std::result::Result<&Path, String> {
+fn single_relative_component<'a>(
+    field: &str,
+    value: &'a str,
+) -> std::result::Result<&'a Path, String> {
     let path = Path::new(value);
     let mut components = path.components();
     match (components.next(), components.next()) {
         (Some(Component::Normal(_)), None) => Ok(path),
         _ => Err(format!(
-            "Bun/JSC adapter manifest library must be a single relative filename, got {value:?}"
+            "Bun/JSC adapter manifest {field} must be a single relative filename, got {value:?}"
         )),
     }
 }
@@ -462,6 +594,46 @@ mod tests {
             serde_json::to_vec_pretty(manifest).expect("manifest should serialize"),
         )
         .expect("manifest should be written");
+        if let Some(provenance) = manifest.get("provenance").and_then(Value::as_object) {
+            for field in ["sbom", "slsa"] {
+                if let Some(file_name) = provenance.get(field).and_then(Value::as_str)
+                    && !file_name.contains('/')
+                    && !file_name.contains("..")
+                {
+                    let contents = match field {
+                        "sbom" => br#"{"bomFormat":"CycloneDX","components":[]}"#.as_slice(),
+                        "slsa" => br#"{"_type":"https://in-toto.io/Statement/v1","predicateType":"https://slsa.dev/provenance/v1"}"#.as_slice(),
+                        _ => unreachable!(),
+                    };
+                    std::fs::write(dir.join(file_name), contents)
+                        .expect("provenance evidence should be written");
+                }
+            }
+            if let Some(checksum_file) = provenance.get("checksum_file").and_then(Value::as_str)
+                && !checksum_file.contains('/')
+                && !checksum_file.contains("..")
+            {
+                let mut checksums = String::new();
+                for file_name in [
+                    shared_library_basename(),
+                    BUN_JSC_ADAPTER_MANIFEST_FILE,
+                    provenance.get("sbom").and_then(Value::as_str).unwrap_or(""),
+                    provenance.get("slsa").and_then(Value::as_str).unwrap_or(""),
+                ] {
+                    if file_name.is_empty() {
+                        continue;
+                    }
+                    let path = dir.join(file_name);
+                    if path.is_file() {
+                        let sha256 = compute_sha256_for_path(&path)
+                            .expect("checksum should compute for manifest fixture");
+                        checksums.push_str(&format!("{sha256}  {file_name}\n"));
+                    }
+                }
+                std::fs::write(dir.join(checksum_file), checksums)
+                    .expect("checksum manifest should be written");
+            }
+        }
         manifest_path
     }
 
@@ -624,6 +796,83 @@ mod tests {
 
         assert!(
             error.contains("checksum mismatch"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn manifest_requires_provenance_evidence() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let (_library_path, sha256) = write_stub_library(temp_dir.path());
+        let mut manifest = manifest_json(&sha256);
+        manifest
+            .as_object_mut()
+            .expect("manifest should be object")
+            .remove("provenance");
+        let manifest_path = write_manifest(temp_dir.path(), &manifest);
+
+        let error = validate_adapter_manifest_path(&manifest_path)
+            .expect_err("missing provenance evidence should be rejected");
+
+        assert!(
+            error.contains("provenance must be present"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_missing_provenance_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let (_library_path, sha256) = write_stub_library(temp_dir.path());
+        let manifest = manifest_json(&sha256);
+        let manifest_path = write_manifest(temp_dir.path(), &manifest);
+        std::fs::remove_file(temp_dir.path().join("nimbus-bun-jsc-adapter.sbom.cdx.json"))
+            .expect("fixture SBOM should be removed");
+
+        let error = validate_adapter_manifest_path(&manifest_path)
+            .expect_err("missing provenance file should be rejected");
+
+        assert!(
+            error.contains("provenance.sbom") && error.contains("does not exist"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_provenance_checksum_mismatch() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let (_library_path, sha256) = write_stub_library(temp_dir.path());
+        let manifest = manifest_json(&sha256);
+        let manifest_path = write_manifest(temp_dir.path(), &manifest);
+        std::fs::write(
+            temp_dir.path().join("nimbus-bun-jsc-adapter.intoto.jsonl"),
+            b"tampered",
+        )
+        .expect("fixture provenance should be tampered");
+
+        let error = validate_adapter_manifest_path(&manifest_path)
+            .expect_err("provenance checksum mismatch should be rejected");
+
+        assert!(
+            error.contains("checksum file must contain SHA-256")
+                && error.contains("nimbus-bun-jsc-adapter.intoto.jsonl"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_unsafe_provenance_paths() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let (_library_path, sha256) = write_stub_library(temp_dir.path());
+        let mut manifest = manifest_json(&sha256);
+        manifest["provenance"]["slsa"] = json!("../adapter.intoto.jsonl");
+        let manifest_path = write_manifest(temp_dir.path(), &manifest);
+
+        let error = validate_adapter_manifest_path(&manifest_path)
+            .expect_err("unsafe provenance path should be rejected");
+
+        assert!(
+            error.contains("provenance.slsa") && error.contains("single relative filename"),
             "unexpected error: {error}"
         );
     }

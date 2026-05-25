@@ -21,8 +21,8 @@ Optional:
   --bun-source-repository <url>
   --bun-source-ref <ref>
   --bun-source-revision <sha>
-  --sbom <path>                Optional CycloneDX SBOM file to include
-  --slsa <path>                Optional SLSA/in-toto provenance file to include
+  --sbom <path>                CycloneDX SBOM content override (archive filename is fixed)
+  --slsa <path>                SLSA/in-toto provenance content override (archive filename is fixed)
   -h, --help                   Show this help text
 EOF
 }
@@ -137,16 +137,131 @@ rm -rf "${stage_dir}" "${archive_path}"
 mkdir -p "${stage_dir}"
 
 install -m 0755 "${shared_library}" "${stage_dir}/${library_basename}"
+library_sha256="$(bun_jsc_adapter_sha256_file "${stage_dir}/${library_basename}")"
+
+validate_evidence_basename() {
+  local field="$1"
+  local basename="$2"
+  case "${basename}" in
+    ""|.|..|*/*|*\\*)
+      die "${field} must resolve to a single filename, got: ${basename}"
+      ;;
+    "${library_basename}"|"${BUN_JSC_ADAPTER_MANIFEST_FILE}"|"${BUN_JSC_ADAPTER_README_FILE}"|"${BUN_JSC_ADAPTER_CHECKSUMS_FILE}")
+      die "${field} must not collide with required adapter archive file: ${basename}"
+      ;;
+  esac
+}
 
 sbom_basename=""
 slsa_basename=""
 if [[ -n "${sbom_path}" ]]; then
-  sbom_basename="$(basename "${sbom_path}")"
+  sbom_basename="nimbus-bun-jsc-adapter.sbom.cdx.json"
+  validate_evidence_basename "--sbom" "${sbom_basename}"
   install -m 0644 "${sbom_path}" "${stage_dir}/${sbom_basename}"
+else
+  sbom_basename="nimbus-bun-jsc-adapter.sbom.cdx.json"
+  export adapter_version
+  export nimbus_version
+  export bun_source_repository
+  export bun_source_ref
+  export bun_source_revision
+  export target_triple
+  export platform
+  export library_basename
+  export library_sha256
+  python3 - <<'PY' >"${stage_dir}/${sbom_basename}"
+import json
+import os
+
+document = {
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.5",
+    "version": 1,
+    "metadata": {
+        "component": {
+            "type": "library",
+            "name": "nimbus-bun-jsc-adapter",
+            "version": os.environ["adapter_version"],
+        },
+        "properties": [
+            {"name": "nimbus.version", "value": os.environ["nimbus_version"]},
+            {"name": "bun.source.repository", "value": os.environ["bun_source_repository"]},
+            {"name": "bun.source.ref", "value": os.environ["bun_source_ref"]},
+            {"name": "bun.source.revision", "value": os.environ["bun_source_revision"]},
+            {"name": "target.triple", "value": os.environ["target_triple"]},
+            {"name": "platform", "value": os.environ["platform"]},
+        ],
+    },
+    "components": [
+        {
+            "type": "file",
+            "name": os.environ["library_basename"],
+            "hashes": [
+                {"alg": "SHA-256", "content": os.environ["library_sha256"]},
+            ],
+        },
+        {
+            "type": "library",
+            "name": "bun",
+            "version": os.environ["bun_source_ref"],
+            "purl": f"pkg:github/{os.environ['bun_source_repository'].removeprefix('https://github.com/')}"
+                    f"@{os.environ['bun_source_revision']}",
+        },
+    ],
+}
+print(json.dumps(document, indent=2))
+PY
 fi
 if [[ -n "${slsa_path}" ]]; then
-  slsa_basename="$(basename "${slsa_path}")"
+  slsa_basename="nimbus-bun-jsc-adapter.intoto.jsonl"
+  validate_evidence_basename "--slsa" "${slsa_basename}"
   install -m 0644 "${slsa_path}" "${stage_dir}/${slsa_basename}"
+else
+  slsa_basename="nimbus-bun-jsc-adapter.intoto.jsonl"
+  export adapter_version
+  export nimbus_version
+  export bun_source_repository
+  export bun_source_ref
+  export bun_source_revision
+  export target_triple
+  export platform
+  export library_basename
+  export library_sha256
+  python3 - <<'PY' >"${stage_dir}/${slsa_basename}"
+import json
+import os
+
+statement = {
+    "_type": "https://in-toto.io/Statement/v1",
+    "subject": [
+        {
+            "name": os.environ["library_basename"],
+            "digest": {"sha256": os.environ["library_sha256"]},
+        }
+    ],
+    "predicateType": "https://slsa.dev/provenance/v1",
+    "predicate": {
+        "buildDefinition": {
+            "buildType": "https://github.com/nimbus/nimbus/bun-jsc-adapter-build/v1",
+            "externalParameters": {
+                "nimbusVersion": os.environ["nimbus_version"],
+                "bunSourceRepository": os.environ["bun_source_repository"],
+                "bunSourceRef": os.environ["bun_source_ref"],
+                "bunSourceRevision": os.environ["bun_source_revision"],
+                "targetTriple": os.environ["target_triple"],
+                "platform": os.environ["platform"],
+                "adapterVersion": os.environ["adapter_version"],
+            },
+        },
+        "runDetails": {
+            "builder": {
+                "id": "https://github.com/nimbus/nimbus/.github/workflows/bun-jsc-adapter.yml"
+            },
+        },
+    },
+}
+print(json.dumps(statement, separators=(",", ":")))
+PY
 fi
 
 cat >"${stage_dir}/${BUN_JSC_ADAPTER_README_FILE}" <<EOF
@@ -164,7 +279,6 @@ Nimbus. The default Nimbus binary remains valid without this archive; packaged
 installs discover this adapter through ${BUN_JSC_ADAPTER_MANIFEST_FILE}.
 EOF
 
-library_sha256="$(bun_jsc_adapter_sha256_file "${stage_dir}/${library_basename}")"
 required_exports_json="$(
   printf '%s\n' "${BUN_JSC_ADAPTER_REQUIRED_EXPORTS[@]}" |
     python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))'

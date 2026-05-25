@@ -433,6 +433,11 @@ manual source-backed artifact workflow:
   `scripts/verify-build-linux-release-packages-helper.sh`, which proves the
   deterministic `nimbus-bun-jsc-adapter` deb/rpm manifest rendering path
   without requiring a full Bun/WebKit rebuild or nFPM availability.
+- Adapter archives include generated minimal CycloneDX SBOM and in-toto/SLSA
+  statement files by default. The package/release verifiers check their
+  presence, SHA-256 entries, and basic shape, while real cryptographic
+  signature/SLSA validation remains owned by the artifact-provenance verifier
+  tooling rather than custom shell logic.
 
 ### CW4: warm-sccache compile-cost reduction
 

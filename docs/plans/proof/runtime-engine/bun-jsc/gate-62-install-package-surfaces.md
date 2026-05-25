@@ -129,8 +129,8 @@ output included:
 
 ```text
 verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract deterministically
-verified: Bun/JSC adapter package helper accepts a good fixture and rejects missing library, bad checksum, bad manifest, wrong exports, and native leaks
-verified: Bun/JSC release asset helper accepts absent-optional and good assets, rejects missing required assets, bad release checksums, unknown platforms, and tampered adapter packages
+verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, wrong exports, and native leaks
+verified: Bun/JSC release asset helper accepts absent-optional and good assets with SBOM/provenance, rejects missing required assets, bad release checksums, unknown platforms, and tampered adapter packages
 verified: linux package builder rendered deterministic nimbus/nimbus-libkrun/nimbus-crun/nimbus-bun-jsc-adapter deb/rpm manifests (nfpm not installed; package build skipped)
 verified: install script helper passed 32 tests
 ```

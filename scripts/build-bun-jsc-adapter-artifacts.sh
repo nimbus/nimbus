@@ -20,8 +20,8 @@ Optional:
   --bun-source-ref <ref>       Expected Bun source ref
   --bun-source-revision <sha>  Expected Bun source revision
   --bun-source-repository <url>
-  --sbom <path>                Optional CycloneDX SBOM file to include
-  --slsa <path>                Optional SLSA/in-toto provenance file to include
+  --sbom <path>                CycloneDX SBOM content override (default: generated minimal SBOM)
+  --slsa <path>                SLSA/in-toto provenance content override (default: generated statement)
   -h, --help                   Show this help text
 EOF
 }

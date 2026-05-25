@@ -110,7 +110,11 @@ tampered_extract="${tmp_root}/tampered-extract"
 mkdir -p "${tampered_assets}" "${tampered_extract}"
 tar -xzf "${archive_path}" -C "${tampered_extract}"
 printf 'tamper\n' >>"${tampered_extract}/${library_basename}"
-(cd "${tampered_extract}" && tar -czf "${tampered_assets}/nimbus-bun-jsc-adapter-${platform_arch}.tar.gz" .)
+(
+  cd "${tampered_extract}"
+  tar -czf "${tampered_assets}/nimbus-bun-jsc-adapter-${platform_arch}.tar.gz" \
+    $(find . -maxdepth 1 -type f -print | sed 's#^\./##' | sort)
+)
 tampered_checksums="${tampered_assets}/nimbus-bun-jsc-adapter-checksums-sha256.txt"
 (
   cd "${tampered_assets}"
@@ -130,4 +134,4 @@ fi
 grep -F "checksums file does not contain matching ${library_basename} digest" \
   "${tmp_root}/tampered.out" >/dev/null
 
-printf 'verified: Bun/JSC release asset helper accepts absent-optional and good assets, rejects missing required assets, bad release checksums, unknown platforms, and tampered adapter packages\n'
+printf 'verified: Bun/JSC release asset helper accepts absent-optional and good assets with SBOM/provenance, rejects missing required assets, bad release checksums, unknown platforms, and tampered adapter packages\n'
