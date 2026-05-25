@@ -726,6 +726,8 @@ jobs:
           bash -n scripts/package-bun-jsc-adapter.sh
           bash -n scripts/verify-bun-jsc-adapter-package.sh
           bash -n scripts/verify-bun-jsc-adapter-package-helper.sh
+          bash -n scripts/verify-bun-jsc-release-assets.sh
+          bash -n scripts/verify-bun-jsc-release-assets-helper.sh
           bash -n scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
           bash -n scripts/verify-nimbus-machine-guest-proof-helper.sh
           bash -n scripts/verify-nimbus-machine-service-proof-helper.sh
@@ -763,6 +765,9 @@ jobs:
 
       - name: Verify Bun/JSC adapter package helper
         run: bash scripts/verify-bun-jsc-adapter-package-helper.sh
+
+      - name: Verify Bun/JSC release asset helper
+        run: bash scripts/verify-bun-jsc-release-assets-helper.sh
 
       - name: Verify install script helper
         run: bash scripts/verify-install-helper.sh

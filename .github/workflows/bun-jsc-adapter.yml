@@ -7,6 +7,10 @@ on:
         description: "Nimbus release version or tag to embed in the adapter manifest"
         required: false
         default: ""
+      release_tag:
+        description: "GitHub release tag to upload assets to when publish_release_assets is true"
+        required: false
+        default: ""
       bun_repository:
         description: "Bun fork repository"
         required: true
@@ -28,6 +32,11 @@ on:
         description: "Bun npm package version used only when install_bun_with_npm is true"
         required: true
         default: "1.3.14"
+      publish_release_assets:
+        description: "Upload verified adapter archives and adapter checksum file to the GitHub Release"
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.bun_source_ref }}
@@ -107,8 +116,12 @@ jobs:
       - name: Build, package, and verify adapter
         env:
           INPUT_NIMBUS_VERSION: ${{ inputs.nimbus_version }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           nimbus_version="${INPUT_NIMBUS_VERSION}"
+          if [[ -z "${nimbus_version}" ]]; then
+            nimbus_version="${INPUT_RELEASE_TAG}"
+          fi
           if [[ -z "${nimbus_version}" ]]; then
             nimbus_version="${GITHUB_REF_NAME:-manual}"
           fi
@@ -143,3 +156,69 @@ jobs:
           path: dist/bun-jsc-adapter-${{ matrix.platform_arch }}/**
           compression-level: 0
           if-no-files-found: error
+
+  publish-release-assets:
+    name: Publish Bun/JSC adapter release assets
+    if: inputs.publish_release_assets == true
+    needs: build-adapter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out Nimbus repository
+        uses: actions/checkout@v6
+
+      - name: Download adapter artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: adapter-artifacts
+          pattern: bun-jsc-adapter-*
+          merge-multiple: true
+
+      - name: Generate adapter checksums
+        run: |
+          cd adapter-artifacts
+          sha256sum nimbus-bun-jsc-adapter-*.tar.gz \
+            > nimbus-bun-jsc-adapter-checksums-sha256.txt
+          cat nimbus-bun-jsc-adapter-checksums-sha256.txt
+
+      - name: Verify adapter release assets
+        run: |
+          bash scripts/verify-bun-jsc-release-assets.sh \
+            --artifacts-dir adapter-artifacts \
+            --checksums adapter-artifacts/nimbus-bun-jsc-adapter-checksums-sha256.txt \
+            --require-platform linux-x86_64 \
+            --require-platform darwin-arm64
+
+      - name: Attest adapter build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            adapter-artifacts/nimbus-bun-jsc-adapter-*.tar.gz
+            adapter-artifacts/nimbus-bun-jsc-adapter-checksums-sha256.txt
+
+      - name: Upload adapter assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_NIMBUS_VERSION: ${{ inputs.nimbus_version }}
+        run: |
+          release_tag="${INPUT_RELEASE_TAG}"
+          if [[ -z "${release_tag}" ]]; then
+            release_tag="${INPUT_NIMBUS_VERSION}"
+          fi
+          if [[ -z "${release_tag}" ]]; then
+            release_tag="${GITHUB_REF_NAME:-}"
+          fi
+          if [[ -z "${release_tag}" || "${release_tag}" != v* ]]; then
+            echo "set release_tag or nimbus_version to the target v* release tag before publishing Bun/JSC adapter assets" >&2
+            exit 64
+          fi
+          gh release upload "${release_tag}" \
+            adapter-artifacts/nimbus-bun-jsc-adapter-*.tar.gz \
+            adapter-artifacts/nimbus-bun-jsc-adapter-checksums-sha256.txt \
+            --clobber
