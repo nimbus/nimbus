@@ -7,8 +7,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/nimbus/bun}"
-EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-bun-v1.4.0-nimbus.4}"
-EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-7c6dd4312e437c67a6c4c8cbb252f0d7ae898db8}"
+EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-bun-v1.4.0-nimbus.5}"
+EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57}"
 BUN_SIMDUTF_NAMESPACE="${NIMBUS_BUN_SIMDUTF_NAMESPACE:-nimbus_bun_simdutf}"
 
 host_triple="$(rustc -vV | awk '/^host:/ { print $2 }')"
