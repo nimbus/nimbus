@@ -414,6 +414,13 @@ manual source-backed artifact workflow:
   runs `scripts/build-bun-jsc-adapter-artifacts.sh`, uploads
   `nimbus-bun-jsc-adapter-<platform>.tar.gz`, the manifest, checksums, and
   proof logs.
+- When dispatched with `publish_release_assets=true`, the adapter workflow
+  requires both Linux x86_64 and macOS arm64 archives, generates
+  `nimbus-bun-jsc-adapter-checksums-sha256.txt`, attests the adapter assets,
+  and uploads them to the selected `v*` GitHub Release. The default `Release`
+  workflow also runs `scripts/verify-bun-jsc-release-assets.sh` so absent
+  optional assets are explicit and any staged adapter assets are verified before
+  release checksum generation.
 - The workflow does not hide an unpinned curl installer. It expects a pinned
   Bun CLI on the runner, or an explicit `install_bun_with_npm` dispatch input
   that installs the requested `bun` npm package version before the source build.

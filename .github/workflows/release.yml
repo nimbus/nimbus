@@ -540,6 +540,9 @@ jobs:
       - name: Verify release archive layout
         run: bash scripts/verify-release-archive-layout.sh --artifacts-dir artifacts
 
+      - name: Verify optional Bun/JSC adapter assets
+        run: bash scripts/verify-bun-jsc-release-assets.sh --artifacts-dir artifacts
+
       - name: Stage install script alongside release artifacts
         run: |
           cp scripts/install.sh artifacts/install.sh
@@ -548,7 +551,9 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum nimbus_* install.sh > checksums-sha256.txt
+          shopt -s nullglob
+          adapter_assets=(nimbus-bun-jsc-adapter-*.tar.gz)
+          sha256sum nimbus_* "${adapter_assets[@]}" install.sh > checksums-sha256.txt
           cat checksums-sha256.txt
 
       - name: Generate release notes
