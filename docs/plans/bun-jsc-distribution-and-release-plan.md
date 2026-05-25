@@ -22,6 +22,12 @@ experience.
 - **Default posture:** the normal Nimbus binary remains usable without Bun/JSC
   and reports the Bun/JSC lane as `not_linked` unless a verified shared adapter
   artifact is installed and discovered
+- **Post-closeout hardening:** gate 67 resolves the enterprise audit findings:
+  diagnostics verify/discover without eager `dlopen`, Linux packaged discovery
+  requires a root-owned non-writable trust chain, direct install uses the strict
+  manifest/SBOM/SLSA/export/native-symbol contract, checksum subjects are exact
+  matches, and manual adapter workflow dispatches are self-sufficient by
+  default.
 
 Progress state is this plan's phase ledger, proof docs under
 `docs/plans/proof/runtime-engine/bun-jsc/`, and focused local git commits.
@@ -42,7 +48,7 @@ default Nimbus install
 
 Nimbus install with Bun/JSC adapter artifact
   -> packaged adapter manifest is discovered from a canonical location
-  -> shared adapter is loaded explicitly and locally
+  -> shared adapter is loaded explicitly and locally on first Bun/JSC invocation
   -> Bun/JSC lane reports linked
   -> "use bun"; functions execute through the Bun/JSC pool
   -> HostBridge, tenant identity, cancellation, teardown, and memory policy
@@ -114,6 +120,8 @@ library paths:
   libnimbus_bun_jsc_embedder.so
   nimbus-bun-jsc-adapter.json
   checksums-sha256.txt
+  nimbus-bun-jsc-adapter.sbom.cdx.json
+  nimbus-bun-jsc-adapter.intoto.jsonl
   README.md
 /usr/libexec/nimbus/runtime/bun-jsc/current/
   nimbus-bun-jsc-adapter.json
@@ -122,6 +130,8 @@ library paths:
   libnimbus_bun_jsc_embedder.dylib
   nimbus-bun-jsc-adapter.json
   checksums-sha256.txt
+  nimbus-bun-jsc-adapter.sbom.cdx.json
+  nimbus-bun-jsc-adapter.intoto.jsonl
   README.md
 <Homebrew prefix>/libexec/runtime/bun-jsc/current/
   nimbus-bun-jsc-adapter.json

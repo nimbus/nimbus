@@ -254,8 +254,8 @@ fn validate_adapter_manifest_path_inner(
             )
         })?
         .to_path_buf();
-    validate_packaged_path_safety(&manifest_dir, "Bun/JSC adapter manifest directory")?;
-    validate_packaged_path_safety(&manifest_path, "Bun/JSC adapter manifest")?;
+    validate_adapter_path_safety(&manifest_dir, "Bun/JSC adapter manifest directory", source)?;
+    validate_adapter_path_safety(&manifest_path, "Bun/JSC adapter manifest", source)?;
 
     let manifest_bytes = std::fs::read(&manifest_path)
         .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
@@ -282,7 +282,7 @@ fn validate_adapter_manifest_path_inner(
             manifest_dir.display()
         ));
     }
-    validate_packaged_path_safety(&library_path, "Bun/JSC adapter library")?;
+    validate_adapter_path_safety(&library_path, "Bun/JSC adapter library", source)?;
 
     let actual_sha256 = compute_sha256_for_path(&library_path)?;
     let expected_sha256 = normalize_sha256(&manifest.library_sha256, "library_sha256")?;
@@ -300,6 +300,7 @@ fn validate_adapter_manifest_path_inner(
         &manifest_bytes,
         &library_path,
         &actual_sha256,
+        source,
     )?;
 
     Ok(ResolvedBunJscAdapterLibrary {
@@ -498,6 +499,7 @@ fn validate_manifest_provenance_files(
     manifest_bytes: &[u8],
     library_path: &Path,
     library_sha256: &str,
+    source: RuntimeExecutionAdapterArtifactSource,
 ) -> std::result::Result<(), String> {
     let provenance = manifest
         .provenance
@@ -525,7 +527,7 @@ fn validate_manifest_provenance_files(
             manifest_dir.display()
         ));
     }
-    validate_packaged_path_safety(&checksum_path, "Bun/JSC adapter checksum file")?;
+    validate_adapter_path_safety(&checksum_path, "Bun/JSC adapter checksum file", source)?;
     let checksums = std::fs::read_to_string(&checksum_path).map_err(|error| {
         format!(
             "failed to read Bun/JSC adapter checksum file {}: {error}",
@@ -574,7 +576,7 @@ fn validate_manifest_provenance_files(
                 manifest_dir.display()
             ));
         }
-        validate_packaged_path_safety(&evidence_path, "Bun/JSC adapter provenance file")?;
+        validate_adapter_path_safety(&evidence_path, "Bun/JSC adapter provenance file", source)?;
         verify_checksum_manifest_entry(
             &checksums,
             file_name,
@@ -673,9 +675,21 @@ fn compute_sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[cfg(unix)]
-fn validate_packaged_path_safety(path: &Path, label: &str) -> std::result::Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
+fn validate_adapter_path_safety(
+    path: &Path,
+    label: &str,
+    source: RuntimeExecutionAdapterArtifactSource,
+) -> std::result::Result<(), String> {
+    validate_unix_mode(path, label)?;
+    if source == RuntimeExecutionAdapterArtifactSource::PackagedManifest {
+        validate_packaged_manifest_trust_chain(path, label)?;
+    }
+    Ok(())
+}
 
+#[cfg(unix)]
+fn validate_unix_mode(path: &Path, label: &str) -> std::result::Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("failed to read metadata for {}: {error}", path.display()))?;
     let mode = metadata.permissions().mode();
@@ -690,8 +704,84 @@ fn validate_packaged_path_safety(path: &Path, label: &str) -> std::result::Resul
 }
 
 #[cfg(not(unix))]
-fn validate_packaged_path_safety(_path: &Path, _label: &str) -> std::result::Result<(), String> {
+fn validate_adapter_path_safety(
+    _path: &Path,
+    _label: &str,
+    _source: RuntimeExecutionAdapterArtifactSource,
+) -> std::result::Result<(), String> {
     Ok(())
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn validate_packaged_manifest_trust_chain(
+    path: &Path,
+    label: &str,
+) -> std::result::Result<(), String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    for ancestor in packaged_manifest_trust_chain(path)? {
+        let metadata = std::fs::symlink_metadata(&ancestor).map_err(|error| {
+            format!(
+                "failed to read packaged Bun/JSC adapter path metadata for {}: {error}",
+                ancestor.display()
+            )
+        })?;
+        if metadata.uid() != 0 {
+            return Err(format!(
+                "{label} {} is under non-root-owned packaged path {}; Linux packaged Bun/JSC adapter paths must be root-owned",
+                path.display(),
+                ancestor.display()
+            ));
+        }
+        if !metadata.file_type().is_symlink() && metadata.permissions().mode() & 0o022 != 0 {
+            return Err(format!(
+                "{label} {} is under unsafe packaged path {} with permissions {:o}; group/other writable packaged Bun/JSC adapter paths are rejected",
+                path.display(),
+                ancestor.display(),
+                metadata.permissions().mode() & 0o777
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn validate_packaged_manifest_trust_chain(
+    path: &Path,
+    label: &str,
+) -> std::result::Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    for ancestor in packaged_manifest_trust_chain(path)? {
+        let metadata = std::fs::symlink_metadata(&ancestor).map_err(|error| {
+            format!(
+                "failed to read packaged Bun/JSC adapter path metadata for {}: {error}",
+                ancestor.display()
+            )
+        })?;
+        if !metadata.file_type().is_symlink() && metadata.permissions().mode() & 0o022 != 0 {
+            return Err(format!(
+                "{label} {} is under unsafe packaged path {} with permissions {:o}; group/other writable packaged Bun/JSC adapter paths are rejected",
+                path.display(),
+                ancestor.display(),
+                metadata.permissions().mode() & 0o777
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn packaged_manifest_trust_chain(path: &Path) -> std::result::Result<Vec<PathBuf>, String> {
+    let mut ancestors: Vec<PathBuf> = path.ancestors().map(Path::to_path_buf).collect();
+    ancestors.reverse();
+    if ancestors.is_empty() {
+        return Err(format!(
+            "Bun/JSC packaged adapter path {} has no ancestor chain",
+            path.display()
+        ));
+    }
+    Ok(ancestors)
 }
 
 #[cfg(test)]
@@ -705,6 +795,7 @@ mod tests {
         let library_path = dir.join(shared_library_basename());
         std::fs::write(&library_path, b"stub Bun/JSC shared adapter")
             .expect("stub library should be written");
+        set_safe_file_permissions(&library_path, 0o755);
         let sha256 = compute_sha256_for_path(&library_path).expect("stub sha256 should compute");
         (library_path, sha256)
     }
@@ -738,6 +829,41 @@ mod tests {
         })
     }
 
+    fn secure_tempdir() -> tempfile::TempDir {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(temp_dir.path())
+                .expect("temp dir metadata should load")
+                .permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(temp_dir.path(), permissions)
+                .expect("temp dir permissions should be tightened");
+        }
+        temp_dir
+    }
+
+    fn set_safe_file_permissions(path: &Path, mode: u32) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(path)
+                .expect("fixture metadata should load")
+                .permissions();
+            permissions.set_mode(mode);
+            std::fs::set_permissions(path, permissions)
+                .expect("fixture permissions should be tightened");
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            let _ = mode;
+        }
+    }
+
     fn write_manifest(dir: &Path, manifest: &Value) -> PathBuf {
         let manifest_path = dir.join(BUN_JSC_ADAPTER_MANIFEST_FILE);
         std::fs::write(
@@ -745,6 +871,7 @@ mod tests {
             serde_json::to_vec_pretty(manifest).expect("manifest should serialize"),
         )
         .expect("manifest should be written");
+        set_safe_file_permissions(&manifest_path, 0o644);
         if let Some(provenance) = manifest.get("provenance").and_then(Value::as_object) {
             for field in ["sbom", "slsa"] {
                 if let Some(file_name) = provenance.get(field).and_then(Value::as_str)
@@ -756,8 +883,10 @@ mod tests {
                         "slsa" => br#"{"_type":"https://in-toto.io/Statement/v1","predicateType":"https://slsa.dev/provenance/v1"}"#.as_slice(),
                         _ => unreachable!(),
                     };
-                    std::fs::write(dir.join(file_name), contents)
+                    let evidence_path = dir.join(file_name);
+                    std::fs::write(&evidence_path, contents)
                         .expect("provenance evidence should be written");
+                    set_safe_file_permissions(&evidence_path, 0o644);
                 }
             }
             if let Some(checksum_file) = provenance.get("checksum_file").and_then(Value::as_str)
@@ -781,8 +910,10 @@ mod tests {
                         checksums.push_str(&format!("{sha256}  {file_name}\n"));
                     }
                 }
-                std::fs::write(dir.join(checksum_file), checksums)
+                let checksum_path = dir.join(checksum_file);
+                std::fs::write(&checksum_path, checksums)
                     .expect("checksum manifest should be written");
+                set_safe_file_permissions(&checksum_path, 0o644);
             }
         }
         manifest_path
@@ -790,7 +921,7 @@ mod tests {
 
     #[test]
     fn valid_packaged_manifest_resolves_canonical_library_path() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (library_path, sha256) = write_stub_library(temp_dir.path());
         let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&sha256));
 
@@ -807,7 +938,7 @@ mod tests {
 
     #[test]
     fn discovery_prefers_explicit_development_library_override() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (library_path, _sha256) = write_stub_library(temp_dir.path());
         let bad_manifest = temp_dir.path().join("missing.json");
 
@@ -828,7 +959,7 @@ mod tests {
 
     #[test]
     fn discovery_uses_manifest_override_before_packaged_locations() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (library_path, sha256) = write_stub_library(temp_dir.path());
         let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&sha256));
 
@@ -849,7 +980,7 @@ mod tests {
 
     #[test]
     fn manifest_override_reports_sanitized_artifact_diagnostics() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (library_path, sha256) = write_stub_library(temp_dir.path());
         let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&sha256));
 
@@ -891,8 +1022,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "linux"))]
     fn discovery_uses_first_existing_packaged_manifest() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (library_path, sha256) = write_stub_library(temp_dir.path());
         let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&sha256));
 
@@ -912,6 +1044,25 @@ mod tests {
             library_path
                 .canonicalize()
                 .expect("stub library should canonicalize")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn packaged_manifest_from_non_root_test_root_is_rejected() {
+        let temp_dir = secure_tempdir();
+        let (_library_path, sha256) = write_stub_library(temp_dir.path());
+        let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&sha256));
+
+        let error = resolve_shared_adapter_library_from_values(None, None, &[manifest_path])
+            .expect_err("Linux packaged manifests must come from root-owned package paths");
+
+        assert!(
+            error
+                .message()
+                .contains("Linux packaged Bun/JSC adapter paths must be root-owned")
+                || error.message().contains("unsafe packaged path"),
+            "unexpected error: {error}"
         );
     }
 
@@ -958,7 +1109,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_wrong_bun_revision() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let mut manifest = manifest_json(&sha256);
         manifest["bun_source_revision"] = json!("not-the-proven-revision");
@@ -975,7 +1126,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_wrong_target_triple() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let mut manifest = manifest_json(&sha256);
         manifest["target_triple"] = json!("wasm32-unknown-unknown");
@@ -989,7 +1140,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_schema_mismatch() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let mut manifest = manifest_json(&sha256);
         manifest["schema_version"] = json!(2);
@@ -1006,7 +1157,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_checksum_mismatch() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, _sha256) = write_stub_library(temp_dir.path());
         let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&"0".repeat(64)));
 
@@ -1020,13 +1171,17 @@ mod tests {
     }
 
     #[test]
-    fn packaged_manifest_checksum_mismatch_reports_sanitized_artifact_diagnostics() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    fn manifest_env_checksum_mismatch_reports_sanitized_artifact_diagnostics() {
+        let temp_dir = secure_tempdir();
         let (_library_path, _sha256) = write_stub_library(temp_dir.path());
         let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&"0".repeat(64)));
 
-        let error = resolve_shared_adapter_library_from_values(None, None, &[manifest_path])
-            .expect_err("bad packaged manifest should return diagnostics");
+        let error = resolve_shared_adapter_library_from_values(
+            None,
+            Some(manifest_path.into_os_string()),
+            &[],
+        )
+        .expect_err("bad manifest override should return diagnostics");
 
         let diagnostics = error.diagnostics();
         assert_eq!(
@@ -1035,7 +1190,7 @@ mod tests {
         );
         assert_eq!(
             diagnostics.source,
-            RuntimeExecutionAdapterArtifactSource::PackagedManifest
+            RuntimeExecutionAdapterArtifactSource::ManifestEnv
         );
         assert_eq!(diagnostics.reason_code, "checksum_mismatch");
         assert!(diagnostics.manifest.is_none());
@@ -1049,7 +1204,7 @@ mod tests {
 
     #[test]
     fn manifest_requires_provenance_evidence() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let mut manifest = manifest_json(&sha256);
         manifest
@@ -1069,7 +1224,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_missing_provenance_file() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let manifest = manifest_json(&sha256);
         let manifest_path = write_manifest(temp_dir.path(), &manifest);
@@ -1087,7 +1242,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_provenance_checksum_mismatch() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let manifest = manifest_json(&sha256);
         let manifest_path = write_manifest(temp_dir.path(), &manifest);
@@ -1109,7 +1264,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_unsafe_provenance_paths() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let mut manifest = manifest_json(&sha256);
         manifest["provenance"]["slsa"] = json!("../adapter.intoto.jsonl");
@@ -1126,7 +1281,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_unsupported_memory_and_lifecycle_policy() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
 
         let mut memory_manifest = manifest_json(&sha256);
@@ -1152,7 +1307,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_library_paths_that_escape_manifest_directory() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let mut manifest = manifest_json(&sha256);
         manifest["library"] = json!("../libnimbus_bun_jsc_embedder.so");
@@ -1169,7 +1324,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_unknown_fields() {
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let mut manifest = manifest_json(&sha256);
         manifest["unexpected"] = json!("field");
@@ -1186,7 +1341,7 @@ mod tests {
     fn manifest_rejects_group_or_other_writable_packaged_directory() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let temp_dir = secure_tempdir();
         let (_library_path, sha256) = write_stub_library(temp_dir.path());
         let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&sha256));
         let original_permissions = std::fs::metadata(temp_dir.path())

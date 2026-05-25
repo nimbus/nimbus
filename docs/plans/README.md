@@ -104,7 +104,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
     final broad verification while preserving default single-binary no-link
     behavior. Closed with proof gate 66; the optional Bun/JSC adapter is now a
     committed optional runtime backend contract beside the default Deno/V8/Node
-    lanes.
+    lanes. Gate 67 hardened the baseline after audit by keeping diagnostics
+    discovery lazy, enforcing Linux root-owned packaged paths, reusing the
+    strict installer verifier, exact-matching checksum subjects, and making the
+    manual adapter artifact workflow self-sufficient by default.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM

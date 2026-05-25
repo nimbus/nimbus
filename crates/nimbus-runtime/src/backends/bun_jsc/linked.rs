@@ -20,7 +20,7 @@ const BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP: usize = 4 * 1024 * 1024;
 
 type BunJscArtifactDiagnostics = RuntimeExecutionAdapterArtifactDiagnostics;
 type SharedAdapterLibraryResult =
-    std::result::Result<&'static BunJscSharedAdapterLibrary, &'static str>;
+    std::result::Result<&'static BunJscSharedAdapterLibrary, manifest::BunJscAdapterDiscoveryError>;
 type SharedAdapterLoadResult =
     std::result::Result<BunJscSharedAdapterLibrary, manifest::BunJscAdapterDiscoveryError>;
 
@@ -58,12 +58,9 @@ type BunJscInvokeProgramWrapperJsonWithHostBridgeFn = unsafe extern "C" fn(
 struct BunJscSharedAdapterLibrary {
     _library: libloading::Library,
     invoke_program_wrapper_json_with_host_bridge: BunJscInvokeProgramWrapperJsonWithHostBridgeFn,
-    diagnostics: RuntimeExecutionAdapterArtifactDiagnostics,
 }
 
-static BUN_JSC_SHARED_ADAPTER_LIBRARY: OnceLock<
-    std::result::Result<BunJscSharedAdapterLibrary, manifest::BunJscAdapterDiscoveryError>,
-> = OnceLock::new();
+static BUN_JSC_SHARED_ADAPTER_LIBRARY: OnceLock<BunJscSharedAdapterLibrary> = OnceLock::new();
 
 #[derive(Debug, Default)]
 pub(crate) struct BunJscLinkedExecutionAdapterFactory;
@@ -79,7 +76,7 @@ struct BunJscLinkedExecutionAdapter;
 
 impl BunJscExecutionAdapter for BunJscLinkedExecutionAdapter {
     fn state(&self) -> RuntimeExecutionAdapterState {
-        if shared_adapter_library().is_ok() {
+        if manifest::resolve_shared_adapter_library().is_ok() {
             RuntimeExecutionAdapterState::Linked
         } else {
             RuntimeExecutionAdapterState::NotLinked
@@ -96,8 +93,8 @@ impl BunJscExecutionAdapter for BunJscLinkedExecutionAdapter {
 }
 
 pub(crate) fn execution_adapter_artifact_diagnostics() -> BunJscArtifactDiagnostics {
-    match BUN_JSC_SHARED_ADAPTER_LIBRARY.get_or_init(load_shared_adapter_library) {
-        Ok(library) => library.diagnostics.clone(),
+    match manifest::resolve_shared_adapter_library() {
+        Ok(resolved) => resolved.diagnostics,
         Err(error) => error.diagnostics(),
     }
 }
@@ -107,7 +104,10 @@ fn invoke_program_wrapper_json(
     pool_policy: BunJscPoolPolicy,
 ) -> Result<Value> {
     let shared_library = shared_adapter_library().map_err(|error| {
-        NimbusRuntimeError::Contract(format!("Bun/JSC shared adapter is not linked: {error}"))
+        NimbusRuntimeError::Contract(format!(
+            "Bun/JSC shared adapter is not linked: {}",
+            error.message()
+        ))
     })?;
     let RuntimeBackendInvocation {
         policy,
@@ -273,10 +273,15 @@ fn embedder_status_name(status: i32) -> &'static str {
 }
 
 fn shared_adapter_library() -> SharedAdapterLibraryResult {
-    match BUN_JSC_SHARED_ADAPTER_LIBRARY.get_or_init(load_shared_adapter_library) {
-        Ok(library) => Ok(library),
-        Err(error) => Err(error.message()),
+    if let Some(library) = BUN_JSC_SHARED_ADAPTER_LIBRARY.get() {
+        return Ok(library);
     }
+
+    let library = load_shared_adapter_library()?;
+    let _ = BUN_JSC_SHARED_ADAPTER_LIBRARY.set(library);
+    Ok(BUN_JSC_SHARED_ADAPTER_LIBRARY
+        .get()
+        .expect("Bun/JSC shared adapter library should be cached after successful load"))
 }
 
 fn load_shared_adapter_library() -> SharedAdapterLoadResult {
@@ -306,7 +311,6 @@ fn load_shared_adapter_library() -> SharedAdapterLoadResult {
     Ok(BunJscSharedAdapterLibrary {
         _library: library,
         invoke_program_wrapper_json_with_host_bridge,
-        diagnostics: resolved.diagnostics,
     })
 }
 

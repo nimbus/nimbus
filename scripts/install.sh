@@ -29,6 +29,39 @@ ARCH=""
 DISTRO_ID=""
 DISTRO_VERSION=""
 
+# Keep these constants aligned with scripts/bun-jsc-adapter-contract.sh and
+# crates/nimbus-runtime/src/backends/bun_jsc/manifest.rs.
+BUN_JSC_ADAPTER_SCHEMA_VERSION=1
+BUN_JSC_ADAPTER_KIND="nimbus.bun_jsc.adapter"
+BUN_JSC_ADAPTER_ABI_NAME="nimbus-bun-jsc-embedder"
+BUN_JSC_ADAPTER_ABI_VERSION=1
+BUN_JSC_ADAPTER_MEMORY_ENFORCEMENT="outer_quota_required"
+BUN_JSC_ADAPTER_LIFECYCLE="fresh_discard"
+BUN_JSC_ADAPTER_MANIFEST_FILE="nimbus-bun-jsc-adapter.json"
+BUN_JSC_ADAPTER_CHECKSUMS_FILE="checksums-sha256.txt"
+BUN_JSC_ADAPTER_README_FILE="README.md"
+BUN_JSC_ADAPTER_SOURCE_REPOSITORY="https://github.com/nimbus/bun"
+BUN_JSC_ADAPTER_SOURCE_REF="bun-v1.4.0-nimbus.5"
+BUN_JSC_ADAPTER_SOURCE_REVISION="ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57"
+BUN_JSC_ADAPTER_SBOM_FILE="nimbus-bun-jsc-adapter.sbom.cdx.json"
+BUN_JSC_ADAPTER_SLSA_FILE="nimbus-bun-jsc-adapter.intoto.jsonl"
+
+bun_jsc_adapter_required_exports() {
+  cat <<'EOF'
+nimbus_bun_embed_probe_construct_and_destroy_vm
+nimbus_bun_embed_probe_sync_host_call
+nimbus_bun_embed_probe_async_host_call
+nimbus_bun_embed_probe_program_bundle_host_calls
+nimbus_bun_embed_probe_timeout_and_cancel
+nimbus_bun_embed_probe_permission_surface_inventory
+nimbus_bun_embed_probe_memory_behavior
+nimbus_bun_embed_probe_package_module_policy
+nimbus_bun_embed_probe_lifecycle_reuse_stress
+nimbus_bun_embed_invoke_program_wrapper_json
+nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge
+EOF
+}
+
 # GitHub API endpoints
 NIMBUS_RELEASES_API="https://api.github.com/repos/nimbus/nimbus/releases"
 NIMBUS_CRUN_RELEASES_API="https://api.github.com/repos/nimbus/nimbus-crun/releases"
@@ -467,9 +500,45 @@ get_bun_jsc_adapter_asset_name() {
   esac
 }
 
+get_bun_jsc_adapter_target_triple() {
+  case "$PLATFORM:$ARCH" in
+    linux:x86_64)
+      echo "x86_64-unknown-linux-gnu"
+      ;;
+    darwin:arm64)
+      echo "aarch64-apple-darwin"
+      ;;
+    *)
+      err "optional Bun/JSC adapter target triple is not supported for $PLATFORM $ARCH"
+      ;;
+  esac
+}
+
+get_bun_jsc_adapter_library_basename() {
+  case "$PLATFORM" in
+    darwin)
+      echo "libnimbus_bun_jsc_embedder.dylib"
+      ;;
+    *)
+      echo "libnimbus_bun_jsc_embedder.so"
+      ;;
+  esac
+}
+
+require_bun_jsc_adapter_verifier_tools() {
+  need_cmd tar
+  need_cmd python3
+  need_cmd nm
+  need_cmd diff
+  if [ "$PLATFORM" = "linux" ]; then
+    need_cmd readelf
+  fi
+}
+
 verify_bun_jsc_adapter_archive_layout() {
   archive_path="$1"
   entries_path="$2"
+  library_basename="$3"
 
   tar -tzf "$archive_path" >"$entries_path"
   while IFS= read -r entry; do
@@ -477,7 +546,7 @@ verify_bun_jsc_adapter_archive_layout() {
       ""|/*|../*|*"/../"*|*".."*|*/*)
         err "unsafe Bun/JSC adapter archive entry: $entry"
         ;;
-      libnimbus_bun_jsc_embedder.so|nimbus-bun-jsc-adapter.json|checksums-sha256.txt|README.md|nimbus-bun-jsc-adapter.sbom.cdx.json|nimbus-bun-jsc-adapter.intoto.jsonl)
+      "$library_basename"|"$BUN_JSC_ADAPTER_MANIFEST_FILE"|"$BUN_JSC_ADAPTER_CHECKSUMS_FILE"|"$BUN_JSC_ADAPTER_README_FILE"|"$BUN_JSC_ADAPTER_SBOM_FILE"|"$BUN_JSC_ADAPTER_SLSA_FILE")
         ;;
       *)
         err "unexpected Bun/JSC adapter archive entry: $entry"
@@ -490,11 +559,204 @@ verify_bun_jsc_adapter_archive_layout() {
     err "duplicate Bun/JSC adapter archive entry: $duplicate_entry"
   fi
 
-  for required_entry in libnimbus_bun_jsc_embedder.so nimbus-bun-jsc-adapter.json checksums-sha256.txt README.md; do
+  for required_entry in "$library_basename" "$BUN_JSC_ADAPTER_MANIFEST_FILE" "$BUN_JSC_ADAPTER_CHECKSUMS_FILE" "$BUN_JSC_ADAPTER_README_FILE" "$BUN_JSC_ADAPTER_SBOM_FILE" "$BUN_JSC_ADAPTER_SLSA_FILE"; do
     if ! grep -qx "$required_entry" "$entries_path"; then
       err "Bun/JSC adapter archive is missing required entry: $required_entry"
     fi
   done
+}
+
+verify_bun_jsc_adapter_manifest_contract() {
+  extract_dir="$1"
+  target_triple="$2"
+  adapter_platform="$3"
+  library_basename="$4"
+
+  manifest_path="$extract_dir/$BUN_JSC_ADAPTER_MANIFEST_FILE"
+  library_path="$extract_dir/$library_basename"
+  sbom_path="$extract_dir/$BUN_JSC_ADAPTER_SBOM_FILE"
+  slsa_path="$extract_dir/$BUN_JSC_ADAPTER_SLSA_FILE"
+  required_exports_manifest_file="$extract_dir/.nimbus-bun-jsc-required-exports-manifest.txt"
+  required_exports_file="$extract_dir/.nimbus-bun-jsc-required-exports.txt"
+  actual_exports_file="$extract_dir/.nimbus-bun-jsc-actual-exports.txt"
+  library_sha256="$(sha256_file "$library_path")"
+
+  bun_jsc_adapter_required_exports >"$required_exports_manifest_file"
+  sort -u "$required_exports_manifest_file" >"$required_exports_file"
+
+  export BUN_JSC_ADAPTER_SCHEMA_VERSION
+  export BUN_JSC_ADAPTER_KIND
+  export BUN_JSC_ADAPTER_ABI_NAME
+  export BUN_JSC_ADAPTER_ABI_VERSION
+  export BUN_JSC_ADAPTER_MEMORY_ENFORCEMENT
+  export BUN_JSC_ADAPTER_LIFECYCLE
+  export BUN_JSC_ADAPTER_MANIFEST_FILE
+  export BUN_JSC_ADAPTER_README_FILE
+  export BUN_JSC_ADAPTER_SOURCE_REPOSITORY
+  export BUN_JSC_ADAPTER_SOURCE_REF
+  export BUN_JSC_ADAPTER_SOURCE_REVISION
+  export BUN_JSC_ADAPTER_CHECKSUMS_FILE
+  export BUN_JSC_ADAPTER_SBOM_FILE
+  export BUN_JSC_ADAPTER_SLSA_FILE
+  export target_triple
+  export adapter_platform
+  export library_basename
+  export library_sha256
+
+  python3 - "$manifest_path" "$required_exports_manifest_file" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+expected_exports_path = pathlib.Path(sys.argv[2])
+manifest = json.loads(path.read_text())
+allowed_top = {
+    "schema_version",
+    "kind",
+    "adapter_version",
+    "nimbus_version",
+    "bun_source_repository",
+    "bun_source_ref",
+    "bun_source_revision",
+    "target_triple",
+    "platform",
+    "library",
+    "library_sha256",
+    "abi",
+    "memory_enforcement",
+    "lifecycle",
+    "provenance",
+}
+unknown = set(manifest) - allowed_top
+if unknown:
+    raise SystemExit(f"unknown manifest fields: {sorted(unknown)}")
+
+expected = {
+    "schema_version": int(os.environ["BUN_JSC_ADAPTER_SCHEMA_VERSION"]),
+    "kind": os.environ["BUN_JSC_ADAPTER_KIND"],
+    "bun_source_repository": os.environ["BUN_JSC_ADAPTER_SOURCE_REPOSITORY"],
+    "bun_source_ref": os.environ["BUN_JSC_ADAPTER_SOURCE_REF"],
+    "bun_source_revision": os.environ["BUN_JSC_ADAPTER_SOURCE_REVISION"],
+    "target_triple": os.environ["target_triple"],
+    "platform": os.environ["adapter_platform"],
+    "library": os.environ["library_basename"],
+    "library_sha256": os.environ["library_sha256"],
+    "memory_enforcement": os.environ["BUN_JSC_ADAPTER_MEMORY_ENFORCEMENT"],
+    "lifecycle": os.environ["BUN_JSC_ADAPTER_LIFECYCLE"],
+}
+for key, value in expected.items():
+    if manifest.get(key) != value:
+        raise SystemExit(f"manifest {key} mismatch: expected {value!r}, got {manifest.get(key)!r}")
+
+for key in ("adapter_version", "nimbus_version"):
+    if not isinstance(manifest.get(key), str) or not manifest[key].strip():
+        raise SystemExit(f"manifest {key} must be a non-empty string")
+
+abi = manifest.get("abi")
+if not isinstance(abi, dict):
+    raise SystemExit("manifest abi must be an object")
+allowed_abi = {"name", "version", "required_exports"}
+unknown_abi = set(abi) - allowed_abi
+if unknown_abi:
+    raise SystemExit(f"unknown abi fields: {sorted(unknown_abi)}")
+if abi.get("name") != os.environ["BUN_JSC_ADAPTER_ABI_NAME"]:
+    raise SystemExit("manifest abi.name mismatch")
+if abi.get("version") != int(os.environ["BUN_JSC_ADAPTER_ABI_VERSION"]):
+    raise SystemExit("manifest abi.version mismatch")
+expected_exports = expected_exports_path.read_text().splitlines()
+if abi.get("required_exports") != expected_exports:
+    raise SystemExit("manifest abi.required_exports mismatch")
+
+provenance = manifest.get("provenance")
+if not isinstance(provenance, dict):
+    raise SystemExit("manifest provenance must be an object")
+allowed_provenance = {"checksum_file", "sbom", "slsa"}
+unknown_provenance = set(provenance) - allowed_provenance
+if unknown_provenance:
+    raise SystemExit(f"unknown provenance fields: {sorted(unknown_provenance)}")
+expected_provenance = {
+    "checksum_file": os.environ["BUN_JSC_ADAPTER_CHECKSUMS_FILE"],
+    "sbom": os.environ["BUN_JSC_ADAPTER_SBOM_FILE"],
+    "slsa": os.environ["BUN_JSC_ADAPTER_SLSA_FILE"],
+}
+for key, value in expected_provenance.items():
+    if provenance.get(key) != value:
+        raise SystemExit(f"manifest provenance.{key} mismatch")
+PY
+
+  python3 - "$sbom_path" "$slsa_path" "$library_basename" "$library_sha256" <<'PY'
+import json
+import pathlib
+import sys
+
+sbom_path = pathlib.Path(sys.argv[1])
+slsa_path = pathlib.Path(sys.argv[2])
+library_name = sys.argv[3]
+library_sha256 = sys.argv[4]
+
+sbom = json.loads(sbom_path.read_text())
+if sbom.get("bomFormat") != "CycloneDX":
+    raise SystemExit("SBOM evidence must be CycloneDX JSON")
+if not isinstance(sbom.get("components"), list):
+    raise SystemExit("SBOM evidence must contain components")
+component_names = {component.get("name") for component in sbom["components"] if isinstance(component, dict)}
+if library_name not in component_names:
+    raise SystemExit("SBOM evidence must identify the adapter shared library")
+if "bun" not in component_names:
+    raise SystemExit("SBOM evidence must identify the Bun source component")
+if library_sha256 not in json.dumps(sbom, sort_keys=True):
+    raise SystemExit("SBOM evidence must contain the adapter shared library SHA-256")
+
+statements = [
+    json.loads(line)
+    for line in slsa_path.read_text().splitlines()
+    if line.strip()
+]
+if len(statements) != 1:
+    raise SystemExit("SLSA evidence must contain exactly one JSON statement")
+statement = statements[0]
+if statement.get("_type") != "https://in-toto.io/Statement/v1":
+    raise SystemExit("SLSA evidence must be an in-toto statement")
+if statement.get("predicateType") != "https://slsa.dev/provenance/v1":
+    raise SystemExit("SLSA evidence must use the SLSA provenance v1 predicate")
+subjects = statement.get("subject")
+if not isinstance(subjects, list):
+    raise SystemExit("SLSA evidence must contain subjects")
+matched = False
+for subject in subjects:
+    if not isinstance(subject, dict):
+        continue
+    if subject.get("name") == library_name and subject.get("digest", {}).get("sha256") == library_sha256:
+        matched = True
+if not matched:
+    raise SystemExit("SLSA evidence must bind the adapter shared library SHA-256")
+PY
+
+  nm -D --defined-only -C "$library_path" 2>/dev/null |
+    awk '{ print $3 }' |
+    sed -E 's/@@.*$//; s/@.*$//' |
+    sort -u >"$actual_exports_file"
+
+  leaked_count="$(nm -D --defined-only -C "$library_path" 2>/dev/null |
+    awk -v pattern='v8::|hwy::|rust_eh_personality|simdutf::|simdutf__|nimbus_bun_simdutf::|nimbus_bun_simdutf__' '$0 ~ pattern { count++ } END { print count + 0 }')"
+  if [ "$leaked_count" -ne 0 ]; then
+    err "Bun/JSC adapter archive exports bundled native implementation symbols"
+  fi
+
+  if [ "$adapter_platform" = "linux" ]; then
+    if readelf -d "$library_path" 2>/dev/null | grep -q TEXTREL; then
+      err "Bun/JSC adapter archive has TEXTREL dynamic entries"
+    fi
+    if readelf -d "$library_path" 2>/dev/null | grep -q STATIC_TLS; then
+      err "Bun/JSC adapter archive has STATIC_TLS and is not safe for late dlopen"
+    fi
+  fi
+
+  if ! diff -u "$required_exports_file" "$actual_exports_file"; then
+    err "Bun/JSC adapter archive export set drifted"
+  fi
 }
 
 # --- Sudo handling ----------------------------------------------------------
@@ -627,7 +889,7 @@ print_install_plan() {
       say "  attestation:  best-effort (install gh or set NIMBUS_REQUIRE_ATTESTATIONS=1 to fail closed)"
     fi
     if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
-      say "  bun/jsc:      optional adapter checksum enforced"
+      say "  bun/jsc:      optional adapter checksum, manifest, SBOM/SLSA, export, and dlopen-safety checks enforced"
     fi
   fi
 
@@ -762,9 +1024,13 @@ download_and_install_bun_jsc_adapter_linux() {
   fi
 
   asset_name="$(get_bun_jsc_adapter_asset_name)"
+  target_triple="$(get_bun_jsc_adapter_target_triple)"
+  adapter_platform="$PLATFORM"
+  library_basename="$(get_bun_jsc_adapter_library_basename)"
   download_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/${asset_name}"
   adapter_checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/nimbus-bun-jsc-adapter-checksums-sha256.txt"
   release_checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
+  require_bun_jsc_adapter_verifier_tools
 
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' EXIT
@@ -790,21 +1056,27 @@ download_and_install_bun_jsc_adapter_linux() {
     "nimbus/nimbus/.github/workflows/bun-jsc-adapter.yml" \
     "$asset_name"
 
-  verify_bun_jsc_adapter_archive_layout "$tmpdir/$asset_name" "$tmpdir/adapter-archive-entries.txt"
+  verify_bun_jsc_adapter_archive_layout "$tmpdir/$asset_name" "$tmpdir/adapter-archive-entries.txt" "$library_basename"
 
   say_info "Extracting optional Bun/JSC adapter..."
   tar -xzf "$tmpdir/$asset_name" -C "$tmpdir"
-  manifest_path="$tmpdir/nimbus-bun-jsc-adapter.json"
-  verify_file_checksum "$tmpdir/libnimbus_bun_jsc_embedder.so" "$tmpdir/checksums-sha256.txt" "libnimbus_bun_jsc_embedder.so"
-  verify_file_checksum "$manifest_path" "$tmpdir/checksums-sha256.txt" "nimbus-bun-jsc-adapter.json"
-  verify_file_checksum "$tmpdir/README.md" "$tmpdir/checksums-sha256.txt" "README.md"
-  if [ -f "$tmpdir/nimbus-bun-jsc-adapter.sbom.cdx.json" ]; then
-    verify_file_checksum "$tmpdir/nimbus-bun-jsc-adapter.sbom.cdx.json" "$tmpdir/checksums-sha256.txt" "nimbus-bun-jsc-adapter.sbom.cdx.json"
-  fi
-  if [ -f "$tmpdir/nimbus-bun-jsc-adapter.intoto.jsonl" ]; then
-    verify_file_checksum "$tmpdir/nimbus-bun-jsc-adapter.intoto.jsonl" "$tmpdir/checksums-sha256.txt" "nimbus-bun-jsc-adapter.intoto.jsonl"
-  fi
-  adapter_version="$(sed -n 's/^[[:space:]]*"adapter_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_path" | head -n 1)"
+  manifest_path="$tmpdir/$BUN_JSC_ADAPTER_MANIFEST_FILE"
+  verify_file_checksum "$tmpdir/$library_basename" "$tmpdir/$BUN_JSC_ADAPTER_CHECKSUMS_FILE" "$library_basename"
+  verify_file_checksum "$manifest_path" "$tmpdir/$BUN_JSC_ADAPTER_CHECKSUMS_FILE" "$BUN_JSC_ADAPTER_MANIFEST_FILE"
+  verify_file_checksum "$tmpdir/$BUN_JSC_ADAPTER_README_FILE" "$tmpdir/$BUN_JSC_ADAPTER_CHECKSUMS_FILE" "$BUN_JSC_ADAPTER_README_FILE"
+  verify_file_checksum "$tmpdir/$BUN_JSC_ADAPTER_SBOM_FILE" "$tmpdir/$BUN_JSC_ADAPTER_CHECKSUMS_FILE" "$BUN_JSC_ADAPTER_SBOM_FILE"
+  verify_file_checksum "$tmpdir/$BUN_JSC_ADAPTER_SLSA_FILE" "$tmpdir/$BUN_JSC_ADAPTER_CHECKSUMS_FILE" "$BUN_JSC_ADAPTER_SLSA_FILE"
+
+  say_info "Verifying Bun/JSC adapter manifest, evidence, exports, and dlopen safety..."
+  verify_bun_jsc_adapter_manifest_contract "$tmpdir" "$target_triple" "$adapter_platform" "$library_basename"
+
+  adapter_version="$(python3 - "$manifest_path" <<'PY'
+import json
+import pathlib
+import sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text()).get("adapter_version", ""))
+PY
+)"
   case "$adapter_version" in
     ""|*/*|*..*)
       err "Bun/JSC adapter manifest has an unsafe adapter_version"
@@ -814,17 +1086,17 @@ download_and_install_bun_jsc_adapter_linux() {
   target_root="/usr/libexec/nimbus/runtime/bun-jsc"
   target_dir="${target_root}/${adapter_version}"
   maybe_sudo install -d "$target_dir"
-  maybe_sudo install -m 0755 "$tmpdir/libnimbus_bun_jsc_embedder.so" "$target_dir/libnimbus_bun_jsc_embedder.so"
-  maybe_sudo install -m 0644 "$tmpdir/nimbus-bun-jsc-adapter.json" "$target_dir/nimbus-bun-jsc-adapter.json"
-  maybe_sudo install -m 0644 "$tmpdir/checksums-sha256.txt" "$target_dir/checksums-sha256.txt"
-  maybe_sudo install -m 0644 "$tmpdir/README.md" "$target_dir/README.md"
-  if [ -f "$tmpdir/nimbus-bun-jsc-adapter.sbom.cdx.json" ]; then
-    maybe_sudo install -m 0644 "$tmpdir/nimbus-bun-jsc-adapter.sbom.cdx.json" "$target_dir/nimbus-bun-jsc-adapter.sbom.cdx.json"
+  maybe_sudo install -m 0755 "$tmpdir/$library_basename" "$target_dir/$library_basename"
+  maybe_sudo install -m 0644 "$tmpdir/$BUN_JSC_ADAPTER_MANIFEST_FILE" "$target_dir/$BUN_JSC_ADAPTER_MANIFEST_FILE"
+  maybe_sudo install -m 0644 "$tmpdir/$BUN_JSC_ADAPTER_CHECKSUMS_FILE" "$target_dir/$BUN_JSC_ADAPTER_CHECKSUMS_FILE"
+  maybe_sudo install -m 0644 "$tmpdir/$BUN_JSC_ADAPTER_README_FILE" "$target_dir/$BUN_JSC_ADAPTER_README_FILE"
+  maybe_sudo install -m 0644 "$tmpdir/$BUN_JSC_ADAPTER_SBOM_FILE" "$target_dir/$BUN_JSC_ADAPTER_SBOM_FILE"
+  maybe_sudo install -m 0644 "$tmpdir/$BUN_JSC_ADAPTER_SLSA_FILE" "$target_dir/$BUN_JSC_ADAPTER_SLSA_FILE"
+  if [ -L "${target_root}/current" ]; then
+    maybe_sudo rm -f "${target_root}/current"
+  elif [ -e "${target_root}/current" ]; then
+    err "refusing to replace non-symlink Bun/JSC current path: ${target_root}/current"
   fi
-  if [ -f "$tmpdir/nimbus-bun-jsc-adapter.intoto.jsonl" ]; then
-    maybe_sudo install -m 0644 "$tmpdir/nimbus-bun-jsc-adapter.intoto.jsonl" "$target_dir/nimbus-bun-jsc-adapter.intoto.jsonl"
-  fi
-  maybe_sudo rm -rf "${target_root}/current"
   maybe_sudo ln -s "$adapter_version" "${target_root}/current"
 
   say_info "Installed optional Bun/JSC adapter to ${target_root}/current"

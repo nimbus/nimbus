@@ -39,14 +39,14 @@ tenant-controlled paths, or secrets.
 | `node20` | no | `v8` | `node20` | `linked` | `linked` / `built_in` | lazy until invoked | `v8_isolate_heap_limit` |
 | `node22` | no | `v8` | `node22` | `linked` | `linked` / `built_in` | lazy until invoked | `v8_isolate_heap_limit` |
 | `node24` | no | `v8` | `node24` | `linked` | `linked` / `built_in` | lazy until invoked | `v8_isolate_heap_limit` |
-| `bun_jsc` | no | `bun_jsc` | `bun_jsc` | `not_linked` unless the optional shared adapter is verified and loaded | see state table below | lazy until invoked | `outer_quota_required` |
+| `bun_jsc` | no | `bun_jsc` | `bun_jsc` | `not_linked` unless the optional shared adapter is verified and discoverable | see state table below | lazy until invoked | `outer_quota_required` |
 
 Bun/JSC artifact statuses:
 
 | Status | Meaning | Operator action |
 | --- | --- | --- |
 | `not_linked` | Nimbus was built without the optional linked-adapter feature. | Use the default V8/Node lanes, or install/use a build that includes the Bun/JSC linked-adapter feature. |
-| `linked` | The optional adapter was discovered, verified, loaded, and required exports were present. | No install action required; Bun/JSC invocation may proceed subject to runtime policy. |
+| `linked` | The optional adapter manifest and evidence were discovered and verified; the shared library loads lazily on first invocation and required exports are checked during that load. | No install action required; Bun/JSC invocation may proceed subject to runtime policy. |
 | `missing_artifact` | The linked build could not find a direct development library, manifest override, or packaged adapter manifest. | Install `nimbus-bun-jsc-adapter`, set `NIMBUS_BUN_JSC_ADAPTER_MANIFEST` to a verified manifest, or use `NIMBUS_BUN_EMBED_SHARED_LIBRARY` only for a development proof. |
 | `checksum_mismatch` | Manifest, shared library, SBOM, or SLSA evidence checksum did not match the checksum file. | Treat the adapter as corrupt or tampered; reinstall from a verified release asset. |
 | `unsupported_platform` | The adapter manifest targets a different platform or target triple. | Install the adapter archive/package that matches the current host. |
