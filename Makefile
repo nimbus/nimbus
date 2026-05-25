@@ -155,6 +155,8 @@ proof-helpers:
 	bash -n scripts/verify-bun-jsc-adapter-package-helper.sh
 	bash -n scripts/verify-bun-jsc-release-assets.sh
 	bash -n scripts/verify-bun-jsc-release-assets-helper.sh
+	bash -n scripts/build-linux-release-packages.sh
+	bash -n scripts/verify-build-linux-release-packages-helper.sh
 	bash -n scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
 	bash -n scripts/verify-nimbus-machine-guest-proof-helper.sh
 	bash -n scripts/verify-nimbus-machine-service-proof-helper.sh
@@ -168,6 +170,7 @@ proof-helpers:
 	bash scripts/verify-nimbus-homebrew-cask-proof-helper.sh
 	bash scripts/verify-bun-jsc-adapter-package-helper.sh
 	bash scripts/verify-bun-jsc-release-assets-helper.sh
+	bash scripts/verify-build-linux-release-packages-helper.sh
 	bash scripts/verify-install-helper.sh
 
 # Benchmark retained embedded providers on the storage migration workloads

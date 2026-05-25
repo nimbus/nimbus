@@ -101,6 +101,12 @@ if sh "${repo_root}/scripts/install.sh" --help > "${output_dir}/help.txt" 2>&1; 
     fail "install.sh --help documents --libkrun-version"
   fi
 
+  if grep -q "\-\-with-bun-jsc" "${output_dir}/help.txt"; then
+    pass "install.sh --help documents --with-bun-jsc"
+  else
+    fail "install.sh --help documents --with-bun-jsc"
+  fi
+
   if grep -q "NIMBUS_REQUIRE_ATTESTATIONS" "${output_dir}/help.txt"; then
     pass "install.sh --help documents attestation enforcement"
   else
@@ -230,6 +236,18 @@ if PATH="${mock_linux_bin}:$PATH" GITHUB_TOKEN=test-token \
   fi
 else
   fail "Linux mocked dry-run exits successfully"
+fi
+
+if PATH="${mock_linux_bin}:$PATH" \
+    sh "${repo_root}/scripts/install.sh" --dry-run --with-bun-jsc \
+    > "${output_dir}/linux-dry-run-bun-jsc.txt" 2>&1; then
+  if grep -q "nimbus-bun-jsc-adapter" "${output_dir}/linux-dry-run-bun-jsc.txt"; then
+    pass "Linux dry-run shows optional Bun/JSC adapter install"
+  else
+    fail "Linux dry-run shows optional Bun/JSC adapter install"
+  fi
+else
+  fail "Linux mocked Bun/JSC dry-run exits successfully"
 fi
 
 mock_macos_bin="${output_dir}/mock-macos-bin"
@@ -405,6 +423,12 @@ if grep -q "result" "${output_dir}/verify.txt"; then
   pass "verify-install.sh reports result"
 else
   fail "verify-install.sh reports result"
+fi
+
+if grep -q "nimbus-bun-jsc" "${output_dir}/verify.txt"; then
+  pass "verify-install.sh reports optional Bun/JSC adapter state"
+else
+  fail "verify-install.sh reports optional Bun/JSC adapter state"
 fi
 
 # --- Uninstall dry-run ------------------------------------------------------

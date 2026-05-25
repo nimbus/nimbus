@@ -19,6 +19,9 @@ Required:
 Optional:
   --libkrun-version <semver>   nimbus-libkrun package version (leading `v` accepted)
   --crun-version <semver>      nimbus-crun package version (default: --version)
+  --bun-jsc-adapter-archive <path>
+                              Optional `nimbus-bun-jsc-adapter-linux-<arch>.tar.gz`
+                              release archive to package as nimbus-bun-jsc-adapter
   --arch <amd64|arm64>         Package architecture (default: host architecture)
   --format <deb|rpm>           Package format to build; repeatable (default: deb + rpm)
   --nfpm <path>                Explicit nFPM binary path (default: `nfpm` on PATH)
@@ -152,6 +155,122 @@ This package installs the Nimbus-private libkrun runtime stack under
 It does not replace distro libkrun or libkrunfw packages. Nimbus-private crun
 resolves this package through its private runtime path.
 EOF
+}
+
+write_nimbus_bun_jsc_adapter_readme() {
+  local file_path="$1"
+  local adapter_version="$2"
+  cat >"$file_path" <<EOF
+# nimbus-bun-jsc-adapter
+
+Adapter version: ${adapter_version}
+Repository: https://github.com/nimbus/nimbus
+
+This optional package installs the in-process Bun/JSC runtime adapter under
+/usr/libexec/nimbus/runtime/bun-jsc.
+
+The default Nimbus binary works without this package and reports the Bun/JSC
+lane as not_linked. Installing this package makes the adapter discoverable via
+/usr/libexec/nimbus/runtime/bun-jsc/current/nimbus-bun-jsc-adapter.json without
+requiring NIMBUS_BUN_EMBED_SHARED_LIBRARY.
+EOF
+}
+
+linux_target_triple_for_arch() {
+  case "$1" in
+    amd64)
+      printf 'x86_64-unknown-linux-gnu\n'
+      ;;
+    arm64)
+      printf 'aarch64-unknown-linux-gnu\n'
+      ;;
+    *)
+      die "unsupported Bun/JSC adapter package architecture: $1"
+      ;;
+  esac
+}
+
+bun_jsc_platform_arch_for_arch() {
+  case "$1" in
+    amd64)
+      printf 'linux-x86_64\n'
+      ;;
+    arm64)
+      printf 'linux-arm64\n'
+      ;;
+    *)
+      die "unsupported Bun/JSC adapter package architecture: $1"
+      ;;
+  esac
+}
+
+read_bun_jsc_adapter_version() {
+  local manifest_path="$1"
+  command -v python3 >/dev/null 2>&1 || die "python3 is required to read the Bun/JSC adapter manifest"
+  python3 - "$manifest_path" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+version = manifest.get("adapter_version")
+if not isinstance(version, str) or not version.strip():
+    raise SystemExit("adapter_version must be a non-empty string")
+print(version)
+PY
+}
+
+stage_bun_jsc_adapter_archive() {
+  local archive_path="$1"
+  local staged_root="$2"
+  local package_arch="$3"
+  local target_triple platform_arch extract_dir adapter_version version_dir
+  local manifest_name="nimbus-bun-jsc-adapter.json"
+  local checksums_name="checksums-sha256.txt"
+  local readme_name="README.md"
+  local library_name="libnimbus_bun_jsc_embedder.so"
+
+  target_triple="$(linux_target_triple_for_arch "$package_arch")"
+  platform_arch="$(bun_jsc_platform_arch_for_arch "$package_arch")"
+  case "$(basename "$archive_path")" in
+    nimbus-bun-jsc-adapter-"${platform_arch}".tar.gz) ;;
+    *)
+      die "Bun/JSC adapter archive name must match ${platform_arch}: $(basename "$archive_path")"
+      ;;
+  esac
+
+  verify_args=(
+    bash scripts/verify-bun-jsc-adapter-package.sh
+    --archive "$archive_path"
+    --target-triple "$target_triple"
+  )
+  if [[ -n "${NIMBUS_BUN_JSC_ADAPTER_NM:-}" ]]; then
+    verify_args+=(--nm "${NIMBUS_BUN_JSC_ADAPTER_NM}")
+  fi
+  "${verify_args[@]}"
+
+  extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-bun-jsc-adapter-package.XXXXXX")"
+  tar -xzf "$archive_path" -C "$extract_dir"
+  adapter_version="$(read_bun_jsc_adapter_version "${extract_dir}/${manifest_name}")"
+  case "$adapter_version" in
+    ""|*/*|*..*)
+      die "unsafe Bun/JSC adapter version for install path: ${adapter_version}"
+      ;;
+  esac
+
+  version_dir="${staged_root}/usr/libexec/nimbus/runtime/bun-jsc/${adapter_version}"
+  install -d "$version_dir" \
+    "${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter"
+  install -m 0755 "${extract_dir}/${library_name}" "${version_dir}/${library_name}"
+  install -m 0644 "${extract_dir}/${manifest_name}" "${version_dir}/${manifest_name}"
+  install -m 0644 "${extract_dir}/${checksums_name}" "${version_dir}/${checksums_name}"
+  install -m 0644 "${extract_dir}/${readme_name}" "${version_dir}/${readme_name}"
+  ln -sfn "$adapter_version" "${staged_root}/usr/libexec/nimbus/runtime/bun-jsc/current"
+  install -m 0644 LICENSE "${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/LICENSE"
+  write_nimbus_bun_jsc_adapter_readme \
+    "${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/README.md" \
+    "$adapter_version"
+  rm -rf "$extract_dir"
 }
 
 render_nimbus_manifest() {
@@ -296,10 +415,55 @@ contents:
 EOF
 }
 
+render_nimbus_bun_jsc_adapter_manifest() {
+  local manifest_path="$1"
+  local version="$2"
+  local arch="$3"
+  local staged_root="$4"
+
+  cat >"$manifest_path" <<EOF
+# yaml-language-server: \$schema=https://nfpm.goreleaser.com/schema.json
+name: nimbus-bun-jsc-adapter
+arch: ${arch}
+platform: linux
+version: ${version}
+version_schema: semver
+section: devel
+priority: optional
+maintainer: Nimbus
+vendor: Nimbus
+homepage: https://github.com/nimbus/nimbus
+license: Nimbus-Community-1.0
+description: |
+  Optional in-process Bun/JSC runtime adapter for Nimbus.
+
+  This package installs the verified adapter manifest and shared library under
+  /usr/libexec/nimbus/runtime/bun-jsc and points current/ at the packaged
+  adapter version.
+rpm:
+  summary: Optional Bun/JSC runtime adapter for Nimbus
+  group: Applications/Internet
+contents:
+  - src: ${staged_root}/usr/libexec/nimbus/runtime/bun-jsc
+    dst: /usr/libexec/nimbus/runtime/bun-jsc
+    type: tree
+  - src: ${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/README.md
+    dst: /usr/share/doc/nimbus-bun-jsc-adapter/README.md
+    file_info:
+      mode: 0644
+  - src: ${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/LICENSE
+    dst: /usr/share/doc/nimbus-bun-jsc-adapter/LICENSE
+    file_info:
+      mode: 0644
+EOF
+  append_yaml_list "$manifest_path" "depends" "nimbus"
+}
+
 output_dir=""
 nimbus_binary=""
 nimbus_libkrun_archive=""
 nimbus_crun_binary=""
+nimbus_bun_jsc_adapter_archive=""
 version=""
 libkrun_version=""
 crun_version=""
@@ -324,6 +488,10 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --nimbus-crun-binary)
       nimbus_crun_binary="${2:-}"
+      shift 2
+      ;;
+    --bun-jsc-adapter-archive)
+      nimbus_bun_jsc_adapter_archive="${2:-}"
       shift 2
       ;;
     --version)
@@ -400,6 +568,9 @@ fi
 [[ -f "$nimbus_binary" ]] || die "nimbus binary not found: $nimbus_binary"
 [[ -f "$nimbus_libkrun_archive" ]] || die "nimbus-libkrun archive not found: $nimbus_libkrun_archive"
 [[ -f "$nimbus_crun_binary" ]] || die "nimbus-crun binary not found: $nimbus_crun_binary"
+if [[ -n "$nimbus_bun_jsc_adapter_archive" ]]; then
+  [[ -f "$nimbus_bun_jsc_adapter_archive" ]] || die "Bun/JSC adapter archive not found: $nimbus_bun_jsc_adapter_archive"
+fi
 
 mkdir -p "$output_dir"
 output_dir="$(cd "$output_dir" && pwd)"
@@ -414,6 +585,7 @@ mkdir -p "$staging_dir" "$manifests_dir" "$packages_dir"
 nimbus_stage="${staging_dir}/nimbus"
 nimbus_libkrun_stage="${staging_dir}/nimbus-libkrun"
 nimbus_crun_stage="${staging_dir}/nimbus-crun"
+nimbus_bun_jsc_adapter_stage="${staging_dir}/nimbus-bun-jsc-adapter"
 
 install -d "${nimbus_stage}/usr/bin" \
   "${nimbus_stage}/usr/share/doc/nimbus" \
@@ -431,6 +603,9 @@ install -m 0644 LICENSE "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/LICENSE"
 write_nimbus_readme "${nimbus_stage}/usr/share/doc/nimbus/README.md" "$version"
 write_nimbus_libkrun_readme "${nimbus_libkrun_stage}/usr/share/doc/nimbus-libkrun/README.md" "$libkrun_version"
 write_nimbus_crun_readme "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/README.md" "$crun_version"
+if [[ -n "$nimbus_bun_jsc_adapter_archive" ]]; then
+  stage_bun_jsc_adapter_archive "$nimbus_bun_jsc_adapter_archive" "$nimbus_bun_jsc_adapter_stage" "$arch"
+fi
 
 [[ -e "${nimbus_libkrun_stage}/usr/libexec/nimbus/lib/libkrun.so.1" ]] || die "nimbus-libkrun archive is missing lib/libkrun.so.1"
 [[ -e "${nimbus_libkrun_stage}/usr/libexec/nimbus/lib/libkrunfw.so.5" ]] || die "nimbus-libkrun archive is missing lib/libkrunfw.so.5"
@@ -442,6 +617,8 @@ nimbus_libkrun_deb_manifest="${manifests_dir}/nimbus-libkrun-deb.yaml"
 nimbus_libkrun_rpm_manifest="${manifests_dir}/nimbus-libkrun-rpm.yaml"
 nimbus_crun_deb_manifest="${manifests_dir}/nimbus-crun-deb.yaml"
 nimbus_crun_rpm_manifest="${manifests_dir}/nimbus-crun-rpm.yaml"
+nimbus_bun_jsc_adapter_deb_manifest="${manifests_dir}/nimbus-bun-jsc-adapter-deb.yaml"
+nimbus_bun_jsc_adapter_rpm_manifest="${manifests_dir}/nimbus-bun-jsc-adapter-rpm.yaml"
 
 render_nimbus_manifest \
   "$nimbus_deb_manifest" \
@@ -477,16 +654,35 @@ render_nimbus_crun_manifest \
   "$arch" \
   "$nimbus_crun_stage" \
   "nimbus-libkrun"
+if [[ -n "$nimbus_bun_jsc_adapter_archive" ]]; then
+  render_nimbus_bun_jsc_adapter_manifest \
+    "$nimbus_bun_jsc_adapter_deb_manifest" \
+    "$version" \
+    "$arch" \
+    "$nimbus_bun_jsc_adapter_stage"
+  render_nimbus_bun_jsc_adapter_manifest \
+    "$nimbus_bun_jsc_adapter_rpm_manifest" \
+    "$version" \
+    "$arch" \
+    "$nimbus_bun_jsc_adapter_stage"
+fi
 
 printf 'stage.nimbus=%s\n' "$nimbus_stage"
 printf 'stage.nimbus_libkrun=%s\n' "$nimbus_libkrun_stage"
 printf 'stage.nimbus_crun=%s\n' "$nimbus_crun_stage"
+if [[ -n "$nimbus_bun_jsc_adapter_archive" ]]; then
+  printf 'stage.nimbus_bun_jsc_adapter=%s\n' "$nimbus_bun_jsc_adapter_stage"
+fi
 printf 'manifest.nimbus.deb=%s\n' "$nimbus_deb_manifest"
 printf 'manifest.nimbus.rpm=%s\n' "$nimbus_rpm_manifest"
 printf 'manifest.nimbus_libkrun.deb=%s\n' "$nimbus_libkrun_deb_manifest"
 printf 'manifest.nimbus_libkrun.rpm=%s\n' "$nimbus_libkrun_rpm_manifest"
 printf 'manifest.nimbus_crun.deb=%s\n' "$nimbus_crun_deb_manifest"
 printf 'manifest.nimbus_crun.rpm=%s\n' "$nimbus_crun_rpm_manifest"
+if [[ -n "$nimbus_bun_jsc_adapter_archive" ]]; then
+  printf 'manifest.nimbus_bun_jsc_adapter.deb=%s\n' "$nimbus_bun_jsc_adapter_deb_manifest"
+  printf 'manifest.nimbus_bun_jsc_adapter.rpm=%s\n' "$nimbus_bun_jsc_adapter_rpm_manifest"
+fi
 
 if [[ "$render_only" -eq 1 ]]; then
   printf 'result=rendered\n'
@@ -503,9 +699,15 @@ for format in "${formats[@]}"; do
   case "$format" in
     deb)
       manifest_list="${nimbus_deb_manifest} ${nimbus_libkrun_deb_manifest} ${nimbus_crun_deb_manifest}"
+      if [[ -n "$nimbus_bun_jsc_adapter_archive" ]]; then
+        manifest_list="${manifest_list} ${nimbus_bun_jsc_adapter_deb_manifest}"
+      fi
       ;;
     rpm)
       manifest_list="${nimbus_rpm_manifest} ${nimbus_libkrun_rpm_manifest} ${nimbus_crun_rpm_manifest}"
+      if [[ -n "$nimbus_bun_jsc_adapter_archive" ]]; then
+        manifest_list="${manifest_list} ${nimbus_bun_jsc_adapter_rpm_manifest}"
+      fi
       ;;
     *)
       die "unsupported format in build loop: ${format}"

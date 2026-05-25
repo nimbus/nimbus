@@ -17,6 +17,11 @@ on:
         required: false
         default: ""
         type: string
+      include_bun_jsc_adapter:
+        description: "Include optional nimbus-bun-jsc-adapter package when the release asset exists"
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       nimbus_version:
@@ -30,6 +35,11 @@ on:
         description: "nimbus-libkrun release version or tag (defaults to packaging/linux-distribution-contract.env)"
         required: false
         default: ""
+      include_bun_jsc_adapter:
+        description: "Include optional nimbus-bun-jsc-adapter package when the release asset exists"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -153,6 +163,23 @@ jobs:
             -o "dist/input/nimbus-libkrun.tar.gz" \
             "https://github.com/nimbus/nimbus-libkrun/releases/download/${RELEASE_TAG}/nimbus-libkrun-linux-${ARCH}.tar.gz"
 
+      - name: Download optional Bun/JSC adapter archive
+        if: inputs.include_bun_jsc_adapter && matrix.arch == 'amd64'
+        env:
+          RELEASE_TAG: ${{ steps.contract.outputs.nimbus_release_tag }}
+        run: |
+          mkdir -p dist/input
+          curl --fail -sSL --retry 5 \
+            -o "dist/input/nimbus-bun-jsc-adapter-linux-x86_64.tar.gz" \
+            "https://github.com/nimbus/nimbus/releases/download/${RELEASE_TAG}/nimbus-bun-jsc-adapter-linux-x86_64.tar.gz"
+          curl --fail -sSL --retry 5 \
+            -o "dist/input/nimbus-bun-jsc-adapter-checksums-sha256.txt" \
+            "https://github.com/nimbus/nimbus/releases/download/${RELEASE_TAG}/nimbus-bun-jsc-adapter-checksums-sha256.txt"
+          bash scripts/verify-bun-jsc-release-assets.sh \
+            --artifacts-dir dist/input \
+            --checksums dist/input/nimbus-bun-jsc-adapter-checksums-sha256.txt \
+            --require-platform linux-x86_64
+
       - name: Build Linux package artifacts
         env:
           VERSION: ${{ steps.contract.outputs.nimbus_version }}
@@ -160,11 +187,16 @@ jobs:
           CRUN_VERSION: ${{ steps.contract.outputs.nimbus_crun_version }}
           ARCH: ${{ matrix.arch }}
         run: |
+          adapter_args=()
+          if [[ -f "dist/input/nimbus-bun-jsc-adapter-linux-x86_64.tar.gz" ]]; then
+            adapter_args+=(--bun-jsc-adapter-archive "dist/input/nimbus-bun-jsc-adapter-linux-x86_64.tar.gz")
+          fi
           bash scripts/build-linux-release-packages.sh \
             --output-dir "dist/linux-packages/${ARCH}" \
             --nimbus-binary "dist/input/nimbus/nimbus" \
             --nimbus-libkrun-archive "dist/input/nimbus-libkrun.tar.gz" \
             --nimbus-crun-binary "dist/input/nimbus-crun" \
+            "${adapter_args[@]}" \
             --version "${VERSION}" \
             --libkrun-version "${LIBKRUN_VERSION}" \
             --crun-version "${CRUN_VERSION}" \
