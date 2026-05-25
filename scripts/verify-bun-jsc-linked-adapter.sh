@@ -6,10 +6,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${REPO_ROOT}/scripts/bun-jsc-adapter-contract.sh"
 BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/nimbus/bun}"
-EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-bun-v1.4.0-nimbus.5}"
-EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57}"
-BUN_SIMDUTF_NAMESPACE="${NIMBUS_BUN_SIMDUTF_NAMESPACE:-nimbus_bun_simdutf}"
+EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-${BUN_JSC_ADAPTER_SOURCE_REF}}"
+EXPECTED_BUN_REV="${NIMBUS_BUN_EXPECTED_REV:-${BUN_JSC_ADAPTER_SOURCE_REVISION}}"
+BUN_SIMDUTF_NAMESPACE="${NIMBUS_BUN_SIMDUTF_NAMESPACE:-${BUN_JSC_ADAPTER_SIMDUTF_NAMESPACE}}"
 
 host_triple="$(rustc -vV | awk '/^host:/ { print $2 }')"
 case "${host_triple}" in
@@ -278,17 +279,7 @@ fi
 SHARED_LIBRARY="${NIMBUS_BUN_EMBED_SHARED_LIBRARY:-${BUN_BUILD_DIR}/${SHARED_LIBRARY_BASENAME}}"
 
 REQUIRED_EXPORTS=(
-  nimbus_bun_embed_probe_construct_and_destroy_vm
-  nimbus_bun_embed_probe_sync_host_call
-  nimbus_bun_embed_probe_async_host_call
-  nimbus_bun_embed_probe_program_bundle_host_calls
-  nimbus_bun_embed_probe_timeout_and_cancel
-  nimbus_bun_embed_probe_permission_surface_inventory
-  nimbus_bun_embed_probe_memory_behavior
-  nimbus_bun_embed_probe_package_module_policy
-  nimbus_bun_embed_probe_lifecycle_reuse_stress
-  nimbus_bun_embed_invoke_program_wrapper_json
-  nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge
+  "${BUN_JSC_ADAPTER_REQUIRED_EXPORTS[@]}"
 )
 
 cd "${REPO_ROOT}"
