@@ -680,7 +680,10 @@ updates the Homebrew cask on tagged releases.
   `scripts/verify-build-linux-release-packages-helper.sh`, and
   `.github/workflows/linux-packages.yml` render and build candidate `.deb`
   artifacts for `nimbus`, `nimbus-libkrun`, and `nimbus-crun` from released
-  binaries
+  binaries. The same package builder can now stage an optional
+  `nimbus-bun-jsc-adapter` package from the verified
+  `nimbus-bun-jsc-adapter-linux-x86_64.tar.gz` release asset when the
+  adapter package lane is explicitly enabled.
 - Shared static apt-repo builder now exists in-repo:
   `scripts/build-apt-repository.sh`,
   `scripts/verify-build-apt-repository-helper.sh`, and
@@ -694,7 +697,9 @@ updates the Homebrew cask on tagged releases.
   `.github/workflows/linux-distribution-release.yml` mirror each published
   Nimbus GitHub release into the Linux package/repo lanes using that single
   checked-in `nimbus-libkrun`/`nimbus-crun`/channel contract instead of
-  requiring ad hoc operator inputs
+  requiring ad hoc operator inputs. Bun/JSC adapter packages remain explicit:
+  release events require `NIMBUS_INCLUDE_BUN_JSC_ADAPTER_PACKAGES=true`, and
+  manual dispatches require `include_bun_jsc_adapter=true`.
 - Final Debian/Ubuntu channel still needs the hosted apt repository layer:
   final custom-domain publication for that signed static repo bundle
 - The `nimbus-libkrun` package lane is rendered and repo-proved; the remaining
@@ -718,7 +723,9 @@ updates the Homebrew cask on tagged releases.
   `scripts/verify-build-linux-release-packages-helper.sh`, and
   `.github/workflows/linux-packages.yml` render and build candidate `.rpm`
   artifacts for `nimbus`, `nimbus-libkrun`, and `nimbus-crun` from released
-  binaries
+  binaries. Optional `nimbus-bun-jsc-adapter` RPM manifest rendering exists
+  through the shared helper, but public COPR/SRPM adapter publication still
+  needs a separate proof before it is claimed as a supported `dnf` path.
 - Shared Fedora/COPR source-package bridge now exists in-repo:
   `scripts/build-fedora-release-srpms.sh`,
   `scripts/verify-build-fedora-release-srpms-helper.sh`, and
@@ -871,6 +878,7 @@ surface is now `nimbus start` plus `nimbus compose`.
 
 | Date | Phase | Status | Notes | Verification | Next |
 |------|-------|--------|-------|--------------|------|
+| 2026-05-25 | D2/D3 optional Bun/JSC adapter package lane | `in_progress` | Added an explicit optional package path for the in-process Bun/JSC adapter without changing the default `nimbus` package. `scripts/build-linux-release-packages.sh` now verifies a `nimbus-bun-jsc-adapter-linux-x86_64.tar.gz` archive, stages it under `/usr/libexec/nimbus/runtime/bun-jsc/<adapter_version>/`, points `current/` at that version, and renders separate deb/rpm manifests for `nimbus-bun-jsc-adapter` with a dependency on `nimbus`. `linux-packages`, `apt-repo`, and `linux-distribution-release` only include the adapter when explicitly requested. `scripts/install.sh --with-bun-jsc` installs the Linux x86_64 release asset directly with release checksum, GitHub attestation, tar-layout, and internal checksum verification; macOS Homebrew/cask remains a documented separate artifact lane until the tap has a package payload. | `bash -n scripts/build-linux-release-packages.sh scripts/verify-build-linux-release-packages-helper.sh scripts/install.sh scripts/verify-install.sh scripts/verify-install-helper.sh scripts/package-bun-jsc-adapter.sh scripts/verify-bun-jsc-adapter-package.sh scripts/verify-bun-jsc-release-assets.sh`; `dash -n scripts/install.sh`; Ruby YAML parse for `linux-packages.yml`, `apt-repo.yml`, `linux-distribution-release.yml`, and `ci.yml`; `bash scripts/verify-build-linux-release-packages-helper.sh`; `bash scripts/verify-install-helper.sh`; `bash scripts/verify-bun-jsc-release-assets-helper.sh` | Capture a real Linux package install proof after adapter release assets exist for the tag; add a Homebrew/tap payload or keep the separate artifact lane documented; promote COPR/SRPM adapter support only after a Fedora proof. |
 | 2026-05-21 | D1/D2/D3 private krun stack | `done` | Closed the paired Linux krun runtime-stack refresh. `nimbus/nimbus-libkrun` now publishes `v1.17.4-nimbus.1` amd64/arm64 archives with private `libkrun`, bundled `libkrunfw`, checksums, and attestations; `nimbus/nimbus-crun` now publishes `v1.27.1-nimbus.1` built against that private stack. Nimbus direct install, verify, uninstall, package-build, apt-repo, COPR/SRPM, and release-mirror workflows now consume `nimbus + nimbus-libkrun + nimbus-crun` without distro or manual upstream libkrun for service execution. | `bash scripts/verify-install-helper.sh`; `bash scripts/verify-build-linux-release-packages-helper.sh`; `bash scripts/verify-build-apt-repository-helper.sh`; `bash scripts/verify-build-fedora-release-srpms-helper.sh` on Debian 13 `minicloud`; `sudo bash scripts/check-vmm-host.sh` reported `result supported`; `sudo env ... target/debug/deps/krun_linux_smoke-* krun_backend_image_backed_smoke_pulls_and_boots_busybox --ignored --nocapture` passed with non-loopback refusal for `192.168.4.29:18081`; Fedora/COPR helper rebuilt three SRPMs and installed/query-verified private-stack RPMs in Fedora 42 userspace. | Finish public apt/COPR publication and capture fresh installs from those public repos; keep future krun stack bumps on exact upstream-version tags such as `v1.27.1-nimbus.N`. |
 | 2026-04-14 | D4b | `done` | Machine-os CI workflow (`.github/workflows/nimbus-machine-os.yml`) migrated from self-hosted ARM64 runners to GitHub-hosted `ubuntu-24.04-arm`. Pipeline switched from rpm-ostree + custom-coreos-disk-images to `podman save --format oci-archive` + `bootc-image-builder`. Base image changed from Fedora CoreOS to `fedora-bootc:42`. Publishes raw-disk OCI artifact to GHCR on `machine-os/v*` tags with `actions/attest@v4` provenance. Consumer-side attestation verification added to `manager.rs`. | CI run green on `ubuntu-24.04-arm`; `actions/attest@v4` provenance attached; machine manager queries GitHub Attestations API after SHA256 verification | D4b acceptance criteria met: versioned GHCR reference, digest/provenance, dedicated ARM64 build lane |
 | 2026-04-17 | D1 | `done` | Closed the stale Nimbus binary-release gap. The main release workflow succeeded for `v0.1.10` after the Windows type-gating and cache-failure fixes, and the published release now carries the expected asset set: `nimbus_linux_x86_64.tar.gz`, `nimbus_linux_arm64.tar.gz`, `nimbus_darwin_arm64.tar.gz`, `nimbus_windows_x86_64.zip`, plus `checksums-sha256.txt`. The same workflow also attaches build provenance, dispatches the matching `nimbus-machine-os` publish workflow, and updates the Homebrew cask, so the general binary CI/publish lane is no longer a plan gap. | `gh run list --workflow release.yml --limit 10 --json databaseId,displayTitle,headBranch,status,conclusion,url`; successful release run `24578780644` (`https://github.com/nimbus/nimbus/actions/runs/24578780644`) on tag `v0.1.10`; `gh release view v0.1.10 --json tagName,isPrerelease,isDraft,assets,url`; published release `https://github.com/nimbus/nimbus/releases/tag/v0.1.10` with uploaded Linux/macOS/Windows assets plus checksums | Resume the remaining distribution backlog at D2/D3/D5, or keep tightening release ergonomics and packaging evidence where the new landed pipeline exposed rough edges |

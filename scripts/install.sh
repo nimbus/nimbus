@@ -18,6 +18,7 @@ NIMBUS_VERSION=""
 NIMBUS_CRUN_VERSION=""
 NIMBUS_LIBKRUN_VERSION=""
 NIMBUS_PREFIX="/usr/local"
+INSTALL_BUN_JSC_ADAPTER="${NIMBUS_INSTALL_BUN_JSC_ADAPTER:-}"
 DRY_RUN=""
 SKIP_DEPS=""
 UNINSTALL=""
@@ -452,6 +453,50 @@ get_libkrun_asset_name() {
   esac
 }
 
+get_bun_jsc_adapter_asset_name() {
+  case "$PLATFORM:$ARCH" in
+    linux:x86_64)
+      echo "nimbus-bun-jsc-adapter-linux-x86_64.tar.gz"
+      ;;
+    darwin:arm64)
+      echo "nimbus-bun-jsc-adapter-darwin-arm64.tar.gz"
+      ;;
+    *)
+      err "optional Bun/JSC adapter release asset is not supported for $PLATFORM $ARCH"
+      ;;
+  esac
+}
+
+verify_bun_jsc_adapter_archive_layout() {
+  archive_path="$1"
+  entries_path="$2"
+
+  tar -tzf "$archive_path" >"$entries_path"
+  while IFS= read -r entry; do
+    case "$entry" in
+      ""|/*|../*|*"/../"*|*".."*|*/*)
+        err "unsafe Bun/JSC adapter archive entry: $entry"
+        ;;
+      libnimbus_bun_jsc_embedder.so|nimbus-bun-jsc-adapter.json|checksums-sha256.txt|README.md|nimbus-bun-jsc-adapter.sbom.cdx.json|nimbus-bun-jsc-adapter.intoto.jsonl)
+        ;;
+      *)
+        err "unexpected Bun/JSC adapter archive entry: $entry"
+        ;;
+    esac
+  done <"$entries_path"
+
+  duplicate_entry="$(sort "$entries_path" | uniq -d | head -n 1 || true)"
+  if [ -n "$duplicate_entry" ]; then
+    err "duplicate Bun/JSC adapter archive entry: $duplicate_entry"
+  fi
+
+  for required_entry in libnimbus_bun_jsc_embedder.so nimbus-bun-jsc-adapter.json checksums-sha256.txt README.md; do
+    if ! grep -qx "$required_entry" "$entries_path"; then
+      err "Bun/JSC adapter archive is missing required entry: $required_entry"
+    fi
+  done
+}
+
 # --- Sudo handling ----------------------------------------------------------
 
 maybe_sudo() {
@@ -533,6 +578,9 @@ print_install_plan() {
   if [ "$PLATFORM" = "linux" ]; then
     say "  nimbus-libkrun: ${NIMBUS_LIBKRUN_VERSION:-latest}"
     say "  nimbus-crun: ${NIMBUS_CRUN_VERSION:-latest}"
+    if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
+      say "  nimbus-bun-jsc-adapter: ${NIMBUS_VERSION:-latest}"
+    fi
   fi
 
   say ""
@@ -541,6 +589,9 @@ print_install_plan() {
     say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
     say "  nimbus-libkrun: /usr/libexec/nimbus/lib"
     say "  nimbus-crun: /usr/libexec/nimbus/crun"
+    if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
+      say "  nimbus-bun-jsc-adapter: /usr/libexec/nimbus/runtime/bun-jsc/current"
+    fi
   elif [ "$PLATFORM" = "darwin" ]; then
     say "  nimbus:      \$(brew --prefix)/bin/nimbus (via Homebrew cask)"
     say "  gvproxy:     \$(brew --prefix)/Caskroom/nimbus/<version>/libexec/gvproxy"
@@ -575,6 +626,9 @@ print_install_plan() {
     else
       say "  attestation:  best-effort (install gh or set NIMBUS_REQUIRE_ATTESTATIONS=1 to fail closed)"
     fi
+    if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
+      say "  bun/jsc:      optional adapter checksum enforced"
+    fi
   fi
 
   say ""
@@ -596,6 +650,9 @@ warn_ignored_args_for_platform() {
   fi
   if [ "$NIMBUS_PREFIX" != "/usr/local" ]; then
     say_warn "--prefix is ignored on macOS — Homebrew manages the install prefix"
+  fi
+  if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
+    say_warn "--with-bun-jsc is not installed by the macOS Homebrew cask yet — use the nimbus-bun-jsc-adapter release asset or package lane for the same tag"
   fi
 }
 
@@ -692,6 +749,73 @@ download_and_install_nimbus_linux() {
   maybe_sudo install -m 0755 "$tmpdir/nimbus" "${NIMBUS_PREFIX}/bin/nimbus"
 
   say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
+}
+
+download_and_install_bun_jsc_adapter_linux() {
+  if [ -z "$INSTALL_BUN_JSC_ADAPTER" ]; then
+    return 0
+  fi
+
+  if [ -n "$DRY_RUN" ]; then
+    say_info "[dry-run] Would download and install optional Bun/JSC adapter from nimbus $NIMBUS_VERSION to /usr/libexec/nimbus/runtime/bun-jsc/current"
+    return 0
+  fi
+
+  asset_name="$(get_bun_jsc_adapter_asset_name)"
+  download_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/${asset_name}"
+  adapter_checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/nimbus-bun-jsc-adapter-checksums-sha256.txt"
+  release_checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
+
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  say_info "Downloading Bun/JSC adapter checksums for nimbus ${NIMBUS_VERSION}..."
+  if download_to_file "$adapter_checksums_url" "$tmpdir/adapter-checksums-sha256.txt" 2>/dev/null; then
+    checksums_path="$tmpdir/adapter-checksums-sha256.txt"
+  else
+    say_warn "Adapter-specific checksum file not found — falling back to release checksums"
+    download_to_file "$release_checksums_url" "$tmpdir/checksums-sha256.txt"
+    checksums_path="$tmpdir/checksums-sha256.txt"
+  fi
+
+  say_info "Downloading optional Bun/JSC adapter ${NIMBUS_VERSION}..."
+  download_to_file "$download_url" "$tmpdir/$asset_name"
+
+  say_info "Verifying Bun/JSC adapter checksum..."
+  verify_file_checksum "$tmpdir/$asset_name" "$checksums_path" "$asset_name"
+  verify_github_attestation \
+    "$tmpdir/$asset_name" \
+    "nimbus/nimbus" \
+    "refs/tags/$NIMBUS_VERSION" \
+    "nimbus/nimbus/.github/workflows/bun-jsc-adapter.yml" \
+    "$asset_name"
+
+  verify_bun_jsc_adapter_archive_layout "$tmpdir/$asset_name" "$tmpdir/adapter-archive-entries.txt"
+
+  say_info "Extracting optional Bun/JSC adapter..."
+  tar -xzf "$tmpdir/$asset_name" -C "$tmpdir"
+  manifest_path="$tmpdir/nimbus-bun-jsc-adapter.json"
+  verify_file_checksum "$tmpdir/libnimbus_bun_jsc_embedder.so" "$tmpdir/checksums-sha256.txt" "libnimbus_bun_jsc_embedder.so"
+  verify_file_checksum "$manifest_path" "$tmpdir/checksums-sha256.txt" "nimbus-bun-jsc-adapter.json"
+  verify_file_checksum "$tmpdir/README.md" "$tmpdir/checksums-sha256.txt" "README.md"
+  adapter_version="$(sed -n 's/^[[:space:]]*"adapter_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_path" | head -n 1)"
+  case "$adapter_version" in
+    ""|*/*|*..*)
+      err "Bun/JSC adapter manifest has an unsafe adapter_version"
+      ;;
+  esac
+
+  target_root="/usr/libexec/nimbus/runtime/bun-jsc"
+  target_dir="${target_root}/${adapter_version}"
+  maybe_sudo install -d "$target_dir"
+  maybe_sudo install -m 0755 "$tmpdir/libnimbus_bun_jsc_embedder.so" "$target_dir/libnimbus_bun_jsc_embedder.so"
+  maybe_sudo install -m 0644 "$tmpdir/nimbus-bun-jsc-adapter.json" "$target_dir/nimbus-bun-jsc-adapter.json"
+  maybe_sudo install -m 0644 "$tmpdir/checksums-sha256.txt" "$target_dir/checksums-sha256.txt"
+  maybe_sudo install -m 0644 "$tmpdir/README.md" "$target_dir/README.md"
+  maybe_sudo rm -rf "${target_root}/current"
+  maybe_sudo ln -s "$adapter_version" "${target_root}/current"
+
+  say_info "Installed optional Bun/JSC adapter to ${target_root}/current"
 }
 
 get_installed_libkrun_version() {
@@ -796,6 +920,7 @@ install_linux() {
   resolve_libkrun_version
   resolve_crun_version
   download_and_install_nimbus_linux
+  download_and_install_bun_jsc_adapter_linux
   download_and_install_libkrun
   download_and_install_crun
   verify_installation
@@ -870,6 +995,7 @@ uninstall_linux() {
     say_info "[dry-run] Would remove /usr/libexec/nimbus/crun"
     say_info "[dry-run] Would remove /usr/libexec/nimbus/lib"
     say_info "[dry-run] Would remove /usr/libexec/nimbus/include"
+    say_info "[dry-run] Would remove /usr/libexec/nimbus/runtime/bun-jsc"
     return 0
   fi
 
@@ -893,12 +1019,18 @@ uninstall_linux() {
     say_info "Removed /usr/libexec/nimbus/include"
   fi
 
+  if [ -d "/usr/libexec/nimbus/runtime/bun-jsc" ]; then
+    maybe_sudo rm -rf "/usr/libexec/nimbus/runtime/bun-jsc"
+    say_info "Removed /usr/libexec/nimbus/runtime/bun-jsc"
+  fi
+
   if [ -f "/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt" ]; then
     maybe_sudo rm -f "/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
     say_info "Removed /usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
   fi
 
   if [ -d "/usr/libexec/nimbus" ]; then
+    maybe_sudo rmdir "/usr/libexec/nimbus/runtime" 2>/dev/null || true
     maybe_sudo rmdir "/usr/libexec/nimbus" 2>/dev/null || true
   fi
 
@@ -1077,6 +1209,43 @@ inline_check_private_libkrun_stack() {
   fi
 }
 
+inline_check_bun_jsc_adapter() {
+  manifest_path="/usr/libexec/nimbus/runtime/bun-jsc/current/nimbus-bun-jsc-adapter.json"
+  adapter_dir="/usr/libexec/nimbus/runtime/bun-jsc/current"
+  if [ ! -f "$manifest_path" ]; then
+    inline_print_line "nimbus-bun-jsc" "absent optional"
+    return 0
+  fi
+
+  adapter_version="$(sed -n 's/^[[:space:]]*"adapter_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_path" | head -n 1)"
+  inline_print_line "nimbus-bun-jsc" "present path=$manifest_path version=${adapter_version:-unknown}"
+  if [ -x "$adapter_dir/libnimbus_bun_jsc_embedder.so" ]; then
+    inline_print_line "bun-jsc.library" "present path=$adapter_dir/libnimbus_bun_jsc_embedder.so"
+  else
+    inline_print_line "bun-jsc.library" "missing path=$adapter_dir/libnimbus_bun_jsc_embedder.so"
+    inline_mark_failure
+  fi
+}
+
+inline_check_macos_bun_jsc_adapter() {
+  brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
+  manifest_path="${brew_prefix}/opt/nimbus/libexec/runtime/bun-jsc/current/nimbus-bun-jsc-adapter.json"
+  adapter_dir="$(dirname "$manifest_path")"
+  if [ ! -f "$manifest_path" ]; then
+    inline_print_line "nimbus-bun-jsc" "absent optional"
+    return 0
+  fi
+
+  adapter_version="$(sed -n 's/^[[:space:]]*"adapter_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_path" | head -n 1)"
+  inline_print_line "nimbus-bun-jsc" "present path=$manifest_path version=${adapter_version:-unknown}"
+  if [ -x "$adapter_dir/libnimbus_bun_jsc_embedder.dylib" ]; then
+    inline_print_line "bun-jsc.library" "present path=$adapter_dir/libnimbus_bun_jsc_embedder.dylib"
+  else
+    inline_print_line "bun-jsc.library" "missing path=$adapter_dir/libnimbus_bun_jsc_embedder.dylib"
+    inline_mark_failure
+  fi
+}
+
 verify_linux_inline() {
   if [ -x "${NIMBUS_PREFIX}/bin/nimbus" ]; then
     inline_print_line "nimbus" "present path=${NIMBUS_PREFIX}/bin/nimbus"
@@ -1108,6 +1277,7 @@ verify_linux_inline() {
   inline_check_command "newuidmap" "newuidmap" recommended
   inline_check_command "fuse-overlayfs" "fuse-overlayfs" recommended
   inline_check_private_libkrun_stack
+  inline_check_bun_jsc_adapter
 }
 
 resolve_macos_gvproxy_path() {
@@ -1142,6 +1312,7 @@ resolve_macos_gvproxy_path() {
 verify_macos_inline() {
   inline_check_command "nimbus" "nimbus" required
   inline_check_command "krunkit" "krunkit" required
+  inline_check_macos_bun_jsc_adapter
 
   if gvproxy_path="$(resolve_macos_gvproxy_path)"; then
     inline_print_line "gvproxy" "present path=$gvproxy_path"
@@ -1197,6 +1368,8 @@ Options:
   --crun-version <tag>  Pin nimbus-crun version (Linux only)
   --libkrun-version <tag>
                         Pin nimbus-libkrun version (Linux only)
+  --with-bun-jsc        Install optional in-process Bun/JSC adapter when a
+                        matching release asset exists (Linux x86_64 today)
   --prefix <path>       Install prefix (default: /usr/local, Linux only)
   --skip-deps           Skip system dependency installation
   --dry-run             Print what would happen without executing
@@ -1212,6 +1385,8 @@ Environment:
   NIMBUS_REQUIRE_ATTESTATIONS
                         Fail closed if GitHub artifact attestation verification
                         cannot run or fails
+  NIMBUS_INSTALL_BUN_JSC_ADAPTER
+                        Set to a non-empty value to behave like --with-bun-jsc
 
 Examples:
   # Install latest version
@@ -1251,6 +1426,9 @@ parse_args() {
           err "--libkrun-version requires a value"
         fi
         NIMBUS_LIBKRUN_VERSION="$1"
+        ;;
+      --with-bun-jsc)
+        INSTALL_BUN_JSC_ADAPTER="1"
         ;;
       --prefix)
         shift

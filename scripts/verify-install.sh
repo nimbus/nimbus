@@ -166,6 +166,52 @@ check_private_libkrun_stack() {
   fi
 }
 
+check_bun_jsc_adapter() {
+  local manifest_path="/usr/libexec/nimbus/runtime/bun-jsc/current/nimbus-bun-jsc-adapter.json"
+  local adapter_dir="/usr/libexec/nimbus/runtime/bun-jsc/current"
+  local adapter_version=""
+
+  if [[ ! -f "${manifest_path}" ]]; then
+    print_line "nimbus-bun-jsc" "absent optional"
+    return 0
+  fi
+
+  adapter_version="$(sed -n 's/^[[:space:]]*"adapter_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest_path}" | head -n 1)"
+  print_line "nimbus-bun-jsc" "present path=${manifest_path} version=${adapter_version:-unknown}"
+
+  if [[ -x "${adapter_dir}/libnimbus_bun_jsc_embedder.so" ]]; then
+    print_line "bun-jsc.library" "present path=${adapter_dir}/libnimbus_bun_jsc_embedder.so"
+  else
+    print_line "bun-jsc.library" "missing path=${adapter_dir}/libnimbus_bun_jsc_embedder.so"
+    mark_failure
+  fi
+}
+
+check_macos_bun_jsc_adapter() {
+  local brew_prefix=""
+  local manifest_path=""
+  local adapter_dir=""
+  local adapter_version=""
+
+  brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
+  manifest_path="${brew_prefix}/opt/nimbus/libexec/runtime/bun-jsc/current/nimbus-bun-jsc-adapter.json"
+  adapter_dir="$(dirname "${manifest_path}")"
+  if [[ ! -f "${manifest_path}" ]]; then
+    print_line "nimbus-bun-jsc" "absent optional"
+    return 0
+  fi
+
+  adapter_version="$(sed -n 's/^[[:space:]]*"adapter_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest_path}" | head -n 1)"
+  print_line "nimbus-bun-jsc" "present path=${manifest_path} version=${adapter_version:-unknown}"
+
+  if [[ -x "${adapter_dir}/libnimbus_bun_jsc_embedder.dylib" ]]; then
+    print_line "bun-jsc.library" "present path=${adapter_dir}/libnimbus_bun_jsc_embedder.dylib"
+  else
+    print_line "bun-jsc.library" "missing path=${adapter_dir}/libnimbus_bun_jsc_embedder.dylib"
+    mark_failure
+  fi
+}
+
 # --- Platform detection -----------------------------------------------------
 
 os_name="$(uname -s)"
@@ -243,6 +289,9 @@ verify_linux() {
   # Nimbus-private libkrun stack
   check_private_libkrun_stack
 
+  # Optional Bun/JSC in-process runtime adapter
+  check_bun_jsc_adapter
+
   # containers config
   if [[ -d /etc/containers || -d /usr/share/containers ]]; then
     print_line "containers.config" "present"
@@ -282,6 +331,9 @@ verify_macos() {
 
   # krunkit
   check_command "krunkit" "krunkit" required
+
+  # Optional Bun/JSC in-process runtime adapter
+  check_macos_bun_jsc_adapter
 
   # gvproxy — find it relative to the installed nimbus binary in Caskroom
   local nimbus_path=""

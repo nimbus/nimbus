@@ -424,6 +424,15 @@ manual source-backed artifact workflow:
 - The workflow does not hide an unpinned curl installer. It expects a pinned
   Bun CLI on the runner, or an explicit `install_bun_with_npm` dispatch input
   that installs the requested `bun` npm package version before the source build.
+- Linux distribution packaging is explicitly opt-in for the adapter. The
+  reusable `linux-packages` and `apt-repo` workflows accept
+  `include_bun_jsc_adapter`; the tag-driven `linux-distribution-release`
+  workflow passes that through from manual dispatch or from repository variable
+  `NIMBUS_INCLUDE_BUN_JSC_ADAPTER_PACKAGES=true` on release events.
+- Default proof-helper CI now also runs
+  `scripts/verify-build-linux-release-packages-helper.sh`, which proves the
+  deterministic `nimbus-bun-jsc-adapter` deb/rpm manifest rendering path
+  without requiring a full Bun/WebKit rebuild or nFPM availability.
 
 ### CW4: warm-sccache compile-cost reduction
 

@@ -27,6 +27,11 @@ on:
         required: false
         default: false
         type: boolean
+      include_bun_jsc_adapter:
+        description: "Include optional amd64 nimbus-bun-jsc-adapter package when the release asset exists"
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       nimbus_version:
@@ -47,6 +52,11 @@ on:
       publish:
         description: "Deploy the built apt repository bundle to GitHub Pages"
         required: true
+        type: boolean
+        default: false
+      include_bun_jsc_adapter:
+        description: "Include optional amd64 nimbus-bun-jsc-adapter package when the release asset exists"
+        required: false
         type: boolean
         default: false
 
@@ -153,17 +163,39 @@ jobs:
             -o dist/input/libkrun/nimbus-libkrun-linux-arm64.tar.gz \
             "https://github.com/nimbus/nimbus-libkrun/releases/download/${LIBKRUN_RELEASE_TAG}/nimbus-libkrun-linux-arm64.tar.gz"
 
+      - name: Download optional Bun/JSC adapter archive
+        if: inputs.include_bun_jsc_adapter
+        env:
+          NIMBUS_RELEASE_TAG: ${{ steps.contract.outputs.nimbus_release_tag }}
+        run: |
+          mkdir -p dist/input/bun-jsc-adapter
+          curl --fail -sSL --retry 5 \
+            -o dist/input/bun-jsc-adapter/nimbus-bun-jsc-adapter-linux-x86_64.tar.gz \
+            "https://github.com/nimbus/nimbus/releases/download/${NIMBUS_RELEASE_TAG}/nimbus-bun-jsc-adapter-linux-x86_64.tar.gz"
+          curl --fail -sSL --retry 5 \
+            -o dist/input/bun-jsc-adapter/nimbus-bun-jsc-adapter-checksums-sha256.txt \
+            "https://github.com/nimbus/nimbus/releases/download/${NIMBUS_RELEASE_TAG}/nimbus-bun-jsc-adapter-checksums-sha256.txt"
+          bash scripts/verify-bun-jsc-release-assets.sh \
+            --artifacts-dir dist/input/bun-jsc-adapter \
+            --checksums dist/input/bun-jsc-adapter/nimbus-bun-jsc-adapter-checksums-sha256.txt \
+            --require-platform linux-x86_64
+
       - name: Build amd64 deb packages
         env:
           NIMBUS_VERSION: ${{ steps.contract.outputs.nimbus_version }}
           LIBKRUN_VERSION: ${{ steps.contract.outputs.nimbus_libkrun_version }}
           CRUN_VERSION: ${{ steps.contract.outputs.nimbus_crun_version }}
         run: |
+          adapter_args=()
+          if [[ -f dist/input/bun-jsc-adapter/nimbus-bun-jsc-adapter-linux-x86_64.tar.gz ]]; then
+            adapter_args+=(--bun-jsc-adapter-archive dist/input/bun-jsc-adapter/nimbus-bun-jsc-adapter-linux-x86_64.tar.gz)
+          fi
           bash scripts/build-linux-release-packages.sh \
             --output-dir dist/linux-packages/amd64 \
             --nimbus-binary dist/input/nimbus/amd64/nimbus \
             --nimbus-libkrun-archive dist/input/libkrun/nimbus-libkrun-linux-amd64.tar.gz \
             --nimbus-crun-binary dist/input/crun/nimbus-crun-amd64 \
+            "${adapter_args[@]}" \
             --version "${NIMBUS_VERSION}" \
             --libkrun-version "${LIBKRUN_VERSION}" \
             --crun-version "${CRUN_VERSION}" \
