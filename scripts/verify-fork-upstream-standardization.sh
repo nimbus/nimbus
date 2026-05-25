@@ -37,11 +37,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 forks_tsv=$(cat <<EOF
-nimbus/deno	${HOME}/src/github.com/nimbus/deno	full_source	git@github.com:nimbus/deno.git	git@github.com:denoland/deno.git	v2.8.0	v2.8.0-nimbus.2	v[0-9]*	yes	v2.7.14
-nimbus/rusty_v8	${HOME}/src/github.com/nimbus/rusty_v8	full_source	git@github.com:nimbus/rusty_v8.git	git@github.com:denoland/rusty_v8.git	v149.0.0	v149.0.0-nimbus.1	v[0-9]*	no	v147.4.0
-nimbus/bun	${HOME}/src/github.com/nimbus/bun	full_source	git@github.com:nimbus/bun.git	git@github.com:oven-sh/bun.git	bun-v1.3.14	nimbus-bun-jsc-proof-main-20260525	bun-v[0-9]*	yes	f161e0311d56
-nimbus/nimbus-crun	${HOME}/src/github.com/nimbus/nimbus-crun	patch_carrier	git@github.com:nimbus/nimbus-crun.git	git@github.com:containers/crun.git	1.27.1	v1.27.1-nimbus.2	[0-9]*	yes	1.27.1
-nimbus/nimbus-libkrun	${HOME}/src/github.com/nimbus/nimbus-libkrun	full_source	git@github.com:nimbus/nimbus-libkrun.git	git@github.com:containers/libkrun.git	v1.18.1	v1.18.1-nimbus.1	v[0-9]*	yes	v1.18.1
+nimbus/deno	${HOME}/src/github.com/nimbus/deno	full_source	nimbus/v2.8.0	git@github.com:nimbus/deno.git	git@github.com:denoland/deno.git	v2.8.0	v2.8.0-nimbus.2	v[0-9]*	yes	v2.7.14
+nimbus/rusty_v8	${HOME}/src/github.com/nimbus/rusty_v8	full_source	nimbus/v149.0.0	git@github.com:nimbus/rusty_v8.git	git@github.com:denoland/rusty_v8.git	v149.0.0	v149.0.0-nimbus.1	v[0-9]*	no	v147.4.0
+nimbus/bun	${HOME}/src/github.com/nimbus/bun	full_source	nimbus/bun-main-20260525	git@github.com:nimbus/bun.git	git@github.com:oven-sh/bun.git	bun-v1.3.14	nimbus-bun-jsc-proof-main-20260525	bun-v[0-9]*	yes	f161e0311d56
+nimbus/nimbus-crun	${HOME}/src/github.com/nimbus/nimbus-crun	patch_carrier	nimbus/1.27.1	git@github.com:nimbus/nimbus-crun.git	git@github.com:containers/crun.git	1.27.1	v1.27.1-nimbus.2	[0-9]*	yes	1.27.1
+nimbus/nimbus-libkrun	${HOME}/src/github.com/nimbus/nimbus-libkrun	full_source	nimbus/v1.18.1	git@github.com:nimbus/nimbus-libkrun.git	git@github.com:containers/libkrun.git	v1.18.1	v1.18.1-nimbus.1	v[0-9]*	yes	v1.18.1
 EOF
 )
 
@@ -133,13 +133,13 @@ local_release_tag_state() {
   fi
 }
 
-printf 'fork\tpath\tkind\tbranch\torigin_url\tupstream_url\torigin_head\tupstream_head\tselected_source_tag\tselected_release_tag\tlocal_source_tag\tremote_source_tag\tlocal_release_tag\tlatest_upstream_tag\ttracks_latest\tclean_state\tdelta_base\n'
+printf 'fork\tpath\tkind\tbranch\texpected_branch\torigin_url\tupstream_url\torigin_head\tupstream_head\tselected_source_tag\tselected_release_tag\tlocal_source_tag\tremote_source_tag\tlocal_release_tag\tlatest_upstream_tag\ttracks_latest\tclean_state\tdelta_base\n'
 
-while IFS=$'\t' read -r fork path kind expected_origin expected_upstream selected_source_tag selected_release_tag tag_pattern tracks_latest delta_base; do
+while IFS=$'\t' read -r fork path kind expected_branch expected_origin expected_upstream selected_source_tag selected_release_tag tag_pattern tracks_latest delta_base; do
   if [[ ! -d "${path}" ]] || ! git -C "${path}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     record_issue "${fork}" "missing git checkout at ${path}"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "${fork}" "${path}" "${kind}" "<missing>" "<missing>" "<missing>" "missing" "missing" \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${fork}" "${path}" "${kind}" "<missing>" "${expected_branch}" "<missing>" "<missing>" "missing" "missing" \
       "${selected_source_tag}" "${selected_release_tag}" "missing" "missing" "missing" "missing" \
       "${tracks_latest}" "missing" "${delta_base}"
     continue
@@ -164,11 +164,15 @@ while IFS=$'\t' read -r fork path kind expected_origin expected_upstream selecte
     clean_state="dirty:${dirty_count}"
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "${fork}" "${path}" "${kind}" "${branch}" "${origin:-<missing>}" "${upstream:-<missing>}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${fork}" "${path}" "${kind}" "${branch}" "${expected_branch}" "${origin:-<missing>}" "${upstream:-<missing>}" \
     "${origin_head:-unavailable}" "${upstream_head:-unavailable}" "${selected_source_tag}" \
     "${selected_release_tag}" "${local_source_tag}" "${remote_source_tag}" "${local_release_tag}" \
     "${latest_tag:-unavailable}" "${tracks_latest}" "${clean_state}" "${delta_base}"
+
+  if [[ "${branch}" != "${expected_branch}" ]]; then
+    record_issue "${fork}" "branch mismatch expected=${expected_branch} actual=${branch}"
+  fi
 
   if [[ "${origin}" != "${expected_origin}" ]]; then
     record_issue "${fork}" "origin mismatch expected=${expected_origin} actual=${origin:-<missing>}"
@@ -176,6 +180,10 @@ while IFS=$'\t' read -r fork path kind expected_origin expected_upstream selecte
 
   if [[ "${upstream}" != "${expected_upstream}" ]]; then
     record_issue "${fork}" "upstream mismatch expected=${expected_upstream} actual=${upstream:-<missing>}"
+  fi
+
+  if [[ "${origin_head}" != "skipped" && "${origin_head}" != "unavailable" && "${origin_head}" != "${expected_branch}" ]]; then
+    record_issue "${fork}" "origin default branch mismatch expected=${expected_branch} actual=${origin_head}"
   fi
 
   if [[ "${remote_source_tag}" == "missing" ]]; then

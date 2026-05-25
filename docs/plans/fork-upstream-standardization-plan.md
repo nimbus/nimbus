@@ -190,7 +190,7 @@ below.
 | --- | --- | --- | --- | --- |
 | `nimbus/deno` | `locker-v2.7.14`, `v2.7.14-locker.43` | Uses `locker` branch/tag names | `v2.8.0` | Rebase/port Nimbus deltas to `nimbus/v2.8.0`, tag `v2.8.0-nimbus.2`, update Nimbus pins |
 | `nimbus/rusty_v8` | `locker-v147.4.0`, `v147.4.0-locker.7` | Uses `locker` branch/tag names | Deno-required `v149.0.0` | Rebase/port Nimbus deltas to `nimbus/v149.0.0`, include/evaluate upstream teardown fix `e5abf2b`, tag `v149.0.0-nimbus.1` |
-| `nimbus/bun` | `nimbus/proof-main-bun-jsc-embedder`, `nimbus-bun-jsc-proof-main-20260525` | Was using a release-looking proof tag before FUS3 | Latest official release observed: `bun-v1.3.14` | Keep Bun as proof-main until an official upstream release contains the required Rust/embedder surfaces |
+| `nimbus/bun` | `nimbus/bun-main-20260525`, `nimbus-bun-jsc-proof-main-20260525` | Was using a release-looking proof tag before FUS3 | Latest official release observed: `bun-v1.3.14` | Keep Bun as mainline-proof until an official upstream release contains the required Rust/embedder surfaces |
 | `nimbus/nimbus-crun` | `main`, `v1.27.1-nimbus.1` | Missing `upstream` remote | `1.27.1` | Add upstream remote, create active `nimbus/1.27.1` branch or document `main` exception, verify package consumers |
 | `nimbus/nimbus-libkrun` | `main`, `v1.17.4-nimbus.1` plus untagged release tooling | Behind latest upstream release | `v1.18.1` | Rebase/port Nimbus patch and release tooling to `nimbus/v1.18.1`, tag `v1.18.1-nimbus.1`, update installers/packages |
 
@@ -207,11 +207,10 @@ remotes after the FUS4 source/package updates:
   `v149.0.0` and Nimbus release tag `v149.0.0-nimbus.1` are present locally
   and remotely. `origin/HEAD` still points at `locker-v147.4.0`; FUS6 owns
   default-branch alignment or a documented exception.
-- `nimbus/bun` is clean on `nimbus/proof-main-bun-jsc-embedder`; the active
-  source contract is proof tag `nimbus-bun-jsc-proof-main-20260525`. The
-  default branch still points at the older proof branch
-  `nimbus/bja4l2-simdutf-namespace`; FUS6 owns default-branch alignment or a
-  documented proof exception.
+- `nimbus/bun` is clean on `nimbus/bun-main-20260525`; the active source
+  contract is proof tag `nimbus-bun-jsc-proof-main-20260525`. FUS6 renamed the
+  active default branch to the same `nimbus/<source>` shape as the other forks
+  without pretending the source is based on an official `bun-vX.Y.Z` release.
 - `nimbus/nimbus-crun` is clean on `nimbus/1.27.1`; upstream source tag
   `1.27.1` and Nimbus release tag `v1.27.1-nimbus.2` are present locally and
   remotely. `origin/HEAD` still points at `main`; FUS6 owns default-branch
@@ -363,8 +362,8 @@ Execution implication:
 Current local state:
 
 - `nimbus/bun`: historical proof branch `nimbus/bja4l2-simdutf-namespace`,
-  historical proof tag `bun-v1.4.0-nimbus.5`; FUS3 canonical proof branch
-  `nimbus/proof-main-bun-jsc-embedder` and proof tag
+  historical proof tag `bun-v1.4.0-nimbus.5`; FUS3 canonical source branch
+  `nimbus/bun-main-20260525` and proof tag
   `nimbus-bun-jsc-proof-main-20260525`.
 - The local branch is based on an upstream-main proof commit after
   `bun-v1.3.14`, not on an official `bun-v1.4.0` release.
@@ -837,9 +836,9 @@ Evidence:
   native permission denial, resolver/package denial, lifecycle reuse, shared
   embedder mode, dynamic TLS, HostBridge ABI, private `simdutf` namespace, and
   executable-only stack-size filtering.
-- Created and pushed proof-only branch `nimbus/proof-main-bun-jsc-embedder`
-  and annotated proof tag `nimbus-bun-jsc-proof-main-20260525`, both pointing
-  at `ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57`.
+- Created and pushed mainline-proof branch `nimbus/bun-main-20260525` and
+  annotated proof tag `nimbus-bun-jsc-proof-main-20260525`, both pointing at
+  `ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57`.
 - Updated the active Nimbus Bun/JSC adapter source contract, manual CI default,
   installer constants, package/release helpers, runtime diagnostics tests,
   manifest tests, and API/operator docs to reference
@@ -1042,7 +1041,7 @@ Evidence:
 - GitHub default branches were updated:
   - `nimbus/deno` -> `nimbus/v2.8.0`.
   - `nimbus/rusty_v8` -> `nimbus/v149.0.0`.
-  - `nimbus/bun` -> `nimbus/proof-main-bun-jsc-embedder`.
+  - `nimbus/bun` -> `nimbus/bun-main-20260525`.
   - `nimbus/nimbus-crun` -> `nimbus/1.27.1`.
   - `nimbus/nimbus-libkrun` -> `nimbus/v1.18.1`.
 - `gh repo view <repo> --json nameWithOwner,defaultBranchRef` verified those
