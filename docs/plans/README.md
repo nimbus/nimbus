@@ -95,13 +95,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
     distribution and release productization, not more proof of the basic linked
     execution path.
 - `docs/plans/bun-jsc-distribution-and-release-plan.md`
-  - active execution plan for turning the completed Bun/JSC linked adapter into
-    a distributable optional runtime backend. BJD0-BJD9 own the release
+  - completed execution plan for turning the completed Bun/JSC linked adapter
+    into a distributable optional runtime backend. BJD0-BJD9 delivered the release
     artifact layout, strict adapter manifest, packaged runtime discovery,
     deterministic package helper, Linux/macOS CI and release lanes,
     package/install integration, checksum/SBOM/provenance evidence, operator
-    diagnostics, and installed-package proof while preserving default
-    single-binary no-link behavior.
+    diagnostics, local plus Debian 13 `minicloud` installed-package proof, and
+    final broad verification while preserving default single-binary no-link
+    behavior. Closed with proof gate 66; the optional Bun/JSC adapter is now a
+    committed optional runtime backend contract beside the default Deno/V8/Node
+    lanes.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
