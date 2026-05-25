@@ -11,7 +11,7 @@ experience.
 
 ## Status
 
-- **Status:** active; `BJD0` through `BJD4` complete, `BJD5` next
+- **Status:** active; `BJD0` through `BJD7` complete, `BJD8` next
 - **Primary owner:** this plan
 - **Nimbus baseline:** `dec70418` (`Close Bun JSC linked adapter plan`)
 - **Bun source baseline:** `nimbus/bun` tag `bun-v1.4.0-nimbus.5`
@@ -244,6 +244,72 @@ path to Sigstore/SLSA evidence and release attestation.
 6. **Operator proof and closeout (`BJD7-BJD9`)**
    - Make diagnostics and documentation real product contracts.
    - Finish with installed-package proofs on macOS and Debian 13 `minicloud`.
+
+## Remaining Execution Plan
+
+`BJD8` and `BJD9` are the closeout gates that turn the adapter from a
+source-backed proof into a package-discovered product contract.
+
+### BJD8 Installed-Package Proof
+
+1. Add a repeatable installed-package proof helper.
+   - The helper should stage an already-built adapter archive into the same
+     fixed discovery layout used by real packages.
+   - It must run with `NIMBUS_BUN_EMBED_SHARED_LIBRARY` unset so success proves
+     packaged manifest discovery rather than development override behavior.
+   - It must refuse to overwrite an existing non-proof package-manager install
+     and must clean up proof-owned temporary paths.
+
+2. Prove the macOS packaged layout.
+   - Package the existing local `libnimbus_bun_jsc_embedder.dylib` into a
+     `nimbus-bun-jsc-adapter-darwin-*.tar.gz` archive.
+   - Stage it under the Homebrew-style discovery path for the current machine.
+   - Run a linked Bun/JSC invocation that executes a `"use bun";` function.
+   - Remove the staged artifact and rerun the no-link fallback proof.
+
+3. Prove the Debian 13 `minicloud` packaged layout.
+   - Use `nimbus@192.168.4.29` and the canonical
+     `~/src/github.com/nimbus/{nimbus,bun}` layout.
+   - Use home-backed caches for `TMPDIR`, `NIMBUS_BUN_BUILD_DIR`,
+     `NIMBUS_BUN_CACHE_DIR`, and `NIMBUS_BUN_CARGO_TARGET_DIR`.
+   - Build or reuse the Linux shared adapter, package it, stage it under
+     `/usr/libexec/nimbus/runtime/bun-jsc/current/`, and run the same
+     no-env linked invocation proof.
+   - Remove or hide the staged artifact and rerun the no-link fallback proof.
+
+4. Keep the existing runtime lanes honest.
+   - During both local and Linux proofs, run the Bun/JSC contract tests that
+     also assert V8/Node lanes do not inherit Bun backend axes.
+   - Record exact commands, host details, archive names, checksums, and test
+     counts in `docs/plans/proof/runtime-engine/bun-jsc/gate-65-installed-package-proof.md`.
+
+### BJD9 Final Closeout
+
+1. Run broad repository verification.
+   - `cargo fmt --all --check`
+   - `make check`
+   - `make clippy`
+   - `npm run typecheck`
+   - `npm run test`
+   - `npm run build`
+   - `make verify-bun-jsc-runtime-contract`
+   - adapter package verifier/helper lanes
+   - local linked/package proof
+   - Debian `minicloud` linked/package proof
+   - `git diff --check`
+
+2. Validate docs and control-plane consistency.
+   - Run strict docs-reference validation if the repo provides it.
+   - If no docs validator is available, record that explicitly in the closeout
+     proof instead of silently skipping it.
+   - Ensure this plan ledger, proof documents, README/runtime docs, install
+     docs, and current commits agree on completed gates.
+
+3. Commit the baseline.
+   - Keep unrelated dirty files out of staging.
+   - Use focused commits that match the gate boundary.
+   - Mark the goal complete only after the plan, proof docs, and git history
+     are internally consistent.
 
 ## Work Surfaces
 
