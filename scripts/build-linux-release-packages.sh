@@ -265,6 +265,16 @@ stage_bun_jsc_adapter_archive() {
   install -m 0644 "${extract_dir}/${manifest_name}" "${version_dir}/${manifest_name}"
   install -m 0644 "${extract_dir}/${checksums_name}" "${version_dir}/${checksums_name}"
   install -m 0644 "${extract_dir}/${readme_name}" "${version_dir}/${readme_name}"
+  if [[ -f "${extract_dir}/nimbus-bun-jsc-adapter.sbom.cdx.json" ]]; then
+    install -m 0644 \
+      "${extract_dir}/nimbus-bun-jsc-adapter.sbom.cdx.json" \
+      "${version_dir}/nimbus-bun-jsc-adapter.sbom.cdx.json"
+  fi
+  if [[ -f "${extract_dir}/nimbus-bun-jsc-adapter.intoto.jsonl" ]]; then
+    install -m 0644 \
+      "${extract_dir}/nimbus-bun-jsc-adapter.intoto.jsonl" \
+      "${version_dir}/nimbus-bun-jsc-adapter.intoto.jsonl"
+  fi
   ln -sfn "$adapter_version" "${staged_root}/usr/libexec/nimbus/runtime/bun-jsc/current"
   install -m 0644 LICENSE "${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/LICENSE"
   write_nimbus_bun_jsc_adapter_readme \

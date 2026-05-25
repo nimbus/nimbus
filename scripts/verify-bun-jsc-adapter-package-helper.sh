@@ -9,6 +9,8 @@ trap 'rm -rf "${tmp_root}"' EXIT
 
 target_triple="$(bun_jsc_adapter_host_triple)"
 library_basename="$(bun_jsc_adapter_library_basename_for_triple "${target_triple}")"
+evidence_sbom="nimbus-bun-jsc-adapter.sbom.cdx.json"
+evidence_slsa="nimbus-bun-jsc-adapter.intoto.jsonl"
 fixture_library="${tmp_root}/${library_basename}"
 printf 'fixture shared adapter bytes\n' >"${fixture_library}"
 chmod 0755 "${fixture_library}"
@@ -69,8 +71,24 @@ bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
   --target-triple "${target_triple}" \
   --nm "${fake_nm}" \
   >"${tmp_root}/verify-good.out"
-grep -F "verified: Bun/JSC adapter package archive matches manifest" \
+grep -F "verified: Bun/JSC adapter package archive matches manifest, checksum, SBOM/provenance" \
   "${tmp_root}/verify-good.out" >/dev/null
+tar -tzf "${archive_path}" >"${tmp_root}/archive-entries.txt"
+grep -Fx "${evidence_sbom}" "${tmp_root}/archive-entries.txt" >/dev/null
+grep -Fx "${evidence_slsa}" "${tmp_root}/archive-entries.txt" >/dev/null
+
+rewrite_checksums_for_extract() {
+  local extract_dir="$1"
+  (
+    cd "${extract_dir}"
+    : >"${BUN_JSC_ADAPTER_CHECKSUMS_FILE}"
+    for file in $(find . -maxdepth 1 -type f -print | sed 's#^\./##' | sort); do
+      [[ "${file}" != "${BUN_JSC_ADAPTER_CHECKSUMS_FILE}" ]] || continue
+      printf '%s  %s\n' "$(bun_jsc_adapter_sha256_file "${file}")" "${file}" \
+        >>"${BUN_JSC_ADAPTER_CHECKSUMS_FILE}"
+    done
+  )
+}
 
 repack_bad_archive() {
   local name="$1"
@@ -86,6 +104,25 @@ repack_bad_archive() {
     bad-checksum)
       printf 'tamper\n' >>"${extract_dir}/${library_basename}"
       ;;
+    missing-sbom)
+      rm -f "${extract_dir}/${evidence_sbom}"
+      ;;
+    bad-provenance-checksum)
+      printf 'tamper\n' >>"${extract_dir}/${evidence_slsa}"
+      ;;
+    wrong-provenance-subject)
+      python3 - "${extract_dir}/${evidence_slsa}" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+statement = json.loads(path.read_text())
+statement["subject"][0]["digest"]["sha256"] = "0" * 64
+path.write_text(json.dumps(statement, separators=(",", ":")) + "\n")
+PY
+      rewrite_checksums_for_extract "${extract_dir}"
+      ;;
     bad-manifest)
       python3 - "${extract_dir}/${BUN_JSC_ADAPTER_MANIFEST_FILE}" <<'PY'
 import json
@@ -97,21 +134,14 @@ manifest = json.loads(path.read_text())
 manifest["kind"] = "wrong.kind"
 path.write_text(json.dumps(manifest, indent=2) + "\n")
 PY
-      (
-        cd "${extract_dir}"
-        : >"${BUN_JSC_ADAPTER_CHECKSUMS_FILE}"
-        for file in "${library_basename}" "${BUN_JSC_ADAPTER_MANIFEST_FILE}" "${BUN_JSC_ADAPTER_README_FILE}"; do
-          printf '%s  %s\n' "$(bun_jsc_adapter_sha256_file "${file}")" "${file}" \
-            >>"${BUN_JSC_ADAPTER_CHECKSUMS_FILE}"
-        done
-      )
+      rewrite_checksums_for_extract "${extract_dir}"
       ;;
     *)
       printf 'unknown mutation: %s\n' "${mutation}" >&2
       exit 2
       ;;
   esac
-  (cd "${extract_dir}" && tar -czf "${bad_archive}" .)
+  (cd "${extract_dir}" && tar -czf "${bad_archive}" $(find . -maxdepth 1 -type f -print | sed 's#^\./##' | sort))
   printf '%s\n' "${bad_archive}"
 }
 
@@ -137,6 +167,42 @@ if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
 fi
 grep -F "checksums file does not contain matching ${library_basename} digest" \
   "${tmp_root}/bad-checksum.out" >/dev/null
+
+missing_sbom_archive="$(repack_bad_archive missing-sbom missing-sbom)"
+if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
+  --archive "${missing_sbom_archive}" \
+  --target-triple "${target_triple}" \
+  --nm "${fake_nm}" \
+  >"${tmp_root}/missing-sbom.out" 2>&1; then
+  printf 'expected missing-sbom archive verification to fail\n' >&2
+  exit 1
+fi
+grep -F "entries do not match manifest provenance contract" \
+  "${tmp_root}/missing-sbom.out" >/dev/null
+
+bad_provenance_checksum_archive="$(repack_bad_archive bad-provenance-checksum bad-provenance-checksum)"
+if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
+  --archive "${bad_provenance_checksum_archive}" \
+  --target-triple "${target_triple}" \
+  --nm "${fake_nm}" \
+  >"${tmp_root}/bad-provenance-checksum.out" 2>&1; then
+  printf 'expected bad-provenance-checksum archive verification to fail\n' >&2
+  exit 1
+fi
+grep -F "checksums file does not contain matching ${evidence_slsa} digest" \
+  "${tmp_root}/bad-provenance-checksum.out" >/dev/null
+
+wrong_provenance_subject_archive="$(repack_bad_archive wrong-provenance-subject wrong-provenance-subject)"
+if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
+  --archive "${wrong_provenance_subject_archive}" \
+  --target-triple "${target_triple}" \
+  --nm "${fake_nm}" \
+  >"${tmp_root}/wrong-provenance-subject.out" 2>&1; then
+  printf 'expected wrong-provenance-subject archive verification to fail\n' >&2
+  exit 1
+fi
+grep -F "SLSA evidence must bind the adapter shared library SHA-256" \
+  "${tmp_root}/wrong-provenance-subject.out" >/dev/null
 
 bad_manifest_archive="$(repack_bad_archive bad-manifest bad-manifest)"
 if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
@@ -172,4 +238,4 @@ fi
 grep -F "exports bundled native implementation symbols" \
   "${tmp_root}/leaked-native.out" >/dev/null
 
-printf 'verified: Bun/JSC adapter package helper accepts a good fixture and rejects missing library, bad checksum, bad manifest, wrong exports, and native leaks\n'
+printf 'verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, wrong exports, and native leaks\n'

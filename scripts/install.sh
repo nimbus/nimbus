@@ -798,6 +798,12 @@ download_and_install_bun_jsc_adapter_linux() {
   verify_file_checksum "$tmpdir/libnimbus_bun_jsc_embedder.so" "$tmpdir/checksums-sha256.txt" "libnimbus_bun_jsc_embedder.so"
   verify_file_checksum "$manifest_path" "$tmpdir/checksums-sha256.txt" "nimbus-bun-jsc-adapter.json"
   verify_file_checksum "$tmpdir/README.md" "$tmpdir/checksums-sha256.txt" "README.md"
+  if [ -f "$tmpdir/nimbus-bun-jsc-adapter.sbom.cdx.json" ]; then
+    verify_file_checksum "$tmpdir/nimbus-bun-jsc-adapter.sbom.cdx.json" "$tmpdir/checksums-sha256.txt" "nimbus-bun-jsc-adapter.sbom.cdx.json"
+  fi
+  if [ -f "$tmpdir/nimbus-bun-jsc-adapter.intoto.jsonl" ]; then
+    verify_file_checksum "$tmpdir/nimbus-bun-jsc-adapter.intoto.jsonl" "$tmpdir/checksums-sha256.txt" "nimbus-bun-jsc-adapter.intoto.jsonl"
+  fi
   adapter_version="$(sed -n 's/^[[:space:]]*"adapter_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_path" | head -n 1)"
   case "$adapter_version" in
     ""|*/*|*..*)
@@ -812,6 +818,12 @@ download_and_install_bun_jsc_adapter_linux() {
   maybe_sudo install -m 0644 "$tmpdir/nimbus-bun-jsc-adapter.json" "$target_dir/nimbus-bun-jsc-adapter.json"
   maybe_sudo install -m 0644 "$tmpdir/checksums-sha256.txt" "$target_dir/checksums-sha256.txt"
   maybe_sudo install -m 0644 "$tmpdir/README.md" "$target_dir/README.md"
+  if [ -f "$tmpdir/nimbus-bun-jsc-adapter.sbom.cdx.json" ]; then
+    maybe_sudo install -m 0644 "$tmpdir/nimbus-bun-jsc-adapter.sbom.cdx.json" "$target_dir/nimbus-bun-jsc-adapter.sbom.cdx.json"
+  fi
+  if [ -f "$tmpdir/nimbus-bun-jsc-adapter.intoto.jsonl" ]; then
+    maybe_sudo install -m 0644 "$tmpdir/nimbus-bun-jsc-adapter.intoto.jsonl" "$target_dir/nimbus-bun-jsc-adapter.intoto.jsonl"
+  fi
   maybe_sudo rm -rf "${target_root}/current"
   maybe_sudo ln -s "$adapter_version" "${target_root}/current"
 

@@ -89,6 +89,8 @@ test -f "${output_dir}/render/staging/nimbus-libkrun/usr/libexec/nimbus/NIMBUS_L
 test -x "${output_dir}/render/staging/nimbus-crun/usr/libexec/nimbus/crun"
 test -f "${output_dir}/render/staging/nimbus-bun-jsc-adapter/usr/libexec/nimbus/runtime/bun-jsc/v0.1.10-bun-v1.4.0-nimbus.5/nimbus-bun-jsc-adapter.json"
 test -x "${output_dir}/render/staging/nimbus-bun-jsc-adapter/usr/libexec/nimbus/runtime/bun-jsc/v0.1.10-bun-v1.4.0-nimbus.5/libnimbus_bun_jsc_embedder.so"
+test -f "${output_dir}/render/staging/nimbus-bun-jsc-adapter/usr/libexec/nimbus/runtime/bun-jsc/v0.1.10-bun-v1.4.0-nimbus.5/nimbus-bun-jsc-adapter.sbom.cdx.json"
+test -f "${output_dir}/render/staging/nimbus-bun-jsc-adapter/usr/libexec/nimbus/runtime/bun-jsc/v0.1.10-bun-v1.4.0-nimbus.5/nimbus-bun-jsc-adapter.intoto.jsonl"
 test -L "${output_dir}/render/staging/nimbus-bun-jsc-adapter/usr/libexec/nimbus/runtime/bun-jsc/current"
 test -f "${output_dir}/render/manifests/nimbus-deb.yaml"
 test -f "${output_dir}/render/manifests/nimbus-rpm.yaml"
