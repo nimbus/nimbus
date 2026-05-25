@@ -11,7 +11,7 @@ experience.
 
 ## Status
 
-- **Status:** active; execution not started
+- **Status:** active; `BJD0` through `BJD2` complete, `BJD3` next
 - **Primary owner:** this plan
 - **Nimbus baseline:** `dec70418` (`Close Bun JSC linked adapter plan`)
 - **Bun source baseline:** `nimbus/bun` tag `bun-v1.4.0-nimbus.5`
@@ -115,16 +115,21 @@ library paths:
   nimbus-bun-jsc-adapter.json
   checksums-sha256.txt
   README.md
+/usr/libexec/nimbus/runtime/bun-jsc/current/
+  nimbus-bun-jsc-adapter.json
 
 <Homebrew prefix>/libexec/runtime/bun-jsc/<adapter_version>/
   libnimbus_bun_jsc_embedder.dylib
   nimbus-bun-jsc-adapter.json
   checksums-sha256.txt
   README.md
+<Homebrew prefix>/libexec/runtime/bun-jsc/current/
+  nimbus-bun-jsc-adapter.json
 ```
 
 Development can keep an explicit override environment variable, but packaged
-installs must not require users to set it by hand.
+installs must not require users to set it by hand. The `current` entry is a
+package-manager-owned pointer to the selected adapter version.
 
 ### Manifest Shape
 
@@ -196,9 +201,9 @@ path to Sigstore/SLSA evidence and release attestation.
 
 | Gate | Status | Goal | Verifiable success criteria |
 | --- | --- | --- | --- |
-| BJD0 | `pending` | Freeze the release-artifact contract and inventory every touched distribution surface. | This plan records the exact archive names, installed paths, manifest fields, discovery order, and owner files for release, package, install, Homebrew, CI, runtime, docs, and proof scripts. A proof doc at `docs/plans/proof/runtime-engine/bun-jsc/gate-57-distribution-contract.md` records current HEAD, Bun tag/revision, touched file inventory, and rejected alternatives. `git diff --check` passes. |
-| BJD1 | `pending` | Implement a typed adapter manifest parser and runtime discovery contract. | Rust code validates the adapter manifest before loading the shared library. Tests cover valid packaged manifests, dev override behavior, missing artifact fallback, schema mismatch, wrong Bun revision, wrong target triple, checksum mismatch, unsafe path ownership/location, and unsupported memory/lifecycle policy. Default builds still report `not_linked` without env vars. |
-| BJD2 | `pending` | Add a deterministic local packaging helper for existing shared adapter artifacts. | A script builds or packages an existing `libnimbus_bun_jsc_embedder.{so,dylib}` into the archive layout with manifest, checksums, README, and optional SBOM/provenance placeholders. A helper verifier accepts a good fixture and rejects missing library, bad checksum, bad manifest, wrong exports, and native symbol leaks. The helper does not require a full WebKit rebuild for fixture tests. |
+| BJD0 | `done` | Freeze the release-artifact contract and inventory every touched distribution surface. | `docs/plans/proof/runtime-engine/bun-jsc/gate-57-distribution-contract.md` records exact archive names, installed paths, manifest fields, discovery order, owner file inventory, current HEAD, Bun tag/revision, and rejected alternatives. `cargo fmt --all --check`, `cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc -- --nocapture` (25 tests), and `git diff --check` passed. |
+| BJD1 | `done` | Implement a typed adapter manifest parser and runtime discovery contract. | `crates/nimbus-runtime/src/backends/bun_jsc/manifest.rs` validates packaged manifests before shared-library loading. Tests cover valid packaged manifests, dev override behavior, manifest override behavior, packaged discovery, missing artifact fallback, schema mismatch, wrong Bun revision, wrong target triple, checksum mismatch, unsafe path ownership/location, unknown fields, and unsupported memory/lifecycle policy. Default builds still report `not_linked` without env vars. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-58-adapter-manifest-discovery.md`. |
+| BJD2 | `done` | Add a deterministic local packaging helper for existing shared adapter artifacts. | `scripts/package-bun-jsc-adapter.sh` packages an existing `libnimbus_bun_jsc_embedder.{so,dylib}` into the archive layout with manifest, checksums, README, and optional SBOM/provenance files. `scripts/verify-bun-jsc-adapter-package.sh` verifies archive layout, manifest contract, checksums, exports, and native symbol leak policy. `scripts/verify-bun-jsc-adapter-package-helper.sh` accepts a good fixture and rejects missing library, bad checksum, bad manifest, wrong exports, and native symbol leaks without a full WebKit rebuild. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-59-adapter-package-helper.md`. |
 | BJD3 | `pending` | Add release/CI lanes for Linux and macOS adapter artifacts without slowing default PR CI. | CI keeps `make verify-bun-jsc-runtime-contract` in default PR lanes. A manual, nightly, or release-triggered lane builds or verifies Linux x86_64 and macOS arm64 adapter artifacts from `nimbus/bun` tag `bun-v1.4.0-nimbus.5` or a superseding recorded tag. The lane uploads adapter archives, manifests, checksums, and proof logs. Shell syntax and fixture verification run in default CI. |
 | BJD4 | `pending` | Integrate release archive checksums and GitHub release upload. | `.github/workflows/release.yml` either publishes adapter artifacts as optional release assets or explicitly dispatches a separate adapter release workflow with the same tag. `scripts/verify-release-archive-layout.sh` or a sibling verifier checks adapter archive layout. Release checksums include adapter assets when present, and missing optional assets produce an intentional, documented result instead of silent drift. |
 | BJD5 | `pending` | Integrate Linux packages, Homebrew/cask, and install script behavior. | Linux package builders can stage the adapter under `/usr/libexec/nimbus/runtime/bun-jsc/...` as an optional package or optional payload with clear dependency semantics. Homebrew/cask can install the adapter under `libexec/runtime/bun-jsc/...` or document the separate artifact lane. The install script either installs the optional adapter when requested or explains how to add it. Packaged installs discover the adapter without manual env vars. |

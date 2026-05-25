@@ -10,6 +10,8 @@ mod adapter;
 mod lifecycle;
 #[cfg(feature = "bun-jsc-linked-adapter")]
 mod linked;
+#[cfg(feature = "bun-jsc-linked-adapter")]
+mod manifest;
 mod pool;
 
 #[cfg(any(test, not(feature = "bun-jsc-linked-adapter")))]

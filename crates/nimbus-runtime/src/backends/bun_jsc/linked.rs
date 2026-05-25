@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
@@ -12,44 +12,11 @@ use crate::host::{HostBridge, HostCallCancellation, HostCallRequest};
 use crate::limits::RuntimeExecutionAdapterState;
 
 use super::adapter::{BunJscExecutionAdapter, BunJscExecutionAdapterFactory};
+use super::manifest;
+pub(crate) use super::manifest::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
 use super::pool::BunJscPoolPolicy;
 
-pub(crate) const BUN_JSC_SHARED_LIBRARY_ENV: &str = "NIMBUS_BUN_EMBED_SHARED_LIBRARY";
 const BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP: usize = 4 * 1024 * 1024;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg(test)]
-pub(crate) struct BunJscLinkedAdapterSourceContract {
-    pub(crate) repository: &'static str,
-    pub(crate) source_ref: &'static str,
-    pub(crate) git_revision: &'static str,
-    pub(crate) proof_target: &'static str,
-    pub(crate) simdutf_namespace: &'static str,
-    pub(crate) required_exports: &'static [&'static str],
-}
-
-#[cfg(test)]
-pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSourceContract =
-    BunJscLinkedAdapterSourceContract {
-        repository: "https://github.com/nimbus/bun",
-        source_ref: "bun-v1.4.0-nimbus.5",
-        git_revision: "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57",
-        proof_target: "check-bun-embed-shared",
-        simdutf_namespace: "nimbus_bun_simdutf",
-        required_exports: &[
-            "nimbus_bun_embed_probe_construct_and_destroy_vm",
-            "nimbus_bun_embed_probe_sync_host_call",
-            "nimbus_bun_embed_probe_async_host_call",
-            "nimbus_bun_embed_probe_program_bundle_host_calls",
-            "nimbus_bun_embed_probe_timeout_and_cancel",
-            "nimbus_bun_embed_probe_permission_surface_inventory",
-            "nimbus_bun_embed_probe_memory_behavior",
-            "nimbus_bun_embed_probe_package_module_policy",
-            "nimbus_bun_embed_probe_lifecycle_reuse_stress",
-            "nimbus_bun_embed_invoke_program_wrapper_json",
-            "nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge",
-        ],
-    };
 
 type BunJscProbeFn = unsafe extern "C" fn() -> i32;
 type BunJscInvokeProgramWrapperJsonFn = unsafe extern "C" fn(
@@ -300,20 +267,10 @@ fn shared_adapter_library() -> std::result::Result<&'static BunJscSharedAdapterL
 }
 
 fn load_shared_adapter_library() -> std::result::Result<BunJscSharedAdapterLibrary, String> {
-    let library_path = shared_adapter_library_path()?;
+    let library_path = manifest::resolve_shared_adapter_library_path()?;
     let library = open_shared_adapter_library(&library_path)?;
 
-    for symbol in [
-        "nimbus_bun_embed_probe_construct_and_destroy_vm",
-        "nimbus_bun_embed_probe_sync_host_call",
-        "nimbus_bun_embed_probe_async_host_call",
-        "nimbus_bun_embed_probe_program_bundle_host_calls",
-        "nimbus_bun_embed_probe_timeout_and_cancel",
-        "nimbus_bun_embed_probe_permission_surface_inventory",
-        "nimbus_bun_embed_probe_memory_behavior",
-        "nimbus_bun_embed_probe_package_module_policy",
-        "nimbus_bun_embed_probe_lifecycle_reuse_stress",
-    ] {
+    for symbol in &BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT.required_exports[..9] {
         let _: BunJscProbeFn = unsafe { load_required_symbol(&library, symbol)? };
     }
     let _: BunJscInvokeProgramWrapperJsonFn =
@@ -329,25 +286,6 @@ fn load_shared_adapter_library() -> std::result::Result<BunJscSharedAdapterLibra
         _library: library,
         invoke_program_wrapper_json_with_host_bridge,
     })
-}
-
-fn shared_adapter_library_path() -> std::result::Result<PathBuf, String> {
-    let Some(path) = std::env::var_os(BUN_JSC_SHARED_LIBRARY_ENV) else {
-        return Err(format!(
-            "set {BUN_JSC_SHARED_LIBRARY_ENV} to libnimbus_bun_jsc_embedder.so/dylib"
-        ));
-    };
-    let path = PathBuf::from(path);
-    if path.as_os_str().is_empty() {
-        return Err(format!("{BUN_JSC_SHARED_LIBRARY_ENV} is empty"));
-    }
-    if !path.is_file() {
-        return Err(format!(
-            "{BUN_JSC_SHARED_LIBRARY_ENV} points to {}, which is not a file",
-            path.display()
-        ));
-    }
-    Ok(path)
 }
 
 #[cfg(unix)]
