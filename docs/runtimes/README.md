@@ -10,6 +10,7 @@ evidence backs each support claim.
 | --- | --- | --- |
 | Web-standard JavaScript isolate | Supported baseline | See adapter-specific docs and `docs/architecture/runtime/adapter-boundary.md` |
 | Node.js-compatible JavaScript | Supported for measured Node20, Node22, and Node24 lanes | [Node.js runtime](nodejs/) |
+| Bun/JSC JavaScript | Optional in-process backend candidate. Default builds stay fail-closed as `not_linked`; linked builds must load a verified adapter artifact before invocation. | [Native runtime diagnostics](../adapters/native/http-api.md#runtime-diagnostics-shape) and [Bun/JSC distribution plan](../plans/bun-jsc-distribution-and-release-plan.md) |
 
 ## Runtime Permission Model
 
@@ -18,11 +19,12 @@ does not imply ambient host access, and a broader permission mode does not
 change the JavaScript compatibility target.
 
 Runtime compatibility is also separate from the internal engine that executes
-the code. The current JavaScript runtime family is implemented through
-Deno/V8. Future engines such as Bun/JSC or wasmtime must land behind the
-internal [runtime engine seam](../architecture/runtime/engine-seam.md) and earn
-their own compatibility evidence before they appear as supported runtime
-families here.
+the code. The default JavaScript runtime family is implemented through
+Deno/V8. Bun/JSC is being productized as a separate optional in-process backend
+with a dedicated Bun pool, not as a replacement for the Deno/V8/Node lanes. It
+only becomes invocable when `/debug/runtime/metrics` reports
+`execution_adapter_state: "linked"` and an `execution_adapter_artifact.status`
+of `linked`; otherwise Bun/JSC selection fails closed.
 
 Nimbus uses three permission modes:
 
@@ -46,3 +48,19 @@ classification evidence.
 
 Internal engineering references live under `docs/architecture/runtime/`.
 Developer-facing runtime guidance lives here.
+
+## Bun/JSC Operator States
+
+The Bun/JSC lane always reports `memory_enforcement:
+"outer_quota_required"` until Bun/JSC exposes a proven hard per-VM heap
+boundary. Its artifact diagnostics intentionally expose only sanitized install
+metadata: source kind, status, reason code, expected source ref/revision, ABI
+version, platform/target, and verified manifest metadata when available. Nimbus
+does not expose absolute manifest or library paths through the operator API.
+
+For installs, the Linux direct installer accepts `--with-bun-jsc` and installs
+the optional `nimbus-bun-jsc-adapter` artifact after checksum, attestation,
+archive-layout, SBOM, and provenance checks. Linux package/repository lanes keep
+the adapter as a separate opt-in package. macOS currently reserves the packaged
+Homebrew layout and uses the separate release artifact lane until the tap has a
+payload for the adapter.

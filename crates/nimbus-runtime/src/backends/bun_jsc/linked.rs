@@ -9,14 +9,20 @@ use serde_json::{Value, json};
 use crate::backends::RuntimeBackendInvocation;
 use crate::error::{NimbusRuntimeError, Result};
 use crate::host::{HostBridge, HostCallCancellation, HostCallRequest};
-use crate::limits::RuntimeExecutionAdapterState;
+use crate::limits::{RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterState};
 
 use super::adapter::{BunJscExecutionAdapter, BunJscExecutionAdapterFactory};
+pub(crate) use super::contract::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
 use super::manifest;
-pub(crate) use super::manifest::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
 use super::pool::BunJscPoolPolicy;
 
 const BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP: usize = 4 * 1024 * 1024;
+
+type BunJscArtifactDiagnostics = RuntimeExecutionAdapterArtifactDiagnostics;
+type SharedAdapterLibraryResult =
+    std::result::Result<&'static BunJscSharedAdapterLibrary, &'static str>;
+type SharedAdapterLoadResult =
+    std::result::Result<BunJscSharedAdapterLibrary, manifest::BunJscAdapterDiscoveryError>;
 
 type BunJscProbeFn = unsafe extern "C" fn() -> i32;
 type BunJscInvokeProgramWrapperJsonFn = unsafe extern "C" fn(
@@ -52,10 +58,11 @@ type BunJscInvokeProgramWrapperJsonWithHostBridgeFn = unsafe extern "C" fn(
 struct BunJscSharedAdapterLibrary {
     _library: libloading::Library,
     invoke_program_wrapper_json_with_host_bridge: BunJscInvokeProgramWrapperJsonWithHostBridgeFn,
+    diagnostics: RuntimeExecutionAdapterArtifactDiagnostics,
 }
 
 static BUN_JSC_SHARED_ADAPTER_LIBRARY: OnceLock<
-    std::result::Result<BunJscSharedAdapterLibrary, String>,
+    std::result::Result<BunJscSharedAdapterLibrary, manifest::BunJscAdapterDiscoveryError>,
 > = OnceLock::new();
 
 #[derive(Debug, Default)]
@@ -85,6 +92,13 @@ impl BunJscExecutionAdapter for BunJscLinkedExecutionAdapter {
         pool_policy: BunJscPoolPolicy,
     ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>> {
         Box::pin(async move { invoke_program_wrapper_json(invocation, pool_policy) })
+    }
+}
+
+pub(crate) fn execution_adapter_artifact_diagnostics() -> BunJscArtifactDiagnostics {
+    match BUN_JSC_SHARED_ADAPTER_LIBRARY.get_or_init(load_shared_adapter_library) {
+        Ok(library) => library.diagnostics.clone(),
+        Err(error) => error.diagnostics(),
     }
 }
 
@@ -258,34 +272,50 @@ fn embedder_status_name(status: i32) -> &'static str {
     }
 }
 
-fn shared_adapter_library() -> std::result::Result<&'static BunJscSharedAdapterLibrary, &'static str>
-{
+fn shared_adapter_library() -> SharedAdapterLibraryResult {
     match BUN_JSC_SHARED_ADAPTER_LIBRARY.get_or_init(load_shared_adapter_library) {
         Ok(library) => Ok(library),
-        Err(error) => Err(error.as_str()),
+        Err(error) => Err(error.message()),
     }
 }
 
-fn load_shared_adapter_library() -> std::result::Result<BunJscSharedAdapterLibrary, String> {
-    let library_path = manifest::resolve_shared_adapter_library_path()?;
-    let library = open_shared_adapter_library(&library_path)?;
+fn load_shared_adapter_library() -> SharedAdapterLoadResult {
+    let resolved = manifest::resolve_shared_adapter_library()?;
+    let library = open_shared_adapter_library(&resolved.path).map_err(|error| {
+        shared_adapter_load_error(&resolved, "shared_library_load_failed", error)
+    })?;
 
     for symbol in &BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT.required_exports[..9] {
-        let _: BunJscProbeFn = unsafe { load_required_symbol(&library, symbol)? };
+        let _: BunJscProbeFn =
+            unsafe { load_required_symbol(&library, symbol) }.map_err(|error| {
+                shared_adapter_load_error(&resolved, "missing_required_export", error)
+            })?;
     }
-    let _: BunJscInvokeProgramWrapperJsonFn =
-        unsafe { load_required_symbol(&library, "nimbus_bun_embed_invoke_program_wrapper_json")? };
+    let _: BunJscInvokeProgramWrapperJsonFn = unsafe {
+        load_required_symbol(&library, "nimbus_bun_embed_invoke_program_wrapper_json")
+    }
+    .map_err(|error| shared_adapter_load_error(&resolved, "missing_required_export", error))?;
     let invoke_program_wrapper_json_with_host_bridge = unsafe {
         load_required_symbol(
             &library,
             "nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge",
-        )?
-    };
+        )
+    }
+    .map_err(|error| shared_adapter_load_error(&resolved, "missing_required_export", error))?;
 
     Ok(BunJscSharedAdapterLibrary {
         _library: library,
         invoke_program_wrapper_json_with_host_bridge,
+        diagnostics: resolved.diagnostics,
     })
+}
+
+fn shared_adapter_load_error(
+    resolved: &manifest::ResolvedBunJscAdapterLibrary,
+    reason_code: &'static str,
+    error: String,
+) -> manifest::BunJscAdapterDiscoveryError {
+    manifest::load_error_diagnostics(resolved.diagnostics.clone(), reason_code, error)
 }
 
 #[cfg(unix)]

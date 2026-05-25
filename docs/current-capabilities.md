@@ -38,7 +38,11 @@ cleaner design is preferred.
   coarse table-level invalidation
 - runtime diagnostics at `GET /debug/runtime/metrics` with a stable empty
   response before an app generation is active, and per-lane runtime state for
-  default V8, Node, and optional Bun/JSC metadata lanes after activation
+  default V8, Node, and optional Bun/JSC metadata lanes after activation;
+  Bun/JSC diagnostics include sanitized artifact status/source data so
+  operators can distinguish `not_linked`, missing adapter artifacts, checksum
+  mismatches, unsupported platform artifacts, and loaded adapters without
+  exposing host paths
 
 See the dedicated references for detail:
 

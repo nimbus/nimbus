@@ -386,6 +386,9 @@ contract gate, not the full Bun source proof. The lane verifies that:
   outer-quota-required profile.
 - Bun/JSC executors stay lazy and `execution_adapter_state` remains
   `not_linked` until a real adapter is linked.
+- Bun/JSC `execution_adapter_artifact` diagnostics expose sanitized status,
+  source, reason, expected source ref/revision, ABI, and manifest metadata
+  without leaking absolute host paths or environment variable values.
 - V8 and Node compatibility lanes keep `v8_isolate_heap_limit` memory
   semantics and do not inherit Bun/JSC backend axes from resource overrides.
 - `/debug/runtime/metrics` and the operator settings UI render the same lane

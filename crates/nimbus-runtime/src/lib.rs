@@ -19,6 +19,10 @@ pub fn bun_jsc_execution_adapter_state() -> RuntimeExecutionAdapterState {
     backends::bun_jsc::execution_adapter_state()
 }
 
+pub fn bun_jsc_adapter_artifact_diagnostics() -> RuntimeExecutionAdapterArtifactDiagnostics {
+    backends::bun_jsc::adapter_artifact_diagnostics()
+}
+
 pub use context::RuntimeInvocationContext;
 pub use error::{NimbusRuntimeError, Result};
 pub use executor::RuntimeExecutor;
@@ -38,10 +42,13 @@ pub use host::{
 pub use limits::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
-    RuntimeExecutionAdapterState, RuntimeExecutionModel, RuntimeGrants,
-    RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeLimits, RuntimeMemoryEnforcement,
-    RuntimeMode, RuntimeModuleStateSemantics, RuntimePolicy, RuntimePoolKind, RuntimePreset,
-    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeTenantBudget,
+    RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterArtifactSource,
+    RuntimeExecutionAdapterArtifactStatus, RuntimeExecutionAdapterExpectedArtifact,
+    RuntimeExecutionAdapterManifestArtifact, RuntimeExecutionAdapterState, RuntimeExecutionModel,
+    RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeLimits,
+    RuntimeMemoryEnforcement, RuntimeMode, RuntimeModuleStateSemantics, RuntimePolicy,
+    RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeTenantBudget,
 };
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,

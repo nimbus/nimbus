@@ -4,48 +4,18 @@ use std::path::{Component, Path, PathBuf};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-pub(crate) const BUN_JSC_SHARED_LIBRARY_ENV: &str = "NIMBUS_BUN_EMBED_SHARED_LIBRARY";
-pub(crate) const BUN_JSC_ADAPTER_MANIFEST_ENV: &str = "NIMBUS_BUN_JSC_ADAPTER_MANIFEST";
-const BUN_JSC_ADAPTER_MANIFEST_FILE: &str = "nimbus-bun-jsc-adapter.json";
-const BUN_JSC_ADAPTER_README_FILE: &str = "README.md";
-const BUN_JSC_ADAPTER_KIND: &str = "nimbus.bun_jsc.adapter";
-const BUN_JSC_ADAPTER_SCHEMA_VERSION: u32 = 1;
-const BUN_JSC_ADAPTER_ABI_NAME: &str = "nimbus-bun-jsc-embedder";
-const BUN_JSC_ADAPTER_ABI_VERSION: u32 = 1;
-const BUN_JSC_MEMORY_ENFORCEMENT: &str = "outer_quota_required";
-const BUN_JSC_LIFECYCLE: &str = "fresh_discard";
+use crate::limits::{
+    RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterArtifactSource,
+    RuntimeExecutionAdapterArtifactStatus, RuntimeExecutionAdapterManifestArtifact,
+};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct BunJscLinkedAdapterSourceContract {
-    pub(crate) repository: &'static str,
-    pub(crate) source_ref: &'static str,
-    pub(crate) git_revision: &'static str,
-    pub(crate) proof_target: &'static str,
-    pub(crate) simdutf_namespace: &'static str,
-    pub(crate) required_exports: &'static [&'static str],
-}
-
-pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSourceContract =
-    BunJscLinkedAdapterSourceContract {
-        repository: "https://github.com/nimbus/bun",
-        source_ref: "bun-v1.4.0-nimbus.5",
-        git_revision: "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57",
-        proof_target: "check-bun-embed-shared",
-        simdutf_namespace: "nimbus_bun_simdutf",
-        required_exports: &[
-            "nimbus_bun_embed_probe_construct_and_destroy_vm",
-            "nimbus_bun_embed_probe_sync_host_call",
-            "nimbus_bun_embed_probe_async_host_call",
-            "nimbus_bun_embed_probe_program_bundle_host_calls",
-            "nimbus_bun_embed_probe_timeout_and_cancel",
-            "nimbus_bun_embed_probe_permission_surface_inventory",
-            "nimbus_bun_embed_probe_memory_behavior",
-            "nimbus_bun_embed_probe_package_module_policy",
-            "nimbus_bun_embed_probe_lifecycle_reuse_stress",
-            "nimbus_bun_embed_invoke_program_wrapper_json",
-            "nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge",
-        ],
-    };
+use super::contract::{
+    BUN_JSC_ADAPTER_ABI_NAME, BUN_JSC_ADAPTER_ABI_VERSION, BUN_JSC_ADAPTER_KIND,
+    BUN_JSC_ADAPTER_MANIFEST_ENV, BUN_JSC_ADAPTER_MANIFEST_FILE, BUN_JSC_ADAPTER_README_FILE,
+    BUN_JSC_ADAPTER_SCHEMA_VERSION, BUN_JSC_LIFECYCLE, BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT,
+    BUN_JSC_MEMORY_ENFORCEMENT, BUN_JSC_SHARED_LIBRARY_ENV, current_platform,
+    current_target_triple, expected_artifact_contract, install_hint,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,34 +53,92 @@ struct BunJscAdapterProvenanceManifest {
     checksum_file: String,
 }
 
-pub(crate) fn resolve_shared_adapter_library_path() -> std::result::Result<PathBuf, String> {
-    resolve_shared_adapter_library_path_from_values(
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedBunJscAdapterLibrary {
+    pub(crate) path: PathBuf,
+    pub(crate) diagnostics: RuntimeExecutionAdapterArtifactDiagnostics,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BunJscAdapterDiscoveryError {
+    message: String,
+    diagnostics: RuntimeExecutionAdapterArtifactDiagnostics,
+}
+
+impl BunJscAdapterDiscoveryError {
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub(crate) fn diagnostics(&self) -> RuntimeExecutionAdapterArtifactDiagnostics {
+        self.diagnostics.clone()
+    }
+}
+
+impl std::fmt::Display for BunJscAdapterDiscoveryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+pub(crate) fn resolve_shared_adapter_library()
+-> std::result::Result<ResolvedBunJscAdapterLibrary, BunJscAdapterDiscoveryError> {
+    resolve_shared_adapter_library_from_values(
         std::env::var_os(BUN_JSC_SHARED_LIBRARY_ENV),
         std::env::var_os(BUN_JSC_ADAPTER_MANIFEST_ENV),
         &packaged_manifest_paths(),
     )
 }
 
+#[cfg(test)]
 fn resolve_shared_adapter_library_path_from_values(
     shared_library_env: Option<OsString>,
     manifest_env: Option<OsString>,
     packaged_manifests: &[PathBuf],
 ) -> std::result::Result<PathBuf, String> {
+    resolve_shared_adapter_library_from_values(shared_library_env, manifest_env, packaged_manifests)
+        .map(|resolved| resolved.path)
+        .map_err(|error| error.message().to_string())
+}
+
+fn resolve_shared_adapter_library_from_values(
+    shared_library_env: Option<OsString>,
+    manifest_env: Option<OsString>,
+    packaged_manifests: &[PathBuf],
+) -> std::result::Result<ResolvedBunJscAdapterLibrary, BunJscAdapterDiscoveryError> {
     if let Some(path) = env_path(shared_library_env, BUN_JSC_SHARED_LIBRARY_ENV)? {
-        return validate_direct_shared_library_path(&path);
+        return validate_direct_shared_library_path(&path).map_err(|error| {
+            discovery_error(
+                RuntimeExecutionAdapterArtifactSource::DevelopmentLibraryEnv,
+                classify_discovery_error(&error),
+                "development_library_invalid",
+                error,
+            )
+        });
     }
     if let Some(path) = env_path(manifest_env, BUN_JSC_ADAPTER_MANIFEST_ENV)? {
-        return validate_adapter_manifest_path(&path);
+        return validate_adapter_manifest_path_with_source(
+            &path,
+            RuntimeExecutionAdapterArtifactSource::ManifestEnv,
+            "manifest_env_verified",
+        );
     }
 
     for manifest_path in packaged_manifests {
         if manifest_path.is_file() {
-            return validate_adapter_manifest_path(manifest_path);
+            return validate_adapter_manifest_path_with_source(
+                manifest_path,
+                RuntimeExecutionAdapterArtifactSource::PackagedManifest,
+                "packaged_manifest_verified",
+            );
         }
     }
 
-    Err(format!(
-        "set {BUN_JSC_SHARED_LIBRARY_ENV} to libnimbus_bun_jsc_embedder.so/dylib for a development proof, set {BUN_JSC_ADAPTER_MANIFEST_ENV} to {BUN_JSC_ADAPTER_MANIFEST_FILE}, or install the optional nimbus-bun-jsc-adapter package"
+    Err(discovery_error(
+        RuntimeExecutionAdapterArtifactSource::NotFound,
+        RuntimeExecutionAdapterArtifactStatus::MissingArtifact,
+        "no_adapter_artifact_configured",
+        install_hint(),
     ))
 }
 
@@ -128,30 +156,82 @@ fn packaged_manifest_paths() -> Vec<PathBuf> {
     ]
 }
 
-fn env_path(value: Option<OsString>, name: &str) -> std::result::Result<Option<PathBuf>, String> {
+fn env_path(
+    value: Option<OsString>,
+    name: &str,
+) -> std::result::Result<Option<PathBuf>, BunJscAdapterDiscoveryError> {
     let Some(value) = value else {
         return Ok(None);
     };
     if value.is_empty() {
-        return Err(format!("{name} is empty"));
+        return Err(discovery_error(
+            env_source(name),
+            RuntimeExecutionAdapterArtifactStatus::MissingArtifact,
+            "empty_adapter_path",
+            format!("{name} is empty"),
+        ));
     }
     Ok(Some(PathBuf::from(value)))
 }
 
-fn validate_direct_shared_library_path(path: &Path) -> std::result::Result<PathBuf, String> {
+fn validate_direct_shared_library_path(
+    path: &Path,
+) -> std::result::Result<ResolvedBunJscAdapterLibrary, String> {
     if !path.is_file() {
         return Err(format!(
             "{BUN_JSC_SHARED_LIBRARY_ENV} points to {}, which is not a file",
             path.display()
         ));
     }
-    path.canonicalize()
-        .map_err(|error| format!("failed to canonicalize {}: {error}", path.display()))
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("failed to canonicalize {}: {error}", path.display()))?;
+    Ok(ResolvedBunJscAdapterLibrary {
+        path,
+        diagnostics: RuntimeExecutionAdapterArtifactDiagnostics {
+            status: RuntimeExecutionAdapterArtifactStatus::Linked,
+            source: RuntimeExecutionAdapterArtifactSource::DevelopmentLibraryEnv,
+            reason_code: "development_library_verified".to_string(),
+            install_hint: None,
+            expected: Some(expected_artifact_contract()),
+            manifest: None,
+        },
+    })
 }
 
 pub(crate) fn validate_adapter_manifest_path(
     manifest_path: &Path,
 ) -> std::result::Result<PathBuf, String> {
+    validate_adapter_manifest_path_with_source(
+        manifest_path,
+        RuntimeExecutionAdapterArtifactSource::ManifestEnv,
+        "manifest_env_verified",
+    )
+    .map(|resolved| resolved.path)
+    .map_err(|error| error.message().to_string())
+}
+
+fn validate_adapter_manifest_path_with_source(
+    manifest_path: &Path,
+    source: RuntimeExecutionAdapterArtifactSource,
+    verified_reason_code: &str,
+) -> std::result::Result<ResolvedBunJscAdapterLibrary, BunJscAdapterDiscoveryError> {
+    match validate_adapter_manifest_path_inner(manifest_path, source, verified_reason_code) {
+        Ok(resolved) => Ok(resolved),
+        Err(error) => Err(discovery_error(
+            source,
+            classify_discovery_error(&error),
+            classify_discovery_reason_code(&error),
+            error,
+        )),
+    }
+}
+
+fn validate_adapter_manifest_path_inner(
+    manifest_path: &Path,
+    source: RuntimeExecutionAdapterArtifactSource,
+    verified_reason_code: &str,
+) -> std::result::Result<ResolvedBunJscAdapterLibrary, String> {
     if !manifest_path.is_file() {
         return Err(format!(
             "{BUN_JSC_ADAPTER_MANIFEST_ENV} points to {}, which is not a file",
@@ -221,7 +301,17 @@ pub(crate) fn validate_adapter_manifest_path(
         &actual_sha256,
     )?;
 
-    Ok(library_path)
+    Ok(ResolvedBunJscAdapterLibrary {
+        path: library_path,
+        diagnostics: RuntimeExecutionAdapterArtifactDiagnostics {
+            status: RuntimeExecutionAdapterArtifactStatus::Linked,
+            source,
+            reason_code: verified_reason_code.to_string(),
+            install_hint: None,
+            expected: Some(expected_artifact_contract()),
+            manifest: Some(manifest_diagnostics(&manifest, &actual_sha256)?),
+        },
+    })
 }
 
 fn validate_manifest_contract(manifest: &BunJscAdapterManifest) -> std::result::Result<(), String> {
@@ -290,6 +380,115 @@ fn validate_manifest_contract(manifest: &BunJscAdapterManifest) -> std::result::
         ));
     }
     Ok(())
+}
+
+fn manifest_diagnostics(
+    manifest: &BunJscAdapterManifest,
+    library_sha256: &str,
+) -> std::result::Result<RuntimeExecutionAdapterManifestArtifact, String> {
+    let provenance = manifest
+        .provenance
+        .as_ref()
+        .ok_or_else(|| "Bun/JSC adapter manifest provenance must be present".to_string())?;
+    Ok(RuntimeExecutionAdapterManifestArtifact {
+        adapter_version: manifest.adapter_version.clone(),
+        nimbus_version: manifest.nimbus_version.clone(),
+        source_repository: manifest.bun_source_repository.clone(),
+        source_ref: manifest.bun_source_ref.clone(),
+        source_revision: manifest.bun_source_revision.clone(),
+        target_triple: manifest.target_triple.clone(),
+        platform: manifest.platform.clone(),
+        library_file: manifest.library.clone(),
+        library_sha256: library_sha256.to_string(),
+        abi_name: manifest.abi.name.clone(),
+        abi_version: manifest.abi.version,
+        checksum_file: provenance.checksum_file.clone(),
+        sbom: provenance.sbom.clone(),
+        slsa: provenance.slsa.clone(),
+    })
+}
+
+pub(crate) fn load_error_diagnostics(
+    mut diagnostics: RuntimeExecutionAdapterArtifactDiagnostics,
+    reason_code: impl Into<String>,
+    message: impl Into<String>,
+) -> BunJscAdapterDiscoveryError {
+    diagnostics.status = RuntimeExecutionAdapterArtifactStatus::LoadFailed;
+    diagnostics.reason_code = reason_code.into();
+    discovery_error_from_diagnostics(diagnostics, message)
+}
+
+fn discovery_error(
+    source: RuntimeExecutionAdapterArtifactSource,
+    status: RuntimeExecutionAdapterArtifactStatus,
+    reason_code: impl Into<String>,
+    message: impl Into<String>,
+) -> BunJscAdapterDiscoveryError {
+    discovery_error_from_diagnostics(
+        RuntimeExecutionAdapterArtifactDiagnostics {
+            status,
+            source,
+            reason_code: reason_code.into(),
+            install_hint: Some(install_hint()),
+            expected: Some(expected_artifact_contract()),
+            manifest: None,
+        },
+        message,
+    )
+}
+
+fn discovery_error_from_diagnostics(
+    diagnostics: RuntimeExecutionAdapterArtifactDiagnostics,
+    message: impl Into<String>,
+) -> BunJscAdapterDiscoveryError {
+    BunJscAdapterDiscoveryError {
+        message: message.into(),
+        diagnostics,
+    }
+}
+
+fn env_source(name: &str) -> RuntimeExecutionAdapterArtifactSource {
+    if name == BUN_JSC_SHARED_LIBRARY_ENV {
+        RuntimeExecutionAdapterArtifactSource::DevelopmentLibraryEnv
+    } else {
+        RuntimeExecutionAdapterArtifactSource::ManifestEnv
+    }
+}
+
+fn classify_discovery_error(error: &str) -> RuntimeExecutionAdapterArtifactStatus {
+    if error.contains("checksum mismatch") || error.contains("checksum file must contain") {
+        RuntimeExecutionAdapterArtifactStatus::ChecksumMismatch
+    } else if error.contains("target_triple")
+        || error.contains("platform")
+        || current_target_triple() == "unsupported"
+    {
+        RuntimeExecutionAdapterArtifactStatus::UnsupportedPlatform
+    } else if error.contains("not a file")
+        || error.contains("does not exist")
+        || error.contains("failed to canonicalize")
+    {
+        RuntimeExecutionAdapterArtifactStatus::MissingArtifact
+    } else {
+        RuntimeExecutionAdapterArtifactStatus::InvalidManifest
+    }
+}
+
+fn classify_discovery_reason_code(error: &str) -> &'static str {
+    if error.contains("checksum mismatch") || error.contains("checksum file must contain") {
+        "checksum_mismatch"
+    } else if error.contains("target_triple")
+        || error.contains("platform")
+        || current_target_triple() == "unsupported"
+    {
+        "unsupported_platform"
+    } else if error.contains("not a file")
+        || error.contains("does not exist")
+        || error.contains("failed to canonicalize")
+    {
+        "missing_artifact"
+    } else {
+        "invalid_manifest"
+    }
 }
 
 fn validate_manifest_provenance_files(
@@ -472,46 +671,6 @@ fn compute_sha256_hex(bytes: &[u8]) -> String {
     encoded
 }
 
-fn current_platform() -> &'static str {
-    match std::env::consts::OS {
-        "macos" => "darwin",
-        platform => platform,
-    }
-}
-
-fn current_target_triple() -> &'static str {
-    #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
-    {
-        "x86_64-unknown-linux-gnu"
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
-    {
-        "aarch64-unknown-linux-gnu"
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-    {
-        "aarch64-apple-darwin"
-    }
-    #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
-    {
-        "x86_64-apple-darwin"
-    }
-    #[cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"))]
-    {
-        "x86_64-pc-windows-msvc"
-    }
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"),
-        all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"),
-        all(target_arch = "aarch64", target_os = "macos"),
-        all(target_arch = "x86_64", target_os = "macos"),
-        all(target_arch = "x86_64", target_os = "windows", target_env = "msvc")
-    )))]
-    {
-        "unsupported"
-    }
-}
-
 #[cfg(unix)]
 fn validate_packaged_path_safety(path: &Path, label: &str) -> std::result::Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
@@ -534,21 +693,12 @@ fn validate_packaged_path_safety(_path: &Path, _label: &str) -> std::result::Res
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-fn shared_library_basename() -> &'static str {
-    "libnimbus_bun_jsc_embedder.dylib"
-}
-
-#[cfg(not(target_os = "macos"))]
-fn shared_library_basename() -> &'static str {
-    "libnimbus_bun_jsc_embedder.so"
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::backends::bun_jsc::contract::shared_library_basename;
 
     fn write_stub_library(dir: &Path) -> (PathBuf, String) {
         let library_path = dir.join(shared_library_basename());
@@ -697,6 +847,49 @@ mod tests {
     }
 
     #[test]
+    fn manifest_override_reports_sanitized_artifact_diagnostics() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let (library_path, sha256) = write_stub_library(temp_dir.path());
+        let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&sha256));
+
+        let resolved = resolve_shared_adapter_library_from_values(
+            None,
+            Some(manifest_path.into_os_string()),
+            &[],
+        )
+        .expect("manifest override should resolve with diagnostics");
+
+        assert_eq!(
+            resolved.path,
+            library_path
+                .canonicalize()
+                .expect("stub library should canonicalize")
+        );
+        assert_eq!(
+            resolved.diagnostics.status,
+            RuntimeExecutionAdapterArtifactStatus::Linked
+        );
+        assert_eq!(
+            resolved.diagnostics.source,
+            RuntimeExecutionAdapterArtifactSource::ManifestEnv
+        );
+        assert_eq!(resolved.diagnostics.reason_code, "manifest_env_verified");
+        let manifest = resolved
+            .diagnostics
+            .manifest
+            .as_ref()
+            .expect("verified manifest metadata should be exposed");
+        assert_eq!(manifest.source_ref, "bun-v1.4.0-nimbus.5");
+        assert_eq!(manifest.library_file, shared_library_basename());
+        assert!(
+            !serde_json::to_string(&resolved.diagnostics)
+                .expect("diagnostics should serialize")
+                .contains(temp_dir.path().to_string_lossy().as_ref()),
+            "serialized diagnostics must not expose absolute temp paths"
+        );
+    }
+
+    #[test]
     fn discovery_uses_first_existing_packaged_manifest() {
         let temp_dir = tempfile::tempdir().expect("temp dir should be created");
         let (library_path, sha256) = write_stub_library(temp_dir.path());
@@ -734,6 +927,31 @@ mod tests {
             error.contains(BUN_JSC_SHARED_LIBRARY_ENV)
                 && error.contains(BUN_JSC_ADAPTER_MANIFEST_ENV),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn discovery_without_env_or_package_reports_missing_artifact_diagnostics() {
+        let error = resolve_shared_adapter_library_from_values(None, None, &[])
+            .expect_err("missing adapter should return diagnostics");
+
+        let diagnostics = error.diagnostics();
+        assert_eq!(
+            diagnostics.status,
+            RuntimeExecutionAdapterArtifactStatus::MissingArtifact
+        );
+        assert_eq!(
+            diagnostics.source,
+            RuntimeExecutionAdapterArtifactSource::NotFound
+        );
+        assert_eq!(diagnostics.reason_code, "no_adapter_artifact_configured");
+        assert!(diagnostics.manifest.is_none());
+        assert_eq!(
+            diagnostics
+                .expected
+                .expect("expected contract should be present")
+                .source_ref,
+            "bun-v1.4.0-nimbus.5"
         );
     }
 
@@ -797,6 +1015,34 @@ mod tests {
         assert!(
             error.contains("checksum mismatch"),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn packaged_manifest_checksum_mismatch_reports_sanitized_artifact_diagnostics() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let (_library_path, _sha256) = write_stub_library(temp_dir.path());
+        let manifest_path = write_manifest(temp_dir.path(), &manifest_json(&"0".repeat(64)));
+
+        let error = resolve_shared_adapter_library_from_values(None, None, &[manifest_path])
+            .expect_err("bad packaged manifest should return diagnostics");
+
+        let diagnostics = error.diagnostics();
+        assert_eq!(
+            diagnostics.status,
+            RuntimeExecutionAdapterArtifactStatus::ChecksumMismatch
+        );
+        assert_eq!(
+            diagnostics.source,
+            RuntimeExecutionAdapterArtifactSource::PackagedManifest
+        );
+        assert_eq!(diagnostics.reason_code, "checksum_mismatch");
+        assert!(diagnostics.manifest.is_none());
+        assert!(
+            !serde_json::to_string(&diagnostics)
+                .expect("diagnostics should serialize")
+                .contains(temp_dir.path().to_string_lossy().as_ref()),
+            "serialized diagnostics must not expose absolute temp paths"
         );
     }
 

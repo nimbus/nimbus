@@ -4,9 +4,10 @@ use std::pin::Pin;
 use crate::backends::{RuntimeBackend, RuntimeBackendFactory, RuntimeBackendInvocation};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::host::HostCallCancellation;
-use crate::limits::RuntimeExecutionAdapterState;
+use crate::limits::{RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterState};
 
 mod adapter;
+mod contract;
 mod lifecycle;
 #[cfg(feature = "bun-jsc-linked-adapter")]
 mod linked;
@@ -46,6 +47,17 @@ pub(crate) fn execution_adapter_state() -> RuntimeExecutionAdapterState {
     #[cfg(not(feature = "bun-jsc-linked-adapter"))]
     {
         RuntimeExecutionAdapterState::NotLinked
+    }
+}
+
+pub(crate) fn adapter_artifact_diagnostics() -> RuntimeExecutionAdapterArtifactDiagnostics {
+    #[cfg(feature = "bun-jsc-linked-adapter")]
+    {
+        linked::execution_adapter_artifact_diagnostics()
+    }
+    #[cfg(not(feature = "bun-jsc-linked-adapter"))]
+    {
+        contract::disabled_build_diagnostics()
     }
 }
 
@@ -135,6 +147,10 @@ mod tests {
         RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
         RuntimeBackendTrustTier, RuntimeJavaScriptEvaluationFormat, RuntimeLimits,
         RuntimeMemoryEnforcement, RuntimePoolKind,
+    };
+    #[cfg(not(feature = "bun-jsc-linked-adapter"))]
+    use crate::limits::{
+        RuntimeExecutionAdapterArtifactSource, RuntimeExecutionAdapterArtifactStatus,
     };
     use crate::runtime::{
         InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeHost,
@@ -314,6 +330,31 @@ mod tests {
             backend.execution_adapter_state(),
             RuntimeExecutionAdapterState::NotLinked
         );
+    }
+
+    #[cfg(not(feature = "bun-jsc-linked-adapter"))]
+    #[test]
+    fn bun_jsc_default_runtime_backend_reports_sanitized_artifact_diagnostics() {
+        let diagnostics = adapter_artifact_diagnostics();
+
+        assert_eq!(
+            diagnostics.status,
+            RuntimeExecutionAdapterArtifactStatus::NotLinked
+        );
+        assert_eq!(
+            diagnostics.source,
+            RuntimeExecutionAdapterArtifactSource::BuildFeatureDisabled
+        );
+        assert_eq!(diagnostics.reason_code, "linked_adapter_feature_disabled");
+        assert_eq!(
+            diagnostics
+                .expected
+                .as_ref()
+                .expect("expected Bun/JSC artifact contract should be present")
+                .source_ref,
+            "bun-v1.4.0-nimbus.5"
+        );
+        assert!(diagnostics.manifest.is_none());
     }
 
     #[cfg(not(nimbus_bun_jsc_shared_adapter))]
