@@ -215,7 +215,7 @@ Evidence:
 
 ### NRR3 - Version Bump and Release Metadata
 
-Status: pending
+Status: completed 2026-05-25
 
 Prepare the release version consistently across Rust, JS, lockfiles, and
 changelog.
@@ -230,6 +230,27 @@ Success criteria:
 - `make verify-release-version-contract VERSION=<tag>` passes.
 - The version commit contains only intended release metadata and any required
   root-cause fixes from earlier gates.
+
+Evidence:
+
+- Bumped the Rust workspace package version, Cargo.lock workspace package
+  versions, JS workspace package versions, local JS dependency pins, and
+  package-lock workspace entries from `0.1.31` to `0.1.32`.
+- Added an explicit private `packages/nimbus-ui` version so every
+  `packages/*` workspace participates in the release-version contract
+  instead of relying on a special-case verifier skip.
+- Updated `CHANGELOG.md` with the `0.1.32` release heading and release
+  summary for fork standardization, Bun/JSC optional runtime posture, tenant
+  isolation, enterprise policy/egress, artifact provenance, desktop UI, CI, and
+  release-helper work.
+- `cargo update -w --offline` updated the 10 Nimbus workspace packages in
+  `Cargo.lock` from `0.1.31` to `0.1.32`.
+- `npm install --package-lock-only --ignore-scripts --offline` reported
+  `up to date`, audited 525 packages, and found 0 vulnerabilities; unrelated
+  npm lockfile metadata normalization was not retained in the release diff.
+- `make verify-release-version-contract VERSION=v0.1.32` passed with
+  `verified: release version contract matches v0.1.32`.
+- `git diff --check` passed.
 
 ### NRR4 - Full Nimbus Verification
 

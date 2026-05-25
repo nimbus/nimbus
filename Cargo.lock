@@ -5736,7 +5736,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nimbus"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "nimbus-core",
  "nimbus-engine",
@@ -5748,7 +5748,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-bin"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "aes-gcm-siv",
  "axum 0.8.8",
@@ -5786,7 +5786,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-core"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "rmp-serde",
  "serde",
@@ -5798,7 +5798,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-engine"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -5828,7 +5828,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-machine"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "nimbus-core",
  "serde",
@@ -5836,7 +5836,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-runtime"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "base64 0.22.1",
  "criterion",
@@ -5883,7 +5883,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-sandbox"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "flate2",
  "fs2",
@@ -5907,7 +5907,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-server"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "axum 0.8.8",
  "base64 0.22.1",
@@ -5955,7 +5955,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-storage"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "aes-gcm-siv",
  "aws-config",
@@ -5995,7 +5995,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-testing"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "axum 0.8.8",
  "futures",

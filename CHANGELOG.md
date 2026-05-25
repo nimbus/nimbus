@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.32] - 2026-05-25
+
+### Added
+
+- Added the optional Bun/JSC runtime lane contract with linked-adapter packaging, provenance checks, diagnostics, and fail-closed no-link behavior.
+- Added tenant-isolation, enterprise policy, sandbox egress, and artifact provenance conformance gates for release evidence.
+
+### Changed
+
+- Standardized Nimbus fork consumption on nimbus/deno v2.8.0-nimbus.2, nimbus/rusty_v8 v149.0.0-nimbus.1, nimbus-crun v1.27.1-nimbus.2, and nimbus-libkrun v1.18.1-nimbus.1.
+- Expanded the operator UI and desktop shell with enterprise-oriented runtime, tenant, service, observability, upgrade, and authentication workflows.
+- Modernized CI and release lanes with cached Rust setup, coverage sharding, PR wall-time improvements, release helpers, and stricter verification contracts.
+
+### Fixed
+
+- Hardened runtime diagnostics, auth token UX, local-dev build contracts, release package helpers, tenant-scoped sandbox paths, egress policy enforcement, and artifact provenance validation.
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.31...v0.1.32
+
 ## [0.1.31] - 2026-05-14
 
 ### Documentation
