@@ -84,15 +84,24 @@ This directory prefers a small-number-of-plans model with clear ownership.
     execution adapter, implement the Bun pool execution path, and add
     end-to-end invocation tests for the admitted profile.
 - `docs/plans/bun-jsc-linked-adapter-plan.md`
-  - active execution plan for the linked in-process Bun/JSC backend wave.
-    Starts from the fail-closed Bun/JSC lane and diagnostics contract at
-    Nimbus `40d1a8ea` and Bun proof head `4b5de5ee5d`. BJA0-BJA8 own the
-    linked adapter boundary, reproducible upstream-or-fork Bun source,
-    optional no-link versus linked build lanes, pure Bun/JSC invocation,
-    HostBridge and tenant identity propagation, cancellation/teardown/memory
-    proof, product metadata selection, CI, docs, and minicloud verification.
-    Completion requires a reproducible Bun source tag or Nimbus fork tag; it
-    cannot depend on an uncommitted local Bun checkout.
+  - completed execution plan for the linked in-process Bun/JSC backend wave.
+    BJA0-BJA8 are complete: linked adapter boundary, reproducible
+    source-owned Nimbus Bun fork tag, optional no-link versus linked build
+    lanes, pure Bun/JSC invocation, HostBridge and tenant identity propagation,
+    cancellation/teardown/memory proof, product metadata selection, CI, docs,
+    diagnostics, and local plus Debian 13 `minicloud` verification. Closed at
+    Nimbus `dec70418` with Bun source tag `bun-v1.4.0-nimbus.5`
+    (`ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57`). The next wave is
+    distribution and release productization, not more proof of the basic linked
+    execution path.
+- `docs/plans/bun-jsc-distribution-and-release-plan.md`
+  - active execution plan for turning the completed Bun/JSC linked adapter into
+    a distributable optional runtime backend. BJD0-BJD9 own the release
+    artifact layout, strict adapter manifest, packaged runtime discovery,
+    deterministic package helper, Linux/macOS CI and release lanes,
+    package/install integration, checksum/SBOM/provenance evidence, operator
+    diagnostics, and installed-package proof while preserving default
+    single-binary no-link behavior.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
