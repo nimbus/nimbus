@@ -199,6 +199,7 @@ fn validate_direct_shared_library_path(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn validate_adapter_manifest_path(
     manifest_path: &Path,
 ) -> std::result::Result<PathBuf, String> {

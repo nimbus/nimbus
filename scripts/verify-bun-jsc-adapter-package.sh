@@ -86,7 +86,7 @@ duplicate_entry="$(sort "${entries_path}" | uniq -d | head -n 1 || true)"
 if [[ -n "${duplicate_entry}" ]]; then
   die "duplicate Bun/JSC adapter archive entry: ${duplicate_entry}"
 fi
-tar -xzf "${archive_path}" -C "${extract_root}"
+tar -xpzf "${archive_path}" -C "${extract_root}"
 
 manifest_path="${extract_root}/${BUN_JSC_ADAPTER_MANIFEST_FILE}"
 library_path="${extract_root}/${library_basename}"
@@ -97,6 +97,30 @@ readme_path="${extract_root}/${BUN_JSC_ADAPTER_README_FILE}"
 [[ -f "${library_path}" ]] || die "missing ${library_basename} in ${archive_path}"
 [[ -f "${checksums_path}" ]] || die "missing ${BUN_JSC_ADAPTER_CHECKSUMS_FILE} in ${archive_path}"
 [[ -f "${readme_path}" ]] || die "missing ${BUN_JSC_ADAPTER_README_FILE} in ${archive_path}"
+
+verify_safe_mode() {
+  local label="$1"
+  local path="$2"
+  python3 - "${label}" "${path}" <<'PY'
+import os
+import pathlib
+import sys
+
+label = sys.argv[1]
+path = pathlib.Path(sys.argv[2])
+mode = path.stat().st_mode & 0o777
+if mode & 0o022:
+    raise SystemExit(
+        f"{label} {path} has unsafe permissions {mode:o}; "
+        "group/other writable packaged Bun/JSC adapter files are rejected"
+    )
+PY
+}
+
+verify_safe_mode "Bun/JSC adapter library" "${library_path}"
+verify_safe_mode "Bun/JSC adapter manifest" "${manifest_path}"
+verify_safe_mode "Bun/JSC adapter checksums file" "${checksums_path}"
+verify_safe_mode "Bun/JSC adapter README" "${readme_path}"
 
 library_sha256="$(bun_jsc_adapter_sha256_file "${library_path}")"
 manifest_sha256="$(bun_jsc_adapter_sha256_file "${manifest_path}")"
@@ -252,6 +276,7 @@ slsa_file="$(sed -n '2p' "${evidence_files_path}")"
 for evidence_file in "${sbom_file}" "${slsa_file}"; do
   evidence_path="${extract_root}/${evidence_file}"
   [[ -f "${evidence_path}" ]] || die "missing provenance evidence file: ${evidence_file}"
+  verify_safe_mode "Bun/JSC adapter provenance evidence" "${evidence_path}"
   verify_checksum_entry "${evidence_file}" "$(bun_jsc_adapter_sha256_file "${evidence_path}")"
 done
 

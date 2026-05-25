@@ -208,6 +208,60 @@ globalThis.__nimbusInvoke = async function(request) {
 }
 
 #[test]
+fn bun_shared_adapter_executes_use_bun_directive_program_wrapper() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let bun_bundle_path = temp_dir.path().join("bun-use-bun-wrapper.js");
+    std::fs::write(
+        &bun_bundle_path,
+        r#"
+"use bun";
+
+globalThis.__nimbusInvoke = async function(request) {
+  return {
+    status: "ok",
+    value: {
+      engine: "bun_jsc",
+      directive: "use bun",
+      functionName: request.function_name,
+      body: request.args.body,
+    },
+  };
+};
+"#,
+    )
+    .expect("Bun/JSC bundle should be written");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(NoopHost),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+    );
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:bunDirectiveProof".to_string(),
+        args: json!({ "body": "hello from packaged bun" }),
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: BTreeMap::new(),
+    };
+
+    assert_eq!(
+        runtime
+            .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &request)
+            .expect("linked Bun/JSC invocation should execute a use bun directive bundle"),
+        json!({
+            "status": "ok",
+            "value": {
+                "engine": "bun_jsc",
+                "directive": "use bun",
+                "functionName": "messages:bunDirectiveProof",
+                "body": "hello from packaged bun",
+            },
+        })
+    );
+}
+
+#[test]
 fn bun_shared_adapter_routes_generated_context_db_insert_through_host_bridge() {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let bun_bundle_path = temp_dir.path().join("bun-host-bridge-wrapper.js");
