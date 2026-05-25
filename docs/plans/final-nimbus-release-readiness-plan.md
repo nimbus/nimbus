@@ -1,6 +1,6 @@
 # Final Nimbus Release Readiness Plan
 
-Status: ready for execution
+Status: in progress
 Owner: Nimbus release work
 Created: 2026-05-25
 
@@ -62,7 +62,7 @@ Verified while writing the plan:
 
 ### NRR0 - Release Target and Source Baseline
 
-Status: pending
+Status: completed 2026-05-25
 
 Decide the exact release version and source commit.
 
@@ -77,9 +77,29 @@ Success criteria:
 - If the primary checkout is dirty, a clean release worktree is created and all
   later gates run from that worktree.
 
+Evidence:
+
+- Selected release version: `v0.1.32`.
+- `gh release view --repo nimbus/nimbus --json tagName,isDraft,isPrerelease,publishedAt,url,targetCommitish`
+  returned current live release `v0.1.31`, non-draft, non-prerelease,
+  published `2026-05-15T00:32:23Z`.
+- `git tag --list 'v*' --sort=-v:refname | head -10` showed latest local tag
+  `v0.1.31`; no local `v0.1.32` tag exists.
+- `git ls-remote --tags git@github.com:nimbus/nimbus.git v0.1.32` returned no
+  rows; no remote `v0.1.32` tag exists.
+- Selected starting source commit:
+  `7669d2672f98c27473659860296292f19dce3b24`.
+- The primary checkout is dirty with unrelated generated Convex files,
+  `package-lock.json` churn, screenshots, and an untracked plan, so the release
+  gates will run from clean worktree
+  `/Users/jack/src/github.com/nimbus/nimbus-worktrees/final-release-v0.1.32`
+  on branch `codex/final-release-v0.1.32`.
+- `git -C /Users/jack/src/github.com/nimbus/nimbus-worktrees/final-release-v0.1.32 status --short --branch`
+  reported only `## codex/final-release-v0.1.32`.
+
 ### NRR1 - Fork Stack Health
 
-Status: pending
+Status: completed 2026-05-25
 
 Verify every fork that Nimbus depends on is on the standardized branch/tag,
 has the expected GitHub default branch, and has a clean local checkout.
@@ -101,9 +121,49 @@ Success criteria:
   classified as either Nimbus-owned or upstream-owned with concrete evidence.
   Nimbus-owned failures are fixed before continuing.
 
+Evidence:
+
+- `bash scripts/verify-fork-upstream-standardization.sh` passed from the clean
+  release worktree with `fork-standardization: pass`.
+- The verifier confirmed all five local fork checkouts are clean and on the
+  expected branches:
+  - `nimbus/deno`: `nimbus/v2.8.0`
+  - `nimbus/rusty_v8`: `nimbus/v149.0.0`
+  - `nimbus/bun`: `nimbus/bun-main-20260525`
+  - `nimbus/nimbus-crun`: `nimbus/1.27.1`
+  - `nimbus/nimbus-libkrun`: `nimbus/v1.18.1`
+- `gh repo view ... --json nameWithOwner,defaultBranchRef,description,url`
+  confirmed the same live GitHub default branches and the capability-focused
+  repository descriptions for all five forks.
+- `gh release view` confirmed non-draft, non-prerelease releases:
+  - `nimbus/rusty_v8` `v149.0.0-nimbus.1`, published
+    `2026-05-25T20:52:35Z`
+  - `nimbus/nimbus-libkrun` `v1.18.1-nimbus.1`, published
+    `2026-05-25T21:50:09Z`
+  - `nimbus/nimbus-crun` `v1.27.1-nimbus.2`, published
+    `2026-05-25T21:54:06Z`
+- Hosted fork Actions status:
+  - `nimbus/rusty_v8` active-branch CI succeeded on
+    `9b77553883f1117ab3df62709b8673b803ed721b`.
+  - `nimbus/bun` active-branch graph update succeeded on
+    `ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57`.
+  - `nimbus/deno`, `nimbus/nimbus-crun`, and `nimbus/nimbus-libkrun` have no
+    active-branch hosted runs to treat as release blockers.
+- Investigated the latest `nimbus/deno` hosted run on release ref
+  `v2.8.0-nimbus.2`: it failed in upstream Deno's broad CI workflow while
+  fetching the git-pinned `nimbus/rusty_v8` dependency on GitHub Windows
+  runners, with `path too long` under
+  `third_party/rust/chromium_crates_io/vendor/icu_calendar-v2/...`. This is a
+  fork-hosted CI plumbing gap in the upstream Deno workflow shape, not a
+  Nimbus runtime source failure. The Deno fork is source-only for Nimbus Cargo
+  consumption, and Nimbus' own release workflow already enables Windows
+  long-path handling before its release build. The release remains gated by
+  NRR4/NRR7 compiling and testing Nimbus against the exact pinned Deno/rusty_v8
+  tags.
+
 ### NRR2 - Nimbus Consumes the Released Forks
 
-Status: pending
+Status: completed 2026-05-25
 
 Prove the Nimbus repo pins and installer/package surfaces consume the intended
 Nimbus fork releases.
@@ -120,6 +180,38 @@ Success criteria:
 - `make verify-bun-jsc-runtime-contract`,
   `make verify-bun-jsc-adapter-package`, and
   `make verify-bun-jsc-release-assets` pass.
+
+Evidence:
+
+- `rg -n "v2\\.8\\.0-nimbus\\.2|v149\\.0\\.0-nimbus\\.1|v1\\.27\\.1-nimbus\\.2|v1\\.18\\.1-nimbus\\.1|nimbus-bun-jsc-proof-main-20260525|locker-v|v[0-9][^[:space:]]*-locker" Cargo.toml Cargo.lock scripts .github Makefile docs/adapters docs/architecture docs/operating docs/plans/final-nimbus-release-readiness-plan.md docs/plans/fork-upstream-standardization-plan.md docs/plans/bun-jsc-distribution-and-release-plan.md docs/plans/bun-jsc-linked-adapter-plan.md docs/plans/README.md`
+  confirmed active pins:
+  - `Cargo.toml` patch entries use `nimbus/deno` `v2.8.0-nimbus.2` and
+    `nimbus/rusty_v8` `v149.0.0-nimbus.1`.
+  - `Cargo.lock` resolves Deno-family crates to
+    `363de88e0dd6cd87c60704bc8e373dea202817e4` and rusty_v8 to
+    `9b77553883f1117ab3df62709b8673b803ed721b`.
+  - install/package helpers use `nimbus-crun` `v1.27.1-nimbus.2` and
+    `nimbus-libkrun` `v1.18.1-nimbus.1`.
+  - Bun/JSC source constants use `nimbus-bun-jsc-proof-main-20260525`.
+- `rg -n "locker-v|v[0-9][^[:space:]]*-locker" Cargo.toml Cargo.lock scripts .github Makefile`
+  returned no active code/package pins.
+- `make verify-bun-jsc-runtime-contract` passed from the clean release
+  worktree after building UI prerequisites and compiling the pinned
+  Deno/rusty_v8 dependencies. The gate reported:
+  - runtime policy and memory semantics: `11 passed`
+  - Bun/JSC pool scaffold contract: `10 passed`
+  - Convex runtime lane registry contract: `15 passed`
+  - runtime diagnostics API contract: `2 passed`
+  - tenant admission profile: `1 passed`
+  - operator UI runtime diagnostics contract: `2 files passed`, `5 tests`
+  - final line: `Bun/JSC runtime contract gate: pass`
+- `make verify-bun-jsc-adapter-package` passed:
+  `verified: Bun/JSC adapter package helper accepts a good fixture ... and native leaks`.
+- `make verify-bun-jsc-release-assets` passed:
+  `verified: Bun/JSC release asset helper accepts absent-optional and good assets ... and tampered adapter packages`.
+- The clean release worktree remained clean after these gates:
+  `git status --short --branch` reported only
+  `## codex/final-release-v0.1.32`.
 
 ### NRR3 - Version Bump and Release Metadata
 
