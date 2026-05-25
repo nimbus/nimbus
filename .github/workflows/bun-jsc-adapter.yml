@@ -24,10 +24,10 @@ on:
         required: true
         default: "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57"
       install_bun_with_npm:
-        description: "Install a pinned Bun CLI with npm before building"
+        description: "Install a pinned Bun CLI with npm before building; keep enabled for self-sufficient hosted runner dispatches"
         required: true
         type: boolean
-        default: false
+        default: true
       bun_bootstrap_version:
         description: "Bun npm package version used only when install_bun_with_npm is true"
         required: true

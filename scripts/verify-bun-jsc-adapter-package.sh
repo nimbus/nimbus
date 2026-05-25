@@ -129,7 +129,17 @@ readme_sha256="$(bun_jsc_adapter_sha256_file "${readme_path}")"
 verify_checksum_entry() {
   local subject_name="$1"
   local digest="$2"
-  grep -F "${digest}  ${subject_name}" "${checksums_path}" >/dev/null ||
+  awk -v expected_digest="${digest}" -v expected_subject="${subject_name}" '
+    NF >= 2 {
+      subject = $NF
+      sub(/^\*/, "", subject)
+      if (tolower($1) == tolower(expected_digest) && subject == expected_subject) {
+        found = 1
+        exit
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "${checksums_path}" ||
     die "checksums file does not contain matching ${subject_name} digest"
 }
 

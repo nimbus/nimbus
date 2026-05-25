@@ -163,6 +163,7 @@ printf 'nimbus-test\n' > "${output_dir}/artifact.bin"
 artifact_sha="$(sha256_of "${output_dir}/artifact.bin")"
 printf '%s  artifact.bin\n' "${artifact_sha}" > "${output_dir}/checksums-ok.txt"
 printf '%s  something-else.bin\n' "${artifact_sha}" > "${output_dir}/checksums-missing.txt"
+printf '%s  artifact.bin.evil\n' "${artifact_sha}" > "${output_dir}/checksums-subject-spoof.txt"
 
 if sh -c '. "$1"; verify_file_checksum "$2" "$3" "$4"' sh \
     "${testable_install_sh}" \
@@ -182,6 +183,166 @@ if sh -c '. "$1"; verify_file_checksum "$2" "$3" "$4"' sh \
   fail "verify_file_checksum rejects missing manifest entry"
 else
   pass "verify_file_checksum rejects missing manifest entry"
+fi
+
+if sh -c '. "$1"; verify_file_checksum "$2" "$3" "$4"' sh \
+    "${testable_install_sh}" \
+    "${output_dir}/artifact.bin" \
+    "${output_dir}/checksums-subject-spoof.txt" \
+    artifact.bin >/dev/null 2>&1; then
+  fail "verify_file_checksum rejects checksum subject spoofing"
+else
+  pass "verify_file_checksum rejects checksum subject spoofing"
+fi
+
+# --- Bun/JSC adapter installer hardening ------------------------------------
+
+echo ""
+echo "Checking Bun/JSC adapter installer hardening..."
+
+bun_jsc_layout_dir="${output_dir}/bun-jsc-layout"
+mkdir -p "${bun_jsc_layout_dir}"
+touch \
+  "${bun_jsc_layout_dir}/libnimbus_bun_jsc_embedder.so" \
+  "${bun_jsc_layout_dir}/nimbus-bun-jsc-adapter.json" \
+  "${bun_jsc_layout_dir}/checksums-sha256.txt" \
+  "${bun_jsc_layout_dir}/README.md"
+tar -czf "${output_dir}/bun-jsc-missing-evidence.tar.gz" \
+  -C "${bun_jsc_layout_dir}" \
+  libnimbus_bun_jsc_embedder.so \
+  nimbus-bun-jsc-adapter.json \
+  checksums-sha256.txt \
+  README.md
+
+if sh -c '. "$1"; verify_bun_jsc_adapter_archive_layout "$2" "$3" "$4"' sh \
+    "${testable_install_sh}" \
+    "${output_dir}/bun-jsc-missing-evidence.tar.gz" \
+    "${output_dir}/bun-jsc-missing-evidence.entries" \
+    libnimbus_bun_jsc_embedder.so \
+    >"${output_dir}/bun-jsc-missing-evidence.out" 2>&1; then
+  fail "Bun/JSC installer archive layout requires SBOM/SLSA evidence"
+else
+  if grep -q "missing required entry: nimbus-bun-jsc-adapter.sbom.cdx.json" \
+      "${output_dir}/bun-jsc-missing-evidence.out"; then
+    pass "Bun/JSC installer archive layout requires SBOM/SLSA evidence"
+  else
+    fail "Bun/JSC installer archive layout reports missing SBOM/SLSA evidence"
+  fi
+fi
+
+bun_jsc_strict_dir="${output_dir}/bun-jsc-strict"
+mkdir -p "${bun_jsc_strict_dir}"
+printf 'fixture Bun/JSC shared adapter bytes\n' \
+  >"${bun_jsc_strict_dir}/libnimbus_bun_jsc_embedder.so"
+chmod 0755 "${bun_jsc_strict_dir}/libnimbus_bun_jsc_embedder.so"
+printf 'fixture README\n' >"${bun_jsc_strict_dir}/README.md"
+library_sha="$(sha256_of "${bun_jsc_strict_dir}/libnimbus_bun_jsc_embedder.so")"
+required_exports_file="${output_dir}/bun-jsc-required-exports.txt"
+sh -c '. "$1"; bun_jsc_adapter_required_exports' sh "${testable_install_sh}" \
+  >"${required_exports_file}"
+required_exports_json="$(
+  python3 - "${required_exports_file}" <<'PY'
+import json
+import pathlib
+import sys
+print(json.dumps(pathlib.Path(sys.argv[1]).read_text().splitlines()))
+PY
+)"
+
+python3 - \
+  "${bun_jsc_strict_dir}/nimbus-bun-jsc-adapter.json" \
+  "${bun_jsc_strict_dir}/nimbus-bun-jsc-adapter.sbom.cdx.json" \
+  "${bun_jsc_strict_dir}/nimbus-bun-jsc-adapter.intoto.jsonl" \
+  "${library_sha}" \
+  "${required_exports_json}" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+sbom_path = pathlib.Path(sys.argv[2])
+slsa_path = pathlib.Path(sys.argv[3])
+library_sha = sys.argv[4]
+required_exports = json.loads(sys.argv[5])
+
+manifest_path.write_text(json.dumps({
+    "schema_version": 1,
+    "kind": "nimbus.bun_jsc.adapter",
+    "adapter_version": "v0.1.0-bun-v1.4.0-nimbus.5",
+    "nimbus_version": "v0.1.0",
+    "bun_source_repository": "https://github.com/nimbus/bun",
+    "bun_source_ref": "bun-v1.4.0-nimbus.5",
+    "bun_source_revision": "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57",
+    "target_triple": "x86_64-unknown-linux-gnu",
+    "platform": "linux",
+    "library": "libnimbus_bun_jsc_embedder.so",
+    "library_sha256": library_sha,
+    "abi": {
+        "name": "nimbus-bun-jsc-embedder",
+        "version": 1,
+        "required_exports": required_exports,
+    },
+    "memory_enforcement": "outer_quota_required",
+    "lifecycle": "fresh_discard",
+    "provenance": {
+        "checksum_file": "checksums-sha256.txt",
+        "sbom": "nimbus-bun-jsc-adapter.sbom.cdx.json",
+        "slsa": "nimbus-bun-jsc-adapter.intoto.jsonl",
+    },
+}, indent=2) + "\n")
+
+sbom_path.write_text(json.dumps({
+    "bomFormat": "CycloneDX",
+    "components": [
+        {"name": "libnimbus_bun_jsc_embedder.so", "hashes": [{"alg": "SHA-256", "content": library_sha}]},
+        {"name": "bun", "version": "bun-v1.4.0-nimbus.5"},
+    ],
+}, separators=(",", ":")) + "\n")
+
+slsa_path.write_text(json.dumps({
+    "_type": "https://in-toto.io/Statement/v1",
+    "predicateType": "https://slsa.dev/provenance/v1",
+    "subject": [
+        {"name": "libnimbus_bun_jsc_embedder.so", "digest": {"sha256": library_sha}},
+    ],
+    "predicate": {},
+}, separators=(",", ":")) + "\n")
+PY
+
+(
+  cd "${bun_jsc_strict_dir}"
+  : >checksums-sha256.txt
+  for fixture in README.md libnimbus_bun_jsc_embedder.so nimbus-bun-jsc-adapter.intoto.jsonl nimbus-bun-jsc-adapter.json nimbus-bun-jsc-adapter.sbom.cdx.json; do
+    printf '%s  %s\n' "$(sha256_of "${fixture}")" "${fixture}" >>checksums-sha256.txt
+  done
+)
+
+mock_bun_jsc_tools="${output_dir}/mock-bun-jsc-tools"
+mkdir -p "${mock_bun_jsc_tools}"
+{
+  printf '#!/bin/sh\n'
+  printf 'while IFS= read -r symbol; do\n'
+  printf '  printf '\''0000000000000000 T %%s\\n'\'' "$symbol"\n'
+  printf 'done <<'\''SYMS'\''\n'
+  cat "${required_exports_file}"
+  printf 'SYMS\n'
+} >"${mock_bun_jsc_tools}/nm"
+cat >"${mock_bun_jsc_tools}/readelf" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod +x "${mock_bun_jsc_tools}/nm" "${mock_bun_jsc_tools}/readelf"
+
+if PATH="${mock_bun_jsc_tools}:$PATH" sh -c '. "$1"; verify_bun_jsc_adapter_manifest_contract "$2" "$3" "$4" "$5"' sh \
+    "${testable_install_sh}" \
+    "${bun_jsc_strict_dir}" \
+    x86_64-unknown-linux-gnu \
+    linux \
+    libnimbus_bun_jsc_embedder.so \
+    >"${output_dir}/bun-jsc-strict.out" 2>&1; then
+  pass "Bun/JSC installer verifies manifest, evidence, exports, and native loader policy"
+else
+  fail "Bun/JSC installer verifies manifest, evidence, exports, and native loader policy"
 fi
 
 # --- Mocked platform checks --------------------------------------------------

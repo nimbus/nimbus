@@ -92,6 +92,25 @@ fi
 grep -F "checksums file does not contain matching" \
   "${tmp_root}/bad-checksums.out" >/dev/null
 
+bad_subject_checksums="${tmp_root}/bad-subject-checksums.txt"
+(
+  cd "${assets_dir}"
+  sha256="$(bun_jsc_adapter_sha256_file "nimbus-bun-jsc-adapter-${platform_arch}.tar.gz")"
+  printf '%s  nimbus-bun-jsc-adapter-%s.tar.gz.evil\n' "${sha256}" "${platform_arch}" \
+    >"${bad_subject_checksums}"
+)
+if bash "${repo_root}/scripts/verify-bun-jsc-release-assets.sh" \
+  --artifacts-dir "${assets_dir}" \
+  --checksums "${bad_subject_checksums}" \
+  --require-platform "${platform_arch}" \
+  --nm "${fake_nm}" \
+  >"${tmp_root}/bad-subject-checksums.out" 2>&1; then
+  printf 'expected bad release checksum subject to fail\n' >&2
+  exit 1
+fi
+grep -F "checksums file does not contain matching" \
+  "${tmp_root}/bad-subject-checksums.out" >/dev/null
+
 unknown_assets="${tmp_root}/unknown-assets"
 mkdir -p "${unknown_assets}"
 cp "${archive_path}" "${unknown_assets}/nimbus-bun-jsc-adapter-plan9-x86_64.tar.gz"
@@ -134,4 +153,4 @@ fi
 grep -F "checksums file does not contain matching ${library_basename} digest" \
   "${tmp_root}/tampered.out" >/dev/null
 
-printf 'verified: Bun/JSC release asset helper accepts absent-optional and good assets with SBOM/provenance, rejects missing required assets, bad release checksums, unknown platforms, and tampered adapter packages\n'
+printf 'verified: Bun/JSC release asset helper accepts absent-optional and good assets with SBOM/provenance, rejects missing required assets, bad release checksums, checksum subject spoofing, unknown platforms, and tampered adapter packages\n'

@@ -104,6 +104,19 @@ repack_bad_archive() {
     bad-checksum)
       printf 'tamper\n' >>"${extract_dir}/${library_basename}"
       ;;
+    bad-checksum-subject)
+      library_digest="$(bun_jsc_adapter_sha256_file "${extract_dir}/${library_basename}")"
+      awk -v digest="${library_digest}" -v subject="${library_basename}.evil" -v library="${library_basename}" '
+        $2 == library {
+          printf "%s  %s\n", digest, subject
+          next
+        }
+        { print }
+      ' "${extract_dir}/${BUN_JSC_ADAPTER_CHECKSUMS_FILE}" \
+        >"${extract_dir}/${BUN_JSC_ADAPTER_CHECKSUMS_FILE}.tmp"
+      mv "${extract_dir}/${BUN_JSC_ADAPTER_CHECKSUMS_FILE}.tmp" \
+        "${extract_dir}/${BUN_JSC_ADAPTER_CHECKSUMS_FILE}"
+      ;;
     missing-sbom)
       rm -f "${extract_dir}/${evidence_sbom}"
       ;;
@@ -170,6 +183,16 @@ if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
 fi
 grep -F "checksums file does not contain matching ${library_basename} digest" \
   "${tmp_root}/bad-checksum.out" >/dev/null
+
+bad_checksum_subject_archive="$(repack_bad_archive bad-checksum-subject bad-checksum-subject)"
+if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
+  --archive "${bad_checksum_subject_archive}" \
+  --target-triple "${target_triple}" \
+  --nm "${fake_nm}" \
+  >"${tmp_root}/bad-checksum-subject.out" 2>&1; then
+  printf 'expected bad-checksum-subject archive verification to fail\n' >&2
+  exit 1
+fi
 
 missing_sbom_archive="$(repack_bad_archive missing-sbom missing-sbom)"
 if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
@@ -253,4 +276,4 @@ fi
 grep -F "exports bundled native implementation symbols" \
   "${tmp_root}/leaked-native.out" >/dev/null
 
-printf 'verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, unsafe modes, wrong exports, and native leaks\n'
+printf 'verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, checksum subject spoofing, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, unsafe modes, wrong exports, and native leaks\n'

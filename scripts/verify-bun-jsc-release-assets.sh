@@ -89,6 +89,23 @@ platform_to_target_triple() {
   esac
 }
 
+checksum_file_contains_exact_entry() {
+  local checksums_file="$1"
+  local digest="$2"
+  local subject_name="$3"
+  awk -v expected_digest="${digest}" -v expected_subject="${subject_name}" '
+    NF >= 2 {
+      subject = $NF
+      sub(/^\*/, "", subject)
+      if (tolower($1) == tolower(expected_digest) && subject == expected_subject) {
+        found = 1
+        exit
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "${checksums_file}"
+}
+
 artifacts_dir="$(cd "${artifacts_dir}" && pwd)"
 shopt -s nullglob
 adapter_archives=("${artifacts_dir}"/nimbus-bun-jsc-adapter-*.tar.gz)
@@ -133,7 +150,7 @@ for archive in "${adapter_archives[@]}"; do
 
   if [[ -n "${checksums_path}" ]]; then
     digest="$(bun_jsc_adapter_sha256_file "${archive}")"
-    grep -F "${digest}  ${basename}" "${checksums_path}" >/dev/null ||
+    checksum_file_contains_exact_entry "${checksums_path}" "${digest}" "${basename}" ||
       die "checksums file does not contain matching ${basename} digest"
   fi
 done
