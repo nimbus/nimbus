@@ -268,10 +268,10 @@ required_exports = json.loads(sys.argv[5])
 manifest_path.write_text(json.dumps({
     "schema_version": 1,
     "kind": "nimbus.bun_jsc.adapter",
-    "adapter_version": "v0.1.0-bun-v1.4.0-nimbus.5",
+    "adapter_version": "v0.1.0-bun-proof-main-20260525",
     "nimbus_version": "v0.1.0",
     "bun_source_repository": "https://github.com/nimbus/bun",
-    "bun_source_ref": "bun-v1.4.0-nimbus.5",
+    "bun_source_ref": "nimbus-bun-jsc-proof-main-20260525",
     "bun_source_revision": "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57",
     "target_triple": "x86_64-unknown-linux-gnu",
     "platform": "linux",
@@ -295,7 +295,7 @@ sbom_path.write_text(json.dumps({
     "bomFormat": "CycloneDX",
     "components": [
         {"name": "libnimbus_bun_jsc_embedder.so", "hashes": [{"alg": "SHA-256", "content": library_sha}]},
-        {"name": "bun", "version": "bun-v1.4.0-nimbus.5"},
+        {"name": "bun", "version": "nimbus-bun-jsc-proof-main-20260525"},
     ],
 }, separators=(",", ":")) + "\n")
 
@@ -375,10 +375,10 @@ case "\$last_arg" in
     printf '{"tag_name":"v0.1.14"}'
     ;;
   https://api.github.com/repos/nimbus/nimbus-crun/releases/latest)
-    printf '{"tag_name":"v1.27.1-nimbus.1"}'
+    printf '{"tag_name":"v1.27.1-nimbus.2"}'
     ;;
   https://api.github.com/repos/nimbus/nimbus-libkrun/releases/latest)
-    printf '{"tag_name":"v1.17.4-nimbus.1"}'
+    printf '{"tag_name":"v1.18.1-nimbus.1"}'
     ;;
   *)
     exit 97
@@ -442,7 +442,7 @@ EOF
 chmod +x "${mock_macos_bin}/curl"
 
 if PATH="${mock_macos_bin}:$PATH" \
-    sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --libkrun-version v1.17.4-nimbus.1 --prefix /tmp/custom \
+    sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --libkrun-version v1.18.1-nimbus.1 --prefix /tmp/custom \
     > "${output_dir}/macos-dry-run.txt" 2>&1; then
   if [ ! -s "${macos_curl_log}" ]; then
     pass "macOS dry-run avoids GitHub API lookup"
@@ -465,7 +465,7 @@ echo ""
 echo "Checking dry-run output..."
 
 # Use a mock version to avoid GitHub API calls
-if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.27.1-nimbus.1 --libkrun-version v1.17.4-nimbus.1 \
+if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.27.1-nimbus.2 --libkrun-version v1.18.1-nimbus.1 \
     > "${output_dir}/dry-run.txt" 2>&1; then
 
   if grep -q "Install Plan" "${output_dir}/dry-run.txt"; then

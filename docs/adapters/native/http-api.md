@@ -70,7 +70,7 @@ The Bun/JSC lane must remain explicit while the adapter is not linked:
       "kind": "nimbus.bun_jsc.adapter",
       "schema_version": 1,
       "source_repository": "https://github.com/nimbus/bun",
-      "source_ref": "bun-v1.4.0-nimbus.5",
+      "source_ref": "nimbus-bun-jsc-proof-main-20260525",
       "source_revision": "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57",
       "manifest_file": "nimbus-bun-jsc-adapter.json",
       "abi_name": "nimbus-bun-jsc-embedder",

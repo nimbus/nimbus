@@ -104,14 +104,14 @@ can be built.
 ```bash
 git clone https://github.com/containers/libkrun.git
 cd libkrun
-git checkout v1.17.4   # or latest stable tag
+git checkout v1.18.1   # or latest stable tag
 
 make                    # builds target/release/libkrun.so.<version>
 sudo make install       # installs to /usr/local/lib64/ and /usr/local/include/
 ```
 
 Installs:
-- `/usr/local/lib64/libkrun.so.1.17.4` (plus `libkrun.so.1` and `libkrun.so` symlinks)
+- `/usr/local/lib64/libkrun.so.1.18.1` (plus `libkrun.so.1` and `libkrun.so` symlinks)
 - `/usr/local/include/libkrun.h`
 - `/usr/local/lib64/pkgconfig/libkrun.pc`
 

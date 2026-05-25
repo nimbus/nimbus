@@ -54,16 +54,16 @@ create_stub_deb() {
 create_stub_deb "nimbus" "0.1.10" "amd64" "/usr/bin/nimbus" \
   "Depends: nimbus-crun, buildah, conmon, netavark, aardvark-dns" \
   "Recommends: fuse-overlayfs, uidmap"
-create_stub_deb "nimbus-libkrun" "1.17.4~nimbus.1" "amd64" "/usr/libexec/nimbus/lib/libkrun.so.1" \
+create_stub_deb "nimbus-libkrun" "1.18.1~nimbus.1" "amd64" "/usr/libexec/nimbus/lib/libkrun.so.1" \
   "Provides: nimbus-libkrun"
-create_stub_deb "nimbus-crun" "0.1.4" "amd64" "/usr/libexec/nimbus/crun" \
+create_stub_deb "nimbus-crun" "1.27.1~nimbus.2" "amd64" "/usr/libexec/nimbus/crun" \
   "Depends: nimbus-libkrun"
 create_stub_deb "nimbus" "0.1.10" "arm64" "/usr/bin/nimbus" \
   "Depends: nimbus-crun, buildah, conmon, netavark, aardvark-dns" \
   "Recommends: fuse-overlayfs, uidmap"
-create_stub_deb "nimbus-libkrun" "1.17.4~nimbus.1" "arm64" "/usr/libexec/nimbus/lib/libkrun.so.1" \
+create_stub_deb "nimbus-libkrun" "1.18.1~nimbus.1" "arm64" "/usr/libexec/nimbus/lib/libkrun.so.1" \
   "Provides: nimbus-libkrun"
-create_stub_deb "nimbus-crun" "0.1.4" "arm64" "/usr/libexec/nimbus/crun" \
+create_stub_deb "nimbus-crun" "1.27.1~nimbus.2" "arm64" "/usr/libexec/nimbus/crun" \
   "Depends: nimbus-libkrun"
 
 cd "${repo_root}"
@@ -153,9 +153,11 @@ grep -F "Package: nimbus" "${repo_dir}/dists/stable/main/binary-amd64/Packages" 
 grep -F "Package: nimbus-libkrun" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
 grep -F "Package: nimbus-crun" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
 grep -F "Filename: pool/main/amd64/nimbus_0.1.10_amd64.deb" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
-grep -F "Filename: pool/main/amd64/nimbus-libkrun_1.17.4~nimbus.1_amd64.deb" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
+grep -F "Filename: pool/main/amd64/nimbus-libkrun_1.18.1~nimbus.1_amd64.deb" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
+grep -F "Filename: pool/main/amd64/nimbus-crun_1.27.1~nimbus.2_amd64.deb" "${repo_dir}/dists/stable/main/binary-amd64/Packages" >/dev/null
 grep -F "Filename: pool/main/arm64/nimbus_0.1.10_arm64.deb" "${repo_dir}/dists/stable/main/binary-arm64/Packages" >/dev/null
-grep -F "Filename: pool/main/arm64/nimbus-libkrun_1.17.4~nimbus.1_arm64.deb" "${repo_dir}/dists/stable/main/binary-arm64/Packages" >/dev/null
+grep -F "Filename: pool/main/arm64/nimbus-libkrun_1.18.1~nimbus.1_arm64.deb" "${repo_dir}/dists/stable/main/binary-arm64/Packages" >/dev/null
+grep -F "Filename: pool/main/arm64/nimbus-crun_1.27.1~nimbus.2_arm64.deb" "${repo_dir}/dists/stable/main/binary-arm64/Packages" >/dev/null
 grep -F "Architectures: amd64 arm64" "${repo_dir}/dists/stable/Release" >/dev/null
 grep -F "Components: main" "${repo_dir}/dists/stable/Release" >/dev/null
 grep -F "Codename: stable" "${repo_dir}/dists/stable/Release" >/dev/null

@@ -14,7 +14,7 @@ experience.
 - **Status:** complete; `BJD0` through `BJD9` complete
 - **Primary owner:** this plan
 - **Nimbus baseline:** `dec70418` (`Close Bun JSC linked adapter plan`)
-- **Bun source baseline:** `nimbus/bun` tag `bun-v1.4.0-nimbus.5`
+- **Bun source baseline:** `nimbus/bun` tag `nimbus-bun-jsc-proof-main-20260525`
   (`ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57`)
 - **Predecessor:** `docs/plans/bun-jsc-linked-adapter-plan.md`
 - **Parent distribution plan:** `docs/plans/distribution-plan.md`
@@ -151,10 +151,10 @@ artifacts before `dlopen`:
 {
   "schema_version": 1,
   "kind": "nimbus.bun_jsc.adapter",
-  "adapter_version": "v0.1.0-bun-v1.4.0-nimbus.5",
+  "adapter_version": "v0.1.0-bun-proof-main-20260525",
   "nimbus_version": "v0.1.0",
   "bun_source_repository": "https://github.com/nimbus/bun",
-  "bun_source_ref": "bun-v1.4.0-nimbus.5",
+  "bun_source_ref": "nimbus-bun-jsc-proof-main-20260525",
   "bun_source_revision": "ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57",
   "target_triple": "x86_64-unknown-linux-gnu",
   "platform": "linux",
@@ -214,7 +214,7 @@ path to Sigstore/SLSA evidence and release attestation.
 | BJD0 | `done` | Freeze the release-artifact contract and inventory every touched distribution surface. | `docs/plans/proof/runtime-engine/bun-jsc/gate-57-distribution-contract.md` records exact archive names, installed paths, manifest fields, discovery order, owner file inventory, current HEAD, Bun tag/revision, and rejected alternatives. `cargo fmt --all --check`, `cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc -- --nocapture` (25 tests), and `git diff --check` passed. |
 | BJD1 | `done` | Implement a typed adapter manifest parser and runtime discovery contract. | `crates/nimbus-runtime/src/backends/bun_jsc/manifest.rs` validates packaged manifests before shared-library loading. Tests cover valid packaged manifests, dev override behavior, manifest override behavior, packaged discovery, missing artifact fallback, schema mismatch, wrong Bun revision, wrong target triple, checksum mismatch, unsafe path ownership/location, unknown fields, and unsupported memory/lifecycle policy. Default builds still report `not_linked` without env vars. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-58-adapter-manifest-discovery.md`. |
 | BJD2 | `done` | Add a deterministic local packaging helper for existing shared adapter artifacts. | `scripts/package-bun-jsc-adapter.sh` packages an existing `libnimbus_bun_jsc_embedder.{so,dylib}` into the archive layout with manifest, checksums, README, and optional SBOM/provenance files. `scripts/verify-bun-jsc-adapter-package.sh` verifies archive layout, manifest contract, checksums, exports, and native symbol leak policy. `scripts/verify-bun-jsc-adapter-package-helper.sh` accepts a good fixture and rejects missing library, bad checksum, bad manifest, wrong exports, and native symbol leaks without a full WebKit rebuild. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-59-adapter-package-helper.md`. |
-| BJD3 | `done` | Add release/CI lanes for Linux and macOS adapter artifacts without slowing default PR CI. | CI keeps `make verify-bun-jsc-runtime-contract` in default PR lanes. `.github/workflows/bun-jsc-adapter.yml` adds a manual source-backed artifact lane for Linux x86_64 and macOS arm64 from `nimbus/bun` tag `bun-v1.4.0-nimbus.5`; each lane runs `scripts/build-bun-jsc-adapter-artifacts.sh` and uploads adapter archives, manifests, checksums, and proof logs. `.github/workflows/ci.yml` syntax-checks the Bun/JSC adapter scripts and runs `bash scripts/verify-bun-jsc-adapter-package-helper.sh` in default proof-helper CI. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-60-adapter-release-ci-lane.md`. |
+| BJD3 | `done` | Add release/CI lanes for Linux and macOS adapter artifacts without slowing default PR CI. | CI keeps `make verify-bun-jsc-runtime-contract` in default PR lanes. `.github/workflows/bun-jsc-adapter.yml` adds a manual source-backed artifact lane for Linux x86_64 and macOS arm64 from `nimbus/bun` tag `nimbus-bun-jsc-proof-main-20260525`; each lane runs `scripts/build-bun-jsc-adapter-artifacts.sh` and uploads adapter archives, manifests, checksums, and proof logs. `.github/workflows/ci.yml` syntax-checks the Bun/JSC adapter scripts and runs `bash scripts/verify-bun-jsc-adapter-package-helper.sh` in default proof-helper CI. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-60-adapter-release-ci-lane.md`. |
 | BJD4 | `done` | Integrate release archive checksums and GitHub release upload. | `.github/workflows/release.yml` now verifies optional Bun/JSC adapter assets when present and records absent assets as intentional by policy. Release checksum generation includes staged `nimbus-bun-jsc-adapter-*.tar.gz` assets when present. `.github/workflows/bun-jsc-adapter.yml` has an explicit `publish_release_assets` path that verifies Linux x86_64 and macOS arm64 adapter archives, generates `nimbus-bun-jsc-adapter-checksums-sha256.txt`, attests the assets, and uploads them to the selected `v*` GitHub Release. `scripts/verify-bun-jsc-release-assets.sh` and its helper prove good, absent, missing-required, bad-checksum, unknown-platform, and tampered-package behavior. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-61-release-assets-and-checksums.md`. |
 | BJD5 | `done` | Integrate Linux packages, Homebrew/cask, and install script behavior. | Linux package builders now stage the adapter under `/usr/libexec/nimbus/runtime/bun-jsc/...` as a separate optional `nimbus-bun-jsc-adapter` package that depends on `nimbus`. `.github/workflows/linux-packages.yml`, `.github/workflows/apt-repo.yml`, and `.github/workflows/linux-distribution-release.yml` expose explicit opt-in controls before adapter packages are mirrored. `scripts/install.sh --with-bun-jsc` installs the Linux x86_64 adapter from the matching release asset, checks release checksums/attestation, rejects unsafe tar layouts, verifies archive-internal checksums, and creates the packaged discovery path without manual env vars. macOS Homebrew/cask support is documented as a reserved packaged path with a current separate artifact lane. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-62-install-package-surfaces.md`. |
 | BJD6 | `done` | Add artifact trust, SBOM, and provenance evidence. | Adapter archives now include SHA-256 checksums, a generated minimal CycloneDX SBOM, and a deterministic in-toto/SLSA provenance statement by default. `scripts/verify-bun-jsc-adapter-package.sh` rejects unsafe archive entries, missing evidence, checksum drift, malformed SBOM/SLSA shape, wrong provenance subject digest, export drift, native symbol leaks, `TEXTREL`, and `STATIC_TLS`. Runtime packaged-manifest discovery requires the checksum file plus SBOM/SLSA evidence beside the manifest and verifies their SHA-256 entries before loading. Direct Linux install and Linux packages preserve the evidence files. `bash scripts/verify-artifact-provenance.sh` still passes, proving this remains aligned with the canonical AP verifier lane rather than bespoke crypto. Evidence is recorded in `docs/plans/proof/runtime-engine/bun-jsc/gate-63-artifact-trust-sbom-provenance.md`. |
@@ -396,7 +396,7 @@ When source-backed Bun builds are needed, use the canonical Bun fork:
 
 ```sh
 NIMBUS_BUN_REPO=$HOME/src/github.com/nimbus/bun \
-NIMBUS_BUN_EXPECTED_REF=bun-v1.4.0-nimbus.5 \
+NIMBUS_BUN_EXPECTED_REF=nimbus-bun-jsc-proof-main-20260525 \
 NIMBUS_BUN_EXPECTED_REV=ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57 \
 make verify-bun-jsc-linked-adapter
 ```

@@ -4,6 +4,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/fork-upstream-standardization-plan.md`
+  - ready execution plan for standardizing Nimbus-owned upstream source
+    forks across local paths, Git remotes, active release branches, Nimbus tag
+    names, GitHub defaults, installer/package pins, and verification gates.
+    Covers `nimbus/deno`, `nimbus/rusty_v8`, `nimbus/bun`,
+    `nimbus/nimbus-crun`, and `nimbus/nimbus-libkrun`; explicitly replaces
+    future `locker` branch/tag naming with the `nimbus` standard while
+    preserving historical evidence. Includes an upstream impact audit that
+    requires Deno/rusty_v8, Bun, and crun/libkrun port work to reuse upstream
+    fixes and APIs when they now cover older Nimbus-local deltas.
 - `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
   - active execution plan for OpenShell-informed enterprise trust work.
     EPS0-EPS8 are complete: strict typed operator policy artifacts,
@@ -90,7 +100,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     lanes, pure Bun/JSC invocation, HostBridge and tenant identity propagation,
     cancellation/teardown/memory proof, product metadata selection, CI, docs,
     diagnostics, and local plus Debian 13 `minicloud` verification. Closed at
-    Nimbus `dec70418` with Bun source tag `bun-v1.4.0-nimbus.5`
+    Nimbus `dec70418` with Bun source tag `nimbus-bun-jsc-proof-main-20260525`
     (`ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57`). The next wave is
     distribution and release productization, not more proof of the basic linked
     execution path.
@@ -266,8 +276,8 @@ archived plans only when you need historical execution detail.
 - `docs/plans/archive/nimbus-libkrun-runtime-stack-plan.md`
   - completed execution record for shipping the patched Linux krun service
     stack from Nimbus-owned release artifacts (closed 2026-05-21). Created
-    `nimbus/nimbus-libkrun`, published `v1.17.4-nimbus.1`, paired
-    `nimbus-crun` `v1.27.1-nimbus.1`, updated direct install/uninstall/verify,
+    `nimbus/nimbus-libkrun`, published `v1.18.1-nimbus.1`, paired
+    `nimbus-crun` `v1.27.1-nimbus.2`, updated direct install/uninstall/verify,
     Linux package builders, apt/COPR mirror workflows, VMM helpers, and docs,
     and closed with Debian 13 root VMM localhost-only smoke plus Fedora 42
     package proof. Future krun stack bumps should promote a new active plan.

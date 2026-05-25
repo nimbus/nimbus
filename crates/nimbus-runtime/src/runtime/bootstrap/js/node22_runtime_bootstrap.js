@@ -2790,8 +2790,8 @@ Object.defineProperty(deno, "env", {
 });
 Object.defineProperty(deno, "version", {
   value: {
-    deno: "2.7.14-nimbus",
-    v8: "147.4.0-locker.1",
+    deno: "2.8.0-nimbus",
+    v8: "149.0.0-nimbus.1",
     typescript: "0.0.0-nimbus",
   },
   configurable: true,

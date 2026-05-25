@@ -206,7 +206,8 @@ published rust-vmm crates directly instead.
 
 `containers/libkrun` (**1,808 stars**, Red Hat-backed, Sergio Lopez maintainer)
 is the only true "VMM as library" in the Rust ecosystem. Built on rust-vmm
-crates. Apache 2.0. **v1.17.4** (Feb 2026), last commit 2026-04-07. Stable API
+crates. Apache 2.0. **v1.18.1** (May 2026), last commit observed 2026-05-21.
+Stable API
 since v1.0.0 (SemVer guaranteed).
 
 As of March 2026, libkrun can be used as a **direct Rust crate dependency**

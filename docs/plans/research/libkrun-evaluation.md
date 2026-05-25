@@ -17,8 +17,8 @@ Hypervisor code. It is maintained by Red Hat (Sergio Lopez / `slp`) in the
 `containers` GitHub organization (same org as podman, buildah, crun). Licensed
 Apache 2.0.
 
-- **Latest release:** v1.17.4 (2026-02-18)
-- **Last commit:** 2026-04-07 (actively maintained)
+- **Latest release:** v1.18.1 (2026-05-20)
+- **Last commit observed:** 2026-05-21 (actively maintained)
 - **Stars:** 1,808
 - **API stability:** Stable since v1.0.0 (SemVer guaranteed)
 
@@ -86,7 +86,7 @@ linkage is native Rust — no FFI overhead.
 
 ```toml
 # Git dependency (not yet on crates.io as a lib)
-krun = { git = "https://github.com/containers/libkrun", tag = "v1.17.4" }
+krun = { git = "https://github.com/containers/libkrun", tag = "v1.18.1" }
 ```
 
 ### Option 2: krun-sys crate (FFI bindings)

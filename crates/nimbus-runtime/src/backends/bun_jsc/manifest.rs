@@ -805,7 +805,7 @@ mod tests {
         json!({
             "schema_version": 1,
             "kind": "nimbus.bun_jsc.adapter",
-            "adapter_version": "v0.1.0-bun-v1.4.0-nimbus.5",
+            "adapter_version": "v0.1.0-bun-proof-main-20260525",
             "nimbus_version": "v0.1.0",
             "bun_source_repository": contract.repository,
             "bun_source_ref": contract.source_ref,
@@ -1011,7 +1011,7 @@ mod tests {
             .manifest
             .as_ref()
             .expect("verified manifest metadata should be exposed");
-        assert_eq!(manifest.source_ref, "bun-v1.4.0-nimbus.5");
+        assert_eq!(manifest.source_ref, "nimbus-bun-jsc-proof-main-20260525");
         assert_eq!(manifest.library_file, shared_library_basename());
         assert!(
             !serde_json::to_string(&resolved.diagnostics)
@@ -1103,7 +1103,7 @@ mod tests {
                 .expected
                 .expect("expected contract should be present")
                 .source_ref,
-            "bun-v1.4.0-nimbus.5"
+            "nimbus-bun-jsc-proof-main-20260525"
         );
     }
 

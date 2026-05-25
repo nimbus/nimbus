@@ -56,7 +56,7 @@ bash "${repo_root}/scripts/package-bun-jsc-adapter.sh" \
   --output-dir "${package_output}" \
   --shared-library "${fixture_library}" \
   --nimbus-version v0.1.0 \
-  --adapter-version v0.1.0-bun-v1.4.0-nimbus.5 \
+  --adapter-version v0.1.0-bun-proof-main-20260525 \
   --target-triple "${target_triple}" \
   >"${tmp_root}/package.out"
 

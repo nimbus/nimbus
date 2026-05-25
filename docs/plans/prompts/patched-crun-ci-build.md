@@ -32,7 +32,7 @@ release artifact. The binary must be built for linux/amd64 and linux/arm64.
 
 ### Pinned versions
 - **crun:** 1.27 (upstream tag)
-- **libkrun:** 1.17.4 (containers/libkrun)
+- **libkrun:** 1.18.1 (containers/libkrun)
 - **libkrunfw:** 5.3.0 (containers/libkrunfw, downloads kernel tarball)
 
 ### Build chain
@@ -40,7 +40,7 @@ release artifact. The binary must be built for linux/amd64 and linux/arm64.
 ```
 libkrunfw 5.3.0  (C, downloads + compiles Linux kernel → libkrunfw.so)
      ↓                   5-15 min cold, cacheable
-libkrun 1.17.4   (Rust + C FFI → libkrun.so, libkrun.h, libkrun.pc)
+libkrun 1.18.1   (Rust + C FFI → libkrun.so, libkrun.h, libkrun.pc)
      ↓                   ~60s
 crun 1.27 + patch (C, autotools → /usr/libexec/nimbus/crun)
                          ~90s
