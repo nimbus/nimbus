@@ -136,6 +136,9 @@ path.write_text(json.dumps(manifest, indent=2) + "\n")
 PY
       rewrite_checksums_for_extract "${extract_dir}"
       ;;
+    unsafe-mode)
+      chmod 0664 "${extract_dir}/${BUN_JSC_ADAPTER_MANIFEST_FILE}"
+      ;;
     *)
       printf 'unknown mutation: %s\n' "${mutation}" >&2
       exit 2
@@ -215,6 +218,18 @@ if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
 fi
 grep -F "manifest kind mismatch" "${tmp_root}/bad-manifest.out" >/dev/null
 
+unsafe_mode_archive="$(repack_bad_archive unsafe-mode unsafe-mode)"
+if bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
+  --archive "${unsafe_mode_archive}" \
+  --target-triple "${target_triple}" \
+  --nm "${fake_nm}" \
+  >"${tmp_root}/unsafe-mode.out" 2>&1; then
+  printf 'expected unsafe-mode archive verification to fail\n' >&2
+  exit 1
+fi
+grep -F "group/other writable packaged Bun/JSC adapter files are rejected" \
+  "${tmp_root}/unsafe-mode.out" >/dev/null
+
 if NIMBUS_BUN_JSC_FAKE_NM_MODE=wrong-exports \
   bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
     --archive "${archive_path}" \
@@ -238,4 +253,4 @@ fi
 grep -F "exports bundled native implementation symbols" \
   "${tmp_root}/leaked-native.out" >/dev/null
 
-printf 'verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, wrong exports, and native leaks\n'
+printf 'verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, unsafe modes, wrong exports, and native leaks\n'
