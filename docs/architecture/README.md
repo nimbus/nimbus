@@ -11,6 +11,34 @@ The repository-wide source ownership and architecture guardrail ledger lives at
 Use it with `./scripts/verify-repo-architecture-quality.sh` before and after
 large refactor waves.
 
+## Repository Quality Map
+
+The current architecture hardening baseline keeps large composition roots thin
+and moves behavior into concept-owned modules:
+
+- `nimbus-server::tenant_isolation` owns admission context, authority, stable
+  identity, policy inputs, runtime admission, artifact provenance, image
+  admission, audit evidence, and operator policy.
+- `nimbus-server::construction` and `nimbus-server::router` are the canonical
+  public server construction seams: `ServeOptions::new(service)` plus
+  `serve(listener, options)`, and `RouterOptions::new(service)` plus
+  `build_router(options)`.
+- `nimbus-server::service_manager` remains the sandbox service facade while
+  activation, launch materialization, handle refresh, catalog, registry,
+  verification, and system-state recording live under `service_manager/`.
+- `nimbus-runtime::limits` owns backend axes, grants, resource budgets,
+  adapter diagnostics, and policy wrappers without workspace dependencies.
+- `nimbus-bin::dev` and `nimbus-bin::machine::handlers` delegate workflow
+  phases to child modules so CLI roots stay as dispatch surfaces.
+- JavaScript compatibility selftests are grouped by capability under
+  `packages/firebase/src/selftest/`, and public compatibility bridges stay
+  typed and local to the SDK package that owns them.
+
+When adding a new enterprise capability, update the owning architecture doc and
+run the guardrail script. A new root above the AGENTS.md size threshold should
+either split by product concept or be added to the ledger with a narrow
+justification.
+
 ## Crate mapping
 
 | Directory | Crate | What's here |
