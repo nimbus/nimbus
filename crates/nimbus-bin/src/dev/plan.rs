@@ -1,0 +1,177 @@
+use std::io::{self, IsTerminal};
+use std::path::{Path, PathBuf};
+
+use rand::RngCore;
+
+use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
+use crate::dirs;
+use crate::start::{CliTenantProvider, StartCommand};
+
+use super::adapter::{DevAdapter, detect_dev_adapter};
+use super::launch::{AutoOpenDecision, ProcessEnv, resolve_auto_open};
+use super::{DevCommand, DevTailLogsMode};
+
+#[derive(Debug)]
+pub(super) struct DevPlan {
+    pub(super) app_dir: PathBuf,
+    pub(super) data_dir: PathBuf,
+    pub(super) deployment_slug: String,
+    pub(super) compose_selection: Option<ResolvedComposeSelection>,
+    pub(super) local_url: String,
+    pub(super) adapter: Option<DevAdapter>,
+    pub(super) once: bool,
+    pub(super) tail_logs: DevTailLogsMode,
+    pub(super) start_command: StartCommand,
+    pub(super) auto_open_decision: AutoOpenDecision,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct DevWatchPlan {
+    pub(super) app_dir: PathBuf,
+    pub(super) source_roots: Vec<PathBuf>,
+    pub(super) debug_node_apis: bool,
+    pub(super) tail_logs: DevTailLogsMode,
+    pub(super) local_url: String,
+    pub(super) deploy_admin_token: String,
+}
+
+impl DevPlan {
+    pub(super) fn watch_plan(&self) -> DevWatchPlan {
+        DevWatchPlan {
+            app_dir: self.app_dir.clone(),
+            source_roots: self
+                .adapter
+                .as_ref()
+                .map(|adapter| adapter.source_roots().to_vec())
+                .unwrap_or_default(),
+            debug_node_apis: self.start_command.debug_node_apis,
+            tail_logs: self.tail_logs,
+            local_url: self.local_url.clone(),
+            deploy_admin_token: self
+                .start_command
+                .deploy_admin_token
+                .clone()
+                .expect("dev plan should configure deploy activation token"),
+        }
+    }
+}
+
+pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
+    let auto_open_decision =
+        resolve_auto_open(command.no_open, io::stdout().is_terminal(), &ProcessEnv);
+    let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
+    let adapter = detect_dev_adapter(&app_dir)?;
+    let deployment_slug =
+        dirs::deployment_slug(&app_dir).map_err(|error| io::Error::other(error.to_string()))?;
+    let explicit_compose_files = command.compose_file.as_slice();
+    let compose_selection = resolve_compose_selection(explicit_compose_files, cwd)
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    let data_dir = command
+        .data_dir
+        .as_deref()
+        .map(|path| resolve_unchecked_path(path, cwd))
+        .unwrap_or_else(|| app_dir.join(".nimbus").join("dev"));
+    let local_url = format!("http://localhost:{}/", command.port);
+    let deploy_admin_token = generate_dev_deploy_token();
+    let start_command = StartCommand {
+        port: command.port,
+        data_dir: Some(data_dir.clone()),
+        control_data_dir: Some(data_dir.clone()),
+        tenant_provider: Some(CliTenantProvider::Sqlite),
+        app_dir: Some(app_dir.clone()),
+        skip_codegen: command.skip_codegen,
+        debug_node_apis: command.debug_node_apis,
+        compose_file: command.compose_file,
+        deploy_admin_token: Some(deploy_admin_token),
+        auto_tenant: Some("demo".to_string()),
+        tenant_isolation_mode: nimbus_server::TenantIsolationMode::LocalDevelopment,
+        ..StartCommand::default()
+    };
+
+    Ok(DevPlan {
+        app_dir,
+        data_dir,
+        deployment_slug,
+        compose_selection,
+        local_url,
+        adapter,
+        once: command.once,
+        tail_logs: command.tail_logs,
+        start_command,
+        auto_open_decision,
+    })
+}
+
+pub(super) fn resolve_app_dir(explicit_app_dir: Option<&Path>, cwd: &Path) -> io::Result<PathBuf> {
+    let selected = explicit_app_dir
+        .map(|path| resolve_unchecked_path(path, cwd))
+        .unwrap_or_else(|| detect_app_dir(cwd));
+    canonicalize_dir(&selected)
+}
+
+pub(super) fn detect_app_dir(cwd: &Path) -> PathBuf {
+    for candidate in cwd.ancestors() {
+        if candidate.join("nimbus").is_dir()
+            || candidate.join("convex").is_dir()
+            || candidate
+                .join(".nimbus")
+                .join("convex")
+                .join("functions.json")
+                .is_file()
+            || candidate.join("firebase.json").is_file()
+        {
+            return candidate.to_path_buf();
+        }
+        // Stop the walk-up at the project's `.git` boundary so a sibling
+        // `nimbus/`, `convex/`, or `firebase.json` *outside* the repo can
+        // never accidentally become the app dir. See
+        // `docs/plans/cli-daemon-canonicalization-plan.md` CD2.
+        if crate::path_boundary::at_git_boundary(candidate) {
+            break;
+        }
+    }
+    cwd.to_path_buf()
+}
+
+fn resolve_unchecked_path(path: &Path, cwd: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
+}
+
+fn canonicalize_dir(path: &Path) -> io::Result<PathBuf> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("app directory {} is not readable: {error}", path.display()),
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(io::Error::other(format!(
+            "app path {} is not a directory",
+            path.display()
+        )));
+    }
+    path.canonicalize().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to resolve app directory {}: {error}",
+                path.display()
+            ),
+        )
+    })
+}
+
+fn generate_dev_deploy_token() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut token, "{byte:02x}");
+    }
+    token
+}
