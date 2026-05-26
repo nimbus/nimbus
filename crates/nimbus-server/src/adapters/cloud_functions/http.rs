@@ -1,52 +1,24 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::body::{Body, Bytes};
+use axum::body::Bytes;
 use axum::extract::{OriginalUri, Query as AxumQuery, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, Method};
 use axum::response::Response;
-use nimbus_core::{Error, Result, TenantId};
-use nimbus_runtime::{InvocationAuth, InvocationKind, InvocationRequest};
-use serde::Deserialize;
-use serde_json::Value;
 
 mod callable;
+mod invocation;
+mod request;
+mod response;
+mod tenant;
 
 use callable::{CallableHttpRequest, handle_callable_target};
+use invocation::execute_http_target;
+use request::{build_http_request_args, header_value_contains, normalized_headers, request_url};
+use tenant::resolve_cloud_functions_http_tenant;
 
-use super::host_bridge::CloudFunctionsHostBridge;
 use super::{CloudFunctionsHttpExposure, CloudFunctionsRegistry, CloudFunctionsTargetBinding};
-use crate::application_auth::normalize_principal_context;
-use crate::execution::errors::runtime_error_to_core;
-use crate::execution::invocations::{
-    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host,
-    next_runtime_server_request_id,
-};
-use crate::execution::runtime_admission::RuntimeExecutionAdmission;
-use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::state::{AppError, AppState};
-use crate::tenant_isolation::{
-    RuntimeIsolationTier, TenantIsolationContext, admit_runtime_invocation_decision,
-};
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum CloudFunctionsHttpBodyKind {
-    Json,
-    Text,
-}
-
-#[derive(Debug, Deserialize)]
-struct CloudFunctionsHttpResponseEnvelope {
-    #[serde(default)]
-    status: Option<u16>,
-    #[serde(default)]
-    headers: Option<HashMap<String, Value>>,
-    #[serde(default)]
-    body_kind: Option<CloudFunctionsHttpBodyKind>,
-    #[serde(default)]
-    body: Value,
-}
 
 pub(crate) async fn http_handler(
     State(state): State<Arc<AppState>>,
@@ -115,263 +87,6 @@ pub(crate) async fn http_handler(
     }
 }
 
-fn resolve_cloud_functions_http_tenant(
-    state: &AppState,
-) -> std::result::Result<TenantId, AppError> {
-    let tenants = state.service.list_tenants().map_err(AppError::from)?;
-    match tenants.as_slice() {
-        [tenant_id] => Ok(tenant_id.clone()),
-        [] => Err(AppError::from(Error::Conflict(
-            "cloud functions http handlers require exactly one tenant, but no tenants exist"
-                .to_string(),
-        ))),
-        _ => Err(AppError::from(Error::Conflict(
-            "cloud functions http handlers require exactly one tenant; explicit multi-tenant HTTP binding is deferred to a later cloud functions phase"
-                .to_string(),
-        ))),
-    }
-}
-
-fn build_http_request_args(
-    method: &Method,
-    headers: &HeaderMap,
-    original_uri: &OriginalUri,
-    request_path: &str,
-    query: HashMap<String, String>,
-    body: Bytes,
-) -> Result<Value> {
-    let normalized_headers = normalized_headers(headers);
-    let raw_body = if body.is_empty() {
-        String::new()
-    } else {
-        std::str::from_utf8(&body)
-            .map_err(|error| {
-                Error::InvalidInput(format!(
-                    "cloud functions http handlers only cover UTF-8 request bodies in the first slice: {error}"
-                ))
-            })?
-            .to_string()
-    };
-    let body = if raw_body.is_empty() {
-        Value::Null
-    } else if header_value_contains(headers, header::CONTENT_TYPE, "json") {
-        serde_json::from_str(&raw_body).map_err(|error| {
-            Error::InvalidInput(format!(
-                "cloud functions http handler could not parse JSON request body: {error}"
-            ))
-        })?
-    } else {
-        Value::String(raw_body.clone())
-    };
-
-    Ok(serde_json::json!({
-        "method": method.as_str(),
-        "path": request_path,
-        "original_url": request_url(headers, original_uri, request_path),
-        "query": query,
-        "headers": normalized_headers,
-        "body": body,
-        "raw_body": raw_body,
-    }))
-}
-
-fn request_url(headers: &HeaderMap, original_uri: &OriginalUri, request_path: &str) -> String {
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("http");
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("localhost");
-    let query_suffix = original_uri
-        .0
-        .query()
-        .map(|query| format!("?{query}"))
-        .unwrap_or_default();
-    format!("{scheme}://{host}{request_path}{query_suffix}")
-}
-
-fn normalized_headers(headers: &HeaderMap) -> HashMap<String, String> {
-    headers
-        .iter()
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|value| (name.as_str().to_ascii_lowercase(), value.to_string()))
-        })
-        .collect()
-}
-
-fn header_value_contains(headers: &HeaderMap, name: header::HeaderName, needle: &str) -> bool {
-    headers
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.to_ascii_lowercase().contains(needle))
-}
-
-fn execute_http_target(
-    state: Arc<AppState>,
-    registry: Arc<CloudFunctionsRegistry>,
-    deployment_generation: u64,
-    tenant_id: TenantId,
-    function_name: String,
-    args: Value,
-    auth: Option<InvocationAuth>,
-) -> std::result::Result<Response, AppError> {
-    let server_request_id = next_runtime_server_request_id("cloud-functions-http");
-    let isolation = TenantIsolationContext::application(
-        tenant_id.clone(),
-        normalize_principal_context(auth.as_ref()),
-        "cloud_functions.http_runtime",
-    )
-    .with_deployment_generation(deployment_generation);
-    isolation.ensure_deployment_generation_matches(
-        deployment_generation,
-        "cloud functions http runtime deployment",
-    )?;
-    isolation.ensure_application_principal_tenant_access("cloud functions http tenant")?;
-    let bundle = registry.runtime_bundle();
-    isolation.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
-    let services = state
-        .runtime_service_registry()
-        .snapshot_for_tenant(isolation.tenant_id());
-    let runtime_policy = registry.runtime_policy();
-    let decision = admit_runtime_invocation_decision(
-        &isolation,
-        &function_name,
-        Some(server_request_id.as_str()),
-        &runtime_policy,
-        RuntimeIsolationTier::InProcessUntrusted,
-        state.tenant_isolation_mode,
-        services.keys().cloned(),
-    )?;
-    decision.ensure_runtime_bundle_matches(&bundle, "cloud functions http runtime bundle")?;
-    RuntimeExecutionAdmission::for_decision(&decision)
-        .ensure_in_process_available("cloud functions http runtime invocation")?;
-    let request = InvocationRequest {
-        kind: InvocationKind::Mutation,
-        function_name,
-        args,
-        page_size: None,
-        cursor: None,
-        auth: auth.clone(),
-        services: services.clone(),
-    };
-    let bridge = Arc::new(CloudFunctionsHostBridge::build(
-        RuntimeHostScope::new(
-            state.service.clone(),
-            registry.runtime_policy(),
-            decision.clone(),
-        ),
-        RuntimeHostInvocation::new(
-            normalize_principal_context(auth.as_ref()),
-            Some(server_request_id.clone()),
-            InvocationKind::Mutation,
-        ),
-    )?);
-
-    let runtime_response = invoke_runtime_bundle_blocking_with_host(
-        &registry.runtime_executor(),
-        registry.runtime_policy(),
-        bridge.clone(),
-        bundle,
-        request,
-        RuntimeBundleInvocationOptions::enforcing_policy_limit(
-            decision.tenant_id(),
-            Some(server_request_id.as_str()),
-            None,
-        )
-        .with_runtime_bundle_provenance_gate(registry.runtime_bundle_provenance()),
-    )
-    .map_err(runtime_error_to_core)?;
-    let response = build_http_response(runtime_response)?;
-    bridge.commit_mutation_execution_unit()?;
-    Ok(response)
-}
-
-fn build_http_response(value: Value) -> std::result::Result<Response, AppError> {
-    let envelope: CloudFunctionsHttpResponseEnvelope =
-        serde_json::from_value(value).map_err(|error| {
-            AppError::from(Error::InvalidInput(format!(
-                "cloud functions http handler must return a response envelope: {error}"
-            )))
-        })?;
-    let status = envelope
-        .status
-        .map(StatusCode::from_u16)
-        .transpose()
-        .map_err(|error| {
-            AppError::from(Error::InvalidInput(format!(
-                "cloud functions http handler returned an invalid status code: {error}"
-            )))
-        })?
-        .unwrap_or(StatusCode::OK);
-    let mut builder = Response::builder().status(status);
-    let mut has_content_type = false;
-
-    for (name, value) in parse_headers(envelope.headers)? {
-        if name.eq_ignore_ascii_case("content-type") {
-            has_content_type = true;
-        }
-        builder = builder.header(name, value);
-    }
-
-    let body_kind = envelope.body_kind.unwrap_or(match &envelope.body {
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
-            CloudFunctionsHttpBodyKind::Text
-        }
-        _ => CloudFunctionsHttpBodyKind::Json,
-    });
-    if matches!(body_kind, CloudFunctionsHttpBodyKind::Json) && !has_content_type {
-        builder = builder.header(header::CONTENT_TYPE, "application/json");
-    }
-    let body = match body_kind {
-        CloudFunctionsHttpBodyKind::Json => serde_json::to_vec(&envelope.body)
-            .map_err(|error| AppError::from(Error::Serialization(error.to_string())))?,
-        CloudFunctionsHttpBodyKind::Text => render_text_body(envelope.body)?,
-    };
-    builder.body(Body::from(body)).map_err(|error| {
-        AppError::from(Error::Internal(format!(
-            "cloud functions http response could not build: {error}"
-        )))
-    })
-}
-
-fn parse_headers(
-    headers: Option<HashMap<String, Value>>,
-) -> std::result::Result<Vec<(String, String)>, AppError> {
-    let Some(headers) = headers else {
-        return Ok(Vec::new());
-    };
-    headers
-        .into_iter()
-        .filter_map(|(name, value)| match value {
-            Value::Null => None,
-            Value::String(value) => Some(Ok((name, value))),
-            Value::Number(value) => Some(Ok((name, value.to_string()))),
-            Value::Bool(value) => Some(Ok((name, value.to_string()))),
-            _ => Some(Err(AppError::from(Error::InvalidInput(format!(
-                "cloud functions http header `{name}` must resolve to a string-coercible value"
-            ))))),
-        })
-        .collect()
-}
-
-fn render_text_body(body: Value) -> std::result::Result<Vec<u8>, AppError> {
-    match body {
-        Value::Null => Ok(Vec::new()),
-        Value::String(value) => Ok(value.into_bytes()),
-        Value::Bool(value) => Ok(value.to_string().into_bytes()),
-        Value::Number(value) => Ok(value.to_string().into_bytes()),
-        _ => Err(AppError::from(Error::InvalidInput(
-            "cloud functions http text responses must resolve to a string-coercible value"
-                .to_string(),
-        ))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -379,12 +94,16 @@ mod tests {
     use std::process::Command;
     use std::sync::Arc;
 
+    use axum::http::header;
     use futures::future::BoxFuture;
-    use nimbus_core::{Query, TableName};
+    use nimbus_core::{Query, TableName, TenantId};
     use nimbus_engine::Service;
-    use nimbus_runtime::{RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind};
+    use nimbus_runtime::{
+        InvocationAuth, RuntimeUserIdentity, VerifiedUserIdentity, VerifiedUserIdentityKind,
+    };
     use nimbus_testing::{ServerFixture, ServiceFixture};
     use reqwest::StatusCode;
+    use serde_json::Value;
     use tempfile::tempdir;
 
     use super::*;

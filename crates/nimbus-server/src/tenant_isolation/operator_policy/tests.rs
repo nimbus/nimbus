@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::tenant_isolation::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
-    TenantImageVerificationRequest,
+    TenantImageVerificationRequest, TenantRuntimePolicyAdmission,
 };
 use nimbus_sandbox::PublishedEndpointProtocol;
 
