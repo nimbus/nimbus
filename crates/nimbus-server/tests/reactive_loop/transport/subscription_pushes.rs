@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn subscribe_insert_and_receive_reactive_push() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     let create_response = api.create_tenant("demo").await;
@@ -36,7 +36,7 @@ async fn subscribe_insert_and_receive_reactive_push() {
 #[tokio::test]
 async fn subscribe_update_and_delete_and_receive_reactive_pushes() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     let create_response = api.create_tenant("demo").await;

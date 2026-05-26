@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn license_status_route_returns_community_defaults() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api.license_status().await;

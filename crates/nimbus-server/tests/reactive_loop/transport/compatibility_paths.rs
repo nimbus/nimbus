@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn browser_style_websocket_query_parameter_supports_subscriptions() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -22,7 +22,7 @@ async fn browser_style_websocket_query_parameter_supports_subscriptions() {
 #[tokio::test]
 async fn convex_websocket_path_supports_subscriptions() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(
+    let server = ServerFixture::start(router_for_convex(
         fixture.service(),
         ConvexRegistry::empty(),
     ))

@@ -5,11 +5,8 @@ async fn firebase_batch_write_reports_partial_success_and_rejects_duplicates() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let response = server
         .client()
@@ -100,11 +97,8 @@ async fn firebase_run_query_executes_supported_subset_with_where_order_cursor_of
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
         &CollectionPath::root(CollectionName::new("cities").expect("collection name should parse")),
     )
@@ -233,11 +227,8 @@ async fn firebase_run_query_reports_missing_index_for_compound_query_without_mat
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
         &CollectionPath::root(CollectionName::new("cities").expect("collection name should parse")),
     )
@@ -325,7 +316,7 @@ async fn firebase_run_query_reports_missing_index_for_compound_query_without_mat
 async fn firebase_run_query_returns_read_time_only_when_no_documents_match() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -384,11 +375,8 @@ async fn firebase_run_aggregation_query_counts_filtered_and_empty_results() {
         &["cities", "SEA"],
         [("state", json!("WA"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let response = server
         .client()
@@ -487,11 +475,8 @@ async fn firebase_run_aggregation_query_under_parent_document_scopes_nested_coll
         &["cities", "LA", "landmarks", "sign"],
         [("name", json!("Hollywood Sign"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let response = server
         .client()
@@ -526,7 +511,7 @@ async fn firebase_run_aggregation_query_under_parent_document_scopes_nested_coll
 async fn firebase_run_aggregation_query_rejects_deferred_selectors_and_sum() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -607,11 +592,8 @@ async fn firebase_run_query_supports_composite_unary_filters_and_name_tiebreaks(
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     for (document_id, rank, state) in [
         ("bravo", 1, json!("CA")),
         ("alpha", 1, serde_json::Value::Null),
@@ -756,11 +738,8 @@ async fn firebase_run_query_under_parent_document_scopes_to_nested_collection_pa
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     for (document_path, name) in [
         ("cities/SF/landmarks/golden-gate", "Golden Gate Bridge"),
@@ -820,11 +799,8 @@ async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_orderi
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     for (document_path, rank) in [
         ("cities/SF/districts/1/landmarks/zz-top", 1),
@@ -1028,7 +1004,7 @@ async fn firebase_run_query_collection_group_uses_path_metadata_for_scope_orderi
 async fn firebase_run_query_rejects_invalid_filter_combinations() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))

@@ -5,11 +5,8 @@ async fn firebase_grpc_commit_executes_atomic_batch_and_consumes_transaction_tok
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let transaction = client
@@ -79,11 +76,8 @@ async fn firebase_grpc_batch_get_documents_reads_found_missing_and_rolls_back_se
             ("state", json!("CA")),
         ],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let transaction = client
@@ -193,11 +187,8 @@ async fn firebase_grpc_run_query_supports_transaction_selector_with_pinned_snaps
         &["cities", "SF"],
         [("name", json!("San Francisco")), ("visits", json!(1))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let transaction = client
@@ -281,11 +272,8 @@ async fn firebase_grpc_batch_write_reports_partial_success_and_rejects_duplicate
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let response = client
@@ -363,11 +351,8 @@ async fn firebase_grpc_run_query_streams_documents_and_empty_results() {
         &["cities", "SEA"],
         [("name", json!("Seattle")), ("state", json!("WA"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let mut responses = client
@@ -468,11 +453,8 @@ async fn firebase_grpc_run_query_supports_document_id_filters_and_implicit_name_
         &["cities", "charlie"],
         [("rank", json!(2))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let mut responses = client
@@ -564,11 +546,8 @@ async fn firebase_grpc_run_query_supports_collection_group_cursors_with_full_doc
         &["cities", "SF", "landmarks", "bb-top"],
         [("rank", json!(2))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let mut responses = client
@@ -639,11 +618,8 @@ async fn firebase_grpc_run_query_reports_missing_index_for_compound_query() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let cities_table = crate::adapters::firebase::storage_table_for_collection_path(
         &CollectionPath::root(CollectionName::new("cities").expect("collection name should parse")),
     )
@@ -743,11 +719,8 @@ async fn firebase_grpc_run_aggregation_query_counts_filtered_results_with_aliase
         &["cities", "SEA"],
         [("state", json!("WA"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let mut responses = client
@@ -802,7 +775,7 @@ async fn firebase_grpc_run_aggregation_query_counts_filtered_results_with_aliase
 async fn firebase_grpc_unary_requests_reject_deferred_selectors() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -905,7 +878,7 @@ async fn firebase_grpc_get_document_returns_masked_fields_and_honors_transaction
             ("state", json!("CA")),
         ],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -958,11 +931,8 @@ async fn firebase_grpc_point_crud_handles_explicit_and_generated_ids_masks_and_p
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let explicit = client
@@ -1111,11 +1081,8 @@ async fn firebase_grpc_list_documents_lists_root_and_nested_collections_with_mas
         &["cities", "SF", "landmarks", "bridge"],
         [("label", json!("Golden Gate Bridge"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let root = client
@@ -1170,7 +1137,7 @@ async fn firebase_grpc_list_documents_lists_root_and_nested_collections_with_mas
 async fn firebase_grpc_list_documents_rejects_deferred_selectors() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -1256,11 +1223,8 @@ async fn firebase_grpc_list_collection_ids_lists_root_and_nested_parents_with_pa
         &["cities", "SF", "landmarks", "bridge", "photos", "p1"],
         [("label", json!("Photo"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut client = firestore_grpc_client(&server).await;
 
     let root_first = client
@@ -1319,7 +1283,7 @@ async fn firebase_grpc_list_collection_ids_lists_root_and_nested_parents_with_pa
 async fn firebase_grpc_list_collection_ids_rejects_invalid_page_tokens_and_read_time() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))

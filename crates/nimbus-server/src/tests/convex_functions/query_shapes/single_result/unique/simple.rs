@@ -36,7 +36,7 @@ async fn convex_named_unique_query_returns_document_null_or_error() {
         }
     ]));
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

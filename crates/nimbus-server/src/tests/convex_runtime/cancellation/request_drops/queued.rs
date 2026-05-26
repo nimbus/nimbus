@@ -37,8 +37,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     .with_runtime_limits(limits);
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
-    let server =
-        ServerFixture::start(build_router_with_convex(service.clone(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -169,8 +168,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
         Service::new_with_simulation(path, harness.clock(), harness.fault_injector())
     });
     let service = fixture.service();
-    let server =
-        ServerFixture::start(build_router_with_convex(service.clone(), registry.clone())).await;
+    let server = ServerFixture::start(router_for_convex(service.clone(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

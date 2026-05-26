@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn firebase_rest_preflight_allows_text_plain_and_sdk_headers_from_loopback_origin() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
 
     let allowed = server
         .client()
@@ -64,7 +64,7 @@ async fn firebase_rest_preflight_allows_text_plain_and_sdk_headers_from_loopback
 #[tokio::test]
 async fn firebase_grpc_web_preflight_allows_firestore_headers_and_exposes_grpc_trailers() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
 
     let allowed = server
         .client()
@@ -131,7 +131,7 @@ async fn firebase_grpc_web_preflight_allows_firestore_headers_and_exposes_grpc_t
 #[tokio::test]
 async fn firebase_enabled_routes_grpc_and_grpc_web_requests_to_firestore_service() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))

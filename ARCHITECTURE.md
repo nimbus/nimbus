@@ -665,13 +665,18 @@ worker-local beneath that seam.
 
 **`nimbus-server`** — Network I/O and integration. Nimbus-native routes are the default surface. The Convex adapter is an opt-in layer that owns the runtime executor, the `HostBridge` implementation, auth verification, and the function registry — it is the code that bridges the runtime into the engine.
 
-- `lib.rs` — Public server facade. Re-exports the router builders and serve
-  helpers; `serve` starts the axum listener.
+- `lib.rs` — Public server facade. Re-exports the canonical construction
+  surface: `RouterOptions` + `build_router(options)` for embedders that need
+  an axum router, and `ServeOptions` + `serve(listener, options)` for listener
+  ownership.
+- `construction.rs` — Listener-owned server construction. Applies the packaged
+  `_nimbus` system registry default, optional MongoDB listener startup, and
+  graceful shutdown wiring before handing the HTTP path to the router builder.
 - `router.rs` — Nimbus-native and Convex route composition. The public
-  `build_router*` overloads are now thin wrappers over one internal
-  `RouterBuildConfig` path that normalizes `LicenseState`, optional Convex
-  support, and runtime-service-registry wiring before building the axum
-  router. The landed localhost hardening path also lives here: loopback-first
+  `RouterOptions` bundle lowers into one internal `RouterBuildConfig` path
+  that normalizes `LicenseState`, optional Convex support, and
+  runtime-service-registry wiring before building the axum router. The landed
+  localhost hardening path also lives here: loopback-first
   bind defaults, route-family origin allowlists, local server-access auth, the
   `/ui/*` bootstrap fixture, and the separation between server-access auth and
   tenant/application auth.

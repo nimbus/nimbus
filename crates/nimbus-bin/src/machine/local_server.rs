@@ -231,7 +231,7 @@ mod tests {
     use nimbus_server::{
         LocalServerSecurityState, MachineCreateRequest, MachineLifecycleFuture,
         MachineLifecycleManager, MachineLifecycleSnapshot, MachineUpdateRequest, ServeOptions,
-        ServerDiscoveryLease, load_or_create_local_admin_token, serve_with_options,
+        ServerDiscoveryLease, load_or_create_local_admin_token, serve,
     };
     use nimbus_testing::wait_for_condition;
     use tempfile::tempdir;
@@ -373,10 +373,9 @@ mod tests {
             .expect("listener address should resolve");
         let _lease = ServerDiscoveryLease::acquire(&local_paths, address)
             .expect("server discovery should be recorded");
-        let server_task = tokio::spawn(serve_with_options(
+        let server_task = tokio::spawn(serve(
             listener,
-            service,
-            ServeOptions::default()
+            ServeOptions::new(service.clone())
                 .with_local_server_security(Arc::new(LocalServerSecurityState::new(
                     local_paths.clone(),
                     token,

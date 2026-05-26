@@ -7,11 +7,11 @@ use reqwest::StatusCode;
 use serde_json::json;
 use tokio::net::TcpStream;
 
+use crate::ConvexRegistry;
 use crate::tests::{
-    convex_registry_with_routes_and_bundle, open_json_post_stream, wait_for_runtime_metrics,
-    wait_for_runtime_metrics_case,
+    convex_registry_with_routes_and_bundle, open_json_post_stream, router_for_convex,
+    wait_for_runtime_metrics, wait_for_runtime_metrics_case,
 };
-use crate::{ConvexRegistry, build_router_with_convex};
 
 pub(crate) const FAIRNESS_HTTP_REJECTION_CASE: DeterministicTestCase = DeterministicTestCase::new(
     "runtime-tenant-fairness-http-rejection",
@@ -134,11 +134,7 @@ async fn convex_runtime_http_rejections_return_too_many_requests() {
 pub(crate) async fn convex_runtime_http_rejections_return_too_many_requests_inner() {
     let registry = fairness_runtime_registry();
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(
-        fixture.service(),
-        registry.clone(),
-    ))
-    .await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -226,11 +222,7 @@ async fn convex_runtime_websocket_bootstrap_rejections_send_error_frames() {
 pub(crate) async fn convex_runtime_websocket_bootstrap_rejections_send_error_frames_inner() {
     let registry = fairness_runtime_registry();
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(
-        fixture.service(),
-        registry.clone(),
-    ))
-    .await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

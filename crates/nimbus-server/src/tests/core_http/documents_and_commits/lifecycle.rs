@@ -4,7 +4,7 @@ use nimbus_testing::BlockingFaultInjector;
 #[tokio::test]
 async fn create_tenant_and_run_document_lifecycle() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     let create_response = api.create_tenant("demo").await;
@@ -62,7 +62,7 @@ async fn create_tenant_and_run_document_lifecycle() {
 #[tokio::test]
 async fn get_nonexistent_document_returns_not_found() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -88,7 +88,7 @@ async fn dropped_http_insert_after_commit_still_persists_the_document() {
         )
     });
     let service = fixture.service();
-    let server = ServerFixture::start(build_router(service.clone())).await;
+    let server = ServerFixture::start(router_for_service(service.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

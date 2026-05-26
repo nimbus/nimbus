@@ -5,7 +5,7 @@ use std::sync::Arc;
 use nimbus::{ConvexRegistry, Error, LicenseState, Service, TenantId, run_scheduler};
 use nimbus_server::{
     CloudFunctionsRegistry, LocalServerPaths, LocalServerSecurityState, ServeOptions,
-    ServerDiscoveryLease, load_or_create_local_admin_token, serve_with_options,
+    ServerDiscoveryLease, load_or_create_local_admin_token, serve,
 };
 
 use super::StartCommand;
@@ -129,7 +129,7 @@ pub(crate) async fn run_start_command(
     }
 
     tracing::info!("nimbus listening on {}", listener.local_addr()?);
-    let mut serve_options = ServeOptions::default().with_license(license_state);
+    let mut serve_options = ServeOptions::new(service.clone()).with_license(license_state);
     if let Some(registry) = convex_registry {
         serve_options = serve_options.with_convex_registry(registry);
     }
@@ -146,7 +146,7 @@ pub(crate) async fn run_start_command(
     serve_options = serve_options.with_local_server_security(local_server_security);
     serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
 
-    let server_result = serve_with_options(listener, service, serve_options).await;
+    let server_result = serve(listener, serve_options).await;
     drop(discovery_lease);
     let _ = shutdown_tx.send(true);
     let _ = scheduler_handle.await;

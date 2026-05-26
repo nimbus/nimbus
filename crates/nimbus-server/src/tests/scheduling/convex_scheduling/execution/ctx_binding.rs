@@ -92,7 +92,7 @@ export {};
     let service = fixture.service();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
-    let server = ServerFixture::start(build_router_with_convex(service, registry)).await;
+    let server = ServerFixture::start(router_for_convex(service, registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

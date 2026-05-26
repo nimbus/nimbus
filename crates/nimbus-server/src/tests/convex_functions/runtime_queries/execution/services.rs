@@ -312,7 +312,7 @@ export {};
         )]),
     });
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(crate::build_router_with_convex_and_sandbox_catalog(
+    let server = ServerFixture::start(router_for_convex_sandbox_catalog(
         fixture.service(),
         registry.clone(),
         sandbox_catalog,
@@ -442,13 +442,11 @@ export {};
             },
         });
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(
-        crate::router::build_router_with_convex_and_runtime_service_registry(
-            fixture.service(),
-            registry.clone(),
-            runtime_service_registry,
-        ),
-    )
+    let server = ServerFixture::start(router_for_convex_runtime_service_registry(
+        fixture.service(),
+        registry.clone(),
+        runtime_service_registry,
+    ))
     .await;
     let api = HttpApiFixture::new(&server);
 
@@ -631,13 +629,11 @@ export {};
         delay: Duration::from_millis(40),
     });
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(
-        crate::router::build_router_with_convex_and_runtime_service_registry(
-            fixture.service(),
-            registry.clone(),
-            runtime_service_registry.clone(),
-        ),
-    )
+    let server = ServerFixture::start(router_for_convex_runtime_service_registry(
+        fixture.service(),
+        registry.clone(),
+        runtime_service_registry.clone(),
+    ))
     .await;
     let api = HttpApiFixture::new(&server);
 
@@ -758,7 +754,7 @@ export {};
         .with_activation_timeout(Duration::from_secs(1)),
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(crate::build_router_with_convex_and_sandbox_service_manager(
+    let server = ServerFixture::start(router_for_convex_sandbox_service_manager(
         fixture.service(),
         registry.clone(),
         sandbox_service_manager.clone(),
@@ -903,7 +899,7 @@ export {};
         .with_activation_timeout(Duration::from_secs(1)),
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(crate::build_router_with_convex_and_sandbox_service_manager(
+    let server = ServerFixture::start(router_for_convex_sandbox_service_manager(
         fixture.service(),
         registry.clone(),
         sandbox_service_manager.clone(),
@@ -1074,7 +1070,7 @@ export {};
         .with_activation_timeout(Duration::from_secs(30)),
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(crate::build_router_with_convex_and_sandbox_service_manager(
+    let server = ServerFixture::start(router_for_convex_sandbox_service_manager(
         fixture.service(),
         registry.clone(),
         sandbox_service_manager.clone(),

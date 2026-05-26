@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn websocket_missing_tenant_header_returns_bad_request() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     match WebSocketFixture::connect_with_tenant(&api.ws_url("/ws"), None).await {
@@ -18,7 +18,7 @@ async fn websocket_missing_tenant_header_returns_bad_request() {
 #[tokio::test]
 async fn websocket_nonexistent_tenant_returns_not_found() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     match WebSocketFixture::connect_with_tenant(&api.ws_url("/ws"), Some("missing")).await {

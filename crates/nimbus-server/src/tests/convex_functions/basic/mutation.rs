@@ -4,11 +4,8 @@ use super::*;
 async fn convex_mutation_dispatches_existing_document_operations() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_convex(
-        service.clone(),
-        ConvexRegistry::empty(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_convex(service.clone(), ConvexRegistry::empty())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

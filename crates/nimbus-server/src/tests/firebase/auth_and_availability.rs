@@ -24,11 +24,8 @@ async fn firebase_mock_user_token_requires_explicit_server_opt_in() {
     })
     .to_string();
 
-    let without_opt_in = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let without_opt_in =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let rejected = without_opt_in
         .client()
         .post(without_opt_in.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
@@ -40,7 +37,7 @@ async fn firebase_mock_user_token_requires_explicit_server_opt_in() {
         .expect("ungated mock-user firebase request should send");
     assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
 
-    let with_opt_in = ServerFixture::start(build_router_with_firebase(
+    let with_opt_in = ServerFixture::start(router_for_firebase(
         service,
         FirebaseConfig::new().with_emulator_mock_user_token_auth(),
     ))
@@ -894,11 +891,8 @@ async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_
     .to_string();
     let encoded_token = URL_SAFE_NO_PAD.encode(mock_user_token.as_bytes());
 
-    let without_opt_in = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let without_opt_in =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
     let mut rejected_request = without_opt_in
         .ws_url("/google.firestore.v1.Firestore/Listen")
         .into_client_request()
@@ -920,7 +914,7 @@ async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_
     let close_code = websocket_close_code(rejected_socket.next_message().await);
     assert_eq!(close_code, WsCloseCode::Policy);
 
-    let with_opt_in = ServerFixture::start(build_router_with_firebase(
+    let with_opt_in = ServerFixture::start(router_for_firebase(
         service,
         FirebaseConfig::new().with_emulator_mock_user_token_auth(),
     ))
@@ -969,7 +963,7 @@ async fn firebase_listen_websocket_mock_user_token_requires_explicit_server_opt_
 #[tokio::test]
 async fn firebase_rest_routes_return_not_found_when_adapter_is_disabled() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
 
     for path in [
         "/v1/projects/demo/databases/(default)/documents:commit",
@@ -997,7 +991,7 @@ async fn firebase_rest_routes_return_not_found_when_adapter_is_disabled() {
 async fn firebase_rest_routes_are_registered_when_adapter_is_enabled() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -1066,7 +1060,7 @@ async fn firebase_rest_routes_are_registered_when_adapter_is_enabled() {
 #[tokio::test]
 async fn firebase_commit_rejects_malformed_commit_json() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))

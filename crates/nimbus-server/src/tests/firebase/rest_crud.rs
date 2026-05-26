@@ -46,7 +46,7 @@ async fn firebase_sdk_crud_selftest_smoke() {
             firebase_owner_schema_for_collection("secureSmoke", firebase_owner_read_write_policy()),
         )
         .expect("secureSmoke schema should install");
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         service,
         FirebaseConfig::new().with_emulator_mock_user_token_auth(),
     ))
@@ -77,11 +77,8 @@ async fn firebase_commit_executes_atomic_batch_and_returns_firestore_commit_resp
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let response = server
         .client()
@@ -143,11 +140,8 @@ async fn firebase_commit_applies_update_transforms_and_returns_transform_results
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let response = server
         .client()
@@ -224,11 +218,8 @@ async fn firebase_commit_rolls_back_entire_batch_on_failure() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let response = server
         .client()
@@ -285,11 +276,8 @@ async fn firebase_commit_accepts_transaction_token_and_consumes_session() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let seed_response = server
         .client()
@@ -402,11 +390,8 @@ async fn firebase_batch_get_returns_found_missing_and_elides_duplicates() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let document_path =
         DocumentPath::from_segments(["cities", "SF"]).expect("document path should parse");
@@ -496,11 +481,8 @@ async fn firebase_batch_get_reads_nested_document_paths() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let document_path = DocumentPath::from_segments(["cities", "SF", "landmarks", "golden-gate"])
         .expect("nested document path should parse");
@@ -564,11 +546,8 @@ async fn firebase_batch_get_accepts_active_transaction_tokens_and_rejects_inacti
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let principal = PrincipalContext::anonymous();
     let document_path =
@@ -652,7 +631,7 @@ async fn firebase_batch_get_accepts_active_transaction_tokens_and_rejects_inacti
 async fn firebase_rest_begin_transaction_and_rollback_manage_session_tokens() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -738,11 +717,8 @@ async fn firebase_run_query_supports_transaction_selector_with_pinned_snapshot()
         &["cities", "SF"],
         [("name", json!("San Francisco")), ("visits", json!(1))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let begin_response = server
         .client()
@@ -818,7 +794,7 @@ async fn firebase_run_query_supports_transaction_selector_with_pinned_snapshot()
 async fn firebase_batch_get_rejects_unsupported_read_time_selector() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -860,11 +836,8 @@ async fn firebase_list_collection_ids_lists_root_and_nested_parents_with_paginat
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     seed_firebase_document(
         &service,
@@ -981,7 +954,7 @@ async fn firebase_list_collection_ids_lists_root_and_nested_parents_with_paginat
 async fn firebase_list_collection_ids_rejects_invalid_page_tokens_and_read_time() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))

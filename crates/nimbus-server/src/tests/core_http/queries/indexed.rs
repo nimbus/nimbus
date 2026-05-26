@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn query_endpoint_returns_range_filtered_results_with_indexed_schema() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
