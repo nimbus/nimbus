@@ -67,6 +67,16 @@ type InferDefinitionReturns<Returns> = Returns extends Validator<unknown>
   ? Infer<Returns>
   : unknown;
 
+function bridgeNimbusDefinition<Target>(definition: unknown): Target {
+  return definition as Target;
+}
+
+// Convex compatibility exposes Convex-branded registration types while reusing
+// the Nimbus implementation underneath. Keep that structural bridge centralized.
+function bridgeConvexRegistration<Target>(registration: unknown): Target {
+  return registration as Target;
+}
+
 export type QueryOrder = NimbusQueryOrder;
 export type IndexRangeBuilder = NimbusIndexRangeBuilder;
 export type FilterField = NimbusFilterField;
@@ -244,11 +254,13 @@ export function query<
 >(
   definition: QueryDefinition<Args, Returns>,
 ): RegisteredQuery<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return nimbusQuery(definition as unknown as Parameters<typeof nimbusQuery>[0]) as RegisteredQuery<
-    "public",
-    InferDefinitionArgs<Args>,
-    InferDefinitionReturns<Returns>
-  >;
+  return bridgeConvexRegistration<
+    RegisteredQuery<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>>
+  >(
+    nimbusQuery(
+      bridgeNimbusDefinition<Parameters<typeof nimbusQuery>[0]>(definition),
+    ),
+  );
 }
 
 export function internalQuery<
@@ -257,13 +269,13 @@ export function internalQuery<
 >(
   definition: QueryDefinition<Args, Returns>,
 ): RegisteredQuery<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return nimbusInternalQuery(
-    definition as unknown as Parameters<typeof nimbusInternalQuery>[0],
-  ) as RegisteredQuery<
-    "internal",
-    InferDefinitionArgs<Args>,
-    InferDefinitionReturns<Returns>
-  >;
+  return bridgeConvexRegistration<
+    RegisteredQuery<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>>
+  >(
+    nimbusInternalQuery(
+      bridgeNimbusDefinition<Parameters<typeof nimbusInternalQuery>[0]>(definition),
+    ),
+  );
 }
 
 export function paginatedQuery<
@@ -276,13 +288,13 @@ export function paginatedQuery<
   InferDefinitionArgs<Args>,
   InferDefinitionReturns<Returns>
 > {
-  return nimbusPaginatedQuery(
-    definition as unknown as Parameters<typeof nimbusPaginatedQuery>[0],
-  ) as RegisteredPaginatedQuery<
-    "public",
-    InferDefinitionArgs<Args>,
-    InferDefinitionReturns<Returns>
-  >;
+  return bridgeConvexRegistration<
+    RegisteredPaginatedQuery<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>>
+  >(
+    nimbusPaginatedQuery(
+      bridgeNimbusDefinition<Parameters<typeof nimbusPaginatedQuery>[0]>(definition),
+    ),
+  );
 }
 
 export function internalPaginatedQuery<
@@ -295,13 +307,15 @@ export function internalPaginatedQuery<
   InferDefinitionArgs<Args>,
   InferDefinitionReturns<Returns>
 > {
-  return nimbusInternalPaginatedQuery(
-    definition as unknown as Parameters<typeof nimbusInternalPaginatedQuery>[0],
-  ) as RegisteredPaginatedQuery<
-    "internal",
-    InferDefinitionArgs<Args>,
-    InferDefinitionReturns<Returns>
-  >;
+  return bridgeConvexRegistration<
+    RegisteredPaginatedQuery<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>>
+  >(
+    nimbusInternalPaginatedQuery(
+      bridgeNimbusDefinition<Parameters<typeof nimbusInternalPaginatedQuery>[0]>(
+        definition,
+      ),
+    ),
+  );
 }
 
 export function mutation<
@@ -310,13 +324,13 @@ export function mutation<
 >(
   definition: MutationDefinition<Args, Returns>,
 ): RegisteredMutation<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return nimbusMutation(
-    definition as unknown as Parameters<typeof nimbusMutation>[0],
-  ) as RegisteredMutation<
-    "public",
-    InferDefinitionArgs<Args>,
-    InferDefinitionReturns<Returns>
-  >;
+  return bridgeConvexRegistration<
+    RegisteredMutation<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>>
+  >(
+    nimbusMutation(
+      bridgeNimbusDefinition<Parameters<typeof nimbusMutation>[0]>(definition),
+    ),
+  );
 }
 
 export function internalMutation<
@@ -325,13 +339,13 @@ export function internalMutation<
 >(
   definition: MutationDefinition<Args, Returns>,
 ): RegisteredMutation<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return nimbusInternalMutation(
-    definition as unknown as Parameters<typeof nimbusInternalMutation>[0],
-  ) as RegisteredMutation<
-    "internal",
-    InferDefinitionArgs<Args>,
-    InferDefinitionReturns<Returns>
-  >;
+  return bridgeConvexRegistration<
+    RegisteredMutation<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>>
+  >(
+    nimbusInternalMutation(
+      bridgeNimbusDefinition<Parameters<typeof nimbusInternalMutation>[0]>(definition),
+    ),
+  );
 }
 
 export function action<
@@ -340,11 +354,13 @@ export function action<
 >(
   definition: ActionDefinition<Args, Returns>,
 ): RegisteredAction<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return nimbusAction(definition as unknown as Parameters<typeof nimbusAction>[0]) as RegisteredAction<
-    "public",
-    InferDefinitionArgs<Args>,
-    InferDefinitionReturns<Returns>
-  >;
+  return bridgeConvexRegistration<
+    RegisteredAction<"public", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>>
+  >(
+    nimbusAction(
+      bridgeNimbusDefinition<Parameters<typeof nimbusAction>[0]>(definition),
+    ),
+  );
 }
 
 export function internalAction<
@@ -353,13 +369,13 @@ export function internalAction<
 >(
   definition: ActionDefinition<Args, Returns>,
 ): RegisteredAction<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>> {
-  return nimbusInternalAction(
-    definition as unknown as Parameters<typeof nimbusInternalAction>[0],
-  ) as RegisteredAction<
-    "internal",
-    InferDefinitionArgs<Args>,
-    InferDefinitionReturns<Returns>
-  >;
+  return bridgeConvexRegistration<
+    RegisteredAction<"internal", InferDefinitionArgs<Args>, InferDefinitionReturns<Returns>>
+  >(
+    nimbusInternalAction(
+      bridgeNimbusDefinition<Parameters<typeof nimbusInternalAction>[0]>(definition),
+    ),
+  );
 }
 
 export function httpAction(

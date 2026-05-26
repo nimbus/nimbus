@@ -29,19 +29,20 @@ vi.mock("../../lib/nimbus-client", () => ({
 }));
 
 import { useUiStore } from "../../store/ui-store";
+import { routeLoader, routeLoaderDeps } from "../../test/route-internals";
 import { Route, ServicesLoaderError } from "./services";
 
 type LoaderArgs = {
   deps: { activeTenant: string | null };
 };
 
-const routeInternals = Route as unknown as {
-  loaderDeps: () => { activeTenant: string | null };
-  loader: (args: LoaderArgs) => Promise<{
-    services: unknown[];
-    activeTenant: string | null;
-  }>;
+type LoaderResult = {
+  services: unknown[];
+  activeTenant: string | null;
 };
+
+const loaderDeps = routeLoaderDeps<{ activeTenant: string | null }>(Route);
+const loader = routeLoader<LoaderArgs, LoaderResult>(Route);
 
 beforeEach(() => {
   nimbusQueryMock.mockReset();
@@ -56,18 +57,18 @@ afterEach(() => {
 describe("app/services loaderDeps + loader", () => {
   it("loaderDeps snapshots activeTenant from the Zustand store", () => {
     useUiStore.setState({ activeTenant: "acme" });
-    expect(routeInternals.loaderDeps()).toEqual({ activeTenant: "acme" });
+    expect(loaderDeps()).toEqual({ activeTenant: "acme" });
   });
 
   it("loaderDeps returns activeTenant=null when no tenant is selected", () => {
-    expect(routeInternals.loaderDeps()).toEqual({ activeTenant: null });
+    expect(loaderDeps()).toEqual({ activeTenant: null });
   });
 
   it("queries services scoped to deps.activeTenant", async () => {
     const services = [{ _id: "s1", name: "api", tenantId: "acme" }];
     nimbusQueryMock.mockResolvedValue(services);
 
-    const result = await routeInternals.loader({
+    const result = await loader({
       deps: { activeTenant: "acme" },
     });
 
@@ -84,7 +85,7 @@ describe("app/services loaderDeps + loader", () => {
   it("passes activeTenant=null when deps.activeTenant is null", async () => {
     nimbusQueryMock.mockResolvedValue([]);
 
-    const result = await routeInternals.loader({
+    const result = await loader({
       deps: { activeTenant: null },
     });
 
@@ -96,7 +97,9 @@ describe("app/services loaderDeps + loader", () => {
 describe("app/services errorComponent", () => {
   it("renders the diagnostic envelope with the loader-error message and a Retry CTA wired to reset", async () => {
     const reset = vi.fn();
-    render(<ServicesLoaderError error={new Error("convex down")} reset={reset} />);
+    render(
+      <ServicesLoaderError error={new Error("convex down")} reset={reset} />,
+    );
     expect(
       screen.getByTestId("storage-server-error-envelope"),
     ).toBeInTheDocument();

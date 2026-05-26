@@ -1,5 +1,4 @@
 import { render, screen } from "@testing-library/react";
-import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { loaderDataRef, invalidateMock } = vi.hoisted(() => ({
@@ -47,22 +46,16 @@ vi.mock("sonner", () => ({
 }));
 
 import { Route } from "./tenants";
+import { routeComponent, routeLoader } from "../../test/route-internals";
 
 type LoaderResult =
   | { kind: "ok"; tenants: string[]; tables: unknown[] }
   | { kind: "error"; message: string };
 
-const routeWithInternals = Route as unknown as {
-  component: () => ReactElement;
-  loader: (args: {
-    abortController: AbortController;
-  }) => Promise<LoaderResult>;
-};
-
-const TenantsPage = routeWithInternals.component;
-const loader = routeWithInternals.loader;
-
-const originalFetch = globalThis.fetch;
+const TenantsPage = routeComponent(Route);
+const loader = routeLoader<{ abortController: AbortController }, LoaderResult>(
+  Route,
+);
 
 beforeEach(() => {
   loaderDataRef.current = null;
@@ -71,17 +64,20 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  globalThis.fetch = originalFetch;
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("admin/tenants loader", () => {
   it("returns kind=error when /api/tenants is non-OK", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      json: async () => ({ error: { message: "Request failed: 404" } }),
-    }) as unknown as typeof fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({ error: { message: "Request failed: 404" } }),
+      }),
+    );
 
     const result = await loader({ abortController: new AbortController() });
     expect(result.kind).toBe("error");
@@ -92,9 +88,10 @@ describe("admin/tenants loader", () => {
   });
 
   it("returns kind=error when fetch throws (e.g. abort)", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockRejectedValue(new Error("network down")) as unknown as typeof fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("network down")),
+    );
 
     const result = await loader({ abortController: new AbortController() });
     expect(result.kind).toBe("error");
@@ -104,10 +101,13 @@ describe("admin/tenants loader", () => {
   });
 
   it("returns kind=ok with sorted tenants + tables on the happy path", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ tenants: ["beta", "alpha"] }),
-    }) as unknown as typeof fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ tenants: ["beta", "alpha"] }),
+      }),
+    );
     nimbusQueryMock.mockResolvedValue([
       { _id: "t1", tenantId: "alpha", name: "users", rowCount: 3 },
     ]);
@@ -125,7 +125,7 @@ describe("admin/tenants loader", () => {
       ok: true,
       json: async () => ({ tenants: [] }),
     });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
     nimbusQueryMock.mockResolvedValue([]);
 
     const controller = new AbortController();

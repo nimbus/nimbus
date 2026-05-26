@@ -221,6 +221,26 @@ export class CollectionGroupImpl<AppModelType = DocumentData>
   }
 }
 
+function convertQuerySource<AppModelType, NewAppModelType>(
+  source: QuerySource<AppModelType>,
+  converter: FirestoreDataConverter<NewAppModelType>,
+): QuerySource<NewAppModelType> {
+  // QuerySource is a union with overloaded converter methods; discriminate
+  // first so TypeScript keeps the concrete overload set.
+  return source.type === "collection"
+    ? source.withConverter(converter)
+    : source.withConverter(converter);
+}
+
+function clearQuerySourceConverter<AppModelType>(
+  source: QuerySource<AppModelType>,
+): QuerySource<DocumentData> {
+  // See convertQuerySource for why the duplicate-looking branches stay split.
+  return source.type === "collection"
+    ? source.withConverter(null)
+    : source.withConverter(null);
+}
+
 export class QueryImpl<AppModelType = DocumentData> implements Query<AppModelType> {
   readonly converter: FirestoreDataConverter<AppModelType> | null;
   readonly firestore: Firestore;
@@ -244,14 +264,8 @@ export class QueryImpl<AppModelType = DocumentData> implements Query<AppModelTyp
   ): Query<unknown> {
     const source =
       converter === null
-        ? this.source.withConverter(null)
-        : (
-            this.source as unknown as {
-              withConverter(
-                converter: FirestoreDataConverter<unknown>,
-              ): QuerySource<unknown>;
-            }
-          ).withConverter(converter);
+        ? clearQuerySourceConverter(this.source)
+        : convertQuerySource(this.source, converter);
     return new QueryImpl(
       source as QuerySource<unknown>,
       cloneStructuredQueryShape(this.structuredQuery),

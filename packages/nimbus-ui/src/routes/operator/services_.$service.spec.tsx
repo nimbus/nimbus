@@ -41,17 +41,17 @@ import {
   Route,
   TABS,
 } from "./services_.$service";
+import { routeLoader } from "../../test/route-internals";
 
 type LoaderArgs = { params: { service: string } };
-
-const routeInternals = Route as unknown as {
-  loader: (args: LoaderArgs) => Promise<{
-    service: unknown;
-    services: unknown[];
-    bundles: unknown[];
-    machines: unknown[];
-  }>;
+type LoaderResult = {
+  service: unknown;
+  services: unknown[];
+  bundles: unknown[];
+  machines: unknown[];
 };
+
+const loader = routeLoader<LoaderArgs, LoaderResult>(Route);
 
 beforeEach(() => {
   nimbusQueryMock.mockReset();
@@ -95,7 +95,7 @@ describe("admin/services/$service loader", () => {
       .mockResolvedValueOnce(allBundles)
       .mockResolvedValueOnce(allMachines);
 
-    const result = await routeInternals.loader({
+    const result = await loader({
       params: { service: "svc-1" },
     });
 
@@ -129,18 +129,16 @@ describe("admin/services/$service loader", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
 
-    await expect(
-      routeInternals.loader({ params: { service: "missing" } }),
-    ).rejects.toThrow("__NOT_FOUND__");
+    await expect(loader({ params: { service: "missing" } })).rejects.toThrow(
+      "__NOT_FOUND__",
+    );
     expect(notFoundMock).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("admin/services/$service errorComponent", () => {
   it("renders the diagnostic envelope with the loader-error message and a Retry CTA", () => {
-    render(
-      <AdminServiceDetailLoaderError error={new Error("convex down")} />,
-    );
+    render(<AdminServiceDetailLoaderError error={new Error("convex down")} />);
     expect(
       screen.getByTestId("storage-server-error-envelope"),
     ).toBeInTheDocument();

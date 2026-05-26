@@ -51,9 +51,9 @@ function log(message: string, data?: unknown) {
   elements.activityLog.textContent = `[${timestamp}] ${message}${details}\n${elements.activityLog.textContent}`;
 }
 
-function parseJson(label: string, raw: string): Record<string, unknown> {
+function parseJson<T = Record<string, unknown>>(label: string, raw: string): T {
   try {
-    return JSON.parse(raw) as Record<string, unknown>;
+    return JSON.parse(raw) as T;
   } catch (error) {
     throw new Error(`${label} must be valid JSON: ${(error as Error).message}`);
   }
@@ -207,7 +207,7 @@ elements.disconnectSocket.addEventListener("click", async () => {
 
 elements.subscribeQuery.addEventListener("click", async () => {
   await ensureConnected();
-  const query = parseJson("Query JSON", elements.queryJson.value) as unknown as SubscribeQuery;
+  const query = parseJson<SubscribeQuery>("Query JSON", elements.queryJson.value);
 
   if (state.currentSubscription) {
     state.currentSubscription.unsubscribe();

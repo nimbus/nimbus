@@ -4,10 +4,7 @@ import { getDesktopBridge, isLocalHost } from "./desktop-bridge";
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  Reflect.deleteProperty(
-    window as unknown as Record<string, unknown>,
-    "nimbus",
-  );
+  Reflect.deleteProperty(window, "nimbus");
 });
 
 describe("isLocalHost", () => {
@@ -39,14 +36,18 @@ describe("getDesktopBridge", () => {
 
   it("returns the bridge when runUpgrade is a function", () => {
     const bridge = { runUpgrade: vi.fn() };
-    (window as unknown as Record<string, unknown>).nimbus = bridge;
+    Object.defineProperty(window, "nimbus", {
+      configurable: true,
+      value: bridge,
+    });
     expect(getDesktopBridge()).toBe(bridge);
   });
 
   it("returns null when runUpgrade is not a function", () => {
-    (window as unknown as Record<string, unknown>).nimbus = {
-      runUpgrade: "nope",
-    };
+    Object.defineProperty(window, "nimbus", {
+      configurable: true,
+      value: { runUpgrade: "nope" },
+    });
     expect(getDesktopBridge()).toBe(null);
   });
 });
