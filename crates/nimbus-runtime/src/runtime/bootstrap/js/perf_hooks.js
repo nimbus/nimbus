@@ -8,33 +8,36 @@
 // deno-lint-ignore-file prefer-primordials
 
 import { core } from "ext:core/mod.js";
-import {
+import { EldHistogram } from "ext:core/ops";
+
+const {
   performance,
   PerformanceEntry,
   PerformanceMark,
   PerformanceMeasure,
-  PerformanceObserver as WebPerformanceObserver,
+  PerformanceObserver: WebPerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceResourceTiming,
-} from "ext:deno_web/15_performance.js";
-import { EldHistogram } from "ext:core/ops";
-import {
+} = core.loadExtScript("ext:deno_web/15_performance.js");
+
+const {
   ERR_ILLEGAL_CONSTRUCTOR,
   ERR_INVALID_ARG_TYPE,
   ERR_INVALID_ARG_VALUE,
   ERR_INVALID_THIS,
   ERR_OUT_OF_RANGE,
-} from "ext:deno_node/internal/errors.ts";
-import {
+} = core.loadExtScript("ext:deno_node/internal/errors.ts");
+const {
   validateInteger,
   validateNumber,
   validateObject,
-} from "ext:deno_node/internal/validators.mjs";
-import {
+} = core.loadExtScript("ext:deno_node/internal/validators.mjs");
+const {
   customInspectSymbol,
   kEmptyObject,
-} from "ext:deno_node/internal/util.mjs";
-import { inspect } from "ext:deno_node/internal/util/inspect.mjs";
+} = core.loadExtScript("ext:deno_node/internal/util.mjs");
+const { inspect } =
+  core.loadExtScript("ext:deno_node/internal/util/inspect.mjs");
 
 const constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_NODE: 0,

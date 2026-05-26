@@ -193,18 +193,11 @@ const NODE22_NETWORKING_DGRAM_SEND_BATCH_FIXTURES: &[&str] = &[
 
 const NODE22_NETWORKING_DGRAM_REMAINING_BATCH_FIXTURES: &[&str] = &[
     "test/parallel/test-dgram-abort-closed.js",
-    "test/parallel/test-dgram-bind-error-repeat.js",
-    "test/parallel/test-dgram-bind-fd-error.js",
-    "test/parallel/test-dgram-bind-fd.js",
-    "test/parallel/test-dgram-bind-socket-close-before-lookup.js",
-    "test/parallel/test-dgram-blocklist.js",
     "test/parallel/test-dgram-close-during-bind.js",
     "test/parallel/test-dgram-close-in-listening.js",
     "test/parallel/test-dgram-close-signal.js",
     "test/parallel/test-dgram-connect-send-multi-buffer-copy.js",
     "test/parallel/test-dgram-connect-send-multi-string-array.js",
-    "test/parallel/test-dgram-create-socket-handle-fd.js",
-    "test/parallel/test-dgram-create-socket-handle.js",
     "test/parallel/test-dgram-custom-lookup.js",
     "test/parallel/test-dgram-membership.js",
     "test/parallel/test-dgram-msgsize.js",
@@ -214,11 +207,21 @@ const NODE22_NETWORKING_DGRAM_REMAINING_BATCH_FIXTURES: &[&str] = &[
     "test/parallel/test-dgram-oob-buffer.js",
     "test/parallel/test-dgram-recv-error.js",
     "test/parallel/test-dgram-send-error.js",
-    "test/parallel/test-dgram-send-queue-info.js",
     "test/parallel/test-dgram-setBroadcast.js",
     "test/parallel/test-dgram-setTTL.js",
-    "test/parallel/test-dgram-socket-buffer-size.js",
     "test/parallel/test-dgram-udp4.js",
+];
+
+const NODE22_NETWORKING_DGRAM_INTERNAL_GAP_FIXTURES: &[&str] = &[
+    "test/parallel/test-dgram-bind-error-repeat.js",
+    "test/parallel/test-dgram-bind-fd-error.js",
+    "test/parallel/test-dgram-bind-fd.js",
+    "test/parallel/test-dgram-bind-socket-close-before-lookup.js",
+    "test/parallel/test-dgram-blocklist.js",
+    "test/parallel/test-dgram-create-socket-handle-fd.js",
+    "test/parallel/test-dgram-create-socket-handle.js",
+    "test/parallel/test-dgram-send-queue-info.js",
+    "test/parallel/test-dgram-socket-buffer-size.js",
 ];
 
 const NODE22_NETWORKING_DGRAM_LOCAL_PATCH_REGRESSION_BATCH_FIXTURES: &[&str] = &[
@@ -239,11 +242,14 @@ const NODE22_NETWORKING_CRYPTO_GATED_HELPER_BATCH_FIXTURES: &[&str] = &[
     "test/parallel/test-https-agent-abort-controller.js",
     "test/parallel/test-https-server-options-incoming-message.js",
     "test/parallel/test-https-server-options-server-response.js",
-    "test/parallel/test-https-client-get-url.js",
     "test/parallel/test-http2-getpackedsettings.js",
     "test/parallel/test-http2-util-headers-list.js",
-    "test/parallel/test-http2-util-update-options-buffer.js",
     "test/parallel/test-http2-misc-util.js",
+];
+
+const NODE22_NETWORKING_CRYPTO_GATED_HELPER_GAP_FIXTURES: &[&str] = &[
+    "test/parallel/test-https-client-get-url.js",
+    "test/parallel/test-http2-util-update-options-buffer.js",
 ];
 
 const NODE22_NETWORKING_HTTP2_HEADER_STATUS_BATCH: &[NodeCompatBatchEntry] = &[
@@ -288,6 +294,9 @@ const NODE22_NETWORKING_HTTP2_COMPAT_REQUEST_RESPONSE_BATCH: &[NodeCompatBatchEn
         COMMON_HTTP2_COMPAT_SERVERREQUEST_PIPE_EXTRA_FILES
     ),
     shared_official_batch_case!("test/parallel/test-http2-compat-serverrequest-settimeout.js"),
+];
+
+const NODE22_NETWORKING_HTTP2_COMPAT_REQUEST_RESPONSE_GAP_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case!("test/parallel/test-http2-compat-serverrequest-trailers.js"),
 ];
 
@@ -354,13 +363,16 @@ const NODE22_NETWORKING_HTTPS_AGENT_SESSION_BATCH: &[NodeCompatBatchEntry] = &[
         "test/parallel/test-https-agent-session-injection.js",
         COMMON_TLS_KEY_EXTRA_FILES
     ),
+    shared_node20_node22_batch_case_with_extra!(
+        "test/parallel/test-https-agent-sockets-leak.js",
+        COMMON_TLS_KEY_EXTRA_FILES
+    ),
+];
+
+const NODE22_NETWORKING_HTTPS_AGENT_SESSION_GAP_BATCH: &[NodeCompatBatchEntry] = &[
     shared_node20_node22_with_node24_override_case_with_extra!(
         "test/parallel/test-https-agent-sni.js",
         "node24/test/parallel/test-https-agent-sni.js",
-        COMMON_TLS_KEY_EXTRA_FILES
-    ),
-    shared_node20_node22_batch_case_with_extra!(
-        "test/parallel/test-https-agent-sockets-leak.js",
         COMMON_TLS_KEY_EXTRA_FILES
     ),
     shared_node20_node22_batch_case_with_extra!(
@@ -507,10 +519,6 @@ const NODE22_NETWORKING_HTTPS_TLS_SESSION_BATCH: &[NodeCompatBatchEntry] = &[
         "test/parallel/test-https-client-resume.js",
         COMMON_TLS_SESSION_CERT_EXTRA_FILES
     ),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-https-resume-after-renew.js",
-        COMMON_TLS_SESSION_CERT_EXTRA_FILES
-    ),
     NodeCompatBatchEntry {
         test_relative_path: "test/parallel/test-https-agent-session-reuse.js",
         node20_fixture_source_path: None,
@@ -523,6 +531,13 @@ const NODE22_NETWORKING_HTTPS_TLS_SESSION_BATCH: &[NodeCompatBatchEntry] = &[
     },
     shared_official_batch_case_with_extra!(
         "test/parallel/test-https-hwm.js",
+        COMMON_TLS_SESSION_CERT_EXTRA_FILES
+    ),
+];
+
+const NODE22_NETWORKING_HTTPS_TLS_SESSION_GAP_BATCH: &[NodeCompatBatchEntry] = &[
+    shared_official_batch_case_with_extra!(
+        "test/parallel/test-https-resume-after-renew.js",
         COMMON_TLS_SESSION_CERT_EXTRA_FILES
     ),
 ];
@@ -581,4 +596,3 @@ const NODE22_NETWORKING_DGRAM_HOST_PRESET_BOUNDARY_FIXTURES: &[&str] = &[
     "test/parallel/test-dgram-udp6-link-local-address.js",
     "test/parallel/test-dgram-udp6-send-default-host.js",
 ];
-

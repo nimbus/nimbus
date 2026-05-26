@@ -3,23 +3,23 @@ use super::{NodeCompatBatchEntry, NodeCompatExtraFixtureEntry};
 const SUPPLEMENTARY_MODULE_RESOLUTION_BRIDGE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
     NodeCompatExtraFixtureEntry {
         runtime_path: "node_modules/bridge-target/package.json",
-        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/node_modules/bridge-target/package.json",
+        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/bridge-target/package.json",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "node_modules/bridge-target/esm-entry.mjs",
-        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/node_modules/bridge-target/esm-entry.mjs",
+        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/bridge-target/esm-entry.mjs",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "node_modules/bridge-target/esm-feature.mjs",
-        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/node_modules/bridge-target/esm-feature.mjs",
+        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/bridge-target/esm-feature.mjs",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "node_modules/bridge-target/cjs-entry.cjs",
-        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/node_modules/bridge-target/cjs-entry.cjs",
+        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/bridge-target/cjs-entry.cjs",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "node_modules/bridge-target/cjs-feature.cjs",
-        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/node_modules/bridge-target/cjs-feature.cjs",
+        fixture_source_path: "supplementary/fixtures/module-resolution-bridge/bridge-target/cjs-feature.cjs",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "supplementary/fixtures/module-resolution-bridge/commonjs-only.cjs",

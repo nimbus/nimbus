@@ -9,8 +9,9 @@ Created: 2026-05-25
 This plan ties the recently standardized Nimbus fork releases back into the
 `nimbus/nimbus` product release. A final Nimbus binary should only be released
 after the source fork stack is healthy, Nimbus consumes the intended released
-fork tags, the release source tree is clean, full Nimbus verification passes,
-and the published GitHub release artifacts can be downloaded and re-verified.
+fork tags, the release source tree is clean, downstream machine/desktop
+alignment has been classified, full Nimbus verification passes, and the
+published GitHub release artifacts can be downloaded and re-verified.
 
 The release decision is intentionally evidence-driven. A fork tag existing on
 GitHub is necessary, but it is not enough. The release baseline must prove that
@@ -31,7 +32,7 @@ Verified while writing the plan:
   - `nimbus/nimbus-crun` `v1.27.1-nimbus.2`
   - `nimbus/nimbus-libkrun` `v1.18.1-nimbus.1`
 - Source-only fork tags consumed by Nimbus:
-  - `nimbus/deno` `v2.8.0-nimbus.2`
+  - `nimbus/deno` `v2.8.0-nimbus.5`
   - `nimbus/bun` source tag `nimbus-bun-jsc-proof-main-20260525`
 - The active Bun default branch is now `nimbus/bun-main-20260525`, while the
   immutable adapter source contract remains the proof tag above.
@@ -54,6 +55,14 @@ Verified while writing the plan:
 - Do not replace the single-binary default with optional Bun/JSC adapter
   artifacts. The base `nimbus` binary must still work without the optional
   adapter installed.
+- Treat `nimbus/machine-os` as a release-coupled downstream. If the Nimbus
+  release workflow builds or publishes a machine image, the machine-os source
+  recipe, machine-os CI recipe, and Nimbus release workflow must agree on the
+  same pinned bootc base image before the Nimbus tag is created.
+- Keep `nimbus/desktop` and `packages/nimbus-ui` aligned, but classify their
+  release coupling precisely: the embedded operator UI ships from this repo,
+  while the desktop shell is a separate artifact that must either be green or
+  have any unrelated hosted failure documented with evidence before release.
 - Keep the release version, crate versions, JS workspace package versions,
   lockfile entries, changelog heading, tag, archive names, and package helpers
   in one consistent version contract.
@@ -142,6 +151,32 @@ Evidence:
     `2026-05-25T21:50:09Z`
   - `nimbus/nimbus-crun` `v1.27.1-nimbus.2`, published
     `2026-05-25T21:54:06Z`
+- `nimbus/deno` is source-tagged rather than release-asset-tagged for Nimbus'
+  Cargo consumption. NRR4 exposed Deno-owned embedded Node hardening gaps, so
+  the fork was updated, committed, tagged, and pushed on `nimbus/v2.8.0`:
+  - commit `c0d530232406238305a69586769ef62d7d65e4de`
+    (`runtime: harden embedded node vm and zlib`), annotated source tag
+    `v2.8.0-nimbus.3`
+  - `git ls-remote --tags git@github.com:nimbus/deno.git v2.8.0-nimbus.3`
+    returned the remote tag object `a9e9fb577d86698e669c921c5ca6607234f029c9`
+  - commit `9225357ba8697cf2c998eef62571779957a7a90c`
+    (`runtime: return sqlite config errors`), annotated source tag
+    `v2.8.0-nimbus.4`
+  - `git push origin nimbus/v2.8.0 v2.8.0-nimbus.4` pushed branch
+    `c0d5302324..9225357ba8` and created tag `v2.8.0-nimbus.4`
+  - commit `37b6333a1f703db523efe8a703d36f2152ad087a`
+    (`runtime: update DNS and TLS security dependencies`), annotated source
+    tag `v2.8.0-nimbus.5`
+  - `git push origin nimbus/v2.8.0 v2.8.0-nimbus.5` pushed branch
+    `9225357ba8..37b6333a1f` and created tag `v2.8.0-nimbus.5`
+  - Deno fork security-update verification passed:
+    `cargo fmt --all --check`;
+    `env CARGO_ENCODED_RUSTFLAGS=... cargo check -p deno_net -p deno_fetch -p deno_tls -p deno_node -p deno_node_sqlite`;
+    `env CARGO_ENCODED_RUSTFLAGS=... cargo test -p deno_net -p deno_fetch -p deno_tls -- --test-threads=1`
+    (`deno_fetch` 14 passed, `deno_net` 24 passed, `deno_tls` 3 passed)
+  - `gh run list --repo nimbus/deno --branch nimbus/v2.8.0 --limit 5`
+    returned no hosted active-branch runs, so Nimbus' product verification in
+    NRR4 remains the release gate for the consumed Deno source tag.
 - Hosted fork Actions status:
   - `nimbus/rusty_v8` active-branch CI succeeded on
     `9b77553883f1117ab3df62709b8673b803ed721b`.
@@ -149,7 +184,7 @@ Evidence:
     `ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57`.
   - `nimbus/deno`, `nimbus/nimbus-crun`, and `nimbus/nimbus-libkrun` have no
     active-branch hosted runs to treat as release blockers.
-- Investigated the latest `nimbus/deno` hosted run on release ref
+- Investigated the earlier `nimbus/deno` hosted run on release ref
   `v2.8.0-nimbus.2`: it failed in upstream Deno's broad CI workflow while
   fetching the git-pinned `nimbus/rusty_v8` dependency on GitHub Windows
   runners, with `path too long` under
@@ -163,14 +198,14 @@ Evidence:
 
 ### NRR2 - Nimbus Consumes the Released Forks
 
-Status: completed 2026-05-25
+Status: completed 2026-05-26 after Deno source-tag amendments
 
 Prove the Nimbus repo pins and installer/package surfaces consume the intended
 Nimbus fork releases.
 
 Success criteria:
 
-- `Cargo.toml` and `Cargo.lock` point to `nimbus/deno` `v2.8.0-nimbus.2` and
+- `Cargo.toml` and `Cargo.lock` point to `nimbus/deno` `v2.8.0-nimbus.5` and
   `nimbus/rusty_v8` `v149.0.0-nimbus.1`.
 - Installer/package defaults point to `nimbus-crun` `v1.27.1-nimbus.2` and
   `nimbus-libkrun` `v1.18.1-nimbus.1`.
@@ -184,12 +219,18 @@ Success criteria:
 Evidence:
 
 - `rg -n "v2\\.8\\.0-nimbus\\.2|v149\\.0\\.0-nimbus\\.1|v1\\.27\\.1-nimbus\\.2|v1\\.18\\.1-nimbus\\.1|nimbus-bun-jsc-proof-main-20260525|locker-v|v[0-9][^[:space:]]*-locker" Cargo.toml Cargo.lock scripts .github Makefile docs/adapters docs/architecture docs/operating docs/plans/final-nimbus-release-readiness-plan.md docs/plans/fork-upstream-standardization-plan.md docs/plans/bun-jsc-distribution-and-release-plan.md docs/plans/bun-jsc-linked-adapter-plan.md docs/plans/README.md`
-  confirmed active pins:
-  - `Cargo.toml` patch entries use `nimbus/deno` `v2.8.0-nimbus.2` and
-    `nimbus/rusty_v8` `v149.0.0-nimbus.1`.
-  - `Cargo.lock` resolves Deno-family crates to
-    `363de88e0dd6cd87c60704bc8e373dea202817e4` and rusty_v8 to
-    `9b77553883f1117ab3df62709b8673b803ed721b`.
+  originally confirmed active pins before the Deno hardening amendment.
+- After the Deno hardening and security-dependency amendments, `Cargo.toml`
+  patch entries use `nimbus/deno` `v2.8.0-nimbus.5` and `nimbus/rusty_v8`
+  `v149.0.0-nimbus.1`.
+- `Cargo.lock` resolves Deno-family crates to
+  `37b6333a1f703db523efe8a703d36f2152ad087a` and rusty_v8 to
+  `9b77553883f1117ab3df62709b8673b803ed721b`.
+- `rg -n "/Users/jack/src/github.com/nimbus/deno|v2\\.8\\.0-nimbus\\.[234]|source = \"git\\+https://github.com/nimbus/deno" Cargo.toml Cargo.lock`
+  confirmed the release worktree has no local Deno path override and no stale
+  `v2.8.0-nimbus.2`, `v2.8.0-nimbus.3`, or `v2.8.0-nimbus.4` lock/pin after
+  repinning to `v2.8.0-nimbus.5`.
+  The remaining active pins are:
   - install/package helpers use `nimbus-crun` `v1.27.1-nimbus.2` and
     `nimbus-libkrun` `v1.18.1-nimbus.1`.
   - Bun/JSC source constants use `nimbus-bun-jsc-proof-main-20260525`.
@@ -252,9 +293,145 @@ Evidence:
   `verified: release version contract matches v0.1.32`.
 - `git diff --check` passed.
 
+### NRR3A - Machine OS, Desktop, and UI Alignment
+
+Status: completed 2026-05-26
+
+Verify release-coupled downstream repositories and UI surfaces before starting
+the final full Nimbus verification sweep.
+
+Success criteria:
+
+- `nimbus/machine-os` is clean and current against `origin/main` before any
+  machine-os source edits are made.
+- The supported Fedora bootc base is verified from an authoritative Fedora or
+  registry source, and the pinned digest is recorded.
+- The `nimbus/machine-os` recipe, machine-os hosted CI image pulls/cache, and
+  `nimbus/nimbus` release workflow all reference the same pinned Fedora bootc
+  base image.
+- Any stale machine-os base digest that would break the release workflow is
+  reproduced or classified with concrete evidence.
+- `nimbus/machine-os` local gates pass:
+  - `git diff --check`
+  - `bash -n` for the machine-os shell scripts
+  - `bash scripts/verify-recipe.sh`
+  - `bash scripts/verify-build-helper.sh`
+  - `bash scripts/verify-oci-layout-helper.sh`
+  - `bash scripts/verify-provider-artifact-contracts.sh`
+  - `bash scripts/verify-publish-helper.sh`
+  - `bash scripts/verify-selinux-avc-gate.sh`
+  - `actionlint .github/workflows/ci.yml .github/workflows/publish.yml`
+- If machine-os source changes are needed, they are committed and pushed to
+  `nimbus/machine-os` `main` before the Nimbus release tag is created, because
+  the Nimbus release workflow consumes `MACHINE_OS_SOURCE_REF=main`.
+- Nimbus' machine-os release-reference helper gates pass from the release
+  worktree:
+  - `bash scripts/verify-machine-os-release-ref-contract.sh --machine-os-repo <path>`
+  - `bash scripts/verify-machine-os-release-ref-contract-helper.sh`
+  - `bash scripts/verify-machine-os-release-default-gate-helper.sh`
+  - `bash scripts/verify-bootc-default-promotion-gate-helper.sh`
+- `packages/nimbus-ui` is version-aligned with the release metadata and covered
+  by the JS typecheck/test/build gates.
+- `nimbus/desktop` is clean/current, its relationship to this release is
+  documented, and any hosted desktop failure is either fixed or classified as
+  non-blocking for the Nimbus CLI/server binary release with exact evidence.
+- Local Nimbus repos under `~/src/github.com/nimbus/*` are checked for dirty or
+  unmerged work that should have entered `nimbus/nimbus` before release; any
+  relevant finding is fixed or explicitly recorded as unrelated.
+
+Evidence:
+
+- External release context: Fedora Magazine announced Fedora Linux 44 on
+  2026-04-28
+  (`https://fedoramagazine.org/announcing-fedora-linux-44/`), and the
+  Fedora/CentOS bootc docs identify
+  `quay.io/fedora/fedora-bootc:<release>` as the Fedora bootc base image
+  family (`https://fedora.gitlab.io/bootc/docs/bootc/base-images/`). The
+  release uses the Fedora 44 bootc tag rather than `latest`.
+- Before source edits, `nimbus/machine-os` reported clean
+  `## main...origin/main`.
+- `podman manifest inspect quay.io/fedora/fedora-bootc:44` returned the live
+  multi-arch manifest list; the `linux/arm64` digest is
+  `sha256:3ca807c0d2836ca425031a52dfe7fda69ca55a22c54fa78c068a22f43d6489b6`.
+- `podman manifest inspect
+  quay.io/fedora/fedora-bootc@sha256:3ca807c0d2836ca425031a52dfe7fda69ca55a22c54fa78c068a22f43d6489b6`
+  returned the underlying manifest payload in a `podman` single-image parse
+  error; its annotations included `org.opencontainers.image.version:
+  44.20260525.0` and `ostree.linux: 7.0.9-205.fc44.aarch64`.
+- The previously pinned machine-os recipe digest
+  `sha256:5f2aa40538a71e32eba8dcdf9059dda10600bac68acef4588cb1aecedcfc6fe2`
+  and CI digest
+  `sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94`
+  both failed with `manifest unknown`; keeping either pin would block the
+  machine-os release lane.
+- Updated `nimbus/machine-os` local recipe files and CI cache image pulls to
+  the live Fedora 44 arm64 digest above.
+- Updated `nimbus/nimbus` `.github/workflows/release.yml`
+  `MACHINE_OS_FEDORA_BOOTC_IMAGE` to the same live Fedora 44 arm64 digest.
+- `nimbus/machine-os` local gates passed after the digest refresh:
+  - `git diff --check`
+  - `bash -n scripts/build.sh scripts/check-selinux-avcs.sh scripts/package-oci.sh scripts/publish.sh scripts/write-sbom.sh scripts/verify-recipe.sh scripts/verify-build-helper.sh scripts/verify-oci-layout-helper.sh scripts/verify-provider-artifact-contracts.sh scripts/verify-publish-helper.sh scripts/verify-selinux-avc-gate.sh`
+  - `bash scripts/verify-recipe.sh`
+  - `bash scripts/verify-build-helper.sh`
+  - `bash scripts/verify-oci-layout-helper.sh`
+  - `bash scripts/verify-provider-artifact-contracts.sh`
+  - `bash scripts/verify-publish-helper.sh`
+  - `bash scripts/verify-selinux-avc-gate.sh`
+  - `actionlint .github/workflows/ci.yml .github/workflows/publish.yml`
+- Committed and pushed `nimbus/machine-os` main commit
+  `68dd822b0290869e0af4794a19d869d9d2d8caba`
+  (`Refresh Fedora bootc base digest`).
+- Hosted `nimbus/machine-os` CI succeeded on commit
+  `68dd822b0290869e0af4794a19d869d9d2d8caba`:
+  `https://github.com/nimbus/machine-os/actions/runs/26423279945`.
+- Nimbus release-worktree machine-os gates passed after the release workflow
+  digest refresh:
+  - `bash scripts/verify-machine-os-release-ref-contract.sh --machine-os-repo /Users/jack/src/github.com/nimbus/machine-os`
+  - `bash scripts/verify-machine-os-release-ref-contract-helper.sh`
+  - `bash scripts/verify-machine-os-release-default-gate-helper.sh`
+  - `bash scripts/verify-bootc-default-promotion-gate-helper.sh`
+- `packages/nimbus-ui/package.json` is versioned `0.1.32`, and
+  `package-lock.json` contains the matching `packages/nimbus-ui` workspace
+  entry at `0.1.32`; JS typecheck/test/build coverage remains part of NRR4.
+- `nimbus/desktop` was clean on `main...origin/main` before alignment work.
+  Hosted desktop `package` and `e2e` had been failing on commit
+  `45fcea07fae3108f485e238655dcf526d2c377ad` because Windows runners executed
+  `src/main/upgrade/runner.spec.ts` and the injected Darwin platform probe used
+  host-Windows path joining. Fixed the root cause by making
+  `findOnSanitizedPath` join paths with `path.posix` for Darwin/Linux and
+  `path.win32` for Windows, committed and pushed
+  `1ac13a90a6432656c7d8bece49d5aaf2348a397a`
+  (`Fix upgrade runner path probing on Windows CI`).
+- `nimbus/desktop` local gates passed after the fix:
+  - `npm run lint`
+  - `npm run typecheck`
+  - `npm run test` (`17` files passed, `184` tests passed)
+  - `npm run build:main`
+- Hosted `nimbus/desktop` CI succeeded on commit
+  `1ac13a90a6432656c7d8bece49d5aaf2348a397a`:
+  `https://github.com/nimbus/desktop/actions/runs/26423345140`.
+- The next `nimbus/desktop` commit
+  `fc7b2ec8dc1f30928c061e8cd41e18b6742988ed` updated the e2e auth-page
+  assertions. Hosted desktop runs on that commit all succeeded:
+  - `ci`: `https://github.com/nimbus/desktop/actions/runs/26425345103`
+  - `package`: `https://github.com/nimbus/desktop/actions/runs/26425345105`
+  - `e2e`: `https://github.com/nimbus/desktop/actions/runs/26425345124`
+- Local repo audit:
+  - `nimbus/deno`, `nimbus/rusty_v8`, `nimbus/nimbus-crun`,
+    `nimbus/nimbus-libkrun`, `nimbus/machine-os`, and `nimbus/desktop` are
+    clean on their release/default branches after the alignment pushes.
+  - The primary `nimbus/nimbus` checkout remains intentionally dirty with
+    unrelated Convex generated files, `package-lock.json`, an untracked
+    node-compat plan, and desktop-auth screenshots; release work continues from
+    the clean release worktree to avoid including that state.
+  - `nimbus/homebrew-tap` has an untracked `nix-packages/` directory; it is not
+    consumed by the `v0.1.32` source release gate.
+  - `nimbus/claude-skill-convex` and `nimbus/codex-plugin-convex` are local
+    uncommitted skill/plugin scaffolds, not Nimbus binary release inputs.
+
 ### NRR4 - Full Nimbus Verification
 
-Status: pending
+Status: completed 2026-05-26
 
 Run the product gates that must be green before any final binary release.
 
@@ -276,9 +453,130 @@ Success criteria:
 - Any available strict docs/reference validation is run; if no such command is
   available, record that explicitly.
 
+Evidence so far:
+
+- `cargo fmt --all --check` passed after the Deno repin and node-compat
+  fixture-source cleanup.
+- `make check` passed against the repinned `nimbus/deno`
+  `v2.8.0-nimbus.4` source tag.
+- `make clippy` passed against the repinned `nimbus/deno`
+  `v2.8.0-nimbus.4` source tag.
+- Focused repin proof passed:
+  - `cargo test -p nimbus-runtime --lib node22_process_finalization -- --test-threads=1`:
+    `3 passed; 0 failed; 1 ignored; 531 filtered out`
+  - `cargo test -p nimbus-runtime --lib node_compat_supplementary_module_bridge -- --test-threads=1`:
+    `3 passed; 0 failed; 0 ignored; 532 filtered out`
+  - `cargo test -p nimbus-runtime --lib node22_loader_context_followup_vm -- --test-threads=1`:
+    `9 passed; 0 failed; 5 ignored; 521 filtered out`
+  - `cargo test -p nimbus-runtime --lib node22_loader_context_zlib_foundation_batch_fixture -- --test-threads=1`:
+    `1 passed; 0 failed; 0 ignored; 534 filtered out`
+- First full `make test` attempt failed in
+  `node22-node-tools-sqlite-foundation-batch` because Deno's
+  `deno_node_sqlite` called `panic!("Failed to set db config")` from an
+  `op2` constructor when `sqlite3_db_config` returned an error. That aborted
+  the host process (`SIGABRT`) instead of returning a JavaScript `SqliteError`,
+  so it was treated as a release blocker and fixed in the Deno fork.
+- Deno fork verification for the sqlite fix:
+  - `cargo fmt --all --check` passed in `/Users/jack/src/github.com/nimbus/deno`
+  - `env CARGO_ENCODED_RUSTFLAGS=... cargo check -p deno_node_sqlite` passed
+    with the macOS linker override documented for one-off fork verification
+  - `cargo test -p nimbus-runtime --lib node22_node_tools_sqlite_foundation_batch_fixture -- --test-threads=1`
+    passed against temporary local Deno commit
+    `9225357ba8697cf2c998eef62571779957a7a90c`
+  - the same focused Nimbus test passed after publishing and repinning to
+    `nimbus/deno` `v2.8.0-nimbus.4`:
+    `1 passed; 0 failed; 0 ignored; 534 filtered out`
+- A pre-repin Node22 release slice passed after host-process snapshot hardening
+  and broad replay classification:
+  `cargo test -p nimbus-runtime --lib node22_ -- --test-threads=1`:
+  `125 passed; 0 failed; 89 ignored; 321 filtered out`.
+- The supplementary module bridge fixture source was moved out of an ignored
+  `node_modules` source path while still staging into `node_modules` at runtime;
+  this prevents a clean checkout from depending on ignored local fixture files.
+- Full `make test` passed after the `v2.8.0-nimbus.4` repin and default-lane
+  node-compat hardening. This is now pre-security-repin evidence; NRR4 must
+  rerun after the `v2.8.0-nimbus.5` security dependency repin. Key
+  release-blocking summaries from the run:
+  - `nimbus-runtime`: `359 passed; 0 failed; 178 ignored; finished in 1993.06s`
+  - `nimbus-sandbox`: `157 passed; 0 failed`
+  - `nimbus-server`: `841 passed; 0 failed; 9 ignored`
+  - `nimbus-storage`: `206 passed; 0 failed; 2 ignored`
+  - workspace doc tests completed with `0 failed`
+- The HTTPS TLS session lane passed under the full workspace run through the
+  subprocess wrapper:
+  `node22_networking_https_tls_session_batch_fixture ... ok`; the child proof
+  remained ignored as intended.
+- The `node:sqlite` process-global lane is no longer part of the default
+  workspace gate. The exact proof lane remains available and passed with:
+  `cargo test -p nimbus-runtime --lib runtime::tests::node_compat::node22_node_tools_sqlite_foundation_batch_fixture -- --ignored --exact --nocapture`
+  -> `1 passed; 0 failed; 0 ignored; 536 filtered out`.
+- Deno security dependency repin evidence:
+  - `nimbus/deno` `v2.8.0-nimbus.5` updates Hickory to `0.26.1` and
+    `rustls-webpki` to `0.103.13`, removing the active `cargo-deny`
+    advisories for `hickory-proto 0.25.2` and `rustls-webpki 0.102.8`.
+  - `make deny` passed on the repinned Nimbus graph:
+    `advisories ok, bans ok, licenses ok, sources ok`.
+- Final `v2.8.0-nimbus.5` verification passed:
+  - `cargo fmt --all --check`
+  - `make check`: `cargo check --workspace` finished successfully.
+  - `make clippy`: `cargo clippy --workspace --all-targets -- -D warnings`
+    finished successfully.
+  - `make test`: full workspace run passed. Key summaries:
+    `nimbus-runtime` `359 passed; 0 failed; 178 ignored`;
+    `nimbus-sandbox` `157 passed; 0 failed`;
+    `nimbus-server` `841 passed; 0 failed; 9 ignored`;
+    `nimbus-storage` `206 passed; 0 failed; 2 ignored`; workspace doctests
+    completed with `0 failed`.
+  - `npm run typecheck` passed for all workspaces. `nimbus-ui@0.1.32`
+    codegen emitted the existing TanStack route-helper warnings, then
+    `tsc --noEmit` passed.
+  - `npm run test` passed, including `nimbus-ui` `42` test files and `278`
+    tests.
+  - `npm run build` passed, including the embedded `nimbus-ui@0.1.32`
+    production build. Existing route-helper, Node `module.register()`, and
+    Vite chunk-size warnings were emitted.
+  - The host ran out of disk during the first `make verify-harness` retry
+    while compiling server/runtime artifacts. This was not a harness assertion
+    failure. Cleaning only the main checkout's Cargo build artifacts with
+    `cargo clean` freed `156.0GiB`; the release worktree target cache was
+    preserved.
+  - `make verify-harness` then passed: storage and engine generated-history
+    corpus checks passed; server generated-history and transport-liveness
+    campaigns passed; runtime liveness/integrity cases passed.
+  - `make verify-tenant-isolation-conformance` passed: tenant isolation
+    conformance reported `21 scenarios, 12 allowed, 9 denied`, and production
+    image admission reported `6 passed; 0 failed`.
+  - `make verify-enterprise-policy-egress` passed all `8` sections covering
+    policy fixtures, CLI fixtures, compose egress lowering, service-manager
+    materialization, sandbox enforcement, egress proxy enforcement, audit
+    redaction/export, and drift scanning.
+  - `make verify-artifact-provenance` passed all `5` sections covering
+    Cosign/SLSA/SBOM verifier adapters, runtime bundle provenance admission,
+    tenant image admission with canonical OCI parsing, the operator SBOM policy
+    hook, and production Compose image admission.
+  - `make proof-helpers` passed, including SQLCipher, machine
+    guest/service/Homebrew helpers, Bun/JSC adapter package and release asset
+    helpers, Linux release package helper, and the install helper
+    (`35` install-script checks).
+  - `make verify-bun-jsc-runtime-contract` passed all `7` sections, including
+    runtime policy/memory semantics, Bun/JSC pool scaffold, Convex lane
+    registry, diagnostics API, tenant admission, and UI diagnostics.
+  - `bash scripts/verify-bun-jsc-in-process-lockdown.sh` passed locally
+    against `/Users/jack/src/github.com/oven-sh/bun`. The native embed probe
+    reported deny-by-default permission hooks, deny-all resolver policy, memory
+    pressure/shrink evidence, and the product-first policy
+    `fresh_vm_or_discard_with_outer_quota_required`.
+  - `make verify-bun-jsc-adapter-package` passed.
+  - `make verify-bun-jsc-release-assets` passed.
+  - `git diff --check` passed after the current changes.
+- Strict docs reference validation was attempted with
+  `npm run docs:validate-refs:strict`, but the repo does not define that npm
+  script. `npm run` lists build/typecheck/test and adapter demo scripts only,
+  so the unavailable docs-ref lane is recorded explicitly rather than claimed.
+
 ### NRR5 - Local Release Binary and Archive Contract
 
-Status: pending
+Status: completed 2026-05-26
 
 Build the local release binary and verify the release helper contracts before
 creating the tag.
@@ -294,6 +592,31 @@ Success criteria:
 - If optional Bun/JSC adapter release artifacts are produced locally, they pass
   `scripts/verify-bun-jsc-release-assets.sh`; if absent, the verifier records
   absence as policy.
+
+Evidence:
+
+- `make release` passed from the clean release worktree:
+  `Finished 'release' profile [optimized] target(s) in 12m 53s`.
+- `target/release/nimbus --version` reported `nimbus 0.1.32`.
+- `make verify-release-archive-layout-helper` passed:
+  `verified: release archive layout helper accepts the shipped layout and rejects a broken macOS helper bundle`.
+- `make verify-install-helper` passed `35` install-script checks, including
+  checksum spoof rejection and optional Bun/JSC adapter installer hardening.
+- `make verify-build-linux-release-packages-helper` passed:
+  deterministic `nimbus`, `nimbus-libkrun`, `nimbus-crun`, and
+  `nimbus-bun-jsc-adapter` deb/rpm manifests rendered; actual package creation
+  was skipped because `nfpm` is not installed on the host.
+- `make verify-build-fedora-release-srpms-helper` initially failed because the
+  sandbox could not access Docker/Podman sockets. `docker --version` and
+  `podman --version` confirmed the tools exist, and rerunning the helper with
+  container access passed under Fedora 42:
+  reusable `nimbus`, `nimbus-libkrun`, and `nimbus-crun` source RPMs were
+  built, x86_64 RPMs were installed, and aarch64 RPM metadata was
+  query-verified from the release artifacts.
+- Optional Bun/JSC release-asset policy was already verified in NRR4 with
+  `make verify-bun-jsc-release-assets`, which passed for absent-optional,
+  good-asset, missing-SBOM, missing-SLSA, checksum-mismatch, and tampered
+  package cases.
 
 ### NRR6 - Clean Release Commit and Tag
 
@@ -364,6 +687,9 @@ The release is complete only when:
 - every failure discovered during fork or Nimbus verification is either fixed
   or documented as upstream-owned and non-blocking for Nimbus' consumed
   capability;
+- machine-os, desktop, and UI alignment has been verified or any separate
+  artifact-cadence failure has been classified with concrete non-blocking
+  evidence;
 - the release source worktree is clean;
 - the live GitHub release artifacts pass downloaded verification; and
 - the active goal is marked complete with the release URL and final token
@@ -385,10 +711,19 @@ Verifiable success criteria:
   upstream-base reproduction or hosted evidence and record why it is
   non-blocking or block the release.
 - Prove Nimbus consumes the standardized fork releases:
-  nimbus/deno v2.8.0-nimbus.2, nimbus/rusty_v8 v149.0.0-nimbus.1,
+  nimbus/deno v2.8.0-nimbus.5, nimbus/rusty_v8 v149.0.0-nimbus.1,
   nimbus/bun source tag nimbus-bun-jsc-proof-main-20260525,
   nimbus/nimbus-crun v1.27.1-nimbus.2, and
   nimbus/nimbus-libkrun v1.18.1-nimbus.1.
+- Verify release-coupled downstream alignment before final gates: nimbus/machine-os
+  must use the current supported pinned Fedora bootc base consistently across
+  its recipe, CI workflow, helper tests, and the nimbus/nimbus release workflow;
+  changed machine-os source must pass local shell/helper/actionlint gates and
+  be committed/pushed to main before the Nimbus release tag is created.
+- Verify packages/nimbus-ui version/test/build alignment and classify
+  nimbus/desktop hosted status. Fix any release-blocking desktop/UI issue, or
+  record exact evidence when a separate desktop artifact failure is non-blocking
+  for the Nimbus CLI/server release.
 - Select a new Nimbus release version, update Rust/JS/package-lock/changelog
   metadata, and pass make verify-release-version-contract VERSION=<tag>.
 - Pass the full local gate set: cargo fmt --all --check, make check,

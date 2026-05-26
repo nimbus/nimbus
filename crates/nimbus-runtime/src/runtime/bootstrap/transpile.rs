@@ -17,16 +17,43 @@ type RuntimeExtensionTranspiler =
 deno_error::js_error_wrapper!(deno_ast::ParseDiagnostic, JsParseDiagnostic, "Error");
 deno_error::js_error_wrapper!(deno_ast::TranspileError, JsTranspileError, "Error");
 
-const NODE_EXTENSION_INTERNAL_DENO_PRELUDE: &str = r#"
+const NODE_EXTENSION_INTERNAL_DENO_PRELUDE_HEADER: &str = r#"
 import { core as __nimbusCore } from "ext:core/mod.js";
 import {
   denoGlobals as __nimbusInternalDenoGlobals,
   nodeGlobals as __nimbusInternalNodeGlobals,
   publicDenoPrototype as __nimbusPublicDenoPrototype,
 } from "ext:nimbus_node22/internal_bootstrap.js";
+"#;
 
+const NODE_EXTENSION_INTERNAL_DENO_SCRIPT_PRELUDE_HEADER: &str = r#"
+const __nimbusCore = __bootstrap.core;
+const __nimbusInternalDenoGlobals =
+  __bootstrap.ext_node_denoGlobals ??= globalThis.Deno ?? globalThis.Object.create(null);
+const __nimbusInternalNodeGlobals =
+  __bootstrap.ext_node_nodeGlobals ??= globalThis.__bootstrap?.ext_node_nodeGlobals ??
+    globalThis.Object.create(null);
+const __nimbusPublicDenoPrototype = globalThis.Deno ?? null;
+"#;
+
+const NODE_EXTENSION_INTERNAL_DENO_PRELUDE_BODY: &str = r#"
 function __nimbusResolveDeno() {
   const deno = __nimbusInternalDenoGlobals;
+  const publicDeno = globalThis.Deno;
+  if (
+    publicDeno &&
+    (typeof publicDeno === "object" || typeof publicDeno === "function")
+  ) {
+    for (const key of globalThis.Reflect.ownKeys(publicDeno)) {
+      if (deno[key] !== undefined) {
+        continue;
+      }
+      const descriptor = globalThis.Object.getOwnPropertyDescriptor(publicDeno, key);
+      if (descriptor) {
+        globalThis.Object.defineProperty(deno, key, descriptor);
+      }
+    }
+  }
   if (deno.core === undefined) {
     deno.core = __nimbusCore;
   }
@@ -188,9 +215,10 @@ fn rewrite_node_extension_source(name: &str, source: String) -> String {
         return source;
     }
 
-    // Keep Deno's Node polyfills bound to the hidden `__bootstrap` substrate
-    // instead of the public `globalThis.Deno` contract that user bundles
-    // should not observe in Node22 mode.
+    // Keep Deno's Node polyfills bound to Nimbus-owned Node bootstrap state.
+    // Node22 mode now retains a managed public `globalThis.Deno` because Deno
+    // 2.8's lazy Node polyfills consult it after startup, but extension code
+    // still resolves through this proxy so the substrate is not tenant-owned.
     let source = source
         .replace(
             "globalThis.__bootstrap.ext_node_denoGlobals",
@@ -201,5 +229,32 @@ fn rewrite_node_extension_source(name: &str, source: String) -> String {
             "__nimbusInternalNodeGlobals",
         )
         .replace("globalThis.Deno", "Deno");
-    format!("{NODE_EXTENSION_INTERNAL_DENO_PRELUDE}{source}")
+    if name.starts_with("ext:deno_node/") && source.contains("(function () {") {
+        return inject_node_lazy_script_prelude(source);
+    }
+
+    format!(
+        "{NODE_EXTENSION_INTERNAL_DENO_PRELUDE_HEADER}{NODE_EXTENSION_INTERNAL_DENO_PRELUDE_BODY}{source}"
+    )
+}
+
+fn inject_node_lazy_script_prelude(source: String) -> String {
+    const IIFE_OPEN: &str = "(function () {";
+    if let Some(offset) = source.find(IIFE_OPEN) {
+        let insert_at = offset + IIFE_OPEN.len();
+        let mut rewritten = String::with_capacity(
+            source.len()
+                + NODE_EXTENSION_INTERNAL_DENO_SCRIPT_PRELUDE_HEADER.len()
+                + NODE_EXTENSION_INTERNAL_DENO_PRELUDE_BODY.len(),
+        );
+        rewritten.push_str(&source[..insert_at]);
+        rewritten.push_str(NODE_EXTENSION_INTERNAL_DENO_SCRIPT_PRELUDE_HEADER);
+        rewritten.push_str(NODE_EXTENSION_INTERNAL_DENO_PRELUDE_BODY);
+        rewritten.push_str(&source[insert_at..]);
+        rewritten
+    } else {
+        format!(
+            "(function () {{{NODE_EXTENSION_INTERNAL_DENO_SCRIPT_PRELUDE_HEADER}{NODE_EXTENSION_INTERNAL_DENO_PRELUDE_BODY}\n{source}\n}})();"
+        )
+    }
 }

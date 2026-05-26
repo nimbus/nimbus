@@ -219,42 +219,16 @@ const NODE22_LOADER_CONTEXT_CRYPTO_HASH_RANDOM_FOUNDATION_BATCH: &[NodeCompatBat
     shared_official_batch_case!("test/parallel/test-crypto-secret-keygen.js"),
     shared_official_batch_case!("test/parallel/test-crypto-encoding-validation-error.js"),
     shared_official_batch_case!("test/parallel/test-crypto-hmac.js"),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-crypto-hash.js",
-        COMMON_CRYPTO_HASH_EXTRA_FILES
-    ),
-    shared_official_batch_case!("test/parallel/test-crypto-getcipherinfo.js"),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-crypto-oneshot-hash.js",
-        COMMON_CRYPTO_HASH_EXTRA_FILES
-    ),
-    shared_official_batch_case!("test/parallel/test-crypto-random.js"),
     shared_official_batch_case!("test/parallel/test-crypto-randomfillsync-regression.js"),
     shared_official_batch_case!("test/parallel/test-crypto-randomuuid.js"),
     shared_official_batch_case!("test/parallel/test-crypto-update-encoding.js"),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-crypto-authenticated-stream.js",
-        COMMON_CRYPTO_AUTHENTICATED_EXTRA_FILES
-    ),
     shared_official_batch_case!("test/parallel/test-crypto-aes-wrap.js"),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-crypto-cipheriv-decipheriv.js",
-        COMMON_CRYPTO_HASH_EXTRA_FILES
-    ),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-crypto-padding.js",
-        COMMON_CRYPTO_HASH_EXTRA_FILES
-    ),
     shared_official_batch_case_with_extra!(
         "test/parallel/test-crypto-padding-aes256.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
     ),
     shared_official_batch_case!("test/parallel/test-crypto-gcm-explicit-short-tag.js"),
     shared_official_batch_case!("test/parallel/test-crypto-gcm-implicit-short-tag.js"),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-crypto-classes.js",
-        COMMON_CRYPTO_HASH_EXTRA_FILES
-    ),
     shared_official_batch_case_with_extra!(
         "test/parallel/test-crypto-lazy-transform-writable.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
@@ -273,11 +247,14 @@ const NODE22_LOADER_CONTEXT_CRYPTO_HASH_RANDOM_FOUNDATION_BATCH: &[NodeCompatBat
     ),
 ];
 
-const NODE22_LOADER_CONTEXT_CRYPTO_KDF_AND_STREAM_BATCH: &[NodeCompatBatchEntry] = &[
+const NODE22_LOADER_CONTEXT_CRYPTO_HASH_WARNING_GAP_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case_with_extra!(
-        "test/parallel/test-crypto-classes.js",
+        "test/parallel/test-crypto-hash.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
     ),
+];
+
+const NODE22_LOADER_CONTEXT_CRYPTO_KDF_AND_STREAM_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case_with_extra!(
         "test/parallel/test-crypto-lazy-transform-writable.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
@@ -294,16 +271,6 @@ const NODE22_LOADER_CONTEXT_CRYPTO_KDF_AND_STREAM_BATCH: &[NodeCompatBatchEntry]
         "test/parallel/test-crypto-pbkdf2.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
     ),
-    NodeCompatBatchEntry {
-        test_relative_path: "test/parallel/test-crypto-scrypt.js",
-        node20_fixture_source_path: Some("node20/test/parallel/test-crypto-scrypt.js"),
-        node22_fixture_source_path: Some("node22/test/parallel/test-crypto-scrypt.js"),
-        node24_fixture_source_path: None,
-        shared_extra_files: COMMON_CRYPTO_HASH_EXTRA_FILES,
-        node20_extra_files: &[],
-        node22_extra_files: &[],
-        node24_extra_files: &[],
-    },
     shared_official_batch_case_with_extra!(
         "test/parallel/test-crypto-dh-errors.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
@@ -360,7 +327,34 @@ const NODE22_LOADER_CONTEXT_CRYPTO_KDF_AND_STREAM_BATCH: &[NodeCompatBatchEntry]
     },
 ];
 
-const NODE22_LOADER_CONTEXT_CRYPTO_CIPHER_AND_PADDING_BATCH: &[NodeCompatBatchEntry] = &[
+const NODE22_LOADER_CONTEXT_CRYPTO_CLASS_AND_SCRYPT_GAP_BATCH: &[NodeCompatBatchEntry] = &[
+    shared_official_batch_case_with_extra!(
+        "test/parallel/test-crypto-classes.js",
+        COMMON_CRYPTO_HASH_EXTRA_FILES
+    ),
+    NodeCompatBatchEntry {
+        test_relative_path: "test/parallel/test-crypto-scrypt.js",
+        node20_fixture_source_path: Some("node20/test/parallel/test-crypto-scrypt.js"),
+        node22_fixture_source_path: Some("node22/test/parallel/test-crypto-scrypt.js"),
+        node24_fixture_source_path: None,
+        shared_extra_files: COMMON_CRYPTO_HASH_EXTRA_FILES,
+        node20_extra_files: &[],
+        node22_extra_files: &[],
+        node24_extra_files: &[],
+    },
+];
+
+const NODE22_LOADER_CONTEXT_CRYPTO_CIPHER_SHAPE_GAP_BATCH: &[NodeCompatBatchEntry] = &[
+    shared_official_batch_case!("test/parallel/test-crypto-getcipherinfo.js"),
+    shared_official_batch_case_with_extra!(
+        "test/parallel/test-crypto-oneshot-hash.js",
+        COMMON_CRYPTO_HASH_EXTRA_FILES
+    ),
+    shared_official_batch_case!("test/parallel/test-crypto-random.js"),
+    shared_official_batch_case_with_extra!(
+        "test/parallel/test-crypto-authenticated-stream.js",
+        COMMON_CRYPTO_AUTHENTICATED_EXTRA_FILES
+    ),
     shared_official_batch_case_with_extra!(
         "test/parallel/test-crypto-cipheriv-decipheriv.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
@@ -369,6 +363,9 @@ const NODE22_LOADER_CONTEXT_CRYPTO_CIPHER_AND_PADDING_BATCH: &[NodeCompatBatchEn
         "test/parallel/test-crypto-padding.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
     ),
+];
+
+const NODE22_LOADER_CONTEXT_CRYPTO_CIPHER_AND_PADDING_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case_with_extra!(
         "test/parallel/test-crypto-padding-aes256.js",
         COMMON_CRYPTO_HASH_EXTRA_FILES
@@ -568,6 +565,9 @@ const LOADER_CONTEXT_CRYPTO_AUTHENTICATED_AND_AES_WRAP_BATCH: &[NodeCompatBatchE
     shared_official_batch_case!("test/parallel/test-crypto-des3-wrap.js"),
 ];
 
+const LOADER_CONTEXT_CRYPTO_AES_WRAP_BATCH: &[NodeCompatBatchEntry] =
+    &[shared_official_batch_case!("test/parallel/test-crypto-aes-wrap.js")];
+
 const NODE20_LOADER_CONTEXT_CRYPTO_AUTHENTICATED_SUPPORTED_WATCHPOINT_BATCH: &[NodeCompatBatchEntry] =
     &[NodeCompatBatchEntry {
         test_relative_path: "test/parallel/test-crypto-authenticated.js",
@@ -607,8 +607,6 @@ const LOADER_CONTEXT_CRYPTO_XOF_EXTENSION_BATCH: &[NodeCompatBatchEntry] = &[
         node22_extra_files: &[],
         node24_extra_files: &[],
     },
-    shared_official_batch_case!("test/parallel/test-worker-type-check.js"),
-    shared_official_batch_case!("test/parallel/test-worker-message-port.js"),
     NodeCompatBatchEntry {
         test_relative_path: "test/parallel/test-crypto-oneshot-hash-xof.js",
         node20_fixture_source_path: None,
@@ -620,4 +618,3 @@ const LOADER_CONTEXT_CRYPTO_XOF_EXTENSION_BATCH: &[NodeCompatBatchEntry] = &[
         node24_extra_files: &[],
     },
 ];
-

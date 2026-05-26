@@ -1,23 +1,29 @@
 import { core } from "ext:core/mod.js";
 
-import * as crypto from "ext:deno_crypto/00_crypto.js";
-import * as abortSignal from "ext:deno_web/03_abort_signal.js";
-import * as console from "ext:deno_web/01_console.js";
-import * as encoding from "ext:deno_web/08_text_encoding.js";
-import * as event from "ext:deno_web/02_event.js";
-import * as eventSource from "ext:deno_fetch/27_eventsource.js";
-import * as fetch from "ext:deno_fetch/26_fetch.js";
-import * as file from "ext:deno_web/09_file.js";
-import * as fileReader from "ext:deno_web/10_filereader.js";
-import * as formData from "ext:deno_fetch/21_formdata.js";
-import * as headers from "ext:deno_fetch/20_headers.js";
-import * as imageData from "ext:deno_web/16_image_data.js";
-import * as request from "ext:deno_fetch/23_request.js";
-import * as response from "ext:deno_fetch/23_response.js";
-import * as url from "ext:deno_web/00_url.js";
-import * as urlPattern from "ext:deno_web/01_urlpattern.js";
-import * as webSocket from "ext:deno_websocket/01_websocket.js";
-import { DOMException, QuotaExceededError } from "ext:deno_web/01_dom_exception.js";
+core.loadExtScript("ext:deno_telemetry/telemetry.ts");
+core.loadExtScript("ext:deno_telemetry/util.ts");
+
+const abortSignal = core.loadExtScript("ext:deno_web/03_abort_signal.js");
+const console = core.loadExtScript("ext:deno_web/01_console.js");
+const crypto = core.loadExtScript("ext:deno_crypto/00_crypto.js");
+const encoding = core.loadExtScript("ext:deno_web/08_text_encoding.js");
+const event = core.loadExtScript("ext:deno_web/02_event.js");
+const eventSource = core.loadExtScript("ext:deno_fetch/27_eventsource.js");
+const fetch = core.loadExtScript("ext:deno_fetch/26_fetch.js");
+const file = core.loadExtScript("ext:deno_web/09_file.js");
+const fileReader = core.loadExtScript("ext:deno_web/10_filereader.js");
+const formData = core.loadExtScript("ext:deno_fetch/21_formdata.js");
+const headers = core.loadExtScript("ext:deno_fetch/20_headers.js");
+const imageData = core.loadExtScript("ext:deno_web/16_image_data.js");
+const request = core.loadExtScript("ext:deno_fetch/23_request.js");
+const response = core.loadExtScript("ext:deno_fetch/23_response.js");
+const url = core.loadExtScript("ext:deno_web/00_url.js");
+const urlPattern = core.loadExtScript("ext:deno_web/01_urlpattern.js");
+const loadWebSocket = core.createLazyLoader("ext:deno_websocket/01_websocket.js");
+const {
+  DOMException,
+  QuotaExceededError,
+} = core.loadExtScript("ext:deno_web/01_dom_exception.js");
 
 // Match the Deno runtime module name that Node polyfills import. Keep this
 // intentionally smaller than the full Deno runtime global contract, but wide
@@ -52,7 +58,10 @@ const windowOrWorkerGlobalScope = {
   URL: core.propNonEnumerable(url.URL),
   URLPattern: core.propNonEnumerable(urlPattern.URLPattern),
   URLSearchParams: core.propNonEnumerable(url.URLSearchParams),
-  WebSocket: core.propNonEnumerable(webSocket.WebSocket),
+  WebSocket: core.propNonEnumerableLazyLoaded(
+    (webSocket) => webSocket.WebSocket,
+    loadWebSocket,
+  ),
   console: core.propNonEnumerable(
     new console.Console((msg, level) => core.print(msg, level > 1)),
   ),

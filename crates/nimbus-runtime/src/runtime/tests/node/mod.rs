@@ -5,8 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
-use crate::RuntimeLimits;
-use crate::test_support::acquire_runtime_suite_lock;
+use crate::test_support::{
+    IsolatedRuntimeTestCase, acquire_runtime_suite_lock,
+    run_v8_sensitive_runtime_test_in_subprocess,
+};
+use crate::{RuntimeLimits, RuntimeMode};
 
 mod supplementary_batches;
 
@@ -524,97 +527,105 @@ fn execute_upstream_node_compat_test_with_extra_files(
     postlude_script: Option<&str>,
 ) -> std::result::Result<NodeCompatFixtureOutcome, String> {
     let _guard = acquire_runtime_suite_lock();
-    let fixture_needs_pending_deprecation = fixture_requests_pending_deprecation(test_source);
-    let resolved_prelude_behavior =
-        prelude_script.and_then(NodeCompatNamedPreludeBehavior::from_script);
-    let _interactive_term_guard = matches!(
-        resolved_prelude_behavior,
-        Some(NodeCompatNamedPreludeBehavior::InteractiveTerminal)
-    )
-    .then(|| ScopedProcessEnvVar::set("TERM", "xterm-256color"));
-    let _pending_deprecation_guard = fixture_needs_pending_deprecation
-        .then(|| scoped_node_options_flag("--pending-deprecation"));
-    let effective_prelude = if fixture_needs_pending_deprecation {
-        format!(
-            "{PENDING_DEPRECATION_PRELUDE}\n{}",
-            prelude_script.unwrap_or("")
+    let snapshot = NodeCompatHostProcessSnapshot::capture();
+    let execution = panic::catch_unwind(AssertUnwindSafe(|| {
+        let fixture_needs_pending_deprecation = fixture_requests_pending_deprecation(test_source);
+        let resolved_prelude_behavior =
+            prelude_script.and_then(NodeCompatNamedPreludeBehavior::from_script);
+        let _interactive_term_guard = matches!(
+            resolved_prelude_behavior,
+            Some(NodeCompatNamedPreludeBehavior::InteractiveTerminal)
         )
-    } else {
-        prelude_script.unwrap_or("").to_string()
-    };
-    let (_tempdir, bundle_path) = write_node_compat_bundle(NodeCompatBundleWriteOptions {
-        test_relative_path,
-        test_source,
-        extra_files,
-        capture_top_level_skip,
-        lane,
-        prelude_script: Some(effective_prelude.as_str()),
-        postlude_script,
-        mode: NodeCompatBundleMode::Runtime,
-    });
-    let runtime = NimbusRuntime::with_policy(
-        Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(runtime_limits_for_node_compat_fixture(
+        .then(|| ScopedProcessEnvVar::set("TERM", "xterm-256color"));
+        let _pending_deprecation_guard = fixture_needs_pending_deprecation
+            .then(|| scoped_node_options_flag("--pending-deprecation"));
+        let effective_prelude = if fixture_needs_pending_deprecation {
+            format!(
+                "{PENDING_DEPRECATION_PRELUDE}\n{}",
+                prelude_script.unwrap_or("")
+            )
+        } else {
+            prelude_script.unwrap_or("").to_string()
+        };
+        let (_tempdir, bundle_path) = write_node_compat_bundle(NodeCompatBundleWriteOptions {
             test_relative_path,
-        ))),
-    );
-    let request = InvocationRequest {
-        kind: InvocationKind::Query,
-        function_name: "node_compat:run".to_string(),
-        args: Value::Null,
-        page_size: None,
-        cursor: None,
-        auth: None,
-        services: Default::default(),
-    };
-
-    let result = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime should build")
-        .block_on(async {
-            runtime
-                .invoke_bundle(&RuntimeBundle::new(&bundle_path), &request)
-                .await
+            test_source,
+            extra_files,
+            capture_top_level_skip,
+            lane,
+            prelude_script: Some(effective_prelude.as_str()),
+            postlude_script,
+            mode: NodeCompatBundleMode::Runtime,
         });
+        let runtime_limits =
+            runtime_limits_for_node_compat_bundle(test_relative_path, &bundle_path);
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            Arc::new(RuntimePolicy::new(runtime_limits)),
+        );
+        let request = InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "node_compat:run".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
 
-    let result = match result {
-        Ok(result) => result,
-        Err(error) => {
-            let error = error.to_string();
-            if matches!(
-                resolved_prelude_behavior,
-                Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
-            ) && let Some(exit_code) = node_compat_process_exit_code_from_error(&error)
-            {
-                if exit_code == 0 {
-                    return Ok(NodeCompatFixtureOutcome { skipped: false });
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime should build")
+            .block_on(async {
+                runtime
+                    .invoke_bundle(&RuntimeBundle::new(&bundle_path), &request)
+                    .await
+            });
+
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                let error = error.to_string();
+                if matches!(
+                    resolved_prelude_behavior,
+                    Some(NodeCompatNamedPreludeBehavior::ProcessExitSentinel)
+                ) && let Some(exit_code) = node_compat_process_exit_code_from_error(&error)
+                {
+                    if exit_code == 0 {
+                        return Ok(NodeCompatFixtureOutcome { skipped: false });
+                    }
+                    return Err(format!(
+                        "upstream node_compat fixture `{test_relative_path}` exited with non-zero code {exit_code}: {error}"
+                    ));
                 }
                 return Err(format!(
-                    "upstream node_compat fixture `{test_relative_path}` exited with non-zero code {exit_code}: {error}"
+                    "upstream node_compat fixture `{test_relative_path}` should execute: {error}"
                 ));
             }
+        };
+
+        if result.get("ok") != Some(&serde_json::json!(true)) {
             return Err(format!(
-                "upstream node_compat fixture `{test_relative_path}` should execute: {error}"
+                "upstream node_compat fixture `{test_relative_path}` returned non-ok payload: {result}"
             ));
         }
-    };
 
-    if result.get("ok") != Some(&serde_json::json!(true)) {
-        return Err(format!(
-            "upstream node_compat fixture `{test_relative_path}` returned non-ok payload: {result}"
-        ));
+        if result.get("testPath") != Some(&serde_json::json!(test_relative_path)) {
+            return Err(format!(
+                "upstream node_compat fixture `{test_relative_path}` returned mismatched testPath payload: {result}"
+            ));
+        }
+
+        Ok(NodeCompatFixtureOutcome {
+            skipped: result.get("skipped") == Some(&serde_json::json!(true)),
+        })
+    }));
+    snapshot.restore();
+    match execution {
+        Ok(result) => result,
+        Err(payload) => panic::resume_unwind(payload),
     }
-
-    if result.get("testPath") != Some(&serde_json::json!(test_relative_path)) {
-        return Err(format!(
-            "upstream node_compat fixture `{test_relative_path}` returned mismatched testPath payload: {result}"
-        ));
-    }
-
-    Ok(NodeCompatFixtureOutcome {
-        skipped: result.get("skipped") == Some(&serde_json::json!(true)),
-    })
 }
 
 fn node_compat_fixture_requires_runtime_self_exec(test_relative_path: &str) -> bool {
@@ -651,6 +662,25 @@ fn runtime_limits_for_node_compat_fixture(test_relative_path: &str) -> RuntimeLi
     limits
 }
 
+fn runtime_limits_for_node_compat_bundle(
+    test_relative_path: &str,
+    bundle_path: &std::path::Path,
+) -> RuntimeLimits {
+    let mut limits = runtime_limits_for_node_compat_fixture(test_relative_path);
+    if test_relative_path == "test/parallel/test-module-loading-error.js" {
+        let module_loading_error_fixture = bundle_path
+            .parent()
+            .expect("node compat bundle path should have a parent")
+            .join("test/fixtures/module-loading-error.node");
+        limits.mode = RuntimeMode::Privileged;
+        limits
+            .grants
+            .ffi
+            .push(module_loading_error_fixture.display().to_string());
+    }
+    limits
+}
+
 #[test]
 fn node_compat_runtime_limits_only_grant_self_exec_to_known_respawn_fixtures() {
     let runner_limits =
@@ -671,6 +701,30 @@ fn node_compat_runtime_limits_only_grant_self_exec_to_known_respawn_fixtures() {
     let non_respawn_limits =
         runtime_limits_for_node_compat_fixture("test/parallel/test-repl-mode.js");
     assert!(non_respawn_limits.grants.run.is_empty());
+}
+
+#[test]
+fn node_compat_runtime_limits_grant_ffi_only_to_invalid_native_loader_fixture() {
+    let bundle_path = PathBuf::from("/tmp/nimbus-node-compat/bundle.mjs");
+    let loader_limits = runtime_limits_for_node_compat_bundle(
+        "test/parallel/test-module-loading-error.js",
+        &bundle_path,
+    );
+    assert_eq!(
+        loader_limits.grants.ffi,
+        vec!["/tmp/nimbus-node-compat/test/fixtures/module-loading-error.node"]
+    );
+    assert_eq!(loader_limits.mode, RuntimeMode::Privileged);
+
+    let ordinary_limits = runtime_limits_for_node_compat_bundle(
+        "test/parallel/test-module-loading-globalpaths.js",
+        &bundle_path,
+    );
+    assert_eq!(ordinary_limits.mode, RuntimeMode::Standard);
+    assert!(
+        ordinary_limits.grants.ffi.is_empty(),
+        "Node compat fixture FFI grants must stay fixture-scoped",
+    );
 }
 
 fn execute_manifested_node_compat_test(
@@ -796,7 +850,6 @@ pub(super) fn observe_seeded_fixture_runtime_outcome(
 ) -> std::result::Result<NodeCompatSeededFixtureObservedOutcome, String> {
     let (lane, _family, _slice, batch_entry, fixture_source_path) =
         resolve_seeded_fixture_context(lane_name, test_relative_path)?;
-    let snapshot = NodeCompatHostProcessSnapshot::capture();
     let execution = panic::catch_unwind(AssertUnwindSafe(|| {
         execute_manifested_node_compat_test(
             batch_entry.test_relative_path,
@@ -808,7 +861,6 @@ pub(super) fn observe_seeded_fixture_runtime_outcome(
             None,
         )
     }));
-    snapshot.restore();
     let outcome = match execution {
         Ok(Ok(outcome)) if outcome.skipped => NodeCompatSeededFixtureObservedOutcome {
             state: node_compat_manifest_report::NodeCompatObservedFixtureState::Skip,
@@ -1054,7 +1106,6 @@ fn run_manifested_subset_for_lane(
                 "node_compat {batch_name} {lane_name} -> {}",
                 fixture.test_relative_path
             );
-            let snapshot = NodeCompatHostProcessSnapshot::capture();
             let execution = panic::catch_unwind(AssertUnwindSafe(|| {
                 execute_manifested_node_compat_test(
                     fixture.test_relative_path,
@@ -1066,7 +1117,6 @@ fn run_manifested_subset_for_lane(
                     None,
                 )
             }));
-            snapshot.restore();
             match execution {
                 Ok(Ok(outcome)) => {
                     if outcome.skipped {
@@ -1157,7 +1207,6 @@ fn run_node_compat_watchpoint_batch(
     for test_relative_path in fixture_paths {
         eprintln!("node_compat {batch_name} {lane_name} -> {test_relative_path}");
         let fixture_source_path = format!("{lane_name}/{test_relative_path}");
-        let snapshot = NodeCompatHostProcessSnapshot::capture();
         let execution = panic::catch_unwind(AssertUnwindSafe(|| {
             run_node_compat_watchpoint_for_lane(
                 test_relative_path,
@@ -1166,7 +1215,6 @@ fn run_node_compat_watchpoint_batch(
                 lane,
             );
         }));
-        snapshot.restore();
         if let Err(payload) = execution {
             failures.push(format!(
                 "{test_relative_path}: {}",
@@ -1198,7 +1246,6 @@ fn run_node_compat_watchpoint_entry_batch(
                 "node_compat {batch_name} {lane_name} -> {}",
                 fixture.test_relative_path
             );
-            let snapshot = NodeCompatHostProcessSnapshot::capture();
             let execution = panic::catch_unwind(AssertUnwindSafe(|| {
                 run_node_compat_watchpoint_for_lane(
                     fixture.test_relative_path,
@@ -1207,7 +1254,6 @@ fn run_node_compat_watchpoint_entry_batch(
                     lane,
                 );
             }));
-            snapshot.restore();
             if let Err(payload) = execution {
                 failures.push(format!(
                     "{}: {}",
@@ -1277,7 +1323,6 @@ pub(super) fn collect_seeded_slice_observed_result_records(
                 "node_compat report live {family}:{slice} {lane_name} -> {}",
                 batch_entry.test_relative_path
             );
-            let snapshot = NodeCompatHostProcessSnapshot::capture();
             let execution = panic::catch_unwind(AssertUnwindSafe(|| {
                 execute_manifested_node_compat_test(
                     batch_entry.test_relative_path,
@@ -1289,7 +1334,6 @@ pub(super) fn collect_seeded_slice_observed_result_records(
                     None,
                 )
             }));
-            snapshot.restore();
             let state = match execution {
                 Ok(Ok(outcome)) if outcome.skipped => {
                     skipped += 1;
