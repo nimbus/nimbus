@@ -350,14 +350,24 @@ Evidence:
   release uses the Fedora 44 bootc tag rather than `latest`.
 - Before source edits, `nimbus/machine-os` reported clean
   `## main...origin/main`.
-- `podman manifest inspect quay.io/fedora/fedora-bootc:44` returned the live
-  multi-arch manifest list; the `linux/arm64` digest is
-  `sha256:3ca807c0d2836ca425031a52dfe7fda69ca55a22c54fa78c068a22f43d6489b6`.
+- `curl -I` against the Quay registry manifest endpoint for
+  `quay.io/fedora/fedora-bootc:44` returned top-level OCI index digest
+  `sha256:e3eaca476d25a47aec32f15fc5ee939a15a40d2cf163bc722d0a598d33558484`.
+- `podman manifest inspect quay.io/fedora/fedora-bootc:44` and the digest-pinned
+  index above both returned the live multi-arch manifest list; the `linux/arm64`
+  child digest is
+  `sha256:9872fdc03e3ba2782ec107c667652d8caddb9e2b67a00d5b911a71cca6b10c1b`.
 - `podman manifest inspect
-  quay.io/fedora/fedora-bootc@sha256:3ca807c0d2836ca425031a52dfe7fda69ca55a22c54fa78c068a22f43d6489b6`
+  quay.io/fedora/fedora-bootc@sha256:9872fdc03e3ba2782ec107c667652d8caddb9e2b67a00d5b911a71cca6b10c1b`
   returned the underlying manifest payload in a `podman` single-image parse
-  error; its annotations included `org.opencontainers.image.version:
-  44.20260525.0` and `ostree.linux: 7.0.9-205.fc44.aarch64`.
+  error, proving the child exists; its annotations included
+  `org.opencontainers.image.version: 44.20260526.0` and
+  `ostree.linux: 7.0.9-205.fc44.aarch64`.
+- The first v0.1.32 release run using
+  `sha256:3ca807c0d2836ca425031a52dfe7fda69ca55a22c54fa78c068a22f43d6489b6`
+  failed in `build-machine-os` with Quay `manifest unknown`, so the release pin
+  now uses the verified top-level index digest rather than the stale child
+  digest.
 - The previously pinned machine-os recipe digest
   `sha256:5f2aa40538a71e32eba8dcdf9059dda10600bac68acef4588cb1aecedcfc6fe2`
   and CI digest
@@ -365,9 +375,9 @@ Evidence:
   both failed with `manifest unknown`; keeping either pin would block the
   machine-os release lane.
 - Updated `nimbus/machine-os` local recipe files and CI cache image pulls to
-  the live Fedora 44 arm64 digest above.
+  the live Fedora 44 index digest above.
 - Updated `nimbus/nimbus` `.github/workflows/release.yml`
-  `MACHINE_OS_FEDORA_BOOTC_IMAGE` to the same live Fedora 44 arm64 digest.
+  `MACHINE_OS_FEDORA_BOOTC_IMAGE` to the same live Fedora 44 index digest.
 - `nimbus/machine-os` local gates passed after the digest refresh:
   - `git diff --check`
   - `bash -n scripts/build.sh scripts/check-selinux-avcs.sh scripts/package-oci.sh scripts/publish.sh scripts/write-sbom.sh scripts/verify-recipe.sh scripts/verify-build-helper.sh scripts/verify-oci-layout-helper.sh scripts/verify-provider-artifact-contracts.sh scripts/verify-publish-helper.sh scripts/verify-selinux-avc-gate.sh`
@@ -379,11 +389,12 @@ Evidence:
   - `bash scripts/verify-selinux-avc-gate.sh`
   - `actionlint .github/workflows/ci.yml .github/workflows/publish.yml`
 - Committed and pushed `nimbus/machine-os` main commit
-  `68dd822b0290869e0af4794a19d869d9d2d8caba`
-  (`Refresh Fedora bootc base digest`).
+  `4a21584e578e762fe79a1bf913e7f9b83003ce92`
+  (`Refresh Fedora bootc index digest`), superseding the stale child digest
+  that failed in the first v0.1.32 release attempt.
 - Hosted `nimbus/machine-os` CI succeeded on commit
-  `68dd822b0290869e0af4794a19d869d9d2d8caba`:
-  `https://github.com/nimbus/machine-os/actions/runs/26423279945`.
+  `4a21584e578e762fe79a1bf913e7f9b83003ce92`:
+  `https://github.com/nimbus/machine-os/actions/runs/26454450346`.
 - Nimbus release-worktree machine-os gates passed after the release workflow
   digest refresh:
   - `bash scripts/verify-machine-os-release-ref-contract.sh --machine-os-repo /Users/jack/src/github.com/nimbus/machine-os`
@@ -704,6 +715,16 @@ Evidence:
   `git diff --check` passed. `bash scripts/verify-ci-modernization.sh`
   passed `11/12` local structural checks and failed only the live "latest CI
   run on main" query, which is not a release workflow syntax or pinning check.
+- The workflow fix was committed as
+  `97b24b67322f8c71a85a3f35bb8621fb2e0332cd`
+  (`Fix release workflow UI artifact prerequisite`), pushed to `main`, and the
+  failed `v0.1.32` tag was force-updated from the original failed tag object
+  to the fixed commit. `git rev-parse HEAD v0.1.32^{commit}` showed both
+  resolve to `97b24b67322f8c71a85a3f35bb8621fb2e0332cd`.
+- `gh run list --repo nimbus/nimbus --workflow release.yml --limit 5` then
+  reported fresh tag-triggered release run `26449869964` for `v0.1.32`,
+  created `2026-05-26T13:08:32Z`. The stale failed run `26448883465` was
+  canceled after the corrected tag push.
 
 ### NRR8 - Post-Release Consumer Proof
 
