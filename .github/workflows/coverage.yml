@@ -239,6 +239,7 @@ jobs:
         #
         # CA2: -j 4 matches the ubuntu-24.04 runner vCPU count under mold.
         run: |
+          # shellcheck disable=SC1090
           source <(cargo llvm-cov show-env --export-prefix)
           cargo test ${{ matrix.packages }} -j 4
 
@@ -288,6 +289,7 @@ jobs:
         # binaries' coverage maps on the reducer. sccache hits on
         # per-crate units the shards already populated.
         run: |
+          # shellcheck disable=SC1090
           source <(cargo llvm-cov show-env --export-prefix)
           cargo test --no-run --workspace --exclude nimbus-runtime -j 4
 
@@ -300,6 +302,7 @@ jobs:
 
       - name: Generate combined coverage report
         run: |
+          # shellcheck disable=SC1090
           source <(cargo llvm-cov show-env --export-prefix)
           cargo llvm-cov report --lcov --output-path lcov.info
 
@@ -317,9 +320,11 @@ jobs:
         if: always()
         run: |
           if [ ! -f lcov.info ]; then
-            echo "## Coverage" >> "${GITHUB_STEP_SUMMARY}"
-            echo "" >> "${GITHUB_STEP_SUMMARY}"
-            echo ":warning: lcov.info not produced (reducer failed before report)." >> "${GITHUB_STEP_SUMMARY}"
+            {
+              echo "## Coverage"
+              echo
+              echo ":warning: lcov.info not produced (reducer failed before report)."
+            } >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
           covered=$(awk -F: '/^LH:/ {sum += $2} END {print sum+0}' lcov.info)

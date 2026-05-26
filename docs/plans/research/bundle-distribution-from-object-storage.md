@@ -73,25 +73,25 @@ lifetime of the server.
 
 ```bash
 # Local development (unchanged)
-nimbus serve --app-dir ./my-app
+nimbus start --app-dir ./my-app
 
 # Single node, local bundles (unchanged)
-nimbus serve --app-dir /opt/bundles/my-app
+nimbus start --app-dir /opt/bundles/my-app
 
 # Remote bundles from S3
-nimbus serve --app-dir s3://my-bucket/my-app
+nimbus start --app-dir s3://my-bucket/my-app
 
 # Remote bundles from GCS
-nimbus serve --app-dir gs://my-bucket/my-app
+nimbus start --app-dir gs://my-bucket/my-app
 
 # Remote bundles from Azure Blob Storage
-nimbus serve --app-dir az://my-container/my-app
+nimbus start --app-dir az://my-container/my-app
 
 # Remote bundles from Cloudflare R2
-nimbus serve --app-dir s3://my-r2-bucket/my-app  # R2 is S3-compatible
+nimbus start --app-dir s3://my-r2-bucket/my-app  # R2 is S3-compatible
 
 # Explicit cache directory (optional, defaults to {data-dir}/bundle-cache)
-nimbus serve --app-dir s3://bucket/app --bundle-cache-dir /data/cache
+nimbus start --app-dir s3://bucket/app --bundle-cache-dir /data/cache
 ```
 
 Credentials follow standard cloud SDK conventions:
@@ -380,7 +380,7 @@ operators who don't want cloud vendor dependency, the deploy model becomes:
 
 ```bash
 # Self-hosted
-nimbus serve --app-dir s3://localhost:3900/bundles \
+nimbus start --app-dir s3://localhost:3900/bundles \
   --env AWS_ACCESS_KEY_ID=garage-key \
   --env AWS_SECRET_ACCESS_KEY=garage-secret
 ```

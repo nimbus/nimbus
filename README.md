@@ -260,7 +260,10 @@ real-time subscriptions.
 
 **Networking** — Reactive WebSocket subscriptions, five compatibility adapters, JWT/JWKS authentication with any standards-compliant identity provider.
 
-**Delivery** — A single Rust binary you can `scp` to a server and run. No Docker required, no Kubernetes required, no external database required.
+**Delivery** — A single Rust binary you can `scp` to a server and run. Release
+builds also publish a normal foreground `ghcr.io/nimbus/nimbus:<version>` OCI
+image for orchestrators. No Docker, Kubernetes, or external database is
+required for the binary path.
 
 ## Install
 
@@ -298,6 +301,21 @@ Deno/V8/Node lanes. Linux direct installs can opt in with `install.sh
 beside the main binary. Without that verified adapter, `/debug/runtime/metrics`
 reports the Bun/JSC lane as `not_linked` and Bun-selected functions fail
 closed.
+
+### Container image
+
+Tagged releases also publish `ghcr.io/nimbus/nimbus:<version>` with
+linux/amd64 and linux/arm64 manifests. The image runs `nimbus` directly in the
+foreground and records digest, license, attestation, SBOM, vulnerability-scan,
+and smoke evidence in the GitHub Release.
+
+```bash
+docker pull ghcr.io/nimbus/nimbus:vX.Y.Z
+```
+
+See [`docs/operating/container-image.md`](docs/operating/container-image.md)
+for digest pinning, the one-time admin-token rotation required before public
+binds, and Compose/Podman/Kubernetes examples.
 
 ### Build from source
 

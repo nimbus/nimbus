@@ -3,7 +3,7 @@
 Nimbus Desktop is the native shell for the Nimbus operator console — the
 embedded `/ui/*` SPA wrapped in a signed, notarized, auto-updating Electron
 window with system tray and menu integration. It connects to a running
-`nimbus` server (started separately with `nimbus start` or `nimbus serve`)
+`nimbus` server (started separately with `nimbus start`)
 through the same `server.json` discovery seam that `nimbus ui` uses, so it
 picks up an existing instance automatically.
 

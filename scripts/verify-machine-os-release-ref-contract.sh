@@ -123,8 +123,8 @@ fi
 if grep -F "app-id:" "${workflow_path}" >/dev/null; then
   die "release workflow must not use deprecated actions/create-github-app-token app-id input; use client-id"
 fi
-grep -E 'actions/create-github-app-token@v3([^.]|$)' "${workflow_path}" >/dev/null || \
-  die "release workflow must pin actions/create-github-app-token@v3 (major-version pin) so Dependabot flows v3.x patches and client-id input stays supported"
+grep -F "actions/create-github-app-token@v3.2.0" "${workflow_path}" >/dev/null || \
+  die "release workflow must pin actions/create-github-app-token@v3.2.0 so actionlint validates the current client-id input contract"
 grep -F "MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:" "${workflow_path}" >/dev/null || \
   die "release workflow must set MACHINE_OS_FEDORA_BOOTC_IMAGE to a digest-pinned Fedora bootc image"
 fedora_bootc_refs="$(
@@ -145,6 +145,7 @@ release_section="$(job_section release)"
 
 require_in_section build-machine-os "${build_machine_os_section}" "needs: [build-linux-arm64]"
 require_in_section build-machine-os "${build_machine_os_section}" "contents: read"
+require_in_section build-machine-os "${build_machine_os_section}" "uses: actions/create-github-app-token@v3.2.0"
 require_in_section build-machine-os "${build_machine_os_section}" 'client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}'
 require_in_section build-machine-os "${build_machine_os_section}" 'repository: ${{ env.MACHINE_OS_REPOSITORY }}'
 require_in_section build-machine-os "${build_machine_os_section}" 'ref: ${{ env.MACHINE_OS_SOURCE_REF }}'
@@ -174,6 +175,7 @@ reject_in_section build-machine-os "${build_machine_os_section}" "gh release"
 reject_in_section build-machine-os "${build_machine_os_section}" "actions/attest"
 
 require_in_section publish-machine-os "${publish_machine_os_section}" "needs: [build-linux-arm64, build, build-machine-os]"
+require_in_section publish-machine-os "${publish_machine_os_section}" "uses: actions/create-github-app-token@v3.2.0"
 require_in_section publish-machine-os "${publish_machine_os_section}" 'client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" "permission-actions: write"
 require_in_section publish-machine-os "${publish_machine_os_section}" "permission-contents: read"
@@ -201,8 +203,10 @@ reject_in_section publish-machine-os "${publish_machine_os_section}" "actions/at
 reject_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ steps.machine_os_token.outputs.token }}'
 reject_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}'
 
-require_in_section release "${release_section}" "needs: [build-linux-arm64, build, publish-machine-os]"
-reject_in_section release "${release_section}" "needs: [build-linux-arm64, build, build-machine-os]"
+require_in_section release "${release_section}" "needs:"
+require_in_section release "${release_section}" "publish-machine-os"
+require_in_section release "${release_section}" "uses: actions/create-github-app-token@v3.2.0"
+reject_in_section release "${release_section}" "build-machine-os"
 
 if [[ -n "${machine_os_repo}" ]]; then
   [[ -d "${machine_os_repo}" ]] || die "machine-os repo not found: ${machine_os_repo}"

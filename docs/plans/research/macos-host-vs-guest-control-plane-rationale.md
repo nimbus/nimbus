@@ -10,6 +10,8 @@ contributors do not re-derive the same architecture fork from scratch. It is a
 research rationale, not an execution plan. The settled current contract lives
 in `docs/reference/macos-machine-flow.md`, and the historical execution record
 now lives in `docs/plans/archive/macos-machine-support-plan.md`.
+Command examples in this rationale preserve the then-current `nimbus serve`
+spelling as historical evidence; current operator guidance uses `nimbus start`.
 
 ---
 

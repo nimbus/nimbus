@@ -799,7 +799,7 @@ PowerShell / cmd.exe
 │                    Mirrors Podman WSL2 provider                      │
 │                                                                     │
 │  Windows host                                                       │
-│    ├── nimbus.exe serve (host-resident, authoritative)              │
+│    ├── nimbus.exe start (host-resident, authoritative)              │
 │    ├── nimbus.exe machine ...                                       │
 │    │     ├── wsl --import nimbus-{name} (Tar rootfs, shell config)  │
 │    │     ├── win-sshproxy: API forwarding via named pipe            │
@@ -938,7 +938,7 @@ Target experience:
 Windows host (PowerShell / cmd.exe / Windows Terminal)
   -> nimbus.exe machine init    (wsl --import nimbus-default ...)
   -> nimbus.exe machine start   (starts WSL distro + win-sshproxy)
-  -> nimbus.exe serve            (host-resident server + named pipe client)
+  -> nimbus.exe start            (host-resident server + named pipe client)
   -> nimbus.exe service up/list/logs/down
   -> same compose.yaml as Linux and macOS
   -> host-local V8/runtime/storage/debug loop (on Windows host)
@@ -956,7 +956,7 @@ This plan covers:
   bootstrap, nested systemd, SSH, lifecycle management
 - win-sshproxy integration for named-pipe API forwarding
 - host machine-API client over named pipes
-- transparent `nimbus.exe serve` and `nimbus.exe service ...` paths
+- transparent `nimbus.exe start` and `nimbus.exe service ...` paths
 - WSL2 networking characterization and port forwarding validation
 - WSL2-format Tar image from nimbus-machine-os
 - source-backed Podman reference mapping for every implementation seam
@@ -987,7 +987,7 @@ This plan does not cover:
   - named pipe `\\.\pipe\nimbus-machine-{name}` reachable and answering
   - 3-layer readiness check passes (WSL distro state, SSH port, SSH exec)
   - guest machine-API health/capabilities answering over the named pipe
-  - `nimbus.exe serve` reaches readiness with guest machine-API client wired
+  - `nimbus.exe start` reaches readiness with guest machine-API client wired
   - published ports reachable from Windows localhost via WSL2 networking
   - `nimbus.exe machine stop/rm` clean shutdown and cleanup
   - clean recreate-from-stale-state
@@ -1015,7 +1015,7 @@ This plan does not cover:
 | WIN3 | todo | win-sshproxy integration: named pipe creation, TID lifecycle, pipe-to-SSH tunnel, 3-layer readiness check, stale process cleanup | WIN2 |
 | WIN4 | todo | Host machine-API client over named pipe: `ForwardedMachineApiSandboxBackend` with named pipe transport, `ServiceHostPlatform::Windows` backend loader | WIN3 |
 | WIN5 | todo | WSL2 networking: characterize NAT vs mirrored mode, validate published ports reach Windows localhost, document user-mode networking fallback | WIN2 |
-| WIN6 | todo | Transparent developer UX: Windows-aware `nimbus.exe serve` path, `nimbus.exe service ...` path, Windows-host-path → WSL-guest-path integration, end-to-end compose-backed flow validation | WIN3, WIN4, WIN5 |
+| WIN6 | todo | Transparent developer UX: Windows-aware `nimbus.exe start` path, `nimbus.exe service ...` path, Windows-host-path → WSL-guest-path integration, end-to-end compose-backed flow validation | WIN3, WIN4, WIN5 |
 | WIN7 | todo | Packaging and closeout: MSI/WinGet/Scoop packaging, distribution-plan alignment, install docs, final verification summary | WIN2, WIN3, WIN4, WIN5, WIN6 |
 
 ## Implementation Checkpoints
@@ -1183,7 +1183,7 @@ Acceptance criteria:
 
 Repo outputs:
 
-- Windows-aware host-resident `nimbus.exe serve` path
+- Windows-aware host-resident `nimbus.exe start` path
 - Windows-aware `nimbus.exe service ...` path
 - Windows-host-path → WSL-guest-path translation integrated into the
   compose-backed service flow (build context, Dockerfile, env file,
@@ -1193,7 +1193,7 @@ Repo outputs:
 Required host-local outputs:
 
 - one clean end-to-end project root on a Windows machine
-- `nimbus.exe serve` startup log showing machine-API client connection
+- `nimbus.exe start` startup log showing machine-API client connection
 - `nimbus.exe service up/list/logs/down` transcript
 
 Acceptance criteria:

@@ -34,6 +34,7 @@ host_binary="${bin_dir}/host-nimbus"
 gvproxy_binary="${bin_dir}/gvproxy"
 brew_bin="${bin_dir}/brew"
 ssh_keygen_bin="${bin_dir}/ssh-keygen"
+curl_bin="${bin_dir}/curl"
 host_version="$(awk -F'"' '/^version = / { print $2; exit }' "${repo_root}/Cargo.toml")"
 machine_name="default"
 
@@ -467,6 +468,43 @@ printf 'fake-private-key\n' > "${output}"
 printf 'fake-public-key\n' > "${output}.pub"
 EOF
 
+cat > "${curl_bin}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+url="${*: -1}"
+
+case "${url}" in
+  http://localhost/healthz)
+    cat <<'OUT'
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"status":"ok","role":"guest-machine-api","protocol_version":"v1alpha2"}
+OUT
+    ;;
+  http://localhost/v1/machine-api/capabilities)
+    cat <<'OUT'
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"protocol_version":"v1alpha2","service_execution_ready":true,"service_execution_mode":"standard_containers","supported_service_backends":["container"],"supported_operations":["healthz","capabilities"],"binary_statuses":[],"operation_statuses":[],"service_execution_blockers":[]}
+OUT
+    ;;
+  http://localhost/v1/machine-api/os/bootc/status)
+    cat <<'OUT'
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"booted_image":"ghcr.io/nimbus/machine-os:v9.9.9","booted_digest":"sha256:9999999999999999999999999999999999999999999999999999999999999999","staged_image":null,"staged_digest":null,"rollback_image":null,"rollback_digest":null}
+OUT
+    ;;
+  *)
+    exec /usr/bin/curl "$@"
+    ;;
+esac
+EOF
+
 cat > "${gvproxy_binary}" <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -484,9 +522,9 @@ sed -i.bak \
   "${brew_bin}"
 rm -f "${brew_bin}.bak"
 
-chmod +x "${host_binary}" "${brew_bin}" "${ssh_keygen_bin}" "${gvproxy_binary}"
+chmod +x "${host_binary}" "${brew_bin}" "${ssh_keygen_bin}" "${curl_bin}" "${gvproxy_binary}"
 
-bash "${repo_root}/scripts/collect-nimbus-homebrew-cask-proof.sh" \
+PATH="${bin_dir}:${PATH}" bash "${repo_root}/scripts/collect-nimbus-homebrew-cask-proof.sh" \
   --output-dir "${output_dir}" \
   --home "${home_dir}" \
   --runtime-root "${runtime_root}" \

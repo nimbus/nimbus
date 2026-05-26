@@ -53,6 +53,54 @@ the core server. See
 build, sign, and notarize pipeline, and the `nimbus/desktop`
 repository for installers.
 
+### OCI images
+
+| Image | Registry | Built by | Role |
+|-------|----------|----------|------|
+| `ghcr.io/nimbus/nimbus:<version>` | GHCR | `nimbus/nimbus` tag-driven release workflow | Canonical application/server image for Kubernetes, Compose, Docker, and Podman. Runs `nimbus` directly in the foreground; no systemd inside the image. |
+| `ghcr.io/nimbus/nimbus:<version>-<arch>` | GHCR | same release workflow | Per-architecture image tags used to assemble the multi-arch manifest and for emergency/debug pinning. |
+| `ghcr.io/nimbus/machine-os:<version>` | GHCR | `nimbus/machine-os` release workflow dispatched by Nimbus release | Bootable OS/container-machine image. This is the systemd-in-image path, separate from the normal Nimbus application image. |
+
+### Release license payload contract
+
+The Nimbus Community License requires redistributed copies to provide the
+license text and preserve copyright, attribution, license, and notice files.
+Treat that as a release invariant across every distributed surface:
+
+The full license text does not need to be duplicated into every singleton
+support file. The release rule is: bundle/package/image artifacts carry or
+install the license text directly; direct-fetch helper assets carry a short
+machine-readable pointer to the adjacent release `LICENSE`; and the final
+GitHub Release publishes one byte-identical top-level `LICENSE` asset covered
+by checksums and release-asset provenance.
+
+This matches the packaging norms we want enterprises to recognize: GitHub
+recommends a repository license file for published source, Debian Policy
+requires a verbatim license copy at `/usr/share/doc/PACKAGE/copyright`, RPM
+packages carry explicit license metadata and license files, OCI defines
+`org.opencontainers.image.licenses` as an SPDX license expression, and SPDX
+permits `LicenseRef-*` identifiers for licenses outside the SPDX list.
+
+- source and binary archives include `LICENSE`
+- standalone release support assets, including `install.sh`, are accompanied
+  by a top-level GitHub Release `LICENSE` asset; direct-fetch support scripts
+  also carry an SPDX-style `LicenseRef-Nimbus-Community` header pointing to
+  that release license asset
+- public JS/npm package tarballs, when any workspace package is made
+  publishable, use npm's custom-license metadata shape
+  (`"license": "SEE LICENSE IN LICENSE"`) and include a top-level `LICENSE`
+  file in the packed package; private-only workspaces either remain
+  `"private": true` or adopt the same rule before publication
+- Linux deb/rpm packages install the same text under
+  `/usr/share/doc/<package>/LICENSE`, include the Debian-canonical
+  `/usr/share/doc/<package>/copyright` path, and carry package license metadata
+- the default OCI application image installs
+  `/usr/local/share/doc/nimbus/LICENSE` and sets
+  `org.opencontainers.image.licenses=LicenseRef-Nimbus-Community` on both the
+  image config and multi-arch index
+- release checksums and evidence verifiers cover the top-level `LICENSE` asset
+  whenever they validate the final release bundle
+
 ### System dependencies — Linux (not shipped, installed from OS repos)
 
 | Package | Debian/Ubuntu | Fedora/RHEL |
@@ -566,27 +614,46 @@ The released `nimbus` tarball includes `nimbus`, `README.md`, and `LICENSE`.
 On macOS it also includes `libexec/gvproxy`. The Linux private runtime stack
 is the paired `nimbus-libkrun` archive plus `nimbus-crun` binary; neither path
 uses distro `libkrun` or asks operators to build upstream libkrun manually.
+The GitHub Release also publishes the top-level `LICENSE` as a standalone
+asset because `install.sh` is itself a standalone distributed script. The
+script carries a compact SPDX-style license pointer to that release asset
+instead of embedding the full license text. Package formats install the same
+license text under their conventional documentation paths, including Debian's
+`/usr/share/doc/<package>/copyright` path, and container images install it under
+`/usr/local/share/doc/nimbus/LICENSE`.
 
-### Channel 6: Container Image (for CI/CD tooling)
+### Channel 6: Container Image (Release Artifact)
 
-```dockerfile
-FROM debian:13-slim
-RUN apt-get update && apt-get install -y \
-    conmon buildah catatonit passt uidmap fuse-overlayfs
-COPY nimbus /usr/local/bin/
-COPY nimbus-libkrun/ /usr/libexec/nimbus/
-COPY nimbus-crun /usr/libexec/nimbus/crun
-# Note: This container must run with --privileged and /dev/kvm access
-```
+The canonical container image is part of every tagged Nimbus release. It is a
+normal application OCI image, not a nested service-manager image:
 
-**Use case:** CI/CD pipelines that need to run nimbus. The container
-provides all dependencies. Must run with `--privileged` and
-`--device /dev/kvm` for KVM access.
+- publish `ghcr.io/nimbus/nimbus:<version>` as a multi-architecture Linux image
+  with immutable digest examples in docs; `latest` may exist as a stable-tag
+  convenience, but operator docs should prefer version plus digest
+- build the image from the release-produced Linux `nimbus` binary artifacts
+  rather than rebuilding an untracked binary inside the image job
+- set `ENTRYPOINT ["nimbus"]` and a foreground default command such as
+  `start --host 0.0.0.0 --allow-network`
+- run as a fixed non-root user by default, log to stdout/stderr, expose the
+  server port, document writable state paths, and document `/health` for probes
+- use a minimal runtime base and exclude build toolchains, Podman, buildah,
+  conmon, crun, KVM, and systemd from the default image
+- install the Nimbus license text inside the image and set OCI license
+  metadata (`org.opencontainers.image.licenses=LicenseRef-Nimbus-Community`)
+  on both the image config and multi-arch index
+- attach OCI annotations, SBOM, GitHub/Sigstore signature, SLSA/GitHub
+  provenance, checksums where relevant, and vulnerability-scan evidence
+- upload a release asset such as `nimbus_oci_image.txt` that records the
+  image tag, immutable digest, per-arch digests, verification commands, and
+  provenance/signature/SBOM locations
+- provide Kubernetes/Compose/Podman examples that use restart policy, probes,
+  volumes, and security context outside the image
 
-```bash
-docker run --privileged --device /dev/kvm \
-  ghcr.io/nimbus/nimbus:latest serve
-```
+If Nimbus needs a containerized node-daemon mode that manages tenant workloads
+through host systemd, Podman, cgroups, or KVM, make that an explicit image
+variant or install mode with separate documentation and verification. It must
+not be the default `docker run` path, and it must still run Nimbus directly in
+the foreground while the host service manager owns lifecycle.
 
 ### Channel 7: Cloud VM Images (Production)
 
@@ -669,6 +736,96 @@ updates the Homebrew cask on tagged releases.
   `nimbus_linux_arm64.tar.gz`, `nimbus_darwin_arm64.tar.gz`,
   checksums/provenance, and the matching machine-os publish handoff
 - the darwin tarball includes the bundled `libexec/gvproxy` helper
+
+### Phase D6: Release OCI Image
+
+**Goal:** publish a first-class Nimbus OCI application image on every tagged
+release.
+
+**Scope:**
+- `Containerfile` or equivalent build definition for the default Nimbus
+  application image, pinned to a digest-qualified Dockerfile frontend and
+  runtime base
+- tag-driven release workflow builds per-arch images from
+  `nimbus_linux_x86_64.tar.gz` and `nimbus_linux_arm64.tar.gz`, then assembles
+  a multi-arch `ghcr.io/nimbus/nimbus:<version>` manifest
+- no systemd, Podman, buildah, conmon, crun, KVM, or host workload-management
+  tooling in the default image
+- fixed non-root user, foreground `nimbus` entrypoint, documented state volume,
+  exposed server port, and `/health` probe examples
+- OCI annotations, SBOM, GitHub/Sigstore signature, GitHub/SLSA provenance,
+  vulnerability-scan evidence, and digest report release asset
+- license distribution contract: archives include `LICENSE`, the GitHub
+  Release includes a top-level `LICENSE` asset for standalone release support
+  scripts, direct-fetch scripts carry a compact `LicenseRef-Nimbus-Community`
+  pointer to that release asset, distro packages install `LICENSE` plus the
+  Debian-canonical `copyright` file in their package documentation path, and
+  the OCI image installs `/usr/local/share/doc/nimbus/LICENSE` while carrying
+  OCI license metadata
+- release evidence assets: `nimbus_oci_image.txt`,
+  `nimbus_oci_attestation.json`, `nimbus_oci_sbom.json`, and
+  `nimbus_oci_vulns.sarif.json`
+- release evidence verifier:
+  `scripts/verify-release-oci-image-assets.sh --artifacts-dir <downloaded>
+  --require-license --checksums <downloaded>/checksums-sha256.txt` must
+  validate the report, image digest, certificate-backed release tag ref,
+  repository identity, release workflow identity, SLSA provenance, per-platform
+  SBOM evidence for linux/amd64 and linux/arm64, vulnerability scan, release
+  LICENSE asset, and checksum coverage
+- local helper: `make verify-release-oci-image-helper`
+- Docker-backed fixture helper when Docker is available:
+  `make verify-release-oci-image-build-helper`
+- live tagged-release proof helper:
+  `make verify-release-oci-image-live TAG=vX.Y.Z OUTPUT_DIR=<proof-dir>`
+- live verifier requires every uploaded release asset to be either
+  `checksums-sha256.txt` or listed in `checksums-sha256.txt`, verifies all
+  checksums, and verifies GitHub/Sigstore release-asset attestations for every
+  checksummed asset plus the checksum manifest
+- smoke proof for each architecture: image runs, `nimbus --version` reports the
+  release version, `nimbus start --host 0.0.0.0 --allow-network` starts after
+  the state volume admin token is rotated, and `/health` responds through a
+  published port
+
+**Acceptance criteria:**
+- tagged Nimbus release publishes `ghcr.io/nimbus/nimbus:<version>` as a
+  multi-arch image and records its immutable digest in `nimbus_oci_image.txt`
+- image verification with GitHub/Sigstore attestation verification succeeds
+  against the release tag, repository identity, and release workflow identity
+  with the SLSA provenance predicate pinned, self-hosted-runner attestations
+  denied, verified timestamp evidence present, and GitHub-hosted runner
+  identity recorded
+- SBOM evidence exists and is attached or discoverable for the image digest on
+  both linux/amd64 and linux/arm64
+- LICENSE evidence is present in the release archives, top-level release
+  assets, direct-fetch support script headers, distro package manifests, and
+  default OCI image filesystem/metadata
+- `docker` or `podman` smoke tests prove the image has no nested systemd
+  dependency and runs Nimbus as the foreground process
+- Kubernetes/Compose/Podman examples use host/orchestrator lifecycle controls
+  rather than systemd inside the image
+- the live verifier downloads the public GitHub Release bundle, checks
+  `LICENSE` and whole-release checksum coverage, verifies release-asset
+  attestations for the checksum manifest and every checksummed artifact,
+  re-verifies registry-pushed attestation evidence for the recorded digest, and
+  smoke-tests the published image
+
+**Current completion audit (2026-05-26):**
+
+| Requirement | Current evidence | Status |
+|-------------|------------------|--------|
+| Default image definition uses release archive payload, foreground `ENTRYPOINT ["nimbus"]`, non-root runtime user, writable state volume, `/health`, OCI labels, installed `LICENSE`, and no systemd/Podman/buildah/conmon/crun/KVM tooling | `make verify-release-oci-image-helper` and Docker-backed `make verify-release-oci-image-build-helper` | `local_ready` |
+| Tag-driven workflow builds linux/amd64 and linux/arm64 images from release-produced Linux archives, pushes per-arch refs, assembles `ghcr.io/nimbus/nimbus:<version>`, optionally updates `latest`, and keeps image jobs least-permission | `.github/workflows/release.yml` static audit through `make verify-release-oci-image-helper`; `actionlint .github/workflows/release.yml` | `local_ready` |
+| `nimbus_oci_image.txt` report is deterministic and names immutable multi-arch digest, per-arch digests, verification commands, SBOM, vulnerability scan, signature/provenance evidence, and smoke command | `scripts/render-release-oci-image-report.sh` plus `scripts/verify-release-oci-image-report.sh`, exercised by `make verify-release-oci-image-helper` | `local_ready` |
+| Final GitHub Release bundle publishes `LICENSE`, binary archives, `install.sh`, optional adapter assets when present, `nimbus_oci_*` evidence, `checksums-sha256.txt`, and release-asset attestations for every checksummed asset plus the checksum manifest | Final-bundle logic is statically guarded by `make verify-release-oci-image-helper`; deterministic live fixture is guarded by `make verify-release-oci-image-live-helper`; direct current-public check of `v0.1.32` still lacks the post-D6 assets | `live_missing` |
+| Published GHCR image has registry-pushed GitHub/Sigstore attestation, SLSA predicate, verified timestamp evidence, GitHub-hosted runner identity, SBOM evidence for linux/amd64 and linux/arm64, vulnerability SARIF, and real image smoke proof | Local/verifier fixtures cover the expected evidence contract, but no public post-D6 `ghcr.io/nimbus/nimbus:<version>` release image exists yet | `live_missing` |
+| Operator docs avoid privileged/default `latest`/systemd-in-container guidance and show orchestrator-owned lifecycle for Compose, Podman, and Kubernetes | `make verify-release-oci-image-helper` scans current docs for stale `nimbus serve`, `--privileged`, and production `latest` guidance | `local_ready` |
+
+**Audit conclusion:** D6 is locally release-ready, but it is not complete.
+Closeout requires cutting the next Nimbus tag from this workflow, waiting for
+the hosted release graph to publish the top-level `LICENSE`, `nimbus_oci_*`
+assets, and `ghcr.io/nimbus/nimbus:<version>`, then preserving a successful
+`make verify-release-oci-image-live TAG=<tag> OUTPUT_DIR=<proof-dir>` run
+without `--skip-smoke`.
 
 ### Phase D2: Apt Repository (Debian/Ubuntu)
 
@@ -826,15 +983,11 @@ host-resident server.
   forwarding (proved with a Compose-backed healthz service at `localhost:18080`;
   the same mechanism applies to any forwarded port including postgres at `5432`)
 
-### Channels 5 and 6: No Dedicated Phase
+### Channel 5: No Dedicated Phase
 
 Channel 5 (binary tarball) is a byproduct of the D1 CI build pipeline — the
 release workflow already publishes the tarballs. No additional phase work is
 needed beyond keeping the archive layout guard in the release workflow.
-
-Channel 6 (container image) does not yet have a dedicated phase. When it
-becomes a priority, add a D6 phase with scope, acceptance criteria, and a
-ledger row.
 
 ### Phase D5: Cloud VM Images
 
@@ -857,6 +1010,7 @@ ledger row.
 | Phase | Status | Hard deps | Notes |
 |-------|--------|-----------|-------|
 | D1: CI build pipeline | `done` | Nimbus compiles | Nimbus binary release plus paired `nimbus-libkrun` / `nimbus-crun` release lines are published; future version bumps are normal release maintenance |
+| D6: Release OCI image | `in_progress` | D1 | release workflow, digest-pinned Containerfile frontend/base image, least-permission image jobs, digest report helper, license distribution checks, stale command/container guidance guard, SBOM/registry-pushed attestation/vulnerability-scan evidence assets, static helper, Docker-backed fixture build helper, and per-arch smoke helper landed; first live tag proof remains before closing `done` |
 | D2: Apt repo (Debian/Ubuntu) | `in_progress` | D1 | shared `nfpm` package builder, signed static apt-repo builder, release-driven mirror workflow, and `nimbus-libkrun` package lane landed; GitHub Pages/custom-domain cutover and first public apt install proof remain |
 | D3: COPR (Fedora) | `in_progress` | D1 | shared `nfpm`-based package builder, deterministic Fedora/COPR SRPM bridge, release-driven mirror workflow, and `nimbus-libkrun` SRPM/RPM lane landed; live COPR publication and first `dnf copr enable ...` proof remain |
 | D4a: Homebrew + krunkit | `done` | D1 | Apple Silicon, macOS 14+ cask ships bundled `gvproxy`, owns `krunkit`, auto-updates from the release workflow, and now has both isolated release-proof and real `brew upgrade` validation |
@@ -878,6 +1032,24 @@ surface is now `nimbus start` plus `nimbus compose`.
 
 | Date | Phase | Status | Notes | Verification | Next |
 |------|-------|--------|-------|--------------|------|
+| 2026-05-26 | D6 clean release-candidate replay | `in_progress` | Replayed the D6 OCI-image release lane onto a dedicated clean worktree from current `origin/main` at `/private/tmp/nimbus-d6-release-candidate` on branch `codex/d6-oci-release-candidate`, resolved the final readiness conflict by preserving both downstream machine/desktop alignment and GHCR OCI evidence requirements, and verified the result as one release-candidate system instead of continuing piecemeal hardening in the dirty primary checkout. The candidate proves the local release machinery is ready, while the current public `v0.1.32` release remains an intentional negative control because it predates the D6 asset set. As part of the same lint-clean release candidate, `coverage.yml` now suppresses the intentional `cargo llvm-cov show-env` process substitutions explicitly and groups summary redirection so global workflow lint is clean. | `actionlint .github/workflows/release.yml`; `actionlint .github/workflows/*.yml`; `make verify-release-oci-image-helper`; `make verify-release-oci-image-live-helper`; Docker-backed `make verify-release-oci-image-build-helper`; `make verify-install-helper` reported 37 passing tests; `make verify-build-linux-release-packages-helper`; `make verify-release-archive-layout-helper`; `make proof-helpers`; `bash scripts/verify-machine-os-release-ref-contract-helper.sh`; `git diff --check`; `git diff --cached --check`; `bash scripts/verify-release-oci-image-live.sh --tag v0.1.32 --skip-smoke --output-dir /private/tmp/nimbus-d6-live-v0.1.32-candidate` failed as expected with `expected exactly one LICENSE release asset, found 0` | Commit/push the clean release candidate, cut the next tag from it, and run `make verify-release-oci-image-live TAG=<tag> OUTPUT_DIR=<proof-dir>` without `--skip-smoke` before moving D6 or the `/goal` to `done`. |
+| 2026-05-26 | D6 systematic completion audit | `in_progress` | Switched from piecemeal pre-tag hardening to a requirement-by-requirement D6 completion audit. The current plan now separates `local_ready` requirements from `live_missing` requirements: image definition/runtime posture, release workflow wiring, deterministic report generation, docs guardrails, and local/live fixture verifiers are ready; public closeout remains missing because the latest public release is still the pre-D6 `v0.1.32` asset set and no post-D6 GHCR image/evidence bundle has been published. | `make verify-release-oci-image-helper`; `make verify-release-oci-image-live-helper`; `make verify-release-oci-image-build-helper` with Docker access; `actionlint .github/workflows/release.yml`; `git diff --check`; `gh release view --repo nimbus/nimbus --json tagName,url,assets,isDraft,isPrerelease` confirmed latest `v0.1.32` lacks `LICENSE` and `nimbus_oci_*` release assets | Stop local hardening unless the audit changes; next direct step is a clean release commit/tag and hosted `make verify-release-oci-image-live TAG=<tag> OUTPUT_DIR=<proof-dir>` proof. |
+| 2026-05-26 | release license direct-fetch pointer | `in_progress` | Clarified the release license rule for singleton support files: archives, packages, and images carry or install the full `LICENSE`, while direct-fetch helpers such as `install.sh` carry an SPDX-style `LicenseRef-Nimbus-Community` pointer to the adjacent GitHub Release `LICENSE` asset instead of embedding the full text. `scripts/install.sh` now has that pointer, and the install helper guards it so the standalone bootstrap path stays legally traceable even when someone downloads only the script. | `make verify-install-helper` reported 37 passing tests; `make verify-release-oci-image-helper`; `make proof-helpers`; `actionlint .github/workflows/release.yml`; `git diff --check` | Keep the top-level release `LICENSE` asset byte-identical to the repo license and covered by checksums/provenance; keep singleton helper headers as pointers, not duplicated full license payloads. |
+| 2026-05-26 | D6 live checksum subject exactness | `in_progress` | Hardened the post-tag live verifier's whole-release coverage check so it matches `checksums-sha256.txt` subjects by exact field equality instead of interpolating release asset names into a regex. The deterministic live fixture now includes a checksummed optional asset named `nimbus-extra+[proof].txt`, proving filenames with regex metacharacters remain accepted when they are checksummed and attested, while the existing unchecksummed-extra fixture still fails. | `bash -n scripts/verify-release-oci-image-live.sh scripts/verify-release-oci-image-live-helper.sh scripts/verify-release-oci-image-helper.sh`; `make verify-release-oci-image-live-helper`; `make verify-release-oci-image-helper`; `make proof-helpers`; `git diff --check` | Keep all release asset coverage checks exact and basename-scoped; preserve the live verifier output from the next tag as the final proof that every uploaded asset is uniquely checksummed and attested. |
+| 2026-05-26 | D6 optional asset live-verifier coverage | `in_progress` | Extended the live verifier fixture so the success path includes a valid optional `nimbus-bun-jsc-adapter-*.tar.gz` release asset produced by `scripts/package-bun-jsc-adapter.sh`. The stubbed post-tag verifier now runs the real optional adapter package/checksum verifier through `scripts/verify-release-oci-image-live.sh`, verifies the optional adapter is included in the final checksum set, and expects 13 release-asset attestation checks: `checksums-sha256.txt`, the 10 required release assets, the optional adapter archive, and the optional punctuation-heavy checksum subject fixture. The static D6 helper now guards this fixture shape so optional release artifacts stay inside the same checksum/provenance envelope as the core binary and OCI assets. | `make verify-release-oci-image-live-helper`; `make verify-release-oci-image-helper`; `make proof-helpers`; `actionlint .github/workflows/release.yml`; `git diff --check` | Keep optional adapter assets optional, but require any emitted optional asset to be checksummed and attested by the final release/live verifier path. |
+| 2026-05-26 | D6 release checksum de-duplication | `in_progress` | Made the final release checksum generation compatible with the stricter whole-release verifier. The release job now builds a unique checksum subject list from required `nimbus_*` release artifacts, optional `nimbus-bun-jsc-adapter-*.tar.gz` artifacts, `install.sh`, and `LICENSE` before running `sha256sum`, so future optional assets cannot create duplicate checksum subjects if naming overlaps. The static D6 helper now guards this duplicate-safe checksum shape. | `make verify-release-oci-image-helper`; `actionlint .github/workflows/release.yml`; `git diff --check` | Preserve the next tag's `checksums-sha256.txt` and live verifier output to prove every uploaded release asset is uniquely checksummed and attested. |
+| 2026-05-26 | D6 public live-verifier recheck | `in_progress` | Re-ran the stricter live verifier against the current public stable release after the whole-release checksum/provenance hardening. The latest public tag remains `v0.1.32`, and it still fails before download because the GitHub Release has no top-level `LICENSE` asset. This keeps D6 open: local workflow/helper evidence is ready, but the required hosted release asset set and GHCR image evidence do not exist until the next tag runs the updated release workflow. | `bash scripts/verify-release-oci-image-live.sh --tag v0.1.32 --skip-smoke` failed as expected with `expected exactly one LICENSE release asset, found 0`; `gh release view --repo nimbus/nimbus --json tagName,url,assets,isDraft,isPrerelease` confirmed `v0.1.32` only has the pre-D6 assets | Cut the next tag from the D6 workflow changes and run `make verify-release-oci-image-live TAG=<tag> OUTPUT_DIR=<proof-dir>` without `--skip-smoke`. |
+| 2026-05-26 | D6 live verifier asset completeness | `in_progress` | Tightened the post-tag live verifier so it proves whole-release asset integrity, not only the required D6 filenames. `scripts/verify-release-oci-image-live.sh` now verifies every `checksums-sha256.txt` entry, rejects duplicate or malformed checksum entries, rejects any uploaded release asset that is not the checksum manifest and is not listed in the checksum manifest, re-runs the optional Bun/JSC release-asset verifier with final checksums, and verifies GitHub/Sigstore release-asset attestations for every checksummed asset plus `checksums-sha256.txt`. The fixture helper now covers a complete release with a valid optional Bun/JSC adapter asset, missing top-level `LICENSE`, and an extra unchecksummed release asset. | `make verify-release-oci-image-live-helper` | Keep the stricter live verifier as the final post-tag gate; the next tag must preserve the `OUTPUT_DIR` with release-asset attestation JSONL and registry attestation JSON. |
+| 2026-05-26 | D6 license and command guidance sweep | `in_progress` | Rechecked the legal/distribution convention for Nimbus's custom license and kept the plan's release invariant strict: every standalone release surface must carry the repo `LICENSE` text or install it in the packaging ecosystem's canonical documentation path, and the custom OCI license identity stays `LicenseRef-Nimbus-Community`. Cleaned current non-archive docs and future-facing research prompts that still showed the retired `nimbus serve` spelling, updated the Windows plan to use `nimbus.exe start`, and marked the macOS control-plane rationale as preserving `nimbus serve` only as historical evidence. `scripts/verify-release-oci-image-helper.sh` now guards current guidance files against stale `nimbus serve` command examples, `--privileged` application-image guidance, and `ghcr.io/nimbus/nimbus:latest` production examples. | npm package metadata docs confirmed the custom-license shape and top-level `LICENSE` tarball expectation; Debian Policy confirmed `/usr/share/doc/PACKAGE/copyright`; OCI annotations confirmed `org.opencontainers.image.licenses` is an SPDX expression; SPDX confirmed `LicenseRef-*` custom identifiers; `make verify-release-oci-image-helper`; `make proof-helpers`; `actionlint`; `git diff --check` | Keep D6 open until the next live tag publishes the top-level `LICENSE` asset, OCI evidence assets, and GHCR image, then run the live verifier against that tag. |
+| 2026-05-26 | D6 attestation policy hardening | `in_progress` | Tightened the OCI image attestation evidence path so the release report and workflow pin the SLSA predicate explicitly with `--predicate-type https://slsa.dev/provenance/v1`, continue to reject self-hosted-runner attestations with `--deny-self-hosted-runners`, and require saved `gh attestation verify --format json` output to include verified timestamp evidence plus GitHub-hosted runner identity in both the verified identity and certificate material. The static helper now includes positive timestamp/runner evidence in its fixture, a negative fixture that deletes `verificationResult.verifiedTimestamps`, and a negative fixture that rewrites the runner environment to `self-hosted` to prove the verifier rejects both timestamp-free and non-GitHub-hosted attestation JSON. | `gh attestation verify --help` confirmed `--predicate-type`, `--bundle-from-oci`, and `--deny-self-hosted-runners`; real `v0.1.32` `checksums-sha256.txt` attestation JSON confirmed `verificationResult.verifiedTimestamps`, `verificationResult.verifiedIdentity.runnerEnvironment`, and `verificationResult.signature.certificate.runnerEnvironment`; `make verify-release-oci-image-helper`; `actionlint .github/workflows/release.yml`; `bash -n scripts/render-release-oci-image-report.sh scripts/verify-release-oci-image-report.sh scripts/verify-release-oci-image-assets.sh scripts/verify-release-oci-image-helper.sh`; `git diff --check` | Preserve the hosted `nimbus_oci_attestation.json` from the next tag and keep the final release verifier output with the bundle evidence. |
+| 2026-05-26 | D6 live release audit | `in_progress` | Audited the current public latest release while keeping D6 open. `v0.1.32` is published and stable, but its asset set still contains only the pre-D6 binary archives, `install.sh`, and `checksums-sha256.txt`; it does not include the top-level `LICENSE` asset or any `nimbus_oci_image.txt`, `nimbus_oci_attestation.json`, `nimbus_oci_sbom.json`, or `nimbus_oci_vulns.sarif.json` release evidence. This confirms that local workflow/helper work is not enough to close D6; the next tag must run the new release graph and preserve hosted GHCR evidence before the phase can move to `done`. | `gh release view --repo nimbus/nimbus --json tagName,url,assets,isDraft,isPrerelease` returned latest `v0.1.32` with assets `checksums-sha256.txt`, `install.sh`, `nimbus_darwin_arm64.tar.gz`, `nimbus_linux_arm64.tar.gz`, `nimbus_linux_x86_64.tar.gz`, and `nimbus_windows_x86_64.zip` only | Cut the next release from the D6 workflow changes, then download and verify the final release bundle with `scripts/verify-release-oci-image-assets.sh --require-license --checksums`. |
+| 2026-05-26 | release license payload contract | `in_progress` | Promoted license distribution into an explicit release invariant. Archives must include `LICENSE`; standalone release support assets such as `install.sh` are accompanied by a top-level GitHub Release `LICENSE`; deb/rpm packages install `/usr/share/doc/<package>/LICENSE`, include Debian's `/usr/share/doc/<package>/copyright` path, and carry package license metadata; the default OCI image installs `/usr/local/share/doc/nimbus/LICENSE` and carries `org.opencontainers.image.licenses=LicenseRef-Nimbus-Community` on both config and index; final-bundle verification requires `--require-license --checksums` so the released `LICENSE` asset is present, byte-identical to the repo license, and covered by checksums. The Linux package helper now directly compares every staged package license and copyright file to the repo `LICENSE` and checks both deb and rpm manifests for license metadata and doc-path installation. | `make verify-build-linux-release-packages-helper`; `make verify-release-archive-layout-helper`; `make verify-release-oci-image-helper`; `make verify-release-oci-image-build-helper`; `make proof-helpers`; `actionlint`; `git diff --check` | Preserve the live final-release evidence bundle after the next tag, including `LICENSE`, checksum coverage, package manifest proof, OCI image filesystem/metadata proof, and downloaded-bundle verifier output. |
+| 2026-05-26 | D6 release checksum strictness | `in_progress` | Hardened the final OCI evidence verifier so checksum coverage is singular and unambiguous. `scripts/verify-release-oci-image-assets.sh` now rejects duplicate checksum subjects, malformed SHA-256 values, checksum mismatches, and missing `LICENSE` coverage when `--require-license --checksums` is used. The static release-image helper includes negative fixtures for duplicate checksum entries, malformed digests, and missing top-level `LICENSE` assets so the final release gate cannot pass with ambiguous or incomplete legal/evidence payloads. | `make verify-release-oci-image-helper`; `bash -n scripts/render-release-oci-image-report.sh scripts/verify-release-oci-image-report.sh scripts/verify-release-oci-image-assets.sh scripts/verify-release-oci-image-helper.sh`; `actionlint`; `make proof-helpers`; `make verify-release-oci-image-build-helper`; `git diff --check` | Preserve the downloaded next-tag `checksums-sha256.txt` beside the release assets and keep the successful final verifier output as release evidence. |
+| 2026-05-26 | D6 live release verifier | `in_progress` | Added `scripts/verify-release-oci-image-live.sh` and `make verify-release-oci-image-live TAG=vX.Y.Z` as the post-tag proof path. The verifier checks the public GitHub Release metadata for the required binary, support, license, checksum, and `nimbus_oci_*` assets; downloads the bundle; runs the archive-layout and final OCI evidence verifiers with `--require-license --checksums`; re-runs registry-backed `gh attestation verify` against the digest recorded in `nimbus_oci_image.txt` with the release workflow, tag ref, SLSA predicate, and hosted-runner policy pinned; validates the live attestation JSON through the same asset verifier; and runs the published-image smoke test unless explicitly skipped. A current-release probe against `v0.1.32` fails before download with `expected exactly one LICENSE release asset, found 0`, proving the live verifier catches the known pre-D6 public asset set instead of silently accepting it. | `bash -n scripts/verify-release-oci-image-live.sh scripts/verify-release-oci-image-helper.sh`; `bash scripts/verify-release-oci-image-live.sh --tag v0.1.32 --skip-smoke` failed as expected on the missing top-level `LICENSE` asset; `make verify-release-oci-image-helper`; `make proof-helpers`; `actionlint`; `git diff --check` | Run the live verifier against the next tag and preserve its `OUTPUT_DIR` as the final D6 proof bundle. |
+| 2026-05-26 | D6 live verifier fixture coverage | `in_progress` | Added `scripts/verify-release-oci-image-live-helper.sh` and `make verify-release-oci-image-live-helper` so the networked live verifier has deterministic local coverage. The helper builds a complete fake release bundle, stubs `gh release view`, `gh release download`, and `gh attestation verify`, runs the real live verifier through the success path with downloaded archive/OCI/LICENSE/checksum validation, verifies that registry image attestation JSON is written, verifies that all 11 required release assets get release-asset attestation checks, and then proves a fixture without top-level `LICENSE` is rejected before download. This pass also caught and fixed two pre-tag portability issues in the live verifier path: the fixture now compares against the verifier's canonicalized output directory, and `verify-release-oci-image-live.sh` uses a BSD/macOS-compatible `mktemp ...XXXXXX` template for per-asset attestation JSON. `make proof-helpers` now runs this helper. | `make verify-release-oci-image-live-helper`; `make verify-release-oci-image-helper`; `make proof-helpers`; `actionlint`; `make verify-release-oci-image-build-helper`; `git diff --check` | Keep this fixture as the no-network regression guard; run `make verify-release-oci-image-live TAG=<next-tag>` for the final hosted proof. |
+| 2026-05-26 | final release checksum/provenance sweep | `in_progress` | Tightened the final release job after reviewing the merged artifact directory that now contains binary archives, optional adapter archives, top-level support files, and `nimbus_oci_*` evidence. After `checksums-sha256.txt` is generated, the workflow now re-runs `scripts/verify-bun-jsc-release-assets.sh --checksums artifacts/checksums-sha256.txt` so optional adapter assets get the same final checksum proof as downloaded-release verification. Release asset provenance now uses GitHub's documented `subject-checksums: artifacts/checksums-sha256.txt` mode so optional assets are attested exactly when they are listed in the checksum manifest, and a second attestation covers `checksums-sha256.txt` itself. | `make verify-release-oci-image-helper`; `actionlint`; `git diff --check` | Preserve the next tag's final release attestations and checksum file as evidence that all release-owned assets, including optional adapter payloads, were covered. |
+| 2026-05-26 | D6 public release recheck | `in_progress` | Rechecked the latest public Nimbus release after the final checksum/provenance hardening. The latest stable release remains `v0.1.32`, and its asset list is still the pre-D6 set: `checksums-sha256.txt`, `install.sh`, `nimbus_darwin_arm64.tar.gz`, `nimbus_linux_arm64.tar.gz`, `nimbus_linux_x86_64.tar.gz`, and `nimbus_windows_x86_64.zip`. It still lacks the top-level `LICENSE` asset and all `nimbus_oci_*` evidence assets, so D6 cannot move to `done` until a new tag runs the updated release workflow. | `gh release view --repo nimbus/nimbus --json tagName,url,assets,isDraft,isPrerelease` | Cut the next tag from this release workflow and run `make verify-release-oci-image-live TAG=<tag> OUTPUT_DIR=<proof-dir>`. |
+| 2026-05-26 | D6 release OCI image | `in_progress` | Added the first-class Nimbus application image lane to the tag-driven release workflow. The repo now owns a `Containerfile` with digest-pinned Dockerfile frontend and Debian runtime base, `scripts/render-release-oci-image-report.sh`, `scripts/verify-release-oci-image-report.sh`, `scripts/verify-release-oci-image-assets.sh`, `scripts/smoke-release-oci-image.sh`, `scripts/verify-release-oci-image-helper.sh`, `scripts/verify-release-oci-image-build-helper.sh`, `make verify-release-oci-image-helper`, and `make verify-release-oci-image-build-helper`. The workflow builds linux/amd64 and linux/arm64 images from the already-produced release archives, pushes per-arch tags, assembles `ghcr.io/nimbus/nimbus:<version>`, optionally updates `latest` for stable tags, pushes GitHub/Sigstore attestations to the registry, verifies them with `gh attestation verify --bundle-from-oci` constrained to the release workflow and tag ref, captures BuildKit SBOM evidence with subject image/tag/ref/digest metadata and explicit SPDX payloads for linux/amd64 and linux/arm64, runs a pinned Docker Scout SARIF scan, smoke-tests `nimbus --version` plus foreground `nimbus start` + `/health`, verifies the `nimbus_oci_*` evidence bundle in the image publish job, verifies the final bundle again after `checksums-sha256.txt` exists, and uploads `nimbus_oci_image.txt`, `nimbus_oci_attestation.json`, `nimbus_oci_sbom.json`, and `nimbus_oci_vulns.sarif.json` as release assets. The final release job now also publishes the top-level `LICENSE` as a checksummed and attested release asset so standalone support assets such as `install.sh` are accompanied by the license text. The static helper proves the image definition uses OCI labels including `LicenseRef-Nimbus-Community`, the image jobs have scoped permissions and do not rebuild with Cargo, the report is deterministic and records stdout/stderr logging plus attestation/SBOM/vulnerability assets and a release-evidence verifier command that requires the final `LICENSE` asset, the asset verifier validates report/image digest/SLSA/certificate-backed repository/release-workflow/tag/per-platform-SBOM/SARIF/LICENSE/checksum coherence, and the smoke script checks UID/GID `10001:10001`, writable `/var/lib/nimbus`, image-installed license text, forbidden host tooling, admin-token rotation, and `/health`. The Docker-backed fixture helper builds the actual `Containerfile` from a release-layout archive and inspects/runs the image to prove entrypoint, default command, non-root runtime user, writable state volume, OCI labels, image-installed license text, stdout/stderr logs, and absence of forbidden host tools. Operator docs now document digest pinning, one-time admin-token rotation for non-loopback binds, Compose/Podman/Kubernetes probes, and no service-manager-in-container pattern. The release workflow now pins `actions/create-github-app-token@v3.2.0` so `client-id` inputs validate under `actionlint` and match the current upstream action contract; `actions/attest@v4` usage matches the current GitHub artifact attestation contract for default SLSA provenance and registry-pushed container attestations. | `bash scripts/verify-release-oci-image-helper.sh`; `make verify-release-oci-image-helper`; `make verify-release-oci-image-build-helper`; `actionlint .github/workflows/release.yml`; Ruby YAML parse for `.github/workflows/release.yml`; `git diff --check`; pinned Docker Scout `cves --help` via Docker; Docker probe proving digest-pinned `# syntax=docker/dockerfile:1@sha256:87999aa3...` is accepted | Cut the next tagged release and preserve the hosted run URL, published GHCR digest, registry-pushed attestation verification JSON, per-platform SBOM, Scout SARIF, `scripts/verify-release-oci-image-assets.sh --require-license --checksums` output, LICENSE evidence, and smoke evidence before marking D6 `done`. |
 | 2026-05-25 | D2/D3 optional Bun/JSC adapter package lane | `in_progress` | Added an explicit optional package path for the in-process Bun/JSC adapter without changing the default `nimbus` package. `scripts/build-linux-release-packages.sh` now verifies a `nimbus-bun-jsc-adapter-linux-x86_64.tar.gz` archive, stages it under `/usr/libexec/nimbus/runtime/bun-jsc/<adapter_version>/`, points `current/` at that version, preserves the adapter SBOM/provenance evidence, and renders separate deb/rpm manifests for `nimbus-bun-jsc-adapter` with a dependency on `nimbus`. `linux-packages`, `apt-repo`, and `linux-distribution-release` only include the adapter when explicitly requested. `scripts/install.sh --with-bun-jsc` installs the Linux x86_64 release asset directly with release checksum, GitHub attestation, tar-layout, archive-internal checksum, SBOM, and provenance evidence verification; macOS Homebrew/cask remains a documented separate artifact lane until the tap has a package payload. | `bash -n scripts/build-linux-release-packages.sh scripts/verify-build-linux-release-packages-helper.sh scripts/install.sh scripts/verify-install.sh scripts/verify-install-helper.sh scripts/package-bun-jsc-adapter.sh scripts/verify-bun-jsc-adapter-package.sh scripts/verify-bun-jsc-release-assets.sh`; `dash -n scripts/install.sh`; Ruby YAML parse for `linux-packages.yml`, `apt-repo.yml`, `linux-distribution-release.yml`, and `ci.yml`; `bash scripts/verify-build-linux-release-packages-helper.sh`; `bash scripts/verify-install-helper.sh`; `bash scripts/verify-bun-jsc-release-assets-helper.sh`; `bash scripts/verify-artifact-provenance.sh` | Capture a real Linux package install proof after adapter release assets exist for the tag; add a Homebrew/tap payload or keep the separate artifact lane documented; promote COPR/SRPM adapter support only after a Fedora proof. |
 | 2026-05-21 | D1/D2/D3 private krun stack | `done` | Closed the paired Linux krun runtime-stack refresh. `nimbus/nimbus-libkrun` now publishes `v1.18.1-nimbus.1` amd64/arm64 archives with private `libkrun`, bundled `libkrunfw`, checksums, and attestations; `nimbus/nimbus-crun` now publishes `v1.27.1-nimbus.2` built against that private stack. Nimbus direct install, verify, uninstall, package-build, apt-repo, COPR/SRPM, and release-mirror workflows now consume `nimbus + nimbus-libkrun + nimbus-crun` without distro or manual upstream libkrun for service execution. | `bash scripts/verify-install-helper.sh`; `bash scripts/verify-build-linux-release-packages-helper.sh`; `bash scripts/verify-build-apt-repository-helper.sh`; `bash scripts/verify-build-fedora-release-srpms-helper.sh` on Debian 13 `minicloud`; `sudo bash scripts/check-vmm-host.sh` reported `result supported`; `sudo env ... target/debug/deps/krun_linux_smoke-* krun_backend_image_backed_smoke_pulls_and_boots_busybox --ignored --nocapture` passed with non-loopback refusal for `192.168.4.29:18081`; Fedora/COPR helper rebuilt three SRPMs and installed/query-verified private-stack RPMs in Fedora 42 userspace. | Finish public apt/COPR publication and capture fresh installs from those public repos; keep future krun stack bumps on exact upstream-version tags such as `v1.27.1-nimbus.N`. |
 | 2026-04-14 | D4b | `done` | Machine-os CI workflow (`.github/workflows/nimbus-machine-os.yml`) migrated from self-hosted ARM64 runners to GitHub-hosted `ubuntu-24.04-arm`. Pipeline switched from rpm-ostree + custom-coreos-disk-images to `podman save --format oci-archive` + `bootc-image-builder`. Base image changed from Fedora CoreOS to `fedora-bootc:42`. Publishes raw-disk OCI artifact to GHCR on `machine-os/v*` tags with `actions/attest@v4` provenance. Consumer-side attestation verification added to `manager.rs`. | CI run green on `ubuntu-24.04-arm`; `actions/attest@v4` provenance attached; machine manager queries GitHub Attestations API after SHA256 verification | D4b acceptance criteria met: versioned GHCR reference, digest/provenance, dedicated ARM64 build lane |

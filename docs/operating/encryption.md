@@ -233,7 +233,7 @@ Checked-in benchmark artifacts from the first manifest-backed embedded capture:
 ## Migration Workflows
 
 `nimbus encryption migrate`, `export`, and `rotate-*` reuse the same
-encryption-provider configuration as `serve`. In practice that means setting
+encryption-provider configuration as `start`. In practice that means setting
 `NIMBUS_ENCRYPTION_*` or using the config file loaded through `NIMBUS_CONFIG`
 before invoking the admin command.
 
