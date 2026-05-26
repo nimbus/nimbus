@@ -6,6 +6,8 @@ use nimbus_core::{Error, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use super::super::evidence::redact_evidence_text;
+
 pub const DEFAULT_OPERATOR_EXTERNAL_POLICY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -141,10 +143,12 @@ impl OperatorExternalPolicyDecision {
                 "external policy decision reason cannot be empty",
             ));
         }
+        let outcome = self.outcome;
         Ok(OperatorExternalPolicyEvidence {
             backend: self.backend,
-            outcome: self.outcome,
-            reason: self.reason,
+            outcome,
+            reason_code: outcome.reason_code().to_owned(),
+            reason: redact_evidence_text(&self.reason),
             policy_bundle_hash: request.policy_bundle_hash.clone(),
             input_digest: request.input_digest.clone(),
             timeout_millis: request.timeout_millis,
@@ -156,6 +160,7 @@ impl OperatorExternalPolicyDecision {
 pub struct OperatorExternalPolicyEvidence {
     pub backend: OperatorExternalPolicyBackendIdentity,
     pub outcome: OperatorExternalPolicyOutcome,
+    pub reason_code: String,
     pub reason: String,
     pub policy_bundle_hash: Option<String>,
     pub input_digest: String,
@@ -217,6 +222,13 @@ impl OperatorExternalPolicyOutcome {
             Self::Deny => "deny",
         }
     }
+
+    pub fn reason_code(self) -> &'static str {
+        match self {
+            Self::Allow => "external_policy_allowed",
+            Self::Deny => "external_policy_denied",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,7 +262,12 @@ impl OperatorExternalPolicyBackendError {
 
 impl std::fmt::Display for OperatorExternalPolicyBackendError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.kind.label(), self.message)
+        write!(
+            formatter,
+            "{}: {}",
+            self.kind.label(),
+            redact_evidence_text(&self.message)
+        )
     }
 }
 
@@ -347,8 +364,12 @@ pub(super) fn evaluate_external_policy_backend(
     })?;
     if matches!(evidence.outcome, OperatorExternalPolicyOutcome::Deny) {
         return Err(Error::InvalidInput(format!(
-            "operator policy external backend `{}@{}` denied workload `{}`: {}",
-            evidence.backend.name, evidence.backend.version, request.workload_key, evidence.reason
+            "operator policy external backend `{}@{}` denied workload `{}` [{}]: {}",
+            evidence.backend.name,
+            evidence.backend.version,
+            request.workload_key,
+            evidence.reason_code,
+            evidence.reason
         )));
     }
     Ok(evidence)
