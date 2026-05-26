@@ -12,11 +12,11 @@ yet claimed, so use the first-party package path instead of assuming stock Node
 or browser SDK transport parity.
 
 For the detailed support matrix, see
-[Firebase compatibility](firebase-compatibility.md). For the current Firebase
+[Firebase compatibility](compatibility.md). For the current Firebase
 application-auth truth, see
-[Firebase application auth contract](firebase-auth-contract.md). For the
+[Firebase application auth contract](auth-contract.md). For the
 browser `Listen` transport contract, see
-[Firebase WebSocket Listen](firebase-websocket-listen.md).
+[Firebase WebSocket Listen](websocket-listen.md).
 
 ## Recommended Migration Path
 
@@ -27,7 +27,7 @@ browser `Listen` transport contract, see
 4. Keep unary calls on REST first; opt into gRPC-Web only where you want that
    transport explicitly.
 5. Read the current
-   [Firebase application auth contract](firebase-auth-contract.md) before
+   [Firebase application auth contract](auth-contract.md) before
    depending on Firebase-route identity or authorization behavior.
 6. Move Firestore Security Rules intent into Nimbus-owned application auth and
    authorization checks instead of expecting a rules DSL on the database.
@@ -115,7 +115,7 @@ binary-protobuf WebSocket `Listen` bridge.
 ## Local Demo
 
 Nimbus ships a runnable browser demo at
-[`demos/firebase/html/`](../../demos/firebase/html/).
+[`demos/firebase/html/`](../../../demos/firebase/html/).
 
 Run the local server:
 
@@ -214,7 +214,7 @@ One current caveat matters here:
 - Firebase-route application auth is now enforced on the covered
   CRUD/query/transaction/`Write`/`Listen` paths, but only within the explicit
   contract documented in
-  [Firebase application auth contract](firebase-auth-contract.md). Verified
+  [Firebase application auth contract](auth-contract.md). Verified
   bearer tokens now reach the shared Nimbus principal path on those covered
   routes. JSON-object emulator `mockUserToken` values require explicit
   server-side opt-in for the emulator-only auth contract. Do not assume broader
@@ -253,8 +253,8 @@ For a typical app migration:
 
 ## See Also
 
-- [Firebase compatibility](firebase-compatibility.md)
-- [Firebase application auth contract](firebase-auth-contract.md)
-- [Firebase WebSocket Listen](firebase-websocket-listen.md)
-- [Firebase upstream test catalog](firebase-upstream-test-catalog.md)
-- [Demos](../../demos/README.md)
+- [Firebase compatibility](compatibility.md)
+- [Firebase application auth contract](auth-contract.md)
+- [Firebase WebSocket Listen](websocket-listen.md)
+- [Firebase upstream test catalog](upstream-test-catalog.md)
+- [Demos](../../../demos/README.md)

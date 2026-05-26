@@ -292,5 +292,5 @@ npm run build --workspace convex
 Then open
 [http://localhost:8080/demos/convex/html/vanilla.html](http://localhost:8080/demos/convex/html/vanilla.html).
 
-See [demos/README.md](../../demos/README.md)
+See [demos/README.md](../../../demos/README.md)
 for the demo layout and run flow.

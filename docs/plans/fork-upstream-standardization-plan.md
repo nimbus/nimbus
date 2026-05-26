@@ -1139,9 +1139,8 @@ Evidence:
   - `npm run test`: passed, including `nimbus-ui` 42 files / 278 tests.
   - `npm run build`: passed. Existing route-generation/code-splitting and
     chunk-size warnings remained warnings.
-- `npm run docs:validate-refs:strict`: unavailable; npm reported the script is
-  missing. This is not a FUS7 required gate, but it remains useful future
-  documentation tooling.
+- `npm run docs:validate-refs:strict`: now available and passes against
+  tracked current Markdown docs.
 
 ### FUS8 - Closeout
 

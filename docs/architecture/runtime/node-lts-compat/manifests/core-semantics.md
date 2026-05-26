@@ -16,7 +16,7 @@ Source corpus:
 This file records the pinned Node test globs and the currently manifested
 official-fixture subset for the `core-semantics` family. The canonical
 source of truth for the executed subset is
-[`CORE_SEMANTICS_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs)
+[`CORE_SEMANTICS_BATCH`](../../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs)
 plus the explicit watchpoints in the same Rust file; this document summarizes
 that state so future work can resume without rediscovering it.
 

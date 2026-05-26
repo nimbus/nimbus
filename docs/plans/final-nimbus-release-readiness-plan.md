@@ -252,8 +252,7 @@ Success criteria:
 - `make verify-enterprise-policy-egress` passes.
 - `make verify-artifact-provenance` passes.
 - `make proof-helpers` passes.
-- Any available strict docs/reference validation is run; if no such command is
-  available, record that explicitly.
+- `npm run docs:validate-refs:strict` passes.
 
 ### NRR5 - Local Release Binary and Archive Contract
 

@@ -1,6 +1,6 @@
 # Verification Architecture
 
-This document extends [ARCHITECTURE.md](../../ARCHITECTURE.md) with the deeper
+This document extends [ARCHITECTURE.md](../../../ARCHITECTURE.md) with the deeper
 verification and harness topology that should not sit in the stable
 architecture root. The root architecture doc keeps the system-level invariants;
 this doc keeps the proof surfaces, harness ownership, and corpus layout that

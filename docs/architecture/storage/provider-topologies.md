@@ -1,6 +1,6 @@
 # Provider Topologies
 
-This document extends [ARCHITECTURE.md](../../ARCHITECTURE.md) with the deeper
+This document extends [ARCHITECTURE.md](../../../ARCHITECTURE.md) with the deeper
 provider-topology reference material that should not live in the stable
 architecture root. The root architecture doc keeps the crate map, invariants,
 and major data flows; this doc keeps the more detailed provider-shape guidance

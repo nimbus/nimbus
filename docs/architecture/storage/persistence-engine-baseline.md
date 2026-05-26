@@ -1,6 +1,6 @@
 # Persistence Engine Baseline
 
-This document extends [ARCHITECTURE.md](../../ARCHITECTURE.md) with the
+This document extends [ARCHITECTURE.md](../../../ARCHITECTURE.md) with the
 current persistence-engine baseline. Keep the high-level crate map and repo
 invariants in `ARCHITECTURE.md`; use this reference when work needs the
 current backend layouts, durable-journal contract, serving-snapshot direction,
@@ -204,6 +204,6 @@ usage and control path keeps its own design and rollout boundary.
 
 ## Related Docs
 
-- [ARCHITECTURE.md](../../ARCHITECTURE.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
 - [Provider topology reference](provider-topologies.md)
-- [Versioned serving snapshot design note](../research/versioned-serving-snapshot-design-note.md)
+- [Versioned serving snapshot design note](../../plans/research/versioned-serving-snapshot-design-note.md)

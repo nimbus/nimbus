@@ -6,11 +6,11 @@ runtime compatibility shims and provider-neutral runtime capabilities inside
 
 It complements:
 
-- [ARCHITECTURE.md](../../ARCHITECTURE.md)
-- [cloud-functions-compatibility.md](cloud-functions-compatibility.md)
-- [firebase-compatibility.md](firebase-compatibility.md)
-- [runtime-capability-adapter-boundary-plan.md](../plans/runtime-capability-adapter-boundary-plan.md)
-- [server-runtime-canonicalization-plan.md](../plans/server-runtime-canonicalization-plan.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+- [Cloud Functions compatibility](../../adapters/cloud-functions/compatibility.md)
+- [Firebase compatibility](../../adapters/firebase/compatibility.md)
+- [runtime-capability-adapter-boundary-plan.md](../../plans/archive/runtime-capability-adapter-boundary-plan.md)
+- [server-runtime-canonicalization-plan.md](../../plans/archive/server-runtime-canonicalization-plan.md)
 
 ## Why This Boundary Exists
 

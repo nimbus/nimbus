@@ -47,8 +47,8 @@ Cloud Functions plan keeps the same staging, integrity, and generation-swap
 guarantees, but uses a sibling internal artifact family under
 `.nimbus/firebase/` with its own manifest envelope rather than forcing Cloud
 Functions metadata through the Convex manifest schema. See
-[Cloud Functions artifact contract](cloud-functions-artifact-contract.md) and
-[Cloud Functions target binding contract](cloud-functions-target-binding-contract.md).
+[Cloud Functions artifact contract](../adapters/cloud-functions/artifact-contract.md) and
+[Cloud Functions target binding contract](../adapters/cloud-functions/target-binding-contract.md).
 
 ## Server Behavior
 

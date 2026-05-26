@@ -996,6 +996,6 @@ See [Encryption at rest reference](encryption.md) for full operational guidance.
 Related references:
 
 - [Encryption at rest reference](encryption.md)
-- [MicroVM and service-control baseline](microvm-service-baseline.md)
-- [HTTP and WebSocket API](http-api.md)
-- [Convex compatibility](../convex/compatibility.md)
+- [MicroVM and service-control baseline](../architecture/sandbox/microvm-service-baseline.md)
+- [HTTP and WebSocket API](../adapters/native/http-api.md)
+- [Convex compatibility](../adapters/convex/compatibility.md)

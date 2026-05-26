@@ -5,9 +5,9 @@ repo.
 
 It complements:
 
-- [ARCHITECTURE.md](../../ARCHITECTURE.md)
-- [runtime-adapter-boundary.md](runtime-adapter-boundary.md)
-- [server-auth-runtime-trust.md](server-auth-runtime-trust.md)
+- [ARCHITECTURE.md](../../../ARCHITECTURE.md)
+- [runtime adapter boundary](../runtime/adapter-boundary.md)
+- [server auth runtime trust](auth-runtime-trust.md)
 
 ## Ownership Model
 

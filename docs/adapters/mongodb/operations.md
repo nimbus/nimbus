@@ -22,10 +22,10 @@
 
 ## Known Limitations
 
-See [MongoDB adapter hardening plan](../../plans/mongodb-adapter-hardening-plan.md)
+See [MongoDB adapter hardening plan](../../plans/archive/mongodb-adapter-hardening-plan.md)
 for the current coverage and planned work.
 
 ## Related Docs
 
-- [MongoDB adapter hardening plan](../../plans/mongodb-adapter-hardening-plan.md)
+- [MongoDB adapter hardening plan](../../plans/archive/mongodb-adapter-hardening-plan.md)
 - [Demo: mongodb/node](../../../demos/mongodb/node/)

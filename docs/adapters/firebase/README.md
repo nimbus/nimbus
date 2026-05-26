@@ -122,4 +122,4 @@ See the [Firebase compatibility matrix](compatibility.md) for the full scope.
 - [Firebase migration guide](migration.md)
 - [Firebase auth contract](auth-contract.md)
 - [Firebase WebSocket Listen](websocket-listen.md)
-- [Demo: firebase/html](../../demos/firebase/html/)
+- [Demo: firebase/html](../../../demos/firebase/html/)

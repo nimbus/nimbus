@@ -6,7 +6,7 @@ surface in Nimbus for both Firebase v2 authors and standalone
 
 Use this document as the precise compatibility matrix. For the practical
 adoption path, see
-[Cloud Functions migration guide](cloud-functions-migration-guide.md).
+[Cloud Functions migration guide](migration.md).
 
 ## Status Labels
 
@@ -94,7 +94,7 @@ The first covered admin slice is intentionally narrow and source-compatible.
 | `onInit()` | `deferred` | Explicit fail-fast boundary |
 
 For the exact root-default contract, see
-[Cloud Functions root defaults contract](cloud-functions-root-defaults-contract.md).
+[Cloud Functions root defaults contract](root-defaults-contract.md).
 
 ### Per-handler options
 

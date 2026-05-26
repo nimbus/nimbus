@@ -16,10 +16,10 @@ through the shared Nimbus principal path on covered reads, writes,
 transactions, and listeners.
 
 For the broader support matrix, see
-[Firebase compatibility](firebase-compatibility.md). For the migration path,
-see [Firebase migration guide](firebase-migration-guide.md). For the browser
+[Firebase compatibility](compatibility.md). For the migration path,
+see [Firebase migration guide](migration.md). For the browser
 watch transport details, see
-[Firebase WebSocket Listen](firebase-websocket-listen.md).
+[Firebase WebSocket Listen](websocket-listen.md).
 
 ## Canonical Principal Shape
 

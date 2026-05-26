@@ -48,7 +48,7 @@ shared seam instead of trying to run all `512+` files at once.
 ## Current Manifested Official Subset
 
 The first manifested `streams-and-local-io` family batch is now live in
-[`STREAMS_AND_LOCAL_IO_BATCH`](../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs).
+[`STREAMS_AND_LOCAL_IO_BATCH`](../../../../../crates/nimbus-runtime/src/runtime/tests/node/mod.rs).
 
 Current manifested batch counts:
 

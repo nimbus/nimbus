@@ -4,7 +4,7 @@ This guide is the practical migration path for teams moving Firebase Cloud
 Functions or standalone Functions Framework handlers onto Nimbus today.
 
 For the exact support matrix, see
-[Cloud Functions compatibility](cloud-functions-compatibility.md).
+[Cloud Functions compatibility](compatibility.md).
 
 ## Who This Covers
 
@@ -260,8 +260,8 @@ For most teams:
 
 ## See Also
 
-- [Cloud Functions compatibility](cloud-functions-compatibility.md)
-- [Cloud Functions artifact contract](cloud-functions-artifact-contract.md)
-- [Cloud Functions target binding contract](cloud-functions-target-binding-contract.md)
-- [Cloud Functions root defaults contract](cloud-functions-root-defaults-contract.md)
-- [Cloud Functions app-root and admin contract](cloud-functions-app-root-and-admin-contract.md)
+- [Cloud Functions compatibility](compatibility.md)
+- [Cloud Functions artifact contract](artifact-contract.md)
+- [Cloud Functions target binding contract](target-binding-contract.md)
+- [Cloud Functions root defaults contract](root-defaults-contract.md)
+- [Cloud Functions app-root and admin contract](app-root-admin-contract.md)

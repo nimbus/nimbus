@@ -223,10 +223,10 @@ reproducible measurement; production operators should use their real
 
 Checked-in benchmark artifacts from the first manifest-backed embedded capture:
 
-- [Summary report](../research/encryption-at-rest-benchmark-report.md)
-- [Embedded plaintext raw report](../research/encryption-at-rest-embedded-plaintext-benchmark-report.md)
-- [Embedded encrypted raw report](../research/encryption-at-rest-embedded-encrypted-benchmark-report.md)
-- [Replica-connected SQLite local-cache raw report](../research/encryption-at-rest-libsql-replica-encrypted-cache-benchmark-report.md)
+- [Summary report](../plans/research/encryption-at-rest-benchmark-report.md)
+- [Embedded plaintext raw report](../plans/research/encryption-at-rest-embedded-plaintext-benchmark-report.md)
+- [Embedded encrypted raw report](../plans/research/encryption-at-rest-embedded-encrypted-benchmark-report.md)
+- [Replica-connected SQLite local-cache raw report](../plans/research/encryption-at-rest-libsql-replica-encrypted-cache-benchmark-report.md)
 
 ---
 
@@ -365,12 +365,12 @@ cache from the remote primary under the new key.
 ### Performance
 
 Representative local embedded benchmark numbers are published in
-[Encryption-at-rest benchmark report](../research/encryption-at-rest-benchmark-report.md).
+[Encryption-at-rest benchmark report](../plans/research/encryption-at-rest-benchmark-report.md).
 Those numbers come from the repo-owned benchmark harness and evidence
 collector, and they measure the real manifest-backed startup path rather than
 an in-process shortcut. The corresponding focused replica-connected local-cache
 reopen and freshness drills are published in
-[Replica-connected SQLite local-cache raw report](../research/encryption-at-rest-libsql-replica-encrypted-cache-benchmark-report.md).
+[Replica-connected SQLite local-cache raw report](../plans/research/encryption-at-rest-libsql-replica-encrypted-cache-benchmark-report.md).
 Those libsql numbers should be read as provider-path latency rather than as a
 pure local-crypto delta, because the cold-start and freshness drills include
 replica refresh semantics in addition to local cache reopen.

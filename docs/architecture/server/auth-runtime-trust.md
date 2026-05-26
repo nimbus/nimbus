@@ -6,11 +6,11 @@ bootstrap ownership, and trusted metadata contracts.
 
 It complements:
 
-- [runtime capability and adapter boundary](runtime-adapter-boundary.md)
-- [firebase application auth contract](firebase-auth-contract.md)
-- [cloud functions compatibility](cloud-functions-compatibility.md)
-- [adapter runtime trust hardening plan](../plans/adapter-runtime-trust-hardening-plan.md)
-- [server runtime canonicalization plan](../plans/server-runtime-canonicalization-plan.md)
+- [runtime capability and adapter boundary](../runtime/adapter-boundary.md)
+- [firebase application auth contract](../../adapters/firebase/auth-contract.md)
+- [cloud functions compatibility](../../adapters/cloud-functions/compatibility.md)
+- [adapter runtime trust hardening plan](../../plans/archive/adapter-runtime-trust-hardening-plan.md)
+- [server runtime canonicalization plan](../../plans/archive/server-runtime-canonicalization-plan.md)
 
 ## Landed Conclusions
 

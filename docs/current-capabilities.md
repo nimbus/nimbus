@@ -46,7 +46,7 @@ cleaner design is preferred.
 
 See the dedicated references for detail:
 
-- [MicroVM and service-control baseline](microvm-service-baseline.md)
-- [HTTP and WebSocket API](http-api.md)
-- [CLI reference](cli.md)
-- [Convex compatibility](../convex/compatibility.md)
+- [MicroVM and service-control baseline](architecture/sandbox/microvm-service-baseline.md)
+- [HTTP and WebSocket API](adapters/native/http-api.md)
+- [CLI reference](operating/cli.md)
+- [Convex compatibility](adapters/convex/compatibility.md)

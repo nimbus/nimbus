@@ -1,6 +1,6 @@
 # Reliability Posture
 
-This document complements [ARCHITECTURE.md](../../ARCHITECTURE.md) and
+This document complements [ARCHITECTURE.md](../../../ARCHITECTURE.md) and
 [verification-architecture.md](verification-architecture.md) with the proof
 discipline Nimbus now expects for reliability-sensitive changes. The
 architecture docs explain what the system guarantees; this doc explains how we

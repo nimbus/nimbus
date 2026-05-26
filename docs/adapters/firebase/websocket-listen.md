@@ -12,7 +12,7 @@ Unary and server-streaming Firestore browser traffic should keep using gRPC-Web;
 browser `Listen` uses this WebSocket path instead.
 
 For the broader Firebase-route auth and principal-resolution truth behind this
-transport, see [Firebase application auth contract](firebase-auth-contract.md).
+transport, see [Firebase application auth contract](auth-contract.md).
 
 ## Framing
 

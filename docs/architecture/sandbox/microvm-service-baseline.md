@@ -6,10 +6,10 @@ runtime and Compose-backed service-control architecture.
 It is not a roadmap. Historical execution detail, verification logs, and
 phase-by-phase closeout evidence live in the archived plans:
 
-- [`docs/plans/archive/vmm-infrastructure-plan.md`](../plans/archive/vmm-infrastructure-plan.md)
-- [`docs/plans/archive/microvm-runtime-plan.md`](../plans/archive/microvm-runtime-plan.md)
-- [`docs/plans/archive/service-control-plane-plan.md`](../plans/archive/service-control-plane-plan.md)
-- [`docs/plans/archive/macos-machine-support-plan.md`](../plans/archive/macos-machine-support-plan.md)
+- [`docs/plans/archive/vmm-infrastructure-plan.md`](../../plans/archive/vmm-infrastructure-plan.md)
+- [`docs/plans/archive/microvm-runtime-plan.md`](../../plans/archive/microvm-runtime-plan.md)
+- [`docs/plans/archive/service-control-plane-plan.md`](../../plans/archive/service-control-plane-plan.md)
+- [`docs/plans/archive/macos-machine-support-plan.md`](../../plans/archive/macos-machine-support-plan.md)
 
 ## Scope
 
@@ -275,11 +275,11 @@ machine-support plan.
 
 ## Key References
 
-- [CLI reference](cli.md)
-- [Current capabilities](current-capabilities.md)
+- [CLI reference](../../operating/cli.md)
+- [Current capabilities](../../current-capabilities.md)
 - [krun VMM host validation](krun-vmm-host-validation.md)
 - [krun sandbox backend smoke](krun-sandbox-backend-smoke.md)
-- [Distribution plan](../plans/distribution-plan.md)
+- [Distribution plan](../../plans/distribution-plan.md)
 
 ## When To Open The Archived Plans
 

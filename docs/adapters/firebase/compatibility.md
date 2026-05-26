@@ -7,8 +7,8 @@ adapter work, focused server contract tests, and the `@nimbus/firebase`
 selftest suite.
 
 If you are moving an app onto Nimbus now, start with the
-[Firebase migration guide](firebase-migration-guide.md) and
-[Firebase application auth contract](firebase-auth-contract.md), then treat
+[Firebase migration guide](migration.md) and
+[Firebase application auth contract](auth-contract.md), then treat
 this document as the precise support matrix behind that path.
 
 Nimbus currently has three distinct Firebase-facing stories:
@@ -43,8 +43,8 @@ Nimbus currently has three distinct Firebase-facing stories:
 
 | Surface | Status | Transport(s) | Current claim | Explicit gaps |
 |---------|--------|--------------|---------------|---------------|
-| `@nimbus/firebase` in browsers | `supported with caveats` | REST unary by default, opt-in gRPC-Web unary, WebSocket `Listen` | Primary supported Firebase-style client for Nimbus. Covers refs, CRUD, queries, snapshots, listeners, write batches, transactions, supported `FieldValue` transforms, and covered Firebase-route principal propagation for verified bearer tokens. JSON-object emulator `mockUserToken` values are supported only when the server explicitly enables that emulator-only auth contract. | No WebChannel, no offline persistence/cache APIs, no bundle/named-query APIs, no `onSnapshotsInSync`, no `waitForPendingWrites`, no long-polling transport, and auth behavior remains limited to the covered contract in [Firebase application auth contract](firebase-auth-contract.md). |
-| `@nimbus/firebase` in Node | `supported with caveats` | REST unary by default, opt-in gRPC-Web unary, WebSocket `Listen` with explicit socket wiring when needed | Same API surface as the browser package, intended for tests and server-side JS callers that want the Nimbus first-party SDK instead of the Google Cloud client libraries. Covered Firebase-route principal propagation matches the browser package on the supported data paths. | Watch flows may require `experimentalWebSocketFactory`; this is not a drop-in replacement for `firebase-admin` or `@google-cloud/firestore`, and auth behavior remains limited to the covered contract in [Firebase application auth contract](firebase-auth-contract.md). |
+| `@nimbus/firebase` in browsers | `supported with caveats` | REST unary by default, opt-in gRPC-Web unary, WebSocket `Listen` | Primary supported Firebase-style client for Nimbus. Covers refs, CRUD, queries, snapshots, listeners, write batches, transactions, supported `FieldValue` transforms, and covered Firebase-route principal propagation for verified bearer tokens. JSON-object emulator `mockUserToken` values are supported only when the server explicitly enables that emulator-only auth contract. | No WebChannel, no offline persistence/cache APIs, no bundle/named-query APIs, no `onSnapshotsInSync`, no `waitForPendingWrites`, no long-polling transport, and auth behavior remains limited to the covered contract in [Firebase application auth contract](auth-contract.md). |
+| `@nimbus/firebase` in Node | `supported with caveats` | REST unary by default, opt-in gRPC-Web unary, WebSocket `Listen` with explicit socket wiring when needed | Same API surface as the browser package, intended for tests and server-side JS callers that want the Nimbus first-party SDK instead of the Google Cloud client libraries. Covered Firebase-route principal propagation matches the browser package on the supported data paths. | Watch flows may require `experimentalWebSocketFactory`; this is not a drop-in replacement for `firebase-admin` or `@google-cloud/firestore`, and auth behavior remains limited to the covered contract in [Firebase application auth contract](auth-contract.md). |
 | Stock `firebase/firestore` browser SDK | `deferred` | Upstream WebChannel + browser-specific transport stack | No drop-in claim today. Use `@nimbus/firebase` instead. | WebChannel is not implemented; browser persistence/offline behavior is not implemented. |
 | Stock `firebase/firestore/lite` browser SDK | `not claimed` | Upstream browser REST stack | Some overlapping unary semantics exist on the server, but Nimbus does not claim import-path or transport-stack compatibility for the upstream Lite package. | No upstream package integration testing; no drop-in import compatibility promise. |
 | Node Admin SDK (`firebase-admin.firestore`) | `not claimed` | Upstream Google Cloud Firestore client stack over gRPC/REST | Nimbus implements many of the underlying Firestore RPCs, but Admin SDK parity is broader than the current verified surface. | No compatibility test pass yet for BulkWriter, recursive delete-style helpers, bundles, import/export, emulator control endpoints, or other Google Cloud client behavior. |
@@ -96,7 +96,7 @@ These are intentional, documented boundaries rather than accidental gaps:
   `JavaScriptCode` are rejected on Firebase REST/gRPC reads rather than being
   lossy-projected into strings.
 - Firebase route-family application auth is documented separately in
-  [Firebase application auth contract](firebase-auth-contract.md). Covered
+  [Firebase application auth contract](auth-contract.md). Covered
   CRUD/query/transaction/`Write`/`Listen` paths now enforce the resolved
   principal, but unclaimed Firebase/admin breadth outside that contract should
   not be treated as a verified auth-compatibility promise.
@@ -130,11 +130,11 @@ This matrix is sourced from:
 
 - the Firebase adapter control plan and its execution log,
 - the current Firebase auth/principal baseline in
-  [Firebase application auth contract](firebase-auth-contract.md),
+  [Firebase application auth contract](auth-contract.md),
 - the landed `@nimbus/firebase` export surface in `packages/firebase/src/`,
 - the package selftest suite in `packages/firebase/src/selftest.mjs`,
 - the Firestore server contract tests in `crates/nimbus-server/src/tests.rs`,
 - the documented browser `Listen` transport in
-  [Firebase WebSocket Listen](firebase-websocket-listen.md),
+  [Firebase WebSocket Listen](websocket-listen.md),
 - and the Source Evidence Map in
   `docs/plans/archive/firebase-adapter-plan.md`.

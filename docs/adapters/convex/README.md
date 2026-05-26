@@ -246,7 +246,7 @@ await live.mutation(api.messages.send, { author: "Node", body: "Hello" });
 
 ## `nimbus/` source root
 
-Nimbus also supports a first-party `nimbus/` source root alongside the Convex-compatible `convex/` root. When both directories exist, `nimbus/` takes priority. This is experimental. See the [source directory story](../../plans/stories/support-nimbus-source-directory.md) for the full contract.
+Nimbus also supports a first-party `nimbus/` source root alongside the Convex-compatible `convex/` root. When both directories exist, `nimbus/` takes priority. This is experimental. See the [source directory story](../../plans/stories/support-neovex-source-directory.md) for the full contract.
 
 ## Known Limitations
 
@@ -256,4 +256,4 @@ Convex compatibility is intentionally partial. See the [Convex compatibility mat
 
 - [Convex compatibility matrix](compatibility.md)
 - [Convex AI guidelines](ai-guidelines.md)
-- [Demos: convex/html](../../demos/convex/html/), [convex/http](../../demos/convex/http/), [convex/node](../../demos/convex/node/)
+- [Demos: convex/html](../../../demos/convex/html/), [convex/http](../../../demos/convex/http/), [convex/node](../../../demos/convex/node/)
