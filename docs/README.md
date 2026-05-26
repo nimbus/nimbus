@@ -49,6 +49,9 @@ Internal docs mirroring the crate tree. See
 - [storage/](architecture/storage/) -- encryption design, persistence engine, provider topologies
 - [sandbox/](architecture/sandbox/) -- microVM baseline, macOS machine flow, krun validation
 - [testing/](architecture/testing/) -- verification harness, reliability posture, CI investigation
+- [Architecture quality ledger](architecture/repo-architecture-quality-ledger.tsv) --
+  owned-source size thresholds, generated/vendor/test-corpus exclusions, and
+  helper/common naming exceptions
 
 ## Other
 
