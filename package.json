@@ -21,6 +21,7 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "docs:validate-refs:strict": "node scripts/validate-docs-refs.mjs",
     "convex:codegen": "convex codegen --app demos/convex/html",
     "convex:codegen:node": "convex codegen --app demos/convex/node",
     "convex:build": "npm run build",
