@@ -69,7 +69,7 @@ prove that a refactor preserved behavior.
 | Phase | Status | Goal | Verification |
 | --- | --- | --- | --- |
 | RAQ0 | `done` | Add a tracked architecture inventory and guardrail script that records large owned-source files, allowed generated/vendor/test-corpus exclusions, crate dependency invariants, and helper/common naming exceptions. | `./scripts/verify-repo-architecture-quality.sh` reports the current ledger, rejects unapproved owned-source files above the threshold, and confirms `nimbus-core` has no I/O imports while `nimbus-runtime` has no workspace dependencies. Passed on 2026-05-26. |
-| RAQ1 | `todo` | Split `crates/nimbus-server/src/tenant_isolation.rs` into concept-owned modules while keeping the root as a narrow composition/re-export module. Candidate homes: `identity`, `decision`, `policy_input`, `runtime`, `network`, `storage`, `service`, `quota`, and `redaction`. | Focused `cargo test -p nimbus-server tenant_isolation -- --nocapture`, `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture`, and the enterprise policy/provenance verification scripts pass with no decision ID, redaction, or audit fixture drift unless intentionally reviewed. |
+| RAQ1 | `done` | Split `crates/nimbus-server/src/tenant_isolation.rs` into concept-owned modules while keeping the root as a narrow composition/re-export module. Delivered homes: `authority`, `context`, `decision`, `identity`, `policy_input`, `runtime_admission`, and `tests`. | `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed with 111 tests and the 21-scenario tenant isolation conformance suite. `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` passed with 2 tests. `cargo fmt --all --check` and `./scripts/verify-repo-architecture-quality.sh` passed. |
 | RAQ2 | `todo` | Split `crates/nimbus-server/src/system_tenant.rs` by ownership: schema definitions, projection observation, record builders, and per-resource record writers. | Focused system tenant/service-manager tests pass, and system table names, reserved tenant behavior, and emitted record shapes are covered by golden assertions. |
 | RAQ3 | `todo` | Make server construction and public exports boring. Promote one canonical options/builder surface for router/server construction, remove redundant pre-launch overloads, and narrow `crates/nimbus-server/src/lib.rs` re-exports into stable grouped modules. | Server/router tests pass, public docs use the canonical options path, and `rg "build_router_with_" crates docs` shows no new public overload growth. |
 | RAQ4 | `todo` | Split `crates/nimbus-runtime/src/limits.rs` and the largest runtime bootstrap ops into stable runtime policy axes. Candidate homes: backend kind, trust tier, execution model, adapter diagnostics, grants, budgets, reset capabilities, routing affinity, and local op families. | Focused runtime tests for `runtime_capabilities`, `limits`, and `backends` pass, the Bun/JSC verification gate still proves backend axis separation, and `nimbus-runtime` still has zero workspace dependencies. |
@@ -95,17 +95,16 @@ Target files:
 Desired shape:
 
 ```text
+tenant_isolation.rs
+  composition root and public re-export surface
 tenant_isolation/
-  mod.rs
-  identity.rs
+  authority.rs
+  context.rs
   decision.rs
+  identity.rs
   policy_input.rs
-  runtime.rs
-  network.rs
-  storage.rs
-  service.rs
-  quota.rs
-  redaction.rs
+  runtime_admission.rs
+  tests.rs
   audit_events.rs
   artifact_provenance.rs
   image_admission.rs
@@ -235,7 +234,8 @@ The plan is complete when:
 
 | Date | Phase | Status | Evidence |
 | --- | --- | --- | --- |
-| 2026-05-26 | RAQ0 | `done` | Added `docs/architecture/repo-architecture-quality-ledger.tsv` and `scripts/verify-repo-architecture-quality.sh`. The ledger records 10 current owned-source files at or above AGENTS.md thresholds, generated/vendor/test-corpus/proof exclusions, and helper/common naming exceptions. `./scripts/verify-repo-architecture-quality.sh` passed: large-file ledger matched current source, helper/common naming exceptions were tracked, `nimbus-core` zero-I/O scan passed, and `nimbus-runtime` zero-workspace-dependency scan passed. |
+| 2026-05-26 | RAQ0 | `done` | Added `docs/architecture/repo-architecture-quality-ledger.tsv` and `scripts/verify-repo-architecture-quality.sh`. The baseline ledger recorded 10 owned-source files at or above AGENTS.md thresholds, generated/vendor/test-corpus/proof exclusions, and helper/common naming exceptions. `./scripts/verify-repo-architecture-quality.sh` passed: large-file ledger matched source, helper/common naming exceptions were tracked, `nimbus-core` zero-I/O scan passed, and `nimbus-runtime` zero-workspace-dependency scan passed. |
+| 2026-05-26 | RAQ1 | `done` | Split `crates/nimbus-server/src/tenant_isolation.rs` from a 2,596-line root into a 79-line composition root plus concept-owned `authority`, `context`, `decision`, `identity`, `policy_input`, `runtime_admission`, and `tests` modules. Removed the tenant-isolation root from the large-file ledger. `cargo test -p nimbus-server tenant_isolation -- --nocapture` passed with 111 tests and the 21-scenario conformance suite. `cargo test -p nimbus-server tenant_isolation_drift -- --nocapture` passed with 2 tests. `./scripts/verify-repo-architecture-quality.sh` passed and now reports 9 threshold files remaining for later phases. |
 
 ## Suggested Goal Prompt
 

@@ -6,7 +6,7 @@ use super::{
     RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantIsolationDecision, TenantWorkloadKind,
 };
 #[cfg(test)]
-use super::{TenantIsolationAuthority, TenantIsolationContext};
+use super::{TenantIsolationContext, authority::TenantIsolationAuthority};
 
 pub const TENANT_ISOLATION_EVENT_SCHEMA_VERSION: &str = "nimbus.tenant_isolation.event.v1";
 pub const TENANT_ISOLATION_OCSF_SCHEMA_VERSION: &str = "1.8.0";
