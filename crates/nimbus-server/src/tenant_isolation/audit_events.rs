@@ -4,13 +4,13 @@ use serde::Serialize;
 
 use super::{
     RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantIsolationDecision, TenantWorkloadKind,
+    evidence::{canonical_evidence_reason_code, tenant_isolation_event_name},
 };
 #[cfg(test)]
 use super::{TenantIsolationContext, authority::TenantIsolationAuthority};
 
 pub const TENANT_ISOLATION_EVENT_SCHEMA_VERSION: &str = "nimbus.tenant_isolation.event.v1";
 pub const TENANT_ISOLATION_OCSF_SCHEMA_VERSION: &str = "1.8.0";
-pub const TENANT_ISOLATION_OTEL_SCOPE_NAME: &str = "nimbus.tenant_isolation";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -181,6 +181,11 @@ impl TenantIsolationEvent {
         result: TenantIsolationEventResult,
         reason_code: impl Into<String>,
     ) -> Self {
+        let reason_code = canonical_evidence_reason_code(reason_code.into());
+        let mut redacted_fields = redacted_fields_from_policy(&decision.audit_redactions);
+        if reason_code.was_redacted() {
+            record_redaction_field(&mut redacted_fields, "reason_code".to_owned());
+        }
         Self {
             schema_version: TENANT_ISOLATION_EVENT_SCHEMA_VERSION,
             kind,
@@ -199,10 +204,10 @@ impl TenantIsolationEvent {
             invocation_id: decision.workload.invocation_id().map(ToOwned::to_owned),
             service_name: None,
             result,
-            reason_code: reason_code.into(),
+            reason_code: reason_code.into_value(),
             correlation_ids: BTreeMap::new(),
             attributes: BTreeMap::new(),
-            redacted_fields: redacted_fields_from_policy(&decision.audit_redactions),
+            redacted_fields,
         }
     }
 
@@ -214,6 +219,12 @@ impl TenantIsolationEvent {
         result: TenantIsolationEventResult,
         reason_code: impl Into<String>,
     ) -> Self {
+        let reason_code = canonical_evidence_reason_code(reason_code.into());
+        let mut redacted_fields =
+            redacted_fields_from_policy(&TenantAuditRedactionPolicy::default());
+        if reason_code.was_redacted() {
+            record_redaction_field(&mut redacted_fields, "reason_code".to_owned());
+        }
         Self {
             schema_version: TENANT_ISOLATION_EVENT_SCHEMA_VERSION,
             kind,
@@ -230,10 +241,10 @@ impl TenantIsolationEvent {
             invocation_id: None,
             service_name: None,
             result,
-            reason_code: reason_code.into(),
+            reason_code: reason_code.into_value(),
             correlation_ids: BTreeMap::new(),
             attributes: BTreeMap::new(),
-            redacted_fields: redacted_fields_from_policy(&TenantAuditRedactionPolicy::default()),
+            redacted_fields,
         }
     }
 
@@ -285,6 +296,7 @@ impl TenantIsolationEvent {
     pub fn to_ocsf_event(&self, time_millis: u64) -> TenantIsolationOcsfEvent {
         let severity = ocsf_severity(self.kind, self.result);
         let status = ocsf_status(self.result);
+        let event_name = self.event_name();
         TenantIsolationOcsfEvent {
             time: time_millis,
             metadata: TenantIsolationOcsfMetadata {
@@ -301,7 +313,7 @@ impl TenantIsolationEvent {
             activity_id: 99,
             activity_name: self.kind.label().to_owned(),
             type_uid: 99,
-            type_name: format!("Base Event: {}", self.kind.label()),
+            type_name: event_name,
             severity_id: severity.id,
             severity: severity.label,
             status_id: status.id,
@@ -324,7 +336,7 @@ impl TenantIsolationEvent {
             observed_time_unix_nano,
             severity_text: severity.text,
             severity_number: severity.number,
-            event_name: format!("{}.{}", TENANT_ISOLATION_OTEL_SCOPE_NAME, self.kind.label()),
+            event_name: self.event_name(),
             trace_id: self.correlation_ids.get("trace_id").cloned(),
             span_id: self.correlation_ids.get("span_id").cloned(),
             body: self.summary_message(),
@@ -373,6 +385,10 @@ impl TenantIsolationEvent {
         &self.reason_code
     }
 
+    pub fn event_name(&self) -> String {
+        tenant_isolation_event_name(self.kind.label(), self.result.label())
+    }
+
     pub fn correlation_ids(&self) -> &BTreeMap<String, String> {
         &self.correlation_ids
     }
@@ -382,13 +398,7 @@ impl TenantIsolationEvent {
     }
 
     fn record_redaction(&mut self, field: String) {
-        if !self
-            .redacted_fields
-            .iter()
-            .any(|existing| existing == &field)
-        {
-            self.redacted_fields.push(field);
-        }
+        record_redaction_field(&mut self.redacted_fields, field);
     }
 
     fn summary_message(&self) -> String {
@@ -421,6 +431,10 @@ impl TenantIsolationEvent {
             (
                 "nimbus.event.kind".to_owned(),
                 TenantIsolationEventValue::String(self.kind.label().to_owned()),
+            ),
+            (
+                "nimbus.event.name".to_owned(),
+                TenantIsolationEventValue::String(self.event_name()),
             ),
             (
                 "nimbus.event.result".to_owned(),
@@ -497,11 +511,15 @@ impl TenantIsolationDecision {
 fn redacted_fields_from_policy(policy: &TenantAuditRedactionPolicy) -> Vec<String> {
     let mut fields = Vec::new();
     for field in policy.redacted_fields() {
-        if !fields.contains(field) {
-            fields.push(field.clone());
-        }
+        record_redaction_field(&mut fields, field.clone());
     }
     fields
+}
+
+fn record_redaction_field(fields: &mut Vec<String>, field: String) {
+    if !fields.iter().any(|existing| existing == &field) {
+        fields.push(field);
+    }
 }
 
 #[cfg(test)]
@@ -741,6 +759,10 @@ mod tests {
             assert_eq!(event.principal_class(), "application");
             assert_eq!(event.reason_code(), "policy_allowed");
             assert_eq!(
+                event.event_name(),
+                format!("nimbus.tenant_isolation.{}.allowed", event.kind().label())
+            );
+            assert_eq!(
                 event
                     .correlation_ids()
                     .get("request_id")
@@ -775,6 +797,76 @@ mod tests {
     }
 
     #[test]
+    fn tenant_isolation_event_taxonomy_names_are_stable() {
+        let cases = [
+            (
+                TenantIsolationEventKind::Admission,
+                TenantIsolationEventResult::Allowed,
+                "nimbus.tenant_isolation.admission.allowed",
+            ),
+            (
+                TenantIsolationEventKind::Rejection,
+                TenantIsolationEventResult::Denied,
+                "nimbus.tenant_isolation.rejection.denied",
+            ),
+            (
+                TenantIsolationEventKind::Materialization,
+                TenantIsolationEventResult::Succeeded,
+                "nimbus.tenant_isolation.materialization.succeeded",
+            ),
+            (
+                TenantIsolationEventKind::RuntimeInvocation,
+                TenantIsolationEventResult::Failed,
+                "nimbus.tenant_isolation.runtime_invocation.failed",
+            ),
+            (
+                TenantIsolationEventKind::SandboxLaunch,
+                TenantIsolationEventResult::Succeeded,
+                "nimbus.tenant_isolation.sandbox_launch.succeeded",
+            ),
+            (
+                TenantIsolationEventKind::StorageAccess,
+                TenantIsolationEventResult::Allowed,
+                "nimbus.tenant_isolation.storage_access.allowed",
+            ),
+            (
+                TenantIsolationEventKind::HostBridgeOperation,
+                TenantIsolationEventResult::Denied,
+                "nimbus.tenant_isolation.host_bridge_operation.denied",
+            ),
+            (
+                TenantIsolationEventKind::Cleanup,
+                TenantIsolationEventResult::Succeeded,
+                "nimbus.tenant_isolation.cleanup.succeeded",
+            ),
+            (
+                TenantIsolationEventKind::DriftViolation,
+                TenantIsolationEventResult::Observed,
+                "nimbus.tenant_isolation.drift_violation.observed",
+            ),
+        ];
+
+        for (kind, result, expected) in cases {
+            let event = TenantIsolationEvent::without_decision(
+                kind,
+                "tenant-a",
+                "taxonomy.test",
+                "system",
+                result,
+                "policy_allowed",
+            );
+            assert_eq!(event.event_name(), expected);
+            assert_eq!(
+                event
+                    .to_otel_log_record(1, 2)
+                    .attributes
+                    .get("nimbus.event.name"),
+                Some(&TenantIsolationEventValue::String(expected.to_owned()))
+            );
+        }
+    }
+
+    #[test]
     fn tenant_isolation_event_exports_ocsf_and_otel_records() {
         let decision = tenant_decision();
         let event = decision
@@ -796,7 +888,7 @@ mod tests {
         assert_eq!(ocsf.activity_id, 99);
         assert_eq!(ocsf.activity_name, "admission");
         assert_eq!(ocsf.type_uid, 99);
-        assert_eq!(ocsf.type_name, "Base Event: admission");
+        assert_eq!(ocsf.type_name, "nimbus.tenant_isolation.admission.allowed");
         assert_eq!(ocsf.severity_id, 1);
         assert_eq!(ocsf.severity, "Informational");
         assert_eq!(ocsf.status_id, 1);
@@ -812,6 +904,12 @@ mod tests {
         assert_eq!(
             ocsf.unmapped.get("nimbus.tenant_id"),
             Some(&TenantIsolationEventValue::String("tenant-a".to_owned()))
+        );
+        assert_eq!(
+            ocsf.unmapped.get("nimbus.event.name"),
+            Some(&TenantIsolationEventValue::String(
+                "nimbus.tenant_isolation.admission.allowed".to_owned()
+            ))
         );
         assert_eq!(
             ocsf.unmapped.get("nimbus.attribute.table"),
@@ -845,7 +943,7 @@ mod tests {
         assert_eq!(otel.observed_time_unix_nano, 1_772_000_000_000_001_000);
         assert_eq!(otel.severity_text, "INFO");
         assert_eq!(otel.severity_number, 9);
-        assert_eq!(otel.event_name, "nimbus.tenant_isolation.admission");
+        assert_eq!(otel.event_name, "nimbus.tenant_isolation.admission.allowed");
         assert_eq!(
             otel.trace_id.as_deref(),
             Some("0af7651916cd43dd8448eb211c80319c")
@@ -871,6 +969,29 @@ mod tests {
             ))
         );
         serde_json::to_string(&otel).expect("OpenTelemetry log record should serialize");
+    }
+
+    #[test]
+    fn tenant_isolation_event_reason_code_is_canonical_and_redacted() {
+        let event = TenantIsolationEvent::without_decision(
+            TenantIsolationEventKind::HostBridgeOperation,
+            "tenant-a",
+            "runtime.host_bridge",
+            "application",
+            TenantIsolationEventResult::Denied,
+            "Authorization: Bearer do-not-log-token",
+        );
+
+        assert_eq!(event.reason_code(), "non_canonical_reason_code");
+        assert!(
+            event.redacted_fields().contains(&"reason_code".to_owned()),
+            "non-canonical reason codes should be advertised as redacted"
+        );
+        let serialized = serde_json::to_string(&event).expect("event should serialize");
+        assert!(
+            !serialized.contains("do-not-log-token"),
+            "raw reason-code text must not leak: {serialized}"
+        );
     }
 
     #[test]

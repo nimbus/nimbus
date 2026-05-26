@@ -3,6 +3,7 @@ mod audit_events;
 mod authority;
 mod context;
 mod decision;
+mod evidence;
 mod identity;
 mod image_admission;
 mod operator_policy;

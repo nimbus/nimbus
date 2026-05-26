@@ -266,11 +266,14 @@ fn parse_policy(body: &str) -> OperatorPolicyDocument {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FakeExternalPolicyResponse {
     Allow,
+    AllowSensitiveReason,
     Deny,
+    DenySensitiveReason,
     MalformedOutput,
     Timeout,
     SleepPastEngineTimeout,
     Unavailable,
+    UnavailableSensitiveReason,
 }
 
 struct FakeExternalPolicyBackend {
@@ -333,11 +336,25 @@ impl OperatorExternalPolicyBackend for FakeExternalPolicyBackend {
                 self.version,
                 "fixture policy allowed",
             )),
+            FakeExternalPolicyResponse::AllowSensitiveReason => {
+                Ok(OperatorExternalPolicyDecision::allow(
+                    self.name,
+                    self.version,
+                    "Authorization: Bearer do-not-log-token",
+                ))
+            }
             FakeExternalPolicyResponse::Deny => Ok(OperatorExternalPolicyDecision::deny(
                 self.name,
                 self.version,
                 "fixture policy denied",
             )),
+            FakeExternalPolicyResponse::DenySensitiveReason => {
+                Ok(OperatorExternalPolicyDecision::deny(
+                    self.name,
+                    self.version,
+                    "https://policy.local/deny?token=do-not-log-token",
+                ))
+            }
             FakeExternalPolicyResponse::MalformedOutput => {
                 Ok(OperatorExternalPolicyDecision::allow(
                     self.name,
@@ -359,6 +376,11 @@ impl OperatorExternalPolicyBackend for FakeExternalPolicyBackend {
             FakeExternalPolicyResponse::Unavailable => {
                 Err(OperatorExternalPolicyBackendError::unavailable(
                     "fixture policy backend unavailable",
+                ))
+            }
+            FakeExternalPolicyResponse::UnavailableSensitiveReason => {
+                Err(OperatorExternalPolicyBackendError::unavailable(
+                    "Authorization: Bearer do-not-log-token",
                 ))
             }
         }
@@ -462,6 +484,7 @@ fn external_policy_backend_allow_records_decision_evidence() {
     assert_eq!(evidence.backend.name, "fake-opa");
     assert_eq!(evidence.backend.version, "v0-test");
     assert_eq!(evidence.outcome, OperatorExternalPolicyOutcome::Allow);
+    assert_eq!(evidence.reason_code, "external_policy_allowed");
     assert_eq!(evidence.reason, "fixture policy allowed");
     assert_eq!(
         evidence.policy_bundle_hash.as_deref(),
@@ -490,9 +513,52 @@ fn external_policy_backend_deny_fails_closed() {
     assert!(
         error.to_string().contains("fake-cedar@v0-test")
             && error.to_string().contains("denied workload")
+            && error.to_string().contains("external_policy_denied")
             && error.to_string().contains("fixture policy denied"),
         "deny error should identify backend and reason: {error}"
     );
+}
+
+#[test]
+fn external_policy_evidence_and_errors_redact_sensitive_backend_text() {
+    let policy = parse_policy(VALID_POLICY);
+    let allow_backend = Arc::new(FakeExternalPolicyBackend::fake_opa(
+        FakeExternalPolicyResponse::AllowSensitiveReason,
+    ));
+    let allow_engine = OperatorExternalPolicyEngine::from_arc(allow_backend);
+    let evaluation = policy
+        .evaluate_with_external_policy(Some(&allow_engine))
+        .expect("allowing external policy should admit");
+    let evidence = evaluation.decisions[0]
+        .external_policy
+        .as_ref()
+        .expect("allowing backend should attach evidence");
+    assert_eq!(evidence.reason_code, "external_policy_allowed");
+    assert_eq!(evidence.reason, "[redacted evidence text]");
+
+    let deny_backend = Arc::new(FakeExternalPolicyBackend::fake_opa(
+        FakeExternalPolicyResponse::DenySensitiveReason,
+    ));
+    let deny_engine = OperatorExternalPolicyEngine::from_arc(deny_backend);
+    let deny_error = policy
+        .evaluate_with_external_policy(Some(&deny_engine))
+        .expect_err("external policy deny should fail closed");
+    assert!(deny_error.to_string().contains("[redacted evidence text]"));
+    assert!(!deny_error.to_string().contains("do-not-log-token"));
+
+    let unavailable_backend = Arc::new(FakeExternalPolicyBackend::fake_opa(
+        FakeExternalPolicyResponse::UnavailableSensitiveReason,
+    ));
+    let unavailable_engine = OperatorExternalPolicyEngine::from_arc(unavailable_backend);
+    let unavailable_error = policy
+        .evaluate_with_external_policy(Some(&unavailable_engine))
+        .expect_err("external policy backend failure should fail closed");
+    assert!(
+        unavailable_error
+            .to_string()
+            .contains("[redacted evidence text]")
+    );
+    assert!(!unavailable_error.to_string().contains("do-not-log-token"));
 }
 
 #[test]
