@@ -70,9 +70,40 @@ jobs:
             exit 1
           fi
 
+  ui-artifacts:
+    name: UI Artifacts
+    needs: verify-release-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build nimbus-ui artifacts
+        run: make build-ui
+
+      - name: Upload nimbus-ui artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-artifacts
+          path: |
+            packages/nimbus-ui/.nimbus/convex
+            packages/nimbus-ui/dist
+          if-no-files-found: error
+          retention-days: 1
+
   build-linux-arm64:
     name: Build (aarch64-unknown-linux-gnu)
-    needs: verify-release-contract
+    needs: [verify-release-contract, ui-artifacts]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
 
@@ -89,6 +120,15 @@ jobs:
           shared-key: release-aarch64-unknown-linux-gnu-no-bin-v1
           save-cache: always
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Build release binary
         run: cargo build --release -p nimbus-bin
@@ -125,7 +165,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.target }})
-    needs: verify-release-contract
+    needs: [verify-release-contract, ui-artifacts]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -170,6 +210,16 @@ jobs:
           shared-key: release-${{ matrix.target }}-no-bin-v1
           save-cache: always
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        shell: bash
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Set up Windows Perl
         if: matrix.os == 'windows'
