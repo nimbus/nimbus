@@ -7,23 +7,68 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEDGER="${REPO_ROOT}/docs/architecture/repo-architecture-quality-ledger.tsv"
 
 issue_count=0
+exclusion_patterns=()
+large_file_paths=()
+naming_exception_paths=()
 
 record_issue() {
   printf 'repo-architecture-quality: %s\n' "$1" >&2
   issue_count=$((issue_count + 1))
 }
 
+load_ledger() {
+  local kind
+  local value
+  local rest
+
+  exclusion_patterns=()
+  large_file_paths=()
+  naming_exception_paths=()
+
+  while IFS=$'\t' read -r kind value rest; do
+    [[ -z "${kind}" || "${kind}" == \#* || "${kind}" == "kind" ]] && continue
+    case "${kind}" in
+      exclusion) exclusion_patterns+=("${value}") ;;
+      large_file) large_file_paths+=("${value}") ;;
+      naming_exception) naming_exception_paths+=("${value}") ;;
+    esac
+  done < "${LEDGER}"
+}
+
 ledger_values() {
   local kind="$1"
-  awk -F $'\t' -v kind="${kind}" '
-    $0 !~ /^#/ && $1 == kind { print $2 }
-  ' "${LEDGER}"
+  local value
+  local values=()
+
+  case "${kind}" in
+    exclusion) values=("${exclusion_patterns[@]}") ;;
+    large_file) values=("${large_file_paths[@]}") ;;
+    naming_exception) values=("${naming_exception_paths[@]}") ;;
+    *) return 0 ;;
+  esac
+
+  for value in "${values[@]}"; do
+    printf '%s\n' "${value}"
+  done
 }
 
 ledger_has_value() {
   local kind="$1"
-  local value="$2"
-  ledger_values "${kind}" | grep -Fqx -- "${value}"
+  local needle="$2"
+  local value
+  local values=()
+
+  case "${kind}" in
+    exclusion) values=("${exclusion_patterns[@]}") ;;
+    large_file) values=("${large_file_paths[@]}") ;;
+    naming_exception) values=("${naming_exception_paths[@]}") ;;
+    *) return 1 ;;
+  esac
+
+  for value in "${values[@]}"; do
+    [[ "${value}" == "${needle}" ]] && return 0
+  done
+  return 1
 }
 
 is_source_file() {
@@ -35,13 +80,14 @@ is_source_file() {
 
 is_excluded() {
   local path="$1"
+  local pattern
 
-  while IFS= read -r pattern; do
+  for pattern in "${exclusion_patterns[@]}"; do
     [[ -z "${pattern}" ]] && continue
     case "${path}" in
       ${pattern}) return 0 ;;
     esac
-  done < <(ledger_values "exclusion") || true
+  done
 
   return 1
 }
@@ -158,6 +204,7 @@ check_runtime_no_workspace_deps() {
 if [[ ! -f "${LEDGER}" ]]; then
   record_issue "missing ledger: ${LEDGER#${REPO_ROOT}/}"
 else
+  load_ledger
   printf 'repo architecture quality gate\n'
   printf 'Repo: %s\n' "${REPO_ROOT}"
   printf 'Ledger: %s\n\n' "${LEDGER#${REPO_ROOT}/}"
