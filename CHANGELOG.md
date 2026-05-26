@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.33] - 2026-05-26
+
+### Distribution
+
+- Add release-owned multi-architecture Nimbus OCI image publication for GHCR,
+  including release-archive-based image builds, provenance verification, SBOM
+  and vulnerability evidence, smoke verification, and `nimbus_oci_*` release
+  assets.
+- Publish the top-level `LICENSE` as a checksummed release asset and enforce
+  license payload coverage across archives, Linux packages, the install helper,
+  and the default application image.
+- Make workflow lint clean with current `actions/create-github-app-token`
+  `client-id` inputs and explicit coverage ShellCheck handling.
+
+**Full Changelog**: https://github.com/nimbus/nimbus/compare/v0.1.32...v0.1.33
+
 ## [0.1.32] - 2026-05-26
 
 ### A1+A2
