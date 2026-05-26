@@ -1,6 +1,6 @@
 # Final Nimbus Release Readiness Plan
 
-Status: in progress
+Status: completed 2026-05-26
 Owner: Nimbus release work
 Created: 2026-05-25
 
@@ -663,7 +663,7 @@ Evidence:
 
 ### NRR7 - Hosted Release Workflow and Artifacts
 
-Status: in progress
+Status: completed 2026-05-26
 
 Let the tag-driven GitHub workflow produce the cross-platform release, then
 verify the live artifacts.
@@ -725,10 +725,72 @@ Evidence:
   reported fresh tag-triggered release run `26449869964` for `v0.1.32`,
   created `2026-05-26T13:08:32Z`. The stale failed run `26448883465` was
   canceled after the corrected tag push.
+- Release run `26449869964` proved the UI artifact fix by passing all four
+  platform binary lanes, then failed in `Build machine-os` while pulling the
+  old Fedora bootc digest
+  `sha256:3ca807c0d2836ca425031a52dfe7fda69ca55a22c54fa78c068a22f43d6489b6`
+  with Quay `manifest unknown`.
+- The Fedora bootc pin was refreshed to the live Fedora 44 OCI index digest
+  `sha256:e3eaca476d25a47aec32f15fc5ee939a15a40d2cf163bc722d0a598d33558484`
+  in `nimbus/machine-os` and `nimbus/nimbus` release workflow sources.
+  `nimbus/machine-os` commit
+  `4a21584e578e762fe79a1bf913e7f9b83003ce92`
+  (`Refresh Fedora bootc index digest`) was pushed to `main`; hosted CI passed
+  at `https://github.com/nimbus/machine-os/actions/runs/26454450346`.
+- The Nimbus release workflow pin fix was committed as
+  `f9557c76be96a4caaf53d47680c6c990c18e011e`
+  (`Fix machine-os Fedora bootc release pin`), pushed to `main`, and the
+  `v0.1.32` tag was force-updated to that verified release commit.
+- Final tag-triggered release run
+  `https://github.com/nimbus/nimbus/actions/runs/26454578091` completed
+  successfully on `2026-05-26`:
+  - `Verify release contract`: passed.
+  - `UI Artifacts`: passed.
+  - `Build (x86_64-unknown-linux-gnu)`: passed in `33m28s`.
+  - `Build (aarch64-unknown-linux-gnu)`: passed in `27m15s`.
+  - `Build (aarch64-apple-darwin)`: passed in `27m38s`.
+  - `Build (x86_64-pc-windows-msvc)`: passed in `34m42s`.
+  - `Build machine-os`: passed in `7m49s`.
+  - `Publish machine-os`: passed in `7m22s`.
+  - `Create Release`: passed in `1m4s`.
+- The dispatched `nimbus/machine-os` publish workflow
+  `https://github.com/nimbus/machine-os/actions/runs/26456735315` completed
+  successfully and published `nimbus/machine-os` `v0.1.32` from
+  `4a21584e578e762fe79a1bf913e7f9b83003ce92`.
+- `gh release view --repo nimbus/machine-os v0.1.32 --json tagName,targetCommitish,isDraft,isPrerelease,publishedAt,url,assets`
+  confirmed `v0.1.32` is non-draft, non-prerelease, published
+  `2026-05-26T15:12:40Z`, targets
+  `4a21584e578e762fe79a1bf913e7f9b83003ce92`, and includes
+  `nimbus-machine-os.raw.gz`, `nimbus-machine-os.sbom.cdx.json`,
+  `checksums.txt`, `published-digests.txt`, `machine-image-reference.txt`,
+  `build-summary.txt`, `oci-layout-summary.txt`, and `publish-summary.txt`.
+- `gh release view --repo nimbus/nimbus v0.1.32 --json tagName,targetCommitish,isDraft,isPrerelease,publishedAt,url,assets`
+  confirmed `v0.1.32` is non-draft, non-prerelease, published
+  `2026-05-26T15:14:42Z`, and exposes
+  `https://github.com/nimbus/nimbus/releases/tag/v0.1.32` with the expected
+  core assets:
+  `nimbus_darwin_arm64.tar.gz`, `nimbus_linux_x86_64.tar.gz`,
+  `nimbus_linux_arm64.tar.gz`, `nimbus_windows_x86_64.zip`, `install.sh`, and
+  `checksums-sha256.txt`.
+- The published Nimbus release notes were updated with the required fork stack
+  evidence for `nimbus/deno` `v2.8.0-nimbus.5`,
+  `nimbus/rusty_v8` `v149.0.0-nimbus.1`, Bun/JSC optional adapter posture,
+  `nimbus/nimbus-crun` `v1.27.1-nimbus.2`,
+  `nimbus/nimbus-libkrun` `v1.18.1-nimbus.1`, and `nimbus/machine-os`
+  `v0.1.32`.
+- Downloaded live Nimbus release artifacts into
+  `/private/tmp/nimbus-release-v0.1.32-verify`; `shasum -a 256 -c
+  checksums-sha256.txt` reported all five listed assets `OK`.
+- `bash scripts/verify-release-archive-layout.sh --artifacts-dir /private/tmp/nimbus-release-v0.1.32-verify`
+  passed with
+  `verified: release archives match the published binary/layout contract`.
+- `bash scripts/verify-bun-jsc-release-assets.sh --artifacts-dir /private/tmp/nimbus-release-v0.1.32-verify --checksums /private/tmp/nimbus-release-v0.1.32-verify/checksums-sha256.txt`
+  passed with
+  `verified: optional Bun/JSC adapter release assets are absent by policy`.
 
 ### NRR8 - Post-Release Consumer Proof
 
-Status: pending
+Status: completed 2026-05-26
 
 Prove the released binary is installable and still reports the intended
 runtime/sandbox posture.
@@ -744,6 +806,49 @@ Success criteria:
   standardized `nimbus-crun`/`nimbus-libkrun` versions.
 - The plan is updated with final evidence, commit SHA, tag, release URL, and
   any known residual risks.
+
+Evidence:
+
+- `ssh nimbus@192.168.4.29 'curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh -s -- --dry-run --skip-deps -y'`
+  passed from the Debian 13 `minicloud` host and resolved:
+  - `nimbus`: `v0.1.32`
+  - `nimbus-libkrun`: `v1.18.1-nimbus.1`
+  - `nimbus-crun`: `v1.27.1-nimbus.2`
+  The dry run reported checksum enforcement and GitHub provenance verification
+  enabled for Nimbus, then exited with `[dry-run] No changes made`.
+- Extracted the downloaded `nimbus_darwin_arm64.tar.gz` release artifact into
+  `/private/tmp/nimbus-release-v0.1.32-darwin-bin`; running
+  `/private/tmp/nimbus-release-v0.1.32-darwin-bin/nimbus --version` reported
+  `nimbus 0.1.32`.
+- Started the downloaded release binary on loopback with the generated demo app:
+  `/private/tmp/nimbus-release-v0.1.32-darwin-bin/nimbus start --host 127.0.0.1 --port 18080 --app-dir /Users/jack/src/github.com/nimbus/nimbus-worktrees/final-release-v0.1.32/demos/convex/html --skip-codegen --data-dir /private/tmp/nimbus-v0.1.32-smoke-data`.
+  The server reported `tenant isolation: production`, served the operator UI,
+  and was shut down after the diagnostics probe.
+- Authenticated `GET /debug/runtime/metrics` against that downloaded release
+  binary showed:
+  - default lane: V8, `execution_adapter_state: linked`,
+    `memory_enforcement: v8_isolate_heap_limit`, `executor_started: false`.
+  - Node lanes `node20`, `node22`, and `node24`: V8 linked lanes with
+    Node compatibility targets and `executor_started: false`.
+  - Bun/JSC lane: `execution_adapter_state: not_linked`,
+    `reason_code: linked_adapter_feature_disabled`, expected adapter source
+    `https://github.com/nimbus/bun` at
+    `nimbus-bun-jsc-proof-main-20260525`, `memory_enforcement:
+    outer_quota_required`, `runtime_pool_kind: bun_jsc_fresh_discard`, and
+    `executor_started: false`.
+- Package helper version coupling was proved by NRR5
+  `make verify-build-linux-release-packages-helper` and by the Linux installer
+  dry run above, which resolved the standardized `nimbus-crun` and
+  `nimbus-libkrun` release tags consumed by the installer path.
+
+Residual risks:
+
+- The optional Bun/JSC adapter is intentionally absent from the `v0.1.32`
+  release artifacts. The shipped binary exposes the lane as fail-closed
+  `not_linked`; a future adapter release must pass the linked-adapter and
+  installed-package proofs before execution is enabled.
+- Windows hosted release output is built and checksummed, but Windows runtime
+  smoke execution was not run locally in this release gate.
 
 ## Completion Gate
 
