@@ -1,60 +1,30 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use futures::executor::block_on;
-use nimbus_core::{Error, TenantId};
 use nimbus_engine::Service;
-use nimbus_runtime::{HostCallCancellation, InvocationServiceBinding, InvocationServices};
-use nimbus_sandbox::{SandboxBackend, SandboxError, SandboxHandle, SandboxStatus};
+use nimbus_sandbox::SandboxBackend;
 use tokio::sync::Notify;
-use tokio::time::sleep;
 
-use crate::sandbox::{SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch};
-use crate::service_registry::{
-    RuntimeServiceBindingFuture, RuntimeServiceRegistry, service_binding_from_handle,
-};
-use crate::tenant_isolation::{
-    TenantImageAdmissionSource, TenantImagePolicyDecision, TenantImageVerificationEvidence,
-    TenantImageVerificationProvider, TenantIsolationContext, TenantIsolationDecision,
-    TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
-};
+mod activation;
+mod catalog;
+mod handles;
+mod launch;
+mod registry;
+mod system_state;
+mod types;
+mod verification;
+
+#[cfg(test)]
+use activation::service_activation_decision;
+
+use crate::sandbox::SandboxServiceCatalog;
+use crate::tenant_isolation::TenantImageVerificationProvider;
+
+use types::SandboxServiceManagerState;
+use verification::DefaultTenantImageVerificationProvider;
 
 const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_ACTIVATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct TenantServiceKey {
-    tenant_id: TenantId,
-    service_name: String,
-}
-
-impl TenantServiceKey {
-    fn new(tenant_id: &TenantId, service_name: &str) -> Self {
-        Self {
-            tenant_id: tenant_id.clone(),
-            service_name: service_name.to_owned(),
-        }
-    }
-}
-
-#[derive(Default)]
-struct SandboxServiceManagerState {
-    handles: BTreeMap<TenantServiceKey, SandboxHandle>,
-    activations_in_progress: BTreeSet<TenantServiceKey>,
-}
-
-#[derive(Debug, Default)]
-struct DefaultTenantImageVerificationProvider;
-
-impl TenantImageVerificationProvider for DefaultTenantImageVerificationProvider {
-    fn verify_registry_image(
-        &self,
-        _request: &crate::tenant_isolation::TenantImageVerificationRequest,
-    ) -> nimbus_core::Result<TenantImageVerificationEvidence> {
-        Ok(TenantImageVerificationEvidence::default())
-    }
-}
 
 pub struct SandboxServiceManager {
     service_catalog: Arc<dyn SandboxServiceCatalog>,
@@ -84,13 +54,6 @@ impl SandboxServiceManager {
         }
     }
 
-    pub(crate) fn attach_system_state_service(&self, service: Arc<Service>) {
-        *self
-            .system_state_service
-            .lock()
-            .expect("system state service lock should not be poisoned") = Some(service);
-    }
-
     pub fn with_activation_timeout(mut self, activation_timeout: Duration) -> Self {
         self.activation_timeout = activation_timeout;
         self
@@ -116,520 +79,6 @@ impl SandboxServiceManager {
         self.image_verification_provider = provider;
         self
     }
-
-    fn current_handle(&self, key: &TenantServiceKey) -> Option<SandboxHandle> {
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .handles
-            .get(key)
-            .cloned()
-    }
-
-    fn refresh_handle(&self, key: &TenantServiceKey) -> Result<Option<SandboxHandle>, Error> {
-        let Some(handle) = self.current_handle(key) else {
-            return Ok(None);
-        };
-        let inspected = block_on(self.sandbox_backend.inspect(&handle.id))
-            .map_err(|error| sandbox_backend_error(key, "inspect", &error))?;
-        let mut state = self
-            .state
-            .lock()
-            .expect("manager lock should not be poisoned");
-        match inspected {
-            Some(handle) => {
-                if matches!(
-                    handle.status,
-                    SandboxStatus::Stopped | SandboxStatus::Failed
-                ) {
-                    state.handles.remove(key);
-                } else {
-                    state.handles.insert(key.clone(), handle.clone());
-                }
-                Ok(Some(handle))
-            }
-            None => {
-                state.handles.remove(key);
-                Ok(None)
-            }
-        }
-    }
-
-    async fn refresh_handle_async(
-        &self,
-        key: &TenantServiceKey,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        let Some(handle) = self.current_handle(key) else {
-            return Ok(None);
-        };
-        let inspected = self
-            .sandbox_backend
-            .inspect(&handle.id)
-            .await
-            .map_err(|error| sandbox_backend_error(key, "inspect", &error))?;
-        let refreshed = {
-            let mut state = self
-                .state
-                .lock()
-                .expect("manager lock should not be poisoned");
-            match inspected {
-                Some(handle) => {
-                    if matches!(
-                        handle.status,
-                        SandboxStatus::Stopped | SandboxStatus::Failed
-                    ) {
-                        state.handles.remove(key);
-                    } else {
-                        state.handles.insert(key.clone(), handle.clone());
-                    }
-                    Some(handle)
-                }
-                None => {
-                    state.handles.remove(key);
-                    None
-                }
-            }
-        };
-
-        if let Some(handle) = refreshed.as_ref() {
-            self.record_service_handle(key, handle).await?;
-        }
-
-        Ok(refreshed)
-    }
-
-    async fn claim_activation(&self, key: &TenantServiceKey) -> ActivationClaim {
-        loop {
-            let notified = self.activation_notify.notified();
-            {
-                let mut state = self
-                    .state
-                    .lock()
-                    .expect("manager lock should not be poisoned");
-                if state.handles.contains_key(key) {
-                    return ActivationClaim::AlreadyActive;
-                }
-                if state.activations_in_progress.insert(key.clone()) {
-                    return ActivationClaim::Claimed;
-                }
-            }
-            notified.await;
-        }
-    }
-
-    fn release_activation(&self, key: &TenantServiceKey) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("manager lock should not be poisoned");
-        state.activations_in_progress.remove(key);
-        self.activation_notify.notify_waiters();
-    }
-
-    async fn start_launch_async(
-        &self,
-        key: &TenantServiceKey,
-        decision: &TenantIsolationDecision,
-        launch: SandboxServiceLaunch,
-    ) -> Result<SandboxHandle, Error> {
-        let actual_backend = self.sandbox_backend.kind();
-        let service_access =
-            decision.service_access(&key.service_name, "sandbox service launch")?;
-        service_access.ensure_sandbox_launch_matches(&launch, actual_backend)?;
-        decision
-            .network()
-            .ensure_sandbox_egress_matches(launch.spec(), "sandbox service launch")?;
-        self.admit_launch_image(decision, &launch)?;
-
-        let handle = match launch {
-            SandboxServiceLaunch::Image(launch) => {
-                self.sandbox_backend.start_from_image(launch).await
-            }
-            SandboxServiceLaunch::Build(launch) => {
-                self.sandbox_backend.start_from_build(launch).await
-            }
-        }
-        .map_err(|error| sandbox_backend_error(key, "start", &error))?;
-        if handle.tenant_id != key.tenant_id {
-            return Err(Error::InvalidInput(format!(
-                "sandbox backend returned handle for tenant {}, but service activation requested tenant {}",
-                handle.tenant_id, key.tenant_id
-            )));
-        }
-        if handle.name != key.service_name {
-            return Err(Error::InvalidInput(format!(
-                "sandbox backend returned handle for service {}, but service activation requested {}",
-                handle.name, key.service_name
-            )));
-        }
-
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .handles
-            .insert(key.clone(), handle.clone());
-        self.record_service_handle(key, &handle).await?;
-        Ok(handle)
-    }
-
-    fn admit_launch_image(
-        &self,
-        decision: &TenantIsolationDecision,
-        launch: &SandboxServiceLaunch,
-    ) -> Result<(), Error> {
-        let source = match launch {
-            SandboxServiceLaunch::Image(launch) => {
-                TenantImageAdmissionSource::registry(launch.image_reference.as_str())
-            }
-            SandboxServiceLaunch::Build(launch) => {
-                TenantImageAdmissionSource::local_build(launch.image_name.as_str())
-            }
-        };
-        decision
-            .image()
-            .admit_image(source, self.image_verification_provider.as_ref())?;
-        Ok(())
-    }
-
-    async fn wait_for_ready_handle_async(
-        &self,
-        key: &TenantServiceKey,
-        cancellation: &HostCallCancellation,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        let deadline = Instant::now() + self.activation_timeout;
-        loop {
-            if cancellation.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
-            let Some(handle) = self.refresh_handle_async(key).await? else {
-                return Ok(None);
-            };
-            if handle.status == SandboxStatus::Ready
-                || service_binding_from_handle(&handle).is_some()
-            {
-                return Ok(Some(handle));
-            }
-            if matches!(
-                handle.status,
-                SandboxStatus::Stopped | SandboxStatus::Failed
-            ) {
-                return Ok(Some(handle));
-            }
-            if Instant::now() >= deadline {
-                return Err(Error::ResourceExhausted(format!(
-                    "sandbox service {} for tenant {} did not become ready within {:?}",
-                    key.service_name, key.tenant_id, self.activation_timeout
-                )));
-            }
-            tokio::select! {
-                _ = cancellation.cancelled() => return Err(Error::Cancelled),
-                _ = sleep(self.activation_poll_interval) => {}
-            }
-        }
-    }
-
-    pub(crate) async fn start_service_async(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-        cancellation: HostCallCancellation,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        let isolation =
-            TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-        self.start_service_for_context_async(&isolation, service_name, cancellation)
-            .await
-    }
-
-    pub(crate) async fn start_service_for_context_async(
-        &self,
-        isolation: &TenantIsolationContext,
-        service_name: &str,
-        cancellation: HostCallCancellation,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        let decision = service_activation_decision(isolation, service_name)?;
-        self.start_service_for_decision_async(&decision, service_name, cancellation)
-            .await
-    }
-
-    pub(crate) async fn start_service_for_decision_async(
-        &self,
-        decision: &TenantIsolationDecision,
-        service_name: &str,
-        cancellation: HostCallCancellation,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        let tenant_id = decision.tenant_id();
-        decision.service_access(service_name, "sandbox service activation")?;
-        let key = TenantServiceKey::new(tenant_id, service_name);
-        if let Some(handle) = self.refresh_handle_async(&key).await?
-            && !matches!(
-                handle.status,
-                SandboxStatus::Stopped | SandboxStatus::Failed
-            )
-        {
-            return self.wait_for_ready_handle_async(&key, &cancellation).await;
-        }
-
-        match self.claim_activation(&key).await {
-            ActivationClaim::AlreadyActive => {
-                self.wait_for_ready_handle_async(&key, &cancellation).await
-            }
-            ActivationClaim::Claimed => {
-                let Some(launch) = self
-                    .service_catalog
-                    .sandbox_service_for_tenant(tenant_id, service_name)
-                else {
-                    self.release_activation(&key);
-                    return Ok(None);
-                };
-                let start_result = self.start_launch_async(&key, decision, launch).await;
-                self.release_activation(&key);
-                start_result?;
-                self.wait_for_ready_handle_async(&key, &cancellation).await
-            }
-        }
-    }
-
-    pub(crate) async fn stop_service_for_context_async(
-        &self,
-        isolation: &TenantIsolationContext,
-        service_name: &str,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        let tenant_id = isolation.tenant_id();
-        let key = TenantServiceKey::new(tenant_id, service_name);
-        let previous_handle = self.current_handle(&key);
-        let refreshed_handle = self.refresh_handle_async(&key).await?;
-        let handle_existed_in_backend = refreshed_handle.is_some();
-        let Some(handle) = refreshed_handle.or(previous_handle) else {
-            return Ok(None);
-        };
-
-        if handle_existed_in_backend
-            && !matches!(
-                handle.status,
-                SandboxStatus::Stopped | SandboxStatus::Stopping
-            )
-        {
-            self.sandbox_backend
-                .stop(&handle.id)
-                .await
-                .map_err(|error| sandbox_backend_error(&key, "stop", &error))?;
-        }
-
-        let mut stopped_handle = handle;
-        stopped_handle.status = SandboxStatus::Stopped;
-        stopped_handle.published_endpoints.clear();
-
-        {
-            let mut state = self
-                .state
-                .lock()
-                .expect("manager lock should not be poisoned");
-            state.handles.remove(&key);
-            state.activations_in_progress.remove(&key);
-        }
-        self.activation_notify.notify_waiters();
-        self.record_service_handle(&key, &stopped_handle).await?;
-
-        Ok(Some(stopped_handle))
-    }
-
-    pub(crate) async fn restart_service_for_context_async(
-        &self,
-        isolation: &TenantIsolationContext,
-        service_name: &str,
-        cancellation: HostCallCancellation,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        self.stop_service_for_context_async(isolation, service_name)
-            .await?;
-        self.start_service_for_context_async(isolation, service_name, cancellation)
-            .await
-    }
-
-    pub async fn reload_service_egress_for_decision_async(
-        &self,
-        tenant_id: &TenantId,
-        decision: &TenantIsolationDecision,
-        service_name: &str,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        if decision.tenant_id() != tenant_id {
-            return Err(Error::InvalidInput(format!(
-                "egress reload decision tenant {} does not match requested tenant {}",
-                decision.tenant_id(),
-                tenant_id
-            )));
-        }
-        let key = TenantServiceKey::new(tenant_id, service_name);
-        decision
-            .service_access(service_name, "sandbox service egress reload")?
-            .ensure_tenant_matches(tenant_id, "sandbox service egress reload")?;
-        let Some(handle) = self.refresh_handle_async(&key).await? else {
-            return Ok(None);
-        };
-        let egress = decision.network().sandbox_egress().clone();
-        self.sandbox_backend
-            .reload_egress_policy(&handle.id, egress)
-            .await
-            .map_err(|error| sandbox_backend_error(&key, "reload egress policy", &error))?;
-        let refreshed = self.refresh_handle_async(&key).await?.unwrap_or(handle);
-        Ok(Some(refreshed))
-    }
-
-    fn tenant_handles(&self, tenant_id: &TenantId) -> Vec<(TenantServiceKey, SandboxHandle)> {
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .handles
-            .iter()
-            .filter(|(key, _)| &key.tenant_id == tenant_id)
-            .map(|(key, handle)| (key.clone(), handle.clone()))
-            .collect()
-    }
-
-    async fn record_service_handle(
-        &self,
-        key: &TenantServiceKey,
-        handle: &SandboxHandle,
-    ) -> Result<(), Error> {
-        let service = self
-            .system_state_service
-            .lock()
-            .expect("system state service lock should not be poisoned")
-            .clone();
-        let Some(service) = service else {
-            return Ok(());
-        };
-        crate::system_tenant::record_service_handle_async(&service, &key.tenant_id, handle).await
-    }
-}
-
-impl SandboxCatalog for SandboxServiceManager {
-    fn sandboxes_for_tenant(&self, tenant_id: &TenantId) -> BTreeMap<String, SandboxHandle> {
-        let keys = {
-            self.state
-                .lock()
-                .expect("manager lock should not be poisoned")
-                .handles
-                .keys()
-                .filter(|key| &key.tenant_id == tenant_id)
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-
-        keys.into_iter()
-            .filter_map(|key| {
-                self.refresh_handle(&key)
-                    .ok()
-                    .flatten()
-                    .filter(|handle| {
-                        !matches!(
-                            handle.status,
-                            SandboxStatus::Stopped | SandboxStatus::Failed
-                        )
-                    })
-                    .map(|handle| (key.service_name.clone(), handle))
-            })
-            .collect()
-    }
-}
-
-impl RuntimeServiceRegistry for SandboxServiceManager {
-    fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices {
-        self.sandboxes_for_tenant(tenant_id)
-            .into_iter()
-            .filter_map(|(service_name, handle)| {
-                service_binding_from_handle(&handle).map(|binding| (service_name, binding))
-            })
-            .collect()
-    }
-
-    fn resolve_service_binding(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-    ) -> Result<Option<InvocationServiceBinding>, Error> {
-        let key = TenantServiceKey::new(tenant_id, service_name);
-        Ok(self
-            .current_handle(&key)
-            .and_then(|handle| service_binding_from_handle(&handle)))
-    }
-
-    fn ensure_service_binding_async<'a>(
-        &'a self,
-        tenant_id: &'a TenantId,
-        service_name: &'a str,
-        cancellation: HostCallCancellation,
-    ) -> RuntimeServiceBindingFuture<'a> {
-        Box::pin(async move {
-            if let Some(binding) = self.resolve_service_binding(tenant_id, service_name)? {
-                return Ok(Some(binding));
-            }
-            let Some(handle) = self
-                .start_service_async(tenant_id, service_name, cancellation)
-                .await?
-            else {
-                return Ok(None);
-            };
-            Ok(service_binding_from_handle(&handle))
-        })
-    }
-
-    fn teardown_tenant(&self, tenant_id: &TenantId) -> Result<(), Error> {
-        let tenant_handles = self.tenant_handles(tenant_id);
-        for (key, handle) in &tenant_handles {
-            block_on(self.sandbox_backend.stop(&handle.id))
-                .map_err(|error| sandbox_backend_error(key, "stop", &error))?;
-            let mut stopped_handle = handle.clone();
-            stopped_handle.status = SandboxStatus::Stopped;
-            stopped_handle.published_endpoints.clear();
-            block_on(self.record_service_handle(key, &stopped_handle))?;
-        }
-        block_on(
-            self.sandbox_backend
-                .remove_tenant_artifacts(tenant_id.clone()),
-        )
-        .map_err(|error| {
-            Error::Internal(format!(
-                "failed to remove sandbox artifacts for tenant {tenant_id}: {error}"
-            ))
-        })?;
-
-        let mut state = self
-            .state
-            .lock()
-            .expect("manager lock should not be poisoned");
-        for (key, _) in tenant_handles {
-            state.handles.remove(&key);
-            state.activations_in_progress.remove(&key);
-        }
-        self.activation_notify.notify_waiters();
-        Ok(())
-    }
-}
-
-enum ActivationClaim {
-    Claimed,
-    AlreadyActive,
-}
-
-fn sandbox_backend_error(key: &TenantServiceKey, operation: &str, error: &SandboxError) -> Error {
-    Error::Internal(format!(
-        "failed to {operation} sandbox service {} for tenant {}: {error}",
-        key.service_name, key.tenant_id
-    ))
-}
-
-fn service_activation_decision(
-    isolation: &TenantIsolationContext,
-    service_name: &str,
-) -> Result<TenantIsolationDecision, Error> {
-    isolation.admit_decision(
-        TenantIsolationPolicyInput::new(TenantWorkloadIdentity::sandbox_service(
-            service_name,
-            "activation",
-        ))
-        .with_services(TenantServiceGrantPolicyDecision::new([service_name]))
-        .with_image(TenantImagePolicyDecision::default().allow_local_build()),
-    )
 }
 
 #[cfg(test)]
@@ -637,15 +86,26 @@ mod tests {
     use std::collections::BTreeMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use axum::http::StatusCode;
+    use nimbus_core::{Error, TenantId};
+    use nimbus_runtime::HostCallCancellation;
     use nimbus_sandbox::{
-        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxBuildLaunchSpec,
-        SandboxEgressPolicy, SandboxEgressRule, SandboxFilesystemSpec, SandboxFuture,
-        SandboxHandle, SandboxId, SandboxImageLaunchSpec, SandboxProcessSpec, SandboxSpec,
+        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
+        SandboxBuildLaunchSpec, SandboxEgressPolicy, SandboxEgressRule, SandboxError,
+        SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
+        SandboxProcessSpec, SandboxSpec, SandboxStatus,
     };
     use nimbus_testing::ServerFixture;
     use serde_json::json;
+
+    use crate::sandbox::{SandboxServiceCatalog, SandboxServiceLaunch};
+    use crate::service_registry::RuntimeServiceRegistry;
+    use crate::tenant_isolation::{
+        TenantImageVerificationEvidence, TenantImageVerificationProvider, TenantIsolationContext,
+        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
+    };
 
     use super::*;
 
