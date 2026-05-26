@@ -33,15 +33,13 @@ const sonnerMocks = vi.hoisted(() => {
 });
 
 vi.mock("sonner", () => {
-  const toast = sonnerMocks.base as unknown as ((
-    message: string,
-    opts?: unknown,
-  ) => void) & {
-    error: typeof sonnerMocks.error;
-    success: typeof sonnerMocks.success;
-  };
-  toast.error = sonnerMocks.error;
-  toast.success = sonnerMocks.success;
+  const toast = Object.assign(
+    (message: string, opts?: unknown) => sonnerMocks.base(message, opts),
+    {
+      error: sonnerMocks.error,
+      success: sonnerMocks.success,
+    },
+  );
   return { toast };
 });
 

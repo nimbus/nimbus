@@ -34,6 +34,7 @@ vi.mock("../../lib/nimbus-client", () => ({
 }));
 
 import { useUiStore } from "../../store/ui-store";
+import { routeLoader, routeLoaderDeps } from "../../test/route-internals";
 import { Route, ServiceDetailLoaderError } from "./services_.$service";
 
 type LoaderArgs = {
@@ -41,15 +42,15 @@ type LoaderArgs = {
   deps: { activeTenant: string | null };
 };
 
-const routeInternals = Route as unknown as {
-  loaderDeps: () => { activeTenant: string | null };
-  loader: (args: LoaderArgs) => Promise<{
-    service: unknown;
-    services: unknown[];
-    bundles: unknown[];
-    activeTenant: string | null;
-  }>;
+type LoaderResult = {
+  service: unknown;
+  services: unknown[];
+  bundles: unknown[];
+  activeTenant: string | null;
 };
+
+const loaderDeps = routeLoaderDeps<{ activeTenant: string | null }>(Route);
+const loader = routeLoader<LoaderArgs, LoaderResult>(Route);
 
 beforeEach(() => {
   nimbusQueryMock.mockReset();
@@ -65,7 +66,7 @@ afterEach(() => {
 describe("app/services/$service loaderDeps + loader", () => {
   it("loaderDeps snapshots activeTenant from the Zustand store", () => {
     useUiStore.setState({ activeTenant: "acme" });
-    expect(routeInternals.loaderDeps()).toEqual({ activeTenant: "acme" });
+    expect(loaderDeps()).toEqual({ activeTenant: "acme" });
   });
 
   it("returns service + tenant-scoped services + bundles + active tenant", async () => {
@@ -77,7 +78,7 @@ describe("app/services/$service loaderDeps + loader", () => {
       .mockResolvedValueOnce(tenantServices)
       .mockResolvedValueOnce(allBundles);
 
-    const result = await routeInternals.loader({
+    const result = await loader({
       params: { service: "svc-1" },
       deps: { activeTenant: "acme" },
     });
@@ -107,7 +108,7 @@ describe("app/services/$service loaderDeps + loader", () => {
       .mockResolvedValueOnce([]);
 
     await expect(
-      routeInternals.loader({
+      loader({
         params: { service: "missing" },
         deps: { activeTenant: null },
       }),
@@ -122,7 +123,7 @@ describe("app/services/$service loaderDeps + loader", () => {
       .mockResolvedValueOnce([target])
       .mockResolvedValueOnce([]);
 
-    const result = await routeInternals.loader({
+    const result = await loader({
       params: { service: "svc-1" },
       deps: { activeTenant: null },
     });

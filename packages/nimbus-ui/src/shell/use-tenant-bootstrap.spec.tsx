@@ -25,21 +25,22 @@ import { useUiStore } from "../store/ui-store";
 import { useTenantBootstrap } from "./use-tenant-bootstrap";
 
 function mockTenantsResponse(tenants: unknown) {
-  const fetchMock = vi.fn(async () =>
-    new Response(JSON.stringify({ tenants }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }),
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ tenants }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
   );
-  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 
 function mockTenantsError(status = 500) {
-  const fetchMock = vi.fn(async () =>
-    new Response(JSON.stringify({}), { status }),
+  const fetchMock = vi.fn(
+    async () => new Response(JSON.stringify({}), { status }),
   );
-  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 
@@ -52,6 +53,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -157,7 +159,7 @@ describe("useTenantBootstrap — auto-default (DR4 / F5)", () => {
           resolveFetch = resolve;
         }),
     );
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
 
     const { unmount } = renderHook(() => useTenantBootstrap());
     expect(fetchMock).toHaveBeenCalledTimes(1);

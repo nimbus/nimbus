@@ -64,13 +64,14 @@ test.describe("observability LogStream perf budget", () => {
           for (const listener of listeners) listener();
         },
       };
-      (window as unknown as { __nimbusEvents: typeof store }).__nimbusEvents =
-        store;
-      (window as unknown as { __nimbusPerf: { longTasks: number[] } }).__nimbusPerf =
-        { longTasks: [] };
-      const target = (
-        window as unknown as { __nimbusPerf: { longTasks: number[] } }
-      ).__nimbusPerf;
+      type PerfWindow = Window & {
+        __nimbusEvents: typeof store;
+        __nimbusPerf: { longTasks: number[] };
+      };
+      const perfWindow = window as PerfWindow;
+      perfWindow.__nimbusEvents = store;
+      perfWindow.__nimbusPerf = { longTasks: [] };
+      const target = perfWindow.__nimbusPerf;
       try {
         const observer = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
@@ -88,16 +89,19 @@ test.describe("observability LogStream perf budget", () => {
 
     const result = await page.evaluate(
       async ({ rate, seconds }) => {
-        const win = window as unknown as {
+        type PerfWindow = Window & {
           __nimbusEvents: {
             push: (event: unknown) => void;
             snapshot: () => unknown[];
           };
           __nimbusPerf: { longTasks: number[] };
         };
-        const memBefore = (
-          performance as unknown as { memory?: { usedJSHeapSize: number } }
-        ).memory?.usedJSHeapSize ?? 0;
+        type MemoryPerformance = Performance & {
+          memory?: { usedJSHeapSize: number };
+        };
+        const win = window as PerfWindow;
+        const memoryPerformance = performance as MemoryPerformance;
+        const memBefore = memoryPerformance.memory?.usedJSHeapSize ?? 0;
         let frameCount = 0;
         let rafActive = true;
         const rafTick = () => {
@@ -132,9 +136,7 @@ test.describe("observability LogStream perf budget", () => {
         });
         const elapsedSec = (performance.now() - start) / 1000;
         rafActive = false;
-        const memAfter = (
-          performance as unknown as { memory?: { usedJSHeapSize: number } }
-        ).memory?.usedJSHeapSize ?? 0;
+        const memAfter = memoryPerformance.memory?.usedJSHeapSize ?? 0;
         const longTasks = win.__nimbusPerf.longTasks.slice();
         const renderedRows = document
           .querySelectorAll('[data-testid^="observability-log-row-"]')

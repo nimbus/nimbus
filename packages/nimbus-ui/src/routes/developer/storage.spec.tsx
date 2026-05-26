@@ -33,6 +33,7 @@ vi.mock("../../shell/sub-drawer", () => ({
 }));
 
 import { useUiStore } from "../../store/ui-store";
+import { routeComponent } from "../../test/route-internals";
 
 function mockTenants(tenants: string[]) {
   vi.stubGlobal(
@@ -87,16 +88,14 @@ describe("StoragePage empty states", () => {
     expect(screen.getByTestId("tenant-tables-empty")).toHaveTextContent(
       /Pick a tenant from the top-nav selector/i,
     );
-    expect(
-      screen.getByTestId("tenant-tables-empty"),
-    ).not.toHaveTextContent(/CREATE TENANT/i);
+    expect(screen.getByTestId("tenant-tables-empty")).not.toHaveTextContent(
+      /CREATE TENANT/i,
+    );
   });
 });
 
 async function loadPage() {
   vi.resetModules();
   const mod = await import("./storage");
-  const config = (mod.Route as unknown as { component: React.ComponentType })
-    .component;
-  return { StoragePage: config };
+  return { StoragePage: routeComponent(mod.Route) };
 }

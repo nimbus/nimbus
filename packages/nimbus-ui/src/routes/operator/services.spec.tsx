@@ -34,12 +34,11 @@ vi.mock("../../lib/nimbus-client", () => ({
 }));
 
 import { AdminServicesLoaderError, Route } from "./services";
+import { routeLoader } from "../../test/route-internals";
 
 type LoaderArgs = Record<string, unknown>;
 
-const routeInternals = Route as unknown as {
-  loader: (args: LoaderArgs) => Promise<{ services: unknown[] }>;
-};
+const loader = routeLoader<LoaderArgs, { services: unknown[] }>(Route);
 
 beforeEach(() => {
   nimbusQueryMock.mockReset();
@@ -58,7 +57,7 @@ describe("admin/services loader", () => {
     ];
     nimbusQueryMock.mockResolvedValue(services);
 
-    const result = await routeInternals.loader({});
+    const result = await loader({});
 
     expect(nimbusQueryMock).toHaveBeenCalledTimes(1);
     const args = nimbusQueryMock.mock.calls[0]?.[1];
@@ -73,7 +72,7 @@ describe("admin/services loader", () => {
 
   it("propagates query errors so the route can show its error UI", async () => {
     nimbusQueryMock.mockRejectedValue(new Error("convex down"));
-    await expect(routeInternals.loader({})).rejects.toThrow("convex down");
+    await expect(loader({})).rejects.toThrow("convex down");
   });
 });
 
