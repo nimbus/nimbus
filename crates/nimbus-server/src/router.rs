@@ -70,6 +70,152 @@ impl RuntimeServiceSource {
     }
 }
 
+/// Canonical public option bundle for building a Nimbus HTTP/WebSocket router.
+pub struct RouterOptions {
+    service: Arc<Service>,
+    convex_registry: Option<ConvexRegistry>,
+    system_convex_registry: Option<ConvexRegistry>,
+    cloud_functions_registry: Option<CloudFunctionsRegistry>,
+    firebase_config: Option<FirebaseConfig>,
+    license_state: LicenseState,
+    sandbox_catalog: Option<Arc<dyn SandboxCatalog>>,
+    sandbox_service_manager: Option<Arc<SandboxServiceManager>>,
+    machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
+    deploy_admin_token: Option<String>,
+    local_server_security: Option<Arc<LocalServerSecurityState>>,
+    tenant_isolation_mode: TenantIsolationMode,
+}
+
+impl RouterOptions {
+    pub fn new(service: Arc<Service>) -> Self {
+        Self {
+            service,
+            convex_registry: None,
+            system_convex_registry: None,
+            cloud_functions_registry: None,
+            firebase_config: None,
+            license_state: LicenseState::community(),
+            sandbox_catalog: None,
+            sandbox_service_manager: None,
+            machine_lifecycle_manager: None,
+            deploy_admin_token: None,
+            local_server_security: None,
+            tenant_isolation_mode: TenantIsolationMode::default(),
+        }
+    }
+
+    pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
+        self.convex_registry = Some(convex_registry);
+        self
+    }
+
+    pub fn with_system_convex_registry(mut self, system_convex_registry: ConvexRegistry) -> Self {
+        self.system_convex_registry = Some(system_convex_registry);
+        self
+    }
+
+    pub fn with_cloud_functions_registry(
+        mut self,
+        cloud_functions_registry: CloudFunctionsRegistry,
+    ) -> Self {
+        self.cloud_functions_registry = Some(cloud_functions_registry);
+        self
+    }
+
+    pub fn with_firebase_config(mut self, firebase_config: FirebaseConfig) -> Self {
+        self.firebase_config = Some(firebase_config);
+        self
+    }
+
+    pub fn with_license(mut self, license_state: LicenseState) -> Self {
+        self.license_state = license_state;
+        self
+    }
+
+    pub fn with_sandbox_catalog(mut self, sandbox_catalog: Arc<dyn SandboxCatalog>) -> Self {
+        self.sandbox_catalog = Some(sandbox_catalog);
+        self.sandbox_service_manager = None;
+        self
+    }
+
+    pub fn with_sandbox_service_manager(
+        mut self,
+        sandbox_service_manager: Arc<SandboxServiceManager>,
+    ) -> Self {
+        self.sandbox_service_manager = Some(sandbox_service_manager);
+        self.sandbox_catalog = None;
+        self
+    }
+
+    pub fn with_machine_lifecycle_manager(
+        mut self,
+        machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
+    ) -> Self {
+        self.machine_lifecycle_manager = Some(machine_lifecycle_manager);
+        self
+    }
+
+    pub fn with_deploy_admin_token(mut self, token: impl Into<String>) -> Self {
+        self.deploy_admin_token = Some(token.into());
+        self
+    }
+
+    pub fn with_local_server_security(
+        mut self,
+        local_server_security: Arc<LocalServerSecurityState>,
+    ) -> Self {
+        self.local_server_security = Some(local_server_security);
+        self
+    }
+
+    pub fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
+        self.tenant_isolation_mode = mode;
+        self
+    }
+
+    pub(crate) fn service(&self) -> Arc<Service> {
+        Arc::clone(&self.service)
+    }
+
+    pub(crate) fn has_system_convex_registry(&self) -> bool {
+        self.system_convex_registry.is_some()
+    }
+
+    pub(crate) fn into_build_config(self) -> RouterBuildConfig {
+        let mut config = RouterBuildConfig::core(self.service).with_license(self.license_state);
+        if let Some(system_convex_registry) = self.system_convex_registry {
+            config = config.with_system_convex_registry(system_convex_registry);
+        }
+        if let Some(convex_registry) = self.convex_registry {
+            config = config
+                .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
+                .with_convex(convex_registry);
+        }
+        if let Some(cloud_functions_registry) = self.cloud_functions_registry {
+            config = config.with_cloud_functions(cloud_functions_registry);
+        }
+        if let Some(firebase_config) = self.firebase_config {
+            config = config.with_firebase(firebase_config);
+        }
+        if let Some(deploy_admin_token) = self.deploy_admin_token {
+            config = config.with_deploy_admin_token(deploy_admin_token);
+        }
+        if let Some(local_server_security) = self.local_server_security {
+            config = config.with_local_server_security(local_server_security);
+        }
+        config = config.with_tenant_isolation_mode(self.tenant_isolation_mode);
+        if let Some(sandbox_service_manager) = self.sandbox_service_manager {
+            config = config.with_sandbox_service_manager(sandbox_service_manager);
+        } else if let Some(sandbox_catalog) = self.sandbox_catalog {
+            config = config.with_sandbox_catalog(sandbox_catalog);
+        }
+        if let Some(machine_lifecycle_manager) = self.machine_lifecycle_manager {
+            config = config.with_machine_lifecycle_manager(machine_lifecycle_manager);
+        }
+        config
+    }
+}
+
 pub(crate) struct RouterBuildConfig {
     service: Arc<Service>,
     convex_registry: Option<ConvexRegistry>,
@@ -357,138 +503,18 @@ fn build_version_check() -> Arc<VersionCheck> {
     VersionCheck::new(current, config)
 }
 
-/// Builds the Nimbus HTTP/WebSocket router without Convex support.
-pub fn build_router(service: Arc<Service>) -> Router {
-    RouterBuildConfig::core(service).build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router without Convex support and with an explicit sandbox catalog.
-pub fn build_router_with_sandbox_catalog(
-    service: Arc<Service>,
-    sandbox_catalog: Arc<dyn SandboxCatalog>,
-) -> Router {
-    RouterBuildConfig::core(service)
-        .with_sandbox_catalog(sandbox_catalog)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with an explicit license state.
-pub fn build_router_with_license(service: Arc<Service>, license_state: LicenseState) -> Router {
-    RouterBuildConfig::core(service)
-        .with_license(license_state)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with an explicit license state and sandbox catalog.
-pub fn build_router_with_license_and_sandbox_catalog(
-    service: Arc<Service>,
-    license_state: LicenseState,
-    sandbox_catalog: Arc<dyn SandboxCatalog>,
-) -> Router {
-    RouterBuildConfig::core(service)
-        .with_license(license_state)
-        .with_sandbox_catalog(sandbox_catalog)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with Convex support enabled.
-pub fn build_router_with_convex(service: Arc<Service>, convex_registry: ConvexRegistry) -> Router {
-    RouterBuildConfig::core(service)
-        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-        .with_convex(convex_registry)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with Firebase REST support enabled.
-pub fn build_router_with_firebase(
-    service: Arc<Service>,
-    firebase_config: FirebaseConfig,
-) -> Router {
-    RouterBuildConfig::core(service)
-        .with_firebase(firebase_config)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with Convex support enabled and with an explicit sandbox catalog.
-pub fn build_router_with_convex_and_sandbox_catalog(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
-    sandbox_catalog: Arc<dyn SandboxCatalog>,
-) -> Router {
-    RouterBuildConfig::core(service)
-        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-        .with_convex(convex_registry)
-        .with_sandbox_catalog(sandbox_catalog)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with Convex support enabled and a
-/// server-owned sandbox service manager capable of start-on-first-reference activation.
-pub fn build_router_with_convex_and_sandbox_service_manager(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
-    sandbox_service_manager: Arc<SandboxServiceManager>,
-) -> Router {
-    RouterBuildConfig::core(service)
-        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-        .with_convex(convex_registry)
-        .with_sandbox_service_manager(sandbox_service_manager)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with Convex support and an explicit license state.
-pub fn build_router_with_convex_and_license(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
-    license_state: LicenseState,
-) -> Router {
-    RouterBuildConfig::core(service)
-        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-        .with_convex(convex_registry)
-        .with_license(license_state)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with Convex support, license state,
-/// and a server-owned sandbox service manager.
-pub fn build_router_with_convex_and_license_and_sandbox_service_manager(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
-    license_state: LicenseState,
-    sandbox_service_manager: Arc<SandboxServiceManager>,
-) -> Router {
-    RouterBuildConfig::core(service)
-        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-        .with_convex(convex_registry)
-        .with_license(license_state)
-        .with_sandbox_service_manager(sandbox_service_manager)
-        .build()
-}
-
-/// Builds the Nimbus HTTP/WebSocket router with Convex support, license state, and sandbox catalog.
-pub fn build_router_with_convex_and_license_and_sandbox_catalog(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
-    license_state: LicenseState,
-    sandbox_catalog: Arc<dyn SandboxCatalog>,
-) -> Router {
-    RouterBuildConfig::core(service)
-        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-        .with_convex(convex_registry)
-        .with_license(license_state)
-        .with_sandbox_catalog(sandbox_catalog)
-        .build()
+/// Builds the Nimbus HTTP/WebSocket router from the canonical option bundle.
+pub fn build_router(options: RouterOptions) -> Router {
+    options.into_build_config().build()
 }
 
 #[cfg(test)]
-pub(crate) fn build_router_with_convex_and_runtime_service_registry(
-    service: Arc<Service>,
-    convex_registry: ConvexRegistry,
+pub(crate) fn build_router_for_test_runtime(
+    options: RouterOptions,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
 ) -> Router {
-    RouterBuildConfig::core(service)
-        .with_application_auth_verifier(convex_application_auth_verifier(&convex_registry))
-        .with_convex(convex_registry)
+    options
+        .into_build_config()
         .with_runtime_service_registry(runtime_service_registry)
         .build()
 }

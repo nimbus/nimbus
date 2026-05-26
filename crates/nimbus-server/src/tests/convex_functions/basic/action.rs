@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn convex_action_can_execute_query_and_paginated_query_shapes() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(
+    let server = ServerFixture::start(router_for_convex(
         fixture.service(),
         ConvexRegistry::empty(),
     ))

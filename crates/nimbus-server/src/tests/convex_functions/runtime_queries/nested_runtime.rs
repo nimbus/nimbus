@@ -63,11 +63,7 @@ export {};
         ),
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(
-        fixture.service(),
-        registry.clone(),
-    ))
-    .await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry.clone())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

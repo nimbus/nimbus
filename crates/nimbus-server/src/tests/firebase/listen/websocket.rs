@@ -17,11 +17,8 @@ async fn firebase_listen_websocket_streams_binary_protobuf_frames_and_remove_tar
         &["cities", "LA"],
         [("name", json!("Los Angeles"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let mut socket =
         WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))
@@ -144,11 +141,8 @@ async fn firebase_listen_websocket_resume_token_reconnects_via_shared_transport_
         &["cities", "LA"],
         [("name", json!("Los Angeles"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let mut socket =
         WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))
@@ -266,11 +260,8 @@ async fn firebase_listen_websocket_accepts_loopback_browser_origin_and_bootstrap
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let mut request = server
         .ws_url("/google.firestore.v1.Firestore/Listen")
@@ -317,7 +308,7 @@ async fn firebase_listen_websocket_accepts_loopback_browser_origin_and_bootstrap
 async fn firebase_listen_websocket_text_frames_close_with_unsupported_code() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -337,7 +328,7 @@ async fn firebase_listen_websocket_text_frames_close_with_unsupported_code() {
 async fn firebase_listen_websocket_invalid_protobuf_frames_close_with_policy_code() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     fixture.create_tenant("demo", Service::create_tenant);
-    let server = ServerFixture::start(build_router_with_firebase(
+    let server = ServerFixture::start(router_for_firebase(
         fixture.service(),
         FirebaseConfig::new(),
     ))
@@ -364,11 +355,8 @@ async fn firebase_listen_websocket_backpressure_closes_with_error_code() {
         &["cities", "SF"],
         [("name", json!("San Francisco"))],
     );
-    let server = ServerFixture::start(build_router_with_firebase(
-        service.clone(),
-        FirebaseConfig::new(),
-    ))
-    .await;
+    let server =
+        ServerFixture::start(router_for_firebase(service.clone(), FirebaseConfig::new())).await;
 
     let mut socket =
         WebSocketFixture::connect_raw(&server.ws_url("/google.firestore.v1.Firestore/Listen"))

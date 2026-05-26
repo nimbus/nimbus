@@ -56,7 +56,7 @@ async fn wait_for_subscription_documents(
 #[tokio::test]
 async fn websocket_protocol_rejects_no_overlap_with_structured_http_error() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -95,7 +95,7 @@ async fn websocket_protocol_rejects_no_overlap_with_structured_http_error() {
 #[tokio::test]
 async fn websocket_protocol_v2_echoes_subprotocol_and_sends_hello_immediately() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -333,7 +333,7 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
 #[tokio::test]
 async fn websocket_protocol_v2_times_out_missing_client_hello() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());
@@ -385,7 +385,7 @@ async fn websocket_protocol_v2_times_out_missing_client_hello() {
 #[tokio::test]
 async fn websocket_protocol_rejects_missing_subprotocol_header() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(
+    let server = ServerFixture::start(router_for_convex(
         fixture.service(),
         ConvexRegistry::empty(),
     ))
@@ -418,7 +418,7 @@ async fn websocket_protocol_rejects_missing_subprotocol_header() {
 #[tokio::test]
 async fn websocket_protocol_rejects_explicit_v1_only_offer() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());

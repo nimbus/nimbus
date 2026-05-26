@@ -7,7 +7,7 @@ async fn convex_http_demo_flow_matches_generated_app_behavior() {
     let service = fixture.service();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let scheduler_handle = tokio::spawn(run_scheduler(service.clone(), shutdown_rx));
-    let server = ServerFixture::start(build_router_with_convex(service.clone(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -226,7 +226,7 @@ async fn convex_http_demo_flow_matches_generated_app_behavior() {
 async fn convex_http_demo_action_then_http_post_and_follow_up_action_all_complete() {
     let registry = http_demo_registry(1_000);
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -293,7 +293,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         Service::new_with_simulation(path, harness.clock(), harness.fault_injector())
     });
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_convex(service.clone(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

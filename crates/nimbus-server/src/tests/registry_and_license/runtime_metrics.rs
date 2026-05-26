@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn runtime_metrics_route_returns_null_fields_without_convex_support() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api.runtime_metrics().await;
@@ -24,7 +24,7 @@ async fn runtime_metrics_route_returns_null_fields_without_convex_support() {
 #[tokio::test]
 async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is_enabled() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(
+    let server = ServerFixture::start(router_for_convex(
         fixture.service(),
         ConvexRegistry::empty(),
     ))

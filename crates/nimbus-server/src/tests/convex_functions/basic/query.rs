@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn convex_query_returns_documents_as_plain_json() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(
+    let server = ServerFixture::start(router_for_convex(
         fixture.service(),
         ConvexRegistry::empty(),
     ))

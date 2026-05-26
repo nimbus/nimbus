@@ -54,7 +54,7 @@ async fn assert_generated_task_history_matches_model_on_native_http_surface(
     );
 
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
     let table = history.table().to_string();
 

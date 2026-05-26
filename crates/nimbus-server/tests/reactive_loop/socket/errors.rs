@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn websocket_invalid_message_returns_error_event() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert!(api.create_tenant("demo").await.status().is_success());

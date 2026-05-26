@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nimbus_sandbox::backends::krun::{KrunLaunchMode, KrunSandboxBackend};
-use nimbus_server::build_router_with_convex_and_sandbox_service_manager;
+use nimbus_server::{RouterOptions, build_router};
 use nimbus_testing::{HttpApiFixture, ServerFixture, ServiceFixture, wait_for_condition};
 use tempfile::tempdir;
 
@@ -63,10 +63,10 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
         .with_activation_timeout(Duration::from_secs(30)),
     );
     let fixture = ServiceFixture::new(|path| nimbus::Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex_and_sandbox_service_manager(
-        fixture.service(),
-        registry,
-        sandbox_service_manager.clone(),
+    let server = ServerFixture::start(build_router(
+        RouterOptions::new(fixture.service())
+            .with_convex_registry(registry)
+            .with_sandbox_service_manager(sandbox_service_manager.clone()),
     ))
     .await;
     let api = HttpApiFixture::new(&server);

@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn tenant_engine_metrics_route_returns_not_found_for_missing_tenant() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api.tenant_engine_metrics("missing").await;
@@ -14,7 +14,7 @@ async fn tenant_engine_metrics_route_returns_not_found_for_missing_tenant() {
 #[tokio::test]
 async fn tenant_engine_metrics_route_surfaces_worker_and_serving_health_after_mixed_traffic() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

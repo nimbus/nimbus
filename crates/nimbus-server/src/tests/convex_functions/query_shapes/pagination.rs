@@ -28,7 +28,7 @@ async fn convex_named_paginated_query_and_action_resolve_from_manifest() {
         }
     ]));
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -107,7 +107,7 @@ export {};
         ),
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(
@@ -183,7 +183,7 @@ export {};
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
-    let server = ServerFixture::start(build_router_with_convex(service.clone(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(service.clone(), registry)).await;
     let api = HttpApiFixture::new(&server);
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let table = TableName::new("messages").expect("table name should build");

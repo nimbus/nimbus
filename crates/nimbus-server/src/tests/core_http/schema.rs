@@ -81,7 +81,7 @@ async fn wait_for_system_table_by_name(
 #[tokio::test]
 async fn schema_crud_via_http() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     assert_eq!(

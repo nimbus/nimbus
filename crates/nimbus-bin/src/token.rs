@@ -143,7 +143,7 @@ mod tests {
     use nimbus::Service;
     use nimbus_server::{
         LocalServerPaths, LocalServerSecurityState, ServeOptions, ServerDiscoveryRecord,
-        load_local_admin_token, load_or_create_local_admin_token, serve_with_options,
+        load_local_admin_token, load_or_create_local_admin_token, serve,
     };
     use nimbus_testing::wait_for_condition;
 
@@ -214,10 +214,9 @@ mod tests {
         let address = listener
             .local_addr()
             .expect("listener address should resolve");
-        let server_task = tokio::spawn(serve_with_options(
+        let server_task = tokio::spawn(serve(
             listener,
-            service.clone(),
-            ServeOptions::default().with_local_server_security(local_server_security),
+            ServeOptions::new(service.clone()).with_local_server_security(local_server_security),
         ));
         let client = reqwest::Client::new();
         wait_for_condition(

@@ -80,7 +80,7 @@ async fn schedule_endpoint_returns_job_id_and_lists_pending_job() {
 #[tokio::test]
 async fn schedule_endpoint_returns_not_found_for_unknown_tenant() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api

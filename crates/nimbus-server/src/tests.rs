@@ -49,10 +49,10 @@ use tonic::transport::Channel;
 
 use crate::{
     ConvexRegistry, FirebaseConfig, LicenseDocument, LicenseEntitlements, LicenseKind,
-    LicenseSourceInfo, LicenseSourceKind, LicenseState, RouterBuildConfig, ServeOptions,
-    build_router, build_router_with_convex, build_router_with_firebase, build_router_with_license,
-    serve_with_options,
+    LicenseSourceInfo, LicenseSourceKind, LicenseState, RouterOptions, SandboxCatalog,
+    SandboxServiceManager, ServeOptions, build_router, serve,
 };
+use crate::router::RouterBuildConfig;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::FieldTransform as GrpcFieldTransform;
 use crate::adapters::firebase::grpc::generated::google::firestore::v1::document_transform::field_transform::{
     ServerValue as GrpcServerValue, TransformType as GrpcTransformType,
@@ -110,18 +110,65 @@ use crate::adapters::firebase::grpc::generated::google::firestore::v1::{
     GetDocumentRequest as GrpcGetDocumentRequest, UpdateDocumentRequest as GrpcUpdateDocumentRequest,
 };
 
+fn router_for_service(service: Arc<Service>) -> Router {
+    build_router(RouterOptions::new(service))
+}
+
+fn router_for_convex(service: Arc<Service>, convex_registry: ConvexRegistry) -> Router {
+    build_router(RouterOptions::new(service).with_convex_registry(convex_registry))
+}
+
+fn router_for_firebase(service: Arc<Service>, firebase_config: FirebaseConfig) -> Router {
+    build_router(RouterOptions::new(service).with_firebase_config(firebase_config))
+}
+
+fn router_for_license(service: Arc<Service>, license_state: LicenseState) -> Router {
+    build_router(RouterOptions::new(service).with_license(license_state))
+}
+
+fn router_for_convex_sandbox_catalog(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    sandbox_catalog: Arc<dyn SandboxCatalog>,
+) -> Router {
+    build_router(
+        RouterOptions::new(service)
+            .with_convex_registry(convex_registry)
+            .with_sandbox_catalog(sandbox_catalog),
+    )
+}
+
+fn router_for_convex_sandbox_service_manager(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    sandbox_service_manager: Arc<SandboxServiceManager>,
+) -> Router {
+    build_router(
+        RouterOptions::new(service)
+            .with_convex_registry(convex_registry)
+            .with_sandbox_service_manager(sandbox_service_manager),
+    )
+}
+
+fn router_for_convex_runtime_service_registry(
+    service: Arc<Service>,
+    convex_registry: ConvexRegistry,
+    runtime_service_registry: Arc<dyn crate::service_registry::RuntimeServiceRegistry>,
+) -> Router {
+    crate::router::build_router_for_test_runtime(
+        RouterOptions::new(service).with_convex_registry(convex_registry),
+        runtime_service_registry,
+    )
+}
+
 #[tokio::test]
-async fn serve_with_options_loads_embedded_system_convex_registry_by_default() {
+async fn serve_loads_embedded_system_convex_registry_by_default() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener should bind");
     let addr = listener.local_addr().expect("listener should have addr");
-    let server = tokio::spawn(serve_with_options(
-        listener,
-        fixture.service(),
-        ServeOptions::default(),
-    ));
+    let server = tokio::spawn(serve(listener, ServeOptions::new(fixture.service())));
     tokio::task::yield_now().await;
     if server.is_finished() {
         let result = server.await;
@@ -961,7 +1008,7 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
 #[tokio::test]
 async fn cors_preflight_only_allows_loopback_browser_origins() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router(fixture.service())).await;
+    let server = ServerFixture::start(router_for_service(fixture.service())).await;
 
     let allowed = server
         .client()

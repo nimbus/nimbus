@@ -45,7 +45,7 @@ async fn convex_runtime_query_exposes_authenticated_identity_from_bearer_token()
         })),
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("demo").await.status(),
@@ -143,7 +143,7 @@ async fn convex_runtime_query_accepts_custom_jwt_issuer_without_scheme() {
         })),
     );
     let fixture = ServiceFixture::new(|path| Service::new(path));
-    let server = ServerFixture::start(build_router_with_convex(fixture.service(), registry)).await;
+    let server = ServerFixture::start(router_for_convex(fixture.service(), registry)).await;
     let api = HttpApiFixture::new(&server);
     assert_eq!(
         api.create_tenant("demo").await.status(),

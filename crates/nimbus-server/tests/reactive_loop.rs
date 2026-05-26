@@ -1,8 +1,9 @@
 use std::fs;
+use std::sync::Arc;
 
 use nimbus_engine::{Service, run_scheduler};
 use nimbus_runtime::RuntimeBundle;
-use nimbus_server::{ConvexRegistry, build_router, build_router_with_convex};
+use nimbus_server::{ConvexRegistry, RouterOptions, build_router};
 use nimbus_testing::{
     BlockingFaultInjector, DeterministicHarness, HttpApiFixture, ScenarioMetadata, ServerFixture,
     ServiceFixture, WebSocketFixture, run_to_completion_snapshot_runtime_test_limits,
@@ -16,6 +17,14 @@ use tokio_tungstenite::tungstenite::Error as WebSocketError;
 
 fn convex_registry(functions: serde_json::Value) -> ConvexRegistry {
     convex_registry_with_bundle(functions, None)
+}
+
+fn router_for_service(service: Arc<Service>) -> axum::Router {
+    build_router(RouterOptions::new(service))
+}
+
+fn router_for_convex(service: Arc<Service>, convex_registry: ConvexRegistry) -> axum::Router {
+    build_router(RouterOptions::new(service).with_convex_registry(convex_registry))
 }
 
 fn convex_registry_with_bundle(

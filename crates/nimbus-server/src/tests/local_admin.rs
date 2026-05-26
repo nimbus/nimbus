@@ -13,7 +13,7 @@ use crate::local_server::{
 };
 use crate::router::RouterBuildConfig;
 use crate::tests::{ServerFixture, ServiceFixture};
-use crate::{ServeOptions, serve_with_options};
+use crate::{ServeOptions, serve};
 
 fn sample_paths(root: &std::path::Path) -> LocalServerPaths {
     LocalServerPaths {
@@ -80,10 +80,9 @@ async fn system_shutdown_endpoint_stops_live_server() {
     let address = listener
         .local_addr()
         .expect("listener address should resolve");
-    let server_task = tokio::spawn(serve_with_options(
+    let server_task = tokio::spawn(serve(
         listener,
-        service.clone(),
-        ServeOptions::default().with_local_server_security(local_server_security),
+        ServeOptions::new(service.clone()).with_local_server_security(local_server_security),
     ));
     let client = reqwest::Client::new();
     wait_for_condition(

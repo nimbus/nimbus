@@ -26,8 +26,7 @@ async fn license_status_route_returns_trial_license_details() {
             path: Some("/tmp/license.json".to_string()),
         },
     );
-    let server =
-        ServerFixture::start(build_router_with_license(fixture.service(), license_state)).await;
+    let server = ServerFixture::start(router_for_license(fixture.service(), license_state)).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api.license_status().await;
