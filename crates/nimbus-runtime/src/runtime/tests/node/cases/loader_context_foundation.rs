@@ -37,17 +37,20 @@ const NODE22_LOADER_CONTEXT_ASYNC_LOCAL_STORAGE_BATCH: &[NodeCompatBatchEntry] =
 ];
 
 const NODE22_LOADER_CONTEXT_ASYNC_HOOKS_BATCH: &[NodeCompatBatchEntry] = &[
-    shared_official_batch_case!("test/parallel/test-async-hooks-asyncresource-constructor.js"),
     shared_official_batch_case!("test/parallel/test-async-hooks-constructor.js"),
     shared_official_batch_case!("test/parallel/test-async-hooks-enable-disable.js"),
+    shared_official_batch_case!("test/parallel/test-async-hooks-run-in-async-scope-this-arg.js"),
+    shared_official_batch_case!("test/parallel/test-async-hooks-execution-async-resource.js"),
+    shared_official_batch_case!("test/parallel/test-async-hooks-execution-async-resource-await.js"),
+];
+
+const NODE22_LOADER_CONTEXT_ASYNC_HOOKS_RESOURCE_GAP_BATCH: &[NodeCompatBatchEntry] = &[
+    shared_official_batch_case!("test/parallel/test-async-hooks-asyncresource-constructor.js"),
     shared_official_batch_case!("test/parallel/test-async-hooks-enable-disable-enable.js"),
     shared_official_batch_case!("test/parallel/test-async-hooks-enable-recursive.js"),
     shared_official_batch_case!(
         "test/parallel/test-async-hooks-recursive-stack-runInAsyncScope.js"
     ),
-    shared_official_batch_case!("test/parallel/test-async-hooks-run-in-async-scope-this-arg.js"),
-    shared_official_batch_case!("test/parallel/test-async-hooks-execution-async-resource.js"),
-    shared_official_batch_case!("test/parallel/test-async-hooks-execution-async-resource-await.js"),
 ];
 
 const NODE22_LOADER_CONTEXT_ASYNC_HOOKS_PROMISE_BATCH: &[NodeCompatBatchEntry] = &[
@@ -126,23 +129,22 @@ const LOADER_CONTEXT_FOLLOWUP_INSPECTOR_FRONT_EDGE_BATCH: &[NodeCompatBatchEntry
 ];
 
 const LOADER_CONTEXT_FOLLOWUP_V8_HELPER_BATCH: &[NodeCompatBatchEntry] = &[
-    shared_official_batch_case!("test/parallel/test-v8-version-tag.js"),
     shared_official_batch_case!("test/parallel/test-v8-deserialize-buffer.js"),
+];
+
+const LOADER_CONTEXT_FOLLOWUP_V8_GREEN_BATCH: &[NodeCompatBatchEntry] = &[
+    shared_official_batch_case!("test/parallel/test-v8-deserialize-buffer.js"),
+];
+
+const LOADER_CONTEXT_FOLLOWUP_V8_INTERNAL_GAP_BATCH: &[NodeCompatBatchEntry] = &[
+    shared_official_batch_case!("test/parallel/test-v8-version-tag.js"),
     shared_official_batch_case!("test/parallel/test-v8-serdes.js"),
     shared_official_batch_case!("test/parallel/test-v8-stats.js"),
     shared_official_batch_case!("test/parallel/test-v8-flag-type-check.js"),
 ];
 
-const LOADER_CONTEXT_FOLLOWUP_V8_GREEN_BATCH: &[NodeCompatBatchEntry] = &[
-    shared_official_batch_case!("test/parallel/test-v8-version-tag.js"),
-    shared_official_batch_case!("test/parallel/test-v8-deserialize-buffer.js"),
-    shared_official_batch_case!("test/parallel/test-v8-serdes.js"),
-    shared_official_batch_case!("test/parallel/test-v8-flag-type-check.js"),
-];
-
 const LOADER_CONTEXT_FOLLOWUP_VM_BASIC_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case!("test/parallel/test-vm-basic.js"),
-    shared_official_batch_case!("test/parallel/test-vm-context.js"),
     shared_official_batch_case!("test/parallel/test-vm-run-in-new-context.js"),
     shared_official_batch_case!("test/parallel/test-vm-strict-mode.js"),
     shared_official_batch_case!("test/parallel/test-vm-not-strict.js"),
@@ -1105,4 +1107,3 @@ const NODE_TOOLS_CLUSTER_WORKER_LIFECYCLE_BATCH: &[NodeCompatBatchEntry] = &[
         node24_extra_files: &[],
     },
 ];
-

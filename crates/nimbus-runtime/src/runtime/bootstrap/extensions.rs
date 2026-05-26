@@ -30,12 +30,12 @@ pub(crate) fn snapshot_extensions(target: RuntimeCompatibilityTarget) -> Vec<Ext
     if target.is_node() {
         install_rustls_default_provider_once();
         extensions.extend([
+            deno_telemetry::deno_telemetry::lazy_init(),
             deno_webidl::deno_webidl::lazy_init(),
             deno_web::deno_web::lazy_init(),
             deno_crypto::deno_crypto::lazy_init(),
             deno_fetch::deno_fetch::lazy_init(),
             deno_websocket::deno_websocket::lazy_init(),
-            deno_telemetry::deno_telemetry::lazy_init(),
             deno_net::deno_net::lazy_init(),
             deno_tls::deno_tls::lazy_init(),
             deno_napi::deno_napi::lazy_init(),
@@ -69,6 +69,7 @@ pub(crate) fn execution_extensions(
         install_rustls_default_provider_once();
         let fs: deno_fs::FileSystemRc = MaybeArc::new(deno_fs::RealFs);
         extensions.extend([
+            deno_telemetry::deno_telemetry::init(),
             deno_webidl::deno_webidl::init(),
             deno_web::deno_web::init(
                 Default::default(),
@@ -79,7 +80,6 @@ pub(crate) fn execution_extensions(
             deno_crypto::deno_crypto::init(None),
             deno_fetch::deno_fetch::init(Default::default()),
             deno_websocket::deno_websocket::init(),
-            deno_telemetry::deno_telemetry::init(),
             deno_net::deno_net::init(None, None),
             deno_tls::deno_tls::init(),
             deno_napi::deno_napi::init(None),

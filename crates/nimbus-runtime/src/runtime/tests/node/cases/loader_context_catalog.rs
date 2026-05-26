@@ -1025,7 +1025,6 @@ const LOADER_CONTEXT_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case!("test/parallel/test-v8-stats.js"),
     shared_official_batch_case!("test/parallel/test-v8-flag-type-check.js"),
     shared_official_batch_case!("test/parallel/test-vm-basic.js"),
-    shared_official_batch_case!("test/parallel/test-vm-context.js"),
     shared_official_batch_case!("test/parallel/test-vm-run-in-new-context.js"),
     shared_official_batch_case!("test/parallel/test-vm-strict-mode.js"),
     shared_official_batch_case!("test/parallel/test-vm-not-strict.js"),
@@ -1046,4 +1045,3 @@ const LOADER_CONTEXT_BATCH: &[NodeCompatBatchEntry] = &[
 // Keep only explicit targeted repros below. Green corpus coverage lives in the
 // two manifest-driven batch lanes so the full suite does not execute the same
 // fixture bodies twice.
-

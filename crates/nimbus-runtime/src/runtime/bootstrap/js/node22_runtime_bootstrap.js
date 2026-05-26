@@ -7,100 +7,146 @@ import {
   nodeGlobals as hiddenNodeGlobals,
 } from "ext:nimbus_node22/internal_bootstrap.js";
 
-import "ext:deno_fetch/20_headers.js";
-import "ext:deno_fetch/22_http_client.js";
-import "ext:deno_fetch/23_request.js";
-import "ext:deno_fetch/23_response.js";
-import "ext:deno_fetch/26_fetch.js";
-import "ext:deno_fetch/27_eventsource.js";
-import { realPath as denoRealPath, realPathSync as denoRealPathSync } from "ext:deno_fs/30_fs.js";
-import "ext:deno_http/00_serve.ts";
-import "ext:deno_http/01_http.js";
-import "ext:deno_http/02_websocket.ts";
-import { enableNextTick } from "ext:deno_node/_next_tick.ts";
-import { createWritableStdioStream, initStdin } from "ext:deno_node/_process/streams.mjs";
-import { streamBaseState } from "ext:deno_node/internal_binding/stream_wrap.ts";
-import {
-  bindStreamsLazy as bindNodeConsoleStreamsLazy,
-  Console as NodeConsole,
-  kBindProperties as nodeConsoleBindProperties,
-} from "ext:deno_node/internal/console/constructor.mjs";
-import { onWarning as nodeProcessOnWarning } from "ext:deno_node/internal/process/warning.ts";
-import "ext:deno_net/01_net.js";
-import "ext:deno_net/02_tls.js";
-import {
-  hostname as denoHostname,
-  loadavg as denoLoadavg,
-  networkInterfaces as denoNetworkInterfaces,
-  osRelease as denoOsRelease,
-  osUptime,
-  systemMemoryInfo as denoSystemMemoryInfo,
-} from "ext:deno_os/30_os.js";
-import "ext:deno_os/40_signals.js";
-import * as io from "ext:deno_io/12_io.js";
-import "ext:deno_web/01_urlpattern.js";
-import {
-  defineEventHandler as defineWebEventHandler,
-  PromiseRejectionEvent as WebPromiseRejectionEvent,
-  reportException as reportWebException,
-  saveGlobalThisReference as saveWebGlobalThisReference,
-} from "ext:deno_web/02_event.js";
-import "ext:deno_web/04_global_interfaces.js";
-import {
-  ByteLengthQueuingStrategy as webByteLengthQueuingStrategy,
-  CountQueuingStrategy as webCountQueuingStrategy,
-  ReadableByteStreamController as webReadableByteStreamController,
-  ReadableStream as webReadableStream,
-  ReadableStreamBYOBReader as webReadableStreamBYOBReader,
-  ReadableStreamBYOBRequest as webReadableStreamBYOBRequest,
-  ReadableStreamDefaultController as webReadableStreamDefaultController,
-  ReadableStreamDefaultReader as webReadableStreamDefaultReader,
-  TransformStream as webTransformStream,
-  TransformStreamDefaultController as webTransformStreamDefaultController,
-  WritableStream as webWritableStream,
-  WritableStreamDefaultController as webWritableStreamDefaultController,
-  WritableStreamDefaultWriter as webWritableStreamDefaultWriter,
-} from "ext:deno_web/06_streams.js";
-import "ext:deno_web/10_filereader.js";
-import "ext:deno_web/12_location.js";
-import {
-  deserializeJsMessageData as webDeserializeJsMessageData,
-  MessageChannel as webMessageChannel,
-  MessagePort as webMessagePort,
-  MessagePortPrototype as webMessagePortPrototype,
-  serializeJsMessageData as webSerializeJsMessageData,
-  structuredClone as webStructuredClone,
-  unrefParentPort as webUnrefParentPort,
-} from "ext:deno_web/13_message_port.js";
-import { performance as webPerformance } from "ext:deno_web/15_performance.js";
-import "ext:deno_web/16_image_data.js";
-import "ext:deno_websocket/01_websocket.js";
-import "ext:deno_websocket/02_websocketstream.js";
-import nimbusPerfHooksBuiltin from "ext:nimbus_node22/perf_hooks_impl.js";
 import { Buffer as nodeBuffer } from "node:buffer";
-import { readFileSync as nodeFsReadFileSync } from "node:fs";
 import { relative as nodePathRelative, resolve as nodePathResolve } from "node:path";
 import { fileURLToPath as nodeFileURLToPath } from "node:url";
 import { parseEnv as nodeUtilParseEnv } from "node:util";
-import "node:worker_threads";
-import { FileHandle as nodeInternalFsFileHandle } from "ext:deno_node/internal/fs/handle.ts";
-import {
-  AbortError as nodeAbortError,
-  ERR_FS_INVALID_SYMLINK_TYPE as nodeErrFsInvalidSymlinkType,
-  ERR_FS_FILE_TOO_LARGE as nodeErrFsFileTooLarge,
-} from "ext:deno_node/internal/errors.ts";
-import {
-  Dirent as nodeFsDirent,
-  constants as nodeFsUtilConstants,
-  getValidatedPathToString as nodeFsGetValidatedPathToString,
-  getOptions as nodeFsGetOptions,
-  toUnixTimestamp as nodeFsToUnixTimestamp,
-} from "ext:deno_node/internal/fs/utils.mjs";
 import { StringDecoder as nodeStringDecoder } from "node:string_decoder";
 import { getBinding as getNodeInternalBinding } from "ext:deno_node/internal_binding/mod.ts";
 
+const loadNodeFs = core.createLazyLoader("node:fs");
+const loadNodeProcess = core.createLazyLoader("node:process");
+const loadNodeTimers = core.createLazyLoader("node:timers");
+const loadNodeWorkerThreads = core.createLazyLoader("node:worker_threads");
+const loadDenoWebSocket =
+  core.createLazyLoader("ext:deno_websocket/01_websocket.js");
+const loadDenoWebSocketStream =
+  core.createLazyLoader("ext:deno_websocket/02_websocketstream.js");
+const loadNodeInternalFsHandle =
+  core.createLazyLoader("ext:deno_node/internal/fs/handle.ts");
+const loadNodeInternalFsUtils =
+  core.createLazyLoader("ext:deno_node/internal/fs/utils.mjs");
+const loadNimbusPerfHooksBuiltin =
+  core.createLazyLoader("ext:nimbus_node22/perf_hooks_impl.js");
+const originalPublicDeno = globalThis.Deno;
+const runtimeDenoErrors =
+  originalPublicDeno &&
+    (typeof originalPublicDeno === "object" ||
+      typeof originalPublicDeno === "function")
+    ? originalPublicDeno.errors ?? errors
+    : errors;
+
+core.loadExtScript("ext:deno_fetch/20_headers.js");
+core.loadExtScript("ext:deno_fetch/22_http_client.js");
+core.loadExtScript("ext:deno_fetch/23_request.js");
+core.loadExtScript("ext:deno_fetch/23_response.js");
+core.loadExtScript("ext:deno_fetch/26_fetch.js");
+core.loadExtScript("ext:deno_fetch/27_eventsource.js");
+core.loadExtScript("ext:deno_http/00_serve.ts");
+core.loadExtScript("ext:deno_http/01_http.js");
+core.loadExtScript("ext:deno_http/02_websocket.ts");
+core.loadExtScript("ext:deno_net/01_net.js");
+core.loadExtScript("ext:deno_net/02_tls.js");
+core.loadExtScript("ext:deno_os/40_signals.js");
+core.loadExtScript("ext:deno_web/01_urlpattern.js");
+core.loadExtScript("ext:deno_web/04_global_interfaces.js");
+core.loadExtScript("ext:deno_web/10_filereader.js");
+core.loadExtScript("ext:deno_web/12_location.js");
+core.loadExtScript("ext:deno_web/16_image_data.js");
+loadDenoWebSocket();
+loadDenoWebSocketStream();
+
+const { realPath: denoRealPath, realPathSync: denoRealPathSync } =
+  core.loadExtScript("ext:deno_fs/30_fs.js");
+const {
+  hostname: denoHostname,
+  loadavg: denoLoadavg,
+  networkInterfaces: denoNetworkInterfaces,
+  osRelease: denoOsRelease,
+  osUptime,
+  systemMemoryInfo: denoSystemMemoryInfo,
+} = core.loadExtScript("ext:deno_os/30_os.js");
+const io = core.loadExtScript("ext:deno_io/12_io.js");
+const {
+  defineEventHandler: defineWebEventHandler,
+  PromiseRejectionEvent: WebPromiseRejectionEvent,
+  reportException: reportWebException,
+  saveGlobalThisReference: saveWebGlobalThisReference,
+} = core.loadExtScript("ext:deno_web/02_event.js");
+const {
+  ByteLengthQueuingStrategy: webByteLengthQueuingStrategy,
+  CountQueuingStrategy: webCountQueuingStrategy,
+  ReadableByteStreamController: webReadableByteStreamController,
+  ReadableStream: webReadableStream,
+  ReadableStreamBYOBReader: webReadableStreamBYOBReader,
+  ReadableStreamBYOBRequest: webReadableStreamBYOBRequest,
+  ReadableStreamDefaultController: webReadableStreamDefaultController,
+  ReadableStreamDefaultReader: webReadableStreamDefaultReader,
+  TransformStream: webTransformStream,
+  TransformStreamDefaultController: webTransformStreamDefaultController,
+  WritableStream: webWritableStream,
+  WritableStreamDefaultController: webWritableStreamDefaultController,
+  WritableStreamDefaultWriter: webWritableStreamDefaultWriter,
+} = core.loadExtScript("ext:deno_web/06_streams.js");
+const {
+  deserializeJsMessageData: webDeserializeJsMessageData,
+  MessageChannel: webMessageChannel,
+  MessagePort: webMessagePort,
+  MessagePortPrototype: webMessagePortPrototype,
+  serializeJsMessageData: webSerializeJsMessageData,
+  structuredClone: webStructuredClone,
+  unrefParentPort: webUnrefParentPort,
+} = core.loadExtScript("ext:deno_web/13_message_port.js");
+const { performance: webPerformance } =
+  core.loadExtScript("ext:deno_web/15_performance.js");
+const { enableNextTick } =
+  core.loadExtScript("ext:deno_node/_next_tick.ts");
+const denoProcess = core.loadExtScript("ext:deno_process/40_process.js");
+const { FileHandle: nodeInternalFsFileHandle } = loadNodeInternalFsHandle();
+const {
+  Dirent: nodeFsDirent,
+  constants: nodeFsUtilConstants,
+  getValidatedPathToString: nodeFsGetValidatedPathToString,
+  getOptions: nodeFsGetOptions,
+  toUnixTimestamp: nodeFsToUnixTimestamp,
+} = loadNodeInternalFsUtils();
+
+let nodeProcessStreamsModule;
+function loadNodeProcessStreamsModule() {
+  return nodeProcessStreamsModule ??
+    (nodeProcessStreamsModule =
+      core.createLazyLoader("ext:deno_node/_process/streams.mjs")());
+}
+
+let nodeStreamWrapModule;
+function loadNodeStreamWrapModule() {
+  return nodeStreamWrapModule ??
+    (nodeStreamWrapModule =
+      core.loadExtScript("ext:deno_node/internal_binding/stream_wrap.ts"));
+}
+
+let nodeConsoleConstructorModule;
+function loadNodeConsoleConstructorModule() {
+  return nodeConsoleConstructorModule ??
+    (nodeConsoleConstructorModule =
+      core.loadExtScript("ext:deno_node/internal/console/constructor.mjs"));
+}
+
+let nodeProcessWarningModule;
+function loadNodeProcessWarningModule() {
+  return nodeProcessWarningModule ??
+    (nodeProcessWarningModule =
+      core.loadExtScript("ext:deno_node/internal/process/warning.ts"));
+}
+
+let nodeInternalErrorsModule;
+function loadNodeInternalErrorsModule() {
+  return nodeInternalErrorsModule ??
+    (nodeInternalErrorsModule =
+      core.loadExtScript("ext:deno_node/internal/errors.ts"));
+}
+
 Object.defineProperties(globalThis, windowOrWorkerGlobalScope);
-globalThis.__nimbusPerfHooksBuiltin = nimbusPerfHooksBuiltin;
 const nimbusInternalFsBinding = getNodeInternalBinding("fs");
 const {
   ArrayIsArray,
@@ -157,14 +203,14 @@ function runtimeFsMapThrownError(error) {
   let mappedError;
   switch (hostError.code) {
     case "ENOENT":
-      mappedError = new errors.NotFound(message);
+      mappedError = new runtimeDenoErrors.NotFound(message);
       break;
     case "EEXIST":
-      mappedError = new errors.AlreadyExists(message);
+      mappedError = new runtimeDenoErrors.AlreadyExists(message);
       break;
     case "EACCES":
     case "EPERM":
-      mappedError = new errors.PermissionDenied(message);
+      mappedError = new runtimeDenoErrors.PermissionDenied(message);
       break;
     case "ENOTDIR":
     case "EISDIR":
@@ -673,7 +719,7 @@ function runtimeFsSymlinkFileType(options) {
     fileType !== "file" &&
     fileType !== "junction"
   ) {
-    throw new nodeErrFsInvalidSymlinkType(fileType);
+    throw new (loadNodeInternalErrorsModule().ERR_FS_INVALID_SYMLINK_TYPE)(fileType);
   }
   return fileType;
 }
@@ -856,6 +902,8 @@ function seedNodeProcessStdio(nodeProcess) {
     return;
   }
 
+  const { createWritableStdioStream, initStdin } = loadNodeProcessStreamsModule();
+
   if (nodeProcess.stdin === undefined) {
     nodeProcess.stdin = initStdin(false);
   }
@@ -908,6 +956,311 @@ function seedNodeProcessFeatures(nodeProcess) {
   }
   delete features.openssl_is_boringssl;
   delete features.quic;
+}
+
+const nimbusProcessFinalizationInstalled = Symbol("nimbus.processFinalizationInstalled");
+
+function validateProcessFinalizationRegistration(ref, callback) {
+  if ((typeof ref !== "object" && typeof ref !== "function") || ref === null) {
+    throw new TypeError('The "ref" argument must be of type object');
+  }
+  if (typeof callback !== "function") {
+    throw new TypeError('The "callback" argument must be of type function');
+  }
+}
+
+function seedNodeProcessFinalization(nodeProcess) {
+  if (
+    !nodeProcess ||
+    typeof nodeProcess !== "object" ||
+    typeof nodeProcess.on !== "function" ||
+    nodeProcess[nimbusProcessFinalizationInstalled] === true
+  ) {
+    return;
+  }
+
+  const exitRegistrations = [];
+  const beforeExitRegistrations = [];
+
+  function registerIn(registrations, ref, callback) {
+    validateProcessFinalizationRegistration(ref, callback);
+    registrations.push({
+      callback,
+      ref: new WeakRef(ref),
+    });
+  }
+
+  function runRegistrations(registrations, eventName) {
+    for (const registration of [...registrations]) {
+      const ref = registration.ref.deref();
+      if (ref !== undefined) {
+        registration.callback(ref, eventName);
+      }
+    }
+  }
+
+  const finalization = {
+    register(ref, callback) {
+      registerIn(exitRegistrations, ref, callback);
+    },
+    registerBeforeExit(ref, callback) {
+      registerIn(beforeExitRegistrations, ref, callback);
+    },
+    unregister(ref) {
+      for (const registrations of [exitRegistrations, beforeExitRegistrations]) {
+        for (let index = registrations.length - 1; index >= 0; index -= 1) {
+          const registeredRef = registrations[index].ref.deref();
+          if (registeredRef === undefined || registeredRef === ref) {
+            registrations.splice(index, 1);
+          }
+        }
+      }
+    },
+  };
+
+  Object.defineProperty(nodeProcess, "finalization", {
+    value: finalization,
+    configurable: true,
+    enumerable: true,
+    writable: false,
+  });
+  nodeProcess.on("beforeExit", () => {
+    runRegistrations(beforeExitRegistrations, "beforeExit");
+  });
+  nodeProcess.on("exit", () => {
+    runRegistrations(exitRegistrations, "exit");
+  });
+  Object.defineProperty(nodeProcess, nimbusProcessFinalizationInstalled, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+}
+
+const nimbusProcessDlopenPatched = Symbol("nimbus.processDlopenPatched");
+const nimbusNativeExtensionPatched = Symbol("nimbus.nativeExtensionPatched");
+
+function isDlopenTypeError(error) {
+  return error?.name === "TypeError" &&
+    typeof error?.message === "string" &&
+    error.message.startsWith("dlopen(");
+}
+
+function createNodeDlopenError(error) {
+  const mapped = new Error(error.message);
+  mapped.code = "ERR_DLOPEN_FAILED";
+  if (typeof error.stack === "string") {
+    mapped.stack = error.stack.replace(/^TypeError:/, "Error:");
+  }
+  return mapped;
+}
+
+function installNimbusProcessDlopenErrorMapping(nodeProcess) {
+  if (
+    !nodeProcess ||
+    typeof nodeProcess !== "object" ||
+    typeof nodeProcess.dlopen !== "function" ||
+    nodeProcess[nimbusProcessDlopenPatched] === true
+  ) {
+    return;
+  }
+
+  const originalDlopen = nodeProcess.dlopen;
+  function nimbusDlopen(...args) {
+    try {
+      return Reflect.apply(originalDlopen, this, args);
+    } catch (error) {
+      if (isDlopenTypeError(error)) {
+        throw createNodeDlopenError(error);
+      }
+      throw error;
+    }
+  }
+  Object.defineProperty(nimbusDlopen, nimbusProcessDlopenPatched, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(nodeProcess, nimbusProcessDlopenPatched, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(nodeProcess, "dlopen", {
+    value: nimbusDlopen,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+function installNimbusNativeExtensionErrorMapping(nodeProcess) {
+  const moduleBuiltin = typeof nodeProcess?.getBuiltinModule === "function"
+    ? nodeProcess.getBuiltinModule("module")
+    : undefined;
+  const extensions = moduleBuiltin?._extensions;
+  if (
+    !extensions ||
+    typeof extensions !== "object" ||
+    typeof extensions[".node"] !== "function" ||
+    extensions[".node"][nimbusNativeExtensionPatched] === true
+  ) {
+    return;
+  }
+
+  const originalNativeExtension = extensions[".node"];
+  function nimbusNativeExtension(...args) {
+    try {
+      return Reflect.apply(originalNativeExtension, this, args);
+    } catch (error) {
+      if (isDlopenTypeError(error)) {
+        throw createNodeDlopenError(error);
+      }
+      throw error;
+    }
+  }
+  Object.defineProperty(nimbusNativeExtension, nimbusNativeExtensionPatched, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(extensions, ".node", {
+    value: nimbusNativeExtension,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+function seedManagedDenoProperty(name) {
+  if (
+    !originalPublicDeno ||
+    (typeof originalPublicDeno !== "object" &&
+      typeof originalPublicDeno !== "function") ||
+    deno[name] !== undefined
+  ) {
+    return;
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(originalPublicDeno, name);
+  if (descriptor) {
+    Object.defineProperty(deno, name, descriptor);
+  }
+}
+
+function isDynamicLoaderEnvName(name) {
+  return name === "LD_PRELOAD" ||
+    name === "LD_LIBRARY_PATH" ||
+    name.startsWith("DYLD_");
+}
+
+function nimbusSanitizedSpawnEnv(optionsEnv) {
+  const source = optionsEnv && typeof optionsEnv === "object"
+    ? optionsEnv
+    : globalThis.process?.env ?? {};
+  const env = Object.create(null);
+  for (const key of Object.keys(source)) {
+    if (isDynamicLoaderEnvName(key)) {
+      continue;
+    }
+    const value = source[key];
+    if (value === undefined) {
+      continue;
+    }
+    env[key] = String(value);
+  }
+  return env;
+}
+
+function nimbusNormalizeSpawnSyncArgs(argsOrOptions, maybeOptions) {
+  if (Array.isArray(argsOrOptions)) {
+    return {
+      args: argsOrOptions.map((arg) => String(arg)),
+      options: maybeOptions && typeof maybeOptions === "object" ? maybeOptions : {},
+    };
+  }
+  return {
+    args: [],
+    options: argsOrOptions && typeof argsOrOptions === "object" ? argsOrOptions : {},
+  };
+}
+
+function installNimbusChildProcessSpawnSyncFallback() {
+  const childProcess = core.loadExtScript("ext:deno_node/child_process.ts");
+  if (
+    !childProcess ||
+    typeof childProcess !== "object" ||
+    typeof childProcess.spawnSync !== "function" ||
+    childProcess.spawnSync.__nimbusSanitizedFallback === true
+  ) {
+    return;
+  }
+
+  const originalSpawnSync = childProcess.spawnSync;
+  function nimbusSpawnSync(command, argsOrOptions = undefined, maybeOptions = undefined) {
+    const originalResult = Reflect.apply(originalSpawnSync, this, arguments);
+    if (
+      originalResult &&
+      typeof originalResult === "object" &&
+      Object.keys(originalResult).length > 0
+    ) {
+      return originalResult;
+    }
+    if (typeof command !== "string" || typeof deno.Command !== "function") {
+      return originalResult;
+    }
+
+    const { args, options } = nimbusNormalizeSpawnSyncArgs(argsOrOptions, maybeOptions);
+    try {
+      const output = new deno.Command(command, {
+        args,
+        cwd: options.cwd,
+        env: nimbusSanitizedSpawnEnv(options.env),
+        clearEnv: true,
+        stdout: "piped",
+        stderr: "piped",
+      }).outputSync();
+      let stdout = nodeBuffer.from(output.stdout);
+      let stderr = nodeBuffer.from(output.stderr);
+      if (options.encoding && options.encoding !== "buffer") {
+        stdout = stdout.toString(options.encoding);
+        stderr = stderr.toString(options.encoding);
+      }
+      return {
+        output: [null, stdout, stderr],
+        pid: 0,
+        signal: null,
+        status: output.code,
+        stderr,
+        stdout,
+      };
+    } catch (error) {
+      return {
+        output: [null, null, null],
+        pid: 0,
+        signal: null,
+        status: null,
+        stderr: null,
+        stdout: null,
+        error,
+      };
+    }
+  }
+  Object.defineProperty(nimbusSpawnSync, "__nimbusSanitizedFallback", {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(childProcess, "spawnSync", {
+    value: nimbusSpawnSync,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
 }
 
 const nimbusLoadEnvFilePatched = Symbol("nimbus.loadEnvFilePatched");
@@ -1014,7 +1367,7 @@ function rememberLoadedEnvFileEntries(nodeProcess, path) {
     return;
   }
 
-  const source = nodeFsReadFileSync(resolveLoadEnvFilePath(nodeProcess, path), "utf8");
+  const source = loadNodeFs().readFileSync(resolveLoadEnvFilePath(nodeProcess, path), "utf8");
 
   for (const [key, value] of Object.entries(nodeUtilParseEnv(source))) {
     try {
@@ -1235,7 +1588,7 @@ async function closeNimbusFileHandle(handle) {
 
 function checkFsReadFileAborted(signal) {
   if (signal?.aborted) {
-    throw new nodeAbortError(undefined, { cause: signal.reason });
+    throw new (loadNodeInternalErrorsModule().AbortError)(undefined, { cause: signal.reason });
   }
 }
 
@@ -1303,7 +1656,7 @@ async function readFsPromisePathHandle(handle, options, nodeFs) {
   }
 
   if (size > nodeFsUtilConstants.kIoMaxLength) {
-    throw new nodeErrFsFileTooLarge(size);
+    throw new (loadNodeInternalErrorsModule().ERR_FS_FILE_TOO_LARGE)(size);
   }
 
   let totalRead = 0;
@@ -2192,6 +2545,12 @@ function upgradeGlobalConsole(nodeProcess) {
     return;
   }
 
+  const {
+    bindStreamsLazy: bindNodeConsoleStreamsLazy,
+    Console: NodeConsole,
+    kBindProperties: nodeConsoleBindProperties,
+  } = loadNodeConsoleConstructorModule();
+
   for (const propertyKey of Reflect.ownKeys(NodeConsole.prototype)) {
     if (propertyKey === "constructor") {
       continue;
@@ -2240,7 +2599,7 @@ const nimbusWarningHandlerInstalled = Symbol("nimbus.warningHandlerInstalled");
 
 function safeNodeProcessOnWarning(nodeProcess, warning) {
   try {
-    nodeProcessOnWarning(warning);
+    loadNodeProcessWarningModule().onWarning(warning);
   } catch (error) {
     if (!(warning instanceof Error) || typeof nodeProcess?.stderr?.write !== "function") {
       throw error;
@@ -2415,7 +2774,7 @@ Object.defineProperty(deno, "core", {
   writable: false,
 });
 Object.defineProperty(deno, "errors", {
-  value: errors,
+  value: runtimeDenoErrors,
   configurable: true,
   enumerable: true,
   writable: false,
@@ -2426,6 +2785,16 @@ Object.defineProperty(deno, "args", {
   enumerable: true,
   writable: false,
 });
+seedManagedDenoProperty("Command");
+if (deno.Command === undefined && denoProcess.Command !== undefined) {
+  Object.defineProperty(deno, "Command", {
+    value: denoProcess.Command,
+    configurable: true,
+    enumerable: true,
+    writable: false,
+  });
+}
+installNimbusChildProcessSpawnSyncFallback();
 Object.defineProperty(deno, "build", {
   value: core.build,
   configurable: true,
@@ -2815,6 +3184,18 @@ Object.defineProperty(deno, "test", {
   enumerable: true,
   writable: false,
 });
+Object.defineProperty(globalThis, "Deno", {
+  value: deno,
+  configurable: true,
+  enumerable: false,
+  writable: false,
+});
+Object.defineProperty(globalThis, "__nimbusRetainDenoForNodeLazyScripts", {
+  value: true,
+  configurable: true,
+  enumerable: false,
+  writable: false,
+});
 Object.defineProperty(globalThis, "__nimbusFlushEmbeddedTests", {
   value: flushEmbeddedDenoTests,
   configurable: true,
@@ -2829,6 +3210,12 @@ Object.defineProperty(globalThis, "__nimbusProcessTicksAndRejections", {
 });
 Object.defineProperty(globalThis, "__nimbusEventLoopHasMoreWork", {
   value: core.eventLoopHasMoreWork,
+  configurable: true,
+  enumerable: false,
+  writable: false,
+});
+Object.defineProperty(globalThis, "__nimbusPerfHooksBuiltin", {
+  value: loadNimbusPerfHooksBuiltin(),
   configurable: true,
   enumerable: false,
   writable: false,
@@ -2851,7 +3238,7 @@ if (typeof runtimeTargetTriple === "string" && runtimeTargetTriple.length > 0) {
 }
 
 enableNextTick();
-op_stream_base_register_state(streamBaseState);
+op_stream_base_register_state(loadNodeStreamWrapModule().streamBaseState);
 seedGlobalEventTargetSurface();
 saveWebGlobalThisReference(globalThis);
 defineWebEventHandler(globalThis, "unhandledrejection");
@@ -2866,19 +3253,34 @@ if (
 ) {
   globalThis.process = internals.nodeGlobals.process;
 }
+const loadedNodeProcessModule = loadNodeProcess();
+if (
+  loadedNodeProcessModule?.default &&
+  typeof loadedNodeProcessModule.default === "object" &&
+  globalThis.process !== loadedNodeProcessModule.default
+) {
+  globalThis.process = loadedNodeProcessModule.default;
+}
 seedNodeProcessPlatformMetadata(internals.nodeGlobals?.process);
 seedNodeProcessStdio(internals.nodeGlobals?.process);
 seedNodeProcessExecPath(internals.nodeGlobals?.process);
 seedNodeProcessFeatures(internals.nodeGlobals?.process);
+seedNodeProcessFinalization(internals.nodeGlobals?.process);
+installNimbusProcessDlopenErrorMapping(internals.nodeGlobals?.process);
+installNimbusNativeExtensionErrorMapping(internals.nodeGlobals?.process);
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
 seedNodeProcessExecPath(globalThis.process);
 seedNodeProcessFeatures(globalThis.process);
+seedNodeProcessFinalization(globalThis.process);
+installNimbusProcessDlopenErrorMapping(globalThis.process);
+installNimbusNativeExtensionErrorMapping(globalThis.process);
 const workerBootstrapState =
   typeof core.ops.op_nimbus_worker_bootstrap_state === "function"
     ? core.ops.op_nimbus_worker_bootstrap_state()
     : null;
 seedWorkerThreadHostSurface(workerBootstrapState);
+loadNodeWorkerThreads();
 if (typeof internals.__initWorkerThreads === "function") {
   const deserializedWorkerMetadata =
     workerBootstrapState?.workerMetadata
@@ -2924,14 +3326,18 @@ if (typeof internals.__initWorkerThreads === "function") {
 }
 patchNodeFsReadSemantics(globalThis.process);
 seedNodeProcessLoadEnvFile(globalThis.process);
-seedNodeGlobalTimers(internals.nodeGlobals);
+const loadedNodeTimersModule = loadNodeTimers();
+seedNodeGlobalTimers({
+  ...loadedNodeTimersModule,
+  ...(internals.nodeGlobals ?? {}),
+});
 seedNodeProcessWarnings(globalThis.process);
 if (
   typeof globalThis.Buffer === "undefined"
-  && internals.nodeGlobals?.Buffer !== undefined
+  && (internals.nodeGlobals?.Buffer !== undefined || nodeBuffer !== undefined)
 ) {
   Object.defineProperty(globalThis, "Buffer", {
-    value: internals.nodeGlobals.Buffer,
+    value: internals.nodeGlobals?.Buffer ?? nodeBuffer,
     configurable: true,
     enumerable: false,
     writable: false,

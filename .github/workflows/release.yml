@@ -27,7 +27,7 @@ env:
   MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os
   MACHINE_OS_STAGED_ARTIFACT: nimbus-machine-os-arm64-staged
   MACHINE_OS_RELEASE_ARTIFACT: machine-os-arm64-release
-  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:5f2aa40538a71e32eba8dcdf9059dda10600bac68acef4588cb1aecedcfc6fe2
+  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:3ca807c0d2836ca425031a52dfe7fda69ca55a22c54fa78c068a22f43d6489b6
   MACHINE_OS_BOOTC_IMAGE_BUILDER: quay.io/centos-bootc/bootc-image-builder@sha256:754fc17718f977313885379e2c779066aba7d15af88fe04b486baec74759f574
 
 permissions:

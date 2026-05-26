@@ -704,18 +704,24 @@ function createNimbusFsModule(fsPromisesModule) {
     return new fsModule.ReadStream(path, options);
   };
   fsModule.ReadStream = function ReadStream(path, options) {
-    return fsBuiltin.ReadStream(path, snapshotFsStreamOptions(options));
+    if (!(this instanceof fsModule.ReadStream)) {
+      return new fsModule.ReadStream(path, options);
+    }
+    Reflect.apply(InternalFsReadStream, this, [path, snapshotFsStreamOptions(options)]);
   };
-  fsModule.ReadStream.prototype = fsBuiltin.ReadStream.prototype;
-  Object.setPrototypeOf(fsModule.ReadStream, fsBuiltin.ReadStream);
+  fsModule.ReadStream.prototype = InternalFsReadStream.prototype;
+  Object.setPrototypeOf(fsModule.ReadStream, InternalFsReadStream);
   fsModule.createWriteStream = function createWriteStream(path, options) {
     return new fsModule.WriteStream(path, options);
   };
   fsModule.WriteStream = function WriteStream(path, options) {
-    return fsBuiltin.WriteStream(path, snapshotFsStreamOptions(options));
+    if (!(this instanceof fsModule.WriteStream)) {
+      return new fsModule.WriteStream(path, options);
+    }
+    Reflect.apply(InternalFsWriteStream, this, [path, snapshotFsStreamOptions(options)]);
   };
-  fsModule.WriteStream.prototype = fsBuiltin.WriteStream.prototype;
-  Object.setPrototypeOf(fsModule.WriteStream, fsBuiltin.WriteStream);
+  fsModule.WriteStream.prototype = InternalFsWriteStream.prototype;
+  Object.setPrototypeOf(fsModule.WriteStream, InternalFsWriteStream);
   fsModule.truncate = function truncate(path, len, callback) {
     if (typeof len === "function") {
       callback = len;
@@ -805,4 +811,3 @@ function createNimbusFsModule(fsPromisesModule) {
   };
   return fsModule;
 }
-

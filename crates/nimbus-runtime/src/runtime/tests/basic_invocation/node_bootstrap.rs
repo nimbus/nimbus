@@ -317,7 +317,7 @@ export {};
 }
 
 #[tokio::test]
-async fn node22_target_hides_deno_bootstrap_globals() {
+async fn node22_target_retains_managed_deno_for_lazy_node_polyfills() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");
     let bundle_path = tempdir.path().join("bundle.mjs");
@@ -328,6 +328,10 @@ globalThis.__nimbusInvoke = function () {
   return {
     denoValue: typeof globalThis.Deno,
     hasOwnDeno: Object.prototype.hasOwnProperty.call(globalThis, "Deno"),
+    denoStat: typeof globalThis.Deno?.stat,
+    denoErrors: typeof globalThis.Deno?.errors,
+    denoBadResource: typeof globalThis.Deno?.errors?.BadResource,
+    denoKeys: Object.keys(globalThis.Deno ?? {}).filter((key) => key === "stat" || key === "statSync"),
     bootstrapValue: typeof globalThis.__bootstrap,
     hasOwnBootstrap: Object.prototype.hasOwnProperty.call(globalThis, "__bootstrap"),
     legacyBootstrapValue: typeof globalThis.bootstrap,
@@ -363,8 +367,12 @@ export {};
     assert_eq!(
         result,
         serde_json::json!({
-            "denoValue": "undefined",
-            "hasOwnDeno": false,
+            "denoValue": "object",
+            "hasOwnDeno": true,
+            "denoStat": "function",
+            "denoErrors": "object",
+            "denoBadResource": "function",
+            "denoKeys": ["stat", "statSync"],
             "bootstrapValue": "undefined",
             "hasOwnBootstrap": false,
             "legacyBootstrapValue": "undefined",

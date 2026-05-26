@@ -123,6 +123,13 @@ impl NimbusRuntime {
         let mut extensions =
             execution_extensions(self.policy.limits().compatibility_target, &path_policy);
         extensions.push(worker_threads_state_extension(worker_bootstrap_state));
+        let startup_snapshot_bytes = startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot);
+        let residual_lazy_js_sources = startup_snapshot
+            .map(V8StartupSnapshot::residual_lazy_js_sources)
+            .unwrap_or_default();
+        let residual_lazy_esm_sources = startup_snapshot
+            .map(V8StartupSnapshot::residual_lazy_esm_sources)
+            .unwrap_or_default();
         Ok(RuntimeOptions {
             create_params: Some(self.create_isolate_params()),
             module_loader: Some(Rc::new(RestrictedModuleLoader::new(
@@ -140,7 +147,9 @@ impl NimbusRuntime {
                     | RuntimeCompatibilityTarget::Node22
                     | RuntimeCompatibilityTarget::Node24
             ),
-            startup_snapshot: startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot),
+            startup_snapshot: startup_snapshot_bytes,
+            residual_lazy_js_sources,
+            residual_lazy_esm_sources,
             shared_array_buffer_store: Some(SharedArrayBufferStore::default()),
             use_locker,
             ..Default::default()
