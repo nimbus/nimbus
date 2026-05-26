@@ -620,7 +620,7 @@ Evidence:
 
 ### NRR6 - Clean Release Commit and Tag
 
-Status: pending
+Status: completed 2026-05-26
 
 Create the final release commit and tag only after all local gates above pass.
 
@@ -633,9 +633,26 @@ Success criteria:
 - No unrelated dirty files or untracked artifacts are included in the release
   commit or tag.
 
+Evidence:
+
+- The vetted release changes were committed as
+  `41c857cb6a3f9a4f30bfeeb6f11622294ba58543`
+  (`Prepare Nimbus v0.1.32 release`).
+- Before tagging, `git status --short --branch` reported only
+  `## codex/final-release-v0.1.32`, and `git diff --check HEAD` passed.
+- `git merge-base --is-ancestor origin/main HEAD` passed, proving the release
+  commit included the latest fetched `origin/main` CI/release workflow work.
+- `git tag --list v0.1.32` returned no local tag before creation, and
+  `git ls-remote --tags origin v0.1.32` returned no remote tag.
+- The annotated tag `v0.1.32` was created locally and
+  `git rev-parse HEAD v0.1.32^{commit}` showed both resolve to
+  `41c857cb6a3f9a4f30bfeeb6f11622294ba58543`.
+- `git push origin HEAD:main v0.1.32` advanced remote `main` from
+  `2d2e7b71` to `41c857cb` and created remote tag `v0.1.32`.
+
 ### NRR7 - Hosted Release Workflow and Artifacts
 
-Status: pending
+Status: in progress
 
 Let the tag-driven GitHub workflow produce the cross-platform release, then
 verify the live artifacts.
@@ -659,6 +676,34 @@ Success criteria:
   - checksum verification for every listed asset
 - Release notes mention the fork stack consumed by this release, including
   Deno/rusty_v8, Bun/JSC adapter posture, nimbus-crun, and nimbus-libkrun.
+
+Evidence:
+
+- `gh run list --repo nimbus/nimbus --workflow release.yml --limit 5`
+  reported tag-triggered run `26448883465` for `v0.1.32` in progress, started
+  `2026-05-26T12:47:21Z`.
+- The first attempt failed before product compilation in several lanes with
+  GitHub-hosted checkout/action-download errors that included
+  `Your account is suspended` and codeload archive failures. The exact action
+  archive URLs were reachable immediately afterward, so
+  `gh run rerun --repo nimbus/nimbus 26448883465 --failed` was used to rerun
+  the failed jobs from the same tag.
+- The rerun passed checkout and Rust setup, then exposed a Nimbus-owned release
+  workflow bug: `Build (aarch64-unknown-linux-gnu)` failed in
+  `cargo build --release -p nimbus-bin` because `nimbus-server/build.rs`
+  requires `packages/nimbus-ui/dist/index.html`, while `release.yml` was
+  invoking Cargo directly instead of satisfying the Makefile UI prerequisite.
+- The release workflow was fixed to mirror CI's canonical shape: add a
+  `ui-artifacts` leader job that runs `npm ci` and `make build-ui`, then make
+  each release binary build lane depend on and download those artifacts before
+  running Cargo. This preserves one UI build per release run rather than
+  duplicating UI compilation across platform lanes.
+- Local verification after the workflow fix:
+  `bash scripts/verify-machine-os-release-ref-contract.sh` passed;
+  `bash scripts/verify-machine-os-release-ref-contract-helper.sh` passed;
+  `git diff --check` passed. `bash scripts/verify-ci-modernization.sh`
+  passed `11/12` local structural checks and failed only the live "latest CI
+  run on main" query, which is not a release workflow syntax or pinning check.
 
 ### NRR8 - Post-Release Consumer Proof
 
