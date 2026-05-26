@@ -6,6 +6,11 @@ subdirectory tree mirrors the Rust crate structure.
 For the stable top-level architecture overview, see
 [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
+The repository-wide source ownership and architecture guardrail ledger lives at
+[repo-architecture-quality-ledger.tsv](repo-architecture-quality-ledger.tsv).
+Use it with `./scripts/verify-repo-architecture-quality.sh` before and after
+large refactor waves.
+
 ## Crate mapping
 
 | Directory | Crate | What's here |

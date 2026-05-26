@@ -4,6 +4,14 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/repo-architecture-quality-hardening-plan.md`
+  - active execution plan for a repository-wide architecture quality hardening
+    wave. Uses the current Nimbus architecture, active enterprise plans,
+    OpenShell, and Kubernetes as references to regroup large composition roots
+    by owned concepts, narrow public construction seams, make policy,
+    admission, and audit boundaries easier to find and test, and add
+    guardrails that preserve enterprise trust without splitting files only to
+    reduce line counts.
 - `docs/plans/fork-upstream-standardization-plan.md`
   - ready execution plan for standardizing Nimbus-owned upstream source
     forks across local paths, Git remotes, active release branches, Nimbus tag

@@ -1,0 +1,53 @@
+# Nimbus repository architecture quality ledger.
+#
+# Columns:
+# kind<TAB>path_or_pattern<TAB>status<TAB>owner<TAB>rationale
+#
+# `large_file` rows are exact repo-relative paths for owned source files at or
+# above the AGENTS.md thresholds. `naming_exception` rows are exact
+# repo-relative paths whose helper/common naming is currently accepted or queued
+# for review. `exclusion` rows are glob-style patterns used by
+# scripts/verify-repo-architecture-quality.sh to keep generated, vendor,
+# proof-artifact, and imported compatibility corpus files out of owned-source
+# line-count enforcement.
+kind	path_or_pattern	status	owner	rationale
+exclusion	*/node_modules/*	allowed-generated	repo-architecture	Package-manager dependency trees are not Nimbus-owned source.
+exclusion	*/target/*	allowed-generated	repo-architecture	Cargo build artifacts are not source.
+exclusion	*/dist/*	allowed-generated	repo-architecture	Bundled build outputs are verified by package/build gates, not source-size gates.
+exclusion	*/storybook-static/*	allowed-generated	repo-architecture	Storybook static bundles are generated UI artifacts.
+exclusion	*/.nimbus/*	allowed-generated	repo-architecture	Local Nimbus app artifacts are generated.
+exclusion	*/_generated/*	allowed-generated	repo-architecture	Convex generated API/data model outputs are regenerated from source.
+exclusion	*/src/gen/*	allowed-generated	repo-architecture	Generated protobuf/client sources are tracked output, not hand-owned logic.
+exclusion	crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/*	allowed-test-corpus	repo-architecture	Imported Node compatibility fixtures are evidence corpus, not Nimbus-owned source.
+exclusion	demos/convex/vendor/*	allowed-vendor	repo-architecture	Browser demo vendor bundle is third-party/generated artifact.
+exclusion	docs/plans/proof/*	allowed-proof	repo-architecture	Proof screenshots and evidence artifacts are not source modules.
+large_file	packages/firebase/src/selftest.mjs	planned-split	RAQ8	Firebase compatibility selftest is capability-owned but too large for long-term maintenance; split by behavior while preserving coverage.
+large_file	crates/nimbus-runtime/src/runtime/bootstrap/js/node22_runtime_bootstrap.js	planned-split	RAQ4	Node compatibility bootstrap is product-owned runtime code above the hard threshold; split by capability or document a strong runtime-bootstrap exception.
+large_file	crates/nimbus-server/src/tenant_isolation.rs	planned-split	RAQ1	Tenant isolation root mixes identity, decision, policy input, grants, quota, and redaction; split into concept-owned modules.
+large_file	crates/nimbus-server/src/system_tenant.rs	planned-split	RAQ2	System tenant mixes reserved tenant helpers, schemas, projection observation, and record writers; split by evidence concept.
+large_file	crates/nimbus-bin/src/dev.rs	planned-split	RAQ7	Dev command owns args, app-dir setup, env/deployment, readiness, browser launch, banner, and watch loop; split by workflow phase.
+large_file	crates/nimbus-runtime/src/limits.rs	planned-split	RAQ4	Runtime limits mixes backend axes, diagnostics, grants, budgets, and routing affinity; split by runtime policy axis.
+large_file	crates/nimbus-server/src/service_manager.rs	planned-split	RAQ5	Service manager mixes verification, activation, launch, refresh, runtime binding, and system-state recording; keep facade thin.
+large_file	crates/nimbus-server/src/tenant_isolation/operator_policy.rs	planned-split	RAQ6	Operator policy mixes document/defaulting, validation, evaluation, explanation/diff, reload, external backend, and prover behavior.
+large_file	crates/nimbus-runtime/src/runtime/bootstrap/ops/runtime_local.rs	planned-split	RAQ4	Runtime-local ops should be grouped by host capability family for reviewability.
+large_file	crates/nimbus-server/src/adapters/cloud_functions/http.rs	planned-split	RAQ6	Cloud Functions HTTP adapter should be grouped by request parsing, signature binding, execution handoff, and response mapping.
+naming_exception	crates/nimbus-bin/src/machine/manager/helpers.rs	review	RAQ7	Machine manager helper ownership should become explicit if touched during command split.
+naming_exception	crates/nimbus-bin/src/machine/manager/tests/helper_resolution.rs	allowed-test	RAQ7	Test file names the helper-resolution behavior under test.
+naming_exception	crates/nimbus-engine/benches/provider_bench/common.rs	allowed-bench	RAQ0	Benchmark-only shared setup.
+naming_exception	crates/nimbus-runtime/src/runtime/helpers.rs	review	RAQ4	Runtime helper ownership should become explicit during runtime split.
+naming_exception	crates/nimbus-runtime/src/module_loader/builtins/module_fs_helpers.js	allowed-concept	RAQ4	Builtin module helper name includes the filesystem module concept.
+naming_exception	crates/nimbus-server/src/adapters/convex/handlers/common.rs	review	RAQ6	Convex handler shared behavior should be named by adapter concept if touched.
+naming_exception	crates/nimbus-server/src/adapters/convex/templates/helpers.rs	allowed-template	RAQ6	Template helper module is scoped to Convex codegen templates.
+naming_exception	crates/nimbus-server/src/tests/convex_runtime/cancellation/request_drops/helpers.rs	allowed-test	RAQ0	Test support helper.
+naming_exception	crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/helpers.rs	allowed-test	RAQ0	Test support helper.
+naming_exception	crates/nimbus-storage/src/async_storage/helpers.rs	review	RAQ0	Async storage helper ownership is accepted for now but should become concept-owned when touched.
+naming_exception	packages/codegen/src/emit/reference_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/runtime_bundle_action_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/runtime_bundle_mutation_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/runtime_bundle_query_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/tree_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/type_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/parser/helpers.mjs	allowed-concept	RAQ8	Parser-local helper module is scoped to one codegen concept.
+naming_exception	packages/codegen/src/planner/query_state_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the planned query-state concept.
+naming_exception	packages/codegen/src/selftest/helpers.mjs	allowed-test	RAQ8	Selftest helper support.
+naming_exception	packages/firebase/src/internal/firestore-helpers.ts	allowed-concept	RAQ8	Firebase helper name includes the Firestore concept.
