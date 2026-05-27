@@ -109,7 +109,6 @@ pub(super) fn subscription_document_id(
     )
 }
 
-#[cfg(test)]
 pub(super) fn workload_status_document_id(tenant_id: &TenantId, workload_uid: &str) -> String {
     format!(
         "workload-status:{}:{}",

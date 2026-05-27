@@ -65,6 +65,7 @@ pub use sandbox::{
     SandboxServiceLaunch,
 };
 pub use service_manager::SandboxServiceManager;
+pub use system_tenant::SystemTenantStatusEvidenceWriter;
 pub use tenant::{
     ArtifactAdmission, ArtifactAttestationEvidence, ArtifactImageVerificationProvider,
     ArtifactProvenanceRequirement, ArtifactSignatureEvidence, ArtifactSignatureRequirement,

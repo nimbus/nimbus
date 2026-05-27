@@ -6,8 +6,8 @@ use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use serde_json::{Value, json};
 
 use crate::local_enforcement::{
-    HostLifecycleBackendKind, HostLifecycleStatusReason, NodeStatusAuthorizer,
-    SystemdTransientCapabilities, SystemdUnitName, TenantNodeObservationIds,
+    HostLifecycleBackendKind, HostLifecycleStatusReason, NodeStatusAuthorizer, StatusEvidenceWrite,
+    StatusEvidenceWriter, SystemdTransientCapabilities, SystemdUnitName, TenantNodeObservationIds,
     TenantWorkloadDiagnostics, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase,
     TenantWorkloadStatusPatch,
 };
@@ -390,10 +390,14 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
         .expect("node status should authorize");
     let projection = binding.system_evidence_projection();
 
-    let application_error =
-        record_tenant_workload_status_async(&service, &context, &projection, &status)
-            .await
-            .expect_err("application context must not write _nimbus workload status");
+    let application_writer = SystemTenantStatusEvidenceWriter::new(service.clone(), context);
+    let application_error = application_writer
+        .write_status(
+            StatusEvidenceWrite::new(&projection, &status)
+                .expect("projection/status should match before persistence"),
+        )
+        .await
+        .expect_err("application context must not write _nimbus workload status");
     assert!(
         application_error
             .to_string()
@@ -405,7 +409,12 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
         system_tenant_id().expect("system tenant should parse"),
         "system_tenant.workload_status.test",
     );
-    record_tenant_workload_status_async(&service, &operator, &projection, &status)
+    let operator_writer = SystemTenantStatusEvidenceWriter::new(service.clone(), operator);
+    operator_writer
+        .write_status(
+            StatusEvidenceWrite::new(&projection, &status)
+                .expect("projection/status should match before persistence"),
+        )
         .await
         .expect("operator authority should project workload status");
 

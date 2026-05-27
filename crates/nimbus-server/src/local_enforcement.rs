@@ -13,6 +13,7 @@ use crate::tenant::{
 
 mod direct_process;
 mod host_lifecycle;
+mod reconciler;
 mod systemd_transient;
 
 pub use direct_process::{
@@ -26,6 +27,10 @@ pub use host_lifecycle::{
     HostLifecyclePropertySet, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
     HostRestartPolicy, RuntimePoolTrustClass, RuntimePoolTrustState, SystemdUnitKind,
     SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
+};
+pub use reconciler::{
+    NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileOutcome,
+    NodeWorkloadReconciler, StatusEvidenceWrite, StatusEvidenceWriter,
 };
 pub use systemd_transient::{
     StartTransientMode, SystemdDbusClient, SystemdDbusProperty, SystemdExecStart,
