@@ -1,6 +1,6 @@
 # Final Nimbus Release Readiness Plan
 
-Status: completed 2026-05-26
+Status: completed 2026-05-26; D6 OCI release follow-up completed 2026-05-27
 Owner: Nimbus release work
 Created: 2026-05-25
 
@@ -864,6 +864,52 @@ Evidence:
 - `bash scripts/verify-bun-jsc-release-assets.sh --artifacts-dir /private/tmp/nimbus-release-v0.1.32-verify --checksums /private/tmp/nimbus-release-v0.1.32-verify/checksums-sha256.txt`
   passed with
   `verified: optional Bun/JSC adapter release assets are absent by policy`.
+- D6 OCI image follow-up completed on `2026-05-27` with Nimbus release
+  `v0.1.33` from source commit
+  `49edb2b26c6e501c27ac36576afc6b802b7a7d08`. Release run
+  `https://github.com/nimbus/nimbus/actions/runs/26482097995` completed
+  successfully on rerun attempt 2 after an earlier all-steps-success Windows
+  attempt was marked cancelled by GitHub. The successful run passed the release
+  contract, all platform binary builds, both per-arch OCI image builds,
+  per-arch image smoke tests, multi-arch publish, registry-pushed
+  GitHub/Sigstore attestation, attestation verification, BuildKit SBOM capture,
+  digest-pinned Trivy SARIF scanning, OCI report/evidence verification,
+  machine-os publish, and GitHub Release creation.
+- `gh release view v0.1.33 --repo nimbus/nimbus --json tagName,targetCommitish,isDraft,isPrerelease,publishedAt,url,assets`
+  confirmed `v0.1.33` is non-draft, non-prerelease, published
+  `2026-05-27T02:19:53Z`, and exposes
+  `https://github.com/nimbus/nimbus/releases/tag/v0.1.33` with
+  `LICENSE`, `install.sh`, `checksums-sha256.txt`, all platform archives,
+  `nimbus_oci_image.txt`, `nimbus_oci_attestation.json`,
+  `nimbus_oci_sbom.json`, and `nimbus_oci_vulns.sarif.json`.
+- The `v0.1.33` release notes were updated after publication to name the
+  first-class OCI image digest, per-architecture image digests, release
+  evidence assets, Trivy vulnerability evidence, foreground `/health` smoke
+  proof, and consumed runtime stack.
+- Downloaded live `v0.1.33` release artifacts into
+  `/private/tmp/nimbus-release-v0.1.33-oci-live`; `checksums-sha256.txt`
+  covers `LICENSE`, `install.sh`, all platform archives, and all
+  `nimbus_oci_*` evidence assets. The downloaded `LICENSE` and repo `LICENSE`
+  both have SHA-256
+  `e305b05e3645925c3c9fbc466b228b8faf09c61033b77dda6623d7cad409fbcf`.
+- `nimbus_oci_image.txt` records
+  `ghcr.io/nimbus/nimbus:v0.1.33@sha256:4e20da01cb53cad58498eff02f8b6f59f6ab8703455bcad9c535baf9c46863b5`,
+  linux/amd64 digest
+  `sha256:eacfa73c4a2b388433fb36671eb25bf15705594c7775e7cd12cc51d5877c2b43`,
+  linux/arm64 digest
+  `sha256:7d7335158c00eac72c0b9961fa6d12b438b236e99143d149847ab6d52f33bdd1`,
+  `ENTRYPOINT ["nimbus"]`, default foreground
+  `nimbus start --host 0.0.0.0`, `/var/lib/nimbus` state, `/health`,
+  stdout/stderr logging, GitHub attestation verification, SBOM verification,
+  Trivy scan, pull, and smoke commands.
+- `make verify-release-oci-image-live TAG=v0.1.33 OUTPUT_DIR=/private/tmp/nimbus-release-v0.1.33-oci-live`
+  passed without `--skip-smoke`: it verified archive layout, optional Bun/JSC
+  absence, final OCI evidence, whole-release checksum coverage, release-asset
+  attestations for 11 assets, registry-pushed attestation JSON with
+  GitHub-hosted runner identity and timestamp evidence, SBOM subject metadata
+  for linux/amd64 and linux/arm64, Trivy SARIF 2.1.0, and then pulled and
+  smoke-tested the published GHCR image. The smoke proof confirmed the image
+  reports `v0.1.33` and serves `/health` on container port 8080.
 
 ### NRR8 - Post-Release Consumer Proof
 
