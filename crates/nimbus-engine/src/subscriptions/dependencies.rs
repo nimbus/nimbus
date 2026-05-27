@@ -1,13 +1,27 @@
 use nimbus_core::{
-    CommitEntry, DependencySet, Document, PaginatedWindowDependency, Query,
+    CommitEntry, DependencySet, Document, PaginatedWindowDependency, Query, TableId,
     commit_intersects_dependency_set,
 };
 
 use super::registry::SubscriptionRegistry;
 
-pub(crate) fn subscription_dependencies(query: &Query, documents: &[Document]) -> DependencySet {
+pub(crate) fn subscription_dependencies(
+    query: &Query,
+    table_id: Option<TableId>,
+    documents: &[Document],
+) -> DependencySet {
     let Some(page_size) = query.limit else {
-        return DependencySet::from_engine_query(query);
+        return DependencySet::from_engine_query(query, table_id);
+    };
+
+    let Some(table_id) = table_id else {
+        let mut dependencies = DependencySet::default();
+        if query.filters.is_empty() {
+            dependencies.record_missing_table(&query.table);
+        } else {
+            dependencies.record_missing_predicate(&query.table, query.filters.clone());
+        }
+        return dependencies;
     };
 
     let (end_sort_values, end_doc_id) = documents
@@ -25,6 +39,7 @@ pub(crate) fn subscription_dependencies(query: &Query, documents: &[Document]) -
     let mut dependencies = DependencySet::default();
     dependencies.record_paginated_window(PaginatedWindowDependency {
         table: query.table.clone(),
+        table_id,
         filters: query.filters.clone(),
         order: query.order.clone(),
         start_sort_values: Vec::new(),
@@ -118,7 +133,7 @@ mod tests {
     use crate::subscriptions::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY;
 
     #[test]
-    fn unfiltered_registrations_store_coarse_table_dependencies() {
+    fn unfiltered_pending_registrations_store_missing_table_dependency_until_bootstrap() {
         let registry = SubscriptionRegistry::new();
         let (tx, _rx) = mpsc::channel(DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
         let query = Query {
@@ -145,7 +160,8 @@ mod tests {
             .dependencies
             .clone();
 
-        assert!(stored.tables.contains(&query.table));
+        assert!(stored.missing_tables.contains(&query.table));
+        assert!(stored.tables.is_empty());
         assert!(stored.predicates.is_empty());
     }
 }

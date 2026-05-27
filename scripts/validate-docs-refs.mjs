@@ -28,19 +28,33 @@ const externalSchemes = new Set([
 ]);
 
 function runGitLsFiles() {
-  const result = spawnSync("git", ["ls-files", "*.md"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    "git",
+    [
+      "ls-files",
+      "--cached",
+      "--modified",
+      "--others",
+      "--exclude-standard",
+      "*.md",
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  );
 
   if (result.status !== 0) {
     throw new Error(result.stderr.trim() || "git ls-files failed");
   }
 
-  return result.stdout
+  const files = result.stdout
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((file) => fs.existsSync(path.join(repoRoot, file)));
+
+  return [...new Set(files)];
 }
 
 function isExcluded(file) {
@@ -261,7 +275,7 @@ function validateDocsRefs() {
   }
 
   console.log(
-    `docs reference validation: pass (${trackedMarkdown.length} tracked Markdown files)`,
+    `docs reference validation: pass (${trackedMarkdown.length} working-tree Markdown files)`,
   );
 }
 

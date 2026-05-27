@@ -9,7 +9,7 @@ pub(super) fn plan_exact_index_scan(
     table_schema: &TableSchema,
 ) -> Option<PlanCandidate> {
     let mut best = None;
-    for index in &table_schema.indexes {
+    for index in table_schema.queryable_indexes() {
         let exact_prefix = collect_exact_prefix(query, index);
         if exact_prefix.is_empty() {
             continue;

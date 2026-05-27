@@ -21,7 +21,7 @@ pub use nimbus_storage::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaRefreshCause,
     LibsqlReplicaRefreshPath, MaterializedJournalSnapshot, ShadowMaterializer,
-    ShadowMaterializerConfig, ShadowMaterializerManifest,
+    ShadowMaterializerConfig, ShadowMaterializerManifest, TableIdentitySnapshotEntry,
 };
 pub use persistence_config::{
     AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionValidationError,

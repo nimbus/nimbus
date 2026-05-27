@@ -1,18 +1,18 @@
 use nimbus_core::{
     CollectionName, CollectionPath, DocumentId, DocumentLocator, DocumentPath, ResourcePathBinding,
-    TableName, TriggerInvocationKey,
+    TableId, TriggerInvocationKey,
 };
 
 /// Builds the primary document key.
-pub fn document_key(table: &TableName, id: &DocumentId) -> Vec<u8> {
-    let mut key = table_prefix(table);
+pub fn document_key(table_id: &TableId, id: &DocumentId) -> Vec<u8> {
+    let mut key = table_prefix(table_id);
     key.extend_from_slice(id.as_str().as_bytes());
     key
 }
 
 /// Returns the table key prefix.
-pub fn table_prefix(table: &TableName) -> Vec<u8> {
-    let mut prefix = table.as_str().as_bytes().to_vec();
+pub fn table_prefix(table_id: &TableId) -> Vec<u8> {
+    let mut prefix = table_id.as_str().as_bytes().to_vec();
     prefix.push(0);
     prefix
 }

@@ -703,19 +703,31 @@ function createNimbusFsModule(fsPromisesModule) {
   fsModule.createReadStream = function createReadStream(path, options) {
     return new fsModule.ReadStream(path, options);
   };
-  fsModule.ReadStream = function ReadStream(path, options) {
+  const NimbusReadStream = function ReadStream(path, options) {
     return fsBuiltin.ReadStream(path, snapshotFsStreamOptions(options));
   };
-  fsModule.ReadStream.prototype = fsBuiltin.ReadStream.prototype;
-  Object.setPrototypeOf(fsModule.ReadStream, fsBuiltin.ReadStream);
+  NimbusReadStream.prototype = fsBuiltin.ReadStream.prototype;
+  Object.setPrototypeOf(NimbusReadStream, fsBuiltin.ReadStream);
+  Object.defineProperty(fsModule, "ReadStream", {
+    value: NimbusReadStream,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
   fsModule.createWriteStream = function createWriteStream(path, options) {
     return new fsModule.WriteStream(path, options);
   };
-  fsModule.WriteStream = function WriteStream(path, options) {
+  const NimbusWriteStream = function WriteStream(path, options) {
     return fsBuiltin.WriteStream(path, snapshotFsStreamOptions(options));
   };
-  fsModule.WriteStream.prototype = fsBuiltin.WriteStream.prototype;
-  Object.setPrototypeOf(fsModule.WriteStream, fsBuiltin.WriteStream);
+  NimbusWriteStream.prototype = fsBuiltin.WriteStream.prototype;
+  Object.setPrototypeOf(NimbusWriteStream, fsBuiltin.WriteStream);
+  Object.defineProperty(fsModule, "WriteStream", {
+    value: NimbusWriteStream,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
   fsModule.truncate = function truncate(path, len, callback) {
     if (typeof len === "function") {
       callback = len;
@@ -805,4 +817,3 @@ function createNimbusFsModule(fsPromisesModule) {
   };
   return fsModule;
 }
-

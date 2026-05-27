@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 fn process_cwd_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -18,6 +19,36 @@ pub(crate) fn with_current_dir<T>(path: &Path, operation: impl FnOnce() -> T) ->
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
     }
+}
+
+pub(crate) async fn wait_for_live_server_health<T>(
+    description: &str,
+    address: impl ToString,
+    server_task: &tokio::task::JoinHandle<T>,
+) {
+    let address = address.to_string();
+    let client = reqwest::Client::new();
+    nimbus_testing::wait_for_condition(
+        description,
+        Duration::from_secs(15),
+        Duration::from_millis(50),
+        || {
+            let client = client.clone();
+            let url = format!("http://{address}/health");
+            async move {
+                if server_task.is_finished() {
+                    panic!("{description}: server task exited before /health became reachable");
+                }
+                client
+                    .get(url)
+                    .send()
+                    .await
+                    .map(|response| response.status().is_success())
+                    .unwrap_or(false)
+            }
+        },
+    )
+    .await;
 }
 
 #[cfg(unix)]

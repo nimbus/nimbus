@@ -1,8 +1,8 @@
 use rusqlite::{OptionalExtension, params};
 
 use super::{
-    SqliteReadSnapshot, SqliteTenantStore, SqliteWriteTransaction, TriggerDeliveryCursor,
-    map_sqlite_error,
+    SqliteReadSnapshot, SqliteTenantStore, SqliteWriteTransaction, TenantEventKind,
+    TriggerDeliveryCursor, map_sqlite_error,
 };
 use crate::store::TRIGGER_DELIVERY_CURSOR_KEY;
 
@@ -36,6 +36,7 @@ impl SqliteWriteTransaction {
                 ],
             )
             .map_err(map_sqlite_error)?;
+        self.record_tenant_event(TenantEventKind::TriggerDelivery { cursor });
         Ok(())
     }
 }

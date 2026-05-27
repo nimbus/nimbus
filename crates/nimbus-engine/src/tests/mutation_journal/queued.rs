@@ -5,6 +5,55 @@ use super::support::{
 use super::*;
 
 #[tokio::test]
+async fn async_schema_write_advances_runtime_journal_before_next_queued_document_write() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+
+    service
+        .set_table_schema_async(
+            tenant_id.clone(),
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![FieldSchema {
+                    name: "title".to_string(),
+                    field_type: FieldType::String,
+                    required: true,
+                }],
+                indexes: Vec::new(),
+                access_policy: None,
+            },
+        )
+        .await
+        .expect("async schema write should succeed");
+
+    let after_schema = service
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load after schema write");
+    assert_eq!(after_schema.durable_head, SequenceNumber(1));
+    assert_eq!(after_schema.applied_head, SequenceNumber(1));
+
+    service
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("after-schema"))]),
+        )
+        .await
+        .expect("queued document write should follow the schema commit sequence");
+
+    let after_insert = wait_for_mutation_journal_stats(
+        &service,
+        &tenant_id,
+        "queued insert should advance after schema commit",
+        |stats| stats.durable_head == SequenceNumber(2) && stats.applied_head == SequenceNumber(2),
+    )
+    .await;
+    assert_eq!(after_insert.queue_depth, 0);
+    assert_eq!(after_insert.worker_failure_count, 0);
+}
+
+#[tokio::test]
 async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response()
 {
     let fixture = ServiceFixture::new(|path| Service::new(path));

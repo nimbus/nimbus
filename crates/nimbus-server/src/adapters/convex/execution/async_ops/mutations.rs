@@ -13,6 +13,7 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
     let principal = normalize_principal_context(auth);
     match (mutation, cancellation) {
         (Mutation::Insert { table, id, fields }, Some(cancellation)) => {
+            let table_for_id = table.clone();
             let check_cancellation = cancellation.clone();
             let cancel_wait = {
                 let cancellation = cancellation.clone();
@@ -33,9 +34,12 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                     ),
                 )
                 .await?;
-            Ok(Value::String(id.to_string()))
+            Ok(Value::String(
+                encode_convex_document_id(&table_for_id, &id)?.to_string(),
+            ))
         }
         (Mutation::Insert { table, id, fields }, None) => {
+            let table_for_id = table.clone();
             let id = service
                 .insert_document_async_with(
                     tenant_id.clone(),
@@ -49,9 +53,13 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                     ),
                 )
                 .await?;
-            Ok(Value::String(id.to_string()))
+            Ok(Value::String(
+                encode_convex_document_id(&table_for_id, &id)?.to_string(),
+            ))
         }
         (Mutation::Update { table, id, patch }, Some(cancellation)) => {
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
+            let table_for_id = table.clone();
             let check_cancellation = cancellation.clone();
             let cancel_wait = {
                 let cancellation = cancellation.clone();
@@ -72,9 +80,13 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                     ),
                 )
                 .await?;
-            Ok(Value::String(id.to_string()))
+            Ok(Value::String(
+                encode_convex_document_id(&table_for_id, &id)?.to_string(),
+            ))
         }
         (Mutation::Update { table, id, patch }, None) => {
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
+            let table_for_id = table.clone();
             let id = service
                 .update_document_async_with(
                     tenant_id.clone(),
@@ -88,9 +100,12 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
                     ),
                 )
                 .await?;
-            Ok(Value::String(id.to_string()))
+            Ok(Value::String(
+                encode_convex_document_id(&table_for_id, &id)?.to_string(),
+            ))
         }
         (Mutation::Delete { table, id }, Some(cancellation)) => {
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
             let check_cancellation = cancellation.clone();
             let cancel_wait = {
                 let cancellation = cancellation.clone();
@@ -113,6 +128,7 @@ pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
             Ok(Value::Null)
         }
         (Mutation::Delete { table, id }, None) => {
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
             service
                 .delete_document_async_with(
                     tenant_id.clone(),

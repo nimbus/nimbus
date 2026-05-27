@@ -5,6 +5,8 @@ mod read;
 mod resource_paths;
 mod scan;
 mod schema_rewrite;
+pub(crate) mod table_catalog;
+mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
@@ -13,15 +15,17 @@ use std::sync::Arc;
 
 use nimbus_core::{
     CommitEntry, Document, Error, IndexDefinition, JobId, ResourcePathBinding, Result,
-    ScheduledJob, SequenceNumber, WriteOp,
+    ScheduledJob, SequenceNumber, TenantEventKind, WriteOp,
 };
 use redb::{Database, ReadTransaction, TableDefinition};
 
 use self::scan::ScanMetrics;
 #[cfg(test)]
 pub(crate) use self::scan::ScanStats;
+use crate::RetentionFloor;
 use crate::simulation::{Clock, FaultInjector};
 
+pub(crate) use journal_snapshot::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
 pub use journal_snapshot::MaterializedJournalSnapshot;
 pub use journal_stream::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
@@ -30,6 +34,7 @@ pub use journal_stream::{
 
 pub(crate) const DOCUMENTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("documents");
 pub(crate) const INDEXES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("indexes");
+pub(crate) const TABLE_CATALOG: TableDefinition<&str, &str> = TableDefinition::new("table_catalog");
 pub(crate) const RESOURCE_PATH_BINDINGS: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("resource_path_bindings");
 pub(crate) const RESOURCE_PATH_LOOKUP: TableDefinition<&[u8], &[u8]> =
@@ -72,6 +77,7 @@ pub struct TenantStore {
     pub(crate) db: Database,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) fault_injector: Arc<dyn FaultInjector>,
+    pub(crate) retention_floor: Arc<RetentionFloor>,
     scan_metrics: Arc<ScanMetrics>,
 }
 
@@ -141,6 +147,7 @@ pub struct TenantWriteTransaction {
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
     commit_writes: Vec<WriteOp>,
+    tenant_events: Vec<TenantEventKind>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }
 

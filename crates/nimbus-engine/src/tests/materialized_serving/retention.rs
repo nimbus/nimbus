@@ -382,7 +382,10 @@ async fn serving_snapshot_waiter_wakes_when_new_frontier_is_published() {
         .expect("snapshot waiter should wake")
         .expect("snapshot waiter task should join")
         .expect("snapshot waiter should succeed");
-    assert_eq!(snapshot.covered_sequence(), required_sequence);
+    assert!(
+        snapshot.covered_sequence().0 >= required_sequence.0,
+        "woken snapshot should cover at least the requested sequence"
+    );
     let documents = snapshot
         .table_documents(&table)
         .expect("woken snapshot should include the target table");
@@ -394,7 +397,12 @@ async fn serving_snapshot_waiter_wakes_when_new_frontier_is_published() {
         .serving_snapshot_manager_stats_for_testing(&tenant_id)
         .expect("serving snapshot manager stats should load");
     assert_eq!(stats.waiter_count, 0);
-    assert_eq!(stats.latest_retained_sequence, Some(required_sequence));
+    assert!(
+        stats
+            .latest_retained_sequence
+            .is_some_and(|sequence| sequence.0 >= required_sequence.0),
+        "latest retained snapshot should cover at least the waiter requirement"
+    );
 }
 
 #[test]

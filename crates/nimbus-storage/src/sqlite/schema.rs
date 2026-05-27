@@ -17,7 +17,9 @@ impl SqliteTenantStore {
 
     pub fn replace_schema(&self, schema: &Schema) -> Result<()> {
         let current = self.load_schema()?;
-        if current == *schema {
+        let mut schema = schema.clone();
+        reconcile_schema_index_metadata(&mut schema, &current);
+        if current == schema {
             return Ok(());
         }
 
@@ -123,10 +125,10 @@ pub(super) fn create_sqlite_indexes_for_table_schema(
     conn: &Connection,
     table_schema: &TableSchema,
 ) -> Result<()> {
-    for index in &table_schema.indexes {
+    for index in table_schema.maintained_indexes() {
         let sql = format!(
             "CREATE INDEX IF NOT EXISTS \"{}\" ON documents ({})",
-            sqlite_index_name(&table_schema.table, &index.name),
+            sqlite_index_name(&index.id),
             sqlite_index_columns(&index.fields)
         );
         conn.execute_batch(&sql).map_err(map_sqlite_error)?;
@@ -139,10 +141,7 @@ pub(super) fn drop_sqlite_indexes_for_table_schema(
     table_schema: &TableSchema,
 ) -> Result<()> {
     for index in &table_schema.indexes {
-        let sql = format!(
-            "DROP INDEX IF EXISTS \"{}\"",
-            sqlite_index_name(&table_schema.table, &index.name)
-        );
+        let sql = format!("DROP INDEX IF EXISTS \"{}\"", sqlite_index_name(&index.id));
         conn.execute_batch(&sql).map_err(map_sqlite_error)?;
     }
     Ok(())
@@ -165,7 +164,7 @@ where
     Ok(format!(
         "SELECT id, creation_time, update_time, data_json, typed_fields_json
          FROM documents
-         WHERE table_name = ?1 AND {}
+         WHERE table_id = ?1 AND {}
          ORDER BY {}",
         where_clauses.join(" AND "),
         order_by
@@ -216,7 +215,7 @@ where
     Ok(format!(
         "SELECT id, creation_time, update_time, data_json, typed_fields_json
          FROM documents
-         WHERE table_name = ?1 AND {}
+         WHERE table_id = ?1 AND {}
          ORDER BY {}",
         clauses.join(" AND "),
         sqlite_order_by_fields_after_exact_prefix(fields, exact_prefix_len)
@@ -243,8 +242,7 @@ fn index_fields_for_schema(
         return Err(Error::SchemaNotFound(table.clone()));
     };
     table_schema
-        .indexes
-        .iter()
+        .queryable_indexes()
         .find(|definition| definition.name == index_name)
         .map(|definition| definition.fields.clone())
         .ok_or_else(|| {
@@ -255,12 +253,24 @@ fn index_fields_for_schema(
         })
 }
 
-fn sqlite_index_name(table: &TableName, index_name: &str) -> String {
-    format!(
-        "idx_{}_{}",
-        sanitize_identifier_component(table.as_str()),
-        sanitize_identifier_component(index_name)
-    )
+pub(super) fn reconcile_table_schema(
+    conn: &Connection,
+    table_schema: &TableSchema,
+) -> Result<TableSchema> {
+    let previous = load_table_schema_from_conn(conn, &table_schema.table)?;
+    let mut table_schema = table_schema.clone();
+    table_schema.reconcile_index_metadata(previous.as_ref());
+    Ok(table_schema)
+}
+
+fn reconcile_schema_index_metadata(schema: &mut Schema, current: &Schema) {
+    for (table, table_schema) in &mut schema.tables {
+        table_schema.reconcile_index_metadata(current.tables.get(table));
+    }
+}
+
+fn sqlite_index_name(index_id: &nimbus_core::IndexId) -> String {
+    format!("idx_{}", sanitize_identifier_component(index_id.as_str()))
 }
 
 fn sqlite_index_columns<S>(fields: &[S]) -> String
@@ -268,7 +278,7 @@ where
     S: AsRef<str>,
 {
     let mut columns = Vec::with_capacity(fields.len() + 2);
-    columns.push("table_name".to_string());
+    columns.push("table_id".to_string());
     columns.extend(fields.iter().map(|field| json_extract_expr(field.as_ref())));
     columns.push("id".to_string());
     columns.join(", ")

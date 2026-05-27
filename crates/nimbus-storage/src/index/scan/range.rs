@@ -10,7 +10,10 @@ use crate::store::{DOCUMENTS, INDEXES, map_redb_error};
 use super::super::bounds::composite_range_scan_bounds;
 use super::super::encoding::encode_index_value;
 use super::super::keyspace::{doc_id_from_index_key, encoded_value_from_index_key, index_prefix};
-use super::read::{decode_document, scan_documents_for_index_key_bounds_in_read_txn};
+use super::read::{
+    decode_document, resolve_queryable_index_in_read_txn,
+    scan_documents_for_index_key_bounds_in_read_txn,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn index_scan_range_in_read_txn(
@@ -23,6 +26,10 @@ pub(super) fn index_scan_range_in_read_txn(
     end_inclusive: bool,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
+    let Some((table_id, index)) = resolve_queryable_index_in_read_txn(read_txn, table, index_name)?
+    else {
+        return Ok(Vec::new());
+    };
     let index_table = match read_txn.open_table(INDEXES) {
         Ok(index_table) => index_table,
         Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
@@ -34,7 +41,7 @@ pub(super) fn index_scan_range_in_read_txn(
         Err(error) => return Err(map_redb_error(error)),
     };
 
-    let prefix = index_prefix(table, index_name);
+    let prefix = index_prefix(&table_id, &index.id);
     let prefix_len = prefix.len();
     let start = start.map(encode_index_value).transpose()?;
     let end = end.map(encode_index_value).transpose()?;
@@ -66,7 +73,7 @@ pub(super) fn index_scan_range_in_read_txn(
         }
 
         let doc_id = doc_id_from_index_key(key.value());
-        let doc_key = document_key(table, &doc_id);
+        let doc_key = document_key(&table_id, &doc_id);
         if let Some(value) = documents_table
             .get(doc_key.as_slice())
             .map_err(map_redb_error)?
@@ -89,9 +96,13 @@ pub(super) fn index_scan_composite_range_in_read_txn(
     end_inclusive: bool,
     check_cancel: &mut dyn FnMut() -> Result<()>,
 ) -> Result<Vec<Document>> {
+    let Some((table_id, index)) = resolve_queryable_index_in_read_txn(read_txn, table, index_name)?
+    else {
+        return Ok(Vec::new());
+    };
     let (match_prefix, start_key, end_key) = composite_range_scan_bounds(
-        table,
-        index_name,
+        &table_id,
+        &index.id,
         exact_prefix,
         start,
         end,
@@ -104,7 +115,7 @@ pub(super) fn index_scan_composite_range_in_read_txn(
 
     scan_documents_for_index_key_bounds_in_read_txn(
         read_txn,
-        table,
+        &table_id,
         &match_prefix,
         &start_key,
         end_key.as_deref(),

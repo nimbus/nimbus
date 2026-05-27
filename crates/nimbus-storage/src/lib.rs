@@ -2,9 +2,11 @@
 
 pub mod async_storage;
 pub mod commit_log;
+pub mod diagnostics;
 pub mod document_codec;
 pub mod encrypted_redb;
 pub mod encryption;
+pub mod format;
 pub mod index;
 pub mod keys;
 pub mod libsql;
@@ -12,12 +14,15 @@ pub mod materializer;
 pub mod mysql;
 pub mod postgres;
 pub mod query_read;
+pub mod retention;
 mod runtime_bridge;
 pub mod scheduler;
 pub mod schema_store;
 pub mod simulation;
 pub mod sqlite;
 pub mod store;
+mod table_identity;
+pub mod traits;
 pub mod usage_store;
 
 pub use async_storage::{
@@ -25,6 +30,7 @@ pub use async_storage::{
     EmbeddedRedbProvider, EmbeddedSqliteProvider, RedbTenantStorage, RedbUsageStorage,
     SqliteTenantStorage, TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage,
 };
+pub use diagnostics::{StorageCapabilities, StorageHealthDiagnostic};
 pub use encrypted_redb::{
     ENCRYPTED_FORMAT_VERSION, EncryptedFileBackend, EncryptedMemoryBackend, LOGICAL_PAGE_SIZE,
     PHYSICAL_PAGE_SIZE,
@@ -37,6 +43,10 @@ pub use encryption::{
     LocalKeySubjectKind, ManifestCipher, ManifestError, ManifestReadError, ManifestWriteError,
     MasterKeyFileProvider, WrappedDatabaseKey, generate_database_manifest,
     resolve_database_encryption_key, unwrap_database_manifest_key,
+};
+pub use format::{
+    CURRENT_STORAGE_FORMAT_VERSION, StorageFormatVersion, storage_format_version,
+    validate_storage_format_version,
 };
 pub use libsql::{
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaProvider,
@@ -55,6 +65,9 @@ pub use postgres::{
     PostgresTenantStorage, PostgresTenantStore, PostgresWriteTransaction,
 };
 pub use query_read::QueryReadStore;
+pub use retention::{
+    HardDeleteDecision, RetentionFloor, RetentionParticipant, RetentionPin, RetentionPinGuard,
+};
 pub use simulation::{
     Clock, DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
     GeneratedTaskHistoryModel, GeneratedTaskHistorySeedCase, GeneratedTaskHistoryStep,
@@ -81,6 +94,15 @@ pub use store::{
     JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot,
     ResolvedScheduleOp, ResolvedWrite, TenantReadSnapshot, TenantStore, TenantWriteCommit,
     TenantWriteTransaction,
+};
+pub use table_identity::{
+    TableBackendLayout, TableIdentityDiagnostic, TableIdentitySnapshotEntry,
+    TableLifecycleStateMachine, TableLifecycleTransition, TableSummaryStatus,
+    apply_table_lifecycle_transition,
+};
+pub use traits::{
+    ControlPlaneUsage, DurableJournal, KeyProviderSurface, SchedulerStore, StorageEngine,
+    TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
 };
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
 

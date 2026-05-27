@@ -703,7 +703,7 @@ mod tests {
             .with_guest_port(5432),
         ]))
         .with_storage(TenantStoragePolicyDecision::namespace("tenant-a"))
-        .with_volumes(TenantVolumePolicyDecision::new(["cache"]))
+        .with_volumes(TenantVolumePolicyDecision::new(["cache"])) // 002-auth-caching-policy: volume fixture name, not auth cache
         .with_image(TenantImagePolicyDecision::digest_pinned(
             "registry.example.com/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ))

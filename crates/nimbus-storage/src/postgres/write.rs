@@ -381,6 +381,7 @@ impl PostgresWriteTransaction {
             schema_cache: store.schema_cache.clone(),
             client: Some(client),
             commit_writes: Vec::new(),
+            tenant_events: Vec::new(),
             trigger_write_origin: None,
             notification: PendingPostgresNotification::default(),
             schema_cache_changed: false,
@@ -401,24 +402,38 @@ impl PostgresWriteTransaction {
 
     pub fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
         self.check_cancel()?;
-        if let Some(previous) = self.load_table_schema(&table_schema.table)? {
+        let table_id = self.resolve_or_create_table_id(&table_schema.table)?;
+        let previous = self.load_table_schema(&table_schema.table)?;
+        let mut table_schema = table_schema.clone();
+        table_schema.reconcile_index_metadata(previous.as_ref());
+        if let Some(previous) = previous.as_ref() {
             self.drop_table_indexes(&previous)?;
         }
-        self.upsert_table_schema(table_schema)?;
-        self.create_table_indexes(table_schema)?;
+        self.upsert_table_schema(&table_schema)?;
+        self.create_table_indexes(&table_schema)?;
         self.notification.schema_changed = true;
         self.schema_cache_changed = true;
+        record_postgres_schema_set_events(self, table_id, previous, &table_schema);
         Ok(())
     }
 
     pub fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
         self.check_cancel()?;
-        if let Some(previous) = self.load_table_schema(table)? {
+        let previous = self.load_table_schema(table)?;
+        let table_id = self.load_table_id(table)?;
+        if let Some(previous) = previous.as_ref() {
             self.drop_table_indexes(&previous)?;
         }
         self.delete_table_schema_entry(table)?;
         self.notification.schema_changed = true;
         self.schema_cache_changed = true;
+        self.record_tenant_event(TenantEventKind::SchemaChange {
+            change: SchemaChangeEvent::DeleteTable {
+                table: table.clone(),
+                table_id,
+                previous,
+            },
+        });
         Ok(())
     }
 
@@ -426,20 +441,26 @@ impl PostgresWriteTransaction {
         self.check_cancel()?;
         let schema_name = self.schema_name.clone();
         let execution_id = execution_id.map(str::to_string);
+        let event_execution_id = execution_id.clone();
         let client = self.session()?;
-        self.block_on(async move {
+        let inserted = self.block_on(async move {
             begin_scheduled_execution_in_session(client, &schema_name, execution_id.as_deref())
                 .await
-        })
+        })?;
+        if inserted && let Some(execution_id) = event_execution_id {
+            self.record_tenant_event(TenantEventKind::ScheduledExecution { execution_id });
+        }
+        Ok(inserted)
     }
 
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
         self.check_cancel()?;
+        let table_id = self.resolve_or_create_table_id(&document.table)?;
+        let write_table_id = table_id.clone();
         let query = format!(
-            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO {} (table_id, id, data_json, typed_fields_json, creation_time, update_time) VALUES ($1, $2, $3, $4, $5, $6)",
             qualified_table(&self.schema_name, "documents")
         );
-        let table = document.table.as_str().to_string();
         let id = document.id.to_string();
         let data_json = serialize_document_fields(document)?;
         let typed_fields_json = serialize_document_typed_fields(document)?;
@@ -451,7 +472,7 @@ impl PostgresWriteTransaction {
                 .execute(
                     query.as_str(),
                     &[
-                        &table,
+                        &table_id.as_str(),
                         &id,
                         &data_json,
                         &typed_fields_json,
@@ -465,6 +486,7 @@ impl PostgresWriteTransaction {
         })?;
         self.record_commit_write(WriteOp {
             table: document.table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Insert,
             doc_id: document.id.clone(),
             resource_path_binding: None,
@@ -495,12 +517,15 @@ impl PostgresWriteTransaction {
         }
         document.update_time = self.provider.clock.now();
         validate(&existing_document, &document)?;
+        let table_id = self
+            .load_table_id(table)?
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
+        let write_table_id = table_id.clone();
 
         let query = format!(
-            "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_name = $1 AND id = $2",
+            "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_id = $1 AND id = $2",
             qualified_table(&self.schema_name, "documents")
         );
-        let table_name = table.as_str().to_string();
         let document_id = id.to_string();
         let data_json = serialize_document_fields(&document)?;
         let typed_fields_json = serialize_document_typed_fields(&document)?;
@@ -512,7 +537,7 @@ impl PostgresWriteTransaction {
                 .execute(
                     query.as_str(),
                     &[
-                        &table_name,
+                        &table_id.as_str(),
                         &document_id,
                         &data_json,
                         &typed_fields_json,
@@ -529,6 +554,7 @@ impl PostgresWriteTransaction {
         )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Update,
             doc_id: id.clone(),
             resource_path_binding,
@@ -553,17 +579,20 @@ impl PostgresWriteTransaction {
             .load_document(table, id)?
             .ok_or(Error::DocumentNotFound(id.clone()))?;
         validate(&removed_document)?;
+        let table_id = self
+            .load_table_id(table)?
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
+        let write_table_id = table_id.clone();
 
         let query = format!(
-            "DELETE FROM {} WHERE table_name = $1 AND id = $2",
+            "DELETE FROM {} WHERE table_id = $1 AND id = $2",
             qualified_table(&self.schema_name, "documents")
         );
-        let table_name = table.as_str().to_string();
         let document_id = id.to_string();
         let client = self.session()?;
         self.block_on(async move {
             client
-                .execute(query.as_str(), &[&table_name, &document_id])
+                .execute(query.as_str(), &[&table_id.as_str(), &document_id])
                 .await
                 .map_err(map_postgres_error)?;
             Ok(())
@@ -573,6 +602,7 @@ impl PostgresWriteTransaction {
         )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Delete,
             doc_id: id.clone(),
             resource_path_binding,
@@ -915,12 +945,18 @@ impl PostgresWriteTransaction {
                         current.id
                     )));
                 }
+                let table_id =
+                    self.load_table_id(&current.table)?
+                        .ok_or(Error::Conflict(format!(
+                            "document {} changed before transaction commit",
+                            current.id
+                        )))?;
+                let write_table_id = table_id.clone();
 
                 let query = format!(
-                    "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_name = $1 AND id = $2",
+                    "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_id = $1 AND id = $2",
                     qualified_table(&self.schema_name, "documents")
                 );
-                let table_name = current.table.as_str().to_string();
                 let document_id = current.id.to_string();
                 let data_json = serialize_document_fields(current)?;
                 let typed_fields_json = serialize_document_typed_fields(current)?;
@@ -932,7 +968,7 @@ impl PostgresWriteTransaction {
                         .execute(
                             query.as_str(),
                             &[
-                                &table_name,
+                                &table_id.as_str(),
                                 &document_id,
                                 &data_json,
                                 &typed_fields_json,
@@ -946,6 +982,7 @@ impl PostgresWriteTransaction {
                 })?;
                 self.record_commit_write(WriteOp {
                     table: current.table.clone(),
+                    table_id: write_table_id,
                     op_type: WriteOpType::Update,
                     doc_id: current.id.clone(),
                     resource_path_binding: resource_path_binding.clone(),
@@ -972,17 +1009,23 @@ impl PostgresWriteTransaction {
                         previous.id
                     )));
                 }
+                let table_id =
+                    self.load_table_id(&previous.table)?
+                        .ok_or(Error::Conflict(format!(
+                            "document {} changed before transaction commit",
+                            previous.id
+                        )))?;
+                let write_table_id = table_id.clone();
 
                 let query = format!(
-                    "DELETE FROM {} WHERE table_name = $1 AND id = $2",
+                    "DELETE FROM {} WHERE table_id = $1 AND id = $2",
                     qualified_table(&self.schema_name, "documents")
                 );
-                let table_name = previous.table.as_str().to_string();
                 let document_id = previous.id.to_string();
                 let client = self.session()?;
                 self.block_on(async move {
                     client
-                        .execute(query.as_str(), &[&table_name, &document_id])
+                        .execute(query.as_str(), &[&table_id.as_str(), &document_id])
                         .await
                         .map_err(map_postgres_error)?;
                     Ok(())
@@ -992,6 +1035,7 @@ impl PostgresWriteTransaction {
                 )?;
                 self.record_commit_write(WriteOp {
                     table: previous.table.clone(),
+                    table_id: write_table_id,
                     op_type: WriteOpType::Delete,
                     doc_id: previous.id.clone(),
                     resource_path_binding,
@@ -1006,11 +1050,20 @@ impl PostgresWriteTransaction {
 
     pub fn commit(mut self) -> Result<Option<CommitEntry>> {
         self.check_cancel()?;
-        let commit = if self.commit_writes.is_empty() {
+        let writes = std::mem::take(&mut self.commit_writes);
+        if !writes.is_empty() {
+            self.tenant_events.insert(
+                0,
+                TenantEventKind::DocumentWrite {
+                    writes: writes.clone(),
+                },
+            );
+        }
+        let commit = if self.tenant_events.is_empty() {
             None
         } else {
-            let writes = std::mem::take(&mut self.commit_writes);
-            Some(self.append_commit_entry(writes)?)
+            let events = std::mem::take(&mut self.tenant_events);
+            Some(self.append_commit_entry(writes, events)?)
         };
         self.enqueue_notification()?;
         self.provider
@@ -1106,11 +1159,17 @@ impl PostgresWriteTransaction {
         })
     }
 
-    fn append_commit_entry(&mut self, writes: Vec<WriteOp>) -> Result<CommitEntry> {
+    fn append_commit_entry(
+        &mut self,
+        writes: Vec<WriteOp>,
+        events: Vec<TenantEventKind>,
+    ) -> Result<CommitEntry> {
         let sequence = SequenceNumber(self.latest_sequence()?.0.saturating_add(1));
+        let timestamp = self.provider.clock.now();
+        let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
         let entry = CommitEntry {
             sequence,
-            timestamp: self.provider.clock.now(),
+            timestamp,
             writes,
         };
         let query = format!(
@@ -1118,7 +1177,7 @@ impl PostgresWriteTransaction {
             qualified_table(&self.schema_name, "commit_log")
         );
         let sequence_i64 = i64_from_sequence(entry.sequence)?;
-        let payload = serialize_commit(&entry)?;
+        let payload = serialize_tenant_event_record(&record)?;
         let client = self.session()?;
         self.block_on(async move {
             client
@@ -1160,7 +1219,23 @@ impl PostgresWriteTransaction {
         )
     }
 
-    fn load_table_schema(&mut self, table: &TableName) -> Result<Option<TableSchema>> {
+    pub(super) fn load_table_id(&mut self, table: &TableName) -> Result<Option<TableId>> {
+        let schema_name = self.schema_name.clone();
+        let table = table.clone();
+        let client = self.session()?;
+        self.block_on(async move { load_table_id_from_session(client, &schema_name, &table).await })
+    }
+
+    fn resolve_or_create_table_id(&mut self, table: &TableName) -> Result<TableId> {
+        let schema_name = self.schema_name.clone();
+        let table = table.clone();
+        let client = self.session()?;
+        self.block_on(async move {
+            resolve_or_create_table_id_in_session(client, &schema_name, &table).await
+        })
+    }
+
+    pub(super) fn load_table_schema(&mut self, table: &TableName) -> Result<Option<TableSchema>> {
         let schema_name = self.schema_name.clone();
         let table = table.clone();
         let client = self.session()?;
@@ -1187,7 +1262,7 @@ impl PostgresWriteTransaction {
         })
     }
 
-    fn delete_table_schema_entry(&mut self, table: &TableName) -> Result<()> {
+    pub(super) fn delete_table_schema_entry(&mut self, table: &TableName) -> Result<()> {
         let query = format!(
             "DELETE FROM {} WHERE table_name = $1",
             qualified_table(&self.schema_name, "schemas")
@@ -1212,7 +1287,7 @@ impl PostgresWriteTransaction {
         })
     }
 
-    fn drop_table_indexes(&mut self, table_schema: &TableSchema) -> Result<()> {
+    pub(super) fn drop_table_indexes(&mut self, table_schema: &TableSchema) -> Result<()> {
         let schema_name = self.schema_name.clone();
         let table_schema = table_schema.clone();
         let client = self.session()?;
@@ -1232,10 +1307,16 @@ impl PostgresWriteTransaction {
     fn apply_durable_record(&mut self, record: &DurableMutationRecord) -> Result<()> {
         let schema_name = self.schema_name.clone();
         let record = record.clone();
+        let changes_schema_cache = durable_record_changes_schema_cache(&record);
         let client = self.session()?;
-        self.block_on(async move {
+        let result = self.block_on(async move {
             apply_durable_record_in_session(client, &schema_name, &record).await
-        })
+        });
+        if result.is_ok() && changes_schema_cache {
+            self.notification.schema_changed = true;
+            self.schema_cache_changed = true;
+        }
+        result
     }
 
     fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
@@ -1247,6 +1328,10 @@ impl PostgresWriteTransaction {
             write.trigger_write_origin = self.trigger_write_origin.clone();
         }
         self.commit_writes.push(write);
+    }
+
+    pub(super) fn record_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.push(event);
     }
 
     fn enqueue_notification(&mut self) -> Result<()> {
@@ -1271,4 +1356,43 @@ impl PostgresWriteTransaction {
             Ok(())
         })
     }
+}
+
+fn record_postgres_schema_set_events(
+    transaction: &mut PostgresWriteTransaction,
+    table_id: TableId,
+    previous: Option<TableSchema>,
+    table_schema: &TableSchema,
+) {
+    transaction.record_tenant_event(TenantEventKind::SchemaChange {
+        change: SchemaChangeEvent::SetTable {
+            table: table_schema.table.clone(),
+            table_id: table_id.clone(),
+            previous,
+            current: table_schema.clone(),
+        },
+    });
+    for index in &table_schema.indexes {
+        transaction.record_tenant_event(TenantEventKind::IndexLifecycle {
+            index: IndexLifecycleEvent {
+                table: table_schema.table.clone(),
+                table_id: table_id.clone(),
+                index_id: index.id.clone(),
+                state: index.state,
+                definition: index.clone(),
+            },
+        });
+    }
+}
+
+fn durable_record_changes_schema_cache(record: &DurableMutationRecord) -> bool {
+    record.events.iter().any(|event| {
+        matches!(
+            event,
+            TenantEventKind::SchemaChange { .. }
+                | TenantEventKind::TableLifecycle {
+                    lifecycle: TableLifecycleEvent::HardDelete { .. },
+                }
+        )
+    })
 }

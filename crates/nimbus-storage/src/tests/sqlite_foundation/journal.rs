@@ -53,11 +53,13 @@ fn sqlite_durable_journal_batch_append_enforces_no_holes() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
         .expect("sqlite tenant store should open");
+    let table_id = TableId::new();
     let first = DurableMutationRecord::new(
         SequenceNumber(1),
         Timestamp(10),
         vec![WriteOp {
             table: TableName::new("tasks").expect("table name should be valid"),
+            table_id: table_id.clone(),
             op_type: WriteOpType::Insert,
             doc_id: DocumentId::new(),
             resource_path_binding: None,
@@ -73,6 +75,7 @@ fn sqlite_durable_journal_batch_append_enforces_no_holes() {
         Timestamp(11),
         vec![WriteOp {
             table: TableName::new("tasks").expect("table name should be valid"),
+            table_id: table_id.clone(),
             op_type: WriteOpType::Insert,
             doc_id: DocumentId::new(),
             resource_path_binding: None,
@@ -103,6 +106,7 @@ fn sqlite_durable_journal_batch_append_enforces_no_holes() {
             Timestamp(12),
             vec![WriteOp {
                 table: TableName::new("tasks").expect("table name should be valid"),
+                table_id: table_id.clone(),
                 op_type: WriteOpType::Insert,
                 doc_id: DocumentId::new(),
                 resource_path_binding: None,
@@ -141,12 +145,14 @@ fn sqlite_recovery_replays_durable_but_unapplied_records() {
         .expect("sqlite tenant store should open");
     let first = sample_document("tasks", "First");
     let second = sample_document("tasks", "Second");
+    let table_id = TableId::new();
     let records = vec![
         DurableMutationRecord::new(
             SequenceNumber(1),
             Timestamp(100),
             vec![WriteOp {
                 table: first.table.clone(),
+                table_id: table_id.clone(),
                 op_type: WriteOpType::Insert,
                 doc_id: first.id.clone(),
                 resource_path_binding: None,
@@ -162,6 +168,7 @@ fn sqlite_recovery_replays_durable_but_unapplied_records() {
             Timestamp(101),
             vec![WriteOp {
                 table: second.table.clone(),
+                table_id: table_id.clone(),
                 op_type: WriteOpType::Insert,
                 doc_id: second.id.clone(),
                 resource_path_binding: None,
@@ -221,6 +228,188 @@ fn sqlite_recovery_replays_durable_but_unapplied_records() {
         .collect::<Vec<_>>();
     titles.sort_unstable();
     assert_eq!(titles, vec!["First", "Second"]);
+}
+
+#[test]
+fn sqlite_tenant_event_journal_replays_mixed_history() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let table_schema = ranked_tasks_schema();
+    let table = table_schema.table.clone();
+    let table_id = TableId::new();
+    let document = ranked_document(&table, "First", 1);
+    let record_schema = TenantEventRecord::from_events(
+        SequenceNumber(1),
+        Timestamp(10),
+        vec![
+            TenantEventKind::SchemaChange {
+                change: SchemaChangeEvent::SetTable {
+                    table: table.clone(),
+                    table_id: table_id.clone(),
+                    previous: None,
+                    current: table_schema.clone(),
+                },
+            },
+            TenantEventKind::IndexLifecycle {
+                index: IndexLifecycleEvent {
+                    table: table.clone(),
+                    table_id: table_id.clone(),
+                    index_id: table_schema.indexes[0].id.clone(),
+                    state: table_schema.indexes[0].state,
+                    definition: table_schema.indexes[0].clone(),
+                },
+            },
+        ],
+    )
+    .expect("schema tenant event should build");
+    let record_document = DurableMutationRecord::new(
+        SequenceNumber(2),
+        Timestamp(11),
+        vec![WriteOp {
+            table: table.clone(),
+            table_id: table_id.clone(),
+            op_type: WriteOpType::Insert,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(document.clone()),
+        }],
+        None,
+    )
+    .expect("document tenant event should build");
+    let record_trigger = TenantEventRecord::trigger_delivery(
+        SequenceNumber(3),
+        Timestamp(12),
+        TriggerDeliveryCursor::new(SequenceNumber(2)),
+    )
+    .expect("trigger tenant event should build");
+
+    store
+        .append_durable_records_batch(&[record_schema, record_document, record_trigger])
+        .expect("mixed tenant events should append");
+    let progress = store
+        .recover_durable_journal()
+        .expect("mixed tenant events should recover");
+
+    assert_eq!(progress.applied_head, SequenceNumber(3));
+    assert_eq!(
+        store.load_schema().expect("schema should replay"),
+        Schema {
+            tables: std::collections::HashMap::from_iter([(table.clone(), table_schema.clone())]),
+        }
+    );
+    assert_eq!(
+        store
+            .scan_table(&table)
+            .expect("documents should replay through tenant event"),
+        vec![document]
+    );
+    assert_eq!(
+        store
+            .index_scan_eq(&table, "by_rank", &json!(1))
+            .expect("index should replay"),
+        store.scan_table(&table).expect("scan should replay")
+    );
+    assert_eq!(
+        store
+            .trigger_delivery_cursor()
+            .expect("trigger cursor should replay"),
+        TriggerDeliveryCursor::new(SequenceNumber(2))
+    );
+}
+
+#[test]
+fn sqlite_durable_replay_retires_recreated_table_identity() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let table = TableName::new("tasks_replayed_lifecycle").expect("table should parse");
+    let old_table_id = TableId::new();
+    let new_table_id = TableId::new();
+    let old_document = nimbus_core::Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([("title".to_string(), json!("old"))]),
+    );
+    let new_document = nimbus_core::Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([("title".to_string(), json!("new"))]),
+    );
+    let records = vec![
+        DurableMutationRecord::new(
+            SequenceNumber(1),
+            Timestamp(1),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: old_table_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: old_document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(old_document.clone()),
+            }],
+            None,
+        )
+        .expect("old durable record should build"),
+        DurableMutationRecord::new(
+            SequenceNumber(2),
+            Timestamp(2),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: new_table_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: new_document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(new_document.clone()),
+            }],
+            None,
+        )
+        .expect("new durable record should build"),
+    ];
+
+    store
+        .apply_durable_records_batch(&records)
+        .expect("durable replay should infer table recreation");
+
+    assert_eq!(
+        store
+            .table_id(&table)
+            .expect("active table id should resolve"),
+        Some(new_table_id.clone())
+    );
+    assert!(
+        store
+            .get(&table, &old_document.id)
+            .expect("logical get should use active replacement")
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .scan_table(&table)
+            .expect("scan should use active replacement"),
+        vec![new_document]
+    );
+    let identities = store
+        .read_snapshot()
+        .expect("snapshot should open")
+        .table_identities()
+        .expect("table identities should export");
+    assert!(identities.iter().any(|identity| {
+        identity.namespace == crate::table_identity::DEFAULT_TABLE_NAMESPACE
+            && identity.table == table
+            && identity.table_id == new_table_id
+            && identity.state == nimbus_core::TableState::Active
+    }));
+    assert!(identities.iter().any(|identity| {
+        identity.namespace == crate::table_identity::deleting_table_namespace(&old_table_id)
+            && identity.table == table
+            && identity.table_id == old_table_id
+            && identity.state == nimbus_core::TableState::Deleting
+    }));
 }
 
 #[test]

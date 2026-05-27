@@ -100,6 +100,20 @@ test -f "${output_dir}/render/manifests/nimbus-crun-deb.yaml"
 test -f "${output_dir}/render/manifests/nimbus-crun-rpm.yaml"
 test -f "${output_dir}/render/manifests/nimbus-bun-jsc-adapter-deb.yaml"
 test -f "${output_dir}/render/manifests/nimbus-bun-jsc-adapter-rpm.yaml"
+for package in nimbus nimbus-libkrun nimbus-crun nimbus-bun-jsc-adapter; do
+  staged_license="${output_dir}/render/staging/${package}/usr/share/doc/${package}/LICENSE"
+  staged_copyright="${output_dir}/render/staging/${package}/usr/share/doc/${package}/copyright"
+  test -f "${staged_license}"
+  test -f "${staged_copyright}"
+  cmp -s "${repo_root}/LICENSE" "${staged_license}"
+  cmp -s "${repo_root}/LICENSE" "${staged_copyright}"
+  for format in deb rpm; do
+    manifest="${output_dir}/render/manifests/${package}-${format}.yaml"
+    grep -F "license: Nimbus-Community-1.0" "${manifest}" >/dev/null
+    grep -F "dst: /usr/share/doc/${package}/LICENSE" "${manifest}" >/dev/null
+    grep -F "dst: /usr/share/doc/${package}/copyright" "${manifest}" >/dev/null
+  done
+done
 
 grep -F "dst: /usr/bin/nimbus" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
 grep -F "dst: /usr/libexec/nimbus/crun" "${output_dir}/render/manifests/nimbus-crun-rpm.yaml" >/dev/null
@@ -148,7 +162,7 @@ if command -v nfpm >/dev/null 2>&1; then
   grep -F ".rpm" "${output_dir}/packaged/packages/checksums-sha256.txt" >/dev/null
   grep -F "result=packaged" "${output_dir}/package-summary.txt" >/dev/null
   grep -F "packages.checksums=${packaged_root}/packages/checksums-sha256.txt" "${output_dir}/package-summary.txt" >/dev/null
-  printf 'verified: linux package builder rendered and built deb/rpm artifacts, including optional nimbus-bun-jsc-adapter\n'
+  printf 'verified: linux package builder rendered and built deb/rpm artifacts with package license and copyright files, including optional nimbus-bun-jsc-adapter\n'
 else
-  printf 'verified: linux package builder rendered deterministic nimbus/nimbus-libkrun/nimbus-crun/nimbus-bun-jsc-adapter deb/rpm manifests (nfpm not installed; package build skipped)\n'
+  printf 'verified: linux package builder rendered deterministic nimbus/nimbus-libkrun/nimbus-crun/nimbus-bun-jsc-adapter deb/rpm manifests with package license and copyright files (nfpm not installed; package build skipped)\n'
 fi

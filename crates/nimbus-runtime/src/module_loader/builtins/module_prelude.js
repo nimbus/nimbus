@@ -42,6 +42,7 @@ const internalFsUtils = denoLoad("internal/fs/utils", null, false);
 const internalConsoleConstructor = denoLoad("internal/console/constructor", null, false);
 const internalErrors = denoLoad("internal/errors", null, false);
 const utilModule = denoLoad("util", null, false);
+const vmBuiltin = denoGetBuiltinModule("vm");
 const inspectCustomSymbol = Symbol.for("nodejs.util.inspect.custom");
 const ERR_SOCKET_BUFFER_SIZE =
   internalErrors?.codes?.ERR_SOCKET_BUFFER_SIZE ?? internalErrors?.ERR_SOCKET_BUFFER_SIZE;
@@ -167,6 +168,131 @@ function cloneBuiltinModuleWithOverrides(builtinModule, overrides = {}) {
     Object.setPrototypeOf(clone, prototype);
   }
   return Object.freeze(clone);
+}
+
+function normalizeVmScriptOptions(options) {
+  if (typeof options === "string") {
+    return { filename: options };
+  }
+  if (options && typeof options === "object") {
+    return options;
+  }
+  return {};
+}
+
+function vmSourceFailureColumn(sourceLine) {
+  const constructorOffset = sourceLine.indexOf("new ");
+  if (constructorOffset >= 0) {
+    return constructorOffset + 1;
+  }
+  const throwOffset = sourceLine.indexOf("throw");
+  if (throwOffset >= 0) {
+    return throwOffset + 1;
+  }
+  const firstTokenOffset = sourceLine.search(/\S/);
+  return firstTokenOffset >= 0 ? firstTokenOffset + 1 : 1;
+}
+
+function vmSourceCaret(sourceLine) {
+  const indent = sourceLine.match(/^\s*/)?.[0]?.length ?? 0;
+  return `${" ".repeat(Math.max(1, indent))}^`;
+}
+
+function stripVmDisplayErrorPreamble(stack, filename, lineNumber, sourceLine) {
+  if (typeof stack !== "string" || !stack.startsWith(`${filename}:${lineNumber}`)) {
+    return stack;
+  }
+  const lines = stack.split("\n");
+  if (lines.length < 4 || lines[1] !== sourceLine) {
+    return stack;
+  }
+  let tailStart = 2;
+  if (/^\s*\^/.test(lines[tailStart] ?? "")) {
+    tailStart += 1;
+  }
+  if (lines[tailStart] === "") {
+    tailStart += 1;
+  }
+  return lines.slice(tailStart).join("\n");
+}
+
+function decorateVmDisplayErrorStack(error, code, options) {
+  if (!error || typeof error !== "object") {
+    return;
+  }
+  const scriptOptions = normalizeVmScriptOptions(options);
+  if (scriptOptions.displayErrors === false) {
+    return;
+  }
+
+  const filename = typeof scriptOptions.filename === "string" && scriptOptions.filename.length > 0
+    ? scriptOptions.filename
+    : "evalmachine.<anonymous>";
+  const lineOffset = Number.isInteger(scriptOptions.lineOffset) ? scriptOptions.lineOffset : 0;
+  const columnOffset = Number.isInteger(scriptOptions.columnOffset) ? scriptOptions.columnOffset : 0;
+  const source = String(code);
+  const sourceLine = source.split(/\r\n|\n|\r/, 1)[0] ?? "";
+  const lineNumber = lineOffset + 1;
+  const columnNumber = columnOffset + vmSourceFailureColumn(sourceLine);
+  const errorName = typeof error.name === "string" && error.name.length > 0
+    ? error.name
+    : "Error";
+  const errorMessage = typeof error.message === "string" && error.message.length > 0
+    ? `: ${error.message}`
+    : "";
+  const currentStack = error.stack;
+  const stackTail =
+    typeof currentStack === "string" && currentStack.length > 0 && currentStack !== "null"
+      ? stripVmDisplayErrorPreamble(currentStack, filename, lineNumber, sourceLine)
+      : [
+        `${errorName}${errorMessage}`,
+        `    at ${filename}:${lineNumber}:${columnNumber}`,
+      ].join("\n");
+  const fallbackStack = [
+    `${filename}:${lineNumber}`,
+    sourceLine,
+    vmSourceCaret(sourceLine),
+    "",
+    stackTail.includes(`${filename}:${lineNumber}:${columnNumber}`)
+      ? stackTail
+      : `${stackTail}\n    at ${filename}:${lineNumber}:${columnNumber}`,
+  ].join("\n");
+
+  Object.defineProperty(error, "stack", {
+    value: fallbackStack,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+}
+
+function createVmDisplayErrorWrapper(methodName) {
+  const originalMethod = vmBuiltin?.[methodName];
+  if (typeof originalMethod !== "function") {
+    return undefined;
+  }
+  return function nimbusVmDisplayErrorWrapper(code, context, options) {
+    try {
+      return Reflect.apply(originalMethod, this, arguments);
+    } catch (error) {
+      decorateVmDisplayErrorStack(error, code, options);
+      throw error;
+    }
+  };
+}
+
+function createNimbusVmModule() {
+  if (!vmBuiltin || typeof vmBuiltin !== "object") {
+    throw new Error("Nimbus Node22 bootstrap expected vm builtin to be available");
+  }
+  const overrides = {};
+  for (const methodName of ["runInContext", "runInNewContext"]) {
+    const wrapper = createVmDisplayErrorWrapper(methodName);
+    if (wrapper !== undefined) {
+      overrides[methodName] = wrapper;
+    }
+  }
+  return cloneBuiltinModuleWithOverrides(vmBuiltin, overrides);
 }
 
 function createNimbusInternalDgramModule() {
@@ -781,4 +907,3 @@ function createNimbusReadlinePromisesModule() {
     },
   };
 }
-

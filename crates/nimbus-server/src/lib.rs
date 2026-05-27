@@ -6,6 +6,7 @@ mod construction;
 mod error_envelope;
 mod execution;
 mod http;
+mod latency;
 mod license;
 mod local_server;
 mod machine_lifecycle;

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use clap::Args;
 use nimbus::{
     HostBridge, HostCallRequest, InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle,
-    RuntimeLimits, RuntimePolicy,
+    RuntimeExecutionModel, RuntimeLimits, RuntimePolicy, RuntimePoolKind,
 };
 use tokio::process::Command;
 
@@ -292,9 +292,12 @@ async fn run_embedded_codegen_for_app_dir(
         auth: None,
         services: Default::default(),
     };
+    let mut limits = RuntimeLimits::tooling_node22();
+    limits.execution_model = RuntimeExecutionModel::RunToCompletion;
+    limits.runtime_pool_kind = RuntimePoolKind::StartupSnapshotCache;
     let runtime = NimbusRuntime::with_policy(
         Arc::new(EmbeddedCodegenHost),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
+        Arc::new(RuntimePolicy::new(limits)),
     );
     let result = runtime
         .invoke_bundle(&bundle, &request)

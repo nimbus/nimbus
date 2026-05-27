@@ -163,10 +163,20 @@ pub(crate) fn filter(field: &str, op: FilterOp, value: serde_json::Value) -> Fil
 pub(crate) fn materialized_snapshot_with_documents(
     documents: Vec<nimbus_core::Document>,
 ) -> crate::MaterializedJournalSnapshot {
+    let table_identities = documents
+        .iter()
+        .map(|document| document.table.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|table| {
+            crate::TableIdentitySnapshotEntry::default_namespace(table, nimbus_core::TableId::new())
+        })
+        .collect();
     crate::MaterializedJournalSnapshot {
-        version: 1,
+        version: 2,
         applied_sequence: SequenceNumber(1),
         durable_head: SequenceNumber(1),
+        table_identities,
         schema: nimbus_core::Schema::default(),
         documents,
         scheduled_execution_ids: Vec::new(),

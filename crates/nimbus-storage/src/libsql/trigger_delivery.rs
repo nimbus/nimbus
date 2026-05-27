@@ -35,6 +35,8 @@ impl LibsqlReplicaWriteTransaction {
                 cursor.materialized_through.0,
             )
             .await
-        })
+        })?;
+        self.record_tenant_event(TenantEventKind::TriggerDelivery { cursor });
+        Ok(())
     }
 }

@@ -400,10 +400,25 @@ async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
         .drain_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger candidates should drain");
     assert_eq!(candidates.len(), 2);
+    let commit_prefixes = candidates
+        .iter()
+        .map(|candidate| {
+            candidate
+                .event_id
+                .split(':')
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(":")
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        commit_prefixes.len(),
+        1,
+        "bootstrap should replay candidates from one document commit: {candidates:?}"
+    );
     assert!(
-        candidates
-            .iter()
-            .all(|candidate| candidate.event_id.starts_with("commit:2:"))
+        !commit_prefixes.contains("commit:1"),
+        "bootstrap should only replay commits after the persisted cursor: {candidates:?}"
     );
 }
 

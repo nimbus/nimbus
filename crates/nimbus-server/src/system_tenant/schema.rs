@@ -281,8 +281,5 @@ fn any(name: &str, required: bool) -> FieldSchema {
 }
 
 fn index(name: &str, fields: &[&str]) -> IndexDefinition {
-    IndexDefinition {
-        name: name.to_string(),
-        fields: fields.iter().map(|field| (*field).to_string()).collect(),
-    }
+    IndexDefinition::new(name, fields.iter().copied())
 }

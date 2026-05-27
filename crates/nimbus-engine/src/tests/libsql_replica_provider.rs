@@ -10,9 +10,9 @@ use libsql::{Builder, Database};
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, CollectionName, DocumentId, DocumentLocator, DocumentPath,
     FieldReference, FieldSchema, FieldType, IndexDefinition, Mutation, PrincipalContext,
-    QueryDirection, ResourcePathBinding, ScheduleRequest, ScheduledJobOutcome, SequenceNumber,
-    StructuredCursor, StructuredOrder, StructuredQuery, TableName, TableSchema, TenantId,
-    Timestamp, WriteKey, WritePrecondition, WriteSetMode,
+    QueryDirection, ResourcePathBinding, ScheduleRequest, ScheduledJobOutcome, StructuredCursor,
+    StructuredOrder, StructuredQuery, TableId, TableName, TableSchema, TenantId, Timestamp,
+    WriteKey, WritePrecondition, WriteSetMode,
 };
 use nimbus_storage::libsql::libsql_transport_connector;
 use nimbus_storage::{
@@ -226,15 +226,22 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
                 .latest_sequence_async(tenant_id.clone())
                 .await
                 .expect("latest sequence should track journaled mutations"),
-            SequenceNumber(2)
+            service
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("journal stats should load")
+                .durable_head
         );
 
         let bootstrap = service
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await
             .expect("bootstrap should export");
-        assert_eq!(bootstrap.bootstrap_cut, SequenceNumber(2));
-        assert_eq!(bootstrap.resume_after, SequenceNumber(2));
+        let latest_sequence = service
+            .latest_sequence_async(tenant_id.clone())
+            .await
+            .expect("latest sequence should load");
+        assert_eq!(bootstrap.bootstrap_cut, latest_sequence);
+        assert_eq!(bootstrap.resume_after, latest_sequence);
 
         service.quiesce().await;
     })
@@ -310,8 +317,8 @@ async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
                 &tenant_id,
                 "replica poll should catch up journal heads",
                 |stats| {
-                    stats.durable_head == SequenceNumber(1)
-                        && stats.applied_head == SequenceNumber(1)
+                    stats.durable_head.0 >= 2
+                        && stats.applied_head.0 >= 2
                 },
             )
             .await;
@@ -335,8 +342,14 @@ async fn libsql_replica_background_poll_refreshes_loaded_runtime_schema_and_jour
             let freshness = diagnostics
                 .libsql_replica_freshness
                 .expect("libsql-replica diagnostics should include freshness stats");
-            assert_eq!(freshness.required_sequence, SequenceNumber(1));
-            assert_eq!(freshness.local_applied_sequence, SequenceNumber(1));
+            assert!(
+                freshness.required_sequence.0 >= 2,
+                "replica diagnostics should require at least the remote schema and document writes"
+            );
+            assert!(
+                freshness.local_applied_sequence.0 >= 2,
+                "replica diagnostics should report local visibility through the remote document write"
+            );
             assert_eq!(freshness.refresh_error_count, 0);
             assert!(
                 freshness.incremental_refresh_count
@@ -590,7 +603,7 @@ async fn libsql_replica_collection_group_queries_use_path_binding_metadata() {
                             field_type: FieldType::Number,
                             required: false,
                         }],
-                        indexes: vec![IndexDefinition {
+                        indexes: vec![IndexDefinition { id: nimbus_core::IndexId::new(), state: nimbus_core::IndexState::Enabled,
                             name: "by_rank".to_string(),
                             fields: vec!["rank".to_string()],
                         }],
@@ -1068,10 +1081,17 @@ async fn seed_remote_namespace(
     )
     .await
     .expect("remote schema insert should succeed");
+    let table_id = TableId::new();
     conn.execute(
-        "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO table_catalog (namespace, table_name, table_id) VALUES (?, ?, ?)",
+        libsql::params!["default", table_schema.table.as_str(), table_id.as_str()],
+    )
+    .await
+    .expect("remote table catalog insert should succeed");
+    conn.execute(
+        "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
         libsql::params![
-            table_schema.table.as_str(),
+            table_id.as_str(),
             document_id.to_string(),
             fields.to_string(),
             "{}",

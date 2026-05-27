@@ -15,7 +15,7 @@ pub(super) fn plan_range_index_scan(
     table_schema: &TableSchema,
 ) -> Result<Option<PlanCandidate>> {
     let mut best = None;
-    for index in &table_schema.indexes {
+    for index in table_schema.queryable_indexes() {
         let exact_prefix = collect_exact_prefix(query, index);
         let Some(range_field) = index.fields.get(exact_prefix.len()) else {
             continue;

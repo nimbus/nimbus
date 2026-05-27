@@ -2,6 +2,7 @@ use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context, Poll};
@@ -12,9 +13,11 @@ use hyper::client::connect::{Connected, Connection as HyperConnection};
 use libsql::{Builder, Connection, Database, Transaction, TransactionBehavior};
 use native_tls::TlsConnector as NativeTlsConnector;
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SequenceNumber, StorageErrorKind, TableName, TableSchema, TenantId,
-    Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, IndexLifecycleEvent,
+    Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber,
+    StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema, TableState,
+    TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use reqwest::Client as HttpClient;
 use reqwest::header::AUTHORIZATION;
@@ -30,8 +33,11 @@ use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
 use tower_service::Service;
 use tracing::{debug, warn};
 
+use crate::RetentionFloor;
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
-use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
+use crate::commit_log::{
+    deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
+};
 use crate::encryption::{
     LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_database_encryption_key,
 };
@@ -54,6 +60,7 @@ mod read;
 mod remote;
 mod resource_paths;
 mod storage;
+mod table_lifecycle;
 mod transport;
 mod trigger_delivery;
 mod trigger_invocations;
@@ -84,6 +91,7 @@ const LIBSQL_TENANT_WRITE_PARALLELISM: usize = 1;
 const LIBSQL_REPLICA_FILENAME: &str = "tenant.sqlite3";
 const LIBSQL_DROP_TENANT_SQL: &str = r#"
 DROP TABLE IF EXISTS documents;
+DROP TABLE IF EXISTS table_catalog;
 DROP TABLE IF EXISTS schemas;
 DROP TABLE IF EXISTS resource_path_bindings;
 DROP TABLE IF EXISTS scheduled_jobs;
@@ -210,6 +218,7 @@ pub struct LibsqlReplicaTenantStore {
     refresh_complete: Arc<Notify>,
     required_cache_sequence: Arc<AtomicU64>,
     freshness_metrics: Arc<LibsqlReplicaFreshnessMetrics>,
+    pub(crate) retention_floor: Arc<RetentionFloor>,
 }
 
 #[derive(Clone)]
@@ -230,6 +239,7 @@ pub struct LibsqlReplicaWriteTransaction {
     store: LibsqlReplicaTenantStore,
     tx: Option<Transaction>,
     commit_writes: Vec<WriteOp>,
+    tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
     refresh_cache_after_commit: bool,
@@ -272,6 +282,7 @@ impl LibsqlReplicaTenantStore {
             refresh_complete: Arc::new(Notify::new()),
             required_cache_sequence: Arc::new(AtomicU64::new(initial_applied)),
             freshness_metrics: Arc::new(LibsqlReplicaFreshnessMetrics::new()),
+            retention_floor: RetentionFloor::new(),
         }
     }
 

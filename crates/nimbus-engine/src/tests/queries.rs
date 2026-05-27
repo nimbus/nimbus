@@ -13,6 +13,8 @@ async fn query_uses_index_for_equality_filter() {
             required: false,
         }],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_status".to_string(),
             fields: vec!["status".to_string()],
         }],
@@ -48,6 +50,62 @@ async fn query_uses_index_for_equality_filter() {
 }
 
 #[tokio::test]
+async fn set_table_schema_publishes_reconciled_index_identity() {
+    let fixture = ServiceFixture::new(|path| Service::new(path));
+    let service = fixture.service();
+    let tenant_id = fixture.create_tenant("demo", Service::create_tenant);
+    let table = tasks_table();
+    let initial_index_id = nimbus_core::IndexId::new();
+    let replacement_index_id = nimbus_core::IndexId::new();
+    service
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: table.clone(),
+                fields: vec![FieldSchema {
+                    name: "status".to_string(),
+                    field_type: FieldType::String,
+                    required: false,
+                }],
+                indexes: vec![nimbus_core::IndexDefinition {
+                    id: initial_index_id.clone(),
+                    state: nimbus_core::IndexState::Enabled,
+                    name: "by_status".to_string(),
+                    fields: vec!["status".to_string()],
+                }],
+                access_policy: None,
+            },
+        )
+        .expect("initial schema should save");
+    service
+        .set_table_schema(
+            &tenant_id,
+            TableSchema {
+                table: table.clone(),
+                fields: vec![FieldSchema {
+                    name: "status".to_string(),
+                    field_type: FieldType::String,
+                    required: false,
+                }],
+                indexes: vec![nimbus_core::IndexDefinition {
+                    id: replacement_index_id.clone(),
+                    state: nimbus_core::IndexState::Enabled,
+                    name: "by_status".to_string(),
+                    fields: vec!["status".to_string()],
+                }],
+                access_policy: None,
+            },
+        )
+        .expect("replacement schema should save");
+
+    let runtime_schema = service
+        .get_table_schema(&tenant_id, &table)
+        .expect("runtime schema should load");
+    assert_eq!(runtime_schema.indexes[0].id, initial_index_id);
+    assert_ne!(runtime_schema.indexes[0].id, replacement_index_id);
+}
+
+#[tokio::test]
 async fn structured_query_executes_supported_subset() {
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let service = fixture.service();
@@ -70,6 +128,8 @@ async fn structured_query_executes_supported_subset() {
                     },
                 ],
                 indexes: vec![nimbus_core::IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
                     name: "by_status_rank".to_string(),
                     fields: vec!["status".to_string(), "rank".to_string()],
                 }],
@@ -149,6 +209,8 @@ async fn structured_query_supports_repeated_order_cursor_offset_and_projection()
                     },
                 ],
                 indexes: vec![nimbus_core::IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
                     name: "by_rank_title".to_string(),
                     fields: vec!["rank".to_string(), "title".to_string()],
                 }],
@@ -244,6 +306,8 @@ async fn subscription_initial_evaluation_uses_indexed_query_path() {
             required: false,
         }],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_status".to_string(),
             fields: vec!["status".to_string()],
         }],
@@ -430,6 +494,8 @@ async fn setting_schema_backfills_indexes_for_existing_documents() {
             required: false,
         }],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_status".to_string(),
             fields: vec!["status".to_string()],
         }],
@@ -466,6 +532,8 @@ async fn query_uses_index_for_range_filter() {
             required: false,
         }],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_rank".to_string(),
             fields: vec!["rank".to_string()],
         }],
@@ -524,6 +592,8 @@ async fn query_uses_index_for_eq_filter_and_still_applies_remaining_filters() {
             },
         ],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_status".to_string(),
             fields: vec!["status".to_string()],
         }],
@@ -582,6 +652,8 @@ async fn subscription_re_evaluation_uses_indexed_query_path() {
             required: false,
         }],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_status".to_string(),
             fields: vec!["status".to_string()],
         }],
@@ -722,6 +794,8 @@ async fn query_uses_index_for_bounded_range_filter() {
             required: false,
         }],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_rank".to_string(),
             fields: vec!["rank".to_string()],
         }],
@@ -788,6 +862,8 @@ async fn query_uses_three_field_composite_range_index_through_planner() {
             },
         ],
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_team_status_rank".to_string(),
             fields: vec!["team".to_string(), "status".to_string(), "rank".to_string()],
         }],
@@ -862,6 +938,8 @@ async fn query_documents_cancellable_stops_during_index_scan() {
             required: false,
         }],
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_rank".to_string(),
             fields: vec!["rank".to_string()],
         }],
@@ -979,6 +1057,8 @@ async fn query_documents_async_cancellable_returns_cancelled_during_index_scan()
                     required: false,
                 }],
                 indexes: vec![IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
                     name: "by_rank".to_string(),
                     fields: vec!["rank".to_string()],
                 }],
@@ -1057,6 +1137,8 @@ async fn paginated_query_uses_index_for_range_filter() {
             required: false,
         }],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_rank".to_string(),
             fields: vec!["rank".to_string()],
         }],
@@ -1142,6 +1224,8 @@ async fn paginated_query_uses_composite_index_for_exact_prefix_and_cursor_progre
             },
         ],
         indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_status_rank".to_string(),
             fields: vec!["status".to_string(), "rank".to_string()],
         }],
@@ -1249,10 +1333,14 @@ fn query_planning_stats_distinguish_composite_single_field_and_fallback_paths() 
         ],
         indexes: vec![
             IndexDefinition {
+                id: nimbus_core::IndexId::new(),
+                state: nimbus_core::IndexState::Enabled,
                 name: "by_status_rank".to_string(),
                 fields: vec!["status".to_string(), "rank".to_string()],
             },
             IndexDefinition {
+                id: nimbus_core::IndexId::new(),
+                state: nimbus_core::IndexState::Enabled,
                 name: "by_rank".to_string(),
                 fields: vec!["rank".to_string()],
             },

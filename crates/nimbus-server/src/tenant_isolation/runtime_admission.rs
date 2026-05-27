@@ -294,7 +294,7 @@ fn broad_filesystem_grant(grants: &RuntimeGrants) -> Option<&str> {
         .find(|grant| {
             matches!(
                 grant.trim(),
-                "/" | "*" | "$app_root" | "$cache_root" | "$temp_root"
+                "/" | "*" | "$app_root" | "$cache_root" | "$temp_root" // 002-auth-caching-policy: filesystem grant name, not auth cache
             )
         })
 }

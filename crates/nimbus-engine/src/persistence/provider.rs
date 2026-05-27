@@ -9,10 +9,11 @@ use nimbus_storage::{
     EmbeddedPersistenceProvider, EmbeddedRedbProvider, EmbeddedSqliteProvider,
     LibsqlReplicaProvider, MySqlProvider, PostgresProvider,
 };
-use tokio_util::sync::CancellationToken;
 
-use super::{TenantPersistence, TenantPersistenceExecutor};
-use crate::service::Service;
+use super::{
+    LibsqlReplicaRuntimeHooks, MySqlRuntimeHooks, PostgresRuntimeHooks, RuntimeHooks,
+    TenantPersistence, TenantPersistenceExecutor,
+};
 
 #[derive(Clone)]
 pub(crate) enum PersistenceProvider {
@@ -20,13 +21,6 @@ pub(crate) enum PersistenceProvider {
     Sqlite(Arc<EmbeddedSqliteProvider>),
     LibsqlReplica(Arc<LibsqlReplicaProvider>),
     Postgres(Arc<PostgresProvider>),
-    MySql(Arc<MySqlProvider>),
-}
-
-#[derive(Clone)]
-pub(crate) enum ProviderBackgroundTask {
-    Postgres(Arc<PostgresProvider>),
-    LibsqlReplica(Arc<LibsqlReplicaProvider>),
     MySql(Arc<MySqlProvider>),
 }
 
@@ -51,13 +45,11 @@ trait OpenedTenantProvider {
 // erased provider object layer that would just rewrap the same enum split.
 
 impl PersistenceProvider {
-    pub(crate) fn background_task(&self) -> Option<ProviderBackgroundTask> {
+    pub(crate) fn runtime_hooks(&self) -> Option<Box<dyn RuntimeHooks>> {
         match self {
-            Self::Postgres(provider) => Some(ProviderBackgroundTask::Postgres(provider.clone())),
-            Self::LibsqlReplica(provider) => {
-                Some(ProviderBackgroundTask::LibsqlReplica(provider.clone()))
-            }
-            Self::MySql(provider) => Some(ProviderBackgroundTask::MySql(provider.clone())),
+            Self::Postgres(provider) => Some(Box::new(PostgresRuntimeHooks::new(provider.clone()))),
+            Self::LibsqlReplica(_) => Some(Box::new(LibsqlReplicaRuntimeHooks)),
+            Self::MySql(_) => Some(Box::new(MySqlRuntimeHooks)),
             Self::Redb(_) | Self::Sqlite(_) => None,
         }
     }
@@ -97,36 +89,6 @@ impl PersistenceProvider {
         store: TenantPersistence,
     ) -> Result<TenantPersistenceExecutor> {
         store.read_storage_for_provider(self)
-    }
-}
-
-impl ProviderBackgroundTask {
-    pub(crate) fn task_name(&self) -> &'static str {
-        match self {
-            Self::Postgres(_) => "postgres_provider_hints",
-            Self::LibsqlReplica(_) => "libsql_replica_provider_poll",
-            Self::MySql(_) => "mysql_provider_poll",
-        }
-    }
-
-    pub(crate) async fn run(self, service: Arc<Service>, shutdown: CancellationToken) {
-        match self {
-            Self::Postgres(provider) => {
-                service
-                    .run_postgres_provider_hint_worker(provider, shutdown)
-                    .await;
-            }
-            Self::LibsqlReplica(provider) => {
-                service
-                    .run_libsql_replica_provider_poll_worker(provider, shutdown)
-                    .await;
-            }
-            Self::MySql(provider) => {
-                service
-                    .run_mysql_provider_poll_worker(provider, shutdown)
-                    .await;
-            }
-        }
     }
 }
 

@@ -172,13 +172,20 @@ pub(super) fn qualified_table(schema_name: &str, table_name: &str) -> String {
 pub(super) fn tenant_init_sql(schema_name: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {} (\
+            namespace TEXT NOT NULL DEFAULT 'default',\
             table_name TEXT NOT NULL,\
+            table_id TEXT NOT NULL UNIQUE,\
+            state TEXT NOT NULL DEFAULT 'active',\
+            PRIMARY KEY (namespace, table_name)\
+        );\
+        CREATE TABLE IF NOT EXISTS {} (\
+            table_id TEXT NOT NULL REFERENCES {}(table_id),\
             id TEXT NOT NULL,\
             data_json TEXT NOT NULL,\
             typed_fields_json TEXT NOT NULL DEFAULT '{{}}',\
             creation_time BIGINT NOT NULL,\
             update_time BIGINT NOT NULL,\
-            PRIMARY KEY (table_name, id)\
+            PRIMARY KEY (table_id, id)\
         );\
         CREATE TABLE IF NOT EXISTS {} (\
             table_name TEXT PRIMARY KEY,\
@@ -228,7 +235,9 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
             key TEXT PRIMARY KEY,\
             value_blob BYTEA NOT NULL\
         );",
+        qualified_table(schema_name, "table_catalog"),
         qualified_table(schema_name, "documents"),
+        qualified_table(schema_name, "table_catalog"),
         qualified_table(schema_name, "schemas"),
         qualified_table(schema_name, "resource_path_bindings"),
         quote_identifier("idx_resource_path_bindings_collection_group_path"),

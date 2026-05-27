@@ -122,7 +122,7 @@ impl SubscriptionRegistry {
         let subscription = Subscription {
             id,
             active,
-            dependencies: DependencySet::from_engine_query(&query),
+            dependencies: DependencySet::from_engine_query(&query, None),
             principal,
             policy_revision,
             query,

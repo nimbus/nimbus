@@ -67,7 +67,8 @@ impl Service {
         documents: Vec<Document>,
     ) -> Result<DependencySet> {
         runtime.cache_documents(&documents);
-        let dependencies = subscription_dependencies(query, &documents);
+        let dependencies =
+            subscription_dependencies(query, runtime.store().table_id(&query.table)?, &documents);
         let update = SubscriptionUpdate::Result {
             subscription_id: publication.subscription_id,
             request_id: Some(publication.request_id),

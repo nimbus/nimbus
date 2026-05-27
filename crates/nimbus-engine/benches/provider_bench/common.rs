@@ -42,10 +42,7 @@ pub(super) fn single_field_schema() -> TableSchema {
                 required: false,
             },
         ],
-        indexes: vec![IndexDefinition {
-            name: "by_status".to_string(),
-            fields: vec!["status".to_string()],
-        }],
+        indexes: vec![IndexDefinition::new("by_status", ["status"])],
         access_policy: None,
     }
 }
@@ -70,10 +67,10 @@ pub(super) fn composite_schema() -> TableSchema {
                 required: false,
             },
         ],
-        indexes: vec![IndexDefinition {
-            name: "by_team_status_rank".to_string(),
-            fields: vec!["team".to_string(), "status".to_string(), "rank".to_string()],
-        }],
+        indexes: vec![IndexDefinition::new(
+            "by_team_status_rank",
+            ["team", "status", "rank"],
+        )],
         access_policy: None,
     }
 }

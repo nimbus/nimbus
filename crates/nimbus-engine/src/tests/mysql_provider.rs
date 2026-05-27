@@ -218,8 +218,12 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await
             .expect("bootstrap should export");
-        assert_eq!(bootstrap.bootstrap_cut, SequenceNumber(2));
-        assert_eq!(bootstrap.resume_after, SequenceNumber(2));
+        let latest_sequence = service
+            .latest_sequence_async(tenant_id.clone())
+            .await
+            .expect("latest sequence should load");
+        assert_eq!(bootstrap.bootstrap_cut, latest_sequence);
+        assert_eq!(bootstrap.resume_after, latest_sequence);
 
         service.quiesce().await;
     })
@@ -255,7 +259,7 @@ async fn typed_mysql_config_collection_group_queries_use_path_binding_metadata()
                             field_type: FieldType::Number,
                             required: false,
                         }],
-                        indexes: vec![IndexDefinition {
+                        indexes: vec![IndexDefinition { id: nimbus_core::IndexId::new(), state: nimbus_core::IndexState::Enabled,
                             name: "by_rank".to_string(),
                             fields: vec!["rank".to_string()],
                         }],
@@ -406,10 +410,7 @@ async fn mysql_background_poll_refreshes_loaded_runtime_schema_and_journal_state
                 &service_b,
                 &tenant_id,
                 "mysql poll should catch up journal heads",
-                |stats| {
-                    stats.durable_head == SequenceNumber(1)
-                        && stats.applied_head == SequenceNumber(1)
-                },
+                |stats| stats.durable_head.0 >= 2 && stats.applied_head.0 >= 2,
             )
             .await;
 

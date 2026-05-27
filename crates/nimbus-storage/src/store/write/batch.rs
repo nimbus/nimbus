@@ -1,4 +1,4 @@
-use nimbus_core::{CommitEntry, Document, Error, Result, WriteOp, WriteOpType};
+use nimbus_core::{CommitEntry, Document, Error, Result, TableId, WriteOp, WriteOpType};
 use redb::ReadableTable;
 
 use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
@@ -8,6 +8,9 @@ use crate::store::resource_paths::{
     remove_resource_path_binding_in_write_txn, upsert_resource_path_binding_in_write_txn,
 };
 
+use super::super::table_catalog::{
+    resolve_or_create_table_id_in_write_txn, resolve_table_id_in_write_txn,
+};
 use super::super::{
     DOCUMENTS, EMPTY_TABLE_VALUE, INDEXES, ResolvedScheduleOp, ResolvedWrite, TenantStore,
     map_redb_error,
@@ -55,41 +58,66 @@ impl TenantStore {
                         document,
                         indexes,
                         resource_path_binding,
-                    } => apply_insert(
-                        &write_txn,
-                        document,
-                        indexes,
-                        resource_path_binding.as_ref(),
-                        trigger_write_origin,
-                        &mut documents,
-                        &mut index_table,
-                        &mut commit_writes,
-                    )?,
+                    } => {
+                        let table_id =
+                            resolve_or_create_table_id_in_write_txn(&write_txn, &document.table)?;
+                        apply_insert(
+                            &write_txn,
+                            document,
+                            indexes,
+                            resource_path_binding.as_ref(),
+                            trigger_write_origin,
+                            &table_id,
+                            &mut documents,
+                            &mut index_table,
+                            &mut commit_writes,
+                        )?;
+                    }
                     ResolvedWrite::Update {
                         previous,
                         current,
                         indexes,
                         resource_path_binding,
-                    } => apply_update(
-                        &write_txn,
-                        previous,
-                        current,
-                        indexes,
-                        resource_path_binding.as_ref(),
-                        trigger_write_origin,
-                        &mut documents,
-                        &mut index_table,
-                        &mut commit_writes,
-                    )?,
-                    ResolvedWrite::Delete { previous, indexes } => apply_delete(
-                        &write_txn,
-                        previous,
-                        indexes,
-                        trigger_write_origin,
-                        &mut documents,
-                        &mut index_table,
-                        &mut commit_writes,
-                    )?,
+                    } => {
+                        let table_id = resolve_table_id_in_write_txn(&write_txn, &current.table)?
+                            .ok_or_else(|| {
+                            Error::Conflict(format!(
+                                "document {} changed before transaction commit",
+                                current.id
+                            ))
+                        })?;
+                        apply_update(
+                            &write_txn,
+                            previous,
+                            current,
+                            indexes,
+                            resource_path_binding.as_ref(),
+                            trigger_write_origin,
+                            &table_id,
+                            &mut documents,
+                            &mut index_table,
+                            &mut commit_writes,
+                        )?;
+                    }
+                    ResolvedWrite::Delete { previous, indexes } => {
+                        let table_id = resolve_table_id_in_write_txn(&write_txn, &previous.table)?
+                            .ok_or_else(|| {
+                                Error::Conflict(format!(
+                                    "document {} changed before transaction commit",
+                                    previous.id
+                                ))
+                            })?;
+                        apply_delete(
+                            &write_txn,
+                            previous,
+                            indexes,
+                            trigger_write_origin,
+                            &table_id,
+                            &mut documents,
+                            &mut index_table,
+                            &mut commit_writes,
+                        )?;
+                    }
                 }
             }
         }
@@ -116,11 +144,12 @@ fn apply_insert(
     indexes: &[nimbus_core::IndexDefinition],
     resource_path_binding: Option<&nimbus_core::ResourcePathBinding>,
     trigger_write_origin: Option<&nimbus_core::TriggerWriteOrigin>,
+    table_id: &TableId,
     documents: &mut redb::Table<&[u8], &[u8]>,
     index_table: &mut redb::Table<&[u8], &[u8]>,
     commit_writes: &mut Vec<WriteOp>,
 ) -> Result<()> {
-    let key = document_key(&document.table, &document.id);
+    let key = document_key(table_id, &document.id);
     if documents
         .get(key.as_slice())
         .map_err(map_redb_error)?
@@ -138,7 +167,7 @@ fn apply_insert(
         .insert(key.as_slice(), payload.as_slice())
         .map_err(map_redb_error)?;
     for index in indexes {
-        if let Some(index_key) = index_key_for_document(document, index)? {
+        if let Some(index_key) = index_key_for_document(document, index, table_id)? {
             index_table
                 .insert(index_key.as_slice(), EMPTY_TABLE_VALUE)
                 .map_err(map_redb_error)?;
@@ -149,6 +178,7 @@ fn apply_insert(
     }
     commit_writes.push(WriteOp {
         table: document.table.clone(),
+        table_id: table_id.clone(),
         op_type: WriteOpType::Insert,
         doc_id: document.id.clone(),
         resource_path_binding: resource_path_binding.cloned(),
@@ -170,11 +200,12 @@ fn apply_update(
     indexes: &[nimbus_core::IndexDefinition],
     resource_path_binding: Option<&nimbus_core::ResourcePathBinding>,
     trigger_write_origin: Option<&nimbus_core::TriggerWriteOrigin>,
+    table_id: &TableId,
     documents: &mut redb::Table<&[u8], &[u8]>,
     index_table: &mut redb::Table<&[u8], &[u8]>,
     commit_writes: &mut Vec<WriteOp>,
 ) -> Result<()> {
-    let key = document_key(&current.table, &current.id);
+    let key = document_key(table_id, &current.id);
     let existing = {
         let existing = documents
             .get(key.as_slice())
@@ -200,8 +231,8 @@ fn apply_update(
         .map_err(map_redb_error)?;
 
     for index in indexes {
-        let old_key = index_key_for_document(previous, index)?;
-        let new_key = index_key_for_document(current, index)?;
+        let old_key = index_key_for_document(previous, index, table_id)?;
+        let new_key = index_key_for_document(current, index, table_id)?;
         if old_key == new_key {
             continue;
         }
@@ -222,6 +253,7 @@ fn apply_update(
 
     commit_writes.push(WriteOp {
         table: current.table.clone(),
+        table_id: table_id.clone(),
         op_type: WriteOpType::Update,
         doc_id: current.id.clone(),
         resource_path_binding: resource_path_binding.cloned(),
@@ -232,16 +264,21 @@ fn apply_update(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "execution-unit deletes need prior document state, index context, optional trigger origin, table identity, and commit sinks inside one storage transaction helper"
+)]
 fn apply_delete(
     write_txn: &redb::WriteTransaction,
     previous: &Document,
     indexes: &[nimbus_core::IndexDefinition],
     trigger_write_origin: Option<&nimbus_core::TriggerWriteOrigin>,
+    table_id: &TableId,
     documents: &mut redb::Table<&[u8], &[u8]>,
     index_table: &mut redb::Table<&[u8], &[u8]>,
     commit_writes: &mut Vec<WriteOp>,
 ) -> Result<()> {
-    let key = document_key(&previous.table, &previous.id);
+    let key = document_key(table_id, &previous.id);
     let removed = documents
         .remove(key.as_slice())
         .map_err(map_redb_error)?
@@ -259,7 +296,7 @@ fn apply_delete(
     }
 
     for index in indexes {
-        if let Some(index_key) = index_key_for_document(previous, index)? {
+        if let Some(index_key) = index_key_for_document(previous, index, table_id)? {
             index_table
                 .remove(index_key.as_slice())
                 .map_err(map_redb_error)?;
@@ -272,6 +309,7 @@ fn apply_delete(
 
     commit_writes.push(WriteOp {
         table: previous.table.clone(),
+        table_id: table_id.clone(),
         op_type: WriteOpType::Delete,
         doc_id: previous.id.clone(),
         resource_path_binding,
@@ -308,6 +346,8 @@ mod tests {
                 },
             ],
             indexes: vec![IndexDefinition {
+                id: nimbus_core::IndexId::new(),
+                state: nimbus_core::IndexState::Enabled,
                 name: "by_body".to_string(),
                 fields: vec!["body".to_string()],
             }],
@@ -389,7 +429,7 @@ mod tests {
             store
                 .latest_sequence()
                 .expect("latest sequence should remain readable"),
-            SequenceNumber(1),
+            SequenceNumber(2),
             "failed batch must not append a commit log entry"
         );
     }

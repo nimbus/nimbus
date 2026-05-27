@@ -147,14 +147,6 @@ const LOADER_CONTEXT_FOLLOWUP_VM_BASIC_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case!("test/parallel/test-vm-strict-mode.js"),
     shared_official_batch_case!("test/parallel/test-vm-not-strict.js"),
     shared_official_batch_case!("test/parallel/test-vm-create-context-arg.js"),
-    shared_official_batch_case!("test/parallel/test-inspector-module.js"),
-    shared_official_batch_case!("test/parallel/test-inspector-open.js"),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-inspector-invalid-args.js",
-        INSPECTOR_FRONT_EDGE_EXTRA_FILES
-    ),
-    shared_official_batch_case!("test/parallel/test-inspector-open-port-integer-overflow.js"),
-    shared_official_batch_case!("test/parallel/test-inspector-enabled.js"),
 ];
 
 const LOADER_CONTEXT_FOLLOWUP_VM_CONTEXT_REGRESSION_BATCH: &[NodeCompatBatchEntry] = &[
@@ -1105,4 +1097,3 @@ const NODE_TOOLS_CLUSTER_WORKER_LIFECYCLE_BATCH: &[NodeCompatBatchEntry] = &[
         node24_extra_files: &[],
     },
 ];
-

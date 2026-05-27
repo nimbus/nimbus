@@ -1,4 +1,11 @@
+use super::table_lifecycle::{
+    activate_hidden_table_identity_in_session, hard_delete_table_identity_in_session,
+    mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
+};
 use super::*;
+use crate::table_identity::{
+    DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
+};
 
 pub(super) fn cached_schema(schema_cache: &RwLock<Option<Schema>>) -> Option<Schema> {
     schema_cache.read().ok().and_then(|guard| guard.clone())
@@ -85,18 +92,23 @@ where
 {
     let query = if table.is_some() {
         format!(
-            "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
-             FROM {} \
-             WHERE table_name = $1 \
-             ORDER BY id",
-            qualified_table(schema_name, "documents")
+            "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
+             FROM {} AS d \
+             JOIN {} AS c ON c.table_id = d.table_id \
+             WHERE c.namespace = 'default' AND c.table_name = $1 \
+             ORDER BY d.id",
+            qualified_table(schema_name, "documents"),
+            qualified_table(schema_name, "table_catalog")
         )
     } else {
         format!(
-            "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
-             FROM {} \
-             ORDER BY table_name, id",
-            qualified_table(schema_name, "documents")
+            "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
+             FROM {} AS d \
+             JOIN {} AS c ON c.table_id = d.table_id \
+             WHERE c.namespace = 'default' \
+             ORDER BY c.table_name, d.id",
+            qualified_table(schema_name, "documents"),
+            qualified_table(schema_name, "table_catalog")
         )
     };
 
@@ -123,18 +135,357 @@ pub(super) async fn load_document_from_session<C>(
 where
     C: GenericClient + Sync,
 {
+    let Some(table_id) = load_table_id_from_session(session, schema_name, table).await? else {
+        return Ok(None);
+    };
     let query = format!(
-        "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
+        "SELECT $1::text AS table_name, id, creation_time, update_time, data_json, typed_fields_json \
          FROM {} \
-         WHERE table_name = $1 AND id = $2",
+         WHERE table_id = $2 AND id = $3",
         qualified_table(schema_name, "documents")
     );
     session
-        .query_opt(query.as_str(), &[&table.as_str(), &id.to_string()])
+        .query_opt(
+            query.as_str(),
+            &[&table.as_str(), &table_id.as_str(), &id.to_string()],
+        )
         .await
         .map_err(map_postgres_error)?
         .map(row_to_document)
         .transpose()
+}
+
+pub(super) async fn load_document_by_table_id_from_session<C>(
+    session: &C,
+    schema_name: &str,
+    table: &TableName,
+    table_id: &TableId,
+    id: &DocumentId,
+) -> Result<Option<Document>>
+where
+    C: GenericClient + Sync,
+{
+    let query = format!(
+        "SELECT $1::text AS table_name, id, creation_time, update_time, data_json, typed_fields_json \
+         FROM {} \
+         WHERE table_id = $2 AND id = $3",
+        qualified_table(schema_name, "documents")
+    );
+    session
+        .query_opt(
+            query.as_str(),
+            &[&table.as_str(), &table_id.as_str(), &id.to_string()],
+        )
+        .await
+        .map_err(map_postgres_error)?
+        .map(row_to_document)
+        .transpose()
+}
+
+pub(super) async fn load_table_id_from_session<C>(
+    session: &C,
+    schema_name: &str,
+    table: &TableName,
+) -> Result<Option<TableId>>
+where
+    C: GenericClient + Sync,
+{
+    let query = format!(
+        "SELECT table_id, state FROM {} WHERE namespace = $1 AND table_name = $2",
+        qualified_table(schema_name, "table_catalog")
+    );
+    let Some(row) = session
+        .query_opt(query.as_str(), &[&"default", &table.as_str()])
+        .await
+        .map_err(map_postgres_error)?
+    else {
+        return Ok(None);
+    };
+    let state = TableState::from_str(row.get::<_, String>(1).as_str())?;
+    if state != TableState::Active {
+        return Err(Error::Conflict(format!(
+            "logical table {} is in {} lifecycle state",
+            table, state
+        )));
+    }
+    Ok(Some(TableId::from_str(row.get::<_, String>(0).as_str())?))
+}
+
+pub(super) async fn load_table_identities_from_session<C>(
+    session: &C,
+    schema_name: &str,
+) -> Result<Vec<crate::TableIdentitySnapshotEntry>>
+where
+    C: GenericClient + Sync,
+{
+    let query = format!(
+        "SELECT namespace, table_name, table_id, state
+         FROM {}
+         ORDER BY namespace, table_name, table_id, state",
+        qualified_table(schema_name, "table_catalog")
+    );
+    session
+        .query(query.as_str(), &[])
+        .await
+        .map_err(map_postgres_error)?
+        .into_iter()
+        .map(|row| {
+            Ok(crate::TableIdentitySnapshotEntry {
+                namespace: row.get::<_, String>(0),
+                table: TableName::new(row.get::<_, String>(1))?,
+                table_id: TableId::from_str(row.get::<_, String>(2).as_str())?,
+                state: TableState::from_str(row.get::<_, String>(3).as_str())?,
+            })
+        })
+        .collect()
+}
+
+pub(super) async fn resolve_or_create_table_id_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    table: &TableName,
+) -> Result<TableId>
+where
+    C: GenericClient + Sync,
+{
+    if let Some(table_id) = load_table_id_from_session(session, schema_name, table).await? {
+        return Ok(table_id);
+    }
+    let table_id = TableId::new();
+    let query = format!(
+        "INSERT INTO {} (namespace, table_name, table_id, state)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT(namespace, table_name) DO NOTHING",
+        qualified_table(schema_name, "table_catalog")
+    );
+    session
+        .execute(
+            query.as_str(),
+            &[
+                &"default",
+                &table.as_str(),
+                &table_id.as_str(),
+                &TableState::Active.as_str(),
+            ],
+        )
+        .await
+        .map_err(map_postgres_error)?;
+    load_table_id_from_session(session, schema_name, table)
+        .await?
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "failed to resolve table id for logical table {} after catalog insert",
+                table
+            ))
+        })
+}
+
+pub(super) async fn ensure_table_id_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    table: &TableName,
+    table_id: &TableId,
+) -> Result<()>
+where
+    C: GenericClient + Sync,
+{
+    let hidden_namespace = hidden_table_namespace(table_id);
+    let staged_hidden = match catalog_identity_row_from_session(
+        session,
+        schema_name,
+        hidden_namespace.as_str(),
+        table,
+    )
+    .await?
+    {
+        Some((hidden_id, TableState::Hidden)) if hidden_id == *table_id => true,
+        Some((hidden_id, state)) => {
+            return Err(Error::Conflict(format!(
+                "hidden identity slot for logical table {} and table id {} contains {} in {} state",
+                table, table_id, hidden_id, state
+            )));
+        }
+        None => false,
+    };
+
+    match catalog_identity_row_from_session(session, schema_name, DEFAULT_TABLE_NAMESPACE, table)
+        .await?
+    {
+        Some((existing, TableState::Active)) if existing == *table_id => {
+            if staged_hidden {
+                return Err(Error::Conflict(format!(
+                    "logical table {} already has active table id {} and a duplicate hidden slot",
+                    table, table_id
+                )));
+            }
+            return Ok(());
+        }
+        Some((existing, state)) if existing == *table_id => {
+            return Err(Error::Conflict(format!(
+                "logical table {} is assigned table id {} in {} lifecycle state",
+                table, table_id, state
+            )));
+        }
+        Some((existing, TableState::Active)) => {
+            ensure_table_id_available_in_session(
+                session,
+                schema_name,
+                table_id,
+                Some((hidden_namespace.as_str(), table)),
+            )
+            .await?;
+            let query = format!(
+                "UPDATE {}
+                 SET namespace = $1, state = $2
+                 WHERE namespace = $3 AND table_name = $4",
+                qualified_table(schema_name, "table_catalog")
+            );
+            let deleting_namespace = deleting_table_namespace(&existing);
+            session
+                .execute(
+                    query.as_str(),
+                    &[
+                        &deleting_namespace,
+                        &TableState::Deleting.as_str(),
+                        &DEFAULT_TABLE_NAMESPACE,
+                        &table.as_str(),
+                    ],
+                )
+                .await
+                .map_err(map_postgres_error)?;
+            if staged_hidden {
+                let query = format!(
+                    "DELETE FROM {} WHERE namespace = $1 AND table_name = $2",
+                    qualified_table(schema_name, "table_catalog")
+                );
+                session
+                    .execute(query.as_str(), &[&hidden_namespace, &table.as_str()])
+                    .await
+                    .map_err(map_postgres_error)?;
+            }
+            let query = format!(
+                "INSERT INTO {} (namespace, table_name, table_id, state) VALUES ($1, $2, $3, $4)",
+                qualified_table(schema_name, "table_catalog")
+            );
+            session
+                .execute(
+                    query.as_str(),
+                    &[
+                        &DEFAULT_TABLE_NAMESPACE,
+                        &table.as_str(),
+                        &table_id.as_str(),
+                        &TableState::Active.as_str(),
+                    ],
+                )
+                .await
+                .map_err(map_postgres_error)?;
+            return Ok(());
+        }
+        Some((existing, state)) => {
+            return Err(Error::Conflict(format!(
+                "logical table {} is already assigned table id {} in {} lifecycle state, journal references {}",
+                table, existing, state, table_id
+            )));
+        }
+        None => {}
+    }
+    ensure_table_id_available_in_session(
+        session,
+        schema_name,
+        table_id,
+        Some((hidden_namespace.as_str(), table)),
+    )
+    .await?;
+    if staged_hidden {
+        let query = format!(
+            "DELETE FROM {} WHERE namespace = $1 AND table_name = $2",
+            qualified_table(schema_name, "table_catalog")
+        );
+        session
+            .execute(query.as_str(), &[&hidden_namespace, &table.as_str()])
+            .await
+            .map_err(map_postgres_error)?;
+    }
+    let query = format!(
+        "INSERT INTO {} (namespace, table_name, table_id, state) VALUES ($1, $2, $3, $4)",
+        qualified_table(schema_name, "table_catalog")
+    );
+    session
+        .execute(
+            query.as_str(),
+            &[
+                &"default",
+                &table.as_str(),
+                &table_id.as_str(),
+                &TableState::Active.as_str(),
+            ],
+        )
+        .await
+        .map_err(map_postgres_error)?;
+    Ok(())
+}
+
+async fn catalog_identity_row_from_session<C>(
+    session: &C,
+    schema_name: &str,
+    namespace: &str,
+    table: &TableName,
+) -> Result<Option<(TableId, TableState)>>
+where
+    C: GenericClient + Sync,
+{
+    let query = format!(
+        "SELECT table_id, state FROM {} WHERE namespace = $1 AND table_name = $2",
+        qualified_table(schema_name, "table_catalog")
+    );
+    session
+        .query_opt(query.as_str(), &[&namespace, &table.as_str()])
+        .await
+        .map_err(map_postgres_error)?
+        .map(|row| {
+            Ok((
+                TableId::from_str(row.get::<_, String>(0).as_str())?,
+                TableState::from_str(row.get::<_, String>(1).as_str())?,
+            ))
+        })
+        .transpose()
+}
+
+async fn ensure_table_id_available_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    table_id: &TableId,
+    allowed_key: Option<(&str, &TableName)>,
+) -> Result<()>
+where
+    C: GenericClient + Sync,
+{
+    let query = format!(
+        "SELECT namespace, table_name, state FROM {} WHERE table_id = $1",
+        qualified_table(schema_name, "table_catalog")
+    );
+    let Some(row) = session
+        .query_opt(query.as_str(), &[&table_id.as_str()])
+        .await
+        .map_err(map_postgres_error)?
+    else {
+        return Ok(());
+    };
+    let namespace = row.get::<_, String>(0);
+    let table = TableName::new(row.get::<_, String>(1))?;
+    let state = TableState::from_str(row.get::<_, String>(2).as_str())?;
+    if allowed_key
+        .map(|(allowed_namespace, allowed_table)| {
+            allowed_namespace == namespace && allowed_table == &table
+        })
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    Err(Error::Conflict(format!(
+        "table id {} is already assigned to logical table {} in namespace {} with {} state",
+        table_id, table, namespace, state
+    )))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -156,8 +507,11 @@ where
     let index_fields = index_fields_for_table_schema(table_schema, index_name)?;
     let range_field = index_fields.get(exact_prefix.len());
 
-    let mut clauses = vec!["table_name = $1".to_string()];
-    let mut params: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(table.as_str().to_string())];
+    let Some(table_id) = load_table_id_from_session(session, schema_name, table).await? else {
+        return Ok(Vec::new());
+    };
+    let mut clauses = vec!["d.table_id = $1".to_string()];
+    let mut params: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(table_id.to_string())];
 
     for (field, value) in index_fields.iter().zip(exact_prefix.iter()) {
         clauses.push(format!(
@@ -203,11 +557,13 @@ where
     }
 
     let sql = format!(
-        "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
-         FROM {} \
+        "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
+         FROM {} AS d \
+         JOIN {} AS c ON c.table_id = d.table_id \
          WHERE {} \
-         ORDER BY id",
+         ORDER BY d.id",
         qualified_table(schema_name, "documents"),
+        qualified_table(schema_name, "table_catalog"),
         clauses.join(" AND ")
     );
     let param_refs = params
@@ -530,7 +886,7 @@ pub(super) async fn create_postgres_indexes_for_table_schema<C>(
 where
     C: GenericClient + Sync,
 {
-    for index in &table_schema.indexes {
+    for index in table_schema.maintained_indexes() {
         let expressions = index
             .fields
             .iter()
@@ -538,8 +894,8 @@ where
             .collect::<Vec<_>>()
             .join(", ");
         let sql = format!(
-            "CREATE INDEX IF NOT EXISTS {} ON {} (table_name, {}, id)",
-            quote_identifier(&postgres_index_name(&table_schema.table, &index.name)),
+            "CREATE INDEX IF NOT EXISTS {} ON {} (table_id, {}, id)",
+            quote_identifier(&postgres_index_name(&index.id)),
             qualified_table(schema_name, "documents"),
             expressions
         );
@@ -563,7 +919,7 @@ where
         let sql = format!(
             "DROP INDEX IF EXISTS {}.{}",
             quote_identifier(schema_name),
-            quote_identifier(&postgres_index_name(&table_schema.table, &index.name))
+            quote_identifier(&postgres_index_name(&index.id))
         );
         session
             .batch_execute(sql.as_str())
@@ -581,17 +937,82 @@ pub(super) async fn apply_durable_record_in_session<C>(
 where
     C: GenericClient + Sync,
 {
-    if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
-        let _ =
-            begin_scheduled_execution_in_session(session, schema_name, Some(execution_id)).await?;
+    if record.events.is_empty() {
+        if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
+            let _ = begin_scheduled_execution_in_session(session, schema_name, Some(execution_id))
+                .await?;
+        }
+        return apply_document_writes_in_session(session, schema_name, &record.writes).await;
     }
 
-    for write in &record.writes {
+    for event in &record.events {
+        apply_tenant_event_in_session(session, schema_name, event).await?;
+    }
+
+    Ok(())
+}
+
+async fn apply_tenant_event_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    event: &TenantEventKind,
+) -> Result<()>
+where
+    C: GenericClient + Sync,
+{
+    match event {
+        TenantEventKind::DocumentWrite { writes } => {
+            apply_document_writes_in_session(session, schema_name, writes).await
+        }
+        TenantEventKind::SchemaChange { change } => {
+            apply_schema_change_in_session(session, schema_name, change).await
+        }
+        TenantEventKind::TableLifecycle { lifecycle } => {
+            apply_table_lifecycle_in_session(session, schema_name, lifecycle).await
+        }
+        TenantEventKind::IndexLifecycle { .. } | TenantEventKind::Barrier { .. } => Ok(()),
+        TenantEventKind::ScheduledExecution { execution_id } => {
+            let _ = begin_scheduled_execution_in_session(session, schema_name, Some(execution_id))
+                .await?;
+            Ok(())
+        }
+        TenantEventKind::TriggerDelivery { cursor } => {
+            let query = format!(
+                "INSERT INTO {} (key, value_blob) VALUES ($1, $2)
+                 ON CONFLICT(key) DO UPDATE SET value_blob = EXCLUDED.value_blob",
+                qualified_table(schema_name, "metadata")
+            );
+            let value = encode_u64(cursor.materialized_through.0);
+            session
+                .execute(query.as_str(), &[&TRIGGER_DELIVERY_CURSOR_KEY, &&value[..]])
+                .await
+                .map_err(map_postgres_error)?;
+            Ok(())
+        }
+    }
+}
+
+async fn apply_document_writes_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    writes: &[WriteOp],
+) -> Result<()>
+where
+    C: GenericClient + Sync,
+{
+    for write in writes {
         match (&write.previous, &write.current) {
             (None, Some(current)) => {
-                let existing =
-                    load_document_from_session(session, schema_name, &write.table, &write.doc_id)
-                        .await?;
+                ensure_table_id_in_session(session, schema_name, &write.table, &write.table_id)
+                    .await?;
+                let existing = load_document_by_table_id_from_session(
+                    session,
+                    schema_name,
+                    &write.table,
+                    &write.table_id,
+                    &write.doc_id,
+                )
+                .await?;
                 match existing {
                     Some(existing) if existing == *current => continue,
                     Some(_) => {
@@ -602,10 +1023,9 @@ where
                     }
                     None => {
                         let query = format!(
-                            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES ($1, $2, $3, $4, $5, $6)",
+                            "INSERT INTO {} (table_id, id, data_json, typed_fields_json, creation_time, update_time) VALUES ($1, $2, $3, $4, $5, $6)",
                             qualified_table(schema_name, "documents")
                         );
-                        let table = write.table.as_str().to_string();
                         let id = write.doc_id.to_string();
                         let data_json = serialize_document_fields(current)?;
                         let typed_fields_json = serialize_document_typed_fields(current)?;
@@ -615,7 +1035,7 @@ where
                             .execute(
                                 query.as_str(),
                                 &[
-                                    &table,
+                                    &write.table_id.as_str(),
                                     &id,
                                     &data_json,
                                     &typed_fields_json,
@@ -629,13 +1049,20 @@ where
                 }
             }
             (Some(previous), Some(current)) => {
-                let existing =
-                    load_document_from_session(session, schema_name, &write.table, &write.doc_id)
-                        .await?
-                        .ok_or(Error::Conflict(format!(
-                            "durable journal update replay missing document {}",
-                            write.doc_id
-                        )))?;
+                ensure_table_id_in_session(session, schema_name, &write.table, &write.table_id)
+                    .await?;
+                let existing = load_document_by_table_id_from_session(
+                    session,
+                    schema_name,
+                    &write.table,
+                    &write.table_id,
+                    &write.doc_id,
+                )
+                .await?
+                .ok_or(Error::Conflict(format!(
+                    "durable journal update replay missing document {}",
+                    write.doc_id
+                )))?;
                 if existing == *current {
                     continue;
                 }
@@ -646,10 +1073,9 @@ where
                     )));
                 }
                 let query = format!(
-                    "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_name = $1 AND id = $2",
+                    "UPDATE {} SET data_json = $3, typed_fields_json = $4, creation_time = $5, update_time = $6 WHERE table_id = $1 AND id = $2",
                     qualified_table(schema_name, "documents")
                 );
-                let table = write.table.as_str().to_string();
                 let id = write.doc_id.to_string();
                 let data_json = serialize_document_fields(current)?;
                 let typed_fields_json = serialize_document_typed_fields(current)?;
@@ -659,7 +1085,7 @@ where
                     .execute(
                         query.as_str(),
                         &[
-                            &table,
+                            &write.table_id.as_str(),
                             &id,
                             &data_json,
                             &typed_fields_json,
@@ -671,8 +1097,16 @@ where
                     .map_err(map_postgres_error)?;
             }
             (Some(previous), None) => {
-                match load_document_from_session(session, schema_name, &write.table, &write.doc_id)
-                    .await?
+                ensure_table_id_in_session(session, schema_name, &write.table, &write.table_id)
+                    .await?;
+                match load_document_by_table_id_from_session(
+                    session,
+                    schema_name,
+                    &write.table,
+                    &write.table_id,
+                    &write.doc_id,
+                )
+                .await?
                 {
                     Some(existing) if existing != *previous => {
                         return Err(Error::Conflict(format!(
@@ -682,13 +1116,12 @@ where
                     }
                     Some(_) => {
                         let query = format!(
-                            "DELETE FROM {} WHERE table_name = $1 AND id = $2",
+                            "DELETE FROM {} WHERE table_id = $1 AND id = $2",
                             qualified_table(schema_name, "documents")
                         );
-                        let table = write.table.as_str().to_string();
                         let id = write.doc_id.to_string();
                         session
-                            .execute(query.as_str(), &[&table, &id])
+                            .execute(query.as_str(), &[&write.table_id.as_str(), &id])
                             .await
                             .map_err(map_postgres_error)?;
                     }
@@ -704,6 +1137,107 @@ where
     }
 
     Ok(())
+}
+
+async fn apply_schema_change_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    change: &SchemaChangeEvent,
+) -> Result<()>
+where
+    C: GenericClient + Sync,
+{
+    match change {
+        SchemaChangeEvent::SetTable {
+            table,
+            table_id,
+            previous,
+            current,
+        } => {
+            ensure_table_id_in_session(session, schema_name, table, table_id).await?;
+            if let Some(previous) = previous {
+                drop_postgres_indexes_for_table_schema(session, schema_name, previous).await?;
+            }
+            let query = format!(
+                "INSERT INTO {} (table_name, schema_json) VALUES ($1, $2)
+                 ON CONFLICT(table_name) DO UPDATE SET schema_json = EXCLUDED.schema_json",
+                qualified_table(schema_name, "schemas")
+            );
+            let schema_json = serialize_json(current)?;
+            session
+                .execute(query.as_str(), &[&table.as_str(), &schema_json])
+                .await
+                .map_err(map_postgres_error)?;
+            create_postgres_indexes_for_table_schema(session, schema_name, current).await
+        }
+        SchemaChangeEvent::DeleteTable {
+            table, previous, ..
+        } => {
+            if let Some(previous) = previous {
+                drop_postgres_indexes_for_table_schema(session, schema_name, previous).await?;
+            }
+            let query = format!(
+                "DELETE FROM {} WHERE table_name = $1",
+                qualified_table(schema_name, "schemas")
+            );
+            session
+                .execute(query.as_str(), &[&table.as_str()])
+                .await
+                .map_err(map_postgres_error)?;
+            Ok(())
+        }
+    }
+}
+
+async fn apply_table_lifecycle_in_session<C>(
+    session: &C,
+    schema_name: &str,
+    lifecycle: &TableLifecycleEvent,
+) -> Result<()>
+where
+    C: GenericClient + Sync,
+{
+    match lifecycle {
+        TableLifecycleEvent::StageHidden { table, table_id } => {
+            stage_hidden_table_identity_in_session(session, schema_name, table, table_id).await
+        }
+        TableLifecycleEvent::ActivateHidden {
+            table, table_id, ..
+        } => {
+            let _ =
+                activate_hidden_table_identity_in_session(session, schema_name, table, table_id)
+                    .await?;
+            Ok(())
+        }
+        TableLifecycleEvent::MarkDeleting { table, .. } => {
+            let _ = mark_table_deleting_in_session(session, schema_name, table).await?;
+            Ok(())
+        }
+        TableLifecycleEvent::HardDelete { table, table_id } => {
+            if hard_delete_table_identity_in_session(session, schema_name, table_id)
+                .await?
+                .is_some()
+                && load_table_id_from_session(session, schema_name, table)
+                    .await?
+                    .is_none()
+            {
+                if let Some(schema) =
+                    load_table_schema_from_session(session, schema_name, table).await?
+                {
+                    drop_postgres_indexes_for_table_schema(session, schema_name, &schema).await?;
+                }
+                let query = format!(
+                    "DELETE FROM {} WHERE table_name = $1",
+                    qualified_table(schema_name, "schemas")
+                );
+                session
+                    .execute(query.as_str(), &[&table.as_str()])
+                    .await
+                    .map_err(map_postgres_error)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 pub(super) fn sequence_number_from_i64(value: i64) -> Result<SequenceNumber> {
@@ -744,8 +1278,8 @@ pub(super) fn tenant_advisory_lock_key(tenant_id: &TenantId) -> i64 {
     i64::from_be_bytes(bytes)
 }
 
-pub(super) fn postgres_index_name(table: &TableName, index_name: &str) -> String {
-    let digest = Sha256::digest(format!("{}:{index_name}", table.as_str()).as_bytes());
+pub(super) fn postgres_index_name(index_id: &nimbus_core::IndexId) -> String {
+    let digest = Sha256::digest(index_id.as_str().as_bytes());
     let mut suffix = String::with_capacity(24);
     for byte in digest.iter().take(12) {
         let _ = write!(&mut suffix, "{byte:02x}");
@@ -927,8 +1461,7 @@ pub(super) fn index_fields_for_table_schema(
     index_name: &str,
 ) -> Result<Vec<String>> {
     table_schema
-        .indexes
-        .iter()
+        .queryable_indexes()
         .find(|index| index.name == index_name)
         .map(|index| index.fields.clone())
         .ok_or_else(|| {

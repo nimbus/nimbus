@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Debug, Clone)]
 pub(super) struct RemoteNamespaceSnapshot {
+    pub(super) table_catalog: Vec<RemoteTableCatalogRow>,
     pub(super) schemas: Vec<RemoteSchemaRow>,
     pub(super) documents: Vec<RemoteDocumentRow>,
     pub(super) resource_path_bindings: Vec<RemoteResourcePathBindingRow>,
@@ -15,6 +16,14 @@ pub(super) struct RemoteNamespaceSnapshot {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct RemoteTableCatalogRow {
+    namespace: String,
+    table_name: String,
+    table_id: String,
+    state: String,
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct RemoteSchemaRow {
     pub(super) table_name: String,
     pub(super) schema_json: String,
@@ -22,7 +31,7 @@ pub(super) struct RemoteSchemaRow {
 
 #[derive(Debug, Clone)]
 pub(super) struct RemoteDocumentRow {
-    table_name: String,
+    table_id: String,
     id: String,
     creation_time: u64,
     update_time: u64,
@@ -75,6 +84,7 @@ pub(super) async fn fetch_remote_namespace_snapshot(
         .map_err(map_libsql_error)?;
     let snapshot = async {
         Ok(RemoteNamespaceSnapshot {
+            table_catalog: query_remote_table_catalog_rows(&conn).await?,
             schemas: query_remote_schema_rows(&conn).await?,
             documents: query_remote_document_rows(&conn).await?,
             resource_path_bindings: query_remote_resource_path_binding_rows(&conn).await?,
@@ -92,6 +102,28 @@ pub(super) async fn fetch_remote_namespace_snapshot(
     .await;
     let _ = conn.execute_batch("ROLLBACK").await;
     snapshot
+}
+
+async fn query_remote_table_catalog_rows(conn: &Connection) -> Result<Vec<RemoteTableCatalogRow>> {
+    let mut rows = conn
+        .query(
+            "SELECT namespace, table_name, table_id, state
+             FROM table_catalog
+             ORDER BY namespace, table_name, table_id, state",
+            (),
+        )
+        .await
+        .map_err(map_libsql_error)?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+        result.push(RemoteTableCatalogRow {
+            namespace: row.get::<String>(0).map_err(map_libsql_error)?,
+            table_name: row.get::<String>(1).map_err(map_libsql_error)?,
+            table_id: row.get::<String>(2).map_err(map_libsql_error)?,
+            state: row.get::<String>(3).map_err(map_libsql_error)?,
+        });
+    }
+    Ok(result)
 }
 
 pub(super) async fn query_remote_schema_rows(conn: &Connection) -> Result<Vec<RemoteSchemaRow>> {
@@ -115,9 +147,11 @@ pub(super) async fn query_remote_schema_rows(conn: &Connection) -> Result<Vec<Re
 async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocumentRow>> {
     let mut rows = conn
         .query(
-            "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json
-             FROM documents
-             ORDER BY table_name, id",
+            "SELECT d.table_id, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json
+             FROM documents AS d
+             JOIN table_catalog AS c ON c.table_id = d.table_id
+             WHERE c.namespace = 'default'
+             ORDER BY c.table_name, d.id",
             (),
         )
         .await
@@ -127,7 +161,7 @@ async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocum
         let creation_time = row.get::<i64>(2).map_err(map_libsql_error)?;
         let update_time = row.get::<i64>(3).map_err(map_libsql_error)?;
         result.push(RemoteDocumentRow {
-            table_name: row.get::<String>(0).map_err(map_libsql_error)?,
+            table_id: row.get::<String>(0).map_err(map_libsql_error)?,
             id: row.get::<String>(1).map_err(map_libsql_error)?,
             creation_time: u64::try_from(creation_time).map_err(|_| {
                 Error::storage(
@@ -326,6 +360,24 @@ fn insert_snapshot_rows(
 ) -> Result<()> {
     {
         let mut statement = conn
+            .prepare(
+                "INSERT INTO table_catalog (namespace, table_name, table_id, state)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )
+            .map_err(map_local_sqlite_error)?;
+        for row in &snapshot.table_catalog {
+            statement
+                .execute(params![
+                    row.namespace.as_str(),
+                    row.table_name.as_str(),
+                    row.table_id.as_str(),
+                    row.state.as_str(),
+                ])
+                .map_err(map_local_sqlite_error)?;
+        }
+    }
+    {
+        let mut statement = conn
             .prepare("INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)")
             .map_err(map_local_sqlite_error)?;
         for row in &snapshot.schemas {
@@ -337,14 +389,14 @@ fn insert_snapshot_rows(
     {
         let mut statement = conn
             .prepare(
-                "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
+                "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
             .map_err(map_local_sqlite_error)?;
         for row in &snapshot.documents {
             statement
                 .execute(params![
-                    row.table_name.as_str(),
+                    row.table_id.as_str(),
                     row.id.as_str(),
                     row.data_json.as_str(),
                     row.typed_fields_json.as_str(),

@@ -171,6 +171,7 @@ impl MutationExecutionUnit {
         indexes: Vec<nimbus_core::IndexDefinition>,
         resource_path_binding: Option<nimbus_core::ResourcePathBinding>,
     ) -> Result<()> {
+        let table_id = self.runtime.store().table_id(&table)?;
         let mut state = self.active_state()?;
         let key = (table.clone(), document_id.clone());
         if !state.staged_writes.contains_key(&key) {
@@ -198,9 +199,14 @@ impl MutationExecutionUnit {
             state.staged_writes.remove(&key);
             state.write_order.retain(|existing| existing != &key);
         } else {
-            state
-                .write_dependencies
-                .record_document(&table, document_id);
+            match table_id.as_ref() {
+                Some(table_id) => {
+                    state
+                        .write_dependencies
+                        .record_document(&table, table_id, document_id);
+                }
+                None => state.write_dependencies.record_missing_table(&table),
+            }
         }
         Ok(())
     }

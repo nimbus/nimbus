@@ -44,6 +44,8 @@ impl MySqlWriteTransaction {
             )
             .await
             .map_err(map_mysql_error)
-        })
+        })?;
+        self.record_tenant_event(TenantEventKind::TriggerDelivery { cursor });
+        Ok(())
     }
 }

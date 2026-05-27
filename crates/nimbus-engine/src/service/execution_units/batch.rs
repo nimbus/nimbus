@@ -390,9 +390,18 @@ impl MutationExecutionUnit {
     fn load_batch_document(&self, key: &WriteKey) -> Result<Option<Document>> {
         let locator = key.locator();
         let document = self.current_document(&locator.table, &locator.id)?;
-        self.active_state()?
-            .read_dependencies
-            .record_document(&locator.table, locator.id.clone());
+        let table_id = self.snapshot.table_id(&locator.table)?;
+        match table_id.as_ref() {
+            Some(table_id) => self.active_state()?.read_dependencies.record_document(
+                &locator.table,
+                table_id,
+                locator.id.clone(),
+            ),
+            None => self
+                .active_state()?
+                .read_dependencies
+                .record_missing_table(&locator.table),
+        }
         Ok(document)
     }
 

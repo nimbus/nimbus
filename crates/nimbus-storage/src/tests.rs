@@ -6,8 +6,9 @@ pub(crate) use std::sync::{Condvar, Mutex};
 
 pub(crate) use nimbus_core::{
     DependencySet, Document, DocumentId, DurableMutationRecord, Error, FieldSchema, FieldType,
-    IndexDefinition, IndexRangeDependency, SequenceNumber, TableName, TableSchema, Timestamp,
-    WriteOp, WriteOpType, durable_record_intersects_dependency_set,
+    IndexDefinition, IndexLifecycleEvent, IndexRangeDependency, Schema, SchemaChangeEvent,
+    SequenceNumber, TableId, TableName, TableSchema, TenantEventKind, TenantEventRecord, Timestamp,
+    TriggerDeliveryCursor, WriteOp, WriteOpType, durable_record_intersects_dependency_set,
 };
 pub(crate) use serde_json::json;
 pub(crate) use tempfile::tempdir;
@@ -18,12 +19,13 @@ pub(crate) use tokio::time::{Duration, timeout};
 pub(crate) use crate::keys::{document_key, prefix_end, table_prefix};
 pub(crate) use crate::{
     DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
-    GeneratedTaskHistorySeedCase, GeneratedTaskRecord, LibsqlReplicaProvider,
+    GeneratedTaskHistorySeedCase, GeneratedTaskRecord, HardDeleteDecision, LibsqlReplicaProvider,
     LibsqlReplicaProviderConfig, ManualClock, MySqlProvider, MySqlProviderConfig, PostgresProvider,
-    PostgresProviderConfig, RedbTenantStorage, RestartBoundary, ScriptedRestartSchedule,
-    SeededFaultInjector, ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest,
-    SqliteTenantStorage, SqliteTenantStore, TenantReadStorage, TenantStore, TenantWriteOutcome,
-    TenantWriteStorage, UsageStore, VerificationHarnessMode, replay_generated_task_history,
+    PostgresProviderConfig, RedbTenantStorage, RestartBoundary, RetentionFloor,
+    RetentionParticipant, ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer,
+    ShadowMaterializerConfig, ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore,
+    TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage, UsageStore,
+    VerificationHarnessMode, replay_generated_task_history,
     selected_generated_task_history_seed_corpus,
 };
 

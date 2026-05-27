@@ -3,12 +3,11 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use nimbus_core::{Result, SequenceNumber, TenantId};
-use nimbus_storage::{
-    LibsqlReplicaProvider, MySqlProvider, PostgresProvider, PostgresProviderNotification,
-};
+use nimbus_storage::{PostgresProvider, PostgresProviderNotification};
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{debug, warn};
 
+use crate::persistence::WorkerContext;
 use crate::tenant::TenantRuntime;
 
 use super::Service;
@@ -22,9 +21,31 @@ const POLLING_PROVIDER_INTERVAL: Duration = Duration::from_millis(100);
 #[cfg(not(test))]
 const POLLING_PROVIDER_INTERVAL: Duration = Duration::from_millis(500);
 
+#[derive(Clone, Copy)]
+pub(crate) enum ProviderPollWorker {
+    MySql,
+    LibsqlReplica,
+}
+
+impl ProviderPollWorker {
+    pub(crate) fn task_name(self) -> &'static str {
+        match self {
+            Self::MySql => "mysql_provider_poll",
+            Self::LibsqlReplica => "libsql_replica_provider_poll",
+        }
+    }
+
+    fn failure_message(self) -> &'static str {
+        match self {
+            Self::MySql => "failed to poll MySQL provider state",
+            Self::LibsqlReplica => "failed to poll replica-connected SQLite provider state",
+        }
+    }
+}
+
 impl Service {
     pub(crate) fn ensure_provider_background_tasks_started(self: &Arc<Self>) {
-        let Some(background) = self.persistence_provider.background_task() else {
+        let Some(runtime_hooks) = self.persistence_provider.runtime_hooks() else {
             return;
         };
         if self
@@ -35,14 +56,20 @@ impl Service {
             return;
         }
 
-        let service = self.clone();
-        let shutdown = self.engine_executor.shutdown_token();
-        self.spawn_background(background.task_name(), async move {
-            background.run(service, shutdown).await;
+        let task_name = runtime_hooks.task_name();
+        if let Some(backend_info) = runtime_hooks.backend_info() {
+            debug!(backend = %backend_info, task = task_name, "starting provider runtime hooks");
+        }
+        let ctx = WorkerContext {
+            service: self.clone(),
+            shutdown: self.engine_executor.shutdown_token(),
+        };
+        self.spawn_background(task_name, async move {
+            runtime_hooks.spawn_workers(ctx).await;
         });
     }
 
-    pub(crate) async fn run_postgres_provider_hint_worker(
+    pub(crate) async fn run_provider_notification_listener(
         self: Arc<Self>,
         provider: Arc<PostgresProvider>,
         shutdown: CancellationToken,
@@ -208,13 +235,13 @@ impl Service {
         Ok(())
     }
 
-    pub(crate) async fn run_mysql_provider_poll_worker(
+    pub(crate) async fn run_provider_poll_worker(
         self: Arc<Self>,
-        _provider: Arc<MySqlProvider>,
+        worker: ProviderPollWorker,
         shutdown: CancellationToken,
     ) {
         #[cfg(any(test, debug_assertions))]
-        Service::assert_running_on_background_task("mysql_provider_poll");
+        Service::assert_running_on_background_task(worker.task_name());
 
         self.provider_hint_listener_ready
             .store(true, Ordering::Release);
@@ -222,32 +249,7 @@ impl Service {
         loop {
             match self.poll_provider_once(last_next_due).await {
                 Ok(next_due) => last_next_due = next_due,
-                Err(error) => warn!(error = %error, "failed to poll MySQL provider state"),
-            }
-            if sleep_or_stop(POLLING_PROVIDER_INTERVAL, &shutdown).await {
-                return;
-            }
-        }
-    }
-
-    pub(crate) async fn run_libsql_replica_provider_poll_worker(
-        self: Arc<Self>,
-        _provider: Arc<LibsqlReplicaProvider>,
-        shutdown: CancellationToken,
-    ) {
-        #[cfg(any(test, debug_assertions))]
-        Service::assert_running_on_background_task("libsql_replica_provider_poll");
-
-        self.provider_hint_listener_ready
-            .store(true, Ordering::Release);
-        let mut last_next_due = None;
-        loop {
-            match self.poll_provider_once(last_next_due).await {
-                Ok(next_due) => last_next_due = next_due,
-                Err(error) => warn!(
-                    error = %error,
-                    "failed to poll replica-connected SQLite provider state"
-                ),
+                Err(error) => warn!(error = %error, "{}", worker.failure_message()),
             }
             if sleep_or_stop(POLLING_PROVIDER_INTERVAL, &shutdown).await {
                 return;

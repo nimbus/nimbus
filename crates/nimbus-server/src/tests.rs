@@ -891,6 +891,8 @@ fn firebase_owner_schema_for_collection(
             },
         ],
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_owner".to_string(),
             fields: vec!["owner".to_string()],
         }],

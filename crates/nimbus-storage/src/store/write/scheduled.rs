@@ -1,4 +1,4 @@
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, Result, TenantEventKind};
 
 use crate::scheduler::{cancel_scheduled_job_in_write_txn, insert_scheduled_job_in_write_txn};
 
@@ -8,7 +8,13 @@ use super::super::{ResolvedScheduleOp, TenantWriteTransaction};
 impl TenantWriteTransaction {
     pub fn begin_scheduled_execution(&mut self, execution_id: Option<&str>) -> Result<bool> {
         self.check_cancel()?;
-        begin_scheduled_execution_in_journal(self.write_txn()?, execution_id)
+        let inserted = begin_scheduled_execution_in_journal(self.write_txn()?, execution_id)?;
+        if inserted && let Some(execution_id) = execution_id {
+            self.record_tenant_event(TenantEventKind::ScheduledExecution {
+                execution_id: execution_id.to_string(),
+            });
+        }
+        Ok(inserted)
     }
 }
 

@@ -2,9 +2,9 @@ use std::fs;
 use std::sync::Arc;
 
 use nimbus_core::{
-    AccessOperator, AccessPredicate, AccessRule, AccessValue, Error, FieldSchema, FieldType,
-    IndexDefinition, OrderBy, OrderDirection, PrincipalClaimSource, Query, TableAccessPolicy,
-    TableName, TableSchema,
+    AccessOperator, AccessPredicate, AccessRule, AccessValue, DocumentId, Error, FieldSchema,
+    FieldType, IndexDefinition, OrderBy, OrderDirection, PrincipalClaimSource, Query,
+    TableAccessPolicy, TableName, TableSchema,
 };
 use nimbus_runtime::{InvocationAuth, InvocationKind, NimbusRuntimeError, RuntimeUserIdentity};
 use serde_json::{Map, Value, json};
@@ -63,6 +63,8 @@ fn schema_with_owner_policy(access_policy: TableAccessPolicy) -> TableSchema {
             },
         ],
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_owner".to_string(),
             fields: vec!["owner".to_string()],
         }],
@@ -104,6 +106,21 @@ fn decode_runtime_result(value: Value) -> Result<Value, Error> {
     let envelope: ConvexRuntimeResponseEnvelope =
         serde_json::from_value(value).expect("runtime envelope should deserialize");
     envelope.into_core_result()
+}
+
+fn convex_document_id(table: &TableName, document_id: &DocumentId) -> DocumentId {
+    encode_convex_document_id(table, document_id).expect("Convex document id should encode")
+}
+
+fn raw_document_id_from_convex_value(table: &TableName, value: &Value) -> DocumentId {
+    let convex_id = value
+        .as_str()
+        .expect("value should contain a Convex document id")
+        .parse::<DocumentId>()
+        .expect("Convex document id should parse as a document key");
+    resolve_convex_document_id(table, convex_id)
+        .expect("Convex document id should resolve for the expected table")
+        .into_document_id()
 }
 
 fn assert_unknown_tenant_payload_rejected(error: NimbusRuntimeError) {
@@ -342,15 +359,12 @@ fn convex_query_execution_matches_direct_engine_authorization_for_same_normalize
         limit: None,
     };
 
-    let direct_documents = service
-        .query_documents_with_principal(&tenant_id, &query, &principal)
-        .expect("direct query should succeed");
-    let direct_json = Value::Array(
-        direct_documents
-            .into_iter()
-            .map(|document| document.to_json())
-            .collect(),
-    );
+    let direct_json = documents_to_convex_json(
+        service
+            .query_documents_with_principal(&tenant_id, &query, &principal)
+            .expect("direct query should succeed"),
+    )
+    .expect("direct documents should encode as Convex JSON");
     let convex_json = execute_query_result_cancellable_with_auth(
         service.as_ref(),
         &tenant_id,
@@ -392,7 +406,7 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
         .expect("schema should save");
 
     let auth = auth_for_subject("user-123");
-    let direct_json = Value::Array(
+    let direct_json = documents_to_convex_json(
         service
             .query_documents_with_principal(
                 &tenant_id,
@@ -407,11 +421,9 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
                 },
                 &normalize_principal_context(Some(&auth)),
             )
-            .expect("direct query should succeed")
-            .into_iter()
-            .map(|document| document.to_json())
-            .collect(),
-    );
+            .expect("direct query should succeed"),
+    )
+    .expect("direct documents should encode as Convex JSON");
     let registry = Arc::new(ConvexRegistry::empty());
     let isolation = crate::tenant_isolation::TenantIsolationContext::application(
         tenant_id.clone(),
@@ -514,22 +526,36 @@ fn runtime_mutation_bridge_stages_writes_until_commit_and_reads_its_own_writes()
             .expect("staged insert should encode"),
     )
     .expect("staged insert should succeed");
-    let document_id = inserted
+    let convex_id = inserted
         .as_str()
-        .expect("insert should return a document id")
-        .parse::<nimbus_core::DocumentId>()
-        .expect("document id should parse");
+        .expect("insert should return a Convex document id")
+        .parse::<DocumentId>()
+        .expect("Convex document id should parse");
+    let document_id = raw_document_id_from_convex_value(&table, &inserted);
 
     let read_back = decode_runtime_result(
         bridge
             .invoke_ctx_db_get(json!({
                 "table": table,
-                "id": document_id
+                "id": convex_id
             }))
             .expect("staged get should encode"),
     )
     .expect("staged get should succeed");
     assert_eq!(read_back["body"], json!("Hello from tx"));
+    assert_eq!(read_back["_id"], json!(convex_id.to_string()));
+    let dependencies = bridge.snapshot_read_set().dependency_set();
+    assert!(
+        dependencies.missing_tables.contains(&table),
+        "staged-only table reads should record a table-creation dependency until a durable TableId exists"
+    );
+    assert!(
+        !dependencies
+            .documents
+            .iter()
+            .any(|dependency| dependency.table == table && dependency.document_id == convex_id),
+        "Convex read tracking must not record the protocol-scoped id"
+    );
     assert!(matches!(
         service.get_document(&tenant_id, &table, document_id.clone()),
         Err(Error::DocumentNotFound(_))
@@ -596,17 +622,18 @@ fn runtime_mutation_bridge_reads_own_writes_even_when_materialized_serving_snaps
             .expect("staged insert should encode"),
     )
     .expect("staged insert should succeed");
-    let document_id = inserted
+    let convex_id = inserted
         .as_str()
-        .expect("insert should return a document id")
-        .parse::<nimbus_core::DocumentId>()
-        .expect("document id should parse");
+        .expect("insert should return a Convex document id")
+        .parse::<DocumentId>()
+        .expect("Convex document id should parse");
+    let document_id = raw_document_id_from_convex_value(&table, &inserted);
 
     let read_back = decode_runtime_result(
         bridge
             .invoke_ctx_db_get(json!({
                 "table": table,
-                "id": document_id
+                "id": convex_id
             }))
             .expect("staged get should encode"),
     )
@@ -616,6 +643,122 @@ fn runtime_mutation_bridge_reads_own_writes_even_when_materialized_serving_snaps
         service.get_document(&tenant_id, &table, document_id),
         Err(Error::DocumentNotFound(_))
     ));
+}
+
+#[test]
+fn runtime_host_bridge_rejects_wrong_table_convex_document_ids() {
+    let (_tempdir, service, tenant_id, _bridge) = host_bridge_fixture();
+    let messages = messages_table();
+    let users = TableName::new("users").expect("users table should be valid");
+    let bridge = mutation_bridge(
+        service,
+        Arc::new(ConvexRegistry::empty()),
+        tenant_id,
+        nimbus_core::PrincipalContext::anonymous(),
+    );
+
+    let inserted = decode_runtime_result(
+        bridge
+            .invoke_ctx_db_insert(json!({
+                "table": messages,
+                "fields": {
+                    "owner": "user-123",
+                    "body": "Wrong table probe"
+                }
+            }))
+            .expect("insert should encode"),
+    )
+    .expect("insert should succeed");
+    let convex_id = inserted
+        .as_str()
+        .expect("insert should return a Convex document id");
+    assert!(
+        convex_id.starts_with("messages:"),
+        "Convex ids should carry their developer table: {convex_id}"
+    );
+
+    for (operation, value) in [
+        (
+            "get",
+            bridge
+                .invoke_ctx_db_get(json!({
+                    "table": users,
+                    "id": convex_id,
+                }))
+                .expect("wrong-table get should encode"),
+        ),
+        (
+            "patch",
+            bridge
+                .invoke_ctx_db_patch(json!({
+                    "table": users,
+                    "id": convex_id,
+                    "patch": {
+                        "body": "should not apply"
+                    }
+                }))
+                .expect("wrong-table patch should encode"),
+        ),
+        (
+            "delete",
+            bridge
+                .invoke_ctx_db_delete(json!({
+                    "table": users,
+                    "id": convex_id,
+                }))
+                .expect("wrong-table delete should encode"),
+        ),
+    ] {
+        let error = decode_runtime_result(value)
+            .expect_err("wrong-table Convex document id should be rejected");
+        assert!(
+            matches!(error, Error::InvalidInput(_)),
+            "wrong-table {operation} should be InvalidInput: {error}"
+        );
+        assert!(
+            error.to_string().contains("belongs to table messages"),
+            "wrong-table {operation} should name the encoded table: {error}"
+        );
+    }
+}
+
+#[test]
+fn convex_read_get_round_trips_custom_table_scoped_ids() {
+    let (_tempdir, service, tenant_id, _bridge) = host_bridge_fixture();
+    let table = messages_table();
+    let raw_id = DocumentId::from_key("custom:id".to_string())
+        .expect("custom id with colon should be a valid storage id");
+    service
+        .insert_document_with_id(
+            &tenant_id,
+            table.clone(),
+            raw_id.clone(),
+            Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("body".to_string(), json!("Custom identity")),
+            ]),
+        )
+        .expect("custom id insert should succeed");
+    let convex_id = convex_document_id(&table, &raw_id);
+
+    let value = execute_query_result_cancellable_with_auth(
+        service.as_ref(),
+        &tenant_id,
+        ConvexExecutableQuery::Read(ConvexReadCommand::Get {
+            table: table.clone(),
+            id: convex_id.clone(),
+        }),
+        None,
+        &mut || Ok(()),
+    )
+    .expect("Convex get should read a custom id");
+
+    assert_eq!(value["_id"], json!(convex_id.to_string()));
+    assert_eq!(value["body"], json!("Custom identity"));
+    assert_eq!(
+        raw_document_id_from_convex_value(&table, &value["_id"]),
+        raw_id
+    );
 }
 
 #[test]
@@ -638,21 +781,43 @@ fn runtime_mutation_bridge_commit_detects_occ_conflicts() {
         tenant_id.clone(),
         nimbus_core::PrincipalContext::anonymous(),
     );
+    let convex_id = convex_document_id(&table, &document_id);
 
     let _ = decode_runtime_result(
         bridge
             .invoke_ctx_db_get(json!({
                 "table": table,
-                "id": document_id
+                "id": convex_id
             }))
             .expect("point read should encode"),
     )
     .expect("point read should succeed");
+    let committed_table_id = service
+        .table_id(&tenant_id, &table)
+        .expect("table id lookup should succeed")
+        .expect("committed document should have a table id");
+    let dependencies = bridge.snapshot_read_set().dependency_set();
+    assert!(
+        dependencies.documents.iter().any(|dependency| {
+            dependency.table == table
+                && dependency.table_id == committed_table_id
+                && dependency.document_id == document_id
+        }),
+        "Convex read tracking should record the raw storage document id under the stable TableId"
+    );
+    assert!(
+        !dependencies.documents.iter().any(|dependency| {
+            dependency.table == table
+                && dependency.table_id == committed_table_id
+                && dependency.document_id == convex_id
+        }),
+        "Convex read tracking must not record the protocol-scoped id"
+    );
     let _ = decode_runtime_result(
         bridge
             .invoke_ctx_db_patch(json!({
                 "table": table,
-                "id": document_id,
+                "id": convex_id,
                 "patch": {
                     "body": "Bridge update"
                 }
@@ -703,6 +868,7 @@ fn runtime_mutation_bridge_conflict_discards_staged_scheduler_side_effects() {
         tenant_id.clone(),
         nimbus_core::PrincipalContext::anonymous(),
     );
+    let convex_id = convex_document_id(&table, &document_id);
 
     let scheduled_job_id = decode_runtime_result(
         bridge
@@ -729,7 +895,7 @@ fn runtime_mutation_bridge_conflict_discards_staged_scheduler_side_effects() {
         bridge
             .invoke_ctx_db_patch(json!({
                 "table": table,
-                "id": document_id,
+                "id": convex_id,
                 "patch": {
                     "body": "Bridge update"
                 }

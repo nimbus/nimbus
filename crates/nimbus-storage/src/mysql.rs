@@ -10,17 +10,21 @@ use mysql_async::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, IndexDefinition, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult,
-    Schema, SequenceNumber, StorageErrorKind, TableName, TableSchema, TenantId, Timestamp,
-    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    FilterOp, IndexDefinition, IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob,
+    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
+    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio::sync::Semaphore;
 
+use crate::RetentionFloor;
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
-use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
+use crate::commit_log::{
+    deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
+};
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
@@ -34,6 +38,7 @@ mod provider;
 mod read;
 mod resource_paths;
 mod storage;
+mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
@@ -50,7 +55,8 @@ const MYSQL_MAX_INDEX_KEY_BYTES: usize = 3072;
 const MYSQL_INDEX_KEY_BYTES_PER_CHAR: usize = 4;
 const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
 const TRIGGER_DELIVERY_CURSOR_KEY: &str = "trigger_delivery_cursor";
-const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 1;
+const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 =
+    crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
 const MYSQL_INDEX_KEY_VALUE_LEN: usize = 191;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,12 +108,14 @@ pub struct MySqlTenantStore {
     tenant_id: TenantId,
     database_name: String,
     schema_cache: Arc<RwLock<Option<Schema>>>,
+    pub(crate) retention_floor: Arc<RetentionFloor>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MySqlReadSnapshot {
     schema: Schema,
     progress: JournalProgress,
+    table_identities: Vec<crate::TableIdentitySnapshotEntry>,
     documents: Vec<Document>,
     resource_path_bindings: Vec<ResourcePathBinding>,
     scheduled_execution_ids: Vec<String>,
@@ -127,6 +135,7 @@ pub struct MySqlWriteTransaction {
     schema_cache: Arc<RwLock<Option<Schema>>>,
     conn: Option<Conn>,
     commit_writes: Vec<WriteOp>,
+    tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     schema_cache_changed: bool,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
@@ -146,6 +155,7 @@ impl MySqlTenantStore {
             tenant_id: registration.tenant_id,
             database_name: registration.database_name,
             schema_cache: Arc::new(RwLock::new(None)),
+            retention_floor: RetentionFloor::new(),
         }
     }
 

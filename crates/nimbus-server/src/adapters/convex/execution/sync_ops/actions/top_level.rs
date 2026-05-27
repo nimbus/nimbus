@@ -25,8 +25,8 @@ pub(in crate::adapters::convex) fn execute_convex_action(
             execute_query_result(service, tenant_id, ConvexExecutableQuery::Query(query))
         }
         ConvexExecutableAction::Action(ConvexAction::PaginatedQuery { query }) => {
-            serde_json::to_value(service.paginate_documents(tenant_id, &query)?)
-                .map_err(|error| Error::Serialization(error.to_string()))
+            let page = service.paginate_documents(tenant_id, &query)?;
+            page_to_convex_json(&query.query.table, page)
         }
         ConvexExecutableAction::Action(ConvexAction::Mutation { mutation }) => {
             dispatch_mutation(service, tenant_id, mutation)
@@ -79,13 +79,13 @@ pub(in crate::adapters::convex) fn execute_convex_action_cancellable_with_auth(
         }
         ConvexExecutableAction::Action(ConvexAction::PaginatedQuery { query }) => {
             let mut check_cancel = || check_host_cancellation(cancellation);
-            serde_json::to_value(service.paginate_documents_with_principal_cancellable(
+            let page = service.paginate_documents_with_principal_cancellable(
                 tenant_id,
                 &query,
                 &normalize_principal_context(auth),
                 &mut check_cancel,
-            )?)
-            .map_err(|error| Error::Serialization(error.to_string()))
+            )?;
+            page_to_convex_json(&query.query.table, page)
         }
         ConvexExecutableAction::Action(ConvexAction::Mutation { mutation }) => {
             check_host_cancellation(cancellation)?;

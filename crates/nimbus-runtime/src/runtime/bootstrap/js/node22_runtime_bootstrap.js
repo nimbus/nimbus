@@ -7,88 +7,9 @@ import {
   nodeGlobals as hiddenNodeGlobals,
 } from "ext:nimbus_node22/internal_bootstrap.js";
 
-import "ext:deno_fetch/20_headers.js";
-import "ext:deno_fetch/22_http_client.js";
-import "ext:deno_fetch/23_request.js";
-import "ext:deno_fetch/23_response.js";
-import "ext:deno_fetch/26_fetch.js";
-import "ext:deno_fetch/27_eventsource.js";
-import { realPath as denoRealPath, realPathSync as denoRealPathSync } from "ext:deno_fs/30_fs.js";
-import "ext:deno_http/00_serve.ts";
-import "ext:deno_http/01_http.js";
-import "ext:deno_http/02_websocket.ts";
-import { enableNextTick } from "ext:deno_node/_next_tick.ts";
-import { createWritableStdioStream, initStdin } from "ext:deno_node/_process/streams.mjs";
-import { streamBaseState } from "ext:deno_node/internal_binding/stream_wrap.ts";
-import {
-  bindStreamsLazy as bindNodeConsoleStreamsLazy,
-  Console as NodeConsole,
-  kBindProperties as nodeConsoleBindProperties,
-} from "ext:deno_node/internal/console/constructor.mjs";
-import { onWarning as nodeProcessOnWarning } from "ext:deno_node/internal/process/warning.ts";
-import "ext:deno_net/01_net.js";
-import "ext:deno_net/02_tls.js";
-import {
-  hostname as denoHostname,
-  loadavg as denoLoadavg,
-  networkInterfaces as denoNetworkInterfaces,
-  osRelease as denoOsRelease,
-  osUptime,
-  systemMemoryInfo as denoSystemMemoryInfo,
-} from "ext:deno_os/30_os.js";
-import "ext:deno_os/40_signals.js";
-import * as io from "ext:deno_io/12_io.js";
-import "ext:deno_web/01_urlpattern.js";
-import {
-  defineEventHandler as defineWebEventHandler,
-  PromiseRejectionEvent as WebPromiseRejectionEvent,
-  reportException as reportWebException,
-  saveGlobalThisReference as saveWebGlobalThisReference,
-} from "ext:deno_web/02_event.js";
-import "ext:deno_web/04_global_interfaces.js";
-import {
-  ByteLengthQueuingStrategy as webByteLengthQueuingStrategy,
-  CountQueuingStrategy as webCountQueuingStrategy,
-  ReadableByteStreamController as webReadableByteStreamController,
-  ReadableStream as webReadableStream,
-  ReadableStreamBYOBReader as webReadableStreamBYOBReader,
-  ReadableStreamBYOBRequest as webReadableStreamBYOBRequest,
-  ReadableStreamDefaultController as webReadableStreamDefaultController,
-  ReadableStreamDefaultReader as webReadableStreamDefaultReader,
-  TransformStream as webTransformStream,
-  TransformStreamDefaultController as webTransformStreamDefaultController,
-  WritableStream as webWritableStream,
-  WritableStreamDefaultController as webWritableStreamDefaultController,
-  WritableStreamDefaultWriter as webWritableStreamDefaultWriter,
-} from "ext:deno_web/06_streams.js";
-import "ext:deno_web/10_filereader.js";
-import "ext:deno_web/12_location.js";
-import {
-  deserializeJsMessageData as webDeserializeJsMessageData,
-  MessageChannel as webMessageChannel,
-  MessagePort as webMessagePort,
-  MessagePortPrototype as webMessagePortPrototype,
-  serializeJsMessageData as webSerializeJsMessageData,
-  structuredClone as webStructuredClone,
-  unrefParentPort as webUnrefParentPort,
-} from "ext:deno_web/13_message_port.js";
-import { performance as webPerformance } from "ext:deno_web/15_performance.js";
-import "ext:deno_web/16_image_data.js";
-import "ext:deno_websocket/01_websocket.js";
-import "ext:deno_websocket/02_websocketstream.js";
 import nimbusPerfHooksBuiltin from "ext:nimbus_node22/perf_hooks_impl.js";
-import { Buffer as nodeBuffer } from "node:buffer";
-import { readFileSync as nodeFsReadFileSync } from "node:fs";
-import { relative as nodePathRelative, resolve as nodePathResolve } from "node:path";
-import { fileURLToPath as nodeFileURLToPath } from "node:url";
-import { parseEnv as nodeUtilParseEnv } from "node:util";
-import "node:worker_threads";
+import { createWritableStdioStream, initStdin } from "ext:deno_node/_process/streams.mjs";
 import { FileHandle as nodeInternalFsFileHandle } from "ext:deno_node/internal/fs/handle.ts";
-import {
-  AbortError as nodeAbortError,
-  ERR_FS_INVALID_SYMLINK_TYPE as nodeErrFsInvalidSymlinkType,
-  ERR_FS_FILE_TOO_LARGE as nodeErrFsFileTooLarge,
-} from "ext:deno_node/internal/errors.ts";
 import {
   Dirent as nodeFsDirent,
   constants as nodeFsUtilConstants,
@@ -96,8 +17,97 @@ import {
   getOptions as nodeFsGetOptions,
   toUnixTimestamp as nodeFsToUnixTimestamp,
 } from "ext:deno_node/internal/fs/utils.mjs";
-import { StringDecoder as nodeStringDecoder } from "node:string_decoder";
 import { getBinding as getNodeInternalBinding } from "ext:deno_node/internal_binding/mod.ts";
+import { Buffer as nodeBuffer } from "node:buffer";
+import { relative as nodePathRelative, resolve as nodePathResolve } from "node:path";
+import nodeProcessBuiltin from "node:process";
+import { StringDecoder as nodeStringDecoder } from "node:string_decoder";
+import * as nodeTimersBuiltin from "node:timers";
+import "ext:deno_websocket/01_websocket.js";
+import "ext:deno_websocket/02_websocketstream.js";
+
+core.loadExtScript("ext:deno_fetch/20_headers.js");
+core.loadExtScript("ext:deno_fetch/22_http_client.js");
+core.loadExtScript("ext:deno_fetch/23_request.js");
+core.loadExtScript("ext:deno_fetch/23_response.js");
+core.loadExtScript("ext:deno_telemetry/telemetry.ts");
+core.loadExtScript("ext:deno_telemetry/util.ts");
+core.loadExtScript("ext:deno_fetch/26_fetch.js");
+core.loadExtScript("ext:deno_fetch/27_eventsource.js");
+const { realPath: denoRealPath, realPathSync: denoRealPathSync } = core.loadExtScript(
+  "ext:deno_fs/30_fs.js",
+);
+core.loadExtScript("ext:deno_http/00_serve.ts");
+core.loadExtScript("ext:deno_http/01_http.js");
+core.loadExtScript("ext:deno_http/02_websocket.ts");
+core.loadExtScript("ext:deno_net/01_net.js");
+core.loadExtScript("ext:deno_net/02_tls.js");
+const {
+  hostname: denoHostname,
+  loadavg: denoLoadavg,
+  networkInterfaces: denoNetworkInterfaces,
+  osRelease: denoOsRelease,
+  osUptime,
+  systemMemoryInfo: denoSystemMemoryInfo,
+} = core.loadExtScript("ext:deno_os/30_os.js");
+core.loadExtScript("ext:deno_os/40_signals.js");
+const io = core.loadExtScript("ext:deno_io/12_io.js");
+core.loadExtScript("ext:deno_web/01_urlpattern.js");
+const {
+  defineEventHandler: defineWebEventHandler,
+  PromiseRejectionEvent: WebPromiseRejectionEvent,
+  reportException: reportWebException,
+  saveGlobalThisReference: saveWebGlobalThisReference,
+} = core.loadExtScript("ext:deno_web/02_event.js");
+core.loadExtScript("ext:deno_web/04_global_interfaces.js");
+const {
+  ByteLengthQueuingStrategy: webByteLengthQueuingStrategy,
+  CountQueuingStrategy: webCountQueuingStrategy,
+  ReadableByteStreamController: webReadableByteStreamController,
+  ReadableStream: webReadableStream,
+  ReadableStreamBYOBReader: webReadableStreamBYOBReader,
+  ReadableStreamBYOBRequest: webReadableStreamBYOBRequest,
+  ReadableStreamDefaultController: webReadableStreamDefaultController,
+  ReadableStreamDefaultReader: webReadableStreamDefaultReader,
+  TransformStream: webTransformStream,
+  TransformStreamDefaultController: webTransformStreamDefaultController,
+  WritableStream: webWritableStream,
+  WritableStreamDefaultController: webWritableStreamDefaultController,
+  WritableStreamDefaultWriter: webWritableStreamDefaultWriter,
+} = core.loadExtScript("ext:deno_web/06_streams.js");
+core.loadExtScript("ext:deno_web/10_filereader.js");
+core.loadExtScript("ext:deno_web/12_location.js");
+const {
+  deserializeJsMessageData: webDeserializeJsMessageData,
+  MessageChannel: webMessageChannel,
+  MessagePort: webMessagePort,
+  MessagePortPrototype: webMessagePortPrototype,
+  serializeJsMessageData: webSerializeJsMessageData,
+  structuredClone: webStructuredClone,
+  unrefParentPort: webUnrefParentPort,
+} = core.loadExtScript("ext:deno_web/13_message_port.js");
+const { performance: webPerformance } = core.loadExtScript(
+  "ext:deno_web/15_performance.js",
+);
+core.loadExtScript("ext:deno_web/16_image_data.js");
+const { enableNextTick } = core.loadExtScript("ext:deno_node/_next_tick.ts");
+const { streamBaseState } = core.loadExtScript(
+  "ext:deno_node/internal_binding/stream_wrap.ts",
+);
+const {
+  bindStreamsLazy: bindNodeConsoleStreamsLazy,
+  Console: NodeConsole,
+  kBindProperties: nodeConsoleBindProperties,
+} = core.loadExtScript("ext:deno_node/internal/console/constructor.mjs");
+const { onWarning: nodeProcessOnWarning } = core.loadExtScript(
+  "ext:deno_node/internal/process/warning.ts",
+);
+const {
+  AbortError: nodeAbortError,
+  ERR_FS_INVALID_SYMLINK_TYPE: nodeErrFsInvalidSymlinkType,
+  ERR_FS_FILE_TOO_LARGE: nodeErrFsFileTooLarge,
+} = core.loadExtScript("ext:deno_node/internal/errors.ts");
+const denoProcessModule = core.loadExtScript("ext:deno_process/40_process.js");
 
 Object.defineProperties(globalThis, windowOrWorkerGlobalScope);
 globalThis.__nimbusPerfHooksBuiltin = nimbusPerfHooksBuiltin;
@@ -910,6 +920,318 @@ function seedNodeProcessFeatures(nodeProcess) {
   delete features.quic;
 }
 
+function seedNodeProcessBuiltinModuleLoader(nodeProcess) {
+  if (!nodeProcess || typeof nodeProcess !== "object") {
+    return;
+  }
+
+  const getBuiltinModule = nodeProcessBuiltin?.getBuiltinModule;
+  if (typeof getBuiltinModule !== "function") {
+    return;
+  }
+  if (
+    typeof nodeProcess.getBuiltinModule === "function" &&
+    nodeProcess.getBuiltinModule("module") !== undefined
+  ) {
+    return;
+  }
+  Object.defineProperty(nodeProcess, "getBuiltinModule", {
+    value: getBuiltinModule,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+const nimbusScopedNodeSpawnSyncInstalled = Symbol.for(
+  "nimbus.scopedNodeSpawnSyncInstalled",
+);
+const nimbusPromiseAsyncHooksInstalled = Symbol.for(
+  "nimbus.promiseAsyncHooksInstalled",
+);
+
+function installScopedNodeSpawnSyncChild() {
+  if (
+    denoProcessModule?.[nimbusScopedNodeSpawnSyncInstalled] === true ||
+    typeof denoProcessModule?.nodeSpawnSyncChild !== "function"
+  ) {
+    return;
+  }
+
+  const nodeSpawnSyncChild = denoProcessModule.nodeSpawnSyncChild;
+  Object.defineProperty(denoProcessModule, "nodeSpawnSyncChild", {
+    value(options = {}) {
+      return nodeSpawnSyncChild({
+        ...options,
+        clearEnv: true,
+      });
+    },
+    configurable: true,
+    enumerable: true,
+    writable: false,
+  });
+  Object.defineProperty(denoProcessModule, nimbusScopedNodeSpawnSyncInstalled, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+}
+
+function installPromiseAsyncHooksBridge() {
+  if (
+    globalThis[nimbusPromiseAsyncHooksInstalled] === true ||
+    typeof core.setPromiseHooks !== "function"
+  ) {
+    return;
+  }
+
+  const asyncHooks = core.loadExtScript("ext:deno_node/internal/async_hooks.ts");
+  if (
+    typeof asyncHooks?.emitInit !== "function" ||
+    typeof asyncHooks?.emitBefore !== "function" ||
+    typeof asyncHooks?.emitAfter !== "function"
+  ) {
+    return;
+  }
+
+  const publicAsyncHooks = core.loadExtScript("ext:deno_node/async_hooks.ts");
+  const promiseAsyncIds = new WeakMap();
+  const promiseTriggerAsyncIds = new WeakMap();
+  const promisesWithActiveInitHooks = new WeakSet();
+  const promisesWithBeforeHooks = new WeakSet();
+  const promiseResolveHooks = [];
+  const triggerAsyncIdStack = [1];
+  let nextPromiseAsyncId = 1;
+  let activeInitHookCount = 0;
+  let activeAfterHookCount = 0;
+  let lateAfterHookBudget = 0;
+  function promiseAsyncId(promise) {
+    let asyncId = promiseAsyncIds.get(promise);
+    if (asyncId === undefined) {
+      asyncId = nextPromiseAsyncId;
+      nextPromiseAsyncId += 1;
+      promiseAsyncIds.set(promise, asyncId);
+    }
+    return asyncId;
+  }
+  function currentTriggerAsyncId() {
+    return triggerAsyncIdStack[triggerAsyncIdStack.length - 1] || 1;
+  }
+
+  if (publicAsyncHooks && typeof publicAsyncHooks === "object") {
+    const publicAsyncHooksDefault = publicAsyncHooks.default &&
+      typeof publicAsyncHooks.default === "object"
+      ? publicAsyncHooks.default
+      : undefined;
+    const originalCreateHook = publicAsyncHooks.createHook ??
+      publicAsyncHooksDefault?.createHook;
+    if (typeof originalCreateHook === "function") {
+      const createHook = function createNimbusAsyncHook(callbacks = {}) {
+        const hook = originalCreateHook(callbacks);
+        const tracksInit = typeof callbacks?.init === "function";
+        const tracksAfter = typeof callbacks?.after === "function";
+        const tracksPromiseResolve = typeof callbacks?.promiseResolve === "function";
+        if (!tracksInit && !tracksAfter && !tracksPromiseResolve) {
+          return hook;
+        }
+
+        let enabled = false;
+        const originalEnable = hook.enable;
+        const originalDisable = hook.disable;
+        hook.enable = function enableNimbusAsyncHook() {
+          originalEnable.call(this);
+          if (!enabled) {
+            if (tracksInit) {
+              activeInitHookCount += 1;
+            }
+            if (tracksAfter) {
+              activeAfterHookCount += 1;
+              lateAfterHookBudget += 1;
+            }
+            if (tracksPromiseResolve) {
+              promiseResolveHooks.push(callbacks.promiseResolve);
+            }
+            enabled = true;
+          }
+          return this;
+        };
+        hook.disable = function disableNimbusAsyncHook() {
+          originalDisable.call(this);
+          if (enabled) {
+            if (tracksInit) {
+              activeInitHookCount = Math.max(0, activeInitHookCount - 1);
+            }
+            if (tracksAfter) {
+              activeAfterHookCount = Math.max(0, activeAfterHookCount - 1);
+            }
+            if (tracksPromiseResolve) {
+              const index = promiseResolveHooks.indexOf(callbacks.promiseResolve);
+              if (index !== -1) {
+                promiseResolveHooks.splice(index, 1);
+              }
+            }
+            enabled = false;
+          }
+          return this;
+        };
+        return hook;
+      };
+      Object.defineProperty(publicAsyncHooks, "createHook", {
+        value: createHook,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+      if (publicAsyncHooksDefault) {
+        Object.defineProperty(publicAsyncHooksDefault, "createHook", {
+          value: createHook,
+          configurable: true,
+          enumerable: true,
+          writable: true,
+        });
+      }
+    }
+    const OriginalAsyncResource = publicAsyncHooks.AsyncResource ??
+      publicAsyncHooksDefault?.AsyncResource;
+    if (typeof OriginalAsyncResource === "function") {
+      class NimbusAsyncResource extends OriginalAsyncResource {
+        #triggerAsyncId;
+
+        constructor(type, options = undefined) {
+          if (typeof type !== "string") {
+            const error = new TypeError(
+              `The "type" argument must be of type string. Received ${typeof type}`,
+            );
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+          if (type.length === 0) {
+            const error = new TypeError(
+              "The property 'type' is invalid. Received ''",
+            );
+            error.code = "ERR_ASYNC_TYPE";
+            throw error;
+          }
+
+          let triggerAsyncId = currentTriggerAsyncId();
+          if (typeof options === "number") {
+            triggerAsyncId = options;
+          } else if (
+            options &&
+            typeof options === "object" &&
+            options.triggerAsyncId !== undefined
+          ) {
+            triggerAsyncId = options.triggerAsyncId;
+          }
+          if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < 0) {
+            const error = new RangeError(
+              `The value of "triggerAsyncId" is out of range. Received ${triggerAsyncId}`,
+            );
+            error.code = "ERR_INVALID_ASYNC_ID";
+            throw error;
+          }
+
+          super(type);
+          this.#triggerAsyncId = triggerAsyncId;
+        }
+
+        triggerAsyncId() {
+          return this.#triggerAsyncId;
+        }
+      }
+      Object.defineProperty(publicAsyncHooks, "AsyncResource", {
+        value: NimbusAsyncResource,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+      if (publicAsyncHooksDefault) {
+        Object.defineProperty(publicAsyncHooksDefault, "AsyncResource", {
+          value: NimbusAsyncResource,
+          configurable: true,
+          enumerable: true,
+          writable: true,
+        });
+      }
+    }
+    Object.defineProperty(publicAsyncHooks, "triggerAsyncId", {
+      value: currentTriggerAsyncId,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+    if (publicAsyncHooks.default && typeof publicAsyncHooks.default === "object") {
+      Object.defineProperty(publicAsyncHooks.default, "triggerAsyncId", {
+        value: currentTriggerAsyncId,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+  }
+
+  core.setPromiseHooks(
+    (promise, parentPromise) => {
+      const asyncId = promiseAsyncId(promise);
+      const triggerAsyncId = parentPromise === undefined || parentPromise === null
+        ? asyncHooks.executionAsyncId() || 1
+        : promiseAsyncId(parentPromise);
+      promiseTriggerAsyncIds.set(promise, triggerAsyncId);
+      if (activeInitHookCount > 0) {
+        promisesWithActiveInitHooks.add(promise);
+      }
+      promise[asyncHooks.async_id_symbol] = asyncId;
+      promise[asyncHooks.trigger_async_id_symbol] = triggerAsyncId;
+      asyncHooks.emitInit(asyncId, "PROMISE", triggerAsyncId, promise);
+    },
+    (promise) => {
+      const asyncId = promiseAsyncIds.get(promise);
+      if (asyncId !== undefined) {
+        promisesWithBeforeHooks.add(promise);
+        triggerAsyncIdStack.push(promiseTriggerAsyncIds.get(promise) || 1);
+        asyncHooks.emitBefore(asyncId);
+      }
+    },
+    (promise) => {
+      const asyncId = promiseAsyncIds.get(promise);
+      if (asyncId !== undefined) {
+        try {
+          asyncHooks.emitAfter(asyncId);
+        } finally {
+          if (triggerAsyncIdStack.length > 1) {
+            triggerAsyncIdStack.pop();
+          }
+        }
+      }
+    },
+    (promise) => {
+      const asyncId = promiseAsyncIds.get(promise);
+      if (asyncId !== undefined) {
+        if (
+          activeAfterHookCount > 0 &&
+          lateAfterHookBudget > 0 &&
+          !promisesWithActiveInitHooks.has(promise) &&
+          !promisesWithBeforeHooks.has(promise)
+        ) {
+          lateAfterHookBudget -= 1;
+          asyncHooks.emitAfter(asyncId);
+        }
+        for (const hook of [...promiseResolveHooks]) {
+          hook(asyncId);
+        }
+      }
+    },
+  );
+
+  Object.defineProperty(globalThis, nimbusPromiseAsyncHooksInstalled, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+}
+
 const nimbusLoadEnvFilePatched = Symbol("nimbus.loadEnvFilePatched");
 const nimbusLoadEnvOverlaySymbol = Symbol.for("nimbus.runtimeEnvOverlay");
 
@@ -933,7 +1255,7 @@ function normalizeLoadEnvFilePath(path) {
 function displayLoadEnvFilePath(path) {
   const normalizedPath = normalizeLoadEnvFilePath(path);
   if (normalizedPath instanceof URL) {
-    return nodeFileURLToPath(normalizedPath);
+    return runtimeFileURLToPath(normalizedPath);
   }
   return typeof normalizedPath === "string" ? normalizedPath : String(normalizedPath);
 }
@@ -941,7 +1263,7 @@ function displayLoadEnvFilePath(path) {
 function resolveLoadEnvFilePath(nodeProcess, path) {
   const normalizedPath = normalizeLoadEnvFilePath(path);
   if (normalizedPath instanceof URL) {
-    return nodeFileURLToPath(normalizedPath);
+    return runtimeFileURLToPath(normalizedPath);
   }
   const pathString = typeof normalizedPath === "string"
     ? normalizedPath
@@ -953,6 +1275,25 @@ function resolveLoadEnvFilePath(nodeProcess, path) {
     return pathString;
   }
   return nodePathResolve(nodeProcess.cwd(), pathString);
+}
+
+function runtimeReadTextFileSync(path) {
+  return String(
+    globalThis.__nimbusSyncHostValue("op_nimbus_runtime_require_read_file", {
+      path: runtimeFsPathToString(path),
+    }),
+  );
+}
+
+function runtimeFileURLToPath(fileUrl) {
+  const url = fileUrl instanceof URL ? fileUrl : new URL(fileUrl);
+  if (url.protocol !== "file:") {
+    throw new TypeError(`Nimbus only supports file: URLs for process.loadEnvFile(); received ${url.href}`);
+  }
+  if (url.hostname && url.hostname !== "localhost") {
+    throw new TypeError(`Nimbus only supports local file: URLs for process.loadEnvFile(); received ${url.href}`);
+  }
+  return decodeURIComponent(url.pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 }
 
 function createLoadEnvFileNotFoundError(path) {
@@ -1014,9 +1355,9 @@ function rememberLoadedEnvFileEntries(nodeProcess, path) {
     return;
   }
 
-  const source = nodeFsReadFileSync(resolveLoadEnvFilePath(nodeProcess, path), "utf8");
+  const source = runtimeReadTextFileSync(resolveLoadEnvFilePath(nodeProcess, path));
 
-  for (const [key, value] of Object.entries(nodeUtilParseEnv(source))) {
+  for (const [key, value] of Object.entries(runtimeParseEnv(source))) {
     try {
       if (nodeProcess.env[key] !== undefined) {
         continue;
@@ -1028,6 +1369,87 @@ function rememberLoadedEnvFileEntries(nodeProcess, path) {
     }
     overlayEntries[key] = value;
   }
+}
+
+function runtimeParseEnv(source) {
+  const entries = Object.create(null);
+  const lines = String(source).split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    let line = lines[index];
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("#")) {
+      continue;
+    }
+    const match = /^(?:\s*export\s+)?\s*([A-Za-z_][A-Za-z0-9_]*?)\s*=\s*(.*)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+    const key = match[1];
+    let rawValue = match[2] ?? "";
+    const leadingTrimmed = rawValue.trimStart();
+    const quote = leadingTrimmed[0];
+    if (quote === "\"" || quote === "'" || quote === "`") {
+      rawValue = leadingTrimmed;
+      while (!runtimeDotenvQuotedValueIsClosed(rawValue, quote) && index + 1 < lines.length) {
+        index += 1;
+        rawValue += `\n${lines[index]}`;
+      }
+    }
+    entries[key] = runtimeParseEnvValue(rawValue);
+  }
+  return entries;
+}
+
+function runtimeDotenvQuotedValueIsClosed(value, quote) {
+  if (!value.startsWith(quote)) {
+    return false;
+  }
+  let escaped = false;
+  for (let index = 1; index < value.length; index += 1) {
+    const char = value[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === "\"" && char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === quote) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function runtimeParseEnvValue(rawValue) {
+  let value = String(rawValue ?? "").trimStart();
+  const quote = value[0];
+  if (quote === "\"" || quote === "'" || quote === "`") {
+    let escaped = false;
+    for (let index = 1; index < value.length; index += 1) {
+      const char = value[index];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (quote === "\"" && char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === quote) {
+        value = value.slice(1, index);
+        return quote === "\"" ? value.replace(/\\n/g, "\n") : value;
+      }
+    }
+    return value.slice(1);
+  }
+
+  const commentIndex = value.search(/\s#/);
+  if (commentIndex !== -1) {
+    value = value.slice(0, commentIndex);
+  }
+  return value.trim();
 }
 
 function normalizeFsReadLength(buffer, offset, length) {
@@ -1906,12 +2328,13 @@ function seedNodeGlobalTimers(nodeGlobals) {
     "setInterval",
     "clearInterval",
   ]) {
-    if (nodeGlobals[property] === undefined) {
+    const timer = nodeGlobals[property] ?? nodeTimersBuiltin[property];
+    if (timer === undefined) {
       continue;
     }
     const value = property === "setImmediate"
-      ? createNodeCompatibleSetImmediate(nodeGlobals[property])
-      : nodeGlobals[property];
+      ? createNodeCompatibleSetImmediate(timer)
+      : timer;
     Object.defineProperty(globalThis, property, {
       value,
       configurable: true,
@@ -2393,9 +2816,23 @@ async function flushEmbeddedDenoTests(options = undefined) {
 const deno = hiddenDenoGlobals;
 const internalSymbol = deno.internal ?? Symbol("Deno.internal");
 const internals = coreInternals;
+Object.defineProperty(globalThis, "__nimbusHiddenDenoGlobals", {
+  value: deno,
+  configurable: false,
+  enumerable: false,
+  writable: false,
+});
+Object.defineProperty(globalThis, "__nimbusHiddenNodeGlobals", {
+  value: hiddenNodeGlobals,
+  configurable: false,
+  enumerable: false,
+  writable: false,
+});
 if (internals.nodeGlobals === undefined) {
   internals.nodeGlobals = hiddenNodeGlobals;
 }
+installScopedNodeSpawnSyncChild();
+installPromiseAsyncHooksBridge();
 Object.defineProperty(deno, "internal", {
   value: internalSymbol,
   configurable: true,
@@ -2866,14 +3303,31 @@ if (
 ) {
   globalThis.process = internals.nodeGlobals.process;
 }
+if (
+  internals.nodeGlobals &&
+  (internals.nodeGlobals.process === undefined || internals.nodeGlobals.process === null) &&
+  nodeProcessBuiltin &&
+  typeof nodeProcessBuiltin === "object"
+) {
+  internals.nodeGlobals.process = nodeProcessBuiltin;
+}
+if (
+  (globalThis.process === undefined || globalThis.process === null) &&
+  nodeProcessBuiltin &&
+  typeof nodeProcessBuiltin === "object"
+) {
+  globalThis.process = nodeProcessBuiltin;
+}
 seedNodeProcessPlatformMetadata(internals.nodeGlobals?.process);
 seedNodeProcessStdio(internals.nodeGlobals?.process);
 seedNodeProcessExecPath(internals.nodeGlobals?.process);
 seedNodeProcessFeatures(internals.nodeGlobals?.process);
+seedNodeProcessBuiltinModuleLoader(internals.nodeGlobals?.process);
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
 seedNodeProcessExecPath(globalThis.process);
 seedNodeProcessFeatures(globalThis.process);
+seedNodeProcessBuiltinModuleLoader(globalThis.process);
 const workerBootstrapState =
   typeof core.ops.op_nimbus_worker_bootstrap_state === "function"
     ? core.ops.op_nimbus_worker_bootstrap_state()
@@ -2927,11 +3381,23 @@ seedNodeProcessLoadEnvFile(globalThis.process);
 seedNodeGlobalTimers(internals.nodeGlobals);
 seedNodeProcessWarnings(globalThis.process);
 if (
+  internals.nodeGlobals
+  && typeof internals.nodeGlobals === "object"
+  && internals.nodeGlobals.Buffer === undefined
+) {
+  Object.defineProperty(internals.nodeGlobals, "Buffer", {
+    value: nodeBuffer,
+    configurable: true,
+    enumerable: false,
+    writable: false,
+  });
+}
+if (
   typeof globalThis.Buffer === "undefined"
-  && internals.nodeGlobals?.Buffer !== undefined
+  && (internals.nodeGlobals?.Buffer !== undefined || nodeBuffer !== undefined)
 ) {
   Object.defineProperty(globalThis, "Buffer", {
-    value: internals.nodeGlobals.Buffer,
+    value: internals.nodeGlobals?.Buffer ?? nodeBuffer,
     configurable: true,
     enumerable: false,
     writable: false,

@@ -29,6 +29,8 @@ env:
   MACHINE_OS_RELEASE_ARTIFACT: machine-os-arm64-release
   MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:5f2aa40538a71e32eba8dcdf9059dda10600bac68acef4588cb1aecedcfc6fe2
   MACHINE_OS_BOOTC_IMAGE_BUILDER: quay.io/centos-bootc/bootc-image-builder@sha256:754fc17718f977313885379e2c779066aba7d15af88fe04b486baec74759f574
+  NIMBUS_IMAGE_PACKAGE: ghcr.io/nimbus/nimbus
+  DOCKER_SCOUT_IMAGE: docker/scout-cli:1.20.0@sha256:734b589e8aa407af8a1343d390bd44a84d283b3e0cb23b24308e73b6be9232d4
 
 permissions:
   contents: read
@@ -55,6 +57,9 @@ jobs:
 
       - name: Verify machine-os release ref contract helper
         run: bash scripts/verify-machine-os-release-ref-contract-helper.sh
+
+      - name: Verify release OCI image helper
+        run: bash scripts/verify-release-oci-image-helper.sh
 
       - name: Require machine-os release app credentials
         env:
@@ -265,7 +270,7 @@ jobs:
 
       - name: Create machine-os source token
         id: machine_os_source_token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@v3.2.0
         with:
           client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
@@ -416,7 +421,7 @@ jobs:
 
       - name: Create machine-os workflow token
         id: machine_os_workflow_token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@v3.2.0
         with:
           client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
@@ -516,15 +521,329 @@ jobs:
           path: ${{ runner.temp }}/machine-os-release/**
           compression-level: 0
 
+  build-oci-image:
+    name: Build OCI image (${{ matrix.platform }})
+    needs: [build-linux-arm64, build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            artifact: nimbus_linux_x86_64
+            archive: nimbus_linux_x86_64.tar.gz
+            arch_tag: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            artifact: nimbus_linux_arm64
+            archive: nimbus_linux_arm64.tar.gz
+            arch_tag: arm64
+    steps:
+      - name: Check out Nimbus repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux release archive
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/${{ matrix.artifact }}
+
+      - name: Verify Linux release archive before image build
+        run: |
+          archive="${RUNNER_TEMP}/${{ matrix.artifact }}/${{ matrix.archive }}"
+          tar -tzf "${archive}" | grep -Fx nimbus
+          tar -tzf "${archive}" | grep -Fx README.md
+          tar -tzf "${archive}" | grep -Fx LICENSE
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s\n' "${GHCR_TOKEN}" | docker login ghcr.io \
+            --username "${GITHUB_ACTOR}" \
+            --password-stdin
+
+      - name: Build and push per-arch Nimbus image
+        id: build
+        env:
+          IMAGE: ${{ env.NIMBUS_IMAGE_PACKAGE }}
+          TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCHIVE: ${{ matrix.archive }}
+          ARCH_TAG: ${{ matrix.arch_tag }}
+        run: |
+          build_date="$(git show -s --format=%cI "${GITHUB_SHA}")"
+          context_dir="${RUNNER_TEMP}/nimbus-oci-context-${ARCH_TAG}"
+          mkdir -p "${context_dir}"
+          cp Containerfile "${context_dir}/Containerfile"
+          cp "${RUNNER_TEMP}/${{ matrix.artifact }}/${ARCHIVE}" "${context_dir}/${ARCHIVE}"
+
+          docker buildx create \
+            --use \
+            --driver docker-container \
+            --name "nimbus-release-image-${ARCH_TAG}"
+          docker buildx inspect --bootstrap
+
+          docker buildx build \
+            --platform "${PLATFORM}" \
+            --file "${context_dir}/Containerfile" \
+            --build-arg "NIMBUS_ARCHIVE=${ARCHIVE}" \
+            --build-arg "NIMBUS_VERSION=${TAG}" \
+            --build-arg "VCS_REF=${GITHUB_SHA}" \
+            --build-arg "BUILD_DATE=${build_date}" \
+            --build-arg "SOURCE_REPOSITORY=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --sbom=true \
+            --provenance=mode=max \
+            --metadata-file "oci-${ARCH_TAG}-metadata.json" \
+            --tag "${IMAGE}:${TAG}-${ARCH_TAG}" \
+            --push \
+            "${context_dir}"
+
+          digest="$(jq -r '."containerimage.digest"' "oci-${ARCH_TAG}-metadata.json")"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "buildx did not report a valid ${ARCH_TAG} image digest: ${digest}" >&2
+            cat "oci-${ARCH_TAG}-metadata.json" >&2
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "arch_tag=${ARCH_TAG}"
+            echo "platform=${PLATFORM}"
+            echo "digest=${digest}"
+            echo "ref=${IMAGE}:${TAG}-${ARCH_TAG}@${digest}"
+          } > "oci-digest-${ARCH_TAG}.env"
+
+      - name: Smoke-test per-arch image
+        run: |
+          bash scripts/smoke-release-oci-image.sh \
+            --image "${{ env.NIMBUS_IMAGE_PACKAGE }}:${{ github.ref_name }}-${{ matrix.arch_tag }}@${{ steps.build.outputs.digest }}" \
+            --expected-version "${{ github.ref_name }}"
+
+      - name: Attest per-arch image provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.NIMBUS_IMAGE_PACKAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Upload per-arch image digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: oci-image-digest-${{ matrix.arch_tag }}
+          path: oci-digest-${{ matrix.arch_tag }}.env
+          compression-level: 0
+
+  publish-oci-image:
+    name: Publish OCI image
+    needs: build-oci-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Check out Nimbus repository
+        uses: actions/checkout@v6
+
+      - name: Download per-arch image digests
+        uses: actions/download-artifact@v8
+        with:
+          path: oci-image-digests
+          pattern: oci-image-digest-*
+          merge-multiple: true
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s\n' "${GHCR_TOKEN}" | docker login ghcr.io \
+            --username "${GITHUB_ACTOR}" \
+            --password-stdin
+
+      - name: Assemble multi-arch image manifest
+        id: manifest
+        env:
+          IMAGE: ${{ env.NIMBUS_IMAGE_PACKAGE }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          amd64_digest="$(awk -F= '$1 == "digest" {print $2}' oci-image-digests/oci-digest-amd64.env)"
+          arm64_digest="$(awk -F= '$1 == "digest" {print $2}' oci-image-digests/oci-digest-arm64.env)"
+          for digest in "${amd64_digest}" "${arm64_digest}"; do
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "invalid per-arch digest: ${digest}" >&2
+              exit 1
+            fi
+          done
+
+          docker buildx create \
+            --use \
+            --driver docker-container \
+            --name nimbus-release-manifest
+          docker buildx inspect --bootstrap
+
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.title=Nimbus" \
+            --annotation "index:org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "index:org.opencontainers.image.version=${TAG}" \
+            --annotation "index:org.opencontainers.image.licenses=LicenseRef-Nimbus-Community" \
+            --tag "${IMAGE}:${TAG}" \
+            --metadata-file oci-manifest-metadata.json \
+            "${IMAGE}:${TAG}-amd64@${amd64_digest}" \
+            "${IMAGE}:${TAG}-arm64@${arm64_digest}"
+
+          multi_digest="$(jq -r '."containerimage.descriptor".digest' oci-manifest-metadata.json)"
+          if [[ ! "${multi_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "imagetools did not report a valid multi-arch digest: ${multi_digest}" >&2
+            cat oci-manifest-metadata.json >&2
+            exit 1
+          fi
+
+          latest_digest="none"
+          if [[ "${TAG}" != *-* ]]; then
+            docker buildx imagetools create \
+              --tag "${IMAGE}:latest" \
+              --metadata-file oci-latest-metadata.json \
+              "${IMAGE}:${TAG}@${multi_digest}"
+            latest_digest="$(jq -r '."containerimage.descriptor".digest' oci-latest-metadata.json)"
+            if [[ "${latest_digest}" != "${multi_digest}" ]]; then
+              echo "latest digest ${latest_digest} did not match ${multi_digest}" >&2
+              exit 1
+            fi
+          fi
+
+          {
+            echo "multi_digest=${multi_digest}"
+            echo "amd64_digest=${amd64_digest}"
+            echo "arm64_digest=${arm64_digest}"
+            echo "latest_digest=${latest_digest}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Attest multi-arch image provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.NIMBUS_IMAGE_PACKAGE }}
+          subject-digest: ${{ steps.manifest.outputs.multi_digest }}
+          push-to-registry: true
+
+      - name: Verify multi-arch image attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts
+          signer_workflow="${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}/.github/workflows/release.yml"
+          gh attestation verify \
+            "oci://${{ env.NIMBUS_IMAGE_PACKAGE }}:${{ github.ref_name }}@${{ steps.manifest.outputs.multi_digest }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --bundle-from-oci \
+            --signer-workflow "${signer_workflow}" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            --source-ref "refs/tags/${{ github.ref_name }}" \
+            --deny-self-hosted-runners \
+            --format json \
+            > artifacts/nimbus_oci_attestation.json
+
+      - name: Capture image SBOM evidence
+        run: |
+          mkdir -p artifacts
+          image_ref="${{ env.NIMBUS_IMAGE_PACKAGE }}:${{ github.ref_name }}@${{ steps.manifest.outputs.multi_digest }}"
+          raw_sbom_amd64="${RUNNER_TEMP}/nimbus_oci_sbom_linux_amd64.raw.json"
+          raw_sbom_arm64="${RUNNER_TEMP}/nimbus_oci_sbom_linux_arm64.raw.json"
+
+          docker buildx imagetools inspect "${image_ref}" \
+            --format '{{json (index .SBOM "linux/amd64").SPDX}}' \
+            > "${raw_sbom_amd64}"
+          docker buildx imagetools inspect "${image_ref}" \
+            --format '{{json (index .SBOM "linux/arm64").SPDX}}' \
+            > "${raw_sbom_arm64}"
+
+          for sbom_path in "${raw_sbom_amd64}" "${raw_sbom_arm64}"; do
+            if [[ ! -s "${sbom_path}" ]] || grep -Fx "null" "${sbom_path}" >/dev/null; then
+              echo "missing BuildKit platform SBOM evidence for Nimbus OCI image: ${sbom_path}" >&2
+              exit 1
+            fi
+            jq -e 'type == "object" and length > 0 and (.SPDXID | type == "string")' "${sbom_path}" >/dev/null
+          done
+
+          jq -n \
+            --arg image "${{ env.NIMBUS_IMAGE_PACKAGE }}" \
+            --arg tag "${{ github.ref_name }}" \
+            --arg ref "${{ env.NIMBUS_IMAGE_PACKAGE }}:${{ github.ref_name }}@${{ steps.manifest.outputs.multi_digest }}" \
+            --arg digest "${{ steps.manifest.outputs.multi_digest }}" \
+            --slurpfile amd64 "${raw_sbom_amd64}" \
+            --slurpfile arm64 "${raw_sbom_arm64}" \
+            '{subject: {image: $image, tag: $tag, ref: $ref, digest: $digest}, platforms: {"linux/amd64": $amd64[0], "linux/arm64": $arm64[0]}}' \
+            > artifacts/nimbus_oci_sbom.json
+
+      - name: Scan image for vulnerabilities
+        run: |
+          mkdir -p artifacts
+          docker run --rm \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${PWD}/artifacts:/workspace" \
+            "${DOCKER_SCOUT_IMAGE}" \
+            cves \
+            --format sarif \
+            --output /workspace/nimbus_oci_vulns.sarif.json \
+            "registry://${{ env.NIMBUS_IMAGE_PACKAGE }}:${{ github.ref_name }}@${{ steps.manifest.outputs.multi_digest }}"
+          test -s artifacts/nimbus_oci_vulns.sarif.json
+
+      - name: Render OCI image release report
+        run: |
+          bash scripts/render-release-oci-image-report.sh \
+            --image "${{ env.NIMBUS_IMAGE_PACKAGE }}" \
+            --tag "${{ github.ref_name }}" \
+            --multi-digest "${{ steps.manifest.outputs.multi_digest }}" \
+            --amd64-digest "${{ steps.manifest.outputs.amd64_digest }}" \
+            --arm64-digest "${{ steps.manifest.outputs.arm64_digest }}" \
+            --latest-digest "${{ steps.manifest.outputs.latest_digest }}" \
+            --output artifacts/nimbus_oci_image.txt
+
+      - name: Verify OCI image release report
+        run: |
+          bash scripts/verify-release-oci-image-report.sh \
+            --report artifacts/nimbus_oci_image.txt \
+            --expected-image "${{ env.NIMBUS_IMAGE_PACKAGE }}" \
+            --expected-tag "${{ github.ref_name }}"
+
+      - name: Verify OCI image release evidence assets
+        run: |
+          bash scripts/verify-release-oci-image-assets.sh \
+            --artifacts-dir artifacts \
+            --expected-image "${{ env.NIMBUS_IMAGE_PACKAGE }}" \
+            --expected-tag "${{ github.ref_name }}"
+
+      - name: Upload OCI image release evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nimbus_oci_image
+          if-no-files-found: error
+          path: artifacts/nimbus_oci_*
+          compression-level: 0
+
   release:
     name: Create Release
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    needs: [build-linux-arm64, build, publish-machine-os]
+    needs: [build-linux-arm64, build, publish-machine-os, publish-oci-image]
     permissions:
       contents: write
       id-token: write
       attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -543,18 +862,46 @@ jobs:
       - name: Verify optional Bun/JSC adapter assets
         run: bash scripts/verify-bun-jsc-release-assets.sh --artifacts-dir artifacts
 
-      - name: Stage install script alongside release artifacts
+      - name: Stage release support assets
         run: |
           cp scripts/install.sh artifacts/install.sh
+          cp LICENSE artifacts/LICENSE
           chmod 0755 artifacts/install.sh
+          test -s artifacts/LICENSE
 
       - name: Generate checksums
         run: |
           cd artifacts
           shopt -s nullglob
           adapter_assets=(nimbus-bun-jsc-adapter-*.tar.gz)
-          sha256sum nimbus_* "${adapter_assets[@]}" install.sh > checksums-sha256.txt
+          checksum_assets=(nimbus_*)
+          checksum_assets+=("${adapter_assets[@]}" install.sh LICENSE)
+          declare -A seen_checksum_asset=()
+          unique_checksum_assets=()
+          for asset in "${checksum_assets[@]}"; do
+            [[ -e "${asset}" ]] || continue
+            if [[ -z "${seen_checksum_asset[$asset]+x}" ]]; then
+              seen_checksum_asset["$asset"]=1
+              unique_checksum_assets+=("${asset}")
+            fi
+          done
+          sha256sum "${unique_checksum_assets[@]}" > checksums-sha256.txt
           cat checksums-sha256.txt
+
+      - name: Verify optional Bun/JSC adapter checksums
+        run: |
+          bash scripts/verify-bun-jsc-release-assets.sh \
+            --artifacts-dir artifacts \
+            --checksums artifacts/checksums-sha256.txt
+
+      - name: Verify OCI image release evidence bundle
+        run: |
+          bash scripts/verify-release-oci-image-assets.sh \
+            --artifacts-dir artifacts \
+            --expected-image "${{ env.NIMBUS_IMAGE_PACKAGE }}" \
+            --expected-tag "${{ github.ref_name }}" \
+            --require-license \
+            --checksums artifacts/checksums-sha256.txt
 
       - name: Generate release notes
         id: release-notes
@@ -599,20 +946,21 @@ jobs:
         id: prerelease
         run: |
           TAG="${{ github.ref_name }}"
-          if [[ "$TAG" == *-alpha* ]] || [[ "$TAG" == *-beta* ]] || [[ "$TAG" == *-rc* ]]; then
+          if [[ "$TAG" == *-* ]]; then
             echo "flag=--prerelease" >> "$GITHUB_OUTPUT"
           else
             echo "flag=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Attest build provenance
+      - name: Attest release asset provenance
         uses: actions/attest@v4
         with:
-          subject-path: |
-            artifacts/nimbus_*.tar.gz
-            artifacts/nimbus_*.zip
-            artifacts/install.sh
-            artifacts/checksums-sha256.txt
+          subject-checksums: artifacts/checksums-sha256.txt
+
+      - name: Attest checksum manifest provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/checksums-sha256.txt
 
       - name: Create GitHub Release
         env:
@@ -625,7 +973,7 @@ jobs:
 
       - name: Create Homebrew tap token
         id: homebrew_tap_token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@v3.2.0
         with:
           client-id: ${{ vars.HOMEBREW_TAP_CLIENT_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
@@ -691,7 +1039,7 @@ jobs:
               "Quick start:"
               "  nimbus --help              # Show all commands"
               "  nimbus machine init        # Record the default macOS machine contract"
-              "  nimbus serve               # Auto-start the machine if needed"
+              "  nimbus start               # Start the server"
               ""
               "Documentation: https://github.com/nimbus/nimbus"
             end

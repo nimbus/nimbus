@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use nimbus_core::Result;
 use redb::backends::InMemoryBackend;
 
+use crate::RetentionFloor;
 use crate::encrypted_redb::{
     EncryptedFileBackend, EncryptedMemoryBackend, EncryptedReadProfileSnapshot,
 };
@@ -41,6 +42,7 @@ impl TenantStore {
             db,
             clock,
             fault_injector,
+            retention_floor: RetentionFloor::new(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
     }
@@ -88,6 +90,7 @@ impl TenantStore {
             db,
             clock,
             fault_injector,
+            retention_floor: RetentionFloor::new(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
     }
@@ -107,6 +110,7 @@ impl TenantStore {
             db,
             clock,
             fault_injector,
+            retention_floor: RetentionFloor::new(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
     }
@@ -134,6 +138,7 @@ impl TenantStore {
             db,
             clock,
             fault_injector,
+            retention_floor: RetentionFloor::new(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
     }

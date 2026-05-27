@@ -14,6 +14,7 @@ pub mod transaction;
 pub mod trigger;
 pub mod typed_scalar;
 pub mod types;
+pub mod visibility;
 pub mod write_batch;
 
 pub use auth::{
@@ -27,7 +28,10 @@ pub use dependency::{
 };
 pub use document::Document;
 pub use error::{Error, Result, StorageErrorKind};
-pub use mutation::{CommitEntry, DurableMutationRecord, Mutation, WriteOp, WriteOpType};
+pub use mutation::{
+    CommitEntry, DurableMutationRecord, IndexLifecycleEvent, Mutation, SchemaChangeEvent,
+    TableLifecycleEvent, TenantEventKind, TenantEventRecord, WriteOp, WriteOpType,
+};
 pub use query::{
     AggregationOperator, CollectionSelector, CompositeFilter, CompositeOperator, CountAggregation,
     Cursor, DistanceMeasure, FieldFilter, FieldFilterOperator, FieldReference, Filter, FilterOp,
@@ -43,7 +47,7 @@ pub use scheduled::{
     CreateCronRequest, CronJob, CronSchedule, JobId, ScheduleRequest, ScheduledJob,
     ScheduledJobOutcome, ScheduledJobResult,
 };
-pub use schema::{FieldSchema, FieldType, IndexDefinition, Schema, TableSchema};
+pub use schema::{FieldSchema, FieldType, IndexDefinition, IndexState, Schema, TableSchema};
 pub use subscription::{
     SubscriptionCommitMetadata, SubscriptionDocumentChange, SubscriptionDocumentChangeKind,
     SubscriptionResultSnapshot, SubscriptionSnapshotDiff, diff_subscription_snapshots,
@@ -56,7 +60,11 @@ pub use trigger::{
     TriggerInvocationKey, TriggerInvocationRecord, TriggerInvocationState, TriggerWriteOrigin,
 };
 pub use typed_scalar::{NumericValue, SpecialDouble, StoredValue, TypedFieldMap, TypedScalarValue};
-pub use types::{DocumentId, SequenceNumber, TableName, TenantId, Timestamp};
+pub use types::{
+    DocumentId, IndexId, ResolvedDocumentId, SequenceNumber, TableId, TableName, TableState,
+    TenantId, Timestamp,
+};
+pub use visibility::{PinnedServingSnapshot, ReadVisibility, RequiredSequence};
 pub use write_batch::{
     AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, AtomicWriteResult, FieldTransform,
     FieldTransformOperation, WriteKey, WritePrecondition, WriteSetMode,
@@ -69,7 +77,8 @@ mod tests {
 
     use crate::{
         CommitEntry, Document, DocumentId, DurableMutationRecord, OrderBy, OrderDirection, Query,
-        SequenceNumber, TableName, TenantId, Timestamp, WriteOp, WriteOpType,
+        ResolvedDocumentId, SequenceNumber, TableId, TableName, TenantId, Timestamp, WriteOp,
+        WriteOpType,
     };
 
     #[test]
@@ -99,6 +108,64 @@ mod tests {
         assert!(matches!(empty, Err(crate::Error::InvalidInput(_))));
         assert!(matches!(nested, Err(crate::Error::InvalidInput(_))));
         assert!(matches!(nul, Err(crate::Error::InvalidInput(_))));
+    }
+
+    #[test]
+    fn resolved_document_id_round_trips_table_scoped_ids() {
+        let table = TableName::new("messages").expect("table should parse");
+        let raw_id = DocumentId::from_key("custom:id").expect("raw id should parse");
+        let scoped = ResolvedDocumentId::encode_table_scoped(&table, &raw_id)
+            .expect("scoped id should encode");
+
+        let resolved = ResolvedDocumentId::resolve_table_scoped(&table, scoped)
+            .expect("scoped id should resolve");
+
+        assert_eq!(resolved.table(), &table);
+        assert_eq!(resolved.document_id(), &raw_id);
+    }
+
+    #[test]
+    fn resolved_document_id_rejects_wrong_table() {
+        let messages = TableName::new("messages").expect("table should parse");
+        let users = TableName::new("users").expect("table should parse");
+        let raw_id = DocumentId::new();
+        let scoped = ResolvedDocumentId::encode_table_scoped(&messages, &raw_id)
+            .expect("scoped id should encode");
+
+        let error = ResolvedDocumentId::resolve_table_scoped(&users, scoped)
+            .expect_err("wrong-table id should fail");
+
+        assert!(
+            error.to_string().contains("belongs to table messages"),
+            "wrong-table error should name the encoded table: {error}"
+        );
+    }
+
+    #[test]
+    fn table_id_roundtrip() {
+        let id = TableId::new();
+        let parsed = TableId::from_str(id.as_str()).expect("table id should parse");
+        assert_eq!(id, parsed);
+    }
+
+    #[test]
+    fn table_state_parses_canonical_lifecycle_values() {
+        assert_eq!(
+            crate::TableState::from_str("active").expect("active should parse"),
+            crate::TableState::Active
+        );
+        assert_eq!(
+            crate::TableState::from_str("hidden").expect("hidden should parse"),
+            crate::TableState::Hidden
+        );
+        assert_eq!(
+            crate::TableState::from_str("deleting").expect("deleting should parse"),
+            crate::TableState::Deleting
+        );
+        assert!(matches!(
+            crate::TableState::from_str("archived"),
+            Err(crate::Error::InvalidInput(_))
+        ));
     }
 
     #[test]
@@ -178,13 +245,16 @@ mod tests {
     #[test]
     fn commit_entry_affected_tables_deduplicates_table_names() {
         let tasks = TableName::new("tasks").expect("table name should be valid");
+        let tasks_id = TableId::new();
         let users = TableName::new("users").expect("table name should be valid");
+        let users_id = TableId::new();
         let entry = CommitEntry {
             sequence: SequenceNumber(1),
             timestamp: Timestamp(123),
             writes: vec![
                 WriteOp {
                     table: tasks.clone(),
+                    table_id: tasks_id.clone(),
                     op_type: WriteOpType::Insert,
                     doc_id: DocumentId::new(),
                     resource_path_binding: None,
@@ -194,6 +264,7 @@ mod tests {
                 },
                 WriteOp {
                     table: tasks.clone(),
+                    table_id: tasks_id.clone(),
                     op_type: WriteOpType::Update,
                     doc_id: DocumentId::new(),
                     resource_path_binding: None,
@@ -203,6 +274,7 @@ mod tests {
                 },
                 WriteOp {
                     table: users.clone(),
+                    table_id: users_id.clone(),
                     op_type: WriteOpType::Delete,
                     doc_id: DocumentId::new(),
                     resource_path_binding: None,
@@ -217,6 +289,11 @@ mod tests {
         assert_eq!(affected.len(), 2);
         assert!(affected.contains(&tasks));
         assert!(affected.contains(&users));
+
+        let affected_ids = entry.affected_table_ids();
+        assert_eq!(affected_ids.len(), 2);
+        assert!(affected_ids.contains(&tasks_id));
+        assert!(affected_ids.contains(&users_id));
     }
 
     #[test]
@@ -226,6 +303,7 @@ mod tests {
             Timestamp(42),
             vec![WriteOp {
                 table: TableName::new("tasks").expect("table name should be valid"),
+                table_id: TableId::new(),
                 op_type: WriteOpType::Insert,
                 doc_id: DocumentId::new(),
                 resource_path_binding: None,
@@ -257,6 +335,7 @@ mod tests {
             Timestamp(43),
             vec![WriteOp {
                 table: TableName::new("tasks").expect("table name should be valid"),
+                table_id: TableId::new(),
                 op_type: WriteOpType::Update,
                 doc_id: DocumentId::new(),
                 resource_path_binding: None,

@@ -35,7 +35,7 @@ async fn typed_postgres_config_collection_group_queries_use_path_binding_metadat
                             field_type: FieldType::Number,
                             required: false,
                         }],
-                        indexes: vec![IndexDefinition {
+                        indexes: vec![IndexDefinition { id: nimbus_core::IndexId::new(), state: nimbus_core::IndexState::Enabled,
                             name: "by_rank".to_string(),
                             fields: vec!["rank".to_string()],
                         }],

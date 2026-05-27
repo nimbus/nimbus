@@ -65,6 +65,20 @@ else
   printf '  [skip] install.sh POSIX sh syntax (dash not available)\n'
 fi
 
+if grep -q "nimbus start" "${repo_root}/scripts/install.sh" && \
+   ! grep -q "nimbus serve" "${repo_root}/scripts/install.sh"; then
+  pass "install.sh getting-started output uses nimbus start"
+else
+  fail "install.sh getting-started output uses nimbus start"
+fi
+
+if grep -q "SPDX-License-Identifier: LicenseRef-Nimbus-Community" "${repo_root}/scripts/install.sh" && \
+   grep -q "releases/latest/download/LICENSE" "${repo_root}/scripts/install.sh"; then
+  pass "install.sh carries release license pointer"
+else
+  fail "install.sh carries release license pointer"
+fi
+
 # --- Help output ------------------------------------------------------------
 
 echo ""

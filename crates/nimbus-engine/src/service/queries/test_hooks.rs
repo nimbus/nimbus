@@ -319,7 +319,10 @@ impl Service {
         cursor: TriggerDeliveryCursor,
     ) -> Result<()> {
         self.with_runtime_for_testing(tenant_id, |runtime| {
-            runtime.store.set_trigger_delivery_cursor(cursor)
+            let _sequence_guard = runtime.lock_mutation_sequence();
+            runtime.store.set_trigger_delivery_cursor(cursor)?;
+            runtime.sync_mutation_journal_progress(runtime.store.journal_progress()?);
+            Ok(())
         })??;
         Ok(())
     }

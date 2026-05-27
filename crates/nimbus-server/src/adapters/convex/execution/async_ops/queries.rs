@@ -76,20 +76,16 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
                 cancellation,
             )
             .await?;
-            Ok(Value::Array(
-                documents
-                    .into_iter()
-                    .map(nimbus_core::Document::into_json)
-                    .collect(),
-            ))
+            documents_to_convex_json(documents)
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
             let principal = normalize_principal_context(auth);
             match service
                 .get_document_async_with_principal(tenant_id.clone(), table, id, principal)
                 .await
             {
-                Ok(document) => Ok(document.into_json()),
+                Ok(document) => document_to_convex_json(document),
                 Err(Error::DocumentNotFound(_)) => Ok(Value::Null),
                 Err(error) => Err(error),
             }
@@ -103,11 +99,11 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
                 cancellation,
             )
             .await?;
-            Ok(documents
+            documents
                 .drain(..)
                 .next()
-                .map(nimbus_core::Document::into_json)
-                .unwrap_or(Value::Null))
+                .map(document_to_convex_json)
+                .unwrap_or(Ok(Value::Null))
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
             let mut documents = query_documents_async_with_optional_cancellation(
@@ -123,11 +119,11 @@ pub(in crate::adapters::convex) async fn execute_query_result_async(
                     "convex unique query matched multiple documents".to_string(),
                 ));
             }
-            Ok(documents
+            documents
                 .drain(..)
                 .next()
-                .map(nimbus_core::Document::into_json)
-                .unwrap_or(Value::Null))
+                .map(document_to_convex_json)
+                .unwrap_or(Ok(Value::Null))
         }
     }
 }

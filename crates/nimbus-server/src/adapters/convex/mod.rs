@@ -27,6 +27,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 mod auth;
+mod document_identity;
 mod execution;
 mod handlers;
 mod host_bridge;
@@ -39,6 +40,10 @@ mod templates;
 #[cfg(test)]
 mod tests;
 
+use self::document_identity::{
+    document_to_convex_json, documents_to_convex_json, encode_convex_document_id,
+    page_to_convex_json, resolve_convex_document_id,
+};
 use self::execution::{ConvexHttpRequestContext, ConvexHttpRouteRequest, ConvexSubscriptionEvent};
 pub(crate) use self::handlers::{
     action, cancel_scheduled_job, http_route, http_route_root, mutation, paginated_query, query,

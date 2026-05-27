@@ -1,5 +1,7 @@
 use super::*;
 
+const STORAGE_CONFORMANCE_SEED_ENV: &str = "NIMBUS_STORAGE_CONFORMANCE_SEED";
+
 fn next_seeded_u64(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
     *seed
@@ -103,6 +105,7 @@ fn build_generated_task_durable_record(
     store: &TenantStore,
     history: &GeneratedTaskHistory,
     step_index: usize,
+    table_id: &TableId,
     documents_by_slot: &mut BTreeMap<u32, Document>,
 ) -> DurableMutationRecord {
     let sequence = SequenceNumber(
@@ -125,6 +128,7 @@ fn build_generated_task_durable_record(
             documents_by_slot.insert(*slot, document.clone());
             vec![WriteOp {
                 table: document.table.clone(),
+                table_id: table_id.clone(),
                 op_type: WriteOpType::Insert,
                 doc_id: document.id.clone(),
                 resource_path_binding: None,
@@ -148,6 +152,7 @@ fn build_generated_task_durable_record(
             documents_by_slot.insert(*slot, current.clone());
             vec![WriteOp {
                 table: current.table.clone(),
+                table_id: table_id.clone(),
                 op_type: WriteOpType::Update,
                 doc_id: current.id.clone(),
                 resource_path_binding: None,
@@ -168,6 +173,7 @@ fn build_generated_task_durable_record(
             });
             vec![WriteOp {
                 table: previous.table.clone(),
+                table_id: table_id.clone(),
                 op_type: WriteOpType::Delete,
                 doc_id: previous.id.clone(),
                 resource_path_binding: None,
@@ -306,6 +312,123 @@ fn generated_task_history_matches_model_on_storage_surface() {
 }
 
 #[test]
+fn storage_conformance_required_seed_corpus_matches_model() {
+    let seed = std::env::var(STORAGE_CONFORMANCE_SEED_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(67);
+    let history = GeneratedTaskHistory::seeded("storage-conformance", seed, 18);
+    assert_generated_task_history_matches_model_on_storage_surface(
+        &history,
+        None,
+        "storage_conformance_required_seed_corpus_matches_model",
+    );
+}
+
+#[test]
+fn generated_storage_history_includes_schema_index_lifecycle_scheduler_retention() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let table = TableName::new("tasks_conformance").expect("table should parse");
+    let schema = TableSchema {
+        table: table.clone(),
+        fields: vec![FieldSchema {
+            name: "rank".to_string(),
+            field_type: FieldType::Number,
+            required: false,
+        }],
+        indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            name: "by_rank".to_string(),
+            fields: vec!["rank".to_string()],
+            state: nimbus_core::IndexState::Enabled,
+        }],
+        access_policy: None,
+    };
+    store
+        .replace_table_schema(&schema)
+        .expect("schema/index transition should commit");
+    let hidden_id = TableId::new();
+    store
+        .stage_hidden_table_identity(&table, &hidden_id)
+        .expect("lifecycle stage should commit");
+    store
+        .activate_hidden_table_identity(&table, &hidden_id)
+        .expect("lifecycle activation should commit");
+    let _pin = store.pin_retention_participant(
+        RetentionParticipant::ShadowMaterializer,
+        store.latest_sequence().expect("sequence should load"),
+        Some(hidden_id),
+        "generated conformance retention pin",
+    );
+    assert_eq!(
+        store
+            .storage_health_diagnostic()
+            .expect("health diagnostic should load")
+            .retention_floor,
+        Some(store.latest_sequence().expect("sequence should load"))
+    );
+}
+
+#[test]
+fn crash_replay_diagnostic_and_retention_snapshot_diagnostic_are_seed_replayable() {
+    let dir = tempdir().expect("tempdir should create");
+    let path = dir.path().join("tenant.redb");
+    let table_id = TableId::new();
+    let document = sample_document("tasks_crash_replay", "pending");
+    let record = DurableMutationRecord::new(
+        SequenceNumber(1),
+        Timestamp(100),
+        vec![WriteOp {
+            table: document.table.clone(),
+            table_id: table_id.clone(),
+            op_type: WriteOpType::Insert,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(document.clone()),
+        }],
+        None,
+    )
+    .expect("record should build");
+    {
+        let store = TenantStore::open(&path).expect("store should open");
+        store
+            .append_durable_records_batch(&[record])
+            .expect("append should commit before simulated crash");
+        assert_eq!(
+            store
+                .storage_health_diagnostic()
+                .expect("diagnostic should load")
+                .last_recovery_status,
+            "pending_replay"
+        );
+    }
+
+    let recovered = TenantStore::open(&path).expect("store should reopen");
+    recovered
+        .recover_durable_journal()
+        .expect("recovery should replay pending record");
+    let health = recovered
+        .storage_health_diagnostic()
+        .expect("diagnostic should load after replay");
+    assert_eq!(health.last_recovery_status, "caught_up");
+
+    let floor = RetentionFloor::new();
+    let _pin = floor.pin(
+        RetentionParticipant::EmbeddedReplica,
+        health.applied_head,
+        Some(table_id.clone()),
+        "replica snapshot diagnostic",
+    );
+    let restored = RetentionFloor::restore_from_snapshot(floor.snapshot());
+    assert!(matches!(
+        restored.hard_delete_decision(&table_id, health.applied_head),
+        HardDeleteDecision::Denied { .. }
+    ));
+}
+
+#[test]
 #[ignore = "verification harness required corpus runs in dedicated harness lanes"]
 fn verification_harness_required_generated_history_seed_corpus_matches_model() {
     for case in selected_generated_task_history_seed_corpus(VerificationHarnessMode::Required)
@@ -355,6 +478,7 @@ fn generated_recovery_campaign_replays_durable_journal_across_repeated_restarts_
     let dir = tempdir().expect("tempdir should create");
     let path = dir.path().join("tenant.redb");
     let table = TableName::new(history.table()).expect("generated task table should be valid");
+    let table_id = TableId::new();
     let mut durable_documents_by_slot = BTreeMap::new();
     let mut recovered_prefix_len = 0_usize;
 
@@ -382,6 +506,7 @@ fn generated_recovery_campaign_replays_durable_journal_across_repeated_restarts_
             &store,
             &history,
             step_index,
+            &table_id,
             &mut durable_documents_by_slot,
         );
         store

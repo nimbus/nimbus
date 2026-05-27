@@ -558,8 +558,7 @@ fn table_schema_supports_structured_query_index(
     required_fields: &[String],
 ) -> bool {
     table_schema
-        .indexes
-        .iter()
+        .queryable_indexes()
         .any(|index| index.fields.as_slice().starts_with(required_fields))
 }
 

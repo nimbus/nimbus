@@ -31,6 +31,10 @@ impl TenantPersistence {
         match_tenant_persistence!(self, |store| store.get(table, id))
     }
 
+    pub(crate) fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        match_tenant_persistence!(self, |store| store.table_id(table))
+    }
+
     pub(crate) fn libsql_replica_freshness_stats(&self) -> Option<LibsqlReplicaFreshnessStats> {
         match self {
             Self::LibsqlReplica(store) => store.replica_freshness_stats().ok(),

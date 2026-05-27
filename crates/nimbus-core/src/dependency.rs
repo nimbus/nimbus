@@ -4,14 +4,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    CommitEntry, Document, DocumentId, DurableMutationRecord, Error, Filter, OrderBy, Query,
-    Result, TableName, WriteOpType,
+    CommitEntry, Document, DocumentId, DurableMutationRecord, Error, Filter, IndexId, OrderBy,
+    Query, Result, TableId, TableName, WriteOpType,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DependencySet {
-    pub tables: HashSet<TableName>,
-    pub documents: HashSet<(TableName, DocumentId)>,
+    pub tables: HashSet<TableDependency>,
+    #[serde(default)]
+    pub missing_tables: HashSet<TableName>,
+    #[serde(default)]
+    pub missing_predicates: Vec<MissingPredicateDependency>,
+    pub documents: HashSet<DocumentDependency>,
     pub index_ranges: Vec<IndexRangeDependency>,
     pub predicates: Vec<PredicateDependency>,
     pub paginated_windows: Vec<PaginatedWindowDependency>,
@@ -26,6 +30,8 @@ pub struct DependencySet {
 impl PartialEq for DependencySet {
     fn eq(&self, other: &Self) -> bool {
         self.tables == other.tables
+            && self.missing_tables == other.missing_tables
+            && self.missing_predicates == other.missing_predicates
             && self.documents == other.documents
             && self.index_ranges == other.index_ranges
             && self.predicates == other.predicates
@@ -34,25 +40,65 @@ impl PartialEq for DependencySet {
 }
 
 impl DependencySet {
-    pub fn from_engine_query(query: &Query) -> Self {
+    pub fn from_engine_query(query: &Query, table_id: Option<TableId>) -> Self {
         let mut dependencies = Self::default();
+        let Some(table_id) = table_id else {
+            if query.filters.is_empty() {
+                dependencies.record_missing_table(&query.table);
+            } else {
+                dependencies.record_missing_predicate(&query.table, query.filters.clone());
+            }
+            return dependencies;
+        };
+
         if query.filters.is_empty() {
-            dependencies.record_table(&query.table);
+            dependencies.record_table(&query.table, &table_id);
         } else {
             dependencies.record_predicate(PredicateDependency {
                 table: query.table.clone(),
+                table_id,
                 filters: query.filters.clone(),
             });
         }
         dependencies
     }
 
-    pub fn record_table(&mut self, table: &TableName) {
-        self.tables.insert(table.clone());
+    pub fn record_table(&mut self, table: &TableName, table_id: &TableId) {
+        self.tables.insert(TableDependency {
+            table: table.clone(),
+            table_id: table_id.clone(),
+        });
     }
 
-    pub fn record_document(&mut self, table: &TableName, document_id: DocumentId) {
-        self.documents.insert((table.clone(), document_id));
+    pub fn record_missing_table(&mut self, table: &TableName) {
+        self.missing_tables.insert(table.clone());
+    }
+
+    pub fn record_missing_predicate(&mut self, table: &TableName, filters: Vec<Filter>) {
+        if filters.is_empty() {
+            self.record_missing_table(table);
+            return;
+        }
+        let dependency = MissingPredicateDependency {
+            table: table.clone(),
+            filters,
+        };
+        if !self.missing_predicates.contains(&dependency) {
+            self.missing_predicates.push(dependency);
+        }
+    }
+
+    pub fn record_document(
+        &mut self,
+        table: &TableName,
+        table_id: &TableId,
+        document_id: DocumentId,
+    ) {
+        self.documents.insert(DocumentDependency {
+            table: table.clone(),
+            table_id: table_id.clone(),
+            document_id,
+        });
     }
 
     pub fn record_index_range(&mut self, dependency: IndexRangeDependency) {
@@ -80,11 +126,21 @@ impl DependencySet {
     }
 
     pub fn extend(&mut self, other: &DependencySet) {
-        for table in &other.tables {
-            self.record_table(table);
+        for dependency in &other.tables {
+            self.record_table(&dependency.table, &dependency.table_id);
         }
-        for (table, document_id) in &other.documents {
-            self.record_document(table, document_id.clone());
+        for table in &other.missing_tables {
+            self.record_missing_table(table);
+        }
+        for dependency in &other.missing_predicates {
+            self.record_missing_predicate(&dependency.table, dependency.filters.clone());
+        }
+        for dependency in &other.documents {
+            self.record_document(
+                &dependency.table,
+                &dependency.table_id,
+                dependency.document_id.clone(),
+            );
         }
         for dependency in &other.index_ranges {
             self.record_index_range(dependency.clone());
@@ -99,6 +155,8 @@ impl DependencySet {
 
     pub fn is_empty(&self) -> bool {
         self.tables.is_empty()
+            && self.missing_tables.is_empty()
+            && self.missing_predicates.is_empty()
             && self.documents.is_empty()
             && self.index_ranges.is_empty()
             && self.predicates.is_empty()
@@ -128,8 +186,29 @@ impl DependencySet {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TableDependency {
+    pub table: TableName,
+    pub table_id: TableId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DocumentDependency {
+    pub table: TableName,
+    pub table_id: TableId,
+    pub document_id: DocumentId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MissingPredicateDependency {
+    pub table: TableName,
+    pub filters: Vec<Filter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct IndexRangeDependency {
     pub table: TableName,
+    pub table_id: TableId,
+    pub index_id: IndexId,
     pub index_name: String,
     pub field: String,
     pub start: Option<Value>,
@@ -141,12 +220,14 @@ pub struct IndexRangeDependency {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PredicateDependency {
     pub table: TableName,
+    pub table_id: TableId,
     pub filters: Vec<Filter>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaginatedWindowDependency {
     pub table: TableName,
+    pub table_id: TableId,
     pub filters: Vec<Filter>,
     pub order: Option<OrderBy>,
     pub start_sort_values: Vec<Option<Value>>,
@@ -219,31 +300,73 @@ fn write_intersects_dependency_set<F>(
 where
     F: FnMut(&TableName, DocumentId) -> Result<Option<Document>>,
 {
-    if dependencies.tables.contains(&write.table) {
+    if dependencies.missing_tables.contains(&write.table) {
         return true;
     }
 
+    let relevant_missing_predicates = dependencies
+        .missing_predicates
+        .iter()
+        .filter(|dependency| dependency.table == write.table)
+        .collect::<Vec<_>>();
+
     if dependencies
-        .documents
-        .contains(&(write.table.clone(), write.doc_id.clone()))
+        .tables
+        .iter()
+        .any(|dependency| dependency.table_id == write.table_id)
     {
         return true;
+    }
+
+    if dependencies.documents.iter().any(|dependency| {
+        dependency.table_id == write.table_id && dependency.document_id == write.doc_id
+    }) {
+        return true;
+    }
+
+    if !relevant_missing_predicates.is_empty() {
+        if let Some(document) = write.current.as_ref()
+            && relevant_missing_predicates.iter().any(|dependency| {
+                filters_match_document(document, &dependency.filters).unwrap_or(true)
+            })
+        {
+            return true;
+        }
+        if let Some(document) = write.previous.as_ref()
+            && relevant_missing_predicates.iter().any(|dependency| {
+                filters_match_document(document, &dependency.filters).unwrap_or(true)
+            })
+        {
+            return true;
+        }
+        if let Some(document) = candidate_documents
+            .get(&(write.table.clone(), write.doc_id.clone()))
+            .copied()
+            && relevant_missing_predicates.iter().any(|dependency| {
+                filters_match_document(document, &dependency.filters).unwrap_or(true)
+            })
+        {
+            return true;
+        }
+        if matches!(write.op_type, WriteOpType::Delete) {
+            return true;
+        }
     }
 
     let relevant_predicates = dependencies
         .predicates
         .iter()
-        .filter(|dependency| dependency.table == write.table)
+        .filter(|dependency| dependency.table_id == write.table_id)
         .collect::<Vec<_>>();
     let relevant_paginated_windows = dependencies
         .paginated_windows
         .iter()
-        .filter(|dependency| dependency.table == write.table)
+        .filter(|dependency| dependency.table_id == write.table_id)
         .collect::<Vec<_>>();
     let mut relevant_index_ranges = dependencies
         .index_ranges
         .iter()
-        .filter(|dependency| dependency.table == write.table);
+        .filter(|dependency| dependency.table_id == write.table_id);
 
     let has_relevant_dependencies = !relevant_predicates.is_empty()
         || !relevant_paginated_windows.is_empty()
@@ -517,7 +640,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{SequenceNumber, Timestamp, WriteOp};
+    use crate::{SequenceNumber, TableId, Timestamp, WriteOp};
 
     fn tasks_table() -> TableName {
         TableName::new("tasks").expect("table should be valid")
@@ -540,6 +663,7 @@ mod tests {
 
     fn single_write_commit(
         table: TableName,
+        table_id: TableId,
         op_type: WriteOpType,
         doc_id: DocumentId,
     ) -> CommitEntry {
@@ -548,6 +672,7 @@ mod tests {
             timestamp: Timestamp::now(),
             writes: vec![WriteOp {
                 table,
+                table_id,
                 op_type,
                 doc_id,
                 resource_path_binding: None,
@@ -561,9 +686,15 @@ mod tests {
     #[test]
     fn table_dependency_matches_writes_on_the_same_table() {
         let table = tasks_table();
-        let commit = single_write_commit(table.clone(), WriteOpType::Insert, DocumentId::new());
+        let table_id = TableId::new();
+        let commit = single_write_commit(
+            table.clone(),
+            table_id.clone(),
+            WriteOpType::Insert,
+            DocumentId::new(),
+        );
         let mut dependencies = DependencySet::default();
-        dependencies.record_table(&table);
+        dependencies.record_table(&table, &table_id);
 
         assert!(commit_intersects_dependency_set(
             &commit,
@@ -576,19 +707,25 @@ mod tests {
     #[test]
     fn document_dependency_matches_only_the_target_document() {
         let table = tasks_table();
+        let table_id = TableId::new();
         let target_id = DocumentId::new();
         let other_id = DocumentId::new();
         let mut dependencies = DependencySet::default();
-        dependencies.record_document(&table, target_id.clone());
+        dependencies.record_document(&table, &table_id, target_id.clone());
 
         assert!(commit_intersects_dependency_set(
-            &single_write_commit(table.clone(), WriteOpType::Update, target_id),
+            &single_write_commit(
+                table.clone(),
+                table_id.clone(),
+                WriteOpType::Update,
+                target_id,
+            ),
             &dependencies,
             &[],
             |_, _| Ok(None),
         ));
         assert!(!commit_intersects_dependency_set(
-            &single_write_commit(table, WriteOpType::Update, other_id),
+            &single_write_commit(table, table_id, WriteOpType::Update, other_id),
             &dependencies,
             &[],
             |_, _| Ok(None),
@@ -596,10 +733,112 @@ mod tests {
     }
 
     #[test]
+    fn table_dependency_uses_table_id_not_reused_table_name() {
+        let table = tasks_table();
+        let old_table_id = TableId::new();
+        let new_table_id = TableId::new();
+        let mut dependencies = DependencySet::default();
+        dependencies.record_table(&table, &old_table_id);
+
+        assert!(!commit_intersects_dependency_set(
+            &single_write_commit(table, new_table_id, WriteOpType::Insert, DocumentId::new(),),
+            &dependencies,
+            &[],
+            |_, _| Ok(None),
+        ));
+    }
+
+    #[test]
+    fn document_dependency_uses_table_id_not_reused_table_name_and_document_key() {
+        let table = tasks_table();
+        let old_table_id = TableId::new();
+        let new_table_id = TableId::new();
+        let document_id = DocumentId::new();
+        let mut dependencies = DependencySet::default();
+        dependencies.record_document(&table, &old_table_id, document_id.clone());
+
+        assert!(!commit_intersects_dependency_set(
+            &single_write_commit(table, new_table_id, WriteOpType::Update, document_id),
+            &dependencies,
+            &[],
+            |_, _| Ok(None),
+        ));
+    }
+
+    #[test]
+    fn missing_table_dependency_matches_first_write_for_that_name() {
+        let table = tasks_table();
+        let mut dependencies = DependencySet::default();
+        dependencies.record_missing_table(&table);
+
+        assert!(commit_intersects_dependency_set(
+            &single_write_commit(
+                table,
+                TableId::new(),
+                WriteOpType::Insert,
+                DocumentId::new(),
+            ),
+            &dependencies,
+            &[],
+            |_, _| Ok(None),
+        ));
+    }
+
+    #[test]
+    fn missing_predicate_dependency_matches_only_possible_first_writes() {
+        let table = tasks_table();
+        let matching_id = DocumentId::new();
+        let nonmatching_id = DocumentId::new();
+        let mut dependencies = DependencySet::default();
+        dependencies.record_missing_predicate(
+            &table,
+            vec![Filter {
+                field: "status".to_string(),
+                op: crate::FilterOp::Eq,
+                value: json!("active"),
+            }],
+        );
+        let matching = document_with_fields(
+            table.clone(),
+            matching_id.clone(),
+            serde_json::Map::from_iter([("status".to_string(), json!("active"))]),
+        );
+        let nonmatching = document_with_fields(
+            table.clone(),
+            nonmatching_id.clone(),
+            serde_json::Map::from_iter([("status".to_string(), json!("archived"))]),
+        );
+
+        assert!(commit_intersects_dependency_set(
+            &single_write_commit(
+                table.clone(),
+                TableId::new(),
+                WriteOpType::Insert,
+                matching_id,
+            ),
+            &dependencies,
+            &[matching],
+            |_, _| Ok(None),
+        ));
+        assert!(!commit_intersects_dependency_set(
+            &single_write_commit(table, TableId::new(), WriteOpType::Insert, nonmatching_id),
+            &dependencies,
+            &[nonmatching],
+            |_, _| Ok(None),
+        ));
+    }
+
+    #[test]
     fn index_range_dependency_matches_documents_inside_the_range() {
         let table = tasks_table();
+        let table_id = TableId::new();
         let doc_id = DocumentId::new();
-        let commit = single_write_commit(table.clone(), WriteOpType::Insert, doc_id.clone());
+        let commit = single_write_commit(
+            table.clone(),
+            table_id.clone(),
+            WriteOpType::Insert,
+            doc_id.clone(),
+        );
         let document = document_with_fields(
             table.clone(),
             doc_id,
@@ -608,6 +847,8 @@ mod tests {
         let mut dependencies = DependencySet::default();
         dependencies.record_index_range(IndexRangeDependency {
             table,
+            table_id,
+            index_id: IndexId::new(),
             index_name: "by_rank".to_string(),
             field: "rank".to_string(),
             start: Some(json!(2)),
@@ -627,8 +868,14 @@ mod tests {
     #[test]
     fn paginated_window_dependency_respects_filters() {
         let table = tasks_table();
+        let table_id = TableId::new();
         let doc_id = DocumentId::new();
-        let commit = single_write_commit(table.clone(), WriteOpType::Insert, doc_id.clone());
+        let commit = single_write_commit(
+            table.clone(),
+            table_id.clone(),
+            WriteOpType::Insert,
+            doc_id.clone(),
+        );
         let matching = document_with_fields(
             table.clone(),
             doc_id,
@@ -637,6 +884,7 @@ mod tests {
         let mut dependencies = DependencySet::default();
         dependencies.record_paginated_window(PaginatedWindowDependency {
             table,
+            table_id,
             filters: vec![Filter {
                 field: "status".to_string(),
                 op: crate::FilterOp::Eq,
@@ -662,8 +910,11 @@ mod tests {
     #[test]
     fn dependency_set_roundtrip_rebuilds_hash_backed_dedup_state() {
         let table = tasks_table();
+        let table_id = TableId::new();
         let index_dependency = IndexRangeDependency {
             table: table.clone(),
+            table_id: table_id.clone(),
+            index_id: IndexId::new(),
             index_name: "by_rank".to_string(),
             field: "rank".to_string(),
             start: Some(json!(1)),
@@ -673,6 +924,7 @@ mod tests {
         };
         let predicate_dependency = PredicateDependency {
             table: table.clone(),
+            table_id: table_id.clone(),
             filters: vec![Filter {
                 field: "status".to_string(),
                 op: crate::FilterOp::Eq,
@@ -681,6 +933,7 @@ mod tests {
         };
         let paginated_dependency = PaginatedWindowDependency {
             table,
+            table_id,
             filters: predicate_dependency.filters.clone(),
             order: None,
             start_sort_values: Vec::new(),

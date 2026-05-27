@@ -262,6 +262,8 @@ fn compound_structured_queries_require_matching_schema_indexes() {
         table: tasks_table(),
         fields: Vec::new(),
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_status".to_string(),
             fields: vec!["status".to_string()],
         }],
@@ -275,6 +277,8 @@ fn compound_structured_queries_require_matching_schema_indexes() {
         table: tasks_table(),
         fields: Vec::new(),
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_status_rank".to_string(),
             fields: vec!["status".to_string(), "rank".to_string()],
         }],

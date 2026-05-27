@@ -25,6 +25,7 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
             .await
         }
         ConvexExecutableAction::Action(ConvexAction::PaginatedQuery { query }) => {
+            let table = query.query.table.clone();
             let page = paginate_documents_async_with_optional_cancellation(
                 service,
                 tenant_id,
@@ -33,7 +34,7 @@ pub(in crate::adapters::convex) async fn execute_convex_action_async(
                 cancellation,
             )
             .await?;
-            serde_json::to_value(page).map_err(|error| Error::Serialization(error.to_string()))
+            page_to_convex_json(&table, page)
         }
         ConvexExecutableAction::Action(ConvexAction::Mutation { mutation }) => {
             if let Some(cancellation) = cancellation.as_ref() {

@@ -643,10 +643,14 @@ async fn firebase_grpc_run_query_reports_missing_index_for_compound_query() {
                 ],
                 indexes: vec![
                     IndexDefinition {
+                        id: nimbus_core::IndexId::new(),
+                        state: nimbus_core::IndexState::Enabled,
                         name: "by_state".to_string(),
                         fields: vec!["state".to_string()],
                     },
                     IndexDefinition {
+                        id: nimbus_core::IndexId::new(),
+                        state: nimbus_core::IndexState::Enabled,
                         name: "by_rank".to_string(),
                         fields: vec!["rank".to_string()],
                     },

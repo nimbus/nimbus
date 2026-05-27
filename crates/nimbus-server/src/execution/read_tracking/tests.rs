@@ -6,9 +6,11 @@ use serde_json::{Value, json};
 #[test]
 fn synthesize_runtime_subscription_base_queries_keeps_disjoint_same_table_predicates() {
     let table = TableName::new("messages").expect("table should be valid");
+    let table_id = nimbus_core::TableId::new();
     let mut read_set = RuntimeReadSet::default();
     read_set.record_predicate(
         &table,
+        Some(&table_id),
         &[Filter {
             field: "author".to_string(),
             op: FilterOp::Eq,
@@ -17,6 +19,7 @@ fn synthesize_runtime_subscription_base_queries_keeps_disjoint_same_table_predic
     );
     read_set.record_predicate(
         &table,
+        Some(&table_id),
         &[Filter {
             field: "author".to_string(),
             op: FilterOp::Eq,
@@ -46,10 +49,12 @@ fn synthesize_runtime_subscription_base_queries_keeps_disjoint_same_table_predic
 #[test]
 fn synthesize_runtime_subscription_base_queries_prefers_broad_query_for_full_table_reads() {
     let table = TableName::new("messages").expect("table should be valid");
+    let table_id = nimbus_core::TableId::new();
     let mut read_set = RuntimeReadSet::default();
-    read_set.record_table(&table);
+    read_set.record_table(&table, Some(&table_id));
     read_set.record_predicate(
         &table,
+        Some(&table_id),
         &[Filter {
             field: "author".to_string(),
             op: FilterOp::Eq,
@@ -74,9 +79,11 @@ fn synthesize_runtime_subscription_base_queries_prefers_broad_query_for_full_tab
 #[test]
 fn runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavior() {
     let table = TableName::new("messages").expect("table should be valid");
+    let table_id = nimbus_core::TableId::new();
     let mut read_set = RuntimeReadSet::default();
     read_set.record_predicate(
         &table,
+        Some(&table_id),
         &[Filter {
             field: "author".to_string(),
             op: FilterOp::Eq,
@@ -102,6 +109,7 @@ fn runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavi
         timestamp: nimbus_core::Timestamp::now(),
         writes: vec![nimbus_core::WriteOp {
             table: table.clone(),
+            table_id: table_id.clone(),
             op_type: nimbus_core::WriteOpType::Insert,
             doc_id: document_id.clone(),
             resource_path_binding: None,
@@ -122,9 +130,11 @@ fn runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavi
 #[test]
 fn shared_dependency_matching_uses_previous_document_snapshots_for_updates() {
     let table = TableName::new("messages").expect("table should be valid");
+    let table_id = nimbus_core::TableId::new();
     let mut read_set = RuntimeReadSet::default();
     read_set.record_predicate(
         &table,
+        Some(&table_id),
         &[Filter {
             field: "author".to_string(),
             op: FilterOp::Eq,
@@ -155,6 +165,7 @@ fn shared_dependency_matching_uses_previous_document_snapshots_for_updates() {
         timestamp: nimbus_core::Timestamp::now(),
         writes: vec![nimbus_core::WriteOp {
             table,
+            table_id,
             op_type: nimbus_core::WriteOpType::Update,
             doc_id: document_id.clone(),
             resource_path_binding: None,
@@ -175,6 +186,7 @@ fn shared_dependency_matching_uses_previous_document_snapshots_for_updates() {
 #[test]
 fn runtime_read_set_preserves_tuple_capable_paginated_window_boundaries() {
     let table = TableName::new("messages").expect("table should be valid");
+    let table_id = nimbus_core::TableId::new();
     let query = Query {
         table: table.clone(),
         filters: vec![Filter {
@@ -203,7 +215,7 @@ fn runtime_read_set_preserves_tuple_capable_paginated_window_boundaries() {
     };
 
     let mut read_set = RuntimeReadSet::default();
-    read_set.record_paginated_window(&query, 1, Some(&after), &page);
+    read_set.record_paginated_window(&query, Some(&table_id), 1, Some(&after), &page);
 
     let dependencies = read_set.dependency_set();
     assert_eq!(dependencies.paginated_windows.len(), 1);

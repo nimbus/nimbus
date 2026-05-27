@@ -52,6 +52,8 @@ pub(super) fn ranked_tasks_schema() -> TableSchema {
             required: true,
         }],
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_rank".to_string(),
             fields: vec!["rank".to_string()],
         }],

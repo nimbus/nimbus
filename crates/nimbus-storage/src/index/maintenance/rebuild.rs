@@ -2,6 +2,9 @@ use nimbus_core::{IndexDefinition, Result, TableName};
 use redb::TableError;
 
 use crate::keys::prefix_end;
+use crate::store::table_catalog::{
+    resolve_or_create_table_id_in_write_txn, resolve_table_id_in_read_txn,
+};
 use crate::store::{INDEXES, TenantStore, map_redb_error};
 
 use super::super::keyspace::{index_key_for_document, table_index_prefix};
@@ -43,7 +46,11 @@ fn collect_index_keys_for_prefix(store: &TenantStore, prefix: &[u8]) -> Result<V
 impl TenantStore {
     /// Clears all index entries for a table.
     pub fn clear_table_indexes(&self, table: &TableName) -> Result<()> {
-        let prefix = table_index_prefix(table);
+        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
+        let Some(table_id) = resolve_table_id_in_read_txn(&read_txn, table)? else {
+            return Ok(());
+        };
+        let prefix = table_index_prefix(&table_id);
         let keys = collect_index_keys_for_prefix(self, &prefix)?;
         if keys.is_empty() {
             return Ok(());
@@ -73,11 +80,12 @@ impl TenantStore {
 
         let documents = self.scan_table(table)?;
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
+        let table_id = resolve_or_create_table_id_in_write_txn(&write_txn, table)?;
         {
             let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
             for document in documents {
-                for index in indexes {
-                    if let Some(key) = index_key_for_document(&document, index)? {
+                for index in indexes.iter().filter(|index| index.is_maintained()) {
+                    if let Some(key) = index_key_for_document(&document, index, &table_id)? {
                         index_table
                             .insert(key.as_slice(), EMPTY_INDEX_VALUE)
                             .map_err(map_redb_error)?;

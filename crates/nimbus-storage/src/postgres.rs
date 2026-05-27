@@ -11,9 +11,10 @@ use deadpool_postgres::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, FieldType, Filter,
-    FilterOp, IndexDefinition, ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult,
-    Schema, SequenceNumber, StorageErrorKind, TableName, TableSchema, TenantId, Timestamp,
-    TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    FilterOp, IndexDefinition, IndexLifecycleEvent, ResourcePathBinding, Result, ScheduledJob,
+    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
+    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,8 +26,11 @@ use tokio::task::JoinHandle;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{AsyncMessage, Config as PostgresConfig, IsolationLevel, NoTls};
 
+use crate::RetentionFloor;
 use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
-use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
+use crate::commit_log::{
+    deserialize_durable_record, serialize_durable_record, serialize_tenant_event_record,
+};
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
@@ -41,6 +45,7 @@ mod provider;
 mod read;
 mod resource_paths;
 mod storage;
+mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
@@ -60,7 +65,8 @@ pub use self::notifications::{PostgresNotificationListener, PostgresProviderNoti
 const POSTGRES_IDENTIFIER_LIMIT: usize = 63;
 const TARGET_TENANT_HASH_HEX_LEN: usize = 40;
 const MIN_TENANT_HASH_HEX_LEN: usize = 16;
-const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 1;
+const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 =
+    crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
 const MIN_POSTGRES_READ_PARALLELISM: usize = 2;
 const POSTGRES_TENANT_WRITE_PARALLELISM: usize = 1;
 const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
@@ -99,12 +105,14 @@ pub struct PostgresTenantStore {
     tenant_id: TenantId,
     schema_name: String,
     schema_cache: Arc<RwLock<Option<Schema>>>,
+    pub(crate) retention_floor: Arc<RetentionFloor>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PostgresReadSnapshot {
     schema: Schema,
     progress: JournalProgress,
+    table_identities: Vec<crate::TableIdentitySnapshotEntry>,
     documents: Vec<Document>,
     resource_path_bindings: Vec<ResourcePathBinding>,
     scheduled_execution_ids: Vec<String>,
@@ -125,6 +133,7 @@ pub struct PostgresWriteTransaction {
     schema_cache: Arc<RwLock<Option<Schema>>>,
     client: Option<Client>,
     commit_writes: Vec<WriteOp>,
+    tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     notification: PendingPostgresNotification,
     schema_cache_changed: bool,
@@ -145,6 +154,7 @@ impl PostgresTenantStore {
             tenant_id: registration.tenant_id,
             schema_name: registration.schema_name,
             schema_cache: Arc::new(RwLock::new(None)),
+            retention_floor: RetentionFloor::new(),
         }
     }
 

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, DocumentLocator, DurableMutationRecord,
-    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, TableId,
     TableName, TableSchema, Timestamp, TriggerDeliveryCursor, TriggerInvocationRecord,
 };
 use nimbus_storage::{

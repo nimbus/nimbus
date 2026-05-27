@@ -20,6 +20,7 @@ command -v unzip >/dev/null 2>&1 || {
 
 good_artifacts="${output_dir}/good"
 bad_artifacts="${output_dir}/bad"
+bad_license_artifacts="${output_dir}/bad-license"
 mkdir -p "${good_artifacts}/darwin/libexec" "${good_artifacts}/linux-x86_64" \
   "${good_artifacts}/linux-arm64" "${good_artifacts}/windows"
 
@@ -75,4 +76,20 @@ fi
 grep -F "expected path missing: " "${output_dir}/bad.txt" >/dev/null
 grep -F "libexec/gvproxy" "${output_dir}/bad.txt" >/dev/null
 
-printf 'verified: release archive layout helper accepts the shipped layout and rejects a broken macOS helper bundle\n'
+cp -R "${good_artifacts}" "${bad_license_artifacts}"
+rm -f "${bad_license_artifacts}/nimbus_linux_x86_64.tar.gz"
+rm -f "${bad_license_artifacts}/linux-x86_64/LICENSE"
+tar -czf "${bad_license_artifacts}/nimbus_linux_x86_64.tar.gz" \
+  -C "${bad_license_artifacts}/linux-x86_64" nimbus README.md
+
+if bash "${repo_root}/scripts/verify-release-archive-layout.sh" \
+  --artifacts-dir "${bad_license_artifacts}" \
+  > "${output_dir}/bad-license.txt" 2>&1; then
+  echo "expected release archive layout verification to fail when LICENSE is missing" >&2
+  exit 1
+fi
+
+grep -F "expected path missing: " "${output_dir}/bad-license.txt" >/dev/null
+grep -F "LICENSE" "${output_dir}/bad-license.txt" >/dev/null
+
+printf 'verified: release archive layout helper accepts the shipped layout and rejects missing macOS helper or LICENSE payloads\n'
