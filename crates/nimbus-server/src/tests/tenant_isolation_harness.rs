@@ -640,7 +640,16 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
         .send()
         .await
         .expect("tenant delete should send");
-    assert_eq!(delete_tenant_a.status(), StatusCode::NO_CONTENT);
+    let delete_tenant_a_status = delete_tenant_a.status();
+    let delete_tenant_a_body = delete_tenant_a
+        .text()
+        .await
+        .expect("tenant delete body should read");
+    assert_eq!(
+        delete_tenant_a_status,
+        StatusCode::NO_CONTENT,
+        "tenant delete body: {delete_tenant_a_body}"
+    );
     assert_eq!(
         sandbox_backend.stop_calls.load(Ordering::SeqCst),
         1,
