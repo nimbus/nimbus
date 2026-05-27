@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use nimbus_core::{Result, SequenceNumber, TableName};
+use nimbus_core::{Error, Result, SequenceNumber, TableName};
 
 use super::publication::apply_write_to_materialized_documents;
 use super::state::estimate_document_bytes;
@@ -131,6 +131,11 @@ impl MaterializedServingBackend {
                         replayed_sequence = last_commit.sequence;
                     }
 
+                    self.catch_up_loaded_tables_before_publish(
+                        snapshots,
+                        store,
+                        replayed_sequence,
+                    )?;
                     self.publish_table_snapshot(
                         snapshots,
                         table.clone(),
@@ -154,6 +159,52 @@ impl MaterializedServingBackend {
                 }
             }
         }
+    }
+
+    fn catch_up_loaded_tables_before_publish(
+        &self,
+        snapshots: &ServingSnapshotManager,
+        store: &TenantPersistence,
+        target_sequence: SequenceNumber,
+    ) -> Result<()> {
+        let earliest_loaded_sequence = {
+            let tables = self
+                .tables
+                .read()
+                .expect("materialized read surface lock should not be poisoned");
+            tables
+                .values()
+                .map(|table_state| table_state.current.covered_sequence)
+                .min_by_key(|sequence| sequence.0)
+        };
+        let Some(earliest_loaded_sequence) = earliest_loaded_sequence else {
+            return Ok(());
+        };
+        if earliest_loaded_sequence.0 >= target_sequence.0 {
+            return Ok(());
+        }
+
+        let commits = store
+            .read_commit_log_from(SequenceNumber(earliest_loaded_sequence.0.saturating_add(1)))?;
+        let commits = commits
+            .into_iter()
+            .take_while(|commit| commit.sequence.0 <= target_sequence.0)
+            .collect::<Vec<_>>();
+        let Some(last_commit) = commits.last() else {
+            return Err(Error::Internal(format!(
+                "materialized read surface made no progress while catching up loaded tables from sequence {} to {}",
+                earliest_loaded_sequence.0, target_sequence.0
+            )));
+        };
+        if last_commit.sequence.0 < target_sequence.0 {
+            return Err(Error::Internal(format!(
+                "materialized read surface caught up loaded tables only to sequence {}, expected {}",
+                last_commit.sequence.0, target_sequence.0
+            )));
+        }
+
+        self.apply_commits(snapshots, commits.iter());
+        Ok(())
     }
 
     pub(crate) fn clear_publications(&self) {
