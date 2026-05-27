@@ -805,7 +805,7 @@ mod tests {
     use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 
     use super::*;
-    use crate::tenant::{
+    use nimbus_tenant::{
         RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
         TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
         TenantWorkloadIdentity, TenantWorkloadLocation,

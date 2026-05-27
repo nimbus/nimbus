@@ -5886,6 +5886,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-node"
+version = "0.1.31"
+dependencies = [
+ "nimbus-core",
+ "nimbus-runtime",
+ "nimbus-sandbox",
+ "nimbus-tenant",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "nimbus-runtime"
 version = "0.1.31"
 dependencies = [
@@ -5972,6 +5986,7 @@ dependencies = [
  "nimbus-core",
  "nimbus-engine",
  "nimbus-machine",
+ "nimbus-node",
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-storage",

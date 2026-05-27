@@ -230,7 +230,7 @@ mod tests {
     use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 
     use super::*;
-    use crate::local_enforcement::{
+    use crate::{
         DirectProcessBackend, HostExecutable, HostLifecycleBackendKind, HostLifecycleProperty,
         HostLifecyclePropertySet, HostRestartPolicy, StartTransientMode, SystemdDbusClient,
         SystemdDbusProperty, SystemdInspectUnitRequest, SystemdStartTransientUnitRequest,
@@ -238,7 +238,7 @@ mod tests {
         SystemdTransientCapabilities, SystemdTransientUnitBackend, SystemdUnitStatus,
         TenantFinalizerRecord, TenantWorkloadPhase, TenantWorkloadStatusPatchTarget,
     };
-    use crate::tenant::{
+    use nimbus_tenant::{
         RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
         TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
         TenantWorkloadIdentity, TenantWorkloadLocation,
@@ -735,15 +735,12 @@ mod tests {
         let binding = binding();
         let spec = binding.spec();
         let projection = binding.system_evidence_projection();
-        let stale_status = crate::local_enforcement::NodeStatusAuthorizer
+        let stale_status = crate::NodeStatusAuthorizer
             .authorize(
                 spec,
-                crate::local_enforcement::TenantWorkloadStatusPatch::observed_status(spec)
-                    .with_observed_generation(
-                        crate::local_enforcement::TenantWorkloadGeneration::new(
-                            spec.generation().as_u64() - 1,
-                        ),
-                    ),
+                crate::TenantWorkloadStatusPatch::observed_status(spec).with_observed_generation(
+                    crate::TenantWorkloadGeneration::new(spec.generation().as_u64() - 1),
+                ),
             )
             .expect_err("stale generation should fail before status write");
         assert!(
@@ -751,10 +748,10 @@ mod tests {
             "stale generation error should name generation mismatch: {stale_status}"
         );
 
-        let live_status = crate::local_enforcement::NodeStatusAuthorizer
+        let live_status = crate::NodeStatusAuthorizer
             .authorize(
                 spec,
-                crate::local_enforcement::TenantWorkloadStatusPatch::observed_status(spec)
+                crate::TenantWorkloadStatusPatch::observed_status(spec)
                     .with_phase(TenantWorkloadPhase::Running),
             )
             .expect("matching status should authorize");
