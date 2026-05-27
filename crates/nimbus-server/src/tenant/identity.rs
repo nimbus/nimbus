@@ -218,6 +218,14 @@ impl TenantWorkloadStableIdentity {
         self.machine_id.as_deref()
     }
 
+    pub fn sandbox_id(&self) -> Option<&str> {
+        self.sandbox_id.as_deref()
+    }
+
+    pub fn invocation_id(&self) -> Option<&str> {
+        self.invocation_id.as_deref()
+    }
+
     fn stable_subject_suffix(&self) -> String {
         self.path_suffix(false)
     }

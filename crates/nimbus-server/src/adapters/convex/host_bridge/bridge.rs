@@ -1,5 +1,6 @@
 use super::*;
 use crate::execution::host_state::RuntimeHostState;
+use crate::local_enforcement::LocalEnforcementBinding;
 use crate::runtime_host::capabilities::RuntimeCapabilityHost;
 use crate::runtime_host::{
     RuntimeHostBootstrapRequest, build_runtime_host_bootstrap,
@@ -67,6 +68,7 @@ pub(crate) struct ConvexHostBridge {
     registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
     decision: TenantIsolationDecision,
+    local_enforcement: LocalEnforcementBinding,
     storage_access: TenantStorageAccessDecision,
     auth: Option<InvocationAuth>,
     services: nimbus_runtime::InvocationServices,
@@ -90,6 +92,7 @@ impl ConvexHostBridge {
         scope: ConvexHostBridgeScope,
         invocation: ConvexHostBridgeInvocation,
     ) -> Result<Self, Error> {
+        let local_enforcement = LocalEnforcementBinding::from_decision(&scope.decision)?;
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             service: &scope.service,
             tenant_id: scope.decision.tenant_id(),
@@ -108,8 +111,9 @@ impl ConvexHostBridge {
             service: scope.service,
             registry: scope.registry,
             tenant_id: scope.decision.tenant_id().clone(),
-            storage_access: scope.decision.storage_access(),
+            storage_access: local_enforcement.storage_access().clone(),
             decision: scope.decision,
+            local_enforcement,
             auth: invocation.auth,
             services: invocation.services,
             runtime_service_registry: scope.runtime_service_registry,
@@ -148,6 +152,10 @@ impl ConvexHostBridge {
 
     pub(in crate::adapters::convex) fn decision(&self) -> &TenantIsolationDecision {
         &self.decision
+    }
+
+    pub(in crate::adapters::convex) fn local_enforcement(&self) -> &LocalEnforcementBinding {
+        &self.local_enforcement
     }
 
     pub(crate) fn storage_access(&self) -> &TenantStorageAccessDecision {

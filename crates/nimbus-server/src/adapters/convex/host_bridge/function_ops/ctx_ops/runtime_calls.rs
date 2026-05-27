@@ -9,15 +9,15 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeServiceLookupPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         let service_access = match self
-            .decision()
-            .service_access(&payload.service_name, "convex ctx.services.get()")
+            .local_enforcement()
+            .service_access(&payload.service_name)
         {
             Ok(service_access) => service_access,
             Err(error) => return encode_runtime_core_result(Err(error)),
         };
         let response = self
             .runtime_service_registry()
-            .ensure_service_binding_for_decision_async(&service_access, cancellation.clone())
+            .ensure_service_binding_for_decision_async(service_access, cancellation.clone())
             .await
             .and_then(|binding| {
                 serde_json::to_value(binding)
@@ -33,15 +33,15 @@ impl ConvexHostBridge {
         let payload: ConvexRuntimeServiceLookupPayload = serde_json::from_value(payload)?;
         self.validate_session(payload.session_id.as_deref())?;
         let service_access = match self
-            .decision()
-            .service_access(&payload.service_name, "convex ctx.services.get()")
+            .local_enforcement()
+            .service_access(&payload.service_name)
         {
             Ok(service_access) => service_access,
             Err(error) => return encode_runtime_core_result(Err(error)),
         };
         let response = self
             .runtime_service_registry()
-            .resolve_service_binding_for_decision(&service_access)
+            .resolve_service_binding_for_decision(service_access)
             .and_then(|binding| {
                 serde_json::to_value(binding)
                     .map_err(|error| Error::Serialization(error.to_string()))

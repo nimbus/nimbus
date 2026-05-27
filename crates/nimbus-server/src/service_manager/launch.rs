@@ -1,6 +1,7 @@
 use nimbus_core::Error;
 use nimbus_sandbox::SandboxHandle;
 
+use crate::local_enforcement::LocalEnforcementBinding;
 use crate::sandbox::SandboxServiceLaunch;
 use crate::tenant::TenantIsolationDecision;
 
@@ -15,8 +16,8 @@ impl SandboxServiceManager {
         launch: SandboxServiceLaunch,
     ) -> Result<SandboxHandle, Error> {
         let actual_backend = self.sandbox_backend.kind();
-        let service_access =
-            decision.service_access(&key.service_name, "sandbox service launch")?;
+        let binding = LocalEnforcementBinding::from_decision(decision)?;
+        let service_access = binding.service_access(&key.service_name)?;
         service_access.ensure_sandbox_launch_matches(&launch, actual_backend)?;
         decision
             .network()
