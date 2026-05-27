@@ -8,6 +8,7 @@ mod execution;
 mod http;
 mod latency;
 mod license;
+pub mod local_enforcement;
 mod local_server;
 mod machine_lifecycle;
 mod owned_tasks;

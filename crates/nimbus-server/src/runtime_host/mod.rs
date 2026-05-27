@@ -9,6 +9,7 @@ pub(crate) mod capabilities;
 pub(crate) mod responses;
 
 use crate::execution::host_state::RuntimeHostState;
+use crate::local_enforcement::LocalEnforcementBinding;
 use crate::tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
 
 pub(crate) struct RuntimeHostBootstrap {
@@ -138,6 +139,7 @@ impl RuntimeHostContext {
         invocation: RuntimeHostInvocation,
         session_prefix: &str,
     ) -> Result<Self> {
+        let binding = LocalEnforcementBinding::from_decision(&scope.decision)?;
         let bootstrap = build_runtime_host_bootstrap(RuntimeHostBootstrapRequest {
             service: &scope.service,
             tenant_id: scope.decision.tenant_id(),
@@ -154,7 +156,7 @@ impl RuntimeHostContext {
         Ok(Self {
             service: scope.service,
             tenant_id: scope.decision.tenant_id().clone(),
-            storage_access: scope.decision.storage_access(),
+            storage_access: binding.storage_access().clone(),
             principal: bootstrap.principal,
             execution_unit: bootstrap.execution_unit,
             state: bootstrap.state,

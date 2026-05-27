@@ -5,6 +5,7 @@ use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use tokio::time::sleep;
 
+use crate::local_enforcement::{LocalEnforcementBinding, TenantEgressReloadRequest};
 use crate::service_registry::service_binding_from_handle;
 use crate::tenant::{
     TenantImagePolicyDecision, TenantIsolationContext, TenantIsolationDecision,
@@ -110,7 +111,8 @@ impl SandboxServiceManager {
         cancellation: HostCallCancellation,
     ) -> Result<Option<SandboxHandle>, Error> {
         let tenant_id = decision.tenant_id();
-        decision.service_access(service_name, "sandbox service activation")?;
+        let binding = LocalEnforcementBinding::from_decision(decision)?;
+        binding.service_access(service_name)?;
         let key = TenantServiceKey::new(tenant_id, service_name);
         if let Some(handle) = self.refresh_handle_async(&key).await?
             && !matches!(
@@ -211,9 +213,11 @@ impl SandboxServiceManager {
             )));
         }
         let key = TenantServiceKey::new(tenant_id, service_name);
-        decision
-            .service_access(service_name, "sandbox service egress reload")?
+        let binding = LocalEnforcementBinding::from_decision(decision)?;
+        binding
+            .service_access(service_name)?
             .ensure_tenant_matches(tenant_id, "sandbox service egress reload")?;
+        binding.authorize_egress_reload(&TenantEgressReloadRequest::for_spec(binding.spec()))?;
         let Some(handle) = self.refresh_handle_async(&key).await? else {
             return Ok(None);
         };
