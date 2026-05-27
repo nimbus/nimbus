@@ -119,6 +119,7 @@ Event kinds are:
 - `host_bridge_operation`
 - `cleanup`
 - `drift_violation`
+- `lifecycle_status`
 
 Every event carries tenant ID, surface, principal class, result, reason code,
 correlation IDs, audit redaction fields, and any available decision ID,
@@ -134,6 +135,13 @@ caller-provided values. The event records the redacted field path and
 serializes the value as `redacted` instead. Callers may add more redacted
 attributes, but they must not bypass the schema by attaching raw secrets to
 another telemetry channel.
+
+Lifecycle status events are observed evidence from node-local enforcement.
+Unit names, systemd job paths, process IDs, cgroup paths, journal selectors,
+node lease IDs, heartbeat IDs, and evidence correlation IDs belong in the
+event payload and `_nimbus` evidence records. Metrics derived from workload
+status must use low-cardinality labels such as lifecycle backend, phase, and
+patch target.
 
 `TenantIsolationEvent` is the internal canonical schema. Enterprise export
 formats such as OCSF JSONL or OpenTelemetry log records are mappings from this

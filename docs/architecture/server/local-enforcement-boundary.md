@@ -168,6 +168,11 @@ It does not let node-local status mutate desired policy or grant placement.
 - backend capability and health diagnostics
 - system evidence correlation IDs
 
+The implementation keeps high-cardinality lifecycle identifiers in structured
+status evidence, lifecycle-status audit events, diagnostics, and
+`_nimbus.workload_status` records. Metrics labels are deliberately limited to
+low-cardinality values such as backend kind, phase, and patch target.
+
 A status writer must be authorized through a restricted subresource shape. The
 authorizer first resolves the caller to one concrete `NodeIdentity`, then checks
 that the patch targets:

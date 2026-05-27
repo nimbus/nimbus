@@ -1,8 +1,21 @@
 use std::sync::Arc;
 
-use nimbus_core::{DocumentId, Error, TableName, TenantId};
+use nimbus_core::{DocumentId, Error, PrincipalContext, TableName, TenantId};
 use nimbus_engine::Service;
+use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use serde_json::{Value, json};
+
+use crate::local_enforcement::{
+    HostLifecycleBackendKind, HostLifecycleStatusReason, NodeStatusAuthorizer,
+    SystemdTransientCapabilities, SystemdUnitName, TenantNodeObservationIds,
+    TenantWorkloadDiagnostics, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase,
+    TenantWorkloadStatusPatch,
+};
+use crate::tenant::{
+    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantIsolationPolicyInput,
+    TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, TenantWorkloadIdentity,
+    TenantWorkloadLocation,
+};
 
 use super::*;
 
@@ -32,6 +45,7 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
             "subscriptions",
             "system_status",
             "tables",
+            "workload_status",
         ])
     );
     for schema in schemas {
@@ -301,6 +315,134 @@ async fn record_subscription_state_projects_live_subscription_document() {
         )
         .await;
     assert!(matches!(deleted, Err(Error::DocumentNotFound(_))));
+}
+
+#[tokio::test]
+async fn workload_status_projection_requires_system_or_operator_authority() {
+    let temp = tempfile::tempdir().expect("tempdir should create");
+    let service = Arc::new(Service::new(temp.path()).expect("service should create"));
+    let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
+    let context = TenantIsolationContext::application(
+        tenant_id.clone(),
+        PrincipalContext {
+            authenticated: true,
+            claims: serde_json::Map::from_iter([("tenant_id".to_string(), json!("tenant-a"))]),
+            verified_claims: serde_json::Map::new(),
+        },
+        "system_tenant.workload_status.test",
+    )
+    .with_deployment_generation(3)
+    .with_workload_location(TenantWorkloadLocation::new().with_node_id("node-a"));
+    let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
+    let decision = context
+        .admit_decision(
+            TenantIsolationPolicyInput::new(
+                TenantWorkloadIdentity::runtime_function(
+                    "messages:send",
+                    RuntimeIsolationTier::InProcessUntrusted,
+                )
+                .with_invocation_id("invoke-1"),
+            )
+            .with_runtime_policy(
+                &context,
+                &policy,
+                RuntimeIsolationTier::InProcessUntrusted,
+                TenantIsolationMode::Production,
+            )
+            .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
+            .with_storage(TenantStoragePolicyDecision::namespace("tenant-a")),
+        )
+        .expect("decision should admit");
+    let binding = crate::local_enforcement::LocalEnforcementBinding::from_decision(&decision)
+        .expect("binding should materialize");
+    let spec = binding.spec();
+    let lifecycle = TenantWorkloadLifecycleEvidence::for_observed_unit(
+        HostLifecycleBackendKind::SystemdTransientUnit,
+        &SystemdUnitName::new("nimbus-tw-system-record.service").expect("unit should parse"),
+        HostLifecycleStatusReason::Running,
+    )
+    .with_job_path("/org/freedesktop/systemd1/job/77")
+    .expect("job path should parse")
+    .with_process_id(777)
+    .with_cgroup_path("/system.slice/nimbus-tw-system-record.service")
+    .expect("cgroup path should parse");
+    let status = NodeStatusAuthorizer
+        .authorize(
+            spec,
+            TenantWorkloadStatusPatch::observed_status(spec)
+                .with_phase(TenantWorkloadPhase::Running)
+                .with_lifecycle_evidence(lifecycle)
+                .with_node_observation_ids(
+                    TenantNodeObservationIds::new()
+                        .with_node_lease_id("lease-node-a")
+                        .expect("lease id should parse")
+                        .with_heartbeat_id("heartbeat-node-a")
+                        .expect("heartbeat id should parse"),
+                )
+                .with_diagnostics(TenantWorkloadDiagnostics::new().with_backend_capabilities([
+                    SystemdTransientCapabilities::available().to_backend_capabilities(),
+                ]))
+                .with_evidence_correlation_ids([
+                    "nimbus-tw-system-record.service",
+                    "/org/freedesktop/systemd1/job/77",
+                ]),
+        )
+        .expect("node status should authorize");
+    let projection = binding.system_evidence_projection();
+
+    let application_error =
+        record_tenant_workload_status_async(&service, &context, &projection, &status)
+            .await
+            .expect_err("application context must not write _nimbus workload status");
+    assert!(
+        application_error
+            .to_string()
+            .contains("requires system/operator authority"),
+        "error should explain system/operator requirement: {application_error}"
+    );
+
+    let operator = TenantIsolationContext::operator(
+        system_tenant_id().expect("system tenant should parse"),
+        "system_tenant.workload_status.test",
+    );
+    record_tenant_workload_status_async(&service, &operator, &projection, &status)
+        .await
+        .expect("operator authority should project workload status");
+
+    let document = service
+        .get_document_async(
+            system_tenant_id().expect("system tenant should parse"),
+            TableName::new("workload_status").expect("table should parse"),
+            DocumentId::from_key(workload_status_document_id(
+                projection.tenant_id(),
+                projection.workload_uid().as_str(),
+            ))
+            .expect("document id should parse"),
+        )
+        .await
+        .expect("workload status document should exist");
+    assert_eq!(document.fields.get("tenantId"), Some(&json!("tenant-a")));
+    assert_eq!(
+        document.fields.get("decisionId"),
+        Some(&json!(spec.decision_id().as_str()))
+    );
+    assert_eq!(document.fields.get("phase"), Some(&json!("running")));
+    assert_eq!(
+        document.fields["evidence"]["lifecycle"]["unit_name"],
+        json!("nimbus-tw-system-record.service")
+    );
+    assert_eq!(
+        document.fields["evidence"]["lifecycle"]["job_path"],
+        json!("/org/freedesktop/systemd1/job/77")
+    );
+    assert_eq!(
+        document.fields["evidence"]["nodeObservation"]["node_lease_id"],
+        json!("lease-node-a")
+    );
+    assert_eq!(
+        document.fields["diagnostics"]["backend_capabilities"][0]["available"],
+        json!(true)
+    );
 }
 
 #[test]

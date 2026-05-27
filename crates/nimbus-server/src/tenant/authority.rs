@@ -21,6 +21,11 @@ impl TenantIsolationAuthority {
             Self::Application { .. } => "application(anonymous)".to_string(),
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn is_system_or_operator(&self) -> bool {
+        matches!(self, Self::Operator | Self::System)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

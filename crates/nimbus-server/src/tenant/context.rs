@@ -58,6 +58,17 @@ impl TenantIsolationContext {
         &self.tenant_id
     }
 
+    #[cfg(test)]
+    pub(crate) fn ensure_system_or_operator_authority(&self, context: &str) -> Result<()> {
+        if self.authority.is_system_or_operator() {
+            return Ok(());
+        }
+        Err(Error::PermissionDenied(format!(
+            "{context} requires system/operator authority, but caller is {}",
+            self.authority.describe()
+        )))
+    }
+
     pub(crate) fn reauthorize_application(
         &self,
         principal: PrincipalContext,

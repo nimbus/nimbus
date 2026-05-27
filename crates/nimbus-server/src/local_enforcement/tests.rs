@@ -113,6 +113,8 @@ fn binding_materializes_decision_derived_spec_and_projections() {
 
     assert_eq!(spec.decision_id(), decision.id());
     assert_eq!(spec.tenant_id(), decision.tenant_id());
+    assert_eq!(spec.surface(), decision.surface());
+    assert_eq!(spec.authority_class(), decision.authority_class());
     assert_eq!(spec.generation().as_u64(), 7);
     assert_eq!(
         spec.assigned_node_id()
@@ -151,6 +153,8 @@ fn binding_materializes_decision_derived_spec_and_projections() {
     let evidence = binding.system_evidence_projection();
     assert_eq!(evidence.decision_id(), decision.id());
     assert_eq!(evidence.tenant_id(), decision.tenant_id());
+    assert_eq!(evidence.surface(), "convex.runtime");
+    assert_eq!(evidence.authority_class(), "application");
     assert_eq!(evidence.generation().as_u64(), 7);
     assert_eq!(evidence.workload_uid(), spec.workload_uid());
     assert!(
@@ -163,6 +167,95 @@ fn binding_materializes_decision_derived_spec_and_projections() {
             .contains(&"raw_credentials".to_string()),
         "system evidence projection should preserve redaction metadata"
     );
+}
+
+#[test]
+fn lifecycle_evidence_audit_events_keep_high_cardinality_ids_out_of_metric_labels() {
+    let binding = binding_with_credentials();
+    let spec = binding.spec();
+    let authorizer = NodeStatusAuthorizer;
+    let projection = binding.system_evidence_projection();
+    let lifecycle = TenantWorkloadLifecycleEvidence::for_observed_unit(
+        HostLifecycleBackendKind::SystemdTransientUnit,
+        &SystemdUnitName::new("nimbus-tw-highcard.service").expect("unit should parse"),
+        HostLifecycleStatusReason::Running,
+    )
+    .with_job_path("/org/freedesktop/systemd1/job/9001")
+    .expect("job path evidence should parse")
+    .with_process_id(424_242)
+    .with_cgroup_path("/system.slice/nimbus-tw-highcard.service")
+    .expect("cgroup evidence should parse")
+    .with_journal_selectors([
+        HostLifecycleJournalSelectorEvidence::new("_SYSTEMD_UNIT", "nimbus-tw-highcard.service")
+            .expect("journal selector should parse"),
+        HostLifecycleJournalSelectorEvidence::new("NIMBUS_WORKLOAD_ID", "tw_highcard")
+            .expect("journal selector should parse"),
+    ]);
+    let node_ids = TenantNodeObservationIds::new()
+        .with_node_lease_id("lease-node-a-0001")
+        .expect("lease id should parse")
+        .with_heartbeat_id("heartbeat-node-a-0002")
+        .expect("heartbeat id should parse");
+    let diagnostics = TenantWorkloadDiagnostics::new()
+        .with_backend_capabilities([SystemdTransientCapabilities::available()
+            .without_dbus()
+            .to_backend_capabilities()])
+        .with_actionable_failure_reason(
+            "install systemd with D-Bus and transient service unit support",
+        )
+        .expect("diagnostic reason should parse");
+    let status = authorizer
+        .authorize(
+            spec,
+            TenantWorkloadStatusPatch::observed_status(spec)
+                .with_phase(TenantWorkloadPhase::Running)
+                .with_lifecycle_evidence(lifecycle)
+                .with_node_observation_ids(node_ids)
+                .with_diagnostics(diagnostics)
+                .with_evidence_correlation_ids([
+                    "nimbus-tw-highcard.service",
+                    "/org/freedesktop/systemd1/job/9001",
+                ]),
+        )
+        .expect("status with lifecycle evidence should authorize");
+
+    let labels = serde_json::to_string(&status.metric_labels()).expect("labels serialize");
+    assert!(labels.contains("systemd_transient_unit"));
+    assert!(labels.contains("running"));
+    for high_cardinality in [
+        spec.decision_id().as_str(),
+        spec.workload_uid().as_str(),
+        "nimbus-tw-highcard.service",
+        "/org/freedesktop/systemd1/job/9001",
+        "/system.slice/nimbus-tw-highcard.service",
+        "424242",
+        "lease-node-a-0001",
+        "heartbeat-node-a-0002",
+    ] {
+        assert!(
+            !labels.contains(high_cardinality),
+            "metric labels must not carry high-cardinality evidence `{high_cardinality}`: {labels}"
+        );
+    }
+
+    let event = status.lifecycle_audit_event(&projection);
+    let event_json = serde_json::to_string(&event).expect("audit event should serialize");
+    for evidence in [
+        spec.decision_id().as_str(),
+        "nimbus-tw-highcard.service",
+        "/org/freedesktop/systemd1/job/9001",
+        "/system.slice/nimbus-tw-highcard.service",
+        "424242",
+        "lease-node-a-0001",
+        "heartbeat-node-a-0002",
+    ] {
+        assert!(
+            event_json.contains(evidence),
+            "audit event should retain high-cardinality evidence `{evidence}`: {event_json}"
+        );
+    }
+    assert_eq!(event.kind(), TenantIsolationEventKind::LifecycleStatus);
+    assert_eq!(event.decision_id(), Some(spec.decision_id().as_str()));
 }
 
 #[test]
@@ -436,6 +529,15 @@ fn deletion_and_quota_state_stay_server_owned_while_cleanup_progress_is_observed
                 TenantWorkloadStatusPatchTarget::CleanupProgress,
             )
             .with_phase(TenantWorkloadPhase::Deleting)
+            .with_cleanup_progress(
+                TenantWorkloadCleanupProgress::new()
+                    .with_pending_finalizers([TenantFinalizerRecord::new(
+                        "local_enforcement",
+                        "sandbox-cleanup",
+                    )
+                    .expect("finalizer should parse")])
+                    .with_retained_bytes(u64::MAX),
+            )
             .with_observed_usage(usage),
         )
         .expect("cleanup progress is observed status");
@@ -444,6 +546,13 @@ fn deletion_and_quota_state_stay_server_owned_while_cleanup_progress_is_observed
     assert_eq!(
         cleanup_status.target(),
         TenantWorkloadStatusPatchTarget::CleanupProgress
+    );
+    assert_eq!(
+        cleanup_status
+            .cleanup_progress()
+            .expect("cleanup progress should be present")
+            .retained_bytes(),
+        u64::MAX
     );
     assert_eq!(
         spec.resources().admitted_quotas(),
@@ -477,6 +586,14 @@ fn deletion_and_quota_state_stay_server_owned_while_cleanup_progress_is_observed
             ),
         ),
         "desired state",
+    );
+    assert_error_contains(
+        authorizer.authorize(
+            &spec,
+            TenantWorkloadStatusPatch::observed_status(&spec)
+                .with_cleanup_progress(TenantWorkloadCleanupProgress::new().with_retained_bytes(1)),
+        ),
+        "cleanup progress",
     );
 
     spec = spec.mark_deleting_server_owned(Vec::<TenantFinalizerRecord>::new());
