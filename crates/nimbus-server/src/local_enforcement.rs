@@ -10,6 +10,16 @@ use crate::tenant::{
     TenantWorkloadStableIdentity,
 };
 
+mod host_lifecycle;
+
+pub use host_lifecycle::{
+    HostBackendObservedState, HostExecutable, HostLifecycleBackend, HostLifecycleBackendKind,
+    HostLifecycleFuture, HostLifecyclePlan, HostLifecycleProperty, HostLifecyclePropertySet,
+    HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason, HostRestartPolicy,
+    RuntimePoolTrustClass, RuntimePoolTrustState, SystemdUnitKind, SystemdUnitName,
+    TenantWorkloadId,
+};
+
 #[cfg(test)]
 mod tests;
 
