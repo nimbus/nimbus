@@ -88,7 +88,7 @@ for forbidden in "cargo build" "target/release" "git clone" "systemd" "systemctl
 done
 
 assert_contains "${workflow}" "NIMBUS_IMAGE_PACKAGE: ghcr.io/nimbus/nimbus"
-assert_contains "${workflow}" "DOCKER_SCOUT_IMAGE: docker/scout-cli:1.20.0@sha256:734b589e8aa407af8a1343d390bd44a84d283b3e0cb23b24308e73b6be9232d4"
+assert_contains "${workflow}" "TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
 assert_contains "${workflow}" "build-oci-image:"
 assert_contains "${workflow}" "publish-oci-image:"
 
@@ -138,7 +138,11 @@ assert_contains "${publish_job}" "raw_sbom_arm64="
 assert_contains "${publish_job}" '(index .SBOM "linux/amd64").SPDX'
 assert_contains "${publish_job}" '(index .SBOM "linux/arm64").SPDX'
 assert_contains "${publish_job}" "subject: {image: \$image, tag: \$tag, ref: \$ref, digest: \$digest}"
-assert_contains "${publish_job}" '${DOCKER_SCOUT_IMAGE}'
+assert_contains "${publish_job}" '${TRIVY_IMAGE}'
+assert_contains "${publish_job}" "--image-src remote"
+assert_contains "${publish_job}" "--scanners vuln"
+assert_contains "${publish_job}" "--skip-version-check"
+assert_not_contains "${publish_job}" '${HOME}/.docker'
 assert_contains "${release_job}" "scripts/verify-release-oci-image-assets.sh"
 assert_contains "${release_job}" "--checksums artifacts/checksums-sha256.txt"
 assert_contains "${release_job}" "--require-license"
@@ -256,9 +260,9 @@ sbom=BuildKit SBOM attestation from docker buildx --sbom=true
 sbom_asset=nimbus_oci_sbom.json
 sbom_platforms=linux/amd64,linux/arm64
 sbom_verify=docker buildx imagetools inspect ghcr.io/nimbus/nimbus:v9.9.9@${multi_digest} --format '{{json .SBOM}}'
-vulnerability_scan=Docker Scout SARIF report
+vulnerability_scan=Trivy SARIF report
 vulnerability_scan_asset=nimbus_oci_vulns.sarif.json
-vulnerability_scan_command=docker run --rm docker/scout-cli:1.20.0@sha256:734b589e8aa407af8a1343d390bd44a84d283b3e0cb23b24308e73b6be9232d4 cves --format sarif --output nimbus_oci_vulns.sarif.json registry://ghcr.io/nimbus/nimbus:v9.9.9@${multi_digest}
+vulnerability_scan_command=docker run --rm -v "\$PWD:/workspace" ghcr.io/aquasecurity/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c image --image-src remote --scanners vuln --format sarif --output /workspace/nimbus_oci_vulns.sarif.json --no-progress --skip-version-check ghcr.io/nimbus/nimbus:v9.9.9@${multi_digest}
 release_assets_verify=scripts/verify-release-oci-image-assets.sh --artifacts-dir <downloaded> --expected-image ghcr.io/nimbus/nimbus --expected-tag v9.9.9 --require-license --checksums <downloaded>/checksums-sha256.txt
 smoke_command=bash scripts/smoke-release-oci-image.sh --image ghcr.io/nimbus/nimbus:v9.9.9@${multi_digest} --expected-version v9.9.9
 pull_command=docker pull ghcr.io/nimbus/nimbus:v9.9.9@${multi_digest}
@@ -356,7 +360,7 @@ cat >"${tmp_dir}/nimbus_oci_vulns.sarif.json" <<'EOF'
     {
       "tool": {
         "driver": {
-          "name": "Docker Scout"
+          "name": "Trivy"
         }
       },
       "results": []

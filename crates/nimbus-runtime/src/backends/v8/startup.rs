@@ -168,7 +168,7 @@ fn transpile_residual_lazy_source(
 fn leak_residual_lazy_sources(
     mut sources: Vec<(&'static str, String)>,
 ) -> Result<ResidualLazySources> {
-    sources.sort_by(|(left, _), (right, _)| left.cmp(right));
+    sources.sort_by_key(|(specifier, _)| *specifier);
     let mut deduped = Vec::<(&'static str, String)>::new();
     for (specifier, source) in sources {
         if let Some((last_specifier, last_source)) = deduped.last()

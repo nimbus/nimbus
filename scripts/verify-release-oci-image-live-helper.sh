@@ -269,7 +269,7 @@ EOF
     {
       "tool": {
         "driver": {
-          "name": "Docker Scout"
+          "name": "Trivy"
         }
       },
       "results": []

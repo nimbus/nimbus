@@ -193,8 +193,8 @@ gh attestation verify \
 ```
 
 The release report also records the BuildKit SBOM inspection command, the
-Docker Scout SARIF scan artifact, the release-evidence verifier command, and
-the exact smoke-test command used by the release workflow. The downloaded
+Trivy SARIF scan artifact, the release-evidence verifier command, and the
+exact smoke-test command used by the release workflow. The downloaded
 release bundle can be checked with `scripts/verify-release-oci-image-assets.sh`;
 that verifier rejects evidence unless the attestation names the expected image
 digest, its verified certificate names the `nimbus/nimbus` repository, release
