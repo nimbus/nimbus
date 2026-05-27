@@ -5975,8 +5975,8 @@ dependencies = [
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-storage",
+ "nimbus-tenant",
  "nimbus-testing",
- "oci-client",
  "pbkdf2",
  "prost 0.13.5",
  "prost-types 0.13.5",
@@ -6042,6 +6042,20 @@ dependencies = [
  "tracing",
  "windows-sys 0.61.2",
  "zeroize",
+]
+
+[[package]]
+name = "nimbus-tenant"
+version = "0.1.31"
+dependencies = [
+ "nimbus-core",
+ "nimbus-runtime",
+ "nimbus-sandbox",
+ "oci-client",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
 ]
 
 [[package]]
