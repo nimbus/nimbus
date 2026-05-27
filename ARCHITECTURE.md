@@ -680,6 +680,12 @@ worker-local beneath that seam.
   bind defaults, route-family origin allowlists, local server-access auth, the
   `/ui/*` bootstrap fixture, and the separation between server-access auth and
   tenant/application auth.
+- `tenant.rs` / `tenant/` — Tenant admission domain. This is where
+  tenant-controlled intent becomes an admitted `TenantIsolationDecision` or a
+  narrow decision-derived projection before runtime, HostBridge, sandbox,
+  storage/API, node-local lifecycle, credential, or `_nimbus` system evidence
+  paths can consume it. The module name is broad; tenant isolation remains the
+  security concept and the explicit type/event naming convention.
 - `service_registry.rs` / `service_manager.rs` — runtime service-binding seam.
   Snapshot reads and activation are now split intentionally: the sync runtime
   path only sees already-ready in-memory bindings, while async `ctx.services.get`
