@@ -1,6 +1,10 @@
 use std::net::SocketAddr;
+#[cfg(unix)]
+use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(unix)]
+use std::{env, process};
 
 use nimbus::{ConvexRegistry, Error, LicenseState, Service, TenantId, run_scheduler};
 use nimbus_server::{
@@ -45,7 +49,9 @@ pub(crate) async fn run_start_command(
     // `--allow-network`) fails fast without paying codegen or registry
     // load costs. The freshness check (stage 2) runs after the admin
     // token is loaded from disk.
-    ensure_host_opt_in(&command.host, command.allow_network)?;
+    if !command.systemd_socket_activation {
+        ensure_host_opt_in(&command.host, command.allow_network)?;
+    }
     let persistence_config = persistence_config_from_start_command(&command)?;
     let compose_control_data_dir =
         control_data_dir_from_persistence_config(&persistence_config).to_path_buf();
@@ -77,11 +83,26 @@ pub(crate) async fn run_start_command(
     let machine_lifecycle_manager = crate::machine::host_machine_lifecycle_manager()?;
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
-    ensure_admin_token_fresh_for_public_bind(
-        &command.host,
-        &local_admin_token,
-        time::OffsetDateTime::now_utc(),
-    )?;
+    if !command.systemd_socket_activation {
+        ensure_admin_token_fresh_for_public_bind(
+            &command.host,
+            &local_admin_token,
+            time::OffsetDateTime::now_utc(),
+        )?;
+    }
+    let activated_listener = if command.systemd_socket_activation {
+        let listener = start_listener(&command).await?;
+        let activated_host = listener.local_addr()?.ip().to_string();
+        ensure_host_opt_in(&activated_host, command.allow_network)?;
+        ensure_admin_token_fresh_for_public_bind(
+            &activated_host,
+            &local_admin_token,
+            time::OffsetDateTime::now_utc(),
+        )?;
+        Some(listener)
+    } else {
+        None
+    };
     let local_server_security = Arc::new(LocalServerSecurityState::new(
         local_server_paths.clone(),
         local_admin_token,
@@ -97,7 +118,10 @@ pub(crate) async fn run_start_command(
     let scheduler_handle = tokio::spawn(async move {
         run_scheduler(scheduler_service, shutdown_rx).await;
     });
-    let listener = tokio::net::TcpListener::bind((command.host.as_str(), command.port)).await?;
+    let listener = match activated_listener {
+        Some(listener) => listener,
+        None => start_listener(&command).await?,
+    };
     let discovery_lease =
         ServerDiscoveryLease::acquire(&local_server_paths, listener.local_addr()?)?;
     emit_start_startup_summary(
@@ -352,6 +376,75 @@ fn local_listen_url(addr: SocketAddr) -> String {
         addr.ip().to_string()
     };
     format!("http://{host}:{}/", addr.port())
+}
+
+async fn start_listener(command: &StartCommand) -> std::io::Result<tokio::net::TcpListener> {
+    if command.systemd_socket_activation {
+        activated_systemd_listener()
+    } else {
+        tokio::net::TcpListener::bind((command.host.as_str(), command.port)).await
+    }
+}
+
+#[cfg(unix)]
+fn activated_systemd_listener() -> std::io::Result<tokio::net::TcpListener> {
+    let listen_fds = env::var("LISTEN_FDS")
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "LISTEN_FDS is not set for systemd socket activation",
+            )
+        })?
+        .parse::<i32>()
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("LISTEN_FDS is invalid: {error}"),
+            )
+        })?;
+    if listen_fds != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("expected exactly one inherited listener, got LISTEN_FDS={listen_fds}"),
+        ));
+    }
+    let listen_pid = env::var("LISTEN_PID")
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "LISTEN_PID is not set for systemd socket activation",
+            )
+        })?
+        .parse::<u32>()
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("LISTEN_PID is invalid: {error}"),
+            )
+        })?;
+    if listen_pid != process::id() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "LISTEN_PID={listen_pid} does not match current process {}",
+                process::id()
+            ),
+        ));
+    }
+    // SAFETY: systemd socket activation guarantees inherited file descriptors
+    // begin at 3 when LISTEN_FDS is set for the current process. The method
+    // consumes fd 3 exactly once and transfers ownership to TcpListener.
+    let listener = unsafe { std::net::TcpListener::from_raw_fd(3) };
+    listener.set_nonblocking(true)?;
+    tokio::net::TcpListener::from_std(listener)
+}
+
+#[cfg(not(unix))]
+fn activated_systemd_listener() -> std::io::Result<tokio::net::TcpListener> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "systemd socket activation is only supported on Unix hosts",
+    ))
 }
 
 /// Build the operator-console URL by appending `/ui/` to the daemon's base

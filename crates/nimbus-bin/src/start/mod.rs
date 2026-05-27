@@ -49,6 +49,10 @@ pub(crate) struct StartCommand {
     #[arg(long, default_value_t = false)]
     pub(crate) allow_network: bool,
 
+    /// Inherit a TCP listener from systemd socket activation.
+    #[arg(long, default_value_t = false)]
+    pub(crate) systemd_socket_activation: bool,
+
     /// Local data directory used for embedded tenant databases and, by default,
     /// the local redb control plane.
     #[arg(long)]
@@ -250,6 +254,7 @@ impl Default for StartCommand {
             port: 8080,
             host: "127.0.0.1".to_string(),
             allow_network: false,
+            systemd_socket_activation: false,
             data_dir: None,
             control_data_dir: None,
             tenant_provider: None,

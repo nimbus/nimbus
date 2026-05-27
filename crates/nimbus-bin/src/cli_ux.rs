@@ -41,6 +41,7 @@ Examples:
   nimbus codegen --app ./demos/convex/html
   nimbus token rotate
   nimbus machine start
+  nimbus node install --systemd --dry-run
   nimbus compose up";
 
 pub(crate) const DEV_HELP_EXAMPLES: &str = "\
@@ -191,6 +192,20 @@ pub(crate) const MACHINE_OS_UPGRADE_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus machine os upgrade --dry-run
   nimbus machine os upgrade --restart";
+
+pub(crate) const NODE_HELP_EXAMPLES: &str = "\
+Examples:
+  nimbus node install --systemd --dry-run
+  nimbus node install --container --image ghcr.io/nimbus/nimbus:vX.Y.Z@sha256:<digest> --user --dry-run
+  nimbus node doctor --container --user
+  nimbus node status";
+
+pub(crate) const NODE_INSTALL_HELP_EXAMPLES: &str = "\
+Examples:
+  nimbus node install --systemd --dry-run
+  nimbus node install --systemd --system --enable --now
+  nimbus node install --systemd --socket-activation --dry-run
+  nimbus node install --container --image ghcr.io/nimbus/nimbus:vX.Y.Z@sha256:<digest> --user --dry-run";
 
 pub(crate) const COMPOSE_HELP_EXAMPLES: &str = "\
 Examples:
