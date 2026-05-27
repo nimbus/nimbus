@@ -3,7 +3,7 @@ use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use nimbus_sandbox::{PublishedEndpointProtocol, SandboxResourceCharge};
 
 use super::*;
-use crate::tenant::{
+use nimbus_tenant::{
     RuntimeIsolationTier, TenantImagePolicyDecision, TenantIsolationContext,
     TenantIsolationDecision, TenantIsolationMode, TenantIsolationPolicyInput,
     TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,

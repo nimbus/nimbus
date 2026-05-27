@@ -785,10 +785,8 @@ mod tests {
     use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 
     use super::*;
-    use crate::local_enforcement::{
-        HostExecutable, HostLifecyclePropertySet, HostRestartPolicy, TenantWorkloadPhase,
-    };
-    use crate::tenant::{
+    use crate::{HostExecutable, HostLifecyclePropertySet, HostRestartPolicy, TenantWorkloadPhase};
+    use nimbus_tenant::{
         RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
         TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
         TenantWorkloadIdentity, TenantWorkloadLocation,

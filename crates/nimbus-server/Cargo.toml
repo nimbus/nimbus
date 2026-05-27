@@ -23,6 +23,7 @@ crc32c.workspace = true
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-machine = { path = "../nimbus-machine" }
+nimbus-node = { path = "../nimbus-node" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine" }
