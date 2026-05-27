@@ -13,6 +13,7 @@ mod init;
 mod local_server_client;
 mod machine;
 mod node;
+mod node_service;
 mod path_boundary;
 mod policy;
 mod sandbox_supervisor;
@@ -30,6 +31,7 @@ use crate::dev::{DevCommand, run_dev_command};
 use crate::encryption::{EncryptionCommand, run_encryption_command};
 use crate::init::{InitCommand, run_init_command};
 use crate::machine::{MachineCommand, run_machine_command};
+use crate::node_service::{NodeCommand, run_node_command};
 use crate::policy::{PolicyCommand, run_policy_command};
 use crate::sandbox_supervisor::{SandboxSupervisorCommand, run_sandbox_supervisor_command};
 use crate::start::{StartCommand, persistence_config_from_start_command, run_start_command};
@@ -72,6 +74,8 @@ enum Command {
     Ui(UiCommand),
     /// Manage local developer machines.
     Machine(MachineCommand),
+    /// Manage Nimbus node service-manager installation artifacts.
+    Node(NodeCommand),
     /// Compose-backed local service lifecycle commands.
     #[command(name = "compose")]
     Compose(ComposeCommand),
@@ -102,6 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Machine(command) => {
             run_machine_command(command).await?;
         }
+        Command::Node(command) => run_node_command(command).await?,
         Command::Compose(command) => {
             let persistence_config =
                 persistence_config_from_start_command(&StartCommand::default())?;
