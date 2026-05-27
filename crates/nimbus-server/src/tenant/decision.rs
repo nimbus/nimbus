@@ -4,8 +4,6 @@ use nimbus_sandbox::{SandboxBackendKind, SandboxSpec};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::sandbox::SandboxServiceLaunch;
-
 use super::{
     TenantAuditRedactionPolicy, TenantImagePolicyDecision, TenantIsolationAuthorityDecision,
     TenantIsolationContext, TenantIsolationPolicyInput, TenantNetworkPolicyDecision,
@@ -331,15 +329,6 @@ impl TenantServiceAccessDecision {
             self.tenant_id,
             actual
         )))
-    }
-
-    pub(crate) fn ensure_sandbox_launch_matches(
-        &self,
-        launch: &SandboxServiceLaunch,
-        actual_backend: SandboxBackendKind,
-    ) -> Result<()> {
-        let spec = launch.spec();
-        self.ensure_sandbox_spec_matches(spec, actual_backend)
     }
 
     pub(crate) fn ensure_sandbox_spec_matches(

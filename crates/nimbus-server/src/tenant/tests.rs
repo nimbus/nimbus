@@ -1,9 +1,8 @@
-use crate::sandbox::SandboxServiceLaunch;
 use nimbus_core::{PrincipalContext, TenantId};
 use nimbus_runtime::{RuntimeBundle, RuntimeLimits, RuntimePolicy};
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackendKind, SandboxFilesystemSpec, SandboxImageLaunchSpec,
-    SandboxProcessSpec, SandboxResourceCharge, SandboxSpec,
+    PublishedEndpointProtocol, SandboxBackendKind, SandboxFilesystemSpec, SandboxProcessSpec,
+    SandboxResourceCharge, SandboxSpec,
 };
 
 use super::*;
@@ -515,13 +514,10 @@ fn tenant_isolation_decision_rejects_mismatched_sandbox_launch() {
     let service = decision
         .service_access("db", "sandbox service launch")
         .expect("db service should be admitted");
-    let launch = SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
-        sparse_spec("tenant-b", "db", SandboxBackendKind::Krun),
-        "postgres:16",
-    ));
+    let spec = sparse_spec("tenant-b", "db", SandboxBackendKind::Krun);
 
     let error = service
-        .ensure_sandbox_launch_matches(&launch, SandboxBackendKind::Krun)
+        .ensure_sandbox_spec_matches(&spec, SandboxBackendKind::Krun)
         .expect_err("service projection must reject a forged launch tenant");
     assert!(
         error.to_string().contains("authorized tenant tenant-a"),
@@ -565,13 +561,10 @@ fn tenant_isolation_decision_rejects_mismatched_service_before_launch() {
     let service = decision
         .service_access("db", "sandbox service launch")
         .expect("db service should be admitted");
-    let launch = SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
-        sparse_spec("tenant-a", "cache", SandboxBackendKind::Krun), // 002-auth-caching-policy: service fixture name, not auth cache
-        "redis:7",
-    ));
+    let spec = sparse_spec("tenant-a", "cache", SandboxBackendKind::Krun); // 002-auth-caching-policy: service fixture name, not auth cache
 
     let error = service
-        .ensure_sandbox_launch_matches(&launch, SandboxBackendKind::Krun)
+        .ensure_sandbox_spec_matches(&spec, SandboxBackendKind::Krun)
         .expect_err("mismatched service name must be rejected before sandbox launch");
     assert!(
         error.to_string().contains("authorized service db"),
@@ -589,13 +582,10 @@ fn tenant_isolation_decision_rejects_mismatched_backend_before_launch() {
     let service = decision
         .service_access("db", "sandbox service launch")
         .expect("db service should be admitted");
-    let launch = SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
-        sparse_spec("tenant-a", "db", SandboxBackendKind::Container),
-        "postgres:16",
-    ));
+    let spec = sparse_spec("tenant-a", "db", SandboxBackendKind::Container);
 
     let error = service
-        .ensure_sandbox_launch_matches(&launch, SandboxBackendKind::Krun)
+        .ensure_sandbox_spec_matches(&spec, SandboxBackendKind::Krun)
         .expect_err("mismatched backend must be rejected before sandbox launch");
     assert!(
         error.to_string().contains("requested backend Container"),
