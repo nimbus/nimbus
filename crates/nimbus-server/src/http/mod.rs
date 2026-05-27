@@ -19,7 +19,7 @@ use crate::protocol::{
     VersionInfoResponse,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant::TenantIsolationContext;
 
 mod deploy;
 mod documents;

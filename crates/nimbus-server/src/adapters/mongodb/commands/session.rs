@@ -10,7 +10,7 @@ use nimbus_engine::Service;
 use super::super::connection::ConnectionState;
 use super::super::error::{BAD_VALUE, MongoError, WRITE_CONFLICT};
 use super::tenant::{default_tenant_context, resolve_tenant_context};
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant::TenantIsolationContext;
 
 const NO_SUCH_TRANSACTION: i32 = 251;
 const NO_SUCH_TRANSACTION_NAME: &str = "NoSuchTransaction";

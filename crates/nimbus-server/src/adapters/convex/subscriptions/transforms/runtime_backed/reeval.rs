@@ -16,7 +16,7 @@ use crate::adapters::convex::execution::{
 use crate::adapters::convex::subscriptions::next_runtime_subscription_server_request_id;
 use crate::execution::read_tracking::{RuntimeReadSet, commit_intersects_runtime_read_set};
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::{TenantIsolationContext, TenantIsolationMode};
+use crate::tenant::{TenantIsolationContext, TenantIsolationMode};
 
 pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a> {
     pub(in crate::adapters::convex::subscriptions) service: &'a Arc<nimbus_engine::Service>,

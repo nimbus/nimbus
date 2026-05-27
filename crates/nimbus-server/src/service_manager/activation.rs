@@ -6,7 +6,7 @@ use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use tokio::time::sleep;
 
 use crate::service_registry::service_binding_from_handle;
-use crate::tenant_isolation::{
+use crate::tenant::{
     TenantImagePolicyDecision, TenantIsolationContext, TenantIsolationDecision,
     TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
 };

@@ -5,7 +5,7 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use crate::tenant_isolation::{
+use crate::tenant::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
     TenantImageVerificationRequest, TenantRuntimePolicyAdmission,
 };

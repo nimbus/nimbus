@@ -38,10 +38,10 @@ pub(super) async fn run_subscription_forwarder(
     service: Arc<nimbus_engine::Service>,
     registry: Arc<ConvexRegistry>,
     runtime_service_registry: Arc<dyn crate::service_registry::RuntimeServiceRegistry>,
-    tenant_context: crate::tenant_isolation::TenantIsolationContext,
+    tenant_context: crate::tenant::TenantIsolationContext,
     subscription_statuses: SubscriptionStatuses,
     runtime_cancellation: HostCallCancellation,
-    tenant_isolation_mode: crate::tenant_isolation::TenantIsolationMode,
+    tenant_isolation_mode: crate::tenant::TenantIsolationMode,
 ) {
     let mut subscription_rx = subscription_rx;
     while let Some(event) = subscription_rx.recv().await {

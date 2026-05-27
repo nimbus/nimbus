@@ -1,8 +1,6 @@
 use nimbus_core::{Error, Result};
 
-use crate::tenant_isolation::{
-    RuntimeIsolationTier, TenantIsolationDecision, TenantRuntimePolicyAdmission,
-};
+use crate::tenant::{RuntimeIsolationTier, TenantIsolationDecision, TenantRuntimePolicyAdmission};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RuntimeExecutionAdmission {
@@ -44,7 +42,7 @@ mod tests {
     use nimbus_runtime::{RuntimeGrants, RuntimeLimits, RuntimePolicy};
 
     use super::*;
-    use crate::tenant_isolation::{
+    use crate::tenant::{
         TenantIsolationContext, TenantIsolationMode, admit_runtime_invocation_decision,
     };
 

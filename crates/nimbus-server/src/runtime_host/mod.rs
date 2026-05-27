@@ -9,7 +9,7 @@ pub(crate) mod capabilities;
 pub(crate) mod responses;
 
 use crate::execution::host_state::RuntimeHostState;
-use crate::tenant_isolation::{TenantIsolationDecision, TenantStorageAccessDecision};
+use crate::tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
 
 pub(crate) struct RuntimeHostBootstrap {
     pub(crate) principal: PrincipalContext,

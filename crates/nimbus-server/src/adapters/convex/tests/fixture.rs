@@ -10,18 +10,18 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
         .create_tenant(tenant_id.clone())
         .expect("tenant should be created");
     let registry = Arc::new(ConvexRegistry::empty());
-    let isolation = crate::tenant_isolation::TenantIsolationContext::application(
+    let isolation = crate::tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         nimbus_core::PrincipalContext::anonymous(),
         "convex_fixture",
     );
-    let decision = crate::tenant_isolation::admit_runtime_invocation_decision(
+    let decision = crate::tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_fixture",
         None,
         &registry.runtime_policy(),
-        crate::tenant_isolation::RuntimeIsolationTier::InProcessUntrusted,
-        crate::tenant_isolation::TenantIsolationMode::LocalDevelopment,
+        crate::tenant::RuntimeIsolationTier::InProcessUntrusted,
+        crate::tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
     )
     .expect("fixture tenant isolation decision should build");

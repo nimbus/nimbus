@@ -1,7 +1,7 @@
 use nimbus_core::Error;
 
 use crate::sandbox::SandboxServiceLaunch;
-use crate::tenant_isolation::{
+use crate::tenant::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
     TenantIsolationDecision,
 };
@@ -14,7 +14,7 @@ pub(super) struct DefaultTenantImageVerificationProvider;
 impl TenantImageVerificationProvider for DefaultTenantImageVerificationProvider {
     fn verify_registry_image(
         &self,
-        _request: &crate::tenant_isolation::TenantImageVerificationRequest,
+        _request: &crate::tenant::TenantImageVerificationRequest,
     ) -> nimbus_core::Result<TenantImageVerificationEvidence> {
         Ok(TenantImageVerificationEvidence::default())
     }

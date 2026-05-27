@@ -28,7 +28,7 @@ use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServi
 use crate::state::{AppState, AppStateConfig};
 use crate::system::VersionCheck;
 use crate::system::version_check::VersionCheckConfig;
-use crate::tenant_isolation::TenantIsolationMode;
+use crate::tenant::TenantIsolationMode;
 use crate::{http, ws};
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");

@@ -19,7 +19,7 @@ use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::service_manager::SandboxServiceManager;
 use crate::service_registry::RuntimeServiceRegistry;
 use crate::system::VersionCheck;
-use crate::tenant_isolation::TenantIsolationMode;
+use crate::tenant::TenantIsolationMode;
 
 pub(crate) struct AppStateConfig {
     pub(crate) service: Arc<Service>,

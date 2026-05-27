@@ -2,7 +2,7 @@ use super::invoke::invoke_named_convex_function_with_trace_async_cancellable;
 use super::*;
 use crate::application_auth::normalize_principal_context;
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::{TenantIsolationContext, TenantIsolationMode};
+use crate::tenant::{TenantIsolationContext, TenantIsolationMode};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_async(

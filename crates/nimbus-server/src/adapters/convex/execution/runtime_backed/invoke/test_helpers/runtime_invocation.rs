@@ -14,7 +14,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
 };
 use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
-use crate::tenant_isolation::{
+use crate::tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
     admit_runtime_invocation_decision,
 };
@@ -129,7 +129,7 @@ async fn invoke_named_convex_function_with_trace_async(
             normalize_principal_context(request.auth.as_ref()),
             "convex_test_runtime",
         ),
-        crate::tenant_isolation::TenantIsolationMode::LocalDevelopment,
+        crate::tenant::TenantIsolationMode::LocalDevelopment,
     );
     invoke_named_convex_function_with_trace_async_cancellable(
         &context,

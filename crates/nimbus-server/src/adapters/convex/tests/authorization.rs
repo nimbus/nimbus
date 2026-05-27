@@ -165,18 +165,18 @@ fn mutation_bridge(
     tenant_id: TenantId,
     principal: nimbus_core::PrincipalContext,
 ) -> ConvexHostBridge {
-    let isolation = crate::tenant_isolation::TenantIsolationContext::application(
+    let isolation = crate::tenant::TenantIsolationContext::application(
         tenant_id,
         principal.clone(),
         "convex_authorization_test",
     );
-    let decision = crate::tenant_isolation::admit_runtime_invocation_decision(
+    let decision = crate::tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_authorization_test",
         None,
         &registry.runtime_policy(),
-        crate::tenant_isolation::RuntimeIsolationTier::InProcessUntrusted,
-        crate::tenant_isolation::TenantIsolationMode::LocalDevelopment,
+        crate::tenant::RuntimeIsolationTier::InProcessUntrusted,
+        crate::tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
     )
     .expect("authorization test tenant isolation decision should build");
@@ -425,18 +425,18 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
     )
     .expect("direct documents should encode as Convex JSON");
     let registry = Arc::new(ConvexRegistry::empty());
-    let isolation = crate::tenant_isolation::TenantIsolationContext::application(
+    let isolation = crate::tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         normalize_principal_context(Some(&auth)),
         "convex_authorization_test",
     );
-    let decision = crate::tenant_isolation::admit_runtime_invocation_decision(
+    let decision = crate::tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_authorization_test",
         None,
         &registry.runtime_policy(),
-        crate::tenant_isolation::RuntimeIsolationTier::InProcessUntrusted,
-        crate::tenant_isolation::TenantIsolationMode::LocalDevelopment,
+        crate::tenant::RuntimeIsolationTier::InProcessUntrusted,
+        crate::tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
     )
     .expect("authorization query tenant isolation decision should build");

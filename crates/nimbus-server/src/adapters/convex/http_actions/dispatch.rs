@@ -2,7 +2,7 @@ use super::*;
 use crate::application_auth::{
     normalize_principal_context, verify_optional_application_auth_from_headers_in_deployment,
 };
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant::TenantIsolationContext;
 
 pub(in crate::adapters::convex) async fn dispatch_http_route(
     state: Arc<AppState>,

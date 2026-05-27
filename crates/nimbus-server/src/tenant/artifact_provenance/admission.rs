@@ -201,9 +201,7 @@ mod tests {
     use nimbus_runtime::RuntimeBundle;
 
     use super::*;
-    use crate::tenant_isolation::{
-        ArtifactVerifierBackendIdentity, SLSA_PROVENANCE_V1_PREDICATE_TYPE,
-    };
+    use crate::tenant::{ArtifactVerifierBackendIdentity, SLSA_PROVENANCE_V1_PREDICATE_TYPE};
 
     const BUILDER_ID: &str = "https://github.com/nimbus/builder";
     const SOURCE_URI: &str = "github.com/nimbus/nimbus";
