@@ -84,7 +84,9 @@ volume lifecycle. Do not install a service manager inside this image.
 
 For a host-managed Podman deployment, keep systemd on the host by using Quadlet
 or an equivalent service-manager artifact. The container still runs `nimbus`
-directly:
+directly. See [Node lifecycle](node-lifecycle.md) for the difference between
+containerized node install, static Quadlet export, and dynamic tenant
+transient units:
 
 ```ini
 # ~/.config/containers/systemd/nimbus.container

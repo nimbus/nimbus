@@ -23,6 +23,9 @@ Each adapter speaks a different client protocol against the same engine.
 ## Operating
 
 - [CLI reference](operating/cli.md) -- server flags, service/machine commands
+- [Node lifecycle](operating/node-lifecycle.md) -- native systemd,
+  containerized Quadlet, machine-os, transient tenant units, and export
+  boundaries
 - [Container image](operating/container-image.md) -- GHCR image contract,
   digest pinning, probes, and orchestrator examples
 - [Tenant isolation runbook](operating/tenant-isolation.md) -- rejection,

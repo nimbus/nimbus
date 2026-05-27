@@ -82,6 +82,31 @@ nimbus compose logs <service> [--file PATH]... [--tenant <tenant-id>] [--follow]
 nimbus compose top <service> [-f json|yaml|table] [--noheading] [--file PATH]... [--tenant <tenant-id>]
 ```
 
+```bash
+nimbus compose export quadlet [--file PATH]... [--service NAME]... [--mode containers|pod|kube] [--podman-version VERSION] [--output-dir DIR] [--overwrite] [--strict]
+```
+
+Current shipped node-service commands:
+
+```bash
+nimbus node install --systemd [--user|--system] [--enable] [--now] [--dry-run] [--overwrite] [--socket-activation]
+```
+
+```bash
+nimbus node install --container --image ghcr.io/nimbus/nimbus:vX.Y.Z@sha256:<digest> [--user|--system] [--enable] [--now] [--dry-run] [--overwrite]
+```
+
+```bash
+nimbus node status [--systemd|--container] [--user|--system]
+nimbus node logs [--systemd|--container] [--user|--system] [--follow]
+nimbus node doctor [--systemd|--container] [--user|--system]
+nimbus node uninstall [--systemd|--container] [--user|--system] [--dry-run]
+```
+
+See [Node lifecycle](node-lifecycle.md) for when to use native systemd units,
+containerized Quadlet node installs, baked `machine-os` units, dynamic tenant
+transient units, static Quadlet export, or direct-process local fallback.
+
 Current shipped machine commands:
 
 ```bash

@@ -294,6 +294,10 @@ values are signed audit claims rather than authority.
 
 ## Host Lifecycle And Artifacts
 
+Operator-facing lifecycle guidance lives in
+[Node lifecycle](../../operating/node-lifecycle.md). This architecture section
+defines the enforcement boundary behind that runbook.
+
 Dynamic tenant workloads use typed host lifecycle plans. On Linux, the product
 path is `SystemdTransientUnitBackend` over systemd D-Bus
 `StartTransientUnit`, not shelling out to `systemd-run`.

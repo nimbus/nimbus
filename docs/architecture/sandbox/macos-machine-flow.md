@@ -514,7 +514,10 @@ The repo also owns two checked-in operator drill helpers for the same contract:
 - Bootc-native convergence does not stage a replacement guest binary. The
   matching Linux `nimbus` binary and systemd units are baked into the
   Nimbus-owned bootc image, and host readiness validates the bootc
-  machine-config evidence plus the forwarded machine API.
+  machine-config evidence plus the forwarded machine API. See
+  [Node lifecycle](../../operating/node-lifecycle.md) for why this baked
+  `machine-os` path is separate from `nimbus node install` and from dynamic
+  tenant transient units.
 - The supported Homebrew Apple Silicon packaging path keeps `krunkit` as an
   explicit formula dependency and now prefers a bundled `libexec/gvproxy`
   beside the packaged `nimbus` binary, matching Podman's "bundle helper,
