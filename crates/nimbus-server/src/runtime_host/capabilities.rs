@@ -9,7 +9,7 @@ use nimbus_runtime::{HostCallCancellation, NimbusRuntimeError};
 use serde_json::{Map, Value};
 
 use crate::execution::errors::{check_host_cancellation, ensure_runtime_host_not_cancelled};
-use crate::tenant_isolation::TenantStorageAccessDecision;
+use crate::tenant::TenantStorageAccessDecision;
 
 pub(crate) trait RuntimeCapabilityHost {
     fn validate_session(

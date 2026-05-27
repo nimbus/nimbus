@@ -21,7 +21,7 @@ mod service_registry;
 mod state;
 mod system;
 mod system_tenant;
-mod tenant_isolation;
+mod tenant;
 mod tenant_isolation_drift;
 mod ws;
 
@@ -56,7 +56,7 @@ pub use sandbox::{
     SandboxServiceLaunch,
 };
 pub use service_manager::SandboxServiceManager;
-pub use tenant_isolation::{
+pub use tenant::{
     ArtifactAdmission, ArtifactAttestationEvidence, ArtifactImageVerificationProvider,
     ArtifactProvenanceRequirement, ArtifactSignatureEvidence, ArtifactSignatureRequirement,
     ArtifactVerificationEvidence, ArtifactVerificationPolicy, ArtifactVerificationRequest,

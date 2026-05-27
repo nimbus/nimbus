@@ -2,7 +2,7 @@ use nimbus_core::Error;
 use nimbus_sandbox::SandboxHandle;
 
 use crate::sandbox::SandboxServiceLaunch;
-use crate::tenant_isolation::TenantIsolationDecision;
+use crate::tenant::TenantIsolationDecision;
 
 use super::SandboxServiceManager;
 use super::types::{TenantServiceKey, sandbox_backend_error};

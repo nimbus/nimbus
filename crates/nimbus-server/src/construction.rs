@@ -13,7 +13,7 @@ use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
 use crate::sandbox::SandboxCatalog;
 use crate::service_manager::SandboxServiceManager;
-use crate::tenant_isolation::TenantIsolationMode;
+use crate::tenant::TenantIsolationMode;
 
 /// Canonical public option bundle for serving Nimbus on a listener.
 pub struct ServeOptions {

@@ -18,7 +18,7 @@ mod verification;
 use activation::service_activation_decision;
 
 use crate::sandbox::SandboxServiceCatalog;
-use crate::tenant_isolation::TenantImageVerificationProvider;
+use crate::tenant::TenantImageVerificationProvider;
 
 use types::SandboxServiceManagerState;
 use verification::DefaultTenantImageVerificationProvider;
@@ -102,7 +102,7 @@ mod tests {
 
     use crate::sandbox::{SandboxServiceCatalog, SandboxServiceLaunch};
     use crate::service_registry::RuntimeServiceRegistry;
-    use crate::tenant_isolation::{
+    use crate::tenant::{
         TenantImageVerificationEvidence, TenantImageVerificationProvider, TenantIsolationContext,
         TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantWorkloadIdentity,
     };
@@ -208,7 +208,7 @@ mod tests {
     impl TenantImageVerificationProvider for RecordingImageVerifier {
         fn verify_registry_image(
             &self,
-            request: &crate::tenant_isolation::TenantImageVerificationRequest,
+            request: &crate::tenant::TenantImageVerificationRequest,
         ) -> nimbus_core::Result<TenantImageVerificationEvidence> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.references
@@ -436,7 +436,7 @@ mod tests {
                 ))
                 .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
                 .with_network(
-                    crate::tenant_isolation::TenantNetworkPolicyDecision::default()
+                    crate::tenant::TenantNetworkPolicyDecision::default()
                         .with_sandbox_egress(egress)
                         .expect("test egress policy should compile"),
                 ),
@@ -479,7 +479,7 @@ mod tests {
                 ))
                 .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
                 .with_image(
-                    crate::tenant_isolation::TenantImagePolicyDecision::digest_pinned(image)
+                    crate::tenant::TenantImagePolicyDecision::digest_pinned(image)
                         .require_signature("https://issuer.example.com", "repo:nimbus/api"),
                 ),
             )
@@ -535,7 +535,7 @@ mod tests {
                 ))
                 .with_services(TenantServiceGrantPolicyDecision::new(["api"]))
                 .with_image(
-                    crate::tenant_isolation::TenantImagePolicyDecision::digest_pinned(image)
+                    crate::tenant::TenantImagePolicyDecision::digest_pinned(image)
                         .require_signature("https://issuer.example.com", "repo:nimbus/api"),
                 ),
             )
@@ -604,7 +604,7 @@ mod tests {
                 ))
                 .with_services(TenantServiceGrantPolicyDecision::new(["db"]))
                 .with_network(
-                    crate::tenant_isolation::TenantNetworkPolicyDecision::default()
+                    crate::tenant::TenantNetworkPolicyDecision::default()
                         .with_sandbox_egress(egress.clone())
                         .expect("test egress policy should compile"),
                 ),

@@ -3,7 +3,7 @@ use crate::application_auth::{
     normalize_principal_context, verify_optional_application_auth_from_headers_in_deployment,
 };
 use crate::local_server::authorize_standard_server_access;
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant::TenantIsolationContext;
 
 pub(super) async fn registry_and_auth_for_path(
     state: &Arc<AppState>,

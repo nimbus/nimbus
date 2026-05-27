@@ -17,7 +17,7 @@ use crate::execution::invocations::{
 use crate::execution::runtime_admission::RuntimeExecutionAdmission;
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::state::{AppError, AppState};
-use crate::tenant_isolation::{
+use crate::tenant::{
     RuntimeIsolationTier, TenantIsolationContext, admit_runtime_invocation_decision,
 };
 

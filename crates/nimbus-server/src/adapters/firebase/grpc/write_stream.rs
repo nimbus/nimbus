@@ -40,7 +40,7 @@ use crate::application_auth::{
     resolve_application_auth_from_bearer,
 };
 use crate::state::{AppState, record_authenticated_usage};
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant::TenantIsolationContext;
 
 const WRITE_STREAM_TTL_MS: u64 = 60_000;
 const MAX_ACTIVE_WRITE_STREAMS: usize = 256;

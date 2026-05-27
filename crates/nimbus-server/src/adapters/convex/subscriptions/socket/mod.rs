@@ -73,7 +73,7 @@ pub(super) type SubscriptionStatuses = Arc<RwLock<HashMap<u64, SubscriptionStatu
 pub(super) struct SocketSessionCtx<'a> {
     pub(super) state: &'a Arc<AppState>,
     pub(super) tenant_id: &'a TenantId,
-    pub(super) tenant_context: &'a crate::tenant_isolation::TenantIsolationContext,
+    pub(super) tenant_context: &'a crate::tenant::TenantIsolationContext,
     pub(super) convex_registry: &'a Arc<ConvexRegistry>,
     pub(super) subscription_tx: &'a mpsc::Sender<SubscriptionUpdate>,
     pub(super) outbound_tx: &'a mpsc::Sender<ServerMessage>,
@@ -95,7 +95,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
     state: Arc<AppState>,
     convex_registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
-    tenant_context: crate::tenant_isolation::TenantIsolationContext,
+    tenant_context: crate::tenant::TenantIsolationContext,
     initial_auth: Option<InvocationAuth>,
     protocol: NegotiatedWebSocketProtocol,
 ) {

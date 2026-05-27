@@ -4,7 +4,7 @@ use nimbus_core::{PrincipalContext, TenantId};
 use nimbus_engine::Service;
 
 use super::super::error::MongoError;
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant::TenantIsolationContext;
 
 pub const DEFAULT_TENANT: &str = "default";
 

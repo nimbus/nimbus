@@ -14,7 +14,7 @@ use crate::execution::invocations::{
 use crate::execution::runtime_admission::RuntimeExecutionAdmission;
 use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::{
+use crate::tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
     admit_runtime_invocation_decision,
 };

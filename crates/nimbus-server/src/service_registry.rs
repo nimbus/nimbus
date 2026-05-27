@@ -11,7 +11,7 @@ use nimbus_runtime::{
 use nimbus_sandbox::{PublishedEndpoint, PublishedEndpointProtocol, SandboxHandle, SandboxStatus};
 
 use crate::sandbox::SandboxCatalog;
-use crate::tenant_isolation::TenantServiceAccessDecision;
+use crate::tenant::TenantServiceAccessDecision;
 
 pub(crate) type RuntimeServiceBindingFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<InvocationServiceBinding>, Error>> + Send + 'a>>;

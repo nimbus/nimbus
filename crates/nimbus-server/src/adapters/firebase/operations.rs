@@ -21,7 +21,7 @@ use crate::provider_family::firestore::{
     locator_for_document_path, storage_table_for_collection_path,
 };
 use crate::state::AppState;
-use crate::tenant_isolation::TenantIsolationContext;
+use crate::tenant::TenantIsolationContext;
 
 pub(crate) fn resolve_write_key(
     document_path: &DocumentPath,

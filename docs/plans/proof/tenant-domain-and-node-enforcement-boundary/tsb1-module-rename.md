@@ -4,7 +4,7 @@ Date: 2026-05-27
 
 ## Status
 
-Status: `in_progress`
+Status: `done`
 
 ## Git Base
 
@@ -20,11 +20,12 @@ Status: `in_progress`
 
 Expected implementation files, once the rename begins:
 
-- `crates/nimbus-server/src/tenant_isolation.rs`
-- `crates/nimbus-server/src/tenant_isolation/`
-- `crates/nimbus-server/src/tenant.rs`
-- `crates/nimbus-server/src/tenant/`
-- Rust call sites importing `crate::tenant_isolation::*`
+- `crates/nimbus-server/src/tenant_isolation.rs` moved to
+  `crates/nimbus-server/src/tenant.rs`
+- `crates/nimbus-server/src/tenant_isolation/` moved to
+  `crates/nimbus-server/src/tenant/`
+- Rust call sites importing `crate::tenant_isolation::*` now import
+  `crate::tenant::*`
 
 ## Requirement IDs Touched
 
@@ -100,6 +101,52 @@ Results so far:
 - `cargo test -p nimbus-server audit_events -- --nocapture`: 6 passed, 0
   failed, 851 filtered out.
 
+## Rename Verification
+
+The old module-path filter changed scope after the path rename:
+
+```sh
+cargo test -p nimbus-server tenant_isolation -- --nocapture
+```
+
+Post-rename result: 20 passed, 0 failed, 837 filtered out. This still covers
+the audit tests with `tenant_isolation` names, the drift tests, and the
+conformance harness, but no longer selects all tenant module tests because the
+module path is now `tenant::`.
+
+New replacement module filter:
+
+```sh
+cargo test -p nimbus-server 'tenant::' -- --nocapture
+```
+
+Result: 122 passed, 0 failed, 735 filtered out. This includes the renamed
+tenant module tests plus tenant-adjacent system and MongoDB tenant tests matched
+by the filter.
+
+The explicit drift and audit filters still pass:
+
+```sh
+cargo test -p nimbus-server tenant_isolation_drift -- --nocapture
+```
+
+Result: 2 passed, 0 failed, 855 filtered out.
+
+```sh
+cargo test -p nimbus-server audit_events -- --nocapture
+```
+
+Result: 6 passed, 0 failed, 851 filtered out.
+
+Intentional remaining `tenant_isolation` strings after TSB1:
+
+- `tenant_isolation_drift` module and scan API names.
+- `TenantIsolation*` type names and test names.
+- `tenant_isolation_mode` policy fields.
+- `nimbus.tenant_isolation.*` event names and evidence scope.
+- Documentation references that TSB2 owns, especially external review targets
+  and explanatory prose.
+
 ## Post-Rename Verification
 
 Commands to run after the module-path rename:
@@ -124,6 +171,5 @@ record both the old and new filters plus the exact output summaries.
 
 ## Next Resumable Action
 
-Run formatting and diff/docs checks for the pre-rename fix, commit that
-checkpoint, then move `crates/nimbus-server/src/tenant_isolation.rs` and
-`crates/nimbus-server/src/tenant_isolation/` to the new `tenant` module path.
+Start TSB2 by updating docs to describe `tenant` as the domain module while
+preserving tenant isolation as the security concept.

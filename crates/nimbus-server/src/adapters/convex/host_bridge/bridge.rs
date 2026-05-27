@@ -6,7 +6,7 @@ use crate::runtime_host::{
     commit_runtime_mutation_execution_unit,
 };
 use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant_isolation::{TenantIsolationDecision, TenantStorageAccessDecision};
+use crate::tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
 
 #[derive(Clone)]
 pub(crate) struct ConvexHostBridgeScope {

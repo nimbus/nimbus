@@ -1052,7 +1052,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::tenant_isolation::{TenantImageAdmissionSource, TenantImagePolicyDecision};
+    use crate::tenant::{TenantImageAdmissionSource, TenantImagePolicyDecision};
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const IMAGE: &str = "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

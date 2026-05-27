@@ -7,7 +7,7 @@ use nimbus_runtime::{
     RuntimeBundle, RuntimeExecutor, RuntimeInvocationContext, RuntimePolicy,
 };
 
-use crate::tenant_isolation::{
+use crate::tenant::{
     ArtifactAdmission, ArtifactVerificationPolicy, ArtifactVerifierBackend,
     admit_runtime_bundle_artifact,
 };
@@ -199,7 +199,7 @@ pub(crate) use worker::invoke_runtime_bundle_on_worker_with_host_state;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tenant_isolation::{
+    use crate::tenant::{
         ArtifactVerificationEvidence, ArtifactVerifierBackendIdentity,
         SLSA_PROVENANCE_V1_PREDICATE_TYPE,
     };
@@ -212,8 +212,8 @@ mod tests {
     impl ArtifactVerifierBackend for StaticArtifactVerifier {
         fn verify_artifact(
             &self,
-            _request: &crate::tenant_isolation::ArtifactVerificationRequest,
-        ) -> crate::tenant_isolation::ArtifactVerifierResult<ArtifactVerificationEvidence> {
+            _request: &crate::tenant::ArtifactVerificationRequest,
+        ) -> crate::tenant::ArtifactVerifierResult<ArtifactVerificationEvidence> {
             Ok(
                 ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
                     "fixture", "test",

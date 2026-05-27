@@ -11,7 +11,7 @@ use super::{
     DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OfflineVerificationConfig,
     ProcessArtifactVerifierCommandRunner, redact_artifact_verifier_output,
 };
-use crate::tenant_isolation::image_admission::{has_sha256_digest, parse_oci_image_reference};
+use crate::tenant::image_admission::{has_sha256_digest, parse_oci_image_reference};
 
 pub struct CosignVerifierBackend {
     program: String,
@@ -262,8 +262,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::tenant_isolation::ArtifactVerifierCommandOutput;
-    use crate::tenant_isolation::{
+    use crate::tenant::ArtifactVerifierCommandOutput;
+    use crate::tenant::{
         ArtifactVerificationPolicy, ArtifactVerificationSubjectKind, ArtifactVerifierErrorKind,
     };
 
