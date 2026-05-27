@@ -357,6 +357,22 @@ pub struct HostLifecycleStatus {
 }
 
 impl HostLifecycleStatus {
+    pub(crate) fn new_for_backend(
+        workload_id: TenantWorkloadId,
+        unit_name: SystemdUnitName,
+        phase: TenantWorkloadPhase,
+        reason: HostLifecycleStatusReason,
+        message: Option<String>,
+    ) -> Self {
+        Self {
+            workload_id,
+            unit_name,
+            phase,
+            reason,
+            message,
+        }
+    }
+
     pub fn from_backend_state(plan: &HostLifecyclePlan, state: HostBackendObservedState) -> Self {
         let (phase, reason, message) = match state {
             HostBackendObservedState::Planned => (

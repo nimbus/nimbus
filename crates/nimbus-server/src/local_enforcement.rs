@@ -12,6 +12,7 @@ use crate::tenant::{
 
 mod direct_process;
 mod host_lifecycle;
+mod systemd_transient;
 
 pub use direct_process::{
     DirectProcessBackend, DirectProcessEvidence, DirectProcessStatusSnapshot,
@@ -23,6 +24,13 @@ pub use host_lifecycle::{
     HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason, HostRestartPolicy,
     RuntimePoolTrustClass, RuntimePoolTrustState, SystemdUnitKind, SystemdUnitName,
     TenantWorkloadId,
+};
+pub use systemd_transient::{
+    StartTransientMode, SystemdDbusClient, SystemdDbusProperty, SystemdExecStart,
+    SystemdInspectUnitRequest, SystemdJournalSelector, SystemdStartTransientUnitRequest,
+    SystemdStartTransientUnitResponse, SystemdStopUnitRequest, SystemdStopUnitResponse,
+    SystemdTransientCapabilities, SystemdTransientUnitBackend, SystemdUnitStatus,
+    UnavailableSystemdDbusClient,
 };
 
 #[cfg(test)]
