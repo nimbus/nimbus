@@ -12,8 +12,15 @@ use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxHandl
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+use crate::local_enforcement::{TenantSystemEvidenceProjection, TenantWorkloadStatus};
+#[cfg(test)]
+use crate::tenant::TenantIsolationContext;
+
 use super::identity::{is_reserved_tenant_id, is_system_tenant_id, system_tenant_id};
 use super::inventory::{adapter_capability_inventory, route_inventory};
+#[cfg(test)]
+use super::keys::workload_status_document_id;
 use super::keys::{
     bundle_document_id, cron_job_document_id, function_document_id, listener_document_id,
     machine_document_id, machine_listener_document_id, machine_port_document_id,
@@ -253,6 +260,47 @@ pub(crate) async fn record_system_event_async(
         )
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn record_tenant_workload_status_async(
+    service: &Arc<Service>,
+    authority: &TenantIsolationContext,
+    projection: &TenantSystemEvidenceProjection,
+    status: &TenantWorkloadStatus,
+) -> Result<()> {
+    authority.ensure_system_or_operator_authority("_nimbus workload status projection")?;
+    projection.ensure_status_matches(status)?;
+    ensure_system_tenant_async(service).await?;
+
+    let evidence = json!({
+        "lifecycle": status.lifecycle_evidence(),
+        "nodeObservation": status.node_observation_ids(),
+        "cleanupProgress": status.cleanup_progress(),
+        "correlationIds": status.evidence_correlation_ids(),
+        "redactedFields": projection.redacted_fields(),
+        "workloadStableId": projection.workload_stable_id(),
+    });
+    let diagnostics = serde_json::to_value(status.diagnostics())
+        .map_err(|error| Error::Serialization(error.to_string()))?;
+    upsert_system_document_async(
+        service,
+        "workload_status",
+        &workload_status_document_id(projection.tenant_id(), projection.workload_uid().as_str()),
+        object_fields(json!({
+            "tenantId": projection.tenant_id().as_str(),
+            "workloadUid": projection.workload_uid().as_str(),
+            "decisionId": projection.decision_id().as_str(),
+            "observedGeneration": status.observed_generation().as_u64(),
+            "nodeId": status.writer_node_id().as_str(),
+            "phase": status.phase().label(),
+            "target": status.target().label(),
+            "evidence": evidence,
+            "diagnostics": diagnostics,
+            "updatedAt": unix_time_millis()?,
+        })),
+    )
+    .await
 }
 
 pub(crate) async fn record_table_state_async(

@@ -236,6 +236,26 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             ],
             &[index("by_name", &["name"]), index("by_health", &["health"])],
         )?,
+        table(
+            "workload_status",
+            &[
+                string("tenantId", true),
+                string("workloadUid", true),
+                string("decisionId", true),
+                number("observedGeneration", true),
+                string("nodeId", true),
+                string("phase", true),
+                string("target", true),
+                object("evidence", false),
+                object("diagnostics", false),
+                number("updatedAt", true),
+            ],
+            &[
+                index("by_tenantId", &["tenantId"]),
+                index("by_decisionId", &["decisionId"]),
+                index("by_phase", &["phase"]),
+            ],
+        )?,
     ])
 }
 

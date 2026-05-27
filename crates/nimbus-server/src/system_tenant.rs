@@ -17,11 +17,13 @@ pub(crate) use inventory::route_inventory;
 #[cfg(test)]
 use keys::{
     machine_document_id, machine_listener_document_id, machine_port_document_id,
-    subscription_document_id,
+    subscription_document_id, workload_status_document_id,
 };
 pub(crate) use projection::install_table_projection_observer;
 #[cfg(test)]
 pub(crate) use records::ensure_system_tenant_async;
+#[cfg(test)]
+pub(crate) use records::record_tenant_workload_status_async;
 pub(crate) use records::{
     RunRecord, delete_cron_job_state_async, delete_machine_state_async,
     delete_scheduled_job_state_async, delete_subscription_state_async, endpoint_protocol,

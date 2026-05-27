@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use super::{
-    RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantIsolationDecision, TenantWorkloadKind,
+    RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantIsolationDecision,
+    TenantIsolationDecisionId, TenantWorkloadKind,
     evidence::{canonical_evidence_reason_code, tenant_isolation_event_name},
 };
 #[cfg(test)]
@@ -24,6 +25,7 @@ pub enum TenantIsolationEventKind {
     HostBridgeOperation,
     Cleanup,
     DriftViolation,
+    LifecycleStatus,
 }
 
 impl TenantIsolationEventKind {
@@ -38,6 +40,7 @@ impl TenantIsolationEventKind {
             Self::HostBridgeOperation => "host_bridge_operation",
             Self::Cleanup => "cleanup",
             Self::DriftViolation => "drift_violation",
+            Self::LifecycleStatus => "lifecycle_status",
         }
     }
 }
@@ -354,6 +357,14 @@ impl TenantIsolationEvent {
 
     pub fn with_service_name(mut self, service_name: impl Into<String>) -> Self {
         self.service_name = Some(service_name.into());
+        self
+    }
+
+    pub(crate) fn with_admitted_decision_id(
+        mut self,
+        decision_id: &TenantIsolationDecisionId,
+    ) -> Self {
+        self.decision_id = Some(decision_id.as_str().to_owned());
         self
     }
 
@@ -742,6 +753,7 @@ mod tests {
             TenantIsolationEventKind::HostBridgeOperation,
             TenantIsolationEventKind::Cleanup,
             TenantIsolationEventKind::DriftViolation,
+            TenantIsolationEventKind::LifecycleStatus,
         ];
 
         for kind in kinds {
@@ -843,6 +855,11 @@ mod tests {
                 TenantIsolationEventKind::DriftViolation,
                 TenantIsolationEventResult::Observed,
                 "nimbus.tenant_isolation.drift_violation.observed",
+            ),
+            (
+                TenantIsolationEventKind::LifecycleStatus,
+                TenantIsolationEventResult::Observed,
+                "nimbus.tenant_isolation.lifecycle_status.observed",
             ),
         ];
 

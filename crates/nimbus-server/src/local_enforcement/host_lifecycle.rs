@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -139,6 +140,219 @@ impl HostExecutable {
 pub enum HostLifecycleBackendKind {
     DirectProcess,
     SystemdTransientUnit,
+}
+
+impl HostLifecycleBackendKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DirectProcess => "direct_process",
+            Self::SystemdTransientUnit => "systemd_transient_unit",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HostLifecycleJournalSelectorEvidence {
+    field: String,
+    value: String,
+}
+
+impl HostLifecycleJournalSelectorEvidence {
+    pub fn new(field: impl Into<String>, value: impl Into<String>) -> Result<Self> {
+        let field = non_empty(field, "journal selector field")?;
+        let value = non_empty(value, "journal selector value")?;
+        if field.contains('\0')
+            || field.contains('\n')
+            || value.contains('\0')
+            || value.contains('\n')
+        {
+            return Err(Error::InvalidInput(
+                "journal selector evidence must not contain control characters".to_string(),
+            ));
+        }
+        Ok(Self { field, value })
+    }
+
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    pub fn label(&self) -> String {
+        format!("{}={}", self.field, self.value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TenantWorkloadLifecycleEvidence {
+    backend: HostLifecycleBackendKind,
+    unit_name: String,
+    job_path: Option<String>,
+    process_id: Option<u64>,
+    cgroup_path: Option<String>,
+    journal_selectors: Vec<HostLifecycleJournalSelectorEvidence>,
+    status_reason: HostLifecycleStatusReason,
+    message: Option<String>,
+}
+
+impl TenantWorkloadLifecycleEvidence {
+    pub fn from_plan(plan: &HostLifecyclePlan, reason: HostLifecycleStatusReason) -> Self {
+        Self {
+            backend: plan.backend(),
+            unit_name: plan.unit_name().as_str().to_owned(),
+            job_path: None,
+            process_id: None,
+            cgroup_path: None,
+            journal_selectors: Vec::new(),
+            status_reason: reason,
+            message: None,
+        }
+    }
+
+    pub fn for_observed_unit(
+        backend: HostLifecycleBackendKind,
+        unit_name: &SystemdUnitName,
+        reason: HostLifecycleStatusReason,
+    ) -> Self {
+        Self {
+            backend,
+            unit_name: unit_name.as_str().to_owned(),
+            job_path: None,
+            process_id: None,
+            cgroup_path: None,
+            journal_selectors: Vec::new(),
+            status_reason: reason,
+            message: None,
+        }
+    }
+
+    pub fn with_job_path(mut self, job_path: impl Into<String>) -> Result<Self> {
+        self.job_path = Some(high_cardinality_evidence_value(job_path, "job path")?);
+        Ok(self)
+    }
+
+    pub fn with_process_id(mut self, process_id: u64) -> Self {
+        self.process_id = Some(process_id);
+        self
+    }
+
+    pub fn with_cgroup_path(mut self, cgroup_path: impl Into<String>) -> Result<Self> {
+        self.cgroup_path = Some(high_cardinality_evidence_value(cgroup_path, "cgroup path")?);
+        Ok(self)
+    }
+
+    pub fn with_journal_selectors(
+        mut self,
+        selectors: impl IntoIterator<Item = HostLifecycleJournalSelectorEvidence>,
+    ) -> Self {
+        self.journal_selectors = selectors.into_iter().collect();
+        self
+    }
+
+    pub fn with_message(mut self, message: Option<String>) -> Self {
+        self.message = message;
+        self
+    }
+
+    pub fn backend(&self) -> HostLifecycleBackendKind {
+        self.backend
+    }
+
+    pub fn unit_name(&self) -> &str {
+        &self.unit_name
+    }
+
+    pub fn job_path(&self) -> Option<&str> {
+        self.job_path.as_deref()
+    }
+
+    pub fn process_id(&self) -> Option<u64> {
+        self.process_id
+    }
+
+    pub fn cgroup_path(&self) -> Option<&str> {
+        self.cgroup_path.as_deref()
+    }
+
+    pub fn journal_selectors(&self) -> &[HostLifecycleJournalSelectorEvidence] {
+        &self.journal_selectors
+    }
+
+    pub fn status_reason(&self) -> HostLifecycleStatusReason {
+        self.status_reason
+    }
+
+    pub fn correlation_ids(&self) -> Vec<String> {
+        let mut ids = vec![self.unit_name.clone()];
+        if let Some(job_path) = &self.job_path {
+            ids.push(job_path.clone());
+        }
+        if let Some(process_id) = self.process_id {
+            ids.push(format!("pid:{process_id}"));
+        }
+        if let Some(cgroup_path) = &self.cgroup_path {
+            ids.push(cgroup_path.clone());
+        }
+        ids
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HostLifecycleBackendCapabilities {
+    backend: HostLifecycleBackendKind,
+    available: bool,
+    features: BTreeMap<String, bool>,
+    failure_reasons: Vec<String>,
+}
+
+impl HostLifecycleBackendCapabilities {
+    pub fn new(backend: HostLifecycleBackendKind, available: bool) -> Self {
+        Self {
+            backend,
+            available,
+            features: BTreeMap::new(),
+            failure_reasons: Vec::new(),
+        }
+    }
+
+    pub fn direct_process() -> Self {
+        Self::new(HostLifecycleBackendKind::DirectProcess, true)
+            .with_feature("pid1", false)
+            .with_feature("dbus", false)
+            .with_feature("podman", false)
+            .with_feature("conmon", false)
+            .with_feature("kvm", false)
+    }
+
+    pub fn with_feature(mut self, feature: impl Into<String>, available: bool) -> Self {
+        self.features.insert(feature.into(), available);
+        self
+    }
+
+    pub fn with_failure_reason(mut self, reason: impl Into<String>) -> Result<Self> {
+        self.failure_reasons
+            .push(non_empty(reason, "backend capability failure reason")?);
+        Ok(self)
+    }
+
+    pub fn backend(&self) -> HostLifecycleBackendKind {
+        self.backend
+    }
+
+    pub fn available(&self) -> bool {
+        self.available
+    }
+
+    pub fn features(&self) -> &BTreeMap<String, bool> {
+        &self.features
+    }
+
+    pub fn failure_reasons(&self) -> &[String] {
+        &self.failure_reasons
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -354,6 +568,7 @@ pub struct HostLifecycleStatus {
     phase: TenantWorkloadPhase,
     reason: HostLifecycleStatusReason,
     message: Option<String>,
+    lifecycle_evidence: TenantWorkloadLifecycleEvidence,
 }
 
 impl HostLifecycleStatus {
@@ -363,6 +578,7 @@ impl HostLifecycleStatus {
         phase: TenantWorkloadPhase,
         reason: HostLifecycleStatusReason,
         message: Option<String>,
+        lifecycle_evidence: TenantWorkloadLifecycleEvidence,
     ) -> Self {
         Self {
             workload_id,
@@ -370,6 +586,7 @@ impl HostLifecycleStatus {
             phase,
             reason,
             message,
+            lifecycle_evidence,
         }
     }
 
@@ -411,13 +628,24 @@ impl HostLifecycleStatus {
                 Some("host lifecycle backend returned unknown state".to_string()),
             ),
         };
+        let lifecycle_evidence =
+            TenantWorkloadLifecycleEvidence::from_plan(plan, reason).with_message(message.clone());
         Self {
             workload_id: plan.workload_id.clone(),
             unit_name: plan.unit_name.clone(),
             phase,
             reason,
             message,
+            lifecycle_evidence,
         }
+    }
+
+    pub fn with_lifecycle_evidence(
+        mut self,
+        lifecycle_evidence: TenantWorkloadLifecycleEvidence,
+    ) -> Self {
+        self.lifecycle_evidence = lifecycle_evidence.with_message(self.message.clone());
+        self
     }
 
     pub fn to_workload_status(&self, plan: &HostLifecyclePlan) -> Result<TenantWorkloadStatus> {
@@ -433,7 +661,8 @@ impl HostLifecycleStatus {
         let patch = TenantWorkloadStatusPatch::observed_status(plan.spec())
             .with_phase(self.phase)
             .with_conditions([condition])
-            .with_evidence_correlation_ids([self.unit_name.as_str()]);
+            .with_lifecycle_evidence(self.lifecycle_evidence.clone())
+            .with_evidence_correlation_ids(self.lifecycle_evidence.correlation_ids());
         NodeStatusAuthorizer.authorize(plan.spec(), patch)
     }
 
@@ -455,6 +684,10 @@ impl HostLifecycleStatus {
 
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
+    }
+
+    pub fn lifecycle_evidence(&self) -> &TenantWorkloadLifecycleEvidence {
+        &self.lifecycle_evidence
     }
 }
 
@@ -523,6 +756,16 @@ fn parse_u64_property(name: &str, value: &str) -> Result<u64> {
             "host lifecycle property `{name}` value `{value}` must be u64: {error}"
         ))
     })
+}
+
+fn high_cardinality_evidence_value(value: impl Into<String>, field: &str) -> Result<String> {
+    let value = non_empty(value, field)?;
+    if value.contains('\0') || value.contains('\n') {
+        return Err(Error::InvalidInput(format!(
+            "{field} evidence must not contain control characters"
+        )));
+    }
+    Ok(value)
 }
 
 fn sanitize_unit_component(raw: &str) -> String {
@@ -621,6 +864,12 @@ mod tests {
                     phase: TenantWorkloadPhase::Deleting,
                     reason: HostLifecycleStatusReason::Stopped,
                     message: Some("fake backend stopped workload".to_string()),
+                    lifecycle_evidence: TenantWorkloadLifecycleEvidence::for_observed_unit(
+                        previous.lifecycle_evidence().backend(),
+                        previous.unit_name(),
+                        HostLifecycleStatusReason::Stopped,
+                    )
+                    .with_message(Some("fake backend stopped workload".to_string())),
                 };
                 statuses.insert(workload_id, stopped.clone());
                 Ok(stopped)

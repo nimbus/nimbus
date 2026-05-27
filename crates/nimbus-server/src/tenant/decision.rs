@@ -122,6 +122,14 @@ impl TenantIsolationDecision {
         &self.tenant_id
     }
 
+    pub fn surface(&self) -> &'static str {
+        self.surface
+    }
+
+    pub fn authority_class(&self) -> &'static str {
+        self.authority.class()
+    }
+
     pub fn workload(&self) -> &TenantWorkloadIdentity {
         &self.workload
     }

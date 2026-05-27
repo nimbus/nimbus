@@ -6,8 +6,9 @@ use serde::Serialize;
 
 use super::{
     HostBackendObservedState, HostLifecycleBackend, HostLifecycleBackendKind, HostLifecycleFuture,
-    HostLifecyclePlan, HostLifecycleRequest, HostLifecycleStatus, LocalEnforcementBinding,
-    TenantWorkloadId, TenantWorkloadStatus,
+    HostLifecyclePlan, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
+    LocalEnforcementBinding, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
+    TenantWorkloadStatus,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -67,8 +68,14 @@ impl HostLifecycleBackend for DirectProcessBackend {
                 .lock()
                 .expect("direct process backend lock should not be poisoned");
             let process_id = state.allocate_process_id();
+            let lifecycle_evidence = TenantWorkloadLifecycleEvidence::from_plan(
+                &plan,
+                HostLifecycleStatusReason::Running,
+            )
+            .with_process_id(process_id);
             let status =
-                HostLifecycleStatus::from_backend_state(&plan, HostBackendObservedState::Running);
+                HostLifecycleStatus::from_backend_state(&plan, HostBackendObservedState::Running)
+                    .with_lifecycle_evidence(lifecycle_evidence);
             let workload_status = status.to_workload_status(&plan)?;
             let evidence = DirectProcessEvidence::from_plan(&plan, process_id);
             let logs = vec![

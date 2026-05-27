@@ -4,10 +4,12 @@ use nimbus_core::{Error, Result};
 use serde::Serialize;
 
 use super::{
-    HostBackendObservedState, HostLifecycleBackend, HostLifecycleBackendKind, HostLifecycleFuture,
+    HostBackendObservedState, HostLifecycleBackend, HostLifecycleBackendCapabilities,
+    HostLifecycleBackendKind, HostLifecycleFuture, HostLifecycleJournalSelectorEvidence,
     HostLifecyclePlan, HostLifecycleProperty, HostLifecycleRequest, HostLifecycleStatus,
     HostLifecycleStatusReason, HostRestartPolicy, LocalEnforcementBinding, SystemdUnitKind,
-    SystemdUnitName, TenantWorkloadId, TenantWorkloadPhase, TenantWorkloadStatus,
+    SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase,
+    TenantWorkloadStatus,
 };
 
 pub trait SystemdDbusClient: Send + Sync + 'static {
@@ -53,6 +55,10 @@ where
     fn ensure_capable(&self) -> Result<()> {
         self.client.capabilities().ensure_required()
     }
+
+    pub fn backend_capabilities(&self) -> HostLifecycleBackendCapabilities {
+        self.client.capabilities().to_backend_capabilities()
+    }
 }
 
 impl<C> HostLifecycleBackend for SystemdTransientUnitBackend<C>
@@ -84,9 +90,6 @@ where
             self.ensure_capable()?;
             let request = SystemdStartTransientUnitRequest::from_plan(&plan)?;
             let response = self.client.start_transient_unit(request).await?;
-            let status =
-                HostLifecycleStatus::from_backend_state(&plan, HostBackendObservedState::Submitted);
-            let workload_status = status.to_workload_status(&plan)?;
             if response.unit_name() != plan.unit_name() {
                 return Err(Error::InvalidInput(format!(
                     "systemd StartTransientUnit returned unit {}, but plan requested {}",
@@ -94,6 +97,18 @@ where
                     plan.unit_name().as_str()
                 )));
             }
+            let request = SystemdStartTransientUnitRequest::from_plan(&plan)?;
+            let lifecycle_evidence = TenantWorkloadLifecycleEvidence::from_plan(
+                &plan,
+                HostLifecycleStatusReason::Submitted,
+            )
+            .with_job_path(response.job_path())?
+            .with_cgroup_path(request.cgroup_path())?
+            .with_journal_selectors(journal_selector_evidence(request.journal_selectors())?);
+            let status =
+                HostLifecycleStatus::from_backend_state(&plan, HostBackendObservedState::Submitted)
+                    .with_lifecycle_evidence(lifecycle_evidence);
+            let workload_status = status.to_workload_status(&plan)?;
             Ok(workload_status)
         })
     }
@@ -108,7 +123,7 @@ where
                 .client
                 .stop_unit(SystemdStopUnitRequest::for_workload(workload_id)?)
                 .await?;
-            Ok(response.status().to_host_lifecycle_status())
+            response.status().to_host_lifecycle_status()
         })
     }
 
@@ -122,7 +137,7 @@ where
                 .client
                 .inspect_unit(SystemdInspectUnitRequest::for_workload(workload_id)?)
                 .await?;
-            Ok(status.to_host_lifecycle_status())
+            status.to_host_lifecycle_status()
         })
     }
 }
@@ -183,6 +198,44 @@ impl SystemdTransientCapabilities {
             ));
         }
         Ok(())
+    }
+
+    pub fn dbus_available(&self) -> bool {
+        self.dbus_available
+    }
+
+    pub fn transient_units(&self) -> bool {
+        self.transient_units
+    }
+
+    pub fn service_units(&self) -> bool {
+        self.service_units
+    }
+
+    pub fn to_backend_capabilities(&self) -> HostLifecycleBackendCapabilities {
+        let mut capabilities = HostLifecycleBackendCapabilities::new(
+            HostLifecycleBackendKind::SystemdTransientUnit,
+            self.dbus_available && self.transient_units && self.service_units,
+        )
+        .with_feature("dbus", self.dbus_available)
+        .with_feature("transient_units", self.transient_units)
+        .with_feature("service_units", self.service_units);
+        if !self.dbus_available {
+            capabilities = capabilities
+                .with_failure_reason("systemd D-Bus is unavailable for transient unit backend")
+                .expect("static failure reason should be valid");
+        }
+        if !self.transient_units {
+            capabilities = capabilities
+                .with_failure_reason("systemd transient units are unavailable")
+                .expect("static failure reason should be valid");
+        }
+        if !self.service_units {
+            capabilities = capabilities
+                .with_failure_reason("systemd service units are unavailable")
+                .expect("static failure reason should be valid");
+        }
+        capabilities
     }
 }
 
@@ -576,7 +629,7 @@ impl SystemdUnitStatus {
         self
     }
 
-    pub fn to_host_lifecycle_status(&self) -> HostLifecycleStatus {
+    pub fn to_host_lifecycle_status(&self) -> Result<HostLifecycleStatus> {
         let observed = match self.active_state.as_str() {
             "activating" => HostBackendObservedState::Submitted,
             "active" => {
@@ -594,7 +647,7 @@ impl SystemdUnitStatus {
             )),
             _ => HostBackendObservedState::Unknown,
         };
-        status_from_observed(self.workload_id.clone(), self.unit_name.clone(), observed)
+        status_from_observed(self, observed)
     }
 
     pub fn workload_id(&self) -> &TenantWorkloadId {
@@ -631,10 +684,9 @@ impl SystemdUnitStatus {
 }
 
 fn status_from_observed(
-    workload_id: TenantWorkloadId,
-    unit_name: SystemdUnitName,
+    status: &SystemdUnitStatus,
     observed: HostBackendObservedState,
-) -> HostLifecycleStatus {
+) -> Result<HostLifecycleStatus> {
     let (phase, reason, message) = match observed {
         HostBackendObservedState::Planned => (
             TenantWorkloadPhase::Pending,
@@ -672,7 +724,39 @@ fn status_from_observed(
             Some("systemd transient unit state is unknown".to_string()),
         ),
     };
-    HostLifecycleStatus::new_for_backend(workload_id, unit_name, phase, reason, message)
+    let mut lifecycle_evidence = TenantWorkloadLifecycleEvidence::for_observed_unit(
+        HostLifecycleBackendKind::SystemdTransientUnit,
+        &status.unit_name,
+        reason,
+    )
+    .with_cgroup_path(&status.cgroup_path)?
+    .with_journal_selectors(journal_selector_evidence(&status.journal_selectors)?)
+    .with_message(message.clone());
+    if let Some(job_path) = status.job_path.as_deref() {
+        lifecycle_evidence = lifecycle_evidence.with_job_path(job_path)?;
+    }
+    if let Some(main_pid) = status.main_pid {
+        lifecycle_evidence = lifecycle_evidence.with_process_id(u64::from(main_pid));
+    }
+    Ok(HostLifecycleStatus::new_for_backend(
+        status.workload_id.clone(),
+        status.unit_name.clone(),
+        phase,
+        reason,
+        message,
+        lifecycle_evidence,
+    ))
+}
+
+fn journal_selector_evidence(
+    selectors: &[SystemdJournalSelector],
+) -> Result<Vec<HostLifecycleJournalSelectorEvidence>> {
+    selectors
+        .iter()
+        .map(|selector| {
+            HostLifecycleJournalSelectorEvidence::new(selector.field(), selector.value())
+        })
+        .collect()
 }
 
 fn systemd_unit_for_workload(workload_id: &TenantWorkloadId) -> Result<SystemdUnitName> {

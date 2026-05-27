@@ -108,3 +108,12 @@ pub(super) fn subscription_document_id(
         subscription_id
     )
 }
+
+#[cfg(test)]
+pub(super) fn workload_status_document_id(tenant_id: &TenantId, workload_uid: &str) -> String {
+    format!(
+        "workload-status:{}:{}",
+        stable_key_segment(tenant_id.as_str()),
+        stable_key_segment(workload_uid)
+    )
+}
