@@ -42,7 +42,9 @@ Each adapter speaks a different client protocol against the same engine.
 Internal docs mirroring the crate tree. See
 [architecture/README.md](architecture/README.md).
 
-- [server/](architecture/server/) -- adapter contracts, auth/runtime trust
+- [server/](architecture/server/) -- adapter contracts,
+  [local enforcement](architecture/server/local-enforcement-boundary.md),
+  auth/runtime trust
 - [runtime/](architecture/runtime/) -- V8 host capabilities, adapter boundary,
   [runtime engine seam](architecture/runtime/engine-seam.md),
   [new engine proof harness](architecture/runtime/new-engine-proof-harness.md),

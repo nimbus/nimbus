@@ -16,7 +16,7 @@ large refactor waves.
 The current architecture hardening baseline keeps large composition roots thin
 and moves behavior into concept-owned modules:
 
-- `nimbus-server::tenant_isolation` owns admission context, authority, stable
+- `nimbus-server::tenant` owns admission context, authority, stable
   identity, policy inputs, runtime admission, artifact provenance, image
   admission, audit evidence, and operator policy.
 - `nimbus-server::construction` and `nimbus-server::router` are the canonical
@@ -43,7 +43,7 @@ justification.
 
 | Directory | Crate | What's here |
 |-----------|-------|-------------|
-| [server/](server/) | `nimbus-server` | Adapter contracts, tenant isolation, auth/runtime trust boundary |
+| [server/](server/) | `nimbus-server` | Adapter contracts, tenant isolation, local enforcement, auth/runtime trust boundary |
 | [runtime/](runtime/) | `nimbus-runtime` | Runtime engine seam, V8 host capability ownership, adapter boundary |
 | [storage/](storage/) | `nimbus-storage` | Encryption design, persistence engine, provider topologies |
 | [sandbox/](sandbox/) | `nimbus-sandbox` | MicroVM baseline, macOS machine flow, krun validation |
