@@ -12,20 +12,19 @@ use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxHandl
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-#[cfg(test)]
-use crate::local_enforcement::{TenantSystemEvidenceProjection, TenantWorkloadStatus};
-#[cfg(test)]
+use crate::local_enforcement::{
+    HostLifecycleFuture, StatusEvidenceWrite, StatusEvidenceWriter, TenantSystemEvidenceProjection,
+    TenantWorkloadStatus,
+};
 use crate::tenant::TenantIsolationContext;
 
 use super::identity::{is_reserved_tenant_id, is_system_tenant_id, system_tenant_id};
 use super::inventory::{adapter_capability_inventory, route_inventory};
-#[cfg(test)]
-use super::keys::workload_status_document_id;
 use super::keys::{
     bundle_document_id, cron_job_document_id, function_document_id, listener_document_id,
     machine_document_id, machine_listener_document_id, machine_port_document_id,
     scheduled_job_document_id, service_document_id, service_port_document_id,
-    subscription_document_id, table_document_id,
+    subscription_document_id, table_document_id, workload_status_document_id,
 };
 use super::schema::system_table_schemas;
 
@@ -262,7 +261,39 @@ pub(crate) async fn record_system_event_async(
     Ok(())
 }
 
-#[cfg(test)]
+#[derive(Clone)]
+pub struct SystemTenantStatusEvidenceWriter {
+    service: Arc<Service>,
+    authority: TenantIsolationContext,
+}
+
+impl SystemTenantStatusEvidenceWriter {
+    pub fn new(service: Arc<Service>, authority: TenantIsolationContext) -> Self {
+        Self { service, authority }
+    }
+
+    pub fn operator(service: Arc<Service>, surface: &'static str) -> Result<Self> {
+        Ok(Self::new(
+            service,
+            TenantIsolationContext::operator(system_tenant_id()?, surface),
+        ))
+    }
+}
+
+impl StatusEvidenceWriter for SystemTenantStatusEvidenceWriter {
+    fn write_status<'a>(&'a self, write: StatusEvidenceWrite<'a>) -> HostLifecycleFuture<'a, ()> {
+        Box::pin(async move {
+            record_tenant_workload_status_async(
+                &self.service,
+                &self.authority,
+                write.projection(),
+                write.status(),
+            )
+            .await
+        })
+    }
+}
+
 pub(crate) async fn record_tenant_workload_status_async(
     service: &Arc<Service>,
     authority: &TenantIsolationContext,
