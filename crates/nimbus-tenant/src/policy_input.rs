@@ -102,11 +102,7 @@ impl TenantNetworkPolicyDecision {
         self.sandbox_egress.authorize(request)
     }
 
-    pub(crate) fn ensure_sandbox_egress_matches(
-        &self,
-        spec: &SandboxSpec,
-        context: &str,
-    ) -> Result<()> {
+    pub fn ensure_sandbox_egress_matches(&self, spec: &SandboxSpec, context: &str) -> Result<()> {
         let spec_egress = spec.egress.compile().map_err(|message| {
             Error::InvalidInput(format!(
                 "tenant network policy rejected invalid sandbox egress policy for {context}: {message}"
@@ -289,7 +285,7 @@ impl TenantIsolationPolicyInput {
         }
     }
 
-    pub(crate) fn with_runtime_policy(
+    pub fn with_runtime_policy(
         mut self,
         context: &TenantIsolationContext,
         policy: &RuntimePolicy,

@@ -36,6 +36,7 @@ pub use artifact_verifier_effects::{
     ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, CosignVerifierBackend,
     DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OfflineVerificationConfig,
     ProcessArtifactVerifierCommandRunner, SbomVerifierBackend, SlsaVerifierBackend,
+    admit_guest_executable_artifact, admit_runtime_bundle_artifact,
 };
 pub mod adapters_mongodb {
     pub use super::adapters::mongodb::bson_bridge;
@@ -100,8 +101,7 @@ pub use tenant::{
     TenantServiceAccessDecision, TenantServiceGrantPolicyDecision, TenantStorageAccessDecision,
     TenantStoragePolicyDecision, TenantVolumePolicyDecision, TenantWorkloadIdentity,
     TenantWorkloadKind, TenantWorkloadLocation, TenantWorkloadStableIdentity,
-    admit_guest_executable_artifact, admit_runtime_bundle_artifact,
-    redact_artifact_verifier_output,
+    admit_artifact_subject, normalize_artifact_sha256, redact_artifact_verifier_output,
 };
 pub use tenant_isolation_drift::{
     TenantIsolationDriftReport, TenantIsolationDriftScanConfig, TenantIsolationDriftSurface,

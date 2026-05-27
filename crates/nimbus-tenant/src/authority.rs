@@ -22,7 +22,6 @@ impl TenantIsolationAuthority {
         }
     }
 
-    #[cfg(test)]
     pub(super) fn is_system_or_operator(&self) -> bool {
         matches!(self, Self::Operator | Self::System)
     }

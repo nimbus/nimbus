@@ -14,7 +14,7 @@ use super::{
     OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy,
     OperatorVolumePolicy,
 };
-use crate::tenant::{RuntimeIsolationTier, TenantIsolationMode, TenantWorkloadKind};
+use crate::{RuntimeIsolationTier, TenantIsolationMode, TenantWorkloadKind};
 
 impl OperatorPolicyDocument {
     pub fn validate(&self) -> Result<()> {

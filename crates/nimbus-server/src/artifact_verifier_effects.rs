@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result};
+use nimbus_runtime::RuntimeBundle;
 use serde::{Deserialize, Serialize};
 
 mod cosign;
@@ -18,10 +19,11 @@ pub use sbom::SbomVerifierBackend;
 pub use slsa::SlsaVerifierBackend;
 
 pub(crate) use crate::tenant::{
-    ArtifactVerificationEvidence, ArtifactVerificationRequest, ArtifactVerificationSubject,
-    ArtifactVerificationSubjectKind, ArtifactVerifierBackend, ArtifactVerifierBackendIdentity,
-    ArtifactVerifierError, ArtifactVerifierResult, SLSA_PROVENANCE_V1_PREDICATE_TYPE,
-    redact_artifact_verifier_output,
+    ArtifactAdmission, ArtifactVerificationEvidence, ArtifactVerificationPolicy,
+    ArtifactVerificationRequest, ArtifactVerificationSubject, ArtifactVerificationSubjectKind,
+    ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierError,
+    ArtifactVerifierResult, SLSA_PROVENANCE_V1_PREDICATE_TYPE, admit_artifact_subject,
+    normalize_artifact_sha256, redact_artifact_verifier_output,
 };
 
 pub const DEFAULT_ARTIFACT_VERIFIER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -63,6 +65,78 @@ impl OfflineVerificationConfig {
         }
         Ok(())
     }
+}
+
+pub fn admit_runtime_bundle_artifact(
+    bundle: &RuntimeBundle,
+    policy: &ArtifactVerificationPolicy,
+    verifier: &dyn ArtifactVerifierBackend,
+    context: &str,
+) -> Result<ArtifactAdmission> {
+    let expected_sha256 = bundle.identity().expected_sha256().ok_or_else(|| {
+        Error::PermissionDenied(format!(
+            "{context} requires runtime bundle provenance, but bundle `{}` has no immutable sha256 identity",
+            bundle.entrypoint().display()
+        ))
+    })?;
+    let expected_sha256 = normalize_artifact_sha256(expected_sha256).map_err(|error| {
+        Error::InvalidInput(format!(
+            "{context} runtime bundle `{}` has invalid sha256 identity: {error}",
+            bundle.entrypoint().display()
+        ))
+    })?;
+    ensure_path_matches_sha256(bundle.entrypoint(), &expected_sha256, context)?;
+    admit_artifact_subject(
+        ArtifactVerificationSubject::RuntimeBundle {
+            path: bundle.entrypoint().to_path_buf(),
+            sha256: format!("sha256:{expected_sha256}"),
+        },
+        policy,
+        verifier,
+        context,
+    )
+}
+
+pub fn admit_guest_executable_artifact(
+    path: impl AsRef<Path>,
+    expected_sha256: impl AsRef<str>,
+    policy: &ArtifactVerificationPolicy,
+    verifier: &dyn ArtifactVerifierBackend,
+    context: &str,
+) -> Result<ArtifactAdmission> {
+    let path = path.as_ref();
+    let expected_sha256 = normalize_artifact_sha256(expected_sha256.as_ref()).map_err(|error| {
+        Error::InvalidInput(format!(
+            "{context} guest executable `{}` has invalid sha256 identity: {error}",
+            path.display()
+        ))
+    })?;
+    ensure_path_matches_sha256(path, &expected_sha256, context)?;
+    admit_artifact_subject(
+        ArtifactVerificationSubject::GuestExecutable {
+            path: path.to_path_buf(),
+            sha256: format!("sha256:{expected_sha256}"),
+        },
+        policy,
+        verifier,
+        context,
+    )
+}
+
+fn ensure_path_matches_sha256(path: &Path, expected_sha256: &str, context: &str) -> Result<()> {
+    let actual_sha256 = RuntimeBundle::compute_sha256_for_path(path).map_err(|error| {
+        Error::InvalidInput(format!(
+            "{context} executable artifact `{}` could not be read before provenance admission: {error}",
+            path.display()
+        ))
+    })?;
+    if actual_sha256 == expected_sha256 {
+        return Ok(());
+    }
+    Err(Error::PermissionDenied(format!(
+        "{context} executable artifact `{}` failed immutable sha256 admission: expected {expected_sha256}, got {actual_sha256}",
+        path.display()
+    )))
 }
 
 pub struct ArtifactVerifierCommandBackend {
@@ -413,6 +487,65 @@ mod tests {
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const IMAGE: &str = "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const BUILDER_ID: &str = "https://github.com/nimbus/builder";
+    const SOURCE_URI: &str = "github.com/nimbus/nimbus";
+
+    #[derive(Debug, Clone)]
+    struct StaticArtifactVerifier {
+        evidence: ArtifactVerificationEvidence,
+    }
+
+    impl StaticArtifactVerifier {
+        fn slsa() -> Self {
+            Self {
+                evidence: ArtifactVerificationEvidence::new(ArtifactVerifierBackendIdentity::new(
+                    "fixture", "test",
+                ))
+                .with_attestation_from_source(
+                    BUILDER_ID,
+                    SOURCE_URI,
+                    SLSA_PROVENANCE_V1_PREDICATE_TYPE,
+                ),
+            }
+        }
+    }
+
+    impl ArtifactVerifierBackend for StaticArtifactVerifier {
+        fn verify_artifact(
+            &self,
+            _request: &ArtifactVerificationRequest,
+        ) -> ArtifactVerifierResult<ArtifactVerificationEvidence> {
+            Ok(self.evidence.clone())
+        }
+    }
+
+    #[derive(Debug)]
+    struct PanicArtifactVerifier;
+
+    impl ArtifactVerifierBackend for PanicArtifactVerifier {
+        fn verify_artifact(
+            &self,
+            _request: &ArtifactVerificationRequest,
+        ) -> ArtifactVerifierResult<ArtifactVerificationEvidence> {
+            panic!("host hash failures must not call artifact verifier")
+        }
+    }
+
+    fn executable_policy() -> ArtifactVerificationPolicy {
+        ArtifactVerificationPolicy::new().require_provenance_from_source(
+            BUILDER_ID,
+            SOURCE_URI,
+            [SLSA_PROVENANCE_V1_PREDICATE_TYPE],
+        )
+    }
+
+    fn write_bundle(contents: &str) -> (tempfile::TempDir, std::path::PathBuf, String) {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let path = temp.path().join("bundle.mjs");
+        std::fs::write(&path, contents).expect("bundle should write");
+        let sha256 = RuntimeBundle::compute_sha256_for_path(&path).expect("bundle should hash");
+        (temp, path, sha256)
+    }
 
     #[derive(Debug)]
     struct StaticCommandRunner {
@@ -470,6 +603,86 @@ mod tests {
         )
         .with_args(["verify", "--normalized-json"])
         .with_runner(runner)
+    }
+
+    #[test]
+    fn runtime_bundle_artifact_effect_hashes_path_before_pure_admission() {
+        let (_temp, path, sha256) = write_bundle("export default 1;\n");
+        let bundle = RuntimeBundle::with_expected_sha256(&path, &sha256)
+            .expect("bundle identity should accept sha256");
+        let verifier = StaticArtifactVerifier::slsa();
+
+        let admission = admit_runtime_bundle_artifact(
+            &bundle,
+            &executable_policy(),
+            &verifier,
+            "runtime invocation",
+        )
+        .expect("matching runtime bundle provenance should admit");
+
+        assert!(matches!(
+            admission.subject(),
+            ArtifactVerificationSubject::RuntimeBundle { path: admitted_path, sha256: admitted_sha }
+                if admitted_path == &path && admitted_sha == &format!("sha256:{sha256}")
+        ));
+        assert_eq!(admission.verification().attestations().len(), 1);
+    }
+
+    #[test]
+    fn runtime_bundle_artifact_effect_rejects_missing_or_wrong_digest_before_verifier() {
+        let (_temp, path, _sha256) = write_bundle("export default 1;\n");
+        let missing_digest_bundle = RuntimeBundle::new(&path);
+        let wrong_digest_bundle = RuntimeBundle::with_expected_sha256(&path, "b".repeat(64))
+            .expect("syntactically valid wrong sha should build");
+
+        let missing_digest_error = admit_runtime_bundle_artifact(
+            &missing_digest_bundle,
+            &executable_policy(),
+            &PanicArtifactVerifier,
+            "runtime invocation",
+        )
+        .expect_err("runtime bundle provenance policy should require immutable bundle identity");
+        let wrong_digest_error = admit_runtime_bundle_artifact(
+            &wrong_digest_bundle,
+            &executable_policy(),
+            &PanicArtifactVerifier,
+            "runtime invocation",
+        )
+        .expect_err("runtime bundle provenance policy should reject wrong digest");
+
+        assert!(
+            missing_digest_error
+                .to_string()
+                .contains("no immutable sha256"),
+            "missing digest error should be actionable: {missing_digest_error}"
+        );
+        assert!(
+            wrong_digest_error
+                .to_string()
+                .contains("failed immutable sha256 admission"),
+            "wrong digest error should be actionable: {wrong_digest_error}"
+        );
+    }
+
+    #[test]
+    fn guest_executable_artifact_effect_reuses_same_hash_and_policy_shape() {
+        let (_temp, path, sha256) = write_bundle("#!/bin/sh\nexit 0\n");
+        let verifier = StaticArtifactVerifier::slsa();
+
+        let admission = admit_guest_executable_artifact(
+            &path,
+            &sha256,
+            &executable_policy(),
+            &verifier,
+            "sandbox guest helper launch",
+        )
+        .expect("matching guest executable provenance should admit");
+
+        assert!(matches!(
+            admission.subject(),
+            ArtifactVerificationSubject::GuestExecutable { path: admitted_path, sha256: admitted_sha }
+                if admitted_path == &path && admitted_sha == &format!("sha256:{sha256}")
+        ));
     }
 
     #[test]

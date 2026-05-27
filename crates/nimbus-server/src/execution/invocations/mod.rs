@@ -7,10 +7,8 @@ use nimbus_runtime::{
     RuntimeBundle, RuntimeExecutor, RuntimeInvocationContext, RuntimePolicy,
 };
 
-use crate::tenant::{
-    ArtifactAdmission, ArtifactVerificationPolicy, ArtifactVerifierBackend,
-    admit_runtime_bundle_artifact,
-};
+use crate::artifact_verifier_effects::admit_runtime_bundle_artifact;
+use crate::tenant::{ArtifactAdmission, ArtifactVerificationPolicy, ArtifactVerifierBackend};
 
 mod blocking;
 mod worker;
