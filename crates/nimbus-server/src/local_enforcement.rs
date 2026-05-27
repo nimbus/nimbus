@@ -10,8 +10,13 @@ use crate::tenant::{
     TenantWorkloadStableIdentity,
 };
 
+mod direct_process;
 mod host_lifecycle;
 
+pub use direct_process::{
+    DirectProcessBackend, DirectProcessEvidence, DirectProcessStatusSnapshot,
+    HostPlatformDependencies,
+};
 pub use host_lifecycle::{
     HostBackendObservedState, HostExecutable, HostLifecycleBackend, HostLifecycleBackendKind,
     HostLifecycleFuture, HostLifecyclePlan, HostLifecycleProperty, HostLifecyclePropertySet,
