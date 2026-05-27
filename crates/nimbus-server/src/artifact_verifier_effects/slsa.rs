@@ -11,11 +11,9 @@ use super::{
     ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierCommandInvocation,
     ArtifactVerifierCommandRunner, ArtifactVerifierError, ArtifactVerifierResult,
     DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, ProcessArtifactVerifierCommandRunner,
-    redact_artifact_verifier_output,
+    SLSA_PROVENANCE_V1_PREDICATE_TYPE, redact_artifact_verifier_output,
 };
-use crate::tenant::image_admission::{has_sha256_digest, parse_oci_image_reference};
-
-pub const SLSA_PROVENANCE_V1_PREDICATE_TYPE: &str = "https://slsa.dev/provenance/v1";
+use crate::tenant::{has_sha256_digest, parse_oci_image_reference};
 
 pub struct SlsaVerifierBackend {
     program: String,
@@ -371,8 +369,8 @@ fn normalize_sha256(value: &str) -> ArtifactVerifierResult<String> {
 mod tests {
     use std::sync::Mutex;
 
+    use super::super::ArtifactVerifierCommandOutput;
     use super::*;
-    use crate::tenant::ArtifactVerifierCommandOutput;
     use crate::tenant::{ArtifactVerificationPolicy, ArtifactVerifierErrorKind};
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

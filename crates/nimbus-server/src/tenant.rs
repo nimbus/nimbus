@@ -18,13 +18,9 @@ pub use artifact_provenance::{
     ArtifactProvenanceRequirement, ArtifactSignatureEvidence, ArtifactSignatureRequirement,
     ArtifactVerificationEvidence, ArtifactVerificationPolicy, ArtifactVerificationRequest,
     ArtifactVerificationSubject, ArtifactVerificationSubjectKind, ArtifactVerifierBackend,
-    ArtifactVerifierBackendIdentity, ArtifactVerifierCommandBackend,
-    ArtifactVerifierCommandInvocation, ArtifactVerifierCommandOutput,
-    ArtifactVerifierCommandRunner, ArtifactVerifierError, ArtifactVerifierErrorKind,
-    ArtifactVerifierResult, CompositeArtifactVerifierBackend, CosignVerifierBackend,
-    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OfflineVerificationConfig,
-    ProcessArtifactVerifierCommandRunner, SLSA_PROVENANCE_V1_PREDICATE_TYPE, SbomVerifierBackend,
-    SlsaVerifierBackend, admit_guest_executable_artifact, admit_runtime_bundle_artifact,
+    ArtifactVerifierBackendIdentity, ArtifactVerifierError, ArtifactVerifierErrorKind,
+    ArtifactVerifierResult, CompositeArtifactVerifierBackend, SLSA_PROVENANCE_V1_PREDICATE_TYPE,
+    admit_guest_executable_artifact, admit_runtime_bundle_artifact,
     redact_artifact_verifier_output,
 };
 pub use audit_events::{
@@ -47,6 +43,7 @@ pub use image_admission::{
     TenantImageSignatureRequirement, TenantImageVerificationEvidence,
     TenantImageVerificationProvider, TenantImageVerificationRequest,
 };
+pub(crate) use image_admission::{has_sha256_digest, parse_oci_image_reference};
 pub use operator_policy::{
     OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy, OperatorDeniedEgressEvent,
     OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,

@@ -10,7 +10,7 @@ use super::{
     DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, ProcessArtifactVerifierCommandRunner,
     redact_artifact_verifier_output,
 };
-use crate::tenant::image_admission::{has_sha256_digest, parse_oci_image_reference};
+use crate::tenant::{has_sha256_digest, parse_oci_image_reference};
 
 pub struct SbomVerifierBackend {
     program: String,
@@ -135,11 +135,11 @@ impl ArtifactVerifierBackend for SbomVerifierBackend {
 mod tests {
     use std::sync::Mutex;
 
+    use super::super::ArtifactVerifierCommandOutput;
     use super::*;
     use crate::tenant::{
-        ArtifactImageVerificationProvider, ArtifactVerificationPolicy,
-        ArtifactVerifierCommandOutput, ArtifactVerifierErrorKind, TenantImageAdmissionSource,
-        TenantImagePolicyDecision,
+        ArtifactImageVerificationProvider, ArtifactVerificationPolicy, ArtifactVerifierErrorKind,
+        TenantImageAdmissionSource, TenantImagePolicyDecision,
     };
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
