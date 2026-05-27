@@ -54,13 +54,19 @@ generation, stable workload identity, runtime policy, service grants, network
 endpoints, storage namespace, volume/image/secret policy, quota reservation,
 audit redactions, and a deterministic decision ID.
 
+The implementation lives in the server's `tenant` domain module:
+`crates/nimbus-server/src/tenant.rs` re-exports the concept-owned children under
+`crates/nimbus-server/src/tenant/`. The module name is broad by design; the
+security concept and admitted artifacts remain explicit as tenant isolation,
+`TenantIsolationContext`, and `TenantIsolationDecision`.
+
 ## Threat Model
 
 | Threat | Control | Evidence |
 | --- | --- | --- |
 | Tenant swaps a path/header/bearer tenant ID to read another tenant. | Server-owned tenant admission checks principal claims and route tenant before storage/runtime calls. | `make verify-tenant-isolation-conformance` includes bearer tenant swap and native path denial scenarios. |
 | Runtime code for one tenant supplies another tenant ID to HostBridge. | HostBridge uses the admitted invocation tenant and decision-derived storage/service projections. | Conformance scenarios prove tenant-b runtime reads only tenant-b data and application runtime cannot read `_nimbus`. |
-| Runtime code asks for broad host capabilities in production. | `TenantIsolationMode::Production` rejects unsafe in-process grants or routes to a stronger tier before JavaScript runs. | `cargo test -p nimbus-server tenant_isolation -- --nocapture`. |
+| Runtime code asks for broad host capabilities in production. | `TenantIsolationMode::Production` rejects unsafe in-process grants or routes to a stronger tier before JavaScript runs. | `cargo test -p nimbus-server 'tenant::' -- --nocapture`. |
 | Service launch materializes another tenant's sandbox, port, or volume. | Sandbox launch consumes a decision-derived service access projection and validates tenant/service/backend before backend launch. | Tenant isolation unit tests and conformance service/volume collision scenarios. |
 | Tenant-controlled Compose input mounts host paths or exposes public ports. | Production Compose admission rejects host binds, undeclared/unsafe volumes, raw secrets, tag-only images, and non-loopback service exposure unless an explicit policy exists. | Conformance image admission scenarios and sandbox architecture docs. |
 | Tenant image content attacks the host during materialization. | Production image admission requires digest-pinned images as the floor; `SandboxServiceManager` runs image admission before service image materialization; concrete Cosign, SLSA, SBOM, offline/private-root, composite-verifier, and command-adapter seams provide stronger policy. | `make verify-artifact-provenance`, image admission tests, service-manager tests, and production Compose admission tests cover digest floor, unsigned, wrong identity, provenance source URI, SBOM, offline trust roots, and local-build rejection. |
@@ -91,6 +97,7 @@ storage/API tenant authorization, HostBridge operations, image admission, or
 drift scanning:
 
 ```sh
+cargo test -p nimbus-server 'tenant::' -- --nocapture
 cargo test -p nimbus-server tenant_isolation -- --nocapture
 cargo test -p nimbus-server tenant_isolation_drift -- --nocapture
 cargo test -p nimbus-server audit_events -- --nocapture
@@ -146,8 +153,8 @@ Accepted for the current baseline:
 Prioritize external security review in this order:
 
 1. Tenant admission and PDP/PEP split:
-   `crates/nimbus-server/src/tenant_isolation.rs` and
-   `crates/nimbus-server/src/tenant_isolation/audit_events.rs`.
+   `crates/nimbus-server/src/tenant.rs` and
+   `crates/nimbus-server/src/tenant/audit_events.rs`.
 2. Runtime HostBridge and capability execution:
    `crates/nimbus-server/src/runtime_host/` and adapter HostBridge code.
 3. Sandbox launch and OCI materialization:

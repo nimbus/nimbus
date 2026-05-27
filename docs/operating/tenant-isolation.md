@@ -130,6 +130,7 @@ Run the focused tenant-isolation lane before and after any isolation-sensitive
 change:
 
 ```sh
+cargo test -p nimbus-server 'tenant::' -- --nocapture
 cargo test -p nimbus-server tenant_isolation -- --nocapture
 cargo test -p nimbus-server tenant_isolation_drift -- --nocapture
 cargo test -p nimbus-server audit_events -- --nocapture
