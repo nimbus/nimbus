@@ -211,7 +211,8 @@ pub(crate) const COMPOSE_HELP_EXAMPLES: &str = "\
 Examples:
   nimbus compose config
   nimbus compose up
-  nimbus compose logs api --follow";
+  nimbus compose logs api --follow
+  nimbus compose export quadlet --strict";
 
 pub(crate) const COMPOSE_CONFIG_HELP_EXAMPLES: &str = "\
 Examples:
@@ -255,6 +256,18 @@ Examples:
   nimbus compose top api --noheading
   nimbus compose top api --tenant demo
   nimbus compose top api -f json";
+
+pub(crate) const COMPOSE_EXPORT_HELP_EXAMPLES: &str = "\
+Examples:
+  nimbus compose export quadlet
+  nimbus compose export quadlet --mode pod --strict";
+
+pub(crate) const COMPOSE_EXPORT_QUADLET_HELP_EXAMPLES: &str = "\
+Examples:
+  nimbus compose export quadlet
+  nimbus compose export quadlet --service api --strict
+  nimbus compose export quadlet --mode pod --output-dir ./quadlet
+  nimbus compose export quadlet --mode kube --podman-version 5.6.0";
 
 const SUPPRESS_PHASE_OUTPUT: usize = 1 << 0;
 const SUPPRESS_INFO_OUTPUT: usize = 1 << 1;
