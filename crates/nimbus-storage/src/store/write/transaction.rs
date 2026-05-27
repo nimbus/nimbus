@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nimbus_core::{CommitEntry, Error, Result, WriteOp};
+use nimbus_core::{CommitEntry, Error, Result, TenantEventKind, WriteOp};
 
 use crate::simulation::{Clock, FaultInjector};
 
@@ -22,6 +22,7 @@ impl TenantWriteTransaction {
             clock,
             fault_injector,
             commit_writes: Vec::new(),
+            tenant_events: Vec::new(),
             check_cancel: Box::new(check_cancel),
         }
     }
@@ -40,6 +41,10 @@ impl TenantWriteTransaction {
         self.commit_writes.push(write);
     }
 
+    pub(crate) fn record_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.push(event);
+    }
+
     pub fn commit(mut self) -> Result<Option<CommitEntry>> {
         self.check_cancel()?;
         let Some(write_txn) = self.write_txn.take() else {
@@ -50,12 +55,27 @@ impl TenantWriteTransaction {
         let clock = self.clock.clone();
         let fault_injector = self.fault_injector.clone();
         let commit_writes = std::mem::take(&mut self.commit_writes);
+        let mut tenant_events = std::mem::take(&mut self.tenant_events);
         let check_cancel = self.check_cancel;
 
-        let commit = if commit_writes.is_empty() {
+        if !commit_writes.is_empty() {
+            tenant_events.insert(
+                0,
+                TenantEventKind::DocumentWrite {
+                    writes: commit_writes.clone(),
+                },
+            );
+        }
+
+        let commit = if tenant_events.is_empty() {
             None
         } else {
-            Some(append_commit(&write_txn, clock.now(), commit_writes)?)
+            Some(append_commit(
+                &write_txn,
+                clock.now(),
+                commit_writes,
+                tenant_events,
+            )?)
         };
         commit_write_txn_cancellable(&*fault_injector, || check_cancel.as_ref()(), write_txn)?;
         Ok(commit)

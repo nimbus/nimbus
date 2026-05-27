@@ -120,6 +120,25 @@ adapter maps deployment URLs, and the Native HTTP API uses the
 `X-Tenant-Id` header. Regardless of the addressing mechanism, the storage
 isolation is identical.
 
+## Storage Trust Diagnostics
+
+Every tenant backend exposes a machine-readable `StorageHealthDiagnostic` and
+`StorageCapabilities` posture for operator inspection. The diagnostic includes
+the backend layout, event-log head, applied head, retention floor, storage
+format version, encryption posture, freshness lag, last recovery status, and
+whether table summaries are exact.
+
+The durable history is a tenant event journal, not a document-only commit log.
+Schema, table lifecycle, index lifecycle, scheduler, trigger-delivery, document,
+and barrier events share the same ordered sequence. Reads continue to use
+applied materialized state: a committed event is read-visible only after the
+serving boundary reaches the required applied sequence.
+
+Hard delete is protected by a retention floor. Exported snapshots, transaction
+sessions, journal consumers, embedded replicas, shadow materializers, and
+CDC/subscription consumers can pin table identities or event sequences; physical
+cleanup is denied until those pins advance or release.
+
 ## Environment Variables
 
 All CLI flags have `NIMBUS_*` environment variable equivalents. Environment variables are overridden by CLI flags. Example:

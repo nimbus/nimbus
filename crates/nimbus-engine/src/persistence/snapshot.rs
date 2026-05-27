@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::{
-    CollectionName, Document, DocumentId, ResourcePathBinding, Result, SequenceNumber, TableName,
+    CollectionName, Document, DocumentId, ResourcePathBinding, Result, SequenceNumber, TableId,
+    TableName,
 };
 use nimbus_storage::{
     MySqlReadSnapshot, PostgresReadSnapshot, SqliteReadSnapshot,
@@ -23,6 +24,10 @@ impl TenantPersistenceSnapshot {
 
     pub(crate) fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         match_tenant_persistence_snapshot!(self, |snapshot| snapshot.get(table, id))
+    }
+
+    pub(crate) fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        match_tenant_persistence_snapshot!(self, |snapshot| snapshot.table_id(table))
     }
 
     pub(crate) fn scan_resource_path_bindings(&self) -> Result<Vec<ResourcePathBinding>> {

@@ -30,10 +30,19 @@ impl MutationExecutionUnit {
             return Ok(None);
         }
 
+        let table_id = self.snapshot.table_id(table)?;
         let document = self.current_document(table, &document_id)?;
-        self.active_state()?
-            .read_dependencies
-            .record_document(table, document_id);
+        match table_id.as_ref() {
+            Some(table_id) => {
+                self.active_state()?
+                    .read_dependencies
+                    .record_document(table, table_id, document_id)
+            }
+            None => self
+                .active_state()?
+                .read_dependencies
+                .record_missing_table(table),
+        }
 
         match document {
             Some(document) if authorization.allows_document(&self.principal, &document)? => {
@@ -228,14 +237,28 @@ impl MutationExecutionUnit {
     }
 
     fn record_query_dependency(&self, query: &Query) -> Result<()> {
+        let table_id = self.snapshot.table_id(&query.table)?;
         let mut state = self.active_state()?;
+        let Some(table_id) = table_id else {
+            if query.filters.is_empty() {
+                state.read_dependencies.record_missing_table(&query.table);
+            } else {
+                state
+                    .read_dependencies
+                    .record_missing_predicate(&query.table, query.filters.clone());
+            }
+            return Ok(());
+        };
         if query.filters.is_empty() {
-            state.read_dependencies.record_table(&query.table);
+            state
+                .read_dependencies
+                .record_table(&query.table, &table_id);
         } else {
             state
                 .read_dependencies
                 .record_predicate(nimbus_core::PredicateDependency {
                     table: query.table.clone(),
+                    table_id,
                     filters: query.filters.clone(),
                 });
         }
@@ -251,10 +274,22 @@ impl MutationExecutionUnit {
         if query.order.is_none() {
             return Ok(());
         }
+        let Some(table_id) = self.snapshot.table_id(&query.table)? else {
+            let mut state = self.active_state()?;
+            if query.filters.is_empty() {
+                state.read_dependencies.record_missing_table(&query.table);
+            } else {
+                state
+                    .read_dependencies
+                    .record_missing_predicate(&query.table, query.filters.clone());
+            }
+            return Ok(());
+        };
         self.active_state()?
             .read_dependencies
             .record_paginated_window(PaginatedWindowDependency {
                 table: query.table.clone(),
+                table_id,
                 filters: query.filters.clone(),
                 order: query.order.clone(),
                 start_sort_values: Vec::new(),
@@ -299,10 +334,25 @@ impl MutationExecutionUnit {
                 None => Vec::new(),
             })
             .unwrap_or_default();
+        let Some(table_id) = self.snapshot.table_id(&paginated.query.table)? else {
+            let mut state = self.active_state()?;
+            if paginated.query.filters.is_empty() {
+                state
+                    .read_dependencies
+                    .record_missing_table(&paginated.query.table);
+            } else {
+                state.read_dependencies.record_missing_predicate(
+                    &paginated.query.table,
+                    paginated.query.filters.clone(),
+                );
+            }
+            return Ok(());
+        };
         self.active_state()?
             .read_dependencies
             .record_paginated_window(PaginatedWindowDependency {
                 table: paginated.query.table.clone(),
+                table_id,
                 filters: paginated.query.filters.clone(),
                 order: paginated.query.order.clone(),
                 start_sort_values,

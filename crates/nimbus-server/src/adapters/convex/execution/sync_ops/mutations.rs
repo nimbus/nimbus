@@ -25,6 +25,7 @@ pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
     let principal = normalize_principal_context(auth);
     match mutation {
         Mutation::Insert { table, id, fields } => {
+            let table_for_id = table.clone();
             let id = service.insert_document_with(
                 tenant_id,
                 table,
@@ -32,9 +33,13 @@ pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
                 fields,
                 nimbus_engine::MutationActor::with_principal(&principal),
             )?;
-            Ok(Value::String(id.to_string()))
+            Ok(Value::String(
+                encode_convex_document_id(&table_for_id, &id)?.to_string(),
+            ))
         }
         Mutation::Update { table, id, patch } => {
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
+            let table_for_id = table.clone();
             let id = service.update_document_with(
                 tenant_id,
                 table,
@@ -42,9 +47,12 @@ pub(in crate::adapters::convex) fn dispatch_mutation_with_auth(
                 patch,
                 nimbus_engine::MutationActor::with_principal(&principal),
             )?;
-            Ok(Value::String(id.to_string()))
+            Ok(Value::String(
+                encode_convex_document_id(&table_for_id, &id)?.to_string(),
+            ))
         }
         Mutation::Delete { table, id } => {
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
             service.delete_document_with(
                 tenant_id,
                 table,

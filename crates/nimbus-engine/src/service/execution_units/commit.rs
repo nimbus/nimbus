@@ -107,10 +107,30 @@ impl MutationExecutionUnit {
 }
 
 fn touched_tables(dependencies: &DependencySet) -> Vec<TableName> {
-    let mut tables = dependencies.tables.iter().cloned().collect::<Vec<_>>();
-    for (table, _) in &dependencies.documents {
+    let mut tables = dependencies
+        .tables
+        .iter()
+        .map(|dependency| dependency.table.clone())
+        .collect::<Vec<_>>();
+    for table in &dependencies.missing_tables {
         if !tables.iter().any(|candidate| candidate == table) {
             tables.push(table.clone());
+        }
+    }
+    for dependency in &dependencies.missing_predicates {
+        if !tables
+            .iter()
+            .any(|candidate| candidate == &dependency.table)
+        {
+            tables.push(dependency.table.clone());
+        }
+    }
+    for dependency in &dependencies.documents {
+        if !tables
+            .iter()
+            .any(|candidate| candidate == &dependency.table)
+        {
+            tables.push(dependency.table.clone());
         }
     }
     for dependency in &dependencies.index_ranges {

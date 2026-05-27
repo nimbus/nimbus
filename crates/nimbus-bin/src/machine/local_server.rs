@@ -225,7 +225,6 @@ struct MachineUpdateBody {
 mod tests {
     use std::net::Ipv4Addr;
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
 
     use nimbus::Service;
     use nimbus_server::{
@@ -233,10 +232,10 @@ mod tests {
         MachineLifecycleManager, MachineLifecycleSnapshot, MachineUpdateRequest, ServeOptions,
         ServerDiscoveryLease, load_or_create_local_admin_token, serve,
     };
-    use nimbus_testing::wait_for_condition;
     use tempfile::tempdir;
 
     use super::*;
+    use crate::test_support::wait_for_live_server_health;
 
     #[derive(Clone)]
     struct StubMachineLifecycleManager {
@@ -382,7 +381,7 @@ mod tests {
                 )))
                 .with_machine_lifecycle_manager(Arc::new(manager.clone())),
         ));
-        wait_for_server(&address.to_string()).await;
+        wait_for_server(&address.to_string(), &server_task).await;
 
         let command = MachineSubcommand::Start(MachineStartCommand {
             cpus: Some(6),
@@ -441,24 +440,11 @@ mod tests {
         }
     }
 
-    async fn wait_for_server(address: &str) {
-        let client = reqwest::Client::new();
-        wait_for_condition(
+    async fn wait_for_server<T>(address: &str, server_task: &tokio::task::JoinHandle<T>) {
+        wait_for_live_server_health(
             "local machine lifecycle server should answer health checks",
-            Duration::from_secs(5),
-            Duration::from_millis(50),
-            || {
-                let client = client.clone();
-                let address = address.to_owned();
-                async move {
-                    client
-                        .get(format!("http://{address}/health"))
-                        .send()
-                        .await
-                        .map(|response| response.status().is_success())
-                        .unwrap_or(false)
-                }
-            },
+            address,
+            server_task,
         )
         .await;
     }

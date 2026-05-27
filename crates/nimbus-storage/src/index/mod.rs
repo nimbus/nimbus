@@ -7,4 +7,4 @@ mod scan;
 mod tests;
 
 pub use self::encoding::{encode_index_tuple, encode_index_value};
-pub(crate) use self::keyspace::index_key_for_document;
+pub(crate) use self::keyspace::{index_key_for_document, table_index_prefix};

@@ -5,7 +5,7 @@ Date: 2026-05-25
 ## Scope
 
 This proof closes `BJD3` of
-`docs/plans/bun-jsc-distribution-and-release-plan.md`.
+`docs/plans/archive/bun-jsc-distribution-and-release-plan.md`.
 
 The goal is to add a source-backed adapter artifact lane without moving the
 heavy Bun/WebKit build into default PR CI.

@@ -466,10 +466,7 @@ impl ConvexSchemaTableDefinition {
 
 impl ConvexSchemaIndexDefinition {
     fn into_index_definition(self) -> Result<IndexDefinition, Error> {
-        Ok(IndexDefinition {
-            name: self.name,
-            fields: self.fields,
-        })
+        Ok(IndexDefinition::new(self.name, self.fields))
     }
 }
 
@@ -535,13 +532,8 @@ mod tests {
             .get(&TableName::new("messages").expect("table name should parse"))
             .expect("messages schema should exist");
 
-        assert_eq!(
-            table.indexes,
-            vec![IndexDefinition {
-                name: "by_tenantId_and_channelId".to_string(),
-                fields: vec!["tenantId".to_string(), "channelId".to_string()],
-            }]
-        );
+        assert_eq!(table.indexes[0].name, "by_tenantId_and_channelId");
+        assert_eq!(table.indexes[0].fields, vec!["tenantId", "channelId"]);
         table
             .validate_indexes()
             .expect("composite index should validate");

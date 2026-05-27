@@ -1,15 +1,17 @@
 use nimbus_core::{
-    Document, DocumentId, Error, Filter, Result, Schema, SequenceNumber, TableName, TableSchema,
-    Timestamp,
+    Document, DocumentId, Error, Filter, Result, Schema, SequenceNumber, TableId, TableName,
+    TableSchema, Timestamp,
 };
 use redb::{ReadableTable, TableError};
 use std::time::{Duration, Instant};
 
 use crate::document_codec::decode_document_msgpack;
 use crate::keys::{document_key, prefix_end, table_prefix};
+use crate::{TableBackendLayout, TableIdentityDiagnostic};
 
 use super::journal::decode_u64;
 use super::scan::ScanPushdown;
+use super::table_catalog::resolve_table_id_in_read_txn;
 use super::{
     APPLIED_SEQUENCE_KEY, DOCUMENTS, JournalProgress, METADATA, NEXT_SEQUENCE_KEY,
     SCHEDULED_JOB_EXECUTIONS, SCHEMAS, TenantReadSnapshot, TenantStore, map_redb_error,
@@ -25,6 +27,10 @@ impl TenantStore {
 
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         self.read_snapshot()?.get(table, id)
+    }
+
+    pub fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        self.read_snapshot()?.table_id(table)
     }
 
     pub fn scan_table(&self, table: &TableName) -> Result<Vec<Document>> {
@@ -90,6 +96,10 @@ impl TenantStore {
         self.read_snapshot()?.journal_progress()
     }
 
+    pub fn table_identity_diagnostics(&self) -> Result<Vec<TableIdentityDiagnostic>> {
+        self.read_snapshot()?.table_identity_diagnostics()
+    }
+
     pub fn now(&self) -> Timestamp {
         self.clock.now()
     }
@@ -101,6 +111,27 @@ impl TenantStore {
 }
 
 impl TenantReadSnapshot {
+    pub fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        resolve_table_id_in_read_txn(&self.read_txn, table)
+    }
+
+    pub fn table_identity_diagnostics(&self) -> Result<Vec<TableIdentityDiagnostic>> {
+        let identities = super::table_catalog::export_table_identities_in_read_txn(&self.read_txn)?;
+        identities
+            .iter()
+            .map(|identity| {
+                Ok(TableIdentityDiagnostic::from_snapshot_entry(
+                    identity,
+                    TableBackendLayout::RedbKeyspaceByTableId,
+                    Some(count_documents_for_table_id_in_read_txn(
+                        &self.read_txn,
+                        &identity.table_id,
+                    )?),
+                ))
+            })
+            .collect()
+    }
+
     pub fn load_schema(&self) -> Result<Schema> {
         let total_started = Instant::now();
         let open_table_started = Instant::now();
@@ -155,13 +186,16 @@ impl TenantReadSnapshot {
     }
 
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
+        let Some(table_id) = resolve_table_id_in_read_txn(&self.read_txn, table)? else {
+            return Ok(None);
+        };
         let table_handle = match self.read_txn.open_table(DOCUMENTS) {
             Ok(table_handle) => table_handle,
             Err(TableError::TableDoesNotExist(_)) => return Ok(None),
             Err(error) => return Err(map_redb_error(error)),
         };
 
-        let key = document_key(table, id);
+        let key = document_key(&table_id, id);
         match table_handle.get(key.as_slice()).map_err(map_redb_error)? {
             Some(value) => Ok(Some(
                 decode_document_msgpack(value.value())
@@ -217,13 +251,16 @@ impl TenantReadSnapshot {
     where
         F: FnMut(&Document) -> Result<bool>,
     {
+        let Some(table_id) = resolve_table_id_in_read_txn(&self.read_txn, table)? else {
+            return Ok(Vec::new());
+        };
         let table_handle = match self.read_txn.open_table(DOCUMENTS) {
             Ok(table_handle) => table_handle,
             Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
             Err(error) => return Err(map_redb_error(error)),
         };
 
-        let start = table_prefix(table);
+        let start = table_prefix(&table_id);
         let mut documents = Vec::new();
         match prefix_end(&start) {
             Some(end) => {
@@ -330,6 +367,43 @@ impl TenantReadSnapshot {
             applied_head,
         })
     }
+}
+
+fn count_documents_for_table_id_in_read_txn(
+    read_txn: &redb::ReadTransaction,
+    table_id: &TableId,
+) -> Result<u64> {
+    let table_handle = match read_txn.open_table(DOCUMENTS) {
+        Ok(table_handle) => table_handle,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(0),
+        Err(error) => return Err(map_redb_error(error)),
+    };
+    let prefix = table_prefix(table_id);
+    let mut count = 0_u64;
+    match prefix_end(&prefix) {
+        Some(end) => {
+            for item in table_handle
+                .range(prefix.as_slice()..end.as_slice())
+                .map_err(map_redb_error)?
+            {
+                let _ = item.map_err(map_redb_error)?;
+                count = count.saturating_add(1);
+            }
+        }
+        None => {
+            for item in table_handle
+                .range(prefix.as_slice()..)
+                .map_err(map_redb_error)?
+            {
+                let (key, _) = item.map_err(map_redb_error)?;
+                if !key.value().starts_with(&prefix) {
+                    break;
+                }
+                count = count.saturating_add(1);
+            }
+        }
+    }
+    Ok(count)
 }
 
 fn maybe_emit_redb_read_profile(args: std::fmt::Arguments<'_>) {

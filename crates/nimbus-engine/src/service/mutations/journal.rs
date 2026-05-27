@@ -7,7 +7,7 @@ use std::{
 
 use nimbus_core::{
     AccessAction, CommitEntry, Document, DocumentId, DurableMutationRecord, Error, Mutation,
-    Result, TableName, TenantId,
+    Result, TableId, TableName, TenantId,
 };
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -185,6 +185,7 @@ fn process_queued_mutation_batch(
 ) -> Result<QueuedMutationBatchResult> {
     let sequence_guard = runtime.lock_mutation_sequence();
     let mut overlay = HashMap::<(TableName, DocumentId), Option<Document>>::new();
+    let mut table_id_overlay = HashMap::<TableName, TableId>::new();
     let mut scheduled_execution_overlay = HashSet::new();
     let mut planned = Vec::new();
 
@@ -193,6 +194,7 @@ fn process_queued_mutation_batch(
             runtime.as_ref(),
             request,
             &mut overlay,
+            &mut table_id_overlay,
             &mut scheduled_execution_overlay,
         ) {
             planned.push(planned_request);
@@ -289,6 +291,7 @@ fn plan_queued_mutation_request(
     runtime: &TenantRuntime,
     request: QueuedMutationRequest,
     overlay: &mut HashMap<(TableName, DocumentId), Option<Document>>,
+    table_id_overlay: &mut HashMap<TableName, TableId>,
     scheduled_execution_overlay: &mut HashSet<String>,
 ) -> Option<PlannedQueuedMutation> {
     let QueuedMutationRequest {
@@ -327,6 +330,13 @@ fn plan_queued_mutation_request(
     let schema = runtime.schema();
     match mutation {
         Mutation::Insert { table, id, fields } => {
+            let table_id = match resolve_queued_table_id(runtime, table_id_overlay, &table, true) {
+                Ok(table_id) => table_id,
+                Err(error) => {
+                    let _ = response.send(Err(error));
+                    return None;
+                }
+            };
             let table_schema = schema.get_table(&table).cloned();
             if let Some(table_schema) = table_schema.as_ref()
                 && let Err(error) = table_schema.validate(&fields)
@@ -365,6 +375,7 @@ fn plan_queued_mutation_request(
                 scheduled_execution_id,
                 writes: vec![nimbus_core::WriteOp {
                     table: document.table.clone(),
+                    table_id,
                     op_type: nimbus_core::WriteOpType::Insert,
                     doc_id: document_id.clone(),
                     resource_path_binding: None,
@@ -375,6 +386,13 @@ fn plan_queued_mutation_request(
             })
         }
         Mutation::Update { table, id, patch } => {
+            let table_id = match resolve_queued_table_id(runtime, table_id_overlay, &table, true) {
+                Ok(table_id) => table_id,
+                Err(error) => {
+                    let _ = response.send(Err(error));
+                    return None;
+                }
+            };
             let table_schema = schema.get_table(&table).cloned();
             let existing = match load_batched_document(runtime, overlay, &table, &id) {
                 Ok(Some(existing)) => existing,
@@ -423,6 +441,7 @@ fn plan_queued_mutation_request(
                 scheduled_execution_id,
                 writes: vec![nimbus_core::WriteOp {
                     table: table.clone(),
+                    table_id,
                     op_type: nimbus_core::WriteOpType::Update,
                     doc_id: id,
                     resource_path_binding: None,
@@ -433,6 +452,13 @@ fn plan_queued_mutation_request(
             })
         }
         Mutation::Delete { table, id } => {
+            let table_id = match resolve_queued_table_id(runtime, table_id_overlay, &table, true) {
+                Ok(table_id) => table_id,
+                Err(error) => {
+                    let _ = response.send(Err(error));
+                    return None;
+                }
+            };
             let table_schema = schema.get_table(&table).cloned();
             let existing = match load_batched_document(runtime, overlay, &table, &id) {
                 Ok(Some(existing)) => existing,
@@ -471,6 +497,7 @@ fn plan_queued_mutation_request(
                 scheduled_execution_id,
                 writes: vec![nimbus_core::WriteOp {
                     table: table.clone(),
+                    table_id,
                     op_type: nimbus_core::WriteOpType::Delete,
                     doc_id: id,
                     resource_path_binding: None,
@@ -500,4 +527,27 @@ fn load_batched_document(
         return Ok(document.clone());
     }
     runtime.store.get(table, id)
+}
+
+fn resolve_queued_table_id(
+    runtime: &TenantRuntime,
+    overlay: &mut HashMap<TableName, TableId>,
+    table: &TableName,
+    create_if_missing: bool,
+) -> Result<TableId> {
+    if let Some(table_id) = overlay.get(table) {
+        return Ok(table_id.clone());
+    }
+    let table_id = match runtime.store.table_id(table)? {
+        Some(table_id) => table_id,
+        None if create_if_missing => TableId::new(),
+        None => {
+            return Err(Error::Internal(format!(
+                "missing table identity for logical table {}",
+                table
+            )));
+        }
+    };
+    overlay.insert(table.clone(), table_id.clone());
+    Ok(table_id)
 }

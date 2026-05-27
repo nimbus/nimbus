@@ -161,7 +161,7 @@ Production tenant isolation requires these additional boundaries:
   SLSA-style provenance builder and predicate requirements, optional SBOM
   evidence, and explicit local-build allowance. Sigstore/Cosign should plug in
   behind `TenantImageVerificationProvider` through
-  `docs/plans/artifact-provenance-verification-plan.md`; Nimbus owns policy and
+  `docs/plans/archive/artifact-provenance-verification-plan.md`; Nimbus owns policy and
   evidence normalization, not hand-rolled cryptographic verification or OCI
   reference/referrer parsing.
 - **Networking:** service ports are loopback-only by default and mediated
@@ -177,7 +177,7 @@ Production tenant isolation requires these additional boundaries:
   libkrun TSI egress PEP exists. The hidden `nimbus sandbox-supervisor`
   entrypoint consumes and validates the contract, but the proven container path
   is the host-side egress proxy owned by
-  `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+  `docs/plans/archive/enterprise-policy-and-sandbox-egress-plan.md`.
 - **HostBridge and runtime grants:** in-process runtime code receives only the
   invocation tenant and exact grants. It cannot request another tenant's
   service binding, and network grants must not let it bypass `ctx.services` by

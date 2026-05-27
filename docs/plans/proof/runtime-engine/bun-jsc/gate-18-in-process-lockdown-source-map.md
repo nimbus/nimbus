@@ -2,7 +2,7 @@
 
 Date: 2026-05-23
 
-Nimbus plan: `docs/plans/bun-jsc-in-process-lockdown-plan.md`
+Nimbus plan: `docs/plans/archive/bun-jsc-in-process-lockdown-plan.md`
 
 Nimbus worktree: `/Users/jack/src/github.com/nimbus/nimbus`
 

@@ -1,6 +1,7 @@
 use super::*;
 use crate::adapters::convex::execution::RuntimeInvocationContext;
 use crate::application_auth::normalize_principal_context;
+use crate::latency::{LatencySegment, budgeted_segment};
 
 pub(crate) async fn query(
     State(state): State<Arc<AppState>>,
@@ -9,6 +10,7 @@ pub(crate) async fn query(
     Json(request): Json<ConvexQueryRequest>,
 ) -> Result<Json<Value>, AppError> {
     let service = state.service.clone();
+    let auth_timer = budgeted_segment(LatencySegment::Auth);
     let (registry, auth, tenant_context) = registry_and_auth_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexHttp,
@@ -17,6 +19,7 @@ pub(crate) async fn query(
         "convex query route requires Convex support state",
     )
     .await?;
+    auth_timer.finish();
     let tenant_id = tenant_context.tenant_id().clone();
     let trace = match &request {
         ConvexQueryRequest::Named(request) => RunTrace::new(request.name.clone(), "query"),
@@ -26,6 +29,7 @@ pub(crate) async fn query(
         ConvexQueryRequest::Named(request)
             if registry.has_runtime_bundle_for_function(&request.name) =>
         {
+            let runtime_timer = budgeted_segment(LatencySegment::Runtime);
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
             let context = RuntimeInvocationContext::new(
@@ -35,7 +39,7 @@ pub(crate) async fn query(
                 tenant_context.clone(),
                 state.tenant_isolation_mode,
             );
-            invoke_named_convex_function_async_cancellable(
+            let result = invoke_named_convex_function_async_cancellable(
                 &context,
                 InvocationRequest {
                     kind: InvocationKind::Query,
@@ -49,30 +53,38 @@ pub(crate) async fn query(
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-query")),
             )
-            .await
+            .await;
+            runtime_timer.finish();
+            result
         }
         ConvexQueryRequest::Named(request) => {
             let query = registry.resolve_query(&request.name, &request.args)?;
+            let storage_timer = budgeted_segment(LatencySegment::Storage);
             let request_cancellation = RequestCancellationGuard::new();
-            execute_query_result_async(
+            let result = execute_query_result_async(
                 &service,
                 &tenant_id,
                 query,
                 auth.as_ref(),
                 Some(request_cancellation.token()),
             )
-            .await
+            .await;
+            storage_timer.finish();
+            result
         }
         ConvexQueryRequest::Raw { query } => {
             let request_cancellation = RequestCancellationGuard::new();
-            execute_query_result_async(
+            let storage_timer = budgeted_segment(LatencySegment::Storage);
+            let result = execute_query_result_async(
                 &service,
                 &tenant_id,
                 ConvexExecutableQuery::Query(query),
                 auth.as_ref(),
                 Some(request_cancellation.token()),
             )
-            .await
+            .await;
+            storage_timer.finish();
+            result
         }
     };
     let status = if result.is_ok() { "ok" } else { "error" };

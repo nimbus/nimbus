@@ -1,12 +1,12 @@
 # /goal: Complete Bun/JSC Embedder API And Pool Plan
 
-Objective: Complete `docs/plans/bun-jsc-embedder-api-and-pool-plan.md` from
+Objective: Complete `docs/plans/archive/bun-jsc-embedder-api-and-pool-plan.md` from
 `BEP1` through `BEP9`, keeping Bun/JSC an optional in-process backend candidate
 beside Deno/V8 and not selectable for tenant code until containment is proven.
 
 Autonomy rules:
 
-- Treat `docs/plans/bun-jsc-embedder-api-and-pool-plan.md` plus local git
+- Treat `docs/plans/archive/bun-jsc-embedder-api-and-pool-plan.md` plus local git
   history as the control plane.
 - Resume the first non-`done` gate before starting a later gate.
 - Update the plan progress log, gate statuses, and proof documents before any

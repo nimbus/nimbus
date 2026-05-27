@@ -154,7 +154,7 @@ Prioritize external security review in this order:
    `crates/nimbus-sandbox/`, `nimbus-crun`, and `nimbus-libkrun`.
 4. Artifact provenance verification:
    `TenantImageVerificationProvider` plus concrete Cosign/SLSA/SBOM backends
-   from `docs/plans/artifact-provenance-verification-plan.md`.
+   from `docs/plans/archive/artifact-provenance-verification-plan.md`.
 5. Service identity and provider auth:
    `TenantWorkloadStableIdentity` projections, stable provider subjects, and
    short-lived credential minting from
@@ -171,10 +171,10 @@ Prioritize external security review in this order:
 - [Tenant isolation runbook](operating/tenant-isolation.md)
 - [Server auth and runtime trust](architecture/server/auth-runtime-trust.md)
 - [MicroVM service baseline](architecture/sandbox/microvm-service-baseline.md)
-- [Artifact provenance verification plan](plans/artifact-provenance-verification-plan.md)
+- [Artifact provenance verification plan](plans/archive/artifact-provenance-verification-plan.md)
 - [Service identity and provider auth plan](plans/service-identity-provider-auth-plan.md)
 - [Verification architecture](architecture/testing/verification-architecture.md)
 - [Completed tenant-isolation control-plane plan](plans/archive/tenant-isolation-control-plane-plan.md)
 - [Enterprise hardening prior-art research](plans/research/tenant-isolation-enterprise-hardening-prior-art.md)
 - [OpenShell competitor analysis](plans/research/openshell-competitor-analysis.md)
-- [Enterprise policy and sandbox egress plan](plans/enterprise-policy-and-sandbox-egress-plan.md)
+- [Enterprise policy and sandbox egress plan](plans/archive/enterprise-policy-and-sandbox-egress-plan.md)

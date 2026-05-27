@@ -62,16 +62,12 @@ pub(in crate::adapters::convex) fn execute_query_result_cancellable_with_auth(
                 &principal,
                 check_cancel,
             )?;
-            Ok(Value::Array(
-                documents
-                    .into_iter()
-                    .map(nimbus_core::Document::into_json)
-                    .collect(),
-            ))
+            documents_to_convex_json(documents)
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
             match service.get_document_with_principal(tenant_id, &table, id, &principal) {
-                Ok(document) => Ok(document.into_json()),
+                Ok(document) => document_to_convex_json(document),
                 Err(Error::DocumentNotFound(_)) => Ok(Value::Null),
                 Err(error) => Err(error),
             }
@@ -83,11 +79,11 @@ pub(in crate::adapters::convex) fn execute_query_result_cancellable_with_auth(
                 &principal,
                 check_cancel,
             )?;
-            Ok(documents
+            documents
                 .drain(..)
                 .next()
-                .map(nimbus_core::Document::into_json)
-                .unwrap_or(Value::Null))
+                .map(document_to_convex_json)
+                .unwrap_or(Ok(Value::Null))
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
             let mut documents = service.query_documents_with_principal_cancellable(
@@ -101,11 +97,11 @@ pub(in crate::adapters::convex) fn execute_query_result_cancellable_with_auth(
                     "convex unique query matched multiple documents".to_string(),
                 ));
             }
-            Ok(documents
+            documents
                 .drain(..)
                 .next()
-                .map(nimbus_core::Document::into_json)
-                .unwrap_or(Value::Null))
+                .map(document_to_convex_json)
+                .unwrap_or(Ok(Value::Null))
         }
     }
 }

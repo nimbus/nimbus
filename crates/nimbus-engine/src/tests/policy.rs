@@ -13,6 +13,8 @@ async fn service_read_policy_filters_indexed_queries_and_hides_unauthorized_gets
             messages_schema(
                 "messages_indexed",
                 vec![IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
                     name: "by_owner".to_string(),
                     fields: vec!["owner".to_string()],
                 }],
@@ -303,9 +305,12 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
             crate::MutationActor::with_principal(&owner_principal),
         )
         .expect("authorized create should succeed");
-    let committed_sequence = service
-        .latest_sequence(&tenant_id)
-        .expect("latest sequence should advance after authorized insert");
+    let committed_document_records = service
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("durable journal should read")
+        .into_iter()
+        .filter(|record| !record.writes.is_empty())
+        .count();
 
     let update_error = service
         .update_document_with(
@@ -319,9 +324,12 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
     assert!(matches!(update_error, Error::PermissionDenied(_)));
     assert_eq!(
         service
-            .latest_sequence(&tenant_id)
-            .expect("latest sequence should remain unchanged"),
-        committed_sequence
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("durable journal should read")
+            .into_iter()
+            .filter(|record| !record.writes.is_empty())
+            .count(),
+        committed_document_records
     );
     assert_eq!(
         service
@@ -343,9 +351,12 @@ async fn service_write_policy_rejects_create_update_and_delete_before_commit() {
     assert!(matches!(delete_error, Error::PermissionDenied(_)));
     assert_eq!(
         service
-            .latest_sequence(&tenant_id)
-            .expect("latest sequence should remain unchanged"),
-        committed_sequence
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("durable journal should read")
+            .into_iter()
+            .filter(|record| !record.writes.is_empty())
+            .count(),
+        committed_document_records
     );
     assert_eq!(
         service

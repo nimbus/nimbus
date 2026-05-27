@@ -8,6 +8,7 @@ const ttyOverrideModule = createNimbusTtyModule();
 const osOverrideModule = createNimbusOsModule();
 const readlineOverrideModule = createNimbusReadlineModule();
 const readlinePromisesOverrideModule = createNimbusReadlinePromisesModule();
+const vmOverrideModule = createNimbusVmModule();
 const internalFsPromisesModule = Object.freeze({
   ...internalFsPromisesDefault,
   FileHandle: InternalFsPromisesFileHandle,
@@ -26,6 +27,7 @@ const INTERNAL_MODULE_OVERRIDES = Object.freeze({
   "readline/promises": readlinePromisesOverrideModule,
   tls: tlsOverrideModule,
   tty: ttyOverrideModule,
+  vm: vmOverrideModule,
   "internal/util/debuglog": Object.freeze({
     kNone: 1 << 0,
     kSkipLog: 1 << 1,

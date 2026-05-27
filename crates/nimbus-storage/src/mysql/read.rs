@@ -59,6 +59,8 @@ impl MySqlTenantStore {
             let schema = load_schema_from_session(&mut transaction, &database_name).await?;
             let progress =
                 load_journal_progress_from_session(&mut transaction, &database_name).await?;
+            let table_identities =
+                load_table_identities_from_session(&mut transaction, &database_name).await?;
             let documents =
                 load_documents_from_session(&mut transaction, &database_name, None).await?;
             let resource_path_bindings =
@@ -69,11 +71,17 @@ impl MySqlTenantStore {
             Ok(MySqlReadSnapshot {
                 schema,
                 progress,
+                table_identities,
                 documents,
                 resource_path_bindings,
                 scheduled_execution_ids,
             })
         })
+    }
+
+    pub fn table_identity_diagnostics(&self) -> Result<Vec<crate::TableIdentityDiagnostic>> {
+        self.read_snapshot()?
+            .table_identity_diagnostics(crate::TableBackendLayout::SharedDocumentsByTableId)
     }
 
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
@@ -84,6 +92,16 @@ impl MySqlTenantStore {
         self.block_on(async move {
             let mut conn = provider.conn().await?;
             load_document_from_session(&mut conn, &database_name, &table, &id).await
+        })
+    }
+
+    pub fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let table = table.clone();
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_table_id_from_session(&mut conn, &database_name, &table).await
         })
     }
 
@@ -493,6 +511,7 @@ impl MySqlReadSnapshot {
             version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
             applied_sequence: self.progress.applied_head,
             durable_head: self.progress.durable_head,
+            table_identities: self.table_identities.clone(),
             schema: self.schema.clone(),
             documents: self.documents.clone(),
             scheduled_execution_ids: self.scheduled_execution_ids.clone(),
@@ -505,6 +524,42 @@ impl MySqlReadSnapshot {
             .iter()
             .find(|document| &document.table == table && &document.id == id)
             .cloned())
+    }
+
+    pub fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        Ok(self
+            .table_identities
+            .iter()
+            .find(|identity| {
+                identity.namespace == crate::table_identity::DEFAULT_TABLE_NAMESPACE
+                    && &identity.table == table
+            })
+            .map(|identity| identity.table_id.clone()))
+    }
+
+    pub fn table_identity_diagnostics(
+        &self,
+        backend_layout: crate::TableBackendLayout,
+    ) -> Result<Vec<crate::TableIdentityDiagnostic>> {
+        Ok(self
+            .table_identities
+            .iter()
+            .map(|identity| {
+                let document_count = (identity.namespace
+                    == crate::table_identity::DEFAULT_TABLE_NAMESPACE)
+                    .then(|| {
+                        self.documents
+                            .iter()
+                            .filter(|document| document.table == identity.table)
+                            .count() as u64
+                    });
+                crate::TableIdentityDiagnostic::from_snapshot_entry(
+                    identity,
+                    backend_layout,
+                    document_count,
+                )
+            })
+            .collect())
     }
 
     pub fn scan_table_matching_cancellable<F>(
@@ -685,8 +740,7 @@ impl MySqlReadSnapshot {
             .get_table(table)
             .ok_or_else(|| Error::SchemaNotFound(table.clone()))?;
         let index = table_schema
-            .indexes
-            .iter()
+            .queryable_indexes()
             .find(|index| index.name == index_name)
             .ok_or_else(|| {
                 Error::InvalidInput(format!(

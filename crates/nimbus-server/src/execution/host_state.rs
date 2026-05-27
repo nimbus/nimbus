@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nimbus_core::{Cursor, DocumentId, Filter, Query, TableName, TenantId};
+use nimbus_core::{Cursor, DocumentId, Filter, Query, TableId, TableName, TenantId};
 use nimbus_runtime::NimbusRuntimeError;
 
 use crate::execution::read_tracking::{RuntimeIndexRangeRead, RuntimeReadSet};
@@ -91,23 +91,29 @@ impl RuntimeHostState {
         }
     }
 
-    pub(crate) fn record_table_read(&self, table: &TableName) {
+    pub(crate) fn record_table_read(&self, table: &TableName, table_id: Option<&TableId>) {
         self.read_set
             .lock()
             .expect("runtime host read set lock should not be poisoned")
-            .record_table(table);
+            .record_table(table, table_id);
     }
 
-    pub(crate) fn record_document_read(&self, table: &TableName, document_id: &DocumentId) {
+    pub(crate) fn record_document_read(
+        &self,
+        table: &TableName,
+        table_id: Option<&TableId>,
+        document_id: &DocumentId,
+    ) {
         self.read_set
             .lock()
             .expect("runtime host read set lock should not be poisoned")
-            .record_document(table, document_id);
+            .record_document(table, table_id, document_id);
     }
 
     pub(crate) fn record_paginated_window_read(
         &self,
         query: &Query,
+        table_id: Option<&TableId>,
         page_size: usize,
         after: Option<&Cursor>,
         page: &nimbus_core::Page,
@@ -115,7 +121,7 @@ impl RuntimeHostState {
         self.read_set
             .lock()
             .expect("runtime host read set lock should not be poisoned")
-            .record_paginated_window(query, page_size, after, page);
+            .record_paginated_window(query, table_id, page_size, after, page);
     }
 
     pub(crate) fn record_index_read(&self, read: RuntimeIndexRangeRead) {
@@ -125,10 +131,15 @@ impl RuntimeHostState {
             .record_index_range(read);
     }
 
-    pub(crate) fn record_predicate_read(&self, table: &TableName, filters: &[Filter]) {
+    pub(crate) fn record_predicate_read(
+        &self,
+        table: &TableName,
+        table_id: Option<&TableId>,
+        filters: &[Filter],
+    ) {
         self.read_set
             .lock()
             .expect("runtime host read set lock should not be poisoned")
-            .record_predicate(table, filters);
+            .record_predicate(table, table_id, filters);
     }
 }

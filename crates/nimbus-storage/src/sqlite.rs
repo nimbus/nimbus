@@ -6,16 +6,19 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuar
 use std::time::Duration;
 
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Filter, JobId,
-    Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, StorageErrorKind, TableName,
-    TableSchema, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, DurableMutationRecord, Error, Filter,
+    IndexLifecycleEvent, JobId, Result, ScheduledJob, ScheduledJobResult, Schema,
+    SchemaChangeEvent, SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName,
+    TableSchema, TableState, TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WriteOp, WriteOpType,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::commit_log::{deserialize_durable_record, serialize_commit, serialize_durable_record};
+use crate::RetentionFloor;
+use crate::commit_log::{deserialize_durable_record, serialize_durable_record};
 use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, JournalProgress,
@@ -31,14 +34,17 @@ mod read;
 mod resource_paths;
 mod scheduler;
 mod schema;
+mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
 
 use self::backend::{
-    decode_u64, deserialize_json, encode_u64, expect_write_commit, load_document_from_conn,
-    map_sqlite_error, row_to_document, serialize_document_fields, serialize_document_typed_fields,
-    serialize_json, sql_value_from_json, table_has_entries,
+    decode_u64, deserialize_json, encode_u64, ensure_table_id_in_conn,
+    ensure_table_identity_in_conn, expect_write_commit, load_document_by_table_id_from_conn,
+    load_document_from_conn, map_sqlite_error, resolve_or_create_table_id_in_conn,
+    resolve_table_id_in_conn, row_to_document, serialize_document_fields,
+    serialize_document_typed_fields, serialize_json, sql_value_from_json, table_has_entries,
 };
 use self::journal::{
     append_commit_entry, next_sequence_in_conn, validate_durable_journal_stream_limit,
@@ -57,14 +63,23 @@ pub use self::schema::{
 };
 
 pub(crate) const SQLITE_INIT_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS documents (
+CREATE TABLE IF NOT EXISTS table_catalog (
+    namespace TEXT NOT NULL DEFAULT 'default',
     table_name TEXT NOT NULL,
+    table_id TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL DEFAULT 'active',
+    PRIMARY KEY (namespace, table_name)
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+    table_id TEXT NOT NULL,
     id TEXT NOT NULL,
     data_json TEXT NOT NULL,
     typed_fields_json TEXT NOT NULL DEFAULT '{}',
     creation_time INTEGER NOT NULL,
     update_time INTEGER NOT NULL,
-    PRIMARY KEY (table_name, id)
+    PRIMARY KEY (table_id, id),
+    FOREIGN KEY (table_id) REFERENCES table_catalog(table_id)
 );
 
 CREATE TABLE IF NOT EXISTS schemas (
@@ -151,6 +166,7 @@ pub struct SqliteTenantStore {
     open_read_connections: Arc<AtomicUsize>,
     read_connections: Arc<Mutex<Vec<Connection>>>,
     schema_cache: Arc<RwLock<Schema>>,
+    pub(crate) retention_floor: Arc<RetentionFloor>,
 }
 
 pub struct SqliteReadSnapshot {
@@ -163,6 +179,7 @@ pub struct SqliteWriteTransaction {
     clock: Arc<dyn Clock>,
     fault_injector: Arc<dyn FaultInjector>,
     commit_writes: Vec<WriteOp>,
+    tenant_events: Vec<TenantEventKind>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
     schema_cache: Arc<RwLock<Schema>>,

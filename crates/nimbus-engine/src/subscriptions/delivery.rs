@@ -104,7 +104,15 @@ pub(crate) fn dispatch_subscription_work(
 
         match result {
             Ok(documents) => {
-                let dependencies = subscription_dependencies(&subscription.query, &documents);
+                let dependencies = subscription_dependencies(
+                    &subscription.query,
+                    runtime
+                        .store()
+                        .table_id(&subscription.query.table)
+                        .ok()
+                        .flatten(),
+                    &documents,
+                );
                 let snapshot = SubscriptionResultSnapshot::from_delivery(
                     work.delivery_sequence,
                     work.commit.as_ref(),

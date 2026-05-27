@@ -1,4 +1,11 @@
+use super::table_lifecycle::{
+    activate_hidden_table_identity_in_session, hard_delete_table_identity_in_session,
+    mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
+};
 use super::*;
+use crate::table_identity::{
+    DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
+};
 
 pub(super) fn validate_identifier_input(value: &str, label: &str) -> Result<()> {
     if value.is_empty() {
@@ -70,15 +77,27 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
     vec![
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\
+                namespace VARCHAR(191) NOT NULL DEFAULT 'default',\
                 table_name VARCHAR(191) NOT NULL,\
+                table_id VARCHAR(191) NOT NULL UNIQUE,\
+                state VARCHAR(32) NOT NULL DEFAULT 'active',\
+                PRIMARY KEY (namespace, table_name)\
+            ) ENGINE=InnoDB",
+            qualified_table(database_name, "table_catalog")
+        ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                table_id VARCHAR(191) NOT NULL,\
                 id VARCHAR(191) NOT NULL,\
                 data_json LONGTEXT NOT NULL,\
                 typed_fields_json LONGTEXT NOT NULL,\
                 creation_time BIGINT UNSIGNED NOT NULL,\
                 update_time BIGINT UNSIGNED NOT NULL,\
-                PRIMARY KEY (table_name, id)\
+                PRIMARY KEY (table_id, id),\
+                CONSTRAINT fk_documents_table_id FOREIGN KEY (table_id) REFERENCES {} (table_id)\
             ) ENGINE=InnoDB",
-            qualified_table(database_name, "documents")
+            qualified_table(database_name, "documents"),
+            qualified_table(database_name, "table_catalog")
         ),
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\
@@ -321,18 +340,26 @@ where
     let (query, params_table) = if let Some(table) = table {
         (
             format!(
-                "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
-                 FROM {} WHERE table_name = ? ORDER BY id",
-                qualified_table(database_name, "documents")
+                "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
+                 FROM {} AS d \
+                 JOIN {} AS c ON c.table_id = d.table_id \
+                 WHERE c.namespace = 'default' AND c.table_name = ? \
+                 ORDER BY d.id",
+                qualified_table(database_name, "documents"),
+                qualified_table(database_name, "table_catalog")
             ),
             Some(table.as_str().to_string()),
         )
     } else {
         (
             format!(
-                "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
-                 FROM {} ORDER BY table_name, id",
-                qualified_table(database_name, "documents")
+                "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
+                 FROM {} AS d \
+                 JOIN {} AS c ON c.table_id = d.table_id \
+                 WHERE c.namespace = 'default' \
+                 ORDER BY c.table_name, d.id",
+                qualified_table(database_name, "documents"),
+                qualified_table(database_name, "table_catalog")
             ),
             None,
         )
@@ -421,12 +448,15 @@ pub(super) async fn load_document_from_session<C>(
 where
     C: Queryable,
 {
+    let Some(table_id) = load_table_id_from_session(session, database_name, table).await? else {
+        return Ok(None);
+    };
     let query = format!(
-        "SELECT creation_time, update_time, data_json, typed_fields_json FROM {} WHERE table_name = ? AND id = ?",
+        "SELECT creation_time, update_time, data_json, typed_fields_json FROM {} WHERE table_id = ? AND id = ?",
         qualified_table(database_name, "documents")
     );
     session
-        .exec_first::<Row, _, _>(query, (table.as_str(), id.to_string()))
+        .exec_first::<Row, _, _>(query, (table_id.as_str(), id.to_string()))
         .await
         .map_err(map_mysql_error)?
         .map(|row| {
@@ -446,6 +476,350 @@ where
             )
         })
         .transpose()
+}
+
+pub(super) async fn load_document_by_table_id_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    table: &TableName,
+    table_id: &TableId,
+    id: &DocumentId,
+) -> Result<Option<Document>>
+where
+    C: Queryable,
+{
+    let query = format!(
+        "SELECT creation_time, update_time, data_json, typed_fields_json FROM {} WHERE table_id = ? AND id = ?",
+        qualified_table(database_name, "documents")
+    );
+    session
+        .exec_first::<Row, _, _>(query, (table_id.as_str(), id.to_string()))
+        .await
+        .map_err(map_mysql_error)?
+        .map(|row| {
+            let (creation_time, update_time, data_json, typed_fields_json): (
+                u64,
+                u64,
+                String,
+                String,
+            ) = mysql_async::from_row(row);
+            row_to_document(
+                table,
+                id,
+                creation_time,
+                update_time,
+                data_json,
+                typed_fields_json,
+            )
+        })
+        .transpose()
+}
+
+pub(super) async fn load_table_id_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    table: &TableName,
+) -> Result<Option<TableId>>
+where
+    C: Queryable,
+{
+    let query = format!(
+        "SELECT table_id, state FROM {} WHERE namespace = ? AND table_name = ?",
+        qualified_table(database_name, "table_catalog")
+    );
+    let Some(row) = session
+        .exec_first::<Row, _, _>(query, ("default", table.as_str()))
+        .await
+        .map_err(map_mysql_error)?
+    else {
+        return Ok(None);
+    };
+    let (table_id, state): (String, String) = mysql_async::from_row(row);
+    let state = TableState::from_str(state.as_str())?;
+    if state != TableState::Active {
+        return Err(Error::Conflict(format!(
+            "logical table {} is in {} lifecycle state",
+            table, state
+        )));
+    }
+    Ok(Some(TableId::from_str(table_id.as_str())?))
+}
+
+pub(super) async fn resolve_or_create_table_id_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    table: &TableName,
+) -> Result<TableId>
+where
+    C: Queryable,
+{
+    if let Some(table_id) = load_table_id_from_session(session, database_name, table).await? {
+        return Ok(table_id);
+    }
+    let table_id = TableId::new();
+    let query = format!(
+        "INSERT IGNORE INTO {} (namespace, table_name, table_id, state) VALUES (?, ?, ?, ?)",
+        qualified_table(database_name, "table_catalog")
+    );
+    session
+        .exec_drop(
+            query,
+            (
+                "default",
+                table.as_str(),
+                table_id.as_str(),
+                TableState::Active.as_str(),
+            ),
+        )
+        .await
+        .map_err(map_mysql_error)?;
+    load_table_id_from_session(session, database_name, table)
+        .await?
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "failed to resolve table id for logical table {} after catalog insert",
+                table
+            ))
+        })
+}
+
+pub(super) async fn ensure_table_id_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    table: &TableName,
+    table_id: &TableId,
+) -> Result<()>
+where
+    C: Queryable,
+{
+    let hidden_namespace = hidden_table_namespace(table_id);
+    let staged_hidden = match catalog_identity_row_from_session(
+        session,
+        database_name,
+        hidden_namespace.as_str(),
+        table,
+    )
+    .await?
+    {
+        Some((hidden_id, TableState::Hidden)) if hidden_id == *table_id => true,
+        Some((hidden_id, state)) => {
+            return Err(Error::Conflict(format!(
+                "hidden identity slot for logical table {} and table id {} contains {} in {} state",
+                table, table_id, hidden_id, state
+            )));
+        }
+        None => false,
+    };
+
+    match catalog_identity_row_from_session(session, database_name, DEFAULT_TABLE_NAMESPACE, table)
+        .await?
+    {
+        Some((existing, TableState::Active)) if existing == *table_id => {
+            if staged_hidden {
+                return Err(Error::Conflict(format!(
+                    "logical table {} already has active table id {} and a duplicate hidden slot",
+                    table, table_id
+                )));
+            }
+            return Ok(());
+        }
+        Some((existing, state)) if existing == *table_id => {
+            return Err(Error::Conflict(format!(
+                "logical table {} is assigned table id {} in {} lifecycle state",
+                table, table_id, state
+            )));
+        }
+        Some((existing, TableState::Active)) => {
+            ensure_table_id_available_from_session(
+                session,
+                database_name,
+                table_id,
+                Some((hidden_namespace.as_str(), table)),
+            )
+            .await?;
+            let query = format!(
+                "UPDATE {}
+                 SET namespace = ?, state = ?
+                 WHERE namespace = ? AND table_name = ?",
+                qualified_table(database_name, "table_catalog")
+            );
+            session
+                .exec_drop(
+                    query,
+                    (
+                        deleting_table_namespace(&existing),
+                        TableState::Deleting.as_str(),
+                        DEFAULT_TABLE_NAMESPACE,
+                        table.as_str(),
+                    ),
+                )
+                .await
+                .map_err(map_mysql_error)?;
+            if staged_hidden {
+                let query = format!(
+                    "DELETE FROM {} WHERE namespace = ? AND table_name = ?",
+                    qualified_table(database_name, "table_catalog")
+                );
+                session
+                    .exec_drop(query, (hidden_namespace.as_str(), table.as_str()))
+                    .await
+                    .map_err(map_mysql_error)?;
+            }
+            let query = format!(
+                "INSERT INTO {} (namespace, table_name, table_id, state) VALUES (?, ?, ?, ?)",
+                qualified_table(database_name, "table_catalog")
+            );
+            session
+                .exec_drop(
+                    query,
+                    (
+                        DEFAULT_TABLE_NAMESPACE,
+                        table.as_str(),
+                        table_id.as_str(),
+                        TableState::Active.as_str(),
+                    ),
+                )
+                .await
+                .map_err(map_mysql_error)?;
+            return Ok(());
+        }
+        Some((existing, state)) => {
+            return Err(Error::Conflict(format!(
+                "logical table {} is already assigned table id {} in {} lifecycle state, journal references {}",
+                table, existing, state, table_id
+            )));
+        }
+        None => {}
+    }
+    ensure_table_id_available_from_session(
+        session,
+        database_name,
+        table_id,
+        Some((hidden_namespace.as_str(), table)),
+    )
+    .await?;
+    if staged_hidden {
+        let query = format!(
+            "DELETE FROM {} WHERE namespace = ? AND table_name = ?",
+            qualified_table(database_name, "table_catalog")
+        );
+        session
+            .exec_drop(query, (hidden_namespace.as_str(), table.as_str()))
+            .await
+            .map_err(map_mysql_error)?;
+    }
+    let query = format!(
+        "INSERT INTO {} (namespace, table_name, table_id, state) VALUES (?, ?, ?, ?)",
+        qualified_table(database_name, "table_catalog")
+    );
+    session
+        .exec_drop(
+            query,
+            (
+                "default",
+                table.as_str(),
+                table_id.as_str(),
+                TableState::Active.as_str(),
+            ),
+        )
+        .await
+        .map_err(map_mysql_error)?;
+    Ok(())
+}
+
+async fn catalog_identity_row_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    namespace: &str,
+    table: &TableName,
+) -> Result<Option<(TableId, TableState)>>
+where
+    C: Queryable,
+{
+    let query = format!(
+        "SELECT table_id, state FROM {} WHERE namespace = ? AND table_name = ?",
+        qualified_table(database_name, "table_catalog")
+    );
+    let Some(row) = session
+        .exec_first::<Row, _, _>(query, (namespace, table.as_str()))
+        .await
+        .map_err(map_mysql_error)?
+    else {
+        return Ok(None);
+    };
+    let (table_id, state): (String, String) = mysql_async::from_row(row);
+    Ok(Some((
+        TableId::from_str(table_id.as_str())?,
+        TableState::from_str(state.as_str())?,
+    )))
+}
+
+async fn ensure_table_id_available_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+    table_id: &TableId,
+    allowed_key: Option<(&str, &TableName)>,
+) -> Result<()>
+where
+    C: Queryable,
+{
+    let query = format!(
+        "SELECT namespace, table_name, state FROM {} WHERE table_id = ?",
+        qualified_table(database_name, "table_catalog")
+    );
+    let Some(row) = session
+        .exec_first::<Row, _, _>(query, (table_id.as_str(),))
+        .await
+        .map_err(map_mysql_error)?
+    else {
+        return Ok(());
+    };
+    let (namespace, table_name, state): (String, String, String) = mysql_async::from_row(row);
+    let table = TableName::new(table_name)?;
+    let state = TableState::from_str(state.as_str())?;
+    if allowed_key
+        .map(|(allowed_namespace, allowed_table)| {
+            allowed_namespace == namespace && allowed_table == &table
+        })
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    Err(Error::Conflict(format!(
+        "table id {} is already assigned to logical table {} in namespace {} with {} state",
+        table_id, table, namespace, state
+    )))
+}
+
+pub(super) async fn load_table_identities_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+) -> Result<Vec<crate::TableIdentitySnapshotEntry>>
+where
+    C: Queryable,
+{
+    let query = format!(
+        "SELECT namespace, table_name, table_id, state
+         FROM {}
+         ORDER BY namespace, table_name, table_id, state",
+        qualified_table(database_name, "table_catalog")
+    );
+    let rows = session
+        .query::<Row, _>(query)
+        .await
+        .map_err(map_mysql_error)?;
+    rows.into_iter()
+        .map(|row| {
+            let (namespace, table_name, table_id, state): (String, String, String, String) =
+                mysql_async::from_row(row);
+            Ok(crate::TableIdentitySnapshotEntry {
+                namespace,
+                table: TableName::new(table_name)?,
+                table_id: TableId::from_str(table_id.as_str())?,
+                state: TableState::from_str(state.as_str())?,
+            })
+        })
+        .collect()
 }
 
 pub(super) async fn load_table_schema_from_session<C>(
@@ -489,8 +863,11 @@ where
     let index_fields = index_fields_for_table_schema(table_schema, index_name)?;
     let range_field = index_fields.get(exact_prefix.len());
 
-    let mut clauses = vec!["table_name = ?".to_string()];
-    let mut params = vec![MySqlValue::Bytes(table.as_str().as_bytes().to_vec())];
+    let Some(table_id) = load_table_id_from_session(session, database_name, table).await? else {
+        return Ok(Vec::new());
+    };
+    let mut clauses = vec!["d.table_id = ?".to_string()];
+    let mut params = vec![MySqlValue::Bytes(table_id.to_string().into_bytes())];
 
     for (field, value) in index_fields.iter().zip(exact_prefix.iter()) {
         clauses.push(format!(
@@ -535,11 +912,13 @@ where
     }
 
     let sql = format!(
-        "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json \
-         FROM {} \
+        "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
+         FROM {} AS d \
+         JOIN {} AS c ON c.table_id = d.table_id \
          WHERE {} \
-         ORDER BY id",
+         ORDER BY d.id",
         qualified_table(database_name, "documents"),
+        qualified_table(database_name, "table_catalog"),
         clauses.join(" AND ")
     );
     let rows: Vec<Row> = session
@@ -680,22 +1059,90 @@ pub(super) async fn apply_durable_record_in_session<C>(
 where
     C: Queryable,
 {
-    if !begin_scheduled_execution_in_session(
-        session,
-        database_name,
-        record.scheduled_execution_id.as_deref(),
-    )
-    .await?
-    {
-        return Ok(());
+    if record.events.is_empty() {
+        if !begin_scheduled_execution_in_session(
+            session,
+            database_name,
+            record.scheduled_execution_id.as_deref(),
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        return apply_document_writes_in_session(session, database_name, &record.writes).await;
     }
 
-    for write in &record.writes {
+    for event in &record.events {
+        apply_tenant_event_in_session(session, database_name, event).await?;
+    }
+
+    Ok(())
+}
+
+async fn apply_tenant_event_in_session<C>(
+    session: &mut C,
+    database_name: &str,
+    event: &TenantEventKind,
+) -> Result<()>
+where
+    C: Queryable,
+{
+    match event {
+        TenantEventKind::DocumentWrite { writes } => {
+            apply_document_writes_in_session(session, database_name, writes).await
+        }
+        TenantEventKind::SchemaChange { change } => {
+            apply_schema_change_in_session(session, database_name, change).await
+        }
+        TenantEventKind::TableLifecycle { lifecycle } => {
+            apply_table_lifecycle_in_session(session, database_name, lifecycle).await
+        }
+        TenantEventKind::IndexLifecycle { .. } | TenantEventKind::Barrier { .. } => Ok(()),
+        TenantEventKind::ScheduledExecution { execution_id } => {
+            let _ =
+                begin_scheduled_execution_in_session(session, database_name, Some(execution_id))
+                    .await?;
+            Ok(())
+        }
+        TenantEventKind::TriggerDelivery { cursor } => {
+            let query = format!(
+                "INSERT INTO {} (key_name, value_u64) VALUES (?, ?)
+                 ON DUPLICATE KEY UPDATE value_u64 = VALUES(value_u64)",
+                qualified_table(database_name, "metadata")
+            );
+            session
+                .exec_drop(
+                    query,
+                    (TRIGGER_DELIVERY_CURSOR_KEY, cursor.materialized_through.0),
+                )
+                .await
+                .map_err(map_mysql_error)?;
+            Ok(())
+        }
+    }
+}
+
+async fn apply_document_writes_in_session<C>(
+    session: &mut C,
+    database_name: &str,
+    writes: &[WriteOp],
+) -> Result<()>
+where
+    C: Queryable,
+{
+    for write in writes {
         match (&write.previous, &write.current) {
             (None, Some(current)) => {
-                let existing =
-                    load_document_from_session(session, database_name, &write.table, &write.doc_id)
-                        .await?;
+                ensure_table_id_from_session(session, database_name, &write.table, &write.table_id)
+                    .await?;
+                let existing = load_document_by_table_id_from_session(
+                    session,
+                    database_name,
+                    &write.table,
+                    &write.table_id,
+                    &write.doc_id,
+                )
+                .await?;
                 match existing {
                     Some(existing) if existing == *current => continue,
                     Some(_) => {
@@ -706,14 +1153,14 @@ where
                     }
                     None => {
                         let query = format!(
-                            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
+                            "INSERT INTO {} (table_id, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
                             qualified_table(database_name, "documents")
                         );
                         session
                             .exec_drop(
                                 query,
                                 (
-                                    write.table.as_str(),
+                                    write.table_id.as_str(),
                                     write.doc_id.to_string(),
                                     serialize_document_fields(current)?,
                                     serialize_document_typed_fields(current)?,
@@ -727,13 +1174,20 @@ where
                 }
             }
             (Some(previous), Some(current)) => {
-                let existing =
-                    load_document_from_session(session, database_name, &write.table, &write.doc_id)
-                        .await?
-                        .ok_or(Error::Conflict(format!(
-                            "durable journal update replay missing document {}",
-                            write.doc_id
-                        )))?;
+                ensure_table_id_from_session(session, database_name, &write.table, &write.table_id)
+                    .await?;
+                let existing = load_document_by_table_id_from_session(
+                    session,
+                    database_name,
+                    &write.table,
+                    &write.table_id,
+                    &write.doc_id,
+                )
+                .await?
+                .ok_or(Error::Conflict(format!(
+                    "durable journal update replay missing document {}",
+                    write.doc_id
+                )))?;
                 if existing == *current {
                     continue;
                 }
@@ -744,7 +1198,7 @@ where
                     )));
                 }
                 let query = format!(
-                    "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_name = ? AND id = ?",
+                    "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_id = ? AND id = ?",
                     qualified_table(database_name, "documents")
                 );
                 session
@@ -755,7 +1209,7 @@ where
                             serialize_document_typed_fields(current)?,
                             current.creation_time.0,
                             current.update_time.0,
-                            write.table.as_str(),
+                            write.table_id.as_str(),
                             write.doc_id.to_string(),
                         ),
                     )
@@ -763,10 +1217,13 @@ where
                     .map_err(map_mysql_error)?;
             }
             (Some(previous), None) => {
-                match load_document_from_session(
+                ensure_table_id_from_session(session, database_name, &write.table, &write.table_id)
+                    .await?;
+                match load_document_by_table_id_from_session(
                     session,
                     database_name,
                     &write.table,
+                    &write.table_id,
                     &write.doc_id,
                 )
                 .await?
@@ -779,11 +1236,11 @@ where
                     }
                     Some(_) => {
                         let query = format!(
-                            "DELETE FROM {} WHERE table_name = ? AND id = ?",
+                            "DELETE FROM {} WHERE table_id = ? AND id = ?",
                             qualified_table(database_name, "documents")
                         );
                         session
-                            .exec_drop(query, (write.table.as_str(), write.doc_id.to_string()))
+                            .exec_drop(query, (write.table_id.as_str(), write.doc_id.to_string()))
                             .await
                             .map_err(map_mysql_error)?;
                     }
@@ -799,6 +1256,106 @@ where
     }
 
     Ok(())
+}
+
+async fn apply_schema_change_in_session<C>(
+    session: &mut C,
+    database_name: &str,
+    change: &SchemaChangeEvent,
+) -> Result<()>
+where
+    C: Queryable,
+{
+    match change {
+        SchemaChangeEvent::SetTable {
+            table,
+            table_id,
+            previous,
+            current,
+        } => {
+            ensure_table_id_from_session(session, database_name, table, table_id).await?;
+            if let Some(previous) = previous {
+                drop_mysql_indexes_for_table_schema(session, database_name, previous).await?;
+            }
+            let query = format!(
+                "INSERT INTO {} (table_name, schema_json) VALUES (?, ?)
+                 ON DUPLICATE KEY UPDATE schema_json = VALUES(schema_json)",
+                qualified_table(database_name, "schemas")
+            );
+            session
+                .exec_drop(query, (table.as_str(), serialize_json(current)?))
+                .await
+                .map_err(map_mysql_error)?;
+            create_mysql_indexes_for_table_schema(session, database_name, current).await
+        }
+        SchemaChangeEvent::DeleteTable {
+            table, previous, ..
+        } => {
+            if let Some(previous) = previous {
+                drop_mysql_indexes_for_table_schema(session, database_name, previous).await?;
+            }
+            let query = format!(
+                "DELETE FROM {} WHERE table_name = ?",
+                qualified_table(database_name, "schemas")
+            );
+            session
+                .exec_drop(query, (table.as_str(),))
+                .await
+                .map_err(map_mysql_error)?;
+            Ok(())
+        }
+    }
+}
+
+async fn apply_table_lifecycle_in_session<C>(
+    session: &mut C,
+    database_name: &str,
+    lifecycle: &TableLifecycleEvent,
+) -> Result<()>
+where
+    C: Queryable,
+{
+    match lifecycle {
+        TableLifecycleEvent::StageHidden { table, table_id } => {
+            stage_hidden_table_identity_in_session(session, database_name, table, table_id).await
+        }
+        TableLifecycleEvent::ActivateHidden {
+            table, table_id, ..
+        } => {
+            let _ =
+                activate_hidden_table_identity_in_session(session, database_name, table, table_id)
+                    .await?;
+            Ok(())
+        }
+        TableLifecycleEvent::MarkDeleting { table, .. } => {
+            let _ = mark_table_deleting_in_session(session, database_name, table).await?;
+            Ok(())
+        }
+        TableLifecycleEvent::HardDelete { table, table_id } => {
+            if hard_delete_table_identity_in_session(session, database_name, table_id)
+                .await?
+                .is_some()
+                && load_table_id_from_session(session, database_name, table)
+                    .await?
+                    .is_none()
+            {
+                if let Some(schema) =
+                    load_table_schema_from_session(session, database_name, table).await?
+                {
+                    drop_mysql_indexes_for_table_schema(session, database_name, &schema).await?;
+                }
+                let query = format!(
+                    "DELETE FROM {} WHERE table_name = ?",
+                    qualified_table(database_name, "schemas")
+                );
+                session
+                    .exec_drop(query, (table.as_str(),))
+                    .await
+                    .map_err(map_mysql_error)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 pub(super) async fn table_has_entries<C>(
@@ -828,6 +1385,7 @@ pub(super) async fn create_mysql_indexes_for_table_schema<C>(
 where
     C: Queryable,
 {
+    resolve_or_create_table_id_from_session(session, database_name, &table_schema.table).await?;
     for field in unique_index_fields(table_schema) {
         let column_name = mysql_generated_column_name(&table_schema.table, field);
         if !mysql_document_column_exists(session, database_name, &column_name).await? {
@@ -836,19 +1394,19 @@ where
                 qualified_table(database_name, "documents"),
                 quote_identifier(&column_name),
                 MYSQL_INDEX_KEY_VALUE_LEN,
-                mysql_generated_column_expr(&table_schema.table, field),
+                mysql_generated_column_expr(field),
             );
             session.query_drop(sql).await.map_err(map_mysql_error)?;
         }
     }
-    for index in &table_schema.indexes {
-        let index_name = mysql_index_name(&table_schema.table, &index.name);
+    for index in table_schema.maintained_indexes() {
+        let index_name = mysql_index_name(&index.id);
         if mysql_document_index_exists(session, database_name, &index_name).await? {
             continue;
         }
         let key_part_prefix = mysql_index_key_prefix_chars(index.fields.len() + 2);
         let mut columns = Vec::with_capacity(index.fields.len() + 2);
-        columns.push(mysql_index_key_part("table_name", key_part_prefix));
+        columns.push(mysql_index_key_part("table_id", key_part_prefix));
         columns.extend(index.fields.iter().map(|field| {
             mysql_index_key_part(
                 &mysql_generated_column_name(&table_schema.table, field),
@@ -875,8 +1433,8 @@ pub(super) async fn drop_mysql_indexes_for_table_schema<C>(
 where
     C: Queryable,
 {
-    for index in &table_schema.indexes {
-        let index_name = mysql_index_name(&table_schema.table, &index.name);
+    for index in table_schema.maintained_indexes() {
+        let index_name = mysql_index_name(&index.id);
         if mysql_document_index_exists(session, database_name, &index_name).await? {
             let sql = format!(
                 "DROP INDEX {} ON {}",
@@ -1093,8 +1651,7 @@ pub(super) fn index_fields_for_table_schema(
     index_name: &str,
 ) -> Result<Vec<String>> {
     let index = table_schema
-        .indexes
-        .iter()
+        .queryable_indexes()
         .find(|index| index.name == index_name)
         .ok_or_else(|| {
             Error::InvalidInput(format!(
@@ -1261,8 +1818,8 @@ pub(super) fn claim_due_jobs_upper_bound(timestamp: Timestamp) -> u64 {
     timestamp.0
 }
 
-pub(super) fn mysql_index_name(table: &TableName, index_name: &str) -> String {
-    let digest = Sha256::digest(format!("{}:{index_name}", table.as_str()).as_bytes());
+pub(super) fn mysql_index_name(index_id: &nimbus_core::IndexId) -> String {
+    let digest = Sha256::digest(index_id.as_str().as_bytes());
     let mut suffix = String::with_capacity(24);
     for byte in digest.iter().take(12) {
         let _ = write!(&mut suffix, "{byte:02x}");
@@ -1291,23 +1848,9 @@ pub(super) fn unique_index_fields(table_schema: &TableSchema) -> Vec<&str> {
     fields
 }
 
-pub(super) fn mysql_generated_column_expr(table: &TableName, field: &str) -> String {
+pub(super) fn mysql_generated_column_expr(field: &str) -> String {
     format!(
-        "CASE WHEN table_name = {} THEN JSON_UNQUOTE(JSON_EXTRACT(data_json, '$.\"{}\"')) ELSE NULL END",
-        mysql_string_literal(table.as_str()),
+        "JSON_UNQUOTE(JSON_EXTRACT(data_json, '$.\"{}\"'))",
         field.replace('\\', "\\\\").replace('"', "\\\"")
     )
-}
-
-pub(super) fn mysql_string_literal(value: &str) -> String {
-    let mut quoted = String::with_capacity(value.len() + 2);
-    quoted.push('\'');
-    for character in value.chars() {
-        if character == '\'' {
-            quoted.push('\'');
-        }
-        quoted.push(character);
-    }
-    quoted.push('\'');
-    quoted
 }

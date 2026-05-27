@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::auth::{TableAccessPolicy, policy_revision_id};
-use crate::types::validate_logical_name;
+use crate::types::{IndexId, validate_logical_name};
 use crate::{Error, Result, TableName};
 
 /// Schema for a single table.
@@ -40,8 +40,47 @@ pub enum FieldType {
 /// Definition of a secondary index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexDefinition {
+    #[serde(default)]
+    pub id: IndexId,
     pub name: String,
     pub fields: Vec<String>,
+    #[serde(default)]
+    pub state: IndexState,
+}
+
+/// Lifecycle state for a logical index identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexState {
+    Pending,
+    Backfilling,
+    Enabled,
+    Deleting,
+}
+
+impl IndexState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Backfilling => "backfilling",
+            Self::Enabled => "enabled",
+            Self::Deleting => "deleting",
+        }
+    }
+
+    pub fn is_queryable(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+
+    pub fn is_maintained(self) -> bool {
+        matches!(self, Self::Backfilling | Self::Enabled)
+    }
+}
+
+impl Default for IndexState {
+    fn default() -> Self {
+        Self::Enabled
+    }
 }
 
 /// Tenant-level schema containing all table schemas.
@@ -89,8 +128,16 @@ impl TableSchema {
     pub fn validate_indexes(&self) -> Result<()> {
         use std::collections::HashSet;
 
+        let mut seen_ids = HashSet::new();
         let mut seen_names = HashSet::new();
         for index in &self.indexes {
+            if !seen_ids.insert(index.id.clone()) {
+                return Err(Error::SchemaValidation(format!(
+                    "duplicate index id: {}",
+                    index.id
+                )));
+            }
+
             validate_logical_name(&index.name, "index name")?;
             if !seen_names.insert(index.name.clone()) {
                 return Err(Error::SchemaValidation(format!(
@@ -153,6 +200,32 @@ impl TableSchema {
     pub fn access_policy_revision(&self) -> Result<String> {
         policy_revision_id(self.access_policy.as_ref())
     }
+
+    /// Returns indexes that may be used to answer queries.
+    pub fn queryable_indexes(&self) -> impl Iterator<Item = &IndexDefinition> {
+        self.indexes.iter().filter(|index| index.is_queryable())
+    }
+
+    /// Returns indexes whose physical entries should be maintained.
+    pub fn maintained_indexes(&self) -> impl Iterator<Item = &IndexDefinition> {
+        self.indexes.iter().filter(|index| index.is_maintained())
+    }
+
+    /// Preserves stable index identity for unchanged public index definitions.
+    pub fn reconcile_index_metadata(&mut self, previous: Option<&TableSchema>) {
+        let Some(previous) = previous else {
+            return;
+        };
+        for index in &mut self.indexes {
+            if let Some(existing) = previous
+                .indexes
+                .iter()
+                .find(|existing| existing.name == index.name && existing.fields == index.fields)
+            {
+                index.id = existing.id.clone();
+            }
+        }
+    }
 }
 
 impl FieldType {
@@ -170,9 +243,42 @@ impl FieldType {
 }
 
 impl IndexDefinition {
+    /// Creates a queryable index definition with a fresh stable identity.
+    pub fn new<I, S>(name: impl Into<String>, fields: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self::with_state(name, fields, IndexState::Enabled)
+    }
+
+    /// Creates an index definition in a specific lifecycle state.
+    pub fn with_state<I, S>(name: impl Into<String>, fields: I, state: IndexState) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            id: IndexId::new(),
+            name: name.into(),
+            fields: fields.into_iter().map(Into::into).collect(),
+            state,
+        }
+    }
+
     /// Returns the indexed field when this is still a single-field index.
     pub fn single_field(&self) -> Option<&str> {
         (self.fields.len() == 1).then(|| self.fields[0].as_str())
+    }
+
+    /// Returns whether the index may be used to answer queries.
+    pub fn is_queryable(&self) -> bool {
+        self.state.is_queryable()
+    }
+
+    /// Returns whether writes should maintain physical entries for this index.
+    pub fn is_maintained(&self) -> bool {
+        self.state.is_maintained()
     }
 }
 
@@ -191,7 +297,7 @@ fn value_type_name(value: &Value) -> &'static str {
 mod tests {
     use serde_json::json;
 
-    use super::{FieldSchema, FieldType, IndexDefinition, TableSchema};
+    use super::{FieldSchema, FieldType, IndexDefinition, IndexState, TableSchema};
     use crate::TableName;
 
     fn users_schema() -> TableSchema {
@@ -274,20 +380,14 @@ mod tests {
     #[test]
     fn schema_rejects_index_on_unknown_or_non_scalar_field() {
         let mut schema = users_schema();
-        schema.indexes = vec![IndexDefinition {
-            name: "by_missing".to_string(),
-            fields: vec!["missing".to_string()],
-        }];
+        schema.indexes = vec![IndexDefinition::new("by_missing", ["missing"])];
 
         let unknown_error = schema
             .validate_indexes()
             .expect_err("index validation should fail");
         assert!(unknown_error.to_string().contains("unknown field"));
 
-        schema.indexes = vec![IndexDefinition {
-            name: "by_anything".to_string(),
-            fields: vec!["anything".to_string()],
-        }];
+        schema.indexes = vec![IndexDefinition::new("by_anything", ["anything"])];
 
         let non_scalar_error = schema
             .validate_indexes()
@@ -298,10 +398,7 @@ mod tests {
     #[test]
     fn schema_rejects_invalid_index_name() {
         let mut schema = users_schema();
-        schema.indexes = vec![IndexDefinition {
-            name: "bad\0name".to_string(),
-            fields: vec!["name".to_string()],
-        }];
+        schema.indexes = vec![IndexDefinition::new("bad\0name", ["name"])];
 
         let error = schema
             .validate_indexes()
@@ -312,10 +409,7 @@ mod tests {
     #[test]
     fn schema_rejects_index_without_fields() {
         let mut schema = users_schema();
-        schema.indexes = vec![IndexDefinition {
-            name: "empty".to_string(),
-            fields: Vec::new(),
-        }];
+        schema.indexes = vec![IndexDefinition::new("empty", Vec::<String>::new())];
 
         let error = schema
             .validate_indexes()
@@ -330,14 +424,54 @@ mod tests {
     #[test]
     fn schema_rejects_duplicate_fields_within_one_index() {
         let mut schema = users_schema();
-        schema.indexes = vec![IndexDefinition {
-            name: "by_age_twice".to_string(),
-            fields: vec!["age".to_string(), "age".to_string()],
-        }];
+        schema.indexes = vec![IndexDefinition::new("by_age_twice", ["age", "age"])];
 
         let error = schema
             .validate_indexes()
             .expect_err("index validation should fail");
         assert!(error.to_string().contains("includes duplicate field 'age'"));
+    }
+
+    #[test]
+    fn schema_rejects_duplicate_index_id() {
+        let mut schema = users_schema();
+        let first = IndexDefinition::new("by_name", ["name"]);
+        let mut second = IndexDefinition::new("by_age", ["age"]);
+        second.id = first.id.clone();
+        schema.indexes = vec![first, second];
+
+        let error = schema
+            .validate_indexes()
+            .expect_err("index validation should fail");
+        assert!(error.to_string().contains("duplicate index id"));
+    }
+
+    #[test]
+    fn index_lifecycle_controls_query_and_maintenance_visibility() {
+        let pending = IndexDefinition::with_state("by_name", ["name"], IndexState::Pending);
+        let backfilling = IndexDefinition::with_state("by_name", ["name"], IndexState::Backfilling);
+        let enabled = IndexDefinition::new("by_name", ["name"]);
+
+        assert!(!pending.is_queryable());
+        assert!(!pending.is_maintained());
+        assert!(!backfilling.is_queryable());
+        assert!(backfilling.is_maintained());
+        assert!(enabled.is_queryable());
+        assert!(enabled.is_maintained());
+    }
+
+    #[test]
+    fn unchanged_index_reconciles_stable_identity() {
+        let mut previous = users_schema();
+        previous.indexes = vec![IndexDefinition::new("by_name", ["name"])];
+
+        let mut next = users_schema();
+        next.indexes = vec![IndexDefinition::new("by_name", ["name"])];
+        let generated_id = next.indexes[0].id.clone();
+
+        next.reconcile_index_metadata(Some(&previous));
+
+        assert_ne!(generated_id, next.indexes[0].id);
+        assert_eq!(previous.indexes[0].id, next.indexes[0].id);
     }
 }

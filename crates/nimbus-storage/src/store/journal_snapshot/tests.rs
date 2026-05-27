@@ -1,10 +1,10 @@
 use nimbus_core::{
-    DurableMutationRecord, Error, FieldSchema, FieldType, IndexDefinition, SequenceNumber,
-    TableName, TableSchema, Timestamp, WriteOp, WriteOpType,
+    DurableMutationRecord, Error, FieldSchema, FieldType, IndexDefinition, SequenceNumber, TableId,
+    TableName, TableSchema, TableState, Timestamp, WriteOp, WriteOpType,
 };
 use serde_json::json;
 
-use crate::TenantStore;
+use crate::{MaterializedJournalSnapshot, TableIdentitySnapshotEntry, TenantStore};
 
 fn tasks_schema() -> TableSchema {
     TableSchema {
@@ -15,11 +15,42 @@ fn tasks_schema() -> TableSchema {
             required: true,
         }],
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_rank".to_string(),
             fields: vec!["rank".to_string()],
         }],
         access_policy: None,
     }
+}
+
+#[test]
+fn materialized_snapshot_rejects_lifecycle_namespace_state_mismatch() {
+    let table = TableName::new("tasks").expect("table name should parse");
+    let table_id = TableId::new();
+    let snapshot = MaterializedJournalSnapshot {
+        version: crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
+        applied_sequence: SequenceNumber(0),
+        durable_head: SequenceNumber(0),
+        table_identities: vec![TableIdentitySnapshotEntry {
+            namespace: crate::table_identity::hidden_table_namespace(&table_id),
+            table,
+            table_id,
+            state: TableState::Active,
+        }],
+        schema: nimbus_core::Schema::default(),
+        documents: Vec::new(),
+        scheduled_execution_ids: Vec::new(),
+    };
+
+    let error = snapshot
+        .validate()
+        .expect_err("active identity in hidden namespace should be rejected");
+    assert!(matches!(
+        error,
+        Error::InvalidInput(message)
+            if message.contains("active state requires default")
+    ));
 }
 
 #[test]
@@ -42,9 +73,12 @@ fn materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
     let snapshot = live
         .export_materialized_journal_snapshot()
         .expect("snapshot export should succeed");
-    assert_eq!(snapshot.version, 1);
-    assert_eq!(snapshot.applied_sequence, SequenceNumber(1));
-    assert_eq!(snapshot.durable_head, SequenceNumber(1));
+    assert_eq!(
+        snapshot.version,
+        crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION
+    );
+    assert_eq!(snapshot.applied_sequence, SequenceNumber(2));
+    assert_eq!(snapshot.durable_head, SequenceNumber(2));
 
     let second = nimbus_core::Document::new(
         table.clone(),
@@ -79,6 +113,16 @@ fn materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
     assert_eq!(
         rebuilt.load_schema().expect("rebuilt schema should load"),
         live.load_schema().expect("live schema should load")
+    );
+    assert_eq!(
+        rebuilt
+            .export_materialized_journal_snapshot()
+            .expect("rebuilt snapshot should export")
+            .table_identities,
+        live.export_materialized_journal_snapshot()
+            .expect("live snapshot should export")
+            .table_identities,
+        "snapshot restore/rebuild must preserve stable table identities"
     );
     assert_eq!(
         rebuilt
@@ -122,8 +166,11 @@ fn materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence() {
     let snapshot = live
         .export_materialized_journal_snapshot()
         .expect("snapshot export should succeed");
-    assert_eq!(snapshot.version, 1);
-    assert_eq!(snapshot.durable_head, SequenceNumber(1));
+    assert_eq!(
+        snapshot.version,
+        crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION
+    );
+    assert_eq!(snapshot.durable_head, SequenceNumber(2));
 
     let second = nimbus_core::Document::new(
         table.clone(),
@@ -147,14 +194,14 @@ fn materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence() {
         .expect("journal tail should read");
     let rebuilt = TenantStore::create_in_memory().expect("rebuilt store should open");
     let progress = rebuilt
-        .rebuild_materialized_journal_from_snapshot(&snapshot, &tail, Some(SequenceNumber(2)))
+        .rebuild_materialized_journal_from_snapshot(&snapshot, &tail, Some(SequenceNumber(3)))
         .expect("point-in-time rebuild should succeed");
 
     assert_eq!(
         progress,
         super::super::JournalProgress {
-            durable_head: SequenceNumber(2),
-            applied_head: SequenceNumber(2),
+            durable_head: SequenceNumber(3),
+            applied_head: SequenceNumber(3),
         }
     );
     let documents = rebuilt
@@ -194,6 +241,7 @@ fn materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail() 
         Timestamp(100),
         vec![WriteOp {
             table: document.table.clone(),
+            table_id: TableId::new(),
             op_type: WriteOpType::Insert,
             doc_id: document.id.clone(),
             resource_path_binding: None,
@@ -211,7 +259,10 @@ fn materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail() 
     let snapshot = store
         .export_materialized_journal_snapshot()
         .expect("snapshot export should succeed");
-    assert_eq!(snapshot.version, 1);
+    assert_eq!(
+        snapshot.version,
+        crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION
+    );
     assert_eq!(snapshot.applied_sequence, SequenceNumber(0));
     assert_eq!(snapshot.durable_head, SequenceNumber(1));
 

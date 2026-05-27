@@ -3,14 +3,16 @@ use super::*;
 impl SqliteTenantStore {
     pub fn insert_document_for_testing(&self, document: &Document) -> Result<()> {
         let conn = self.open_connection()?;
+        let table_id = resolve_or_create_table_id_in_conn(&conn, &document.table)?;
         conn.execute(
-            "INSERT INTO documents (table_name, id, data_json, creation_time, update_time)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
-                document.table.as_str(),
+                table_id.as_str(),
                 document.id.to_string(),
                 serde_json::to_string(&document.fields)
                     .map_err(|error| Error::Serialization(error.to_string()))?,
+                serialize_document_typed_fields(document)?,
                 document.creation_time.0,
                 document.update_time.0,
             ],
@@ -316,31 +318,41 @@ impl SqliteTenantStore {
 impl SqliteWriteTransaction {
     pub fn save_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
         self.check_cancel()?;
+        let previous = load_table_schema_from_conn(self.connection_mut()?, &table_schema.table)?;
+        let table_schema =
+            crate::sqlite::schema::reconcile_table_schema(self.connection_mut()?, table_schema)?;
+        let table_id =
+            resolve_or_create_table_id_in_conn(self.connection_mut()?, &table_schema.table)?;
         self.connection_mut()?
             .execute(
                 "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)
                  ON CONFLICT(table_name) DO UPDATE SET schema_json = excluded.schema_json",
-                params![table_schema.table.as_str(), serialize_json(table_schema)?],
+                params![table_schema.table.as_str(), serialize_json(&table_schema)?],
             )
             .map_err(map_sqlite_error)?;
         self.schema_cache_dirty = true;
+        record_sqlite_schema_set_events(self, table_id, previous, &table_schema);
         Ok(())
     }
 
     pub fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
         self.check_cancel()?;
+        let table_schema =
+            crate::sqlite::schema::reconcile_table_schema(self.connection_mut()?, table_schema)?;
         if let Some(previous) =
             load_table_schema_from_conn(self.connection_mut()?, &table_schema.table)?
         {
             drop_sqlite_indexes_for_table_schema(self.connection_mut()?, &previous)?;
         }
-        self.save_table_schema(table_schema)?;
-        create_sqlite_indexes_for_table_schema(self.connection_mut()?, table_schema)?;
+        self.save_table_schema(&table_schema)?;
+        create_sqlite_indexes_for_table_schema(self.connection_mut()?, &table_schema)?;
         Ok(())
     }
 
     pub fn delete_table_schema_entry(&mut self, table: &TableName) -> Result<()> {
         self.check_cancel()?;
+        let previous = load_table_schema_from_conn(self.connection_mut()?, table)?;
+        let table_id = resolve_table_id_in_conn(self.connection_mut()?, table)?;
         self.connection_mut()?
             .execute(
                 "DELETE FROM schemas WHERE table_name = ?1",
@@ -348,6 +360,13 @@ impl SqliteWriteTransaction {
             )
             .map_err(map_sqlite_error)?;
         self.schema_cache_dirty = true;
+        self.record_tenant_event(TenantEventKind::SchemaChange {
+            change: SchemaChangeEvent::DeleteTable {
+                table: table.clone(),
+                table_id,
+                previous,
+            },
+        });
         Ok(())
     }
 
@@ -384,17 +403,23 @@ impl SqliteWriteTransaction {
                 params![execution_id],
             )
             .map_err(map_sqlite_error)?;
+        if inserted == 1 {
+            self.record_tenant_event(TenantEventKind::ScheduledExecution {
+                execution_id: execution_id.to_string(),
+            });
+        }
         Ok(inserted == 1)
     }
 
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
         self.check_cancel()?;
+        let table_id = resolve_or_create_table_id_in_conn(self.connection_mut()?, &document.table)?;
         self.connection_mut()?
             .execute(
-                "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
+                "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
-                    document.table.as_str(),
+                    table_id.as_str(),
                     document.id.to_string(),
                     serialize_document_fields(document)?,
                     serialize_document_typed_fields(document)?,
@@ -405,6 +430,7 @@ impl SqliteWriteTransaction {
             .map_err(map_sqlite_error)?;
         self.record_commit_write(WriteOp {
             table: document.table.clone(),
+            table_id,
             op_type: WriteOpType::Insert,
             doc_id: document.id.clone(),
             resource_path_binding: None,
@@ -435,13 +461,15 @@ impl SqliteWriteTransaction {
         }
         document.update_time = self.clock.now();
         validate(&existing_document, &document)?;
+        let table_id = resolve_table_id_in_conn(self.connection_mut()?, table)?
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
         self.connection_mut()?
             .execute(
                 "UPDATE documents
                  SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
-                 WHERE table_name = ?1 AND id = ?2",
+                 WHERE table_id = ?1 AND id = ?2",
                 params![
-                    table.as_str(),
+                    table_id.as_str(),
                     id.to_string(),
                     serialize_document_fields(&document)?,
                     serialize_document_typed_fields(&document)?,
@@ -455,6 +483,7 @@ impl SqliteWriteTransaction {
         )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id,
             op_type: WriteOpType::Update,
             doc_id: id.clone(),
             resource_path_binding,
@@ -479,10 +508,12 @@ impl SqliteWriteTransaction {
             .load_document(table, id)?
             .ok_or(Error::DocumentNotFound(id.clone()))?;
         validate(&removed_document)?;
+        let table_id = resolve_table_id_in_conn(self.connection_mut()?, table)?
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
         self.connection_mut()?
             .execute(
-                "DELETE FROM documents WHERE table_name = ?1 AND id = ?2",
-                params![table.as_str(), id.to_string()],
+                "DELETE FROM documents WHERE table_id = ?1 AND id = ?2",
+                params![table_id.as_str(), id.to_string()],
             )
             .map_err(map_sqlite_error)?;
         let resource_path_binding = self.remove_resource_path_binding(
@@ -490,6 +521,7 @@ impl SqliteWriteTransaction {
         )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id,
             op_type: WriteOpType::Delete,
             doc_id: id.clone(),
             resource_path_binding,
@@ -655,13 +687,18 @@ impl SqliteWriteTransaction {
                         current.id
                     )));
                 }
+                let table_id = resolve_table_id_in_conn(self.connection_mut()?, &current.table)?
+                    .ok_or(Error::Conflict(format!(
+                        "document {} changed before transaction commit",
+                        current.id
+                    )))?;
                 self.connection_mut()?
                     .execute(
                         "UPDATE documents
                          SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
-                         WHERE table_name = ?1 AND id = ?2",
+                         WHERE table_id = ?1 AND id = ?2",
                         params![
-                            current.table.as_str(),
+                            table_id.as_str(),
                             current.id.to_string(),
                             serialize_document_fields(current)?,
                             serialize_document_typed_fields(current)?,
@@ -672,6 +709,7 @@ impl SqliteWriteTransaction {
                     .map_err(map_sqlite_error)?;
                 self.record_commit_write(WriteOp {
                     table: current.table.clone(),
+                    table_id,
                     op_type: WriteOpType::Update,
                     doc_id: current.id.clone(),
                     resource_path_binding: resource_path_binding.clone(),
@@ -698,10 +736,15 @@ impl SqliteWriteTransaction {
                         previous.id
                     )));
                 }
+                let table_id = resolve_table_id_in_conn(self.connection_mut()?, &previous.table)?
+                    .ok_or(Error::Conflict(format!(
+                    "document {} changed before transaction commit",
+                    previous.id
+                )))?;
                 self.connection_mut()?
                     .execute(
-                        "DELETE FROM documents WHERE table_name = ?1 AND id = ?2",
-                        params![previous.table.as_str(), previous.id.to_string()],
+                        "DELETE FROM documents WHERE table_id = ?1 AND id = ?2",
+                        params![table_id.as_str(), previous.id.to_string()],
                     )
                     .map_err(map_sqlite_error)?;
                 let resource_path_binding = self.remove_resource_path_binding(
@@ -709,6 +752,7 @@ impl SqliteWriteTransaction {
                 )?;
                 self.record_commit_write(WriteOp {
                     table: previous.table.clone(),
+                    table_id,
                     op_type: WriteOpType::Delete,
                     doc_id: previous.id.clone(),
                     resource_path_binding,
@@ -732,13 +776,23 @@ impl SqliteWriteTransaction {
                 "sqlite write transaction already closed".to_string(),
             ));
         };
-        let commit = if self.commit_writes.is_empty() {
+        let commit_writes = std::mem::take(&mut self.commit_writes);
+        if !commit_writes.is_empty() {
+            self.tenant_events.insert(
+                0,
+                TenantEventKind::DocumentWrite {
+                    writes: commit_writes.clone(),
+                },
+            );
+        }
+        let commit = if self.tenant_events.is_empty() {
             None
         } else {
             Some(append_commit_entry(
                 &conn,
                 self.clock.now(),
-                std::mem::take(&mut self.commit_writes),
+                commit_writes,
+                std::mem::take(&mut self.tenant_events),
             )?)
         };
         self.fault_injector
@@ -780,7 +834,38 @@ impl SqliteWriteTransaction {
         self.commit_writes.push(write);
     }
 
+    pub(crate) fn record_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.push(event);
+    }
+
     fn load_document(&mut self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         load_document_from_conn(self.connection_mut()?, table, id)
+    }
+}
+
+fn record_sqlite_schema_set_events(
+    transaction: &mut SqliteWriteTransaction,
+    table_id: TableId,
+    previous: Option<TableSchema>,
+    table_schema: &TableSchema,
+) {
+    transaction.record_tenant_event(TenantEventKind::SchemaChange {
+        change: SchemaChangeEvent::SetTable {
+            table: table_schema.table.clone(),
+            table_id: table_id.clone(),
+            previous,
+            current: table_schema.clone(),
+        },
+    });
+    for index in &table_schema.indexes {
+        transaction.record_tenant_event(TenantEventKind::IndexLifecycle {
+            index: IndexLifecycleEvent {
+                table: table_schema.table.clone(),
+                table_id: table_id.clone(),
+                index_id: index.id.clone(),
+                state: index.state,
+                definition: index.clone(),
+            },
+        });
     }
 }

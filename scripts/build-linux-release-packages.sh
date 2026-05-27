@@ -277,6 +277,7 @@ stage_bun_jsc_adapter_archive() {
   fi
   ln -sfn "$adapter_version" "${staged_root}/usr/libexec/nimbus/runtime/bun-jsc/current"
   install -m 0644 LICENSE "${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/LICENSE"
+  install -m 0644 LICENSE "${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/copyright"
   write_nimbus_bun_jsc_adapter_readme \
     "${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/README.md" \
     "$adapter_version"
@@ -325,6 +326,10 @@ contents:
     dst: /usr/share/doc/nimbus/LICENSE
     file_info:
       mode: 0644
+  - src: ${staged_root}/usr/share/doc/nimbus/copyright
+    dst: /usr/share/doc/nimbus/copyright
+    file_info:
+      mode: 0644
 EOF
   append_yaml_list "$manifest_path" "depends" "${dependencies[@]}"
   append_yaml_list "$manifest_path" "recommends" "fuse-overlayfs" "uidmap"
@@ -370,6 +375,10 @@ contents:
       mode: 0644
   - src: ${staged_root}/usr/share/doc/nimbus-crun/LICENSE
     dst: /usr/share/doc/nimbus-crun/LICENSE
+    file_info:
+      mode: 0644
+  - src: ${staged_root}/usr/share/doc/nimbus-crun/copyright
+    dst: /usr/share/doc/nimbus-crun/copyright
     file_info:
       mode: 0644
 EOF
@@ -422,6 +431,10 @@ contents:
     dst: /usr/share/doc/nimbus-libkrun/LICENSE
     file_info:
       mode: 0644
+  - src: ${staged_root}/usr/share/doc/nimbus-libkrun/copyright
+    dst: /usr/share/doc/nimbus-libkrun/copyright
+    file_info:
+      mode: 0644
 EOF
 }
 
@@ -463,6 +476,10 @@ contents:
       mode: 0644
   - src: ${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/LICENSE
     dst: /usr/share/doc/nimbus-bun-jsc-adapter/LICENSE
+    file_info:
+      mode: 0644
+  - src: ${staged_root}/usr/share/doc/nimbus-bun-jsc-adapter/copyright
+    dst: /usr/share/doc/nimbus-bun-jsc-adapter/copyright
     file_info:
       mode: 0644
 EOF
@@ -610,6 +627,9 @@ install -m 0755 "$nimbus_crun_binary" "${nimbus_crun_stage}/usr/libexec/nimbus/c
 install -m 0644 LICENSE "${nimbus_stage}/usr/share/doc/nimbus/LICENSE"
 install -m 0644 LICENSE "${nimbus_libkrun_stage}/usr/share/doc/nimbus-libkrun/LICENSE"
 install -m 0644 LICENSE "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/LICENSE"
+install -m 0644 LICENSE "${nimbus_stage}/usr/share/doc/nimbus/copyright"
+install -m 0644 LICENSE "${nimbus_libkrun_stage}/usr/share/doc/nimbus-libkrun/copyright"
+install -m 0644 LICENSE "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/copyright"
 write_nimbus_readme "${nimbus_stage}/usr/share/doc/nimbus/README.md" "$version"
 write_nimbus_libkrun_readme "${nimbus_libkrun_stage}/usr/share/doc/nimbus-libkrun/README.md" "$libkrun_version"
 write_nimbus_crun_readme "${nimbus_crun_stage}/usr/share/doc/nimbus-crun/README.md" "$crun_version"

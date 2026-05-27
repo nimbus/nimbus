@@ -18,6 +18,45 @@ impl LibsqlReplicaTenantStore {
         Ok(remote_schema)
     }
 
+    pub fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        let table = table.clone();
+        self.block_on(async move {
+            let conn = self.remote_connection()?;
+            load_remote_table_id_from_session(&conn, &table).await
+        })
+    }
+
+    pub fn table_identity_diagnostics(&self) -> Result<Vec<crate::TableIdentityDiagnostic>> {
+        let snapshot = self.active_cache_store()?.read_snapshot()?;
+        let mut diagnostics = Vec::new();
+        for identity in snapshot.table_identities()? {
+            let document_count = if identity.namespace
+                == crate::table_identity::DEFAULT_TABLE_NAMESPACE
+                && identity.state == TableState::Active
+            {
+                let mut check_cancel = || Ok(());
+                Some(
+                    snapshot
+                        .scan_table_matching_with_filters_cancellable(
+                            &identity.table,
+                            &[],
+                            &mut check_cancel,
+                            |_| Ok(true),
+                        )?
+                        .len() as u64,
+                )
+            } else {
+                None
+            };
+            diagnostics.push(crate::TableIdentityDiagnostic::from_snapshot_entry(
+                &identity,
+                crate::TableBackendLayout::LibsqlReplicaSharedDocumentsByTableId,
+                document_count,
+            ));
+        }
+        Ok(diagnostics)
+    }
+
     pub fn latest_sequence(&self) -> Result<SequenceNumber> {
         self.block_on(self.load_remote_latest_sequence())
     }

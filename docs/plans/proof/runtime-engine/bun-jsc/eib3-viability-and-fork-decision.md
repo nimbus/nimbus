@@ -176,7 +176,7 @@ Verification command:
 ```sh
 git diff --check -- \
   docs/plans/proof/runtime-engine/bun-jsc/eib3-viability-and-fork-decision.md \
-  docs/plans/bun-jsc-runtime-proof-plan.md \
+  docs/plans/archive/bun-jsc-runtime-proof-plan.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-11-permission-surface-inventory.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-12-memory-behavior.md \
   docs/plans/proof/runtime-engine/bun-jsc/gate-13-package-module-policy.md \

@@ -516,6 +516,8 @@ fn mutation_execution_unit_conflicts_when_auth_filtered_visibility_changes() {
             messages_schema(
                 "messages_occ_auth",
                 vec![IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
                     name: "by_owner".to_string(),
                     fields: vec!["owner".to_string()],
                 }],

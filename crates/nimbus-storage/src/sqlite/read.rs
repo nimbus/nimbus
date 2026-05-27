@@ -5,6 +5,15 @@ impl SqliteTenantStore {
         self.read_snapshot()?.get(table, id)
     }
 
+    pub fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        self.read_snapshot()?.table_id(table)
+    }
+
+    pub fn table_identity_diagnostics(&self) -> Result<Vec<crate::TableIdentityDiagnostic>> {
+        self.read_snapshot()?
+            .table_identity_diagnostics(crate::TableBackendLayout::SharedDocumentsByTableId)
+    }
+
     pub fn scan_table_matching_with_filters_cancellable<F>(
         &self,
         table: &TableName,
@@ -293,22 +302,81 @@ impl SqliteReadSnapshot {
     pub fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
         let progress = self.journal_progress()?;
         Ok(MaterializedJournalSnapshot {
-            version: 1,
+            version: crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
             applied_sequence: progress.applied_head,
             durable_head: progress.durable_head,
+            table_identities: self.table_identities()?,
             schema: self.load_schema()?,
             documents: self.documents()?,
             scheduled_execution_ids: self.scheduled_execution_ids()?,
         })
     }
 
+    pub fn table_identities(&self) -> Result<Vec<crate::TableIdentitySnapshotEntry>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT namespace, table_name, table_id, state
+                 FROM table_catalog
+                 ORDER BY namespace, table_name, table_id, state",
+            )
+            .map_err(map_sqlite_error)?;
+        let mut rows = stmt.query([]).map_err(map_sqlite_error)?;
+        let mut identities = Vec::new();
+        while let Some(row) = rows.next().map_err(map_sqlite_error)? {
+            identities.push(crate::TableIdentitySnapshotEntry {
+                namespace: row.get::<_, String>(0).map_err(map_sqlite_error)?,
+                table: TableName::new(row.get::<_, String>(1).map_err(map_sqlite_error)?)
+                    .map_err(|error| Error::Serialization(error.to_string()))?,
+                table_id: TableId::from_str(
+                    row.get::<_, String>(2).map_err(map_sqlite_error)?.as_str(),
+                )?,
+                state: TableState::from_str(
+                    row.get::<_, String>(3).map_err(map_sqlite_error)?.as_str(),
+                )?,
+            });
+        }
+        Ok(identities)
+    }
+
+    pub fn table_identity_diagnostics(
+        &self,
+        backend_layout: crate::TableBackendLayout,
+    ) -> Result<Vec<crate::TableIdentityDiagnostic>> {
+        self.table_identities()?
+            .iter()
+            .map(|identity| {
+                Ok(crate::TableIdentityDiagnostic::from_snapshot_entry(
+                    identity,
+                    backend_layout,
+                    Some(self.count_documents_for_table_id(&identity.table_id)?),
+                ))
+            })
+            .collect()
+    }
+
+    fn count_documents_for_table_id(&self, table_id: &TableId) -> Result<u64> {
+        let count = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE table_id = ?1",
+                params![table_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sqlite_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
+    }
+
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
+        let Some(table_id) = resolve_table_id_in_conn(&self.conn, table)? else {
+            return Ok(None);
+        };
         self.conn
             .query_row(
                 "SELECT creation_time, update_time, data_json, typed_fields_json
                  FROM documents
-                 WHERE table_name = ?1 AND id = ?2",
-                params![table.as_str(), id.to_string()],
+                 WHERE table_id = ?1 AND id = ?2",
+                params![table_id.as_str(), id.to_string()],
                 |row| {
                     Ok(row_to_document(
                         table,
@@ -323,6 +391,10 @@ impl SqliteReadSnapshot {
             .optional()
             .map_err(map_sqlite_error)?
             .transpose()
+    }
+
+    pub fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
+        resolve_table_id_in_conn(&self.conn, table)
     }
 
     pub fn scheduled_execution_exists(&self, execution_id: &str) -> Result<bool> {
@@ -342,9 +414,12 @@ impl SqliteReadSnapshot {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT table_name, id, creation_time, update_time, data_json, typed_fields_json
+                "SELECT table_catalog.table_name, documents.id, documents.creation_time,
+                        documents.update_time, documents.data_json, documents.typed_fields_json
                  FROM documents
-                 ORDER BY table_name, id",
+                 JOIN table_catalog ON table_catalog.table_id = documents.table_id
+                 WHERE table_catalog.namespace = 'default'
+                 ORDER BY table_catalog.table_name, documents.id",
             )
             .map_err(map_sqlite_error)?;
         let mut rows = stmt.query([]).map_err(map_sqlite_error)?;
@@ -395,17 +470,20 @@ impl SqliteReadSnapshot {
     where
         F: FnMut(&Document) -> Result<bool>,
     {
+        let Some(table_id) = resolve_table_id_in_conn(&self.conn, table)? else {
+            return Ok(Vec::new());
+        };
         let mut stmt = self
             .conn
             .prepare_cached(
                 "SELECT id, creation_time, update_time, data_json, typed_fields_json
                  FROM documents
-                 WHERE table_name = ?1
+                 WHERE table_id = ?1
                  ORDER BY id",
             )
             .map_err(map_sqlite_error)?;
         let mut rows = stmt
-            .query(params![table.as_str()])
+            .query(params![table_id.as_str()])
             .map_err(map_sqlite_error)?;
         let mut documents = Vec::new();
         while let Some(row) = rows.next().map_err(map_sqlite_error)? {
@@ -459,7 +537,10 @@ impl SqliteReadSnapshot {
             )));
         }
         let sql = sqlite_index_scan_prefix_query_sql(&fields, prefix_values.len())?;
-        let mut params = vec![SqlValue::Text(table.as_str().to_string())];
+        let Some(table_id) = resolve_table_id_in_conn(&self.conn, table)? else {
+            return Ok(Vec::new());
+        };
+        let mut params = vec![SqlValue::Text(table_id.to_string())];
         params.extend(
             prefix_values
                 .iter()
@@ -513,7 +594,10 @@ impl SqliteReadSnapshot {
                 index_name
             )));
         }
-        let mut params = vec![SqlValue::Text(table.as_str().to_string())];
+        let Some(table_id) = resolve_table_id_in_conn(&self.conn, table)? else {
+            return Ok(Vec::new());
+        };
+        let mut params = vec![SqlValue::Text(table_id.to_string())];
         params.extend(
             exact_prefix
                 .iter()

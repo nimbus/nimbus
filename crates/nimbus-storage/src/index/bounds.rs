@@ -1,4 +1,4 @@
-use nimbus_core::{Result, TableName};
+use nimbus_core::{IndexId, Result, TableId};
 use serde_json::Value;
 
 use crate::keys::prefix_end;
@@ -9,8 +9,8 @@ use super::keyspace::index_value_prefix;
 pub(super) type CompositeRangeScanBounds = (Vec<u8>, Vec<u8>, Option<Vec<u8>>);
 
 pub(super) fn composite_range_scan_bounds(
-    table: &TableName,
-    index_name: &str,
+    table_id: &TableId,
+    index_id: &IndexId,
     exact_prefix: &[Value],
     start: Option<&Value>,
     end: Option<&Value>,
@@ -18,7 +18,7 @@ pub(super) fn composite_range_scan_bounds(
     end_inclusive: bool,
 ) -> Result<CompositeRangeScanBounds> {
     let encoded_prefix = encode_index_tuple(exact_prefix)?;
-    let match_prefix = index_value_prefix(table, index_name, &encoded_prefix);
+    let match_prefix = index_value_prefix(table_id, index_id, &encoded_prefix);
     let start_key = if let Some(start) = start {
         let mut start_key = match_prefix.clone();
         start_key.extend_from_slice(&encode_index_value(start)?);

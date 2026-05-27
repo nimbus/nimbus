@@ -401,7 +401,6 @@ fn open_in_browser(_url: &str) -> io::Result<()> {
 mod tests {
     use std::net::Ipv4Addr;
     use std::sync::Arc;
-    use std::time::Duration;
 
     use clap::Parser;
     use nimbus::Service;
@@ -409,9 +408,9 @@ mod tests {
         LocalServerPaths, LocalServerSecurityState, ServeOptions, ServerDiscoveryLease,
         load_or_create_local_admin_token, serve,
     };
-    use nimbus_testing::wait_for_condition;
 
     use super::*;
+    use crate::test_support::wait_for_live_server_health;
     use crate::{Cli, Command};
 
     fn sample_paths(root: &std::path::Path) -> LocalServerPaths {
@@ -598,23 +597,19 @@ mod tests {
         let address = listener
             .local_addr()
             .expect("listener address should resolve");
-        let server_task = tokio::spawn(serve(
-            listener,
-            ServeOptions::new(service.clone()).with_local_server_security(local_server_security),
-        ));
-        let client = reqwest::Client::new();
-        wait_for_condition(
+        let server_service = service.clone();
+        let server_task = tokio::spawn(async move {
+            serve(
+                listener,
+                ServeOptions::new(server_service).with_local_server_security(local_server_security),
+            )
+            .await
+            .expect("auth url test server should keep serving");
+        });
+        wait_for_live_server_health(
             "auth url test server should answer health checks",
-            Duration::from_secs(5),
-            Duration::from_millis(50),
-            || async {
-                client
-                    .get(format!("http://{address}/health"))
-                    .send()
-                    .await
-                    .map(|response| response.status().is_success())
-                    .unwrap_or(false)
-            },
+            address,
+            &server_task,
         )
         .await;
 

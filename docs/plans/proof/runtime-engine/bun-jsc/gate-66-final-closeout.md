@@ -4,7 +4,7 @@ Date: 2026-05-25
 
 ## Decision
 
-`docs/plans/bun-jsc-distribution-and-release-plan.md` is complete through
+`docs/plans/archive/bun-jsc-distribution-and-release-plan.md` is complete through
 `BJD9`.
 
 The optional Bun/JSC adapter is now a committed runtime-backend contract beside

@@ -309,10 +309,7 @@ mod tests {
             fields: Vec::new(),
             indexes: indexes
                 .iter()
-                .map(|(name, fields)| IndexDefinition {
-                    name: (*name).to_string(),
-                    fields: fields.iter().map(|field| (*field).to_string()).collect(),
-                })
+                .map(|(name, fields)| IndexDefinition::new(*name, fields.iter().copied()))
                 .collect(),
             access_policy: None,
         }

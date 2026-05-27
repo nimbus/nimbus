@@ -143,7 +143,7 @@ event names, trace/span correlation when present, and namespaced `nimbus.*`
 attributes for decision ID, tenant ID, workload identity, runtime tier,
 sandbox ID, invocation ID, service name, reason code, and redaction evidence.
 The export, retention, and conformance owner is
-`docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+`docs/plans/archive/enterprise-policy-and-sandbox-egress-plan.md`.
 
 ## Agent Auth Contract
 

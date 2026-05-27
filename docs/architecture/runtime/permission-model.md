@@ -164,7 +164,7 @@ currently delegated to an external policy language or runtime. Operator policy
 now has a typed artifact, local `validate|explain|diff|prove` UX, optional
 external backend seam, sandbox egress policy, OCSF/OpenTelemetry export
 mappings, denied-event draft workflow, and advisory/prover lane through
-`docs/plans/enterprise-policy-and-sandbox-egress-plan.md`.
+`docs/plans/archive/enterprise-policy-and-sandbox-egress-plan.md`.
 
 OPA/Rego and Cedar are credible future policy backends when customers need
 user-authored policy-as-code or analyzable authorization policy. They must

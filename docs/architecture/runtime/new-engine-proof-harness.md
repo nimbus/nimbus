@@ -11,9 +11,9 @@ defaults or let an experimental engine masquerade as an existing Node target.
 The harness is evidence for the runtime engine seam in
 [Runtime Engine Seam](engine-seam.md). It is not a shortcut around that seam.
 For Bun/JSC specifically, the completed lockdown proof is
-[Bun/JSC In-Process Lockdown](../../plans/bun-jsc-in-process-lockdown-plan.md),
+[Bun/JSC In-Process Lockdown](../../plans/archive/bun-jsc-in-process-lockdown-plan.md),
 and the active product-moving plan is
-[Bun/JSC Embedder API And Pool](../../plans/bun-jsc-embedder-api-and-pool-plan.md).
+[Bun/JSC Embedder API And Pool](../../plans/archive/bun-jsc-embedder-api-and-pool-plan.md).
 
 ## Location And Isolation
 

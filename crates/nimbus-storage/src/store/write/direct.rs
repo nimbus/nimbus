@@ -8,6 +8,9 @@ use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
 
 use super::super::resource_paths::remove_resource_path_binding_in_write_txn;
+use super::super::table_catalog::{
+    resolve_or_create_table_id_in_write_txn, resolve_table_id_in_write_txn,
+};
 use super::super::{DOCUMENTS, TenantStore, TenantWriteTransaction, map_redb_error};
 
 fn expect_write_commit(commit: Option<CommitEntry>, expectation: &str) -> Result<CommitEntry> {
@@ -19,18 +22,20 @@ impl TenantWriteTransaction {
         self.check_cancel()?;
         let payload = encode_document_msgpack(document)
             .map_err(|error| Error::Serialization(error.to_string()))?;
+        let table_id = resolve_or_create_table_id_in_write_txn(self.write_txn()?, &document.table)?;
         {
             let mut documents = self
                 .write_txn()?
                 .open_table(DOCUMENTS)
                 .map_err(map_redb_error)?;
-            let key = document_key(&document.table, &document.id);
+            let key = document_key(&table_id, &document.id);
             documents
                 .insert(key.as_slice(), payload.as_slice())
                 .map_err(map_redb_error)?;
         }
         self.record_commit_write(WriteOp {
             table: document.table.clone(),
+            table_id,
             op_type: WriteOpType::Insert,
             doc_id: document.id.clone(),
             resource_path_binding: None,
@@ -52,7 +57,9 @@ impl TenantWriteTransaction {
         F: FnOnce(&Document, &Document) -> Result<()>,
     {
         self.check_cancel()?;
-        let key = document_key(table, id);
+        let table_id = resolve_table_id_in_write_txn(self.write_txn()?, table)?
+            .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
+        let key = document_key(&table_id, id);
         let (existing_document, document) = {
             let mut documents = self
                 .write_txn()?
@@ -81,6 +88,7 @@ impl TenantWriteTransaction {
 
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id,
             op_type: WriteOpType::Update,
             doc_id: id.clone(),
             resource_path_binding: None,
@@ -101,12 +109,14 @@ impl TenantWriteTransaction {
         F: FnOnce(&Document) -> Result<()>,
     {
         self.check_cancel()?;
+        let table_id = resolve_table_id_in_write_txn(self.write_txn()?, table)?
+            .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
         let removed_document = {
             let mut documents = self
                 .write_txn()?
                 .open_table(DOCUMENTS)
                 .map_err(map_redb_error)?;
-            let key = document_key(table, id);
+            let key = document_key(&table_id, id);
             let removed = documents.remove(key.as_slice()).map_err(map_redb_error)?;
             let removed = removed.ok_or(Error::DocumentNotFound(id.clone()))?;
             decode_document_msgpack(removed.value())
@@ -119,6 +129,7 @@ impl TenantWriteTransaction {
         )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id,
             op_type: WriteOpType::Delete,
             doc_id: id.clone(),
             resource_path_binding,

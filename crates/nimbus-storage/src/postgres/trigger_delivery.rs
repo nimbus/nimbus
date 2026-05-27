@@ -42,6 +42,8 @@ impl PostgresWriteTransaction {
                 .await
                 .map_err(map_postgres_error)?;
             Ok(())
-        })
+        })?;
+        self.record_tenant_event(TenantEventKind::TriggerDelivery { cursor });
+        Ok(())
     }
 }

@@ -4,6 +4,7 @@ mod committed_mutations;
 mod diagnostics;
 mod encryption;
 mod execution_units;
+mod latency;
 mod mutations;
 mod provider_hints;
 mod queries;
@@ -42,6 +43,7 @@ pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver}
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
 pub use mutations::{AsyncMutationContext, MutationActor};
+pub(crate) use provider_hints::ProviderPollWorker;
 pub(crate) use queries::{
     evaluate_with_index_cancellable_for_principal, paginate_documents_for_store_with_principal,
     query_documents_for_store_with_principal,

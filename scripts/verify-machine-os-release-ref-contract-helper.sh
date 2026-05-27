@@ -81,6 +81,18 @@ fi
 grep -F "must not use deprecated MACHINE_OS_RELEASE_APP_ID" \
   "${tmp_dir}/bad-app-id.out" >/dev/null
 
+bad_app_token_ref="${tmp_dir}/bad-app-token-ref.yml"
+sed 's|actions/create-github-app-token@v3.2.0|actions/create-github-app-token@v3|g' \
+  "${repo_root}/.github/workflows/release.yml" >"${bad_app_token_ref}"
+if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
+  --workflow "${bad_app_token_ref}" \
+  >"${tmp_dir}/bad-app-token-ref.out" 2>&1; then
+  echo "expected release ref contract to reject create-github-app-token major-only refs while actionlint needs exact client-id metadata" >&2
+  exit 1
+fi
+grep -F "actions/create-github-app-token@v3.2.0" \
+  "${tmp_dir}/bad-app-token-ref.out" >/dev/null
+
 bad_fedora_drift="${tmp_dir}/bad-fedora-drift.yml"
 sed 's|sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" "${MACHINE_OS_FEDORA_BOOTC_IMAGE}"|sudo podman save -o "${cache_dir}/fedora-bootc-base.tar" quay.io/fedora/fedora-bootc@sha256:187d480948fe37a4cc55211b8a594adfc4f85a7d17ac1991331bf98272eb8f94|' \
   "${repo_root}/.github/workflows/release.yml" >"${bad_fedora_drift}"
@@ -207,8 +219,8 @@ grep -F 'publish-machine-os must contain: name: ${{ env.MACHINE_OS_RELEASE_ARTIF
 
 bad_release_needs="${tmp_dir}/bad-release-needs.yml"
 awk '
-  $0 == "    needs: [build-linux-arm64, build, publish-machine-os]" && replaced == 0 {
-    print "    needs: [build-linux-arm64, build, build-machine-os]"
+  $0 == "    needs: [build-linux-arm64, build, publish-machine-os, publish-oci-image]" && replaced == 0 {
+    print "    needs: [build-linux-arm64, build, build-machine-os, publish-machine-os, publish-oci-image]"
     replaced = 1
     next
   }
@@ -217,10 +229,10 @@ awk '
 if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
   --workflow "${bad_release_needs}" \
   >"${tmp_dir}/bad-release-needs.out" 2>&1; then
-  echo "expected release ref contract to reject final release bypassing publish-machine-os" >&2
+  echo "expected release ref contract to reject final release depending directly on build-machine-os" >&2
   exit 1
 fi
-grep -F "release must contain: needs: [build-linux-arm64, build, publish-machine-os]" \
+grep -F "release must not contain: build-machine-os" \
   "${tmp_dir}/bad-release-needs.out" >/dev/null
 
 printf 'verified: machine-os release source contract helper rejects ambiguous refs, legacy repository names, deprecated GitHub App app-id usage, divergent Fedora bootc refs, legacy recipe paths, loose run discovery, and build/publish DAG regressions\n'

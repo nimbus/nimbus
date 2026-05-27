@@ -195,29 +195,25 @@ fn execute_query_with_execution_unit_cancellable(
     match query {
         ConvexExecutableQuery::Query(query) => execution_unit
             .query_documents_cancellable(&query, &mut check_cancel)
-            .map(|documents| {
-                Value::Array(
-                    documents
-                        .into_iter()
-                        .map(|document| document.into_json())
-                        .collect(),
-                )
-            }),
+            .and_then(documents_to_convex_json),
         ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, id }) => {
-            execution_unit.get_document(&table, id).map(|document| {
-                document
-                    .map(|document| document.into_json())
-                    .unwrap_or(Value::Null)
-            })
+            let id = resolve_convex_document_id(&table, id)?.into_document_id();
+            execution_unit
+                .get_document(&table, id)
+                .and_then(|document| {
+                    document
+                        .map(document_to_convex_json)
+                        .unwrap_or(Ok(Value::Null))
+                })
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::First { query }) => {
             let mut documents =
                 execution_unit.query_documents_cancellable(&query, &mut check_cancel)?;
-            Ok(documents
+            documents
                 .drain(..)
                 .next()
-                .map(|document| document.into_json())
-                .unwrap_or(Value::Null))
+                .map(document_to_convex_json)
+                .unwrap_or(Ok(Value::Null))
         }
         ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
             let mut documents =
@@ -227,11 +223,11 @@ fn execute_query_with_execution_unit_cancellable(
                     "convex unique query matched multiple documents".to_string(),
                 ));
             }
-            Ok(documents
+            documents
                 .drain(..)
                 .next()
-                .map(|document| document.into_json())
-                .unwrap_or(Value::Null))
+                .map(document_to_convex_json)
+                .unwrap_or(Ok(Value::Null))
         }
     }
 }

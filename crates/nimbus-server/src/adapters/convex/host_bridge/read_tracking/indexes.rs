@@ -8,8 +8,7 @@ impl ConvexHostBridge {
     ) -> Result<Option<String>, Error> {
         let schema = self.service().get_table_schema(self.tenant_id(), table)?;
         Ok(schema
-            .indexes
-            .iter()
+            .queryable_indexes()
             .find(|index| index.name == index_name)
             .and_then(|index| index.single_field().map(|field| field.to_string())))
     }
@@ -25,11 +24,10 @@ impl ConvexHostBridge {
             .ok()?;
         let index = if let Some(index_name) = preferred_index_name {
             table_schema
-                .indexes
-                .iter()
+                .queryable_indexes()
                 .find(|index| index.name == index_name)
         } else {
-            table_schema.indexes.iter().find(|index| {
+            table_schema.queryable_indexes().find(|index| {
                 query.filters.iter().any(|filter| {
                     index.single_field() == Some(filter.field.as_str())
                         && is_scalar_filter_value(&filter.value)
@@ -102,6 +100,12 @@ impl ConvexHostBridge {
 
         Some(RuntimeIndexRangeRead {
             table: query.table.clone(),
+            table_id: self
+                .service()
+                .table_id(self.tenant_id(), &query.table)
+                .ok()
+                .flatten(),
+            index_id: Some(index.id.clone()),
             index_name: index.name.clone(),
             field,
             start,

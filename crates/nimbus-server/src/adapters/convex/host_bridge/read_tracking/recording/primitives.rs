@@ -2,11 +2,23 @@ use super::*;
 
 impl ConvexHostBridge {
     pub(in crate::adapters::convex) fn record_table_read(&self, table: &TableName) {
-        self.host_state().record_table_read(table);
+        let table_id = self
+            .service()
+            .table_id(self.tenant_id(), table)
+            .ok()
+            .flatten();
+        self.host_state()
+            .record_table_read(table, table_id.as_ref());
     }
 
     pub(crate) fn record_document_read(&self, table: &TableName, document_id: &DocumentId) {
-        self.host_state().record_document_read(table, document_id);
+        let table_id = self
+            .service()
+            .table_id(self.tenant_id(), table)
+            .ok()
+            .flatten();
+        self.host_state()
+            .record_document_read(table, table_id.as_ref(), document_id);
     }
 
     pub(in crate::adapters::convex) fn record_result_documents(
@@ -25,6 +37,11 @@ impl ConvexHostBridge {
                     .get("_id")
                     .and_then(Value::as_str)
                     .and_then(|value| value.parse::<DocumentId>().ok())
+                    .and_then(|document_id| {
+                        resolve_convex_document_id(table, document_id)
+                            .ok()
+                            .map(|resolved| resolved.into_document_id())
+                    })
                 {
                     self.record_document_read(table, &document_id);
                 }
@@ -63,8 +80,18 @@ impl ConvexHostBridge {
         after: Option<&Cursor>,
         page: &nimbus_core::Page,
     ) {
-        self.host_state()
-            .record_paginated_window_read(query, page_size, after, page);
+        let table_id = self
+            .service()
+            .table_id(self.tenant_id(), &query.table)
+            .ok()
+            .flatten();
+        self.host_state().record_paginated_window_read(
+            query,
+            table_id.as_ref(),
+            page_size,
+            after,
+            page,
+        );
     }
 
     pub(in crate::adapters::convex) fn record_limited_query_window(
@@ -100,6 +127,12 @@ impl ConvexHostBridge {
         table: &TableName,
         filters: &[Filter],
     ) {
-        self.host_state().record_predicate_read(table, filters);
+        let table_id = self
+            .service()
+            .table_id(self.tenant_id(), table)
+            .ok()
+            .flatten();
+        self.host_state()
+            .record_predicate_read(table, table_id.as_ref(), filters);
     }
 }

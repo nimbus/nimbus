@@ -5,7 +5,7 @@ Date: 2026-05-25
 ## Scope
 
 This proof closes `BJD4` of
-`docs/plans/bun-jsc-distribution-and-release-plan.md`.
+`docs/plans/archive/bun-jsc-distribution-and-release-plan.md`.
 
 The goal is to integrate optional Bun/JSC adapter archives into release asset
 verification and publication without making every default Nimbus tag release

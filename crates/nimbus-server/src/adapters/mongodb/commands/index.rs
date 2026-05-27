@@ -67,7 +67,9 @@ pub fn create_indexes(
             continue;
         }
 
-        table_schema.indexes.push(IndexDefinition { name, fields });
+        table_schema
+            .indexes
+            .push(IndexDefinition::new(name, fields));
     }
 
     let num_after = table_schema.indexes.len();

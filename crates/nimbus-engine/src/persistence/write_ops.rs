@@ -1,15 +1,10 @@
-use nimbus_core::{
-    CronJob, DocumentId, Result, ScheduledJob, ScheduledJobResult, TableName, TableSchema,
-    Timestamp,
-};
+use nimbus_core::{CronJob, DocumentId, Result, ScheduledJob, ScheduledJobResult, Timestamp};
 use nimbus_storage::{
     LibsqlReplicaWriteTransaction, MySqlWriteTransaction, PostgresWriteTransaction,
     TenantWriteTransaction as RedbWriteTransaction,
 };
 
 pub(crate) trait TenantPersistenceWriteOps {
-    fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()>;
-    fn delete_table_schema(&mut self, table: &TableName) -> Result<()>;
     fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()>;
     fn claim_due_jobs(&mut self, now: Timestamp) -> Result<Vec<ScheduledJob>>;
     fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()>;
@@ -20,14 +15,6 @@ pub(crate) trait TenantPersistenceWriteOps {
 }
 
 impl TenantPersistenceWriteOps for RedbWriteTransaction {
-    fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
-        self.replace_table_schema(table_schema)
-    }
-
-    fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
-        self.delete_table_schema(table)
-    }
-
     fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()> {
         self.insert_scheduled_job(job)
     }
@@ -58,14 +45,6 @@ impl TenantPersistenceWriteOps for RedbWriteTransaction {
 }
 
 impl TenantPersistenceWriteOps for nimbus_storage::SqliteWriteTransaction {
-    fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
-        self.replace_table_schema(table_schema)
-    }
-
-    fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
-        self.delete_table_schema(table)
-    }
-
     fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()> {
         self.insert_scheduled_job(job)
     }
@@ -96,14 +75,6 @@ impl TenantPersistenceWriteOps for nimbus_storage::SqliteWriteTransaction {
 }
 
 impl TenantPersistenceWriteOps for PostgresWriteTransaction {
-    fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
-        self.replace_table_schema(table_schema)
-    }
-
-    fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
-        self.delete_table_schema(table)
-    }
-
     fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()> {
         self.insert_scheduled_job(job)
     }
@@ -134,14 +105,6 @@ impl TenantPersistenceWriteOps for PostgresWriteTransaction {
 }
 
 impl TenantPersistenceWriteOps for LibsqlReplicaWriteTransaction {
-    fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
-        self.replace_table_schema(table_schema)
-    }
-
-    fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
-        self.delete_table_schema(table)
-    }
-
     fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()> {
         self.insert_scheduled_job(job)
     }
@@ -172,14 +135,6 @@ impl TenantPersistenceWriteOps for LibsqlReplicaWriteTransaction {
 }
 
 impl TenantPersistenceWriteOps for MySqlWriteTransaction {
-    fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
-        self.replace_table_schema(table_schema)
-    }
-
-    fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
-        self.delete_table_schema(table)
-    }
-
     fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()> {
         self.insert_scheduled_job(job)
     }

@@ -64,7 +64,7 @@ fn tenant_decision_input(
             .with_guest_port(5432),
         ]))
         .with_storage(TenantStoragePolicyDecision::namespace("tenant-a"))
-        .with_volumes(TenantVolumePolicyDecision::new(["cache"]))
+        .with_volumes(TenantVolumePolicyDecision::new(["cache"])) // 002-auth-caching-policy: volume fixture name, not auth cache
         .with_image(TenantImagePolicyDecision::digest_pinned(
             "registry.example.com/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ))
@@ -377,7 +377,7 @@ fn tenant_isolation_decision_clones_inputs_so_policy_cannot_widen_after_admissio
     input
         .volumes
         .named_volumes
-        .push("other-tenant-cache".to_string());
+        .push("other-tenant-cache".to_string()); // 002-auth-caching-policy: volume fixture name, not auth cache
     input.runtime.grants.run.push("npm".to_string());
 
     assert_eq!(
@@ -392,7 +392,7 @@ fn tenant_isolation_decision_clones_inputs_so_policy_cannot_widen_after_admissio
     );
     assert_eq!(
         decision.volumes().named_volumes(),
-        &["cache".to_string()],
+        &["cache".to_string()], // 002-auth-caching-policy: volume fixture name, not auth cache
         "admitted volume grants should be immutable snapshots"
     );
     assert!(
@@ -566,7 +566,7 @@ fn tenant_isolation_decision_rejects_mismatched_service_before_launch() {
         .service_access("db", "sandbox service launch")
         .expect("db service should be admitted");
     let launch = SandboxServiceLaunch::image(SandboxImageLaunchSpec::new(
-        sparse_spec("tenant-a", "cache", SandboxBackendKind::Krun),
+        sparse_spec("tenant-a", "cache", SandboxBackendKind::Krun), // 002-auth-caching-policy: service fixture name, not auth cache
         "redis:7",
     ));
 
@@ -817,7 +817,7 @@ fn production_untrusted_runtime_admission_routes_native_addon_package_loading_to
             read: vec![
                 "$generated_root".to_string(),
                 "$app_root".to_string(),
-                "$cache_root".to_string(),
+                "$cache_root".to_string(), // 002-auth-caching-policy: filesystem grant name, not auth cache
             ],
             ..nimbus_runtime::RuntimeGrants::application_web_standard()
         },

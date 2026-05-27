@@ -396,6 +396,8 @@ module.exports.exportedValue = "exports-from-app-root";
 #[tokio::test]
 async fn tooling_node22_executes_esbuild_style_staged_binary() {
     let _guard = acquire_basic_invocation_suite_lock().await;
+    let _dangerous_host_env =
+        ScopedProcessEnvVar::set("DYLD_FALLBACK_LIBRARY_PATH", "/tmp/nimbus-hidden-dyld");
     let (tempdir, bundle_path) = write_app_style_bundle(
         r#"
 import { build } from "esbuild";

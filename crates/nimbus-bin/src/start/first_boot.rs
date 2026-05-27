@@ -130,10 +130,10 @@ mod tests {
         LocalServerSecurityState, ServeOptions, ServerDiscoveryLease,
         load_or_create_local_admin_token, serve,
     };
-    use nimbus_testing::wait_for_condition;
     use tempfile::tempdir;
 
     use super::*;
+    use crate::test_support::wait_for_live_server_health;
 
     fn sample_paths(root: &std::path::Path) -> LocalServerPaths {
         LocalServerPaths {
@@ -235,19 +235,10 @@ mod tests {
             listener,
             ServeOptions::new(service.clone()).with_local_server_security(local_server_security),
         ));
-        let client = reqwest::Client::new();
-        wait_for_condition(
+        wait_for_live_server_health(
             "first-boot test server should answer /health",
-            Duration::from_secs(5),
-            Duration::from_millis(50),
-            || async {
-                client
-                    .get(format!("http://{address}/health"))
-                    .send()
-                    .await
-                    .map(|response| response.status().is_success())
-                    .unwrap_or(false)
-            },
+            address,
+            &server_task,
         )
         .await;
         let lease =

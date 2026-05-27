@@ -4,6 +4,9 @@ use serde_json::Value;
 
 use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
+use crate::store::table_catalog::{
+    resolve_or_create_table_id_in_write_txn, resolve_table_id_in_write_txn,
+};
 use crate::store::{INDEXES, TenantWriteTransaction, map_redb_error};
 
 use super::super::keyspace::index_key_for_document;
@@ -17,12 +20,13 @@ impl TenantWriteTransaction {
     ) -> Result<()> {
         self.insert_document(document)?;
         self.check_cancel()?;
+        let table_id = resolve_or_create_table_id_in_write_txn(self.write_txn()?, &document.table)?;
         let mut index_table = self
             .write_txn()?
             .open_table(INDEXES)
             .map_err(map_redb_error)?;
-        for index in indexes {
-            if let Some(key) = index_key_for_document(document, index)? {
+        for index in indexes.iter().filter(|index| index.is_maintained()) {
+            if let Some(key) = index_key_for_document(document, index, &table_id)? {
                 index_table
                     .insert(key.as_slice(), EMPTY_INDEX_VALUE)
                     .map_err(map_redb_error)?;
@@ -43,7 +47,9 @@ impl TenantWriteTransaction {
         F: FnOnce(&Document, &Document) -> Result<()>,
     {
         self.check_cancel()?;
-        let key = document_key(table, id);
+        let table_id = resolve_table_id_in_write_txn(self.write_txn()?, table)?
+            .ok_or_else(|| nimbus_core::Error::DocumentNotFound(id.clone()))?;
+        let key = document_key(&table_id, id);
         let (old_document, new_document, payload) = {
             let documents = self
                 .write_txn()?
@@ -84,9 +90,9 @@ impl TenantWriteTransaction {
                 .write_txn()?
                 .open_table(INDEXES)
                 .map_err(map_redb_error)?;
-            for index in indexes {
-                let old_key = index_key_for_document(&old_document, index)?;
-                let new_key = index_key_for_document(&new_document, index)?;
+            for index in indexes.iter().filter(|index| index.is_maintained()) {
+                let old_key = index_key_for_document(&old_document, index, &table_id)?;
+                let new_key = index_key_for_document(&new_document, index, &table_id)?;
 
                 if old_key == new_key {
                     continue;
@@ -106,6 +112,7 @@ impl TenantWriteTransaction {
 
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id,
             op_type: WriteOpType::Update,
             doc_id: id.clone(),
             resource_path_binding: None,
@@ -127,7 +134,9 @@ impl TenantWriteTransaction {
         F: FnOnce(&Document) -> Result<()>,
     {
         self.check_cancel()?;
-        let key = document_key(table, id);
+        let table_id = resolve_table_id_in_write_txn(self.write_txn()?, table)?
+            .ok_or_else(|| nimbus_core::Error::DocumentNotFound(id.clone()))?;
+        let key = document_key(&table_id, id);
         let old_document = {
             let mut documents = self
                 .write_txn()?
@@ -146,8 +155,8 @@ impl TenantWriteTransaction {
                 .write_txn()?
                 .open_table(INDEXES)
                 .map_err(map_redb_error)?;
-            for index in indexes {
-                if let Some(key) = index_key_for_document(&old_document, index)? {
+            for index in indexes.iter().filter(|index| index.is_maintained()) {
+                if let Some(key) = index_key_for_document(&old_document, index, &table_id)? {
                     index_table.remove(key.as_slice()).map_err(map_redb_error)?;
                 }
             }
@@ -155,6 +164,7 @@ impl TenantWriteTransaction {
 
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id,
             op_type: WriteOpType::Delete,
             doc_id: id.clone(),
             resource_path_binding: None,

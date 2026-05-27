@@ -397,6 +397,7 @@ impl MySqlWriteTransaction {
             schema_cache: store.schema_cache.clone(),
             conn: Some(conn),
             commit_writes: Vec::new(),
+            tenant_events: Vec::new(),
             trigger_write_origin: None,
             schema_cache_changed: false,
             check_cancel,
@@ -417,22 +418,36 @@ impl MySqlWriteTransaction {
 
     pub fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
         self.check_cancel()?;
-        if let Some(previous) = self.load_table_schema(&table_schema.table)? {
+        let table_id = self.resolve_or_create_table_id(&table_schema.table)?;
+        let previous = self.load_table_schema(&table_schema.table)?;
+        let mut table_schema = table_schema.clone();
+        table_schema.reconcile_index_metadata(previous.as_ref());
+        if let Some(previous) = previous.as_ref() {
             self.drop_table_indexes(&previous)?;
         }
-        self.upsert_table_schema(table_schema)?;
-        self.create_table_indexes(table_schema)?;
+        self.upsert_table_schema(&table_schema)?;
+        self.create_table_indexes(&table_schema)?;
         self.schema_cache_changed = true;
+        record_mysql_schema_set_events(self, table_id, previous, &table_schema);
         Ok(())
     }
 
     pub fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
         self.check_cancel()?;
-        if let Some(previous) = self.load_table_schema(table)? {
+        let previous = self.load_table_schema(table)?;
+        let table_id = self.load_table_id(table)?;
+        if let Some(previous) = previous.as_ref() {
             self.drop_table_indexes(&previous)?;
         }
         self.delete_table_schema_entry(table)?;
         self.schema_cache_changed = true;
+        self.record_tenant_event(TenantEventKind::SchemaChange {
+            change: SchemaChangeEvent::DeleteTable {
+                table: table.clone(),
+                table_id,
+                previous,
+            },
+        });
         Ok(())
     }
 
@@ -441,18 +456,25 @@ impl MySqlWriteTransaction {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
         let conn = self.session()?;
-        Self::block_on(&runtime_handle, async move {
+        let inserted = Self::block_on(&runtime_handle, async move {
             begin_scheduled_execution_in_session(conn, &database_name, execution_id).await
-        })
+        })?;
+        if inserted && let Some(execution_id) = execution_id {
+            self.record_tenant_event(TenantEventKind::ScheduledExecution {
+                execution_id: execution_id.to_string(),
+            });
+        }
+        Ok(inserted)
     }
 
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
         self.check_cancel()?;
+        let table_id = self.resolve_or_create_table_id(&document.table)?;
+        let write_table_id = table_id.clone();
         let query = format!(
-            "INSERT INTO {} (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO {} (table_id, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
             qualified_table(&self.database_name, "documents")
         );
-        let table_name = document.table.as_str().to_string();
         let document_id = document.id.to_string();
         let data_json = serialize_document_fields(document)?;
         let typed_fields_json = serialize_document_typed_fields(document)?;
@@ -464,7 +486,7 @@ impl MySqlWriteTransaction {
             conn.exec_drop(
                 query,
                 (
-                    table_name,
+                    table_id.to_string(),
                     document_id,
                     data_json,
                     typed_fields_json,
@@ -477,6 +499,7 @@ impl MySqlWriteTransaction {
         })?;
         self.record_commit_write(WriteOp {
             table: document.table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Insert,
             doc_id: document.id.clone(),
             resource_path_binding: None,
@@ -507,15 +530,18 @@ impl MySqlWriteTransaction {
         }
         document.update_time = self.provider.clock.now();
         validate(&existing_document, &document)?;
+        let table_id = self
+            .load_table_id(table)?
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
+        let write_table_id = table_id.clone();
         let query = format!(
-            "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_name = ? AND id = ?",
+            "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_id = ? AND id = ?",
             qualified_table(&self.database_name, "documents")
         );
         let data_json = serialize_document_fields(&document)?;
         let typed_fields_json = serialize_document_typed_fields(&document)?;
         let creation_time = document.creation_time.0;
         let update_time = document.update_time.0;
-        let table_name = table.as_str().to_string();
         let document_id = id.to_string();
         let runtime_handle = self.provider.runtime_handle.clone();
         let conn = self.session()?;
@@ -527,7 +553,7 @@ impl MySqlWriteTransaction {
                     typed_fields_json,
                     creation_time,
                     update_time,
-                    table_name,
+                    table_id.to_string(),
                     document_id,
                 ),
             )
@@ -539,6 +565,7 @@ impl MySqlWriteTransaction {
         )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Update,
             doc_id: id.clone(),
             resource_path_binding,
@@ -563,16 +590,19 @@ impl MySqlWriteTransaction {
             .load_document(table, id)?
             .ok_or(Error::DocumentNotFound(id.clone()))?;
         validate(&removed_document)?;
+        let table_id = self
+            .load_table_id(table)?
+            .ok_or(Error::DocumentNotFound(id.clone()))?;
+        let write_table_id = table_id.clone();
         let query = format!(
-            "DELETE FROM {} WHERE table_name = ? AND id = ?",
+            "DELETE FROM {} WHERE table_id = ? AND id = ?",
             qualified_table(&self.database_name, "documents")
         );
-        let table_name = table.as_str().to_string();
         let document_id = id.to_string();
         let runtime_handle = self.provider.runtime_handle.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
-            conn.exec_drop(query, (table_name, document_id))
+            conn.exec_drop(query, (table_id.to_string(), document_id))
                 .await
                 .map_err(map_mysql_error)
         })?;
@@ -581,6 +611,7 @@ impl MySqlWriteTransaction {
         )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Delete,
             doc_id: id.clone(),
             resource_path_binding,
@@ -897,15 +928,21 @@ impl MySqlWriteTransaction {
                         current.id
                     )));
                 }
+                let table_id =
+                    self.load_table_id(&current.table)?
+                        .ok_or(Error::Conflict(format!(
+                            "document {} changed before transaction commit",
+                            current.id
+                        )))?;
+                let write_table_id = table_id.clone();
                 let query = format!(
-                    "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_name = ? AND id = ?",
+                    "UPDATE {} SET data_json = ?, typed_fields_json = ?, creation_time = ?, update_time = ? WHERE table_id = ? AND id = ?",
                     qualified_table(&self.database_name, "documents")
                 );
                 let data_json = serialize_document_fields(current)?;
                 let typed_fields_json = serialize_document_typed_fields(current)?;
                 let creation_time = current.creation_time.0;
                 let update_time = current.update_time.0;
-                let table_name = current.table.as_str().to_string();
                 let document_id = current.id.to_string();
                 let runtime_handle = self.provider.runtime_handle.clone();
                 let conn = self.session()?;
@@ -917,7 +954,7 @@ impl MySqlWriteTransaction {
                             typed_fields_json,
                             creation_time,
                             update_time,
-                            table_name,
+                            table_id.to_string(),
                             document_id,
                         ),
                     )
@@ -926,6 +963,7 @@ impl MySqlWriteTransaction {
                 })?;
                 self.record_commit_write(WriteOp {
                     table: current.table.clone(),
+                    table_id: write_table_id,
                     op_type: WriteOpType::Update,
                     doc_id: current.id.clone(),
                     resource_path_binding: resource_path_binding.clone(),
@@ -952,16 +990,22 @@ impl MySqlWriteTransaction {
                         previous.id
                     )));
                 }
+                let table_id =
+                    self.load_table_id(&previous.table)?
+                        .ok_or(Error::Conflict(format!(
+                            "document {} changed before transaction commit",
+                            previous.id
+                        )))?;
+                let write_table_id = table_id.clone();
                 let query = format!(
-                    "DELETE FROM {} WHERE table_name = ? AND id = ?",
+                    "DELETE FROM {} WHERE table_id = ? AND id = ?",
                     qualified_table(&self.database_name, "documents")
                 );
-                let table_name = previous.table.as_str().to_string();
                 let document_id = previous.id.to_string();
                 let runtime_handle = self.provider.runtime_handle.clone();
                 let conn = self.session()?;
                 Self::block_on(&runtime_handle, async move {
-                    conn.exec_drop(query, (table_name, document_id))
+                    conn.exec_drop(query, (table_id.to_string(), document_id))
                         .await
                         .map_err(map_mysql_error)
                 })?;
@@ -970,6 +1014,7 @@ impl MySqlWriteTransaction {
                 )?;
                 self.record_commit_write(WriteOp {
                     table: previous.table.clone(),
+                    table_id: write_table_id,
                     op_type: WriteOpType::Delete,
                     doc_id: previous.id.clone(),
                     resource_path_binding,
@@ -984,11 +1029,20 @@ impl MySqlWriteTransaction {
 
     pub fn commit(mut self) -> Result<Option<CommitEntry>> {
         self.check_cancel()?;
-        let commit = if self.commit_writes.is_empty() {
+        let writes = std::mem::take(&mut self.commit_writes);
+        if !writes.is_empty() {
+            self.tenant_events.insert(
+                0,
+                TenantEventKind::DocumentWrite {
+                    writes: writes.clone(),
+                },
+            );
+        }
+        let commit = if self.tenant_events.is_empty() {
             None
         } else {
-            let writes = std::mem::take(&mut self.commit_writes);
-            Some(self.append_commit_entry(writes)?)
+            let events = std::mem::take(&mut self.tenant_events);
+            Some(self.append_commit_entry(writes, events)?)
         };
         self.provider
             .fault_injector
@@ -1096,14 +1150,20 @@ impl MySqlWriteTransaction {
         })
     }
 
-    fn append_commit_entry(&mut self, writes: Vec<WriteOp>) -> Result<CommitEntry> {
+    fn append_commit_entry(
+        &mut self,
+        writes: Vec<WriteOp>,
+        events: Vec<TenantEventKind>,
+    ) -> Result<CommitEntry> {
         let sequence = SequenceNumber(self.latest_sequence()?.0.saturating_add(1));
+        let timestamp = self.provider.clock.now();
+        let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
         let entry = CommitEntry {
             sequence,
-            timestamp: self.provider.clock.now(),
+            timestamp,
             writes,
         };
-        let payload = serialize_commit(&entry)?;
+        let payload = serialize_tenant_event_record(&record)?;
         let query = format!(
             "INSERT INTO {} (sequence, record_blob) VALUES (?, ?)",
             qualified_table(&self.database_name, "commit_log")
@@ -1145,7 +1205,27 @@ impl MySqlWriteTransaction {
         })
     }
 
-    fn load_table_schema(&mut self, table: &TableName) -> Result<Option<TableSchema>> {
+    pub(super) fn load_table_id(&mut self, table: &TableName) -> Result<Option<TableId>> {
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let database_name = self.database_name.clone();
+        let table = table.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            load_table_id_from_session(conn, &database_name, &table).await
+        })
+    }
+
+    fn resolve_or_create_table_id(&mut self, table: &TableName) -> Result<TableId> {
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let database_name = self.database_name.clone();
+        let table = table.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            resolve_or_create_table_id_from_session(conn, &database_name, &table).await
+        })
+    }
+
+    pub(super) fn load_table_schema(&mut self, table: &TableName) -> Result<Option<TableSchema>> {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
         let table = table.clone();
@@ -1172,7 +1252,7 @@ impl MySqlWriteTransaction {
         })
     }
 
-    fn delete_table_schema_entry(&mut self, table: &TableName) -> Result<()> {
+    pub(super) fn delete_table_schema_entry(&mut self, table: &TableName) -> Result<()> {
         let query = format!(
             "DELETE FROM {} WHERE table_name = ?",
             qualified_table(&self.database_name, "schemas")
@@ -1197,7 +1277,7 @@ impl MySqlWriteTransaction {
         })
     }
 
-    fn drop_table_indexes(&mut self, table_schema: &TableSchema) -> Result<()> {
+    pub(super) fn drop_table_indexes(&mut self, table_schema: &TableSchema) -> Result<()> {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
         let table_schema = table_schema.clone();
@@ -1220,10 +1300,15 @@ impl MySqlWriteTransaction {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
         let record = record.clone();
+        let changes_schema_cache = durable_record_changes_schema_cache(&record);
         let conn = self.session()?;
-        Self::block_on(&runtime_handle, async move {
+        let result = Self::block_on(&runtime_handle, async move {
             apply_durable_record_in_session(conn, &database_name, &record).await
-        })
+        });
+        if result.is_ok() && changes_schema_cache {
+            self.schema_cache_changed = true;
+        }
+        result
     }
 
     fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
@@ -1236,6 +1321,49 @@ impl MySqlWriteTransaction {
         }
         self.commit_writes.push(write);
     }
+
+    pub(super) fn record_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.push(event);
+    }
+}
+
+fn record_mysql_schema_set_events(
+    transaction: &mut MySqlWriteTransaction,
+    table_id: TableId,
+    previous: Option<TableSchema>,
+    table_schema: &TableSchema,
+) {
+    transaction.record_tenant_event(TenantEventKind::SchemaChange {
+        change: SchemaChangeEvent::SetTable {
+            table: table_schema.table.clone(),
+            table_id: table_id.clone(),
+            previous,
+            current: table_schema.clone(),
+        },
+    });
+    for index in &table_schema.indexes {
+        transaction.record_tenant_event(TenantEventKind::IndexLifecycle {
+            index: IndexLifecycleEvent {
+                table: table_schema.table.clone(),
+                table_id: table_id.clone(),
+                index_id: index.id.clone(),
+                state: index.state,
+                definition: index.clone(),
+            },
+        });
+    }
+}
+
+fn durable_record_changes_schema_cache(record: &DurableMutationRecord) -> bool {
+    record.events.iter().any(|event| {
+        matches!(
+            event,
+            TenantEventKind::SchemaChange { .. }
+                | TenantEventKind::TableLifecycle {
+                    lifecycle: TableLifecycleEvent::HardDelete { .. },
+                }
+        )
+    })
 }
 
 fn is_retryable_mysql_begin_error(error: &Error) -> bool {

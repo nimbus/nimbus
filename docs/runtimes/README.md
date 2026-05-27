@@ -10,7 +10,7 @@ evidence backs each support claim.
 | --- | --- | --- |
 | Web-standard JavaScript isolate | Supported baseline | See adapter-specific docs and `docs/architecture/runtime/adapter-boundary.md` |
 | Node.js-compatible JavaScript | Supported for measured Node20, Node22, and Node24 lanes | [Node.js runtime](nodejs/) |
-| Bun/JSC JavaScript | Optional in-process backend candidate. Default builds stay fail-closed as `not_linked`; linked builds verify adapter metadata for diagnostics and load the shared adapter lazily on invocation. | [Native runtime diagnostics](../adapters/native/http-api.md#runtime-diagnostics-shape) and [Bun/JSC distribution plan](../plans/bun-jsc-distribution-and-release-plan.md) |
+| Bun/JSC JavaScript | Optional in-process backend candidate. Default builds stay fail-closed as `not_linked`; linked builds verify adapter metadata for diagnostics and load the shared adapter lazily on invocation. | [Native runtime diagnostics](../adapters/native/http-api.md#runtime-diagnostics-shape) and [Bun/JSC distribution plan](../plans/archive/bun-jsc-distribution-and-release-plan.md) |
 
 ## Runtime Permission Model
 

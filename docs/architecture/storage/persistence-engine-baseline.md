@@ -15,7 +15,9 @@ or the settled persistence-specific design decisions.
   engine-visible behavior behind provider-owned seams.
 - The cross-tenant usage and control database remains local and redb-backed
   today.
-- `DurableMutationRecord` is the authoritative per-tenant ordered history.
+- The tenant event journal is the authoritative per-tenant ordered history.
+  `TenantEventRecord` carries document, schema, table lifecycle, index
+  lifecycle, scheduler, trigger-delivery, and barrier events.
 - Serving reads still come from applied materialized state rather than from a
   journal-overlay path.
 
@@ -24,19 +26,20 @@ or the settled persistence-specific design decisions.
 ### SQLite tenant layout
 
 Each SQLite tenant database keeps documents as JSON at rest, durable journal
-rows as serialized `DurableMutationRecord` blobs, and scheduler or metadata
+rows as serialized `TenantEventRecord` blobs, and scheduler or metadata
 state in relational tables:
 
 | Table | Columns | Purpose |
 | --- | --- | --- |
-| `documents` | `table_name`, `id`, `data_json`, `creation_time` | Primary document store with JSON-at-rest payloads |
+| `table_catalog` | `namespace`, `table_name`, `table_id` | Stable logical table identity catalog |
+| `documents` | `table_id`, `id`, `data_json`, `typed_fields_json`, `creation_time`, `update_time` | Primary document store with JSON-at-rest payloads keyed by stable table identity |
 | `schemas` | `table_name`, `schema_json` | Per-table schema definitions |
 | `scheduled_jobs` | `id`, `data_json` | Pending scheduled mutations |
 | `running_scheduled_jobs` | `id`, `data_json` | In-flight jobs for crash recovery |
 | `scheduled_job_results` | `job_id`, `data_json` | Execution outcomes |
 | `scheduled_job_executions` | `execution_id` | Dedup guard for scheduled execution ids |
 | `cron_jobs` | `name`, `data_json` | Recurring job definitions |
-| `commit_log` | `sequence`, `record_blob` | Append-only durable mutation journal |
+| `commit_log` | `sequence`, `record_blob` | Append-only tenant event journal |
 | `metadata` | `key`, `value_blob` | Applied head and related per-tenant metadata |
 
 SQLite expression indexes are derived from table schema definitions and own the
@@ -49,10 +52,11 @@ indexes, schemas, the durable journal, scheduler state, and metadata:
 
 | Table | Key | Value | Purpose |
 | --- | --- | --- | --- |
-| `DOCUMENTS` | `table\0doc_id` | msgpack(Document) | Primary document store |
-| `INDEXES` | `table\0idx\0encoded_val+doc_id` | empty | Secondary index entries |
+| `TABLE_CATALOG` | `namespace\0table_name` | `table_id` | Stable logical table identity catalog |
+| `DOCUMENTS` | `table_id\0doc_id` | msgpack(Document) | Primary document store keyed by stable table identity |
+| `INDEXES` | `table_id\0idx\0encoded_val+doc_id` | empty | Secondary index entries keyed by stable table identity |
 | `SCHEMAS` | `table_name` | msgpack(TableSchema) | Per-table schema definitions |
-| `COMMIT_LOG` | `sequence (u64)` | msgpack(DurableMutationRecord) | Append-only durable mutation journal |
+| `COMMIT_LOG` | `sequence (u64)` | msgpack(TenantEventRecord) | Append-only tenant event journal |
 | `METADATA` | `"next_sequence"` / `"applied_sequence"` | `u64` | Durable-sequence and applied-head tracking |
 | `SCHEDULED_JOBS` | `run_at(8B)+job_id(16B)` | msgpack(ScheduledJob) | Pending scheduled mutations |
 | `RUNNING_SCHEDULED_JOBS` | `job_id(16B)` | msgpack(ScheduledJob) | In-flight jobs for crash recovery |
@@ -89,23 +93,24 @@ expression indexes. redb executes the physical read path through encoded
 secondary-index key scans. Residual semantics, auth, and final query meaning
 stay in Nimbus.
 
-## Durable Journal Baseline
+## Tenant Event Journal Baseline
 
-### Why the durable journal is Nimbus-owned
+### Why the tenant event journal is Nimbus-owned
 
-Nimbus does not treat the durable journal as a generic storage-engine WAL
+Nimbus does not treat the tenant event journal as a generic storage-engine WAL
 substitute. The authoritative journal is a Nimbus-defined logical ordered
 history built above backend internals because the reactive architecture needs:
 
-- logical mutation records rather than page-level recovery entries
+- logical tenant event records rather than page-level recovery entries
 - the same ordered history for replay, dependency-aware invalidation, CDC, and
   future replica consumers
 - freedom to change materializers later without redefining the
   application-level durability contract
 
-Document and index tables remain an applied materialized view maintained from
-that history, with `applied_sequence` defining the serving boundary between
-what is already materialized and what still lives only in the journal tail.
+Document, index, schema, table lifecycle, scheduler, trigger-delivery, and
+diagnostic metadata tables remain applied materialized views maintained from
+that history. `applied_sequence` defines the serving boundary between what is
+already materialized and what still lives only in the journal tail.
 
 ### Bootstrap and replay contract
 
@@ -120,6 +125,15 @@ and the durable head observed at export time so rebuild can reject an
 incomplete journal tail loudly instead of silently reconstructing only the
 applied prefix.
 
+### Retention floor and destructive cleanup
+
+Hard delete is retention-gated. `RetentionFloor` tracks participants that pin a
+table identity or event sequence, including transaction sessions, exported
+snapshots, journal consumers, embedded replicas, shadow materializers, and
+CDC/subscription consumers. A backend may physically remove a deleting table
+only after the retention floor proves no retained reader or consumer can still
+reference that table identity.
+
 ### Read visibility
 
 Committed does not immediately mean read-visible. The durable journal defines
@@ -128,6 +142,27 @@ materialized state. Async mutations acknowledge after the durable append, but
 reads, subscriptions, and cache publication wait for
 `applied_sequence >= required_sequence` instead of overlaying journal-only
 records into point reads, scans, subscriptions, or cache lookups.
+
+`ReadVisibility`, `RequiredSequence`, and `PinnedServingSnapshot` are the typed
+boundary for this current latest-row posture.
+
+### Diagnostics and format gates
+
+Every backend exposes `StorageCapabilities` and `StorageHealthDiagnostic`.
+The diagnostic reports backend layout, event-log head, applied head, retention
+floor, storage format version, encryption posture, freshness lag, last recovery
+status, and exact-summary support.
+
+`StorageFormatVersion` is explicit and unknown future versions fail closed
+through startup validation rather than being treated as best-effort metadata.
+
+Nimbus intentionally stores latest document/index rows rather than Convex-style
+MVCC rows for every historical version. The enterprise guarantee is the ordered
+logical history plus materialized snapshot boundary: snapshot plus journal tail
+can rebuild applied state, and transaction sessions pin their begin snapshot
+for repeatable reads. Nimbus does not claim arbitrary historical table/index
+queries until a product requirement justifies full versioned-row retention,
+compaction, and backend-specific historical index selection.
 
 ## Replica and Serving Baseline
 

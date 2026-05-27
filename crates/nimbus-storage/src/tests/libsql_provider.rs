@@ -8,8 +8,9 @@ use libsql::{Builder, Database};
 use nimbus_core::{
     CollectionName, CronJob, CronSchedule, Document, DocumentId, DocumentLocator, DocumentPath,
     DurableMutationRecord, FieldSchema, FieldType, IndexDefinition, Mutation, ResourcePathBinding,
-    ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, SequenceNumber, TableName, TableSchema,
-    TenantId, Timestamp, WriteOp, WriteOpType,
+    ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, SchemaChangeEvent, SequenceNumber,
+    TableId, TableName, TableSchema, TableState, TenantEventKind, TenantId, Timestamp,
+    TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
 use serial_test::serial;
 use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
@@ -174,6 +175,8 @@ async fn libsql_opened_tenant_materializes_local_sqlite_snapshot() {
                 required: false,
             }],
             indexes: vec![IndexDefinition {
+                id: nimbus_core::IndexId::new(),
+                state: nimbus_core::IndexState::Enabled,
                 name: "by_rank".to_string(),
                 fields: vec!["rank".to_string()],
             }],
@@ -474,7 +477,7 @@ async fn libsql_execution_unit_batch_and_scheduler_state_round_trip() {
             )
             .expect("batch should succeed")
             .expect("batch with writes should emit a commit");
-        assert_eq!(commit.sequence, SequenceNumber(1));
+        assert_eq!(commit.sequence, SequenceNumber(2));
         assert_eq!(
             opened
                 .store
@@ -687,12 +690,14 @@ async fn libsql_durable_journal_recovery_refreshes_local_cache_from_remote_recor
             .expect("tenant should create and open");
         let first = super::sample_document("tasks", "First");
         let second = super::sample_document("tasks", "Second");
+        let table_id = TableId::new();
         let records = vec![
             DurableMutationRecord::new(
                 SequenceNumber(1),
                 Timestamp(100),
                 vec![WriteOp {
                     table: first.table.clone(),
+                    table_id: table_id.clone(),
                     op_type: WriteOpType::Insert,
                     doc_id: first.id.clone(),
                     resource_path_binding: None,
@@ -708,6 +713,7 @@ async fn libsql_durable_journal_recovery_refreshes_local_cache_from_remote_recor
                 Timestamp(200),
                 vec![WriteOp {
                     table: second.table.clone(),
+                    table_id: table_id.clone(),
                     op_type: WriteOpType::Insert,
                     doc_id: second.id.clone(),
                     resource_path_binding: None,
@@ -762,6 +768,448 @@ async fn libsql_durable_journal_recovery_refreshes_local_cache_from_remote_recor
                 .expect("second lookup should succeed")
                 .as_ref(),
             Some(&second)
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_tenant_event_journal_replays_mixed_history() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("tenant-event-mixed").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table = TableName::new("tasks_tenant_event").expect("table name should build");
+        let table_id = TableId::new();
+        let schema = TableSchema {
+            table: table.clone(),
+            fields: vec![FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: false,
+            }],
+            indexes: vec![IndexDefinition {
+                id: nimbus_core::IndexId::new(),
+                state: nimbus_core::IndexState::Enabled,
+                name: "by_rank".to_string(),
+                fields: vec!["rank".to_string()],
+            }],
+            access_policy: None,
+        };
+        let document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([
+                ("title".to_string(), serde_json::json!("evented")),
+                ("rank".to_string(), serde_json::json!(7)),
+            ]),
+        );
+        let records = vec![
+            DurableMutationRecord::from_events(
+                SequenceNumber(1),
+                Timestamp(100),
+                vec![TenantEventKind::TableLifecycle {
+                    lifecycle: nimbus_core::TableLifecycleEvent::StageHidden {
+                        table: table.clone(),
+                        table_id: table_id.clone(),
+                    },
+                }],
+            )
+            .expect("stage-hidden event should build"),
+            DurableMutationRecord::from_events(
+                SequenceNumber(2),
+                Timestamp(200),
+                vec![TenantEventKind::TableLifecycle {
+                    lifecycle: nimbus_core::TableLifecycleEvent::ActivateHidden {
+                        table: table.clone(),
+                        table_id: table_id.clone(),
+                        replaced_table_id: None,
+                    },
+                }],
+            )
+            .expect("activate-hidden event should build"),
+            DurableMutationRecord::from_events(
+                SequenceNumber(3),
+                Timestamp(300),
+                vec![
+                    TenantEventKind::SchemaChange {
+                        change: SchemaChangeEvent::SetTable {
+                            table: table.clone(),
+                            table_id: table_id.clone(),
+                            previous: None,
+                            current: schema.clone(),
+                        },
+                    },
+                    TenantEventKind::IndexLifecycle {
+                        index: nimbus_core::IndexLifecycleEvent {
+                            table: table.clone(),
+                            table_id: table_id.clone(),
+                            index_id: schema.indexes[0].id.clone(),
+                            state: schema.indexes[0].state,
+                            definition: schema.indexes[0].clone(),
+                        },
+                    },
+                ],
+            )
+            .expect("schema event should build"),
+            DurableMutationRecord::from_events(
+                SequenceNumber(4),
+                Timestamp(400),
+                vec![TenantEventKind::DocumentWrite {
+                    writes: vec![WriteOp {
+                        table: table.clone(),
+                        table_id: table_id.clone(),
+                        op_type: WriteOpType::Insert,
+                        doc_id: document.id.clone(),
+                        resource_path_binding: None,
+                        trigger_write_origin: None,
+                        previous: None,
+                        current: Some(document.clone()),
+                    }],
+                }],
+            )
+            .expect("document event should build"),
+            DurableMutationRecord::from_events(
+                SequenceNumber(5),
+                Timestamp(500),
+                vec![TenantEventKind::TriggerDelivery {
+                    cursor: TriggerDeliveryCursor::new(SequenceNumber(4)),
+                }],
+            )
+            .expect("trigger cursor event should build"),
+        ];
+
+        opened
+            .store
+            .apply_durable_records_batch(&records)
+            .expect("mixed tenant event replay should apply");
+        provider
+            .refresh_tenant_snapshot(&tenant)
+            .await
+            .expect("mixed replay should refresh to the local cache");
+        let opened = provider
+            .open_existing_opened_tenant(&tenant)
+            .await
+            .expect("tenant should reopen after replay")
+            .expect("tenant should still exist");
+
+        assert_eq!(
+            opened.store.table_id(&table).expect("table id should load"),
+            Some(table_id)
+        );
+        let loaded_schema = opened.store.load_schema().expect("schema should load");
+        assert_eq!(loaded_schema.get_table(&table), Some(&schema));
+        assert_eq!(
+            opened
+                .store
+                .get(&table, &document.id)
+                .expect("document lookup should succeed")
+                .as_ref(),
+            Some(&document)
+        );
+        assert_eq!(
+            opened
+                .store
+                .trigger_delivery_cursor()
+                .expect("trigger cursor should load"),
+            TriggerDeliveryCursor::new(SequenceNumber(4))
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_durable_replay_retires_recreated_table_identity() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("durable-recreate").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table = TableName::new("tasks_durable_recreate").expect("table name should build");
+        let old_table_id = TableId::new();
+        let new_table_id = TableId::new();
+        let old_document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), serde_json::json!("old"))]),
+        );
+        let new_document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), serde_json::json!("new"))]),
+        );
+        let records = vec![
+            DurableMutationRecord::new(
+                SequenceNumber(1),
+                Timestamp(100),
+                vec![WriteOp {
+                    table: table.clone(),
+                    table_id: old_table_id.clone(),
+                    op_type: WriteOpType::Insert,
+                    doc_id: old_document.id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
+                    previous: None,
+                    current: Some(old_document.clone()),
+                }],
+                None,
+            )
+            .expect("old durable record should build"),
+            DurableMutationRecord::new(
+                SequenceNumber(2),
+                Timestamp(200),
+                vec![WriteOp {
+                    table: table.clone(),
+                    table_id: new_table_id.clone(),
+                    op_type: WriteOpType::Insert,
+                    doc_id: new_document.id.clone(),
+                    resource_path_binding: None,
+                    trigger_write_origin: None,
+                    previous: None,
+                    current: Some(new_document.clone()),
+                }],
+                None,
+            )
+            .expect("new durable record should build"),
+        ];
+
+        opened
+            .store
+            .apply_durable_records_batch(&records)
+            .expect("durable replay should infer table recreation");
+        provider
+            .refresh_tenant_snapshot(&tenant)
+            .await
+            .expect("replayed table identity should refresh to the local cache");
+        let opened = provider
+            .open_existing_opened_tenant(&tenant)
+            .await
+            .expect("tenant should reopen after replay")
+            .expect("tenant should still exist");
+
+        assert_eq!(
+            opened.store.table_id(&table).expect("table id should load"),
+            Some(new_table_id.clone())
+        );
+        assert!(
+            opened
+                .store
+                .get(&table, &old_document.id)
+                .expect("old logical lookup should succeed")
+                .is_none()
+        );
+        assert_eq!(
+            opened
+                .store
+                .get(&table, &new_document.id)
+                .expect("new logical lookup should succeed")
+                .as_ref(),
+            Some(&new_document)
+        );
+        let mut check_cancel = || Ok(());
+        assert_eq!(
+            opened
+                .store
+                .scan_table_matching_cancellable(&table, &mut check_cancel, |_| Ok(true))
+                .expect("active table scan should succeed"),
+            vec![new_document]
+        );
+        let diagnostics = opened
+            .store
+            .table_identity_diagnostics()
+            .expect("diagnostics should load after replay");
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.table_name == table
+                && diagnostic.table_id == new_table_id
+                && diagnostic.state == TableState::Active
+                && diagnostic.document_count == Some(1)
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.table_name == table
+                && diagnostic.table_id == old_table_id
+                && diagnostic.state == TableState::Deleting
+                && diagnostic.document_count.is_none()
+        }));
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_table_lifecycle_activates_hidden_identity_and_diagnostics_track_layout() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("table-lifecycle").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table = TableName::new("tasks_lifecycle").expect("table name should build");
+        let schema = TableSchema {
+            table: table.clone(),
+            fields: Vec::new(),
+            indexes: vec![IndexDefinition {
+                id: nimbus_core::IndexId::new(),
+                state: nimbus_core::IndexState::Enabled,
+                name: "by_title".to_string(),
+                fields: vec!["title".to_string()],
+            }],
+            access_policy: None,
+        };
+        opened
+            .store
+            .replace_table_schema(&schema)
+            .expect("schema write should succeed");
+
+        let old_document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), serde_json::json!("old"))]),
+        );
+        let old_commit = opened
+            .store
+            .insert(&old_document)
+            .expect("old document should insert");
+        let old_table_id = old_commit.writes[0].table_id.clone();
+        let replacement_table_id = TableId::new();
+
+        opened
+            .store
+            .stage_hidden_table_identity(&table, &replacement_table_id)
+            .expect("hidden replacement identity should stage");
+        provider
+            .refresh_tenant_snapshot(&tenant)
+            .await
+            .expect("staged identity should refresh to the local cache");
+        let opened = provider
+            .open_existing_opened_tenant(&tenant)
+            .await
+            .expect("tenant should reopen after staging")
+            .expect("tenant should still exist");
+        let staged = opened
+            .store
+            .table_identity_diagnostics()
+            .expect("diagnostics should load after staging refresh");
+        assert!(
+            staged.iter().any(|diagnostic| {
+                diagnostic.table_name == table
+                    && diagnostic.table_id == replacement_table_id
+                    && diagnostic.state == TableState::Hidden
+                    && diagnostic.backend_layout
+                        == crate::TableBackendLayout::LibsqlReplicaSharedDocumentsByTableId
+                    && diagnostic.summary_status == crate::TableSummaryStatus::Unsupported
+                    && diagnostic.document_count.is_none()
+            }),
+            "hidden replacement diagnostic should be visible after refresh: {staged:?}"
+        );
+
+        let retired = opened
+            .store
+            .activate_hidden_table_identity(&table, &replacement_table_id)
+            .expect("hidden identity should activate");
+        assert_eq!(retired.as_ref(), Some(&old_table_id));
+        assert_eq!(
+            opened.store.table_id(&table).expect("table id should load"),
+            Some(replacement_table_id.clone())
+        );
+        provider
+            .refresh_tenant_snapshot(&tenant)
+            .await
+            .expect("activated identity should refresh to the local cache");
+        let opened = provider
+            .open_existing_opened_tenant(&tenant)
+            .await
+            .expect("tenant should reopen after activation")
+            .expect("tenant should still exist");
+        let activated = opened
+            .store
+            .table_identity_diagnostics()
+            .expect("diagnostics should load after activation refresh");
+        assert!(activated.iter().any(|diagnostic| {
+            diagnostic.table_name == table
+                && diagnostic.table_id == replacement_table_id
+                && diagnostic.state == TableState::Active
+        }));
+        assert!(
+            opened
+                .store
+                .get(&table, &old_document.id)
+                .expect("logical get should use active replacement")
+                .is_none()
+        );
+
+        let new_document = Document::new(
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), serde_json::json!("new"))]),
+        );
+        let new_commit = opened
+            .store
+            .insert(&new_document)
+            .expect("new document should insert under replacement identity");
+        assert_eq!(new_commit.writes[0].table_id, replacement_table_id);
+        provider
+            .refresh_tenant_snapshot(&tenant)
+            .await
+            .expect("new document should refresh to the local cache");
+        let opened = provider
+            .open_existing_opened_tenant(&tenant)
+            .await
+            .expect("tenant should reopen after new insert")
+            .expect("tenant should still exist");
+        let diagnostics = opened
+            .store
+            .table_identity_diagnostics()
+            .expect("diagnostics should load after insert refresh");
+        let active = diagnostics
+            .iter()
+            .find(|diagnostic| {
+                diagnostic.table_name == table && diagnostic.table_id == replacement_table_id
+            })
+            .expect("active replacement diagnostic should exist");
+        assert_eq!(active.state, TableState::Active);
+        assert_eq!(active.document_count, Some(1));
+        assert_eq!(
+            active.summary_status,
+            crate::TableSummaryStatus::ExactDocumentCount
+        );
+
+        assert!(
+            opened
+                .store
+                .hard_delete_table_identity(&old_table_id)
+                .expect("hard delete should succeed")
+        );
+        provider
+            .refresh_tenant_snapshot(&tenant)
+            .await
+            .expect("hard delete should refresh to the local cache");
+        let opened = provider
+            .open_existing_opened_tenant(&tenant)
+            .await
+            .expect("tenant should reopen after hard delete")
+            .expect("tenant should still exist");
+        let diagnostics = opened
+            .store
+            .table_identity_diagnostics()
+            .expect("diagnostics should load after hard-delete refresh");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.table_id != old_table_id),
+            "hard delete should remove retired catalog identity: {diagnostics:?}"
+        );
+        let mut check_cancel = || Ok(());
+        assert_eq!(
+            opened
+                .store
+                .index_scan_prefix_cancellable(
+                    &table,
+                    "by_title",
+                    &[serde_json::json!("new")],
+                    &mut check_cancel,
+                )
+                .expect("active replacement index scan should succeed"),
+            vec![new_document]
         );
     })
     .await;
@@ -994,10 +1442,17 @@ async fn seed_remote_namespace(
     )
     .await
     .expect("remote schema insert should succeed");
+    let table_id = TableId::new();
     conn.execute(
-        "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO table_catalog (namespace, table_name, table_id) VALUES (?, ?, ?)",
+        libsql::params!["default", table_schema.table.as_str(), table_id.as_str()],
+    )
+    .await
+    .expect("remote table catalog insert should succeed");
+    conn.execute(
+        "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time) VALUES (?, ?, ?, ?, ?, ?)",
         libsql::params![
-            table_schema.table.as_str(),
+            table_id.as_str(),
             document_id.to_string(),
             fields.to_string(),
             "{}",

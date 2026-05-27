@@ -10,7 +10,9 @@ This plan ties the recently standardized Nimbus fork releases back into the
 `nimbus/nimbus` product release. A final Nimbus binary should only be released
 after the source fork stack is healthy, Nimbus consumes the intended released
 fork tags, the release source tree is clean, full Nimbus verification passes,
-and the published GitHub release artifacts can be downloaded and re-verified.
+the published GitHub release artifacts can be downloaded and re-verified, and
+the matching Nimbus OCI image is published to GHCR with digest, signature,
+provenance, SBOM, and smoke-test evidence.
 
 The release decision is intentionally evidence-driven. A fork tag existing on
 GitHub is necessary, but it is not enough. The release baseline must prove that
@@ -57,6 +59,12 @@ Verified while writing the plan:
 - Keep the release version, crate versions, JS workspace package versions,
   lockfile entries, changelog heading, tag, archive names, and package helpers
   in one consistent version contract.
+- Treat `ghcr.io/nimbus/nimbus:<version>` as a first-class release artifact,
+  not a post-release convenience image. The release is not complete until the
+  multi-arch image digest is recorded, signed/attested, and verified.
+- Keep the default Nimbus image a normal foreground application image. Do not
+  use systemd inside the default container, and keep any future host-integrated
+  node image mode explicit and separately documented.
 
 ## Execution Plan
 
@@ -183,7 +191,7 @@ Success criteria:
 
 Evidence:
 
-- `rg -n "v2\\.8\\.0-nimbus\\.2|v149\\.0\\.0-nimbus\\.1|v1\\.27\\.1-nimbus\\.2|v1\\.18\\.1-nimbus\\.1|nimbus-bun-jsc-proof-main-20260525|locker-v|v[0-9][^[:space:]]*-locker" Cargo.toml Cargo.lock scripts .github Makefile docs/adapters docs/architecture docs/operating docs/plans/final-nimbus-release-readiness-plan.md docs/plans/fork-upstream-standardization-plan.md docs/plans/bun-jsc-distribution-and-release-plan.md docs/plans/bun-jsc-linked-adapter-plan.md docs/plans/README.md`
+- `rg -n "v2\\.8\\.0-nimbus\\.2|v149\\.0\\.0-nimbus\\.1|v1\\.27\\.1-nimbus\\.2|v1\\.18\\.1-nimbus\\.1|nimbus-bun-jsc-proof-main-20260525|locker-v|v[0-9][^[:space:]]*-locker" Cargo.toml Cargo.lock scripts .github Makefile docs/adapters docs/architecture docs/operating docs/plans/final-nimbus-release-readiness-plan.md docs/plans/archive/fork-upstream-standardization-plan.md docs/plans/archive/bun-jsc-distribution-and-release-plan.md docs/plans/archive/bun-jsc-linked-adapter-plan.md docs/plans/README.md`
   confirmed active pins:
   - `Cargo.toml` patch entries use `nimbus/deno` `v2.8.0-nimbus.2` and
     `nimbus/rusty_v8` `v149.0.0-nimbus.1`.
@@ -266,9 +274,40 @@ Success criteria:
 - `make release` passes.
 - `target/release/nimbus --version` reports the chosen version.
 - `make verify-release-archive-layout-helper` passes.
-- `make verify-install-helper` passes.
-- `make verify-build-linux-release-packages-helper` passes.
+- `make verify-install-helper` passes, including the direct-fetch
+  `install.sh` header that points at the GitHub Release `LICENSE` asset with
+  the `LicenseRef-Nimbus-Community` identity.
+- `make verify-build-linux-release-packages-helper` passes, proving every
+  rendered deb/rpm package stages the repo `LICENSE` under
+  `/usr/share/doc/<package>/LICENSE`, stages the Debian-canonical
+  `/usr/share/doc/<package>/copyright`, and carries package license metadata.
 - `make verify-build-fedora-release-srpms-helper` passes.
+- `make verify-release-oci-image-helper` passes, proving the default image
+  definition runs Nimbus in the foreground, uses a non-root runtime user, does
+  not install systemd or host workload-management tools, logs to
+  stdout/stderr, records OCI annotations including the Nimbus license identity,
+  installs the license text, and exposes the expected `/health` and smoke-test
+  contract.
+- `make verify-release-oci-image-live-helper` passes, proving the post-tag live
+  verifier accepts a complete release/OCI evidence fixture, including an
+  optional Bun/JSC adapter release asset, and rejects a missing top-level
+  `LICENSE` asset or unchecksummed extra release asset with stubbed GitHub
+  release and attestation responses.
+- `make verify-release-oci-image-build-helper` passes when Docker is available,
+  proving the `Containerfile` can consume the release archive layout and
+  produce the expected entrypoint, command, user, volume, label, image license
+  file, and stdout/stderr container-log posture.
+- `scripts/verify-release-oci-image-assets.sh --artifacts-dir <downloaded>
+  --require-license --checksums <downloaded>/checksums-sha256.txt` passes for
+  the downloaded release bundle, proving the `nimbus_oci_*` report, image
+  digest, attestation certificate repository/workflow/tag identity, SBOM,
+  vulnerability scan, release LICENSE asset, and checksum coverage are
+  coherent across linux/amd64 and linux/arm64. The verifier rejects duplicate
+  checksum subjects and malformed SHA-256 digest entries so release evidence is
+  unambiguous.
+- `actionlint .github/workflows/release.yml` passes; release GitHub App token
+  steps pin `actions/create-github-app-token@v3.2.0` and use the current
+  `client-id` input contract rather than the legacy `app-id` input.
 - If optional Bun/JSC adapter release artifacts are produced locally, they pass
   `scripts/verify-bun-jsc-release-assets.sh`; if absent, the verifier records
   absence as policy.
@@ -307,13 +346,51 @@ Success criteria:
   - `nimbus_linux_arm64.tar.gz`
   - `nimbus_windows_x86_64.zip`
   - `install.sh`
+  - `LICENSE`
   - `checksums-sha256.txt`
+  - `nimbus_oci_image.txt`
+  - `nimbus_oci_attestation.json`
+  - `nimbus_oci_sbom.json`
+  - `nimbus_oci_vulns.sarif.json`
+- Expected container image exists:
+  - `ghcr.io/nimbus/nimbus:<version>`
+  - immutable multi-arch digest recorded in `nimbus_oci_image.txt`
+  - per-architecture image digests recorded for linux/amd64 and linux/arm64
 - Downloaded release artifacts pass:
+  - `make verify-release-oci-image-live TAG=vX.Y.Z OUTPUT_DIR=<proof-dir>`
   - `scripts/verify-release-archive-layout.sh --artifacts-dir <downloaded>`
   - `scripts/verify-bun-jsc-release-assets.sh --artifacts-dir <downloaded> --checksums <downloaded>/checksums-sha256.txt`
-  - checksum verification for every listed asset
+  - `scripts/verify-release-oci-image-assets.sh --artifacts-dir <downloaded> --require-license --checksums <downloaded>/checksums-sha256.txt`
+  - checksum verification for every listed asset, with duplicate subjects and
+    malformed digest entries rejected
+  - every uploaded release asset is either `checksums-sha256.txt` or listed in
+    `checksums-sha256.txt`, and every checksummed asset plus the checksum
+    manifest has a GitHub/Sigstore release-asset attestation
+- LICENSE evidence passes:
+  - binary archives contain `LICENSE`
+  - the release publishes a top-level `LICENSE` asset for standalone support
+    assets such as `install.sh`
+  - direct-fetch support scripts carry a compact
+    `LicenseRef-Nimbus-Community` pointer to the release `LICENSE` asset
+  - any public npm package tarball includes top-level `LICENSE` and matching
+    package metadata, while private-only workspaces remain unpublished
+  - the default OCI image exposes `/usr/local/share/doc/nimbus/LICENSE`
+  - OCI metadata records `LicenseRef-Nimbus-Community`
+- GHCR image verification passes:
+  - GitHub/Sigstore attestation verifies from the registry against Nimbus'
+    release workflow identity and tag ref with the SLSA provenance predicate
+    pinned, self-hosted-runner attestations denied, and verified timestamp
+    evidence plus GitHub-hosted runner identity present
+  - GitHub/SLSA provenance verifies for the image digest
+  - SBOM evidence exists for the image digest, names the image, tag, ref, and
+    digest in subject metadata, and includes SPDX payloads for linux/amd64 and
+    linux/arm64
+  - vulnerability-scan evidence exists for the image digest
+  - smoke tests prove `nimbus --version`, foreground `nimbus start`, and
+    `/health` on the published image
 - Release notes mention the fork stack consumed by this release, including
-  Deno/rusty_v8, Bun/JSC adapter posture, nimbus-crun, and nimbus-libkrun.
+  Deno/rusty_v8, Bun/JSC adapter posture, nimbus-crun, nimbus-libkrun, and the
+  Nimbus OCI image digest.
 
 ### NRR8 - Post-Release Consumer Proof
 
@@ -327,6 +404,9 @@ Success criteria:
 - `scripts/install.sh --dry-run` or the supported dry-run path resolves the
   new release.
 - A downloaded Linux or macOS release binary reports the chosen version.
+- Pulling the published `ghcr.io/nimbus/nimbus:<version>@sha256:...` image
+  reports the chosen version and serves `/health` when started with documented
+  volume and port settings.
 - Runtime diagnostics still show Deno/V8/Node lanes and Bun/JSC as an optional
   adapter-backed lane, with the default binary preserving no-link behavior.
 - Packaging helper outputs reference the new Nimbus version and the
@@ -343,7 +423,8 @@ The release is complete only when:
   or documented as upstream-owned and non-blocking for Nimbus' consumed
   capability;
 - the release source worktree is clean;
-- the live GitHub release artifacts pass downloaded verification; and
+- the live GitHub release artifacts and GHCR Nimbus image pass downloaded /
+  registry verification; and
 - the active goal is marked complete with the release URL and final token
   usage.
 
@@ -375,12 +456,17 @@ Verifiable success criteria:
   make verify-enterprise-policy-egress, make verify-artifact-provenance,
   make proof-helpers, make release, make verify-release-archive-layout-helper,
   make verify-install-helper, make verify-build-linux-release-packages-helper,
-  and make verify-build-fedora-release-srpms-helper.
+  make verify-build-fedora-release-srpms-helper, and
+  make verify-release-oci-image-helper. Run
+  make verify-release-oci-image-build-helper on a Docker-capable host before
+  cutting the release.
 - Create and push the release tag only after the release worktree is clean and
   the local gates pass.
 - Monitor the tag-driven GitHub release workflow to success, then download and
   verify the published release artifacts with the archive-layout, Bun/JSC
-  adapter, and checksum verifiers.
+  adapter, LICENSE, checksum, `scripts/verify-release-oci-image-assets.sh`,
+  GHCR image digest, signature, provenance, per-platform SBOM, and image smoke
+  verifiers.
 - Update this plan with final evidence, release tag, release URL, source SHA,
   verification commands, and any residual risks before marking the goal
   complete.

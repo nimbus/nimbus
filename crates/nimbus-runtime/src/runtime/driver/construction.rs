@@ -178,4 +178,7 @@ fn install_missing_runtime_start_time(runtime: &mut JsRuntime) {
     if !state.has::<deno_web::StartTime>() {
         state.put(deno_web::StartTime::default());
     }
+    if !state.has::<deno_core::uv_compat::AsyncId>() {
+        state.put(deno_core::uv_compat::AsyncId::default());
+    }
 }

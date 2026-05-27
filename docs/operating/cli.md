@@ -148,6 +148,11 @@ nimbus machine os rollback [--restart]
 nimbus start [--host 127.0.0.1] [--port 8080] [--app-dir ./app] [--skip-codegen] [--compose-file PATH]...
 ```
 
+The release OCI image uses the same foreground server command through
+`ENTRYPOINT ["nimbus"]` and a default `start --host 0.0.0.0 --allow-network`
+command. See [Container image](container-image.md) for the volume, probe,
+digest, and attestation contract.
+
 For local development from source:
 
 ```bash

@@ -10,7 +10,13 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table.clone();
-        let document_id = payload.id.clone();
+        let document_id = match resolve_convex_document_id(&table, payload.id) {
+            Ok(resolved) => resolved.into_document_id(),
+            Err(error) => {
+                let response = ConvexRuntimeResponseEnvelope::from_core_error(error);
+                return serde_json::to_value(response).map_err(NimbusRuntimeError::from);
+            }
+        };
         let response = match self.mutation_execution_unit().map_or_else(
             || None,
             |execution_unit| {
@@ -26,7 +32,10 @@ impl ConvexHostBridge {
             Some(result) => match result {
                 Ok(document) => {
                     self.record_document_read(&table, &document_id);
-                    ConvexRuntimeResponseEnvelope::ok(document.into_json())
+                    match document_to_convex_json(document) {
+                        Ok(value) => ConvexRuntimeResponseEnvelope::ok(value),
+                        Err(error) => ConvexRuntimeResponseEnvelope::from_core_error(error),
+                    }
                 }
                 Err(Error::DocumentNotFound(_)) => ConvexRuntimeResponseEnvelope::ok(Value::Null),
                 Err(error) => ConvexRuntimeResponseEnvelope::from_core_error(error),
@@ -47,7 +56,10 @@ impl ConvexHostBridge {
                 {
                     Ok(document) => {
                         self.record_document_read(&table, &document_id);
-                        ConvexRuntimeResponseEnvelope::ok(document.into_json())
+                        match document_to_convex_json(document) {
+                            Ok(value) => ConvexRuntimeResponseEnvelope::ok(value),
+                            Err(error) => ConvexRuntimeResponseEnvelope::from_core_error(error),
+                        }
                     }
                     Err(Error::DocumentNotFound(_)) => {
                         ConvexRuntimeResponseEnvelope::ok(Value::Null)
@@ -76,7 +88,13 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table.clone();
-        let document_id = payload.id.clone();
+        let document_id = match resolve_convex_document_id(&table, payload.id) {
+            Ok(resolved) => resolved.into_document_id(),
+            Err(error) => {
+                let response = ConvexRuntimeResponseEnvelope::from_core_error(error);
+                return serde_json::to_value(response).map_err(NimbusRuntimeError::from);
+            }
+        };
         let response = match self.mutation_execution_unit().map_or_else(
             || {
                 self.service().get_document_with_principal(
@@ -96,7 +114,10 @@ impl ConvexHostBridge {
         ) {
             Ok(document) => {
                 self.record_document_read(&table, &document_id);
-                ConvexRuntimeResponseEnvelope::ok(document.into_json())
+                match document_to_convex_json(document) {
+                    Ok(value) => ConvexRuntimeResponseEnvelope::ok(value),
+                    Err(error) => ConvexRuntimeResponseEnvelope::from_core_error(error),
+                }
             }
             Err(Error::DocumentNotFound(_)) => ConvexRuntimeResponseEnvelope::ok(Value::Null),
             Err(error) => ConvexRuntimeResponseEnvelope::from_core_error(error),
@@ -113,6 +134,7 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
+        let table_for_id = table.clone();
         let fields = payload.fields;
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.insert_document(table, fields)
@@ -138,7 +160,10 @@ impl ConvexHostBridge {
                 )
                 .await
         }
-        .map(|id| Value::String(id.to_string()));
+        .and_then(|id| {
+            encode_convex_document_id(&table_for_id, &id)
+                .map(|scoped| Value::String(scoped.to_string()))
+        });
         encode_runtime_core_result(response)
     }
 
@@ -159,6 +184,7 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
+        let table_for_id = table.clone();
         let fields = payload.fields;
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.insert_document(table, fields)
@@ -171,7 +197,10 @@ impl ConvexHostBridge {
                 nimbus_engine::MutationActor::with_principal(self.principal()),
             )
         }
-        .map(|id| Value::String(id.to_string()));
+        .and_then(|id| {
+            encode_convex_document_id(&table_for_id, &id)
+                .map(|scoped| Value::String(scoped.to_string()))
+        });
         encode_runtime_core_result(response)
     }
 
@@ -184,7 +213,11 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
-        let id = payload.id;
+        let id = match resolve_convex_document_id(&table, payload.id) {
+            Ok(resolved) => resolved.into_document_id(),
+            Err(error) => return encode_runtime_core_result(Err(error)),
+        };
+        let table_for_id = table.clone();
         let patch = payload.patch;
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.update_document(table, id, patch)
@@ -210,7 +243,10 @@ impl ConvexHostBridge {
                 )
                 .await
         }
-        .map(|id| Value::String(id.to_string()));
+        .and_then(|id| {
+            encode_convex_document_id(&table_for_id, &id)
+                .map(|scoped| Value::String(scoped.to_string()))
+        });
         encode_runtime_core_result(response)
     }
 
@@ -231,7 +267,11 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
-        let id = payload.id;
+        let id = match resolve_convex_document_id(&table, payload.id) {
+            Ok(resolved) => resolved.into_document_id(),
+            Err(error) => return encode_runtime_core_result(Err(error)),
+        };
+        let table_for_id = table.clone();
         let patch = payload.patch;
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.update_document(table, id, patch)
@@ -244,7 +284,10 @@ impl ConvexHostBridge {
                 nimbus_engine::MutationActor::with_principal(self.principal()),
             )
         }
-        .map(|id| Value::String(id.to_string()));
+        .and_then(|id| {
+            encode_convex_document_id(&table_for_id, &id)
+                .map(|scoped| Value::String(scoped.to_string()))
+        });
         encode_runtime_core_result(response)
     }
 
@@ -257,7 +300,10 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
-        let id = payload.id;
+        let id = match resolve_convex_document_id(&table, payload.id) {
+            Ok(resolved) => resolved.into_document_id(),
+            Err(error) => return encode_runtime_core_result(Err(error)),
+        };
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.delete_document(table, id)
         } else {
@@ -302,7 +348,10 @@ impl ConvexHostBridge {
         self.validate_session(payload.session_id.as_deref())?;
         ensure_runtime_host_not_cancelled(cancellation)?;
         let table = payload.table;
-        let id = payload.id;
+        let id = match resolve_convex_document_id(&table, payload.id) {
+            Ok(resolved) => resolved.into_document_id(),
+            Err(error) => return encode_runtime_core_result(Err(error)),
+        };
         let response = if let Some(execution_unit) = self.mutation_execution_unit() {
             execution_unit.delete_document(table, id)
         } else {

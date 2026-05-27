@@ -57,9 +57,18 @@ struct CanonicalMaterializedJournalSnapshot {
     version: u16,
     applied_sequence: u64,
     durable_head: u64,
+    table_identities: Vec<CanonicalTableIdentity>,
     schema: Vec<TableSchema>,
     documents: Vec<Document>,
     scheduled_execution_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CanonicalTableIdentity {
+    namespace: String,
+    table_name: String,
+    table_id: String,
+    state: String,
 }
 
 pub fn snapshot_fingerprint(snapshot: &MaterializedJournalSnapshot) -> Result<SnapshotFingerprint> {
@@ -286,12 +295,42 @@ fn canonicalize_materialized_journal_snapshot(
         version: snapshot.version,
         applied_sequence: snapshot.applied_sequence.0,
         durable_head: snapshot.durable_head.0,
+        table_identities: canonicalize_table_identities(&snapshot.table_identities),
         schema: canonicalize_schema(&snapshot.schema),
         documents: canonicalize_documents(&snapshot.documents),
         scheduled_execution_ids: canonicalize_scheduled_execution_ids(
             &snapshot.scheduled_execution_ids,
         ),
     }
+}
+
+fn canonicalize_table_identities(
+    identities: &[nimbus_storage::TableIdentitySnapshotEntry],
+) -> Vec<CanonicalTableIdentity> {
+    let mut identities = identities
+        .iter()
+        .map(|identity| CanonicalTableIdentity {
+            namespace: identity.namespace.clone(),
+            table_name: identity.table.to_string(),
+            table_id: identity.table_id.to_string(),
+            state: identity.state.to_string(),
+        })
+        .collect::<Vec<_>>();
+    identities.sort_by(|left, right| {
+        (
+            &left.namespace,
+            &left.table_name,
+            &left.table_id,
+            &left.state,
+        )
+            .cmp(&(
+                &right.namespace,
+                &right.table_name,
+                &right.table_id,
+                &right.state,
+            ))
+    });
+    identities
 }
 
 fn canonicalize_schema(schema: &Schema) -> Vec<TableSchema> {

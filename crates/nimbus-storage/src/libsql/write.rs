@@ -386,6 +386,7 @@ impl LibsqlReplicaWriteTransaction {
             store,
             tx: Some(tx),
             commit_writes: Vec::new(),
+            tenant_events: Vec::new(),
             trigger_write_origin: None,
             check_cancel: Box::new(check_cancel),
             refresh_cache_after_commit: false,
@@ -394,8 +395,15 @@ impl LibsqlReplicaWriteTransaction {
 
     pub fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
         self.check_cancel()?;
-        let schema_json = serialize_json(table_schema)?;
+        let mut table_schema = table_schema.clone();
+        let mut recorded_event: Option<(TableId, Option<TableSchema>, TableSchema)> = None;
         self.store.block_on(async {
+            let previous =
+                load_remote_table_schema_from_session(self.session()?, &table_schema.table).await?;
+            table_schema.reconcile_index_metadata(previous.as_ref());
+            let schema_json = serialize_json(&table_schema)?;
+            let table_id =
+                resolve_or_create_remote_table_id(self.session()?, &table_schema.table).await?;
             self.session()?
                 .execute(
                     "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)
@@ -404,15 +412,23 @@ impl LibsqlReplicaWriteTransaction {
                 )
                 .await
                 .map_err(map_libsql_error)?;
+            recorded_event = Some((table_id, previous, table_schema.clone()));
             Ok(())
         })?;
+        if let Some((table_id, previous, table_schema)) = recorded_event {
+            record_libsql_schema_set_events(self, table_id, previous, &table_schema);
+        }
         self.refresh_cache_after_commit = true;
         Ok(())
     }
 
     pub fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
         self.check_cancel()?;
+        let mut previous = None;
+        let mut table_id = None;
         self.store.block_on(async {
+            previous = load_remote_table_schema_from_session(self.session()?, table).await?;
+            table_id = load_remote_table_id_from_session(self.session()?, table).await?;
             self.session()?
                 .execute(
                     "DELETE FROM schemas WHERE table_name = ?1",
@@ -422,6 +438,13 @@ impl LibsqlReplicaWriteTransaction {
                 .map_err(map_libsql_error)?;
             Ok(())
         })?;
+        self.record_tenant_event(TenantEventKind::SchemaChange {
+            change: SchemaChangeEvent::DeleteTable {
+                table: table.clone(),
+                table_id,
+                previous,
+            },
+        });
         self.refresh_cache_after_commit = true;
         Ok(())
     }
@@ -431,7 +454,7 @@ impl LibsqlReplicaWriteTransaction {
         let Some(execution_id) = execution_id else {
             return Ok(true);
         };
-        self.store.block_on(async {
+        let inserted = self.store.block_on(async {
             let changed = self
                 .session()?
                 .execute(
@@ -441,20 +464,30 @@ impl LibsqlReplicaWriteTransaction {
                 .await
                 .map_err(map_libsql_error)?;
             Ok(changed == 1)
-        })
+        })?;
+        if inserted {
+            self.record_tenant_event(TenantEventKind::ScheduledExecution {
+                execution_id: execution_id.to_string(),
+            });
+        }
+        Ok(inserted)
     }
 
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
         self.check_cancel()?;
         let data_json = serialize_document_fields(document)?;
         let typed_fields_json = serialize_document_typed_fields(document)?;
+        let table_id = self.store.block_on(async {
+            resolve_or_create_remote_table_id(self.session()?, &document.table).await
+        })?;
+        let write_table_id = table_id.clone();
         self.store.block_on(async {
             self.session()?
                 .execute(
-                    "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
+                    "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     libsql::params![
-                        document.table.as_str(),
+                        table_id.as_str(),
                         document.id.to_string(),
                         data_json,
                         typed_fields_json,
@@ -468,6 +501,7 @@ impl LibsqlReplicaWriteTransaction {
         })?;
         self.record_commit_write(WriteOp {
             table: document.table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Insert,
             doc_id: document.id.clone(),
             resource_path_binding: None,
@@ -500,14 +534,20 @@ impl LibsqlReplicaWriteTransaction {
         validate(&existing_document, &document)?;
         let data_json = serialize_document_fields(&document)?;
         let typed_fields_json = serialize_document_typed_fields(&document)?;
+        let table_id = self.store.block_on(async {
+            load_remote_table_id_from_session(self.session()?, table)
+                .await?
+                .ok_or(Error::DocumentNotFound(id.clone()))
+        })?;
+        let write_table_id = table_id.clone();
         self.store.block_on(async {
             self.session()?
                 .execute(
                     "UPDATE documents
                      SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
-                     WHERE table_name = ?1 AND id = ?2",
+                     WHERE table_id = ?1 AND id = ?2",
                     libsql::params![
-                        table.as_str(),
+                        table_id.as_str(),
                         id.to_string(),
                         data_json,
                         typed_fields_json,
@@ -521,6 +561,7 @@ impl LibsqlReplicaWriteTransaction {
         })?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Update,
             doc_id: id.clone(),
             resource_path_binding: self.store.resource_path_binding(
@@ -547,11 +588,17 @@ impl LibsqlReplicaWriteTransaction {
             .load_document(table, id)?
             .ok_or(Error::DocumentNotFound(id.clone()))?;
         validate(&removed_document)?;
+        let table_id = self.store.block_on(async {
+            load_remote_table_id_from_session(self.session()?, table)
+                .await?
+                .ok_or(Error::DocumentNotFound(id.clone()))
+        })?;
+        let write_table_id = table_id.clone();
         self.store.block_on(async {
             self.session()?
                 .execute(
-                    "DELETE FROM documents WHERE table_name = ?1 AND id = ?2",
-                    libsql::params![table.as_str(), id.to_string()],
+                    "DELETE FROM documents WHERE table_id = ?1 AND id = ?2",
+                    libsql::params![table_id.as_str(), id.to_string()],
                 )
                 .await
                 .map_err(map_libsql_error)?;
@@ -562,6 +609,7 @@ impl LibsqlReplicaWriteTransaction {
         )?;
         self.record_commit_write(WriteOp {
             table: table.clone(),
+            table_id: write_table_id,
             op_type: WriteOpType::Delete,
             doc_id: id.clone(),
             resource_path_binding,
@@ -770,14 +818,23 @@ impl LibsqlReplicaWriteTransaction {
                 }
                 let data_json = serialize_document_fields(current)?;
                 let typed_fields_json = serialize_document_typed_fields(current)?;
+                let table_id = self.store.block_on(async {
+                    load_remote_table_id_from_session(self.session()?, &current.table)
+                        .await?
+                        .ok_or(Error::Conflict(format!(
+                            "document {} changed before transaction commit",
+                            current.id
+                        )))
+                })?;
+                let write_table_id = table_id.clone();
                 self.store.block_on(async {
                     self.session()?
                         .execute(
                             "UPDATE documents
                              SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
-                             WHERE table_name = ?1 AND id = ?2",
+                             WHERE table_id = ?1 AND id = ?2",
                             libsql::params![
-                                current.table.as_str(),
+                                table_id.as_str(),
                                 current.id.to_string(),
                                 data_json,
                                 typed_fields_json,
@@ -791,6 +848,7 @@ impl LibsqlReplicaWriteTransaction {
                 })?;
                 self.record_commit_write(WriteOp {
                     table: current.table.clone(),
+                    table_id: write_table_id,
                     op_type: WriteOpType::Update,
                     doc_id: current.id.clone(),
                     resource_path_binding: resource_path_binding.clone(),
@@ -817,11 +875,20 @@ impl LibsqlReplicaWriteTransaction {
                         previous.id
                     )));
                 }
+                let table_id = self.store.block_on(async {
+                    load_remote_table_id_from_session(self.session()?, &previous.table)
+                        .await?
+                        .ok_or(Error::Conflict(format!(
+                            "document {} changed before transaction commit",
+                            previous.id
+                        )))
+                })?;
+                let write_table_id = table_id.clone();
                 self.store.block_on(async {
                     self.session()?
                         .execute(
-                            "DELETE FROM documents WHERE table_name = ?1 AND id = ?2",
-                            libsql::params![previous.table.as_str(), previous.id.to_string()],
+                            "DELETE FROM documents WHERE table_id = ?1 AND id = ?2",
+                            libsql::params![table_id.as_str(), previous.id.to_string()],
                         )
                         .await
                         .map_err(map_libsql_error)?;
@@ -832,6 +899,7 @@ impl LibsqlReplicaWriteTransaction {
                 )?;
                 self.record_commit_write(WriteOp {
                     table: previous.table.clone(),
+                    table_id: write_table_id,
                     op_type: WriteOpType::Delete,
                     doc_id: previous.id.clone(),
                     resource_path_binding,
@@ -847,10 +915,19 @@ impl LibsqlReplicaWriteTransaction {
     pub fn commit(mut self) -> Result<Option<CommitEntry>> {
         self.check_cancel()?;
         let writes = std::mem::take(&mut self.commit_writes);
-        let commit = if writes.is_empty() {
+        if !writes.is_empty() {
+            self.tenant_events.insert(
+                0,
+                TenantEventKind::DocumentWrite {
+                    writes: writes.clone(),
+                },
+            );
+        }
+        let commit = if self.tenant_events.is_empty() {
             None
         } else {
-            Some(self.append_commit_entry(writes)?)
+            let events = std::mem::take(&mut self.tenant_events);
+            Some(self.append_commit_entry(writes, events)?)
         };
         let tx = self.tx.take().ok_or_else(|| {
             Error::Internal("libsql replica write transaction already closed".to_string())
@@ -860,10 +937,18 @@ impl LibsqlReplicaWriteTransaction {
             Ok(())
         })?;
         if let Some(commit) = &commit {
-            self.store.note_required_cache_sequence_with_cause(
-                commit.sequence,
-                LibsqlReplicaRefreshCause::CommitBarrier,
-            );
+            if self.refresh_cache_after_commit {
+                self.store.refresh_needed.store(true, Ordering::Release);
+                self.store.note_required_cache_sequence_with_cause(
+                    commit.sequence,
+                    LibsqlReplicaRefreshCause::SchemaWrite,
+                );
+            } else {
+                self.store.note_required_cache_sequence_with_cause(
+                    commit.sequence,
+                    LibsqlReplicaRefreshCause::CommitBarrier,
+                );
+            }
         } else if self.refresh_cache_after_commit {
             self.store.refresh_needed.store(true, Ordering::Release);
             self.store
@@ -904,6 +989,10 @@ impl LibsqlReplicaWriteTransaction {
         self.commit_writes.push(write);
     }
 
+    pub(super) fn record_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.push(event);
+    }
+
     fn load_document(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
         self.store.block_on(load_remote_document_from_session(
             self.session()?,
@@ -912,17 +1001,23 @@ impl LibsqlReplicaWriteTransaction {
         ))
     }
 
-    fn append_commit_entry(&self, writes: Vec<WriteOp>) -> Result<CommitEntry> {
+    fn append_commit_entry(
+        &self,
+        writes: Vec<WriteOp>,
+        events: Vec<TenantEventKind>,
+    ) -> Result<CommitEntry> {
         let sequence = SequenceNumber(
             self.store
                 .block_on(load_next_sequence_from_session(self.session()?))?,
         );
+        let timestamp = self.store.provider.clock.now();
+        let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
         let entry = CommitEntry {
             sequence,
-            timestamp: self.store.provider.clock.now(),
+            timestamp,
             writes,
         };
-        let payload = serialize_commit(&entry)?;
+        let payload = serialize_tenant_event_record(&record)?;
         self.store.block_on(async {
             self.session()?
                 .execute(
@@ -942,4 +1037,48 @@ impl LibsqlReplicaWriteTransaction {
         })?;
         Ok(entry)
     }
+}
+
+fn record_libsql_schema_set_events(
+    transaction: &mut LibsqlReplicaWriteTransaction,
+    table_id: TableId,
+    previous: Option<TableSchema>,
+    table_schema: &TableSchema,
+) {
+    transaction.record_tenant_event(TenantEventKind::SchemaChange {
+        change: SchemaChangeEvent::SetTable {
+            table: table_schema.table.clone(),
+            table_id: table_id.clone(),
+            previous,
+            current: table_schema.clone(),
+        },
+    });
+    for index in &table_schema.indexes {
+        transaction.record_tenant_event(TenantEventKind::IndexLifecycle {
+            index: IndexLifecycleEvent {
+                table: table_schema.table.clone(),
+                table_id: table_id.clone(),
+                index_id: index.id.clone(),
+                state: index.state,
+                definition: index.clone(),
+            },
+        });
+    }
+}
+
+async fn load_remote_table_schema_from_session(
+    conn: &Connection,
+    table: &TableName,
+) -> Result<Option<TableSchema>> {
+    let mut rows = conn
+        .query(
+            "SELECT schema_json FROM schemas WHERE table_name = ?1",
+            libsql::params![table.as_str()],
+        )
+        .await
+        .map_err(map_libsql_error)?;
+    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+        return Ok(None);
+    };
+    deserialize_json(row.get::<String>(0).map_err(map_libsql_error)?.as_str()).map(Some)
 }

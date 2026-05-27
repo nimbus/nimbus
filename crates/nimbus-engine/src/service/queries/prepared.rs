@@ -446,6 +446,8 @@ mod tests {
                 },
             ],
             indexes: vec![IndexDefinition {
+                id: nimbus_core::IndexId::new(),
+                state: nimbus_core::IndexState::Enabled,
                 name: "by_status_rank".to_string(),
                 fields: vec!["status".to_string(), "rank".to_string()],
             }],

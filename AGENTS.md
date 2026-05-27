@@ -61,6 +61,35 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/plans/archive/runtime-capability-adapter-boundary-plan.md`, and
   `docs/plans/archive/multi-adapter-boundary-hardening-plan.md` only as prior
   wave references.
+- Cross-cutting multi-backend / multi-adapter hardening (storage trait
+  segregation, adapter/backend registration seam decision,
+  `RuntimeHooks` for backend-coupled workers, dual-target tests per
+  adapter, auth-caching ADR, per-backend SQL-safety ADRs, per-segment
+  latency budgets, trait object-safety audit, stable logical table identity +
+  backend-owned physical-layout decision, typed-column key storage,
+  read-consistency routing, hybrid event-capture pattern, cross-cutting
+  `docs/technical-debt.md`):
+  `docs/plans/archive/multi-backend-adapter-hardening-plan.md` (MBA0..MBA14,
+  completed baseline, closed 2026-05-27). Inspiration source is ExtendDB
+  (Apache-2.0 DynamoDB adapter on PostgreSQL) at
+  `~/src/github.com/ExtendDB/extenddb`. Independent
+  of `docs/plans/dynamodb-adapter-plan.md`; applies across every
+  existing backend and adapter, not only the DynamoDB lane. `/goal`
+  control plane gated on
+  `bash scripts/verify-multi-backend-adapter-hardening.sh` (fifteen
+  conditions). Use `docs/operating/multi-backend-adapter-hardening.md`
+  for the current contract.
+- Convex-informed storage trust gaps (table lifecycle after stable
+  `table_catalog`, table-aware Convex document identity validation,
+  `TableId`-based dependency tracking, stable index identity/lifecycle,
+  history/repeatable-read posture, table identity diagnostics, and
+  cross-backend conformance after comparing against Convex internals):
+  `docs/plans/archive/convex-storage-trust-hardening-plan.md` is the
+  completed baseline, closed 2026-05-27. Use local Convex source at
+  `~/src/github.com/get-convex/convex-backend` and the baseline proof at
+  `docs/plans/proof/convex-storage-trust-hardening/cst0-convex-storage-comparison.md`
+  for historical context. Promote a new active plan before another
+  Convex-informed storage trust wave.
 - Sandbox, machine lifecycle, or CLI UX:
   `docs/architecture/sandbox/microvm-service-baseline.md`,
   `docs/architecture/sandbox/macos-machine-flow.md` when relevant,

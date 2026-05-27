@@ -622,15 +622,15 @@ expose the same files via NFS/FUSE while the V8 runtime continues using
 
 ```bash
 # Local development — files on local disk (default)
-nimbus serve --data-dir ./data
+nimbus start --data-dir ./data
 # Files at ./data/files/{tenant_id}/
 
 # Production — files in object storage
-nimbus serve --data-dir /data --file-store s3://my-bucket/tenant-files
+nimbus start --data-dir /data --file-store s3://my-bucket/tenant-files
 # Files at s3://my-bucket/tenant-files/{tenant_id}/
 
 # With local read cache for object storage backend
-nimbus serve --data-dir /data \
+nimbus start --data-dir /data \
   --file-store s3://my-bucket/tenant-files \
   --file-cache-dir /data/file-cache \
   --file-cache-max-gb 10

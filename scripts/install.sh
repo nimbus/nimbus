@@ -1,5 +1,8 @@
 #!/bin/sh
 # shellcheck shell=sh
+# SPDX-License-Identifier: LicenseRef-Nimbus-Community
+# License text: see the LICENSE asset in the same GitHub Release, or
+# https://github.com/nimbus/nimbus/releases/latest/download/LICENSE
 # Nimbus install script — portable bootstrapper for all supported platforms.
 #
 # Usage:
@@ -1217,7 +1220,7 @@ print_getting_started_linux() {
   say ""
   say "Nimbus is installed! To start the server:"
   say ""
-  say "  nimbus serve"
+  say "  nimbus start"
   say ""
   say "For more information:"
   say "  nimbus --help"
@@ -1261,7 +1264,7 @@ print_getting_started_macos() {
   say "Nimbus is installed! To initialize and start the machine VM:"
   say ""
   say "  nimbus machine init"
-  say "  nimbus serve"
+  say "  nimbus start"
   say ""
   say "For more information:"
   say "  nimbus --help"

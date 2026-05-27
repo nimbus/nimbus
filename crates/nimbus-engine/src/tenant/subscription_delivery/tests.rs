@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use nimbus_core::{Query, SequenceNumber, TableName};
+use nimbus_core::{Query, TableName};
 use nimbus_testing::ServiceFixture;
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -111,7 +111,7 @@ async fn service_mutation_returns_while_subscription_delivery_worker_is_blocked(
             let commit = snapshot
                 .commit
                 .expect("single-commit delivery should retain commit metadata");
-            assert_eq!(commit.sequence, SequenceNumber(2));
+            assert!(commit.sequence.0 >= 2);
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("After"));
         }
@@ -215,7 +215,7 @@ async fn subscription_delivery_queue_overflow_falls_back_without_regressing_mono
             let commit = snapshot
                 .commit
                 .expect("single-commit fallback should retain commit metadata");
-            assert_eq!(commit.sequence, SequenceNumber(4));
+            assert!(commit.sequence.0 >= 4);
             assert_eq!(data.len(), 1);
             assert_eq!(data[0]["title"], json!("third"));
         }

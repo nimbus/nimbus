@@ -118,6 +118,7 @@ impl SqliteTenantStore {
             open_read_connections: Arc::new(AtomicUsize::new(0)),
             read_connections: Arc::new(Mutex::new(Vec::new())),
             schema_cache: Arc::new(RwLock::new(Schema::default())),
+            retention_floor: RetentionFloor::new(),
         };
         let pooled_open_started = std::time::Instant::now();
         let conn = store.open_pooled_read_connection()?;
@@ -177,6 +178,7 @@ impl SqliteTenantStore {
             clock: self.clock.clone(),
             fault_injector: self.fault_injector.clone(),
             commit_writes: Vec::new(),
+            tenant_events: Vec::new(),
             trigger_write_origin: None,
             check_cancel: Box::new(check_cancel),
             schema_cache: self.schema_cache.clone(),

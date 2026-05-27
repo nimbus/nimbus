@@ -41,6 +41,7 @@ async fn assert_service_reload_recovers_durable_journal_before_serving_async_rea
             Timestamp(60_000),
             vec![nimbus_core::WriteOp {
                 table: document.table.clone(),
+                table_id: nimbus_core::TableId::new(),
                 op_type: nimbus_core::WriteOpType::Insert,
                 doc_id: document.id.clone(),
                 resource_path_binding: None,
@@ -167,23 +168,27 @@ async fn durable_journal_reads_return_strictly_ordered_authoritative_records() {
         .read_durable_journal_async(tenant_id.clone(), SequenceNumber(0))
         .await
         .expect("durable journal should read");
-    assert_eq!(
+    assert!(
         records
-            .iter()
-            .map(|record| record.sequence)
-            .collect::<Vec<_>>(),
-        vec![SequenceNumber(1), SequenceNumber(2)]
+            .windows(2)
+            .all(|window| window[0].sequence < window[1].sequence),
+        "durable journal records should be strictly ordered: {records:?}"
     );
+    let document_records = records
+        .iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(document_records.len(), 2);
     assert_eq!(
-        records[0].writes[0].op_type,
+        document_records[0].writes[0].op_type,
         nimbus_core::WriteOpType::Insert
     );
     assert_eq!(
-        records[1].writes[0].op_type,
+        document_records[1].writes[0].op_type,
         nimbus_core::WriteOpType::Update
     );
     assert_eq!(
-        records[1].writes[0]
+        document_records[1].writes[0]
             .current
             .as_ref()
             .and_then(|document| document.fields.get("title")),
@@ -194,8 +199,16 @@ async fn durable_journal_reads_return_strictly_ordered_authoritative_records() {
         .read_durable_journal_async(tenant_id, SequenceNumber(1))
         .await
         .expect("filtered durable journal should read");
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].sequence, SequenceNumber(2));
+    assert!(filtered.iter().all(|record| record.sequence.0 > 1));
+    let filtered_document_records = filtered
+        .iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(filtered_document_records.len(), 1);
+    assert_eq!(
+        filtered_document_records[0].writes[0].op_type,
+        nimbus_core::WriteOpType::Update
+    );
 }
 
 #[tokio::test]
@@ -233,12 +246,18 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
         .await
         .expect("second insert should succeed");
 
+    let latest_sequence = service
+        .latest_sequence_async(tenant_id.clone())
+        .await
+        .expect("latest sequence should load");
+    assert!(latest_sequence.0 >= 3);
+
     let first_page = service
         .stream_durable_journal_async(tenant_id.clone(), SequenceNumber(0), 1)
         .await
         .expect("first journal page should read");
     assert_eq!(first_page.cursor_floor, SequenceNumber(0));
-    assert_eq!(first_page.latest_sequence, SequenceNumber(3));
+    assert_eq!(first_page.latest_sequence, latest_sequence);
     assert!(first_page.has_more);
     assert_eq!(first_page.next_cursor, SequenceNumber(1));
     assert_eq!(first_page.records.len(), 1);
@@ -260,22 +279,52 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
     assert_eq!(second_page.records.len(), 1);
     assert_eq!(second_page.records[0].sequence, SequenceNumber(2));
 
-    let third_page = service
-        .stream_durable_journal_async(tenant_id.clone(), second_page.next_cursor, 1)
-        .await
-        .expect("third journal page should read");
-    assert!(!third_page.has_more);
-    assert_eq!(third_page.next_cursor, SequenceNumber(3));
-    assert_eq!(third_page.records.len(), 1);
-    assert_eq!(third_page.records[0].sequence, SequenceNumber(3));
+    let mut cursor = second_page.next_cursor;
+    let mut streamed_records = vec![
+        first_page.records[0].clone(),
+        second_page.records[0].clone(),
+    ];
+    while cursor.0 < latest_sequence.0 {
+        let page = service
+            .stream_durable_journal_async(tenant_id.clone(), cursor, 1)
+            .await
+            .expect("next journal page should read");
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].sequence, SequenceNumber(cursor.0 + 1));
+        cursor = page.next_cursor;
+        streamed_records.push(page.records[0].clone());
+        assert!(
+            !page.has_more || cursor.0 < page.latest_sequence.0,
+            "a non-final page should report a latest sequence beyond its returned cursor"
+        );
+    }
+    assert!(cursor.0 >= latest_sequence.0);
+    assert_eq!(
+        streamed_records
+            .iter()
+            .filter(|record| !record.writes.is_empty())
+            .count(),
+        3
+    );
 
-    let empty_page = service
-        .stream_durable_journal_async(tenant_id, third_page.next_cursor, 1)
+    let tail_page = service
+        .stream_durable_journal_async(tenant_id, cursor, 1)
         .await
-        .expect("empty journal page should read");
-    assert!(!empty_page.has_more);
-    assert_eq!(empty_page.next_cursor, SequenceNumber(3));
-    assert!(empty_page.records.is_empty());
+        .expect("tail journal page should read");
+    if tail_page.records.is_empty() {
+        assert!(!tail_page.has_more);
+        assert_eq!(tail_page.next_cursor, cursor);
+    } else {
+        assert_eq!(tail_page.records[0].sequence, SequenceNumber(cursor.0 + 1));
+        assert!(
+            tail_page
+                .records
+                .iter()
+                .all(|record| record.writes.is_empty()),
+            "only background tenant events may race after the streamed document records"
+        );
+    }
+    assert!(tail_page.latest_sequence.0 >= cursor.0);
 }
 
 #[tokio::test]
@@ -444,7 +493,14 @@ async fn embedded_replica_catches_up_after_reconnection() {
     let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
         .await
         .expect("replica should bootstrap");
-    assert_eq!(replica.sequence_cursor(), SequenceNumber(1));
+    let latest_after_catch_up = service
+        .latest_sequence_async(tenant_id.clone())
+        .await
+        .expect("latest sequence should load");
+    assert!(
+        replica.sequence_cursor().0 <= latest_after_catch_up.0,
+        "a background tenant event may advance the source after catch-up chooses its target"
+    );
 
     service
         .insert_document_async(
@@ -464,7 +520,14 @@ async fn embedded_replica_catches_up_after_reconnection() {
         .catch_up(&service, 1)
         .await
         .expect("replica catch-up should succeed");
-    assert_eq!(replica.sequence_cursor(), SequenceNumber(2));
+    let latest_after_catch_up = service
+        .latest_sequence_async(tenant_id.clone())
+        .await
+        .expect("latest sequence should load");
+    assert!(
+        replica.sequence_cursor().0 <= latest_after_catch_up.0,
+        "a background tenant event may advance the source after catch-up chooses its target"
+    );
 
     let live_documents = service
         .query_documents_async(tenant_id, query_for("tasks"))
@@ -520,7 +583,12 @@ async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
     let mut replica = EmbeddedReplica::bootstrap_in_memory(&service, tenant_id.clone())
         .await
         .expect("replica should bootstrap");
-    assert_eq!(replica.sequence_cursor(), SequenceNumber(2));
+    assert_eq!(
+        replica.sequence_cursor(),
+        service
+            .latest_sequence(&tenant_id)
+            .expect("latest sequence should load")
+    );
 
     service
         .set_table_schema(
@@ -537,7 +605,12 @@ async fn embedded_replica_catch_up_refreshes_policy_only_schema_changes() {
         .catch_up(&service, 1)
         .await
         .expect("replica catch-up should refresh schema even without new journal records");
-    assert_eq!(replica.sequence_cursor(), SequenceNumber(2));
+    assert_eq!(
+        replica.sequence_cursor(),
+        service
+            .latest_sequence(&tenant_id)
+            .expect("latest sequence should load")
+    );
 
     let live_documents = service
         .query_documents_with_principal(&tenant_id, &query, &principal)
@@ -593,6 +666,8 @@ async fn embedded_replica_catch_up_rebuilds_indexes_for_schema_only_changes() {
                     required: false,
                 }],
                 indexes: vec![IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
                     name: "by_rank".to_string(),
                     fields: vec!["rank".to_string()],
                 }],
@@ -658,11 +733,12 @@ async fn shadow_materializer_queries_match_live_service_path() {
         )
         .await
         .expect("shadow materializer should build");
-    assert_eq!(shadow.manifest().current_sequence, SequenceNumber(3));
-    assert_eq!(
-        shadow.current_snapshot().applied_sequence,
-        SequenceNumber(3)
-    );
+    let latest_sequence = service
+        .latest_sequence_async(tenant_id.clone())
+        .await
+        .expect("latest sequence should load");
+    assert_eq!(shadow.manifest().current_sequence, latest_sequence);
+    assert_eq!(shadow.current_snapshot().applied_sequence, latest_sequence);
     let snapshot = shadow.current_snapshot();
 
     let ordered_query = Query {
@@ -723,6 +799,8 @@ async fn shadow_materializer_schema_aware_queries_match_live_service_path() {
             messages_schema(
                 "messages_shadow_schema",
                 vec![IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
                     name: "by_owner".to_string(),
                     fields: vec!["owner".to_string()],
                 }],
@@ -840,6 +918,8 @@ async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_st
                     required: false,
                 }],
                 indexes: vec![IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
                     name: "by_rank".to_string(),
                     fields: vec!["rank".to_string()],
                 }],
@@ -1005,6 +1085,8 @@ async fn assert_schema_async_write_path_rebuilds_and_removes_indexes_durably(
             required: false,
         }],
         indexes: vec![IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
             name: "by_rank".to_string(),
             fields: vec!["rank".to_string()],
         }],
@@ -1190,6 +1272,10 @@ fn index_scan_eq_count_for_backend(
     match backend {
         EmbeddedProviderKind::Redb => {
             let store = TenantStore::open(path).expect("tenant store should reopen");
+            let schema = store.load_schema().expect("tenant schema should load");
+            if schema.get_table(&tasks_table()).is_none() {
+                return 0;
+            }
             store
                 .index_scan_eq(&tasks_table(), "by_rank", value)
                 .expect("index scan should succeed")

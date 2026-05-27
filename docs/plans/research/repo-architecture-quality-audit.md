@@ -3,7 +3,7 @@
 Date: 2026-05-26
 
 This note records the architecture and code-organization review that led to
-`docs/plans/repo-architecture-quality-hardening-plan.md`. It is intentionally
+`docs/plans/archive/repo-architecture-quality-hardening-plan.md`. It is intentionally
 about ownership seams, testability, and enterprise trust. It is not a mandate to
 split files mechanically.
 

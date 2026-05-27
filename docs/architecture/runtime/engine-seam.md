@@ -15,8 +15,8 @@ It complements:
 - [Runtime Permission Model](permission-model.md)
 - [Node compatibility surface matrix](node-compat-surface-matrix.md)
 - [New runtime engine proof harness](new-engine-proof-harness.md)
-- [Bun/JSC in-process lockdown plan](../../plans/bun-jsc-in-process-lockdown-plan.md)
-- [Bun/JSC embedder API and pool plan](../../plans/bun-jsc-embedder-api-and-pool-plan.md)
+- [Bun/JSC in-process lockdown plan](../../plans/archive/bun-jsc-in-process-lockdown-plan.md)
+- [Bun/JSC embedder API and pool plan](../../plans/archive/bun-jsc-embedder-api-and-pool-plan.md)
 - [Archived execution isolation and runtime backends plan](../../plans/archive/execution-isolation-and-runtime-backends-plan.md)
 - [Archived runtime engine seam plan](../../plans/archive/runtime-engine-seam-plan.md)
 

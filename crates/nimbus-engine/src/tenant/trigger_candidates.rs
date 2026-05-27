@@ -455,7 +455,8 @@ fn run_trigger_candidate_worker(
                             candidate,
                         )?);
                     }
-                    runtime.store.materialize_trigger_invocations(
+                    materialize_trigger_invocations_and_sync(
+                        &runtime,
                         records.as_slice(),
                         nimbus_core::TriggerDeliveryCursor::new(commit.sequence),
                     )?;
@@ -510,7 +511,8 @@ fn run_trigger_candidate_worker(
                             candidate,
                         )?);
                     }
-                    runtime.store.materialize_trigger_invocations(
+                    materialize_trigger_invocations_and_sync(
+                        &runtime,
                         records.as_slice(),
                         nimbus_core::TriggerDeliveryCursor::new(commit.sequence),
                     )?;
@@ -525,6 +527,19 @@ fn run_trigger_candidate_worker(
             warn!(error = %error, "trigger candidate worker failed to build candidates");
         }
     }
+}
+
+fn materialize_trigger_invocations_and_sync(
+    runtime: &TenantRuntime,
+    records: &[nimbus_core::TriggerInvocationRecord],
+    cursor: nimbus_core::TriggerDeliveryCursor,
+) -> nimbus_core::Result<()> {
+    let _sequence_guard = runtime.lock_mutation_sequence();
+    runtime
+        .store
+        .materialize_trigger_invocations(records, cursor)?;
+    runtime.sync_mutation_journal_progress(runtime.store.journal_progress()?);
+    Ok(())
 }
 
 impl Drop for TriggerCandidateFeed {

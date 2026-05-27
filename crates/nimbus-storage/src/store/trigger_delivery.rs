@@ -1,4 +1,4 @@
-use nimbus_core::{Result, TriggerDeliveryCursor};
+use nimbus_core::{Result, TenantEventKind, TriggerDeliveryCursor};
 use redb::TableError;
 
 use super::journal::{decode_u64, encode_u64};
@@ -36,16 +36,19 @@ impl TenantStore {
 impl TenantWriteTransaction {
     pub fn set_trigger_delivery_cursor(&mut self, cursor: TriggerDeliveryCursor) -> Result<()> {
         self.check_cancel()?;
-        let mut metadata = self
-            .write_txn()?
-            .open_table(METADATA)
-            .map_err(map_redb_error)?;
-        metadata
-            .insert(
-                TRIGGER_DELIVERY_CURSOR_KEY,
-                encode_u64(cursor.materialized_through.0).as_slice(),
-            )
-            .map_err(map_redb_error)?;
+        {
+            let mut metadata = self
+                .write_txn()?
+                .open_table(METADATA)
+                .map_err(map_redb_error)?;
+            metadata
+                .insert(
+                    TRIGGER_DELIVERY_CURSOR_KEY,
+                    encode_u64(cursor.materialized_through.0).as_slice(),
+                )
+                .map_err(map_redb_error)?;
+        }
+        self.record_tenant_event(TenantEventKind::TriggerDelivery { cursor });
         Ok(())
     }
 }

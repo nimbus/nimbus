@@ -2,7 +2,7 @@
 
 Date: 2026-05-23
 
-Nimbus plan: `docs/plans/bun-jsc-embedder-api-and-pool-plan.md`
+Nimbus plan: `docs/plans/archive/bun-jsc-embedder-api-and-pool-plan.md`
 
 Bun worktree: `/Users/jack/src/github.com/oven-sh/bun`
 

@@ -2,7 +2,7 @@
 
 Date: 2026-05-25
 
-Plan gate: `BJD6` in `docs/plans/bun-jsc-distribution-and-release-plan.md`
+Plan gate: `BJD6` in `docs/plans/archive/bun-jsc-distribution-and-release-plan.md`
 
 ## Result
 

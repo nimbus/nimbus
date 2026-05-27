@@ -25,8 +25,8 @@ pub use nimbus_runtime::{
     HostBridge, HostBridgeFuture, HostCallRequest, InvocationKind, InvocationRequest,
     NimbusRuntime, NimbusRuntimeError, RuntimeBackendKind, RuntimeBackendLifecyclePolicy,
     RuntimeBackendLockdownProfile, RuntimeBackendTrustTier, RuntimeBundle, RuntimeExecutionModel,
-    RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy, VerifiedUserIdentity,
-    VerifiedUserIdentityKind,
+    RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimePolicy, RuntimePoolKind,
+    VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 // Sandbox orchestration surface.
 pub use nimbus_sandbox::{

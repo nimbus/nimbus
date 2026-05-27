@@ -31,7 +31,7 @@ fn synthesize_runtime_subscription_base_queries_for_table(
     read_set: &RuntimeReadSet,
     table: &TableName,
 ) -> Vec<Query> {
-    if read_set.tables.contains(table) {
+    if read_set.tables.iter().any(|read| &read.table == table) {
         return vec![broad_runtime_subscription_query(table.clone())];
     }
 
@@ -80,12 +80,7 @@ fn synthesize_runtime_subscription_base_queries_for_table(
         });
     }
 
-    if queries.is_empty()
-        && read_set
-            .documents
-            .iter()
-            .any(|(document_table, _)| document_table == table)
-    {
+    if queries.is_empty() && read_set.documents.iter().any(|read| &read.table == table) {
         queries.push(broad_runtime_subscription_query(table.clone()));
     }
 

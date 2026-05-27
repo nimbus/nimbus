@@ -113,8 +113,12 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await
             .expect("bootstrap should export");
-        assert_eq!(bootstrap.bootstrap_cut, SequenceNumber(2));
-        assert_eq!(bootstrap.resume_after, SequenceNumber(2));
+        let latest_sequence = service
+            .latest_sequence_async(tenant_id.clone())
+            .await
+            .expect("latest sequence should load");
+        assert_eq!(bootstrap.bootstrap_cut, latest_sequence);
+        assert_eq!(bootstrap.resume_after, latest_sequence);
 
         service.quiesce().await;
     })
@@ -188,10 +192,7 @@ async fn postgres_notifications_refresh_loaded_runtime_schema_and_journal_state(
                 &service_b,
                 &tenant_id,
                 "postgres notification should catch up journal heads",
-                |stats| {
-                    stats.durable_head == SequenceNumber(1)
-                        && stats.applied_head == SequenceNumber(1)
-                },
+                |stats| stats.durable_head.0 >= 2 && stats.applied_head.0 >= 2,
             )
             .await;
 
@@ -331,9 +332,7 @@ async fn postgres_listener_reconnect_recovers_missed_schema_and_journal_hints() 
                         .expect("mutation journal stats should load")
                 }
             },
-            |stats| {
-                stats.durable_head == SequenceNumber(1) && stats.applied_head == SequenceNumber(1)
-            },
+            |stats| stats.durable_head.0 >= 2 && stats.applied_head.0 >= 2,
         )
         .await;
         wait_for_value(

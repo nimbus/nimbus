@@ -201,6 +201,7 @@ mod tests {
             timestamp: Timestamp(42),
             writes: vec![WriteOp {
                 table: binding.locator.table.clone(),
+                table_id: nimbus_core::TableId::new(),
                 op_type: WriteOpType::Insert,
                 doc_id: binding.locator.id.clone(),
                 resource_path_binding: Some(binding.clone()),
@@ -238,6 +239,7 @@ mod tests {
             timestamp: Timestamp(43),
             writes: vec![WriteOp {
                 table: binding.locator.table.clone(),
+                table_id: nimbus_core::TableId::new(),
                 op_type: WriteOpType::Update,
                 doc_id: binding.locator.id.clone(),
                 resource_path_binding: None,
@@ -270,6 +272,7 @@ mod tests {
             timestamp: Timestamp(44),
             writes: vec![WriteOp {
                 table: binding.locator.table.clone(),
+                table_id: nimbus_core::TableId::new(),
                 op_type: WriteOpType::Delete,
                 doc_id: binding.locator.id.clone(),
                 resource_path_binding: Some(binding.clone()),

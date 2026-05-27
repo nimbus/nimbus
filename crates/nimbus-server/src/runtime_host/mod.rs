@@ -214,6 +214,12 @@ impl capabilities::RuntimeCapabilityHost for RuntimeHostContext {
     }
 
     fn record_document_read(&self, locator: &nimbus_core::DocumentLocator) {
-        self.state.record_document_read(&locator.table, &locator.id);
+        let table_id = self
+            .service
+            .table_id(&self.tenant_id, &locator.table)
+            .ok()
+            .flatten();
+        self.state
+            .record_document_read(&locator.table, table_id.as_ref(), &locator.id);
     }
 }

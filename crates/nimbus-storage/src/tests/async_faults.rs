@@ -125,6 +125,8 @@ async fn canceled_async_write_before_commit_leaves_no_durable_state() {
         serde_json::Map::from_iter([("rank".to_string(), json!(7))]),
     );
     let indexes = vec![IndexDefinition {
+        id: nimbus_core::IndexId::new(),
+        state: nimbus_core::IndexState::Enabled,
         name: "by_rank".to_string(),
         fields: vec!["rank".to_string()],
     }];
@@ -206,9 +208,21 @@ async fn canceled_async_write_after_commit_still_reports_committed() {
         serde_json::Map::from_iter([("rank".to_string(), json!(11))]),
     );
     let indexes = vec![IndexDefinition {
+        id: nimbus_core::IndexId::new(),
+        state: nimbus_core::IndexState::Enabled,
         name: "by_rank".to_string(),
         fields: vec!["rank".to_string()],
     }];
+    let schema = TableSchema {
+        table: document.table.clone(),
+        fields: vec![FieldSchema {
+            name: "rank".to_string(),
+            field_type: FieldType::Number,
+            required: false,
+        }],
+        indexes: indexes.clone(),
+        access_policy: None,
+    };
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
     let handle = tokio::spawn({
@@ -222,6 +236,7 @@ async fn canceled_async_write_after_commit_still_reports_committed() {
                     },
                     || Ok(()),
                     move |transaction| {
+                        transaction.save_table_schema(&schema)?;
                         transaction.insert_document_with_indexes(&document, &indexes)?;
                         Ok(document.id)
                     },

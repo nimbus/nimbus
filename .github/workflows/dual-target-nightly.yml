@@ -1,0 +1,83 @@
+name: Dual Target Adapter Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * 2"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  auth-error-fidelity:
+    name: ${{ matrix.adapter }} / ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - adapter: convex
+            target: nimbus
+            requires_live: false
+            command: node tests/dual-target/convex/auth-error-fidelity.mjs
+          - adapter: convex
+            target: convex_cloud
+            requires_live: true
+            command: node tests/dual-target/convex/auth-error-fidelity.mjs
+          - adapter: firebase
+            target: nimbus
+            requires_live: false
+            command: node tests/dual-target/firebase/auth-error-fidelity.mjs
+          - adapter: firebase
+            target: firebase_cloud
+            requires_live: true
+            command: node tests/dual-target/firebase/auth-error-fidelity.mjs
+          - adapter: cloud_functions
+            target: nimbus
+            requires_live: false
+            command: node tests/dual-target/cloud_functions/auth-error-fidelity.mjs
+          - adapter: cloud_functions
+            target: cloud_functions_cloud
+            requires_live: true
+            command: node tests/dual-target/cloud_functions/auth-error-fidelity.mjs
+          - adapter: mongodb
+            target: nimbus
+            requires_live: false
+            command: node tests/dual-target/mongodb/auth-error-fidelity.mjs
+          - adapter: mongodb
+            target: mongodb_cloud
+            requires_live: true
+            command: node tests/dual-target/mongodb/auth-error-fidelity.mjs
+
+    env:
+      NIMBUS_DUAL_TARGET_DRY_RUN: ${{ matrix.requires_live && '0' || '1' }}
+      NIMBUS_TEST_TARGET: ${{ matrix.target }}
+      CLOUD_FUNCTIONS_CLOUD_DUAL_TARGET_URL: ${{ secrets.CLOUD_FUNCTIONS_CLOUD_DUAL_TARGET_URL }}
+      CONVEX_CLOUD_DUAL_TARGET_URL: ${{ secrets.CONVEX_CLOUD_DUAL_TARGET_URL }}
+      FIREBASE_CLOUD_DUAL_TARGET_URL: ${{ secrets.FIREBASE_CLOUD_DUAL_TARGET_URL }}
+      FIREBASE_DUAL_TARGET_API_KEY: ${{ secrets.FIREBASE_DUAL_TARGET_API_KEY }}
+      MONGODB_CLOUD_DUAL_TARGET_URI: ${{ secrets.MONGODB_CLOUD_DUAL_TARGET_URI }}
+      MONGODB_DUAL_TARGET_BAD_USER: ${{ secrets.MONGODB_DUAL_TARGET_BAD_USER }}
+      MONGODB_DUAL_TARGET_BAD_PASSWORD: ${{ secrets.MONGODB_DUAL_TARGET_BAD_PASSWORD }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Run dual-target auth-error probe
+        run: ${{ matrix.command }}

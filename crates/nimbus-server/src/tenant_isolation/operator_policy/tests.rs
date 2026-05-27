@@ -126,7 +126,7 @@ workloads:
     name: "messages:send"
     volumes:
       named:
-        - cache
+        - cache # 002-auth-caching-policy: named volume fixture, not auth cache
     image:
       allowed_registries:
         - registry-a.example.com
@@ -156,7 +156,7 @@ workloads:
       sbom_required: true
     secrets:
       handles:
-        - prod/cache/password
+        - prod/cache/password # 002-auth-caching-policy: redacted secret-handle fixture, not auth cache
     quotas:
       sandbox_charge:
         active_sandboxes: 1
@@ -999,8 +999,8 @@ fn policy_diff_reports_authority_deltas() {
     let rendered = diff.render_text();
     assert!(rendered.contains("+ runtime_function/messages:list"));
     assert!(rendered.contains("~ runtime_function/messages:send"));
-    assert!(rendered.contains("services added: cache"));
-    assert!(rendered.contains("network endpoints added: cache/redis"));
+    assert!(rendered.contains("services added: cache")); // 002-auth-caching-policy: service fixture name, not auth cache
+    assert!(rendered.contains("network endpoints added: cache/redis")); // 002-auth-caching-policy: endpoint fixture name, not auth cache
     assert!(rendered.contains("Lifecycle: recreate_required"));
 }
 
@@ -1107,7 +1107,7 @@ fn policy_diff_reports_every_compiled_authority_delta_without_secret_handle_leak
     assert_eq!(diff.changed_workloads.len(), 1);
     let rendered = diff.render_text();
     assert!(rendered.contains("volumes added: data"));
-    assert!(rendered.contains("volumes removed: cache"));
+    assert!(rendered.contains("volumes removed: cache")); // 002-auth-caching-policy: volume fixture name, not auth cache
     assert!(rendered.contains("image allowed registries added: registry-b.example.com"));
     assert!(rendered.contains("image allowed registries removed: registry-a.example.com"));
     assert!(rendered.contains("image SBOM requirement changed: false -> true"));
@@ -1115,7 +1115,7 @@ fn policy_diff_reports_every_compiled_authority_delta_without_secret_handle_leak
     assert!(rendered.contains("quotas changed:"));
     assert!(rendered.contains("audit redactions added: query_params"));
     assert!(
-        !rendered.contains("prod/db/password") && !rendered.contains("prod/cache/password"),
+        !rendered.contains("prod/db/password") && !rendered.contains("prod/cache/password"), // 002-auth-caching-policy: redacted secret-handle fixture, not auth cache
         "policy diff should not leak raw secret handles: {rendered}"
     );
 }

@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use futures::FutureExt;
 use nimbus_core::{
-    Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TenantId,
+    Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TableId,
+    TableName, TenantId,
 };
 
 use super::materialized::{
@@ -21,6 +22,7 @@ use super::prepared::{
     query_documents_for_read_surface_prepared_cancellable,
 };
 use crate::service::Service;
+use crate::service::latency::{LatencySegment, budgeted_segment};
 use crate::tenant::{QueryPlanMetricKind, QueryPlanMetricOperation, TenantRuntime};
 
 struct LoadedQueryRuntime {
@@ -31,6 +33,12 @@ struct LoadedQueryRuntime {
 }
 
 impl Service {
+    /// Resolves the active stable table identity for a tenant/table, if it exists.
+    pub fn table_id(&self, tenant_id: &TenantId, table: &TableName) -> Result<Option<TableId>> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.store().table_id(table)
+    }
+
     /// Evaluates a query for a tenant.
     pub fn query_documents(&self, tenant_id: &TenantId, query: &Query) -> Result<Vec<Document>> {
         self.query_documents_with_principal_cancellable(
@@ -123,9 +131,9 @@ impl Service {
         } = load_query_runtime_async(self, &tenant_id, cancel_wait.clone()).await?;
         let _operation = runtime.enter_operation(&tenant_id)?;
         let schema = runtime.schema();
-        let prepare_started = Instant::now();
+        let prepare_timer = budgeted_segment(LatencySegment::QueryPrepare);
         let prepared = prepare_query_execution(schema.get_table(&query.table), &query, &principal)?;
-        let prepare_elapsed = prepare_started.elapsed();
+        let prepare_elapsed = prepare_timer.finish();
         match prepared {
             None => {
                 maybe_emit_query_profile(QueryProfileSample {
@@ -141,7 +149,7 @@ impl Service {
                 Ok(Vec::new())
             }
             Some(prepared) if matches!(prepared.plan, QueryPlan::FullScan) => {
-                let execute_started = Instant::now();
+                let execute_timer = budgeted_segment(LatencySegment::QueryExecute);
                 let (plan_kind, documents) = evaluate_with_materialized_surface_async_prepared(
                     runtime.clone(),
                     &query,
@@ -152,11 +160,11 @@ impl Service {
                     check_cancel,
                 )
                 .await?;
-                let execute_elapsed = execute_started.elapsed();
-                let cache_started = Instant::now();
+                let execute_elapsed = execute_timer.finish();
+                let cache_timer = budgeted_segment(LatencySegment::QueryCache);
                 runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
                 runtime.cache_documents(&documents);
-                let cache_elapsed = cache_started.elapsed();
+                let cache_elapsed = cache_timer.finish();
                 maybe_emit_query_profile(QueryProfileSample {
                     tenant_id: &tenant_id,
                     plan: query_plan_metric_kind_label(plan_kind),
@@ -170,7 +178,7 @@ impl Service {
                 Ok(documents)
             }
             Some(prepared) => {
-                let execute_started = Instant::now();
+                let execute_timer = budgeted_segment(LatencySegment::QueryExecute);
                 let (plan_kind, documents) = evaluate_with_index_async_prepared(
                     runtime.clone(),
                     prepared,
@@ -179,11 +187,11 @@ impl Service {
                     check_cancel,
                 )
                 .await?;
-                let execute_elapsed = execute_started.elapsed();
-                let cache_started = Instant::now();
+                let execute_elapsed = execute_timer.finish();
+                let cache_timer = budgeted_segment(LatencySegment::QueryCache);
                 runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
                 runtime.cache_documents(&documents);
-                let cache_elapsed = cache_started.elapsed();
+                let cache_elapsed = cache_timer.finish();
                 maybe_emit_query_profile(QueryProfileSample {
                     tenant_id: &tenant_id,
                     plan: query_plan_metric_kind_label(plan_kind),
@@ -501,19 +509,20 @@ async fn load_query_runtime_async<Fut>(
 where
     Fut: Future<Output = ()> + Clone + Send,
 {
-    let tenant_load_started = Instant::now();
+    let tenant_load_timer = budgeted_segment(LatencySegment::TenantLoad);
     let runtime = service.get_existing_tenant_async(tenant_id).await?;
-    let tenant_load = tenant_load_started.elapsed();
+    let tenant_load = tenant_load_timer.finish();
     let required_sequence = runtime.durable_head();
-    let visibility_started = Instant::now();
+    let visibility_timer = budgeted_segment(LatencySegment::WaitVisibility);
     runtime
         .wait_for_applied_sequence_cancellable(required_sequence, cancel_wait)
         .await?;
+    let wait_visibility = visibility_timer.finish();
     Ok(LoadedQueryRuntime {
         runtime,
         required_sequence,
         tenant_load,
-        wait_visibility: visibility_started.elapsed(),
+        wait_visibility,
     })
 }
 

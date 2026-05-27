@@ -4,24 +4,120 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/repo-architecture-quality-hardening-plan.md`
-  - completed baseline for a repository-wide architecture quality hardening
-    wave. Uses the current Nimbus architecture, active enterprise plans,
-    OpenShell, and Kubernetes as references to regroup large composition roots
-    by owned concepts, narrow public construction seams, make policy,
-    admission, and audit boundaries easier to find and test, and add
-    guardrails that preserve enterprise trust without splitting files only to
-    reduce line counts.
-- `docs/plans/fork-upstream-standardization-plan.md`
-  - ready execution plan for standardizing Nimbus-owned upstream source
-    forks across local paths, Git remotes, active release branches, Nimbus tag
-    names, GitHub defaults, installer/package pins, and verification gates.
-    Covers `nimbus/deno`, `nimbus/rusty_v8`, `nimbus/bun`,
-    `nimbus/nimbus-crun`, and `nimbus/nimbus-libkrun`; explicitly replaces
-    future `locker` branch/tag naming with the `nimbus` standard while
-    preserving historical evidence. Includes an upstream impact audit that
-    requires Deno/rusty_v8, Bun, and crun/libkrun port work to reuse upstream
-    fixes and APIs when they now cover older Nimbus-local deltas.
+- `docs/plans/node-lts-runtime-trust-plan.md`
+  - proposed Node LTS runtime trust plan. Starts from the current Deno-family
+    Cargo patch graph and generated Node compatibility evidence, then removes
+    Node22-as-center from the support architecture by adding a data-driven LTS
+    lane registry, truthful per-lane runtime metadata, Deno fork provenance and
+    patch-closure verification, equal active-LTS evidence, harness timeout/hang
+    diagnostics, and separate local-dev versus production Node permission
+    profiles. Research baseline:
+    `docs/plans/research/node-lts-runtime-and-deno-fork-strategy.md`.
+- `docs/plans/storage-engine-quality-and-mvcc-plan.md`
+  - proposed follow-on plan after storage architecture trust hardening
+    completes. Targets the larger storage-engine quality features that would
+    move Nimbus closer to Convex/CockroachDB/TigerBeetle-class rigor without
+    copying distributed database machinery: MVCC document and index retention,
+    historical point/scan/index reads, versioned table/schema/index registry,
+    serving snapshot manager, retention compaction, PITR/export/import, CDC
+    cursors, deterministic parity checks, MVCC metamorphic tests, and
+    operator MVCC diagnostics. Activation is gated on the SATH verifier.
+- `docs/plans/tenant-domain-and-node-enforcement-boundary-plan.md`
+  - proposed follow-on naming and boundary plan with its repository
+    architecture-quality precondition met. Starts from the current
+    tenant-isolation, storage-trust, system-tenant, and container-image
+    baselines; preserves explicit `TenantIsolation*` type names for security
+    artifacts; and separates tenant admission from `nimbus-node` local
+    enforcement, sandbox primitives, runtime primitives, storage/API PEPs,
+    system-tenant evidence, and the Iroh-backed control plane. Includes a
+    comparative review against Kubernetes, CockroachDB, Convex, workerd,
+    Podman/Quadlet, and OpenShell patterns for node-scoped status writes,
+    typed tenant capabilities, runtime trust monotonicity, strict host artifact
+    rendering, and explicit system-tenant boundaries. The plan now includes a
+    resumable agent-control-plane protocol and proof bundle under
+    `docs/plans/proof/tenant-domain-and-node-enforcement-boundary/`.
+- `docs/plans/firecracker-snapshot-invocation-backend-plan.md`
+  - proposed follow-on plan for a Lambda-like Firecracker snapshot invocation
+    backend. Keeps this separate from long-lived krun service microVMs and
+    in-process V8/Deno/Node/Bun runtime pools, starts with upstream
+    Firecracker sidecar plus jailer, and gates product selectability on
+    verified OCI-to-rootfs template snapshots, snapshot restore invocation,
+    tenant-safe post-restore identity/config/credential projection,
+    storage/network/compute isolation, provenance checks, diagnostics,
+    latency evidence, and Linux/minicloud verification. Tier 1 of the
+    three-tier sandbox roadmap; pairs with the libkrun-session backend
+    that covers Tier 2 and Tier 3.
+- `docs/plans/computer-use-sandbox-plan.md`
+  - proposed plan for Tier 2 of the three-tier sandbox roadmap: long-lived
+    desktop sessions for agent computer use (browser/terminal/IDE inside a
+    libkrun guest with frame capture and input injection). Builds on the
+    shared `libkrun_session` backend, `nimbus-init` PID-1 guest agent
+    (muvm-guest-derived under MIT), virtio-input HID injection, optional
+    headless Wayland compositor, virtiofs/passt/vsock plumbing, and the
+    operator surface `nimbus sandbox session start/list/inspect/stop/screencast/input`.
+    Covers CUS0..CUS11. Backend design at
+    `docs/plans/research/libkrun-session-sandbox.md`.
+- `docs/plans/gpu-accelerated-sandbox-plan.md`
+  - proposed plan for Tier 3 of the three-tier sandbox roadmap: GPU-accelerated
+    AI workloads (model inference/training inside the sandbox with host GPU
+    exposed to guest). Shares the `libkrun_session` backend with Tier 2 but
+    layers a `GpuMediationPolicy` selector — Venus by default (Linux + macOS
+    via krunkit + virglrenderer + MoltenVK; ~75-80% native Metal on Apple
+    Silicon per llama.cpp evidence in libkrun #353/#377), virtio-gpu
+    native-context opt-in for trusted AMD/Adreno/Asahi tenants with strict
+    ioctl filters, CUDA workloads routed to a separate NVIDIA Linux fleet,
+    ROCm deferred. Operator surface `nimbus sandbox gpu doctor/benchmark/admit`.
+    Covers GAW0..GAW13. Backend decision doc at
+    `docs/plans/research/gpu-sandbox-backends.md`.
+- `docs/plans/research/nimbus-libkrun-fork-inventory.md`
+  - load-bearing research doc that satisfies CUS0 + GAW0: the
+    `nimbus-libkrun` fork has exactly one functional patch (TSI
+    bind-address hook, `15bcf49`) plus 9 build/release/CI/hygiene
+    commits, an MIT-licensed per-component disposition table for every
+    file under `AsahiLinux/muvm` (Lift / Lift+mod / Reference / Skip),
+    the canonical `krun_set_gpu_options2` call shape pulled from
+    muvm `crates/muvm/src/bin/muvm.rs:188`, an AI-agent capability map
+    (§6.1), a six-flow media streaming and recording surface (§6.2),
+    and an anticipated-patch list (passt-mode bind-address equivalent,
+    per-tenant native-context ioctl filter, four media-flow follow-on
+    phases CUS-Aud / CUS-Cam / CUS-Rec / CUS-X86). Cite from CUS / GAW
+    implementation phases instead of re-stating the assumptions.
+- `docs/plans/research/computer-use-capabilities-audit.md`
+  - companion research doc to the fork inventory, satisfying the
+    "missing core computer-use capabilities" review for Tier 2.
+    Audits the plan against Anthropic Computer Use, OpenAI Operator,
+    browser-use, OSWorld, AgentBench, Manus, Devin, and Genspark
+    across six dimensions (perception, input, state/lifecycle,
+    outbound content, inbound content, environment). Identifies
+    seven v0 must-have additions wired into CUS1..CUS8 (spec-type
+    state/time/locale/dpi/audio/camera/recording/trajectory/redaction/
+    events fields, `xdg-open` URL injection, per-window/region/PTS
+    capture, IME, vsock channel ID reservations, tenant output area,
+    `Sandbox::snapshot/branch/restore` trait stubs, expanded CLI
+    surface) plus eleven new follow-on phases (CUS-Acc, CUS-Clip,
+    CUS-Snap, CUS-Trace v1, CUS-Red, CUS-Persist, CUS-DnD, CUS-Evt,
+    CUS-Out, CUS-Net-Obs, CUS-Multi).
+- `docs/plans/research/vmm-landscape-2026.md`
+  - evidence base for the three-tier sandbox roadmap. Resolves the
+    recurring "could we use one VMM for everything" question by
+    recording May 2026 state of Firecracker (head `eaa62396d`,
+    Apache-2.0, charter-locked minimalism, vhost-user wired, prod-
+    grade snapshot/restore), libkrun (v1.18.1, LGPL-2.1, no
+    snapshot/restore on any branch, GPU+HVF+virtio-input strengths),
+    Cloud Hypervisor (v52.0, Apache-2.0, snapshot version-locked, no
+    GPU/input mainline), and the zeroboot Firecracker-derivative
+    (Apache-2.0 prototype, 0.79 ms p50 fork, 265 KB/sandbox,
+    serial-I/O-only fork primitive). Captures the rust-vmm lineage
+    (libkrun "incorporates code from Firecracker, rust-vmm and
+    Cloud-Hypervisor"), the 2026 production-platform mapping
+    (AWS Lambda / Fly.io / Koyeb / Northflank / Modal / zeroboot),
+    a capability matrix, and the Firecracker vhost-user escape hatch
+    for delegated fs/gpu/snd. Surfaces six open decisions: Tier 1
+    mechanism (cold boot vs snapshot vs template-fork), zeroboot
+    build-vs-incorporate, libkrun snapshot porting, Sandbox trait
+    split (`InvocationSandbox` vs `SessionSandbox`), browser-only
+    agent lane, and Cloud Hypervisor unification re-evaluation
+    cadence.
 - `docs/plans/final-nimbus-release-readiness-plan.md`
   - ready execution plan for tying the standardized fork releases back into
     the final `nimbus/nimbus` product release. Gates on live fork health,
@@ -29,110 +125,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     consistency, full local Nimbus verification, local release binary proof,
     tag-driven GitHub release workflow success, downloaded artifact
     verification, and post-release install/runtime posture evidence.
-- `docs/plans/enterprise-policy-and-sandbox-egress-plan.md`
-  - active execution plan for OpenShell-informed enterprise trust work.
-    EPS0-EPS8 are complete: strict typed operator policy artifacts,
-    built-in Rust evaluation into the existing `TenantIsolationDecision`
-    path, `nimbus policy validate|explain|diff|prove`, backend-aware reload
-    lifecycle, container proxy-enforced sandbox egress with live reload, krun
-    fail-closed/recreate-required semantics, OCSF/OpenTelemetry export
-    mappings, optional external policy backend seam, denied-egress policy
-    drafts, advisory/prover fixtures with accepted-risk support, operator docs,
-    and the reusable `bash scripts/verify-enterprise-policy-egress.sh`
-    conformance gate.
-- `docs/plans/artifact-provenance-verification-plan.md`
-  - active execution plan for production artifact provenance verification.
-    AP0-AP7 are complete: maintained OCI image parsing, typed verifier
-    adapter contract, Cosign image signatures, SLSA image/file provenance,
-    runtime bundle and guest executable admission, SBOM presence evidence,
-    offline/private-root verification fixtures, the reusable
-    `bash scripts/verify-artifact-provenance.sh` conformance gate, operator
-    docs, real sandbox service-image admission, Convex/Cloud Functions runtime
-    bundle provenance hook propagation, source-scoped provenance enforcement,
-    and composite signature/provenance/SBOM verifier chaining.
-- `docs/plans/bun-jsc-runtime-proof-plan.md`
-  - completed Bun/JSC proof wave. Starts from the completed runtime engine
-    seam and execution-isolation baselines, keeps Bun/JSC proof-only and
-    `in_process_trusted_only`, records Gate 10 on Bun `c57f7e58c0`, Gate 11
-    permission inventory on Bun `9e20ac28a2`, Gate 12 memory behavior on Bun
-    `f6c87be47e`, Gate 13 package/module policy on Bun `f0cee692c0`, and Gate
-    14 lifecycle/reuse stress on Bun `65cdc97796`; BJ5 added explicit
-    JavaScript evaluation-format metadata and server/codegen rejection of
-    unsupported Bun combinations; BJ6 records the hold/no-fork/no-upstream-yet
-    decision against the current local Bun delta; BJ7 closed the plan with
-    final verification. Bun remains not selectable.
-- `docs/plans/bun-jsc-in-process-lockdown-plan.md`
-  - completed follow-on plan for the product-relevant Bun/JSC question:
-    whether Bun can become a Nimbus in-process runtime backend with
-    Nimbus-owned lockdown. This explicitly does not use OCI/microVM isolation
-    as the answer; Bun inside an OCI image is already a sandbox workload mode.
-    Completed 2026-05-23. BIL0-BIL8 are complete. The backend remains
-    proof-only, upstream-first, and not selectable. The reusable verification
-    gate passes locally and on Debian 13 `minicloud` with Bun proof commit
-    `ce5aa2a389`.
-- `docs/plans/bun-jsc-embedder-api-and-pool-plan.md`
-  - completed execution plan for the product-moving Bun/JSC embedder API and
-    pool wave. Nimbus is
-    now pursuing Bun/JSC as an optional in-process backend candidate beside
-    Deno/V8, with a dedicated Bun/JSC pool. BEP0-BEP9 are complete: BEP3
-    added typed Bun/JSC pool metadata and validation that rejects V8/Deno with
-    Bun pool metadata and rejects Bun/JSC with V8/Deno pool metadata;
-    BEP4 added the disabled backend-owned Bun/JSC pool scaffold with
-    state/ack-driven lifecycle, fresh/discard versus trusted-retained policy
-    modes, and no V8/Deno internals in the public pool envelope; BEP5 proved
-    a native Bun embedder resolver denial hook for dynamic import,
-    `Bun.resolve*`, package roots, plugin-style specifiers, and native addon
-    resolution on Bun proof commit `c5bafa6d73`; BEP6 proved a native
-    permission deny profile for filesystem, network/server, env/process,
-    subprocess, FFI, plugin, worker, timer, fetch/WebSocket, and
-    tenant-visible dynamic-code surfaces on Bun proof commit `0c132cff81`;
-    BEP7 proved memory, cancellation, teardown, and retained trusted reuse on
-    Bun proof commit `4b5de5ee5d` with before-guest-entry cancellation denied
-    by the owner-side entry gate, after-entry cancellation changed from
-    elapsed-time sleep to host-observed spin-entry acknowledgement, and fresh
-    teardown plus retained trusted reuse named in the proof output. The reusable
-    `bash scripts/verify-bun-jsc-in-process-lockdown.sh` gate passes locally
-    and on Debian 13 `minicloud` for BEP7. BEP8 added the optional Bun/JSC
-    backend admission baseline: a separate `BunJsc` compatibility target,
-    backend-owned event-loop execution model, Convex `bun` runtime lane,
-    codegen `bunJsc` metadata, and admission only for the proven untrusted
-    fresh/discard profile with `bun_self_contained` package resolution. Current
-    builds still fail closed before Bun/JSC guest execution unless a Bun
-    embedder adapter is linked, so function-level `"use bun"` codegen remains
-    withheld. BEP9 closed the wave with repeatable local/minicloud evidence:
-    the reusable `bash scripts/verify-bun-jsc-in-process-lockdown.sh` gate
-    passed locally at Nimbus `3b6c27bc` and on Debian 13 `minicloud` from the
-    isolated proof checkout
-    `/home/nimbus/src/github.com/nimbus/nimbus-bep9-proof-20260523191300`
-    against Bun proof head `4b5de5ee5d`. Fork posture remains upstream-first;
-    no `nimbus/bun` fork yet. The next wave should link a verified Bun embedder
-    execution adapter, implement the Bun pool execution path, and add
-    end-to-end invocation tests for the admitted profile.
-- `docs/plans/bun-jsc-linked-adapter-plan.md`
-  - completed execution plan for the linked in-process Bun/JSC backend wave.
-    BJA0-BJA8 are complete: linked adapter boundary, reproducible
-    source-owned Nimbus Bun fork tag, optional no-link versus linked build
-    lanes, pure Bun/JSC invocation, HostBridge and tenant identity propagation,
-    cancellation/teardown/memory proof, product metadata selection, CI, docs,
-    diagnostics, and local plus Debian 13 `minicloud` verification. Closed at
-    Nimbus `dec70418` with Bun source tag `nimbus-bun-jsc-proof-main-20260525`
-    (`ad0e1d2bbc6690651e04f10eaf1dcdf8a6c0de57`). The next wave is
-    distribution and release productization, not more proof of the basic linked
-    execution path.
-- `docs/plans/bun-jsc-distribution-and-release-plan.md`
-  - completed execution plan for turning the completed Bun/JSC linked adapter
-    into a distributable optional runtime backend. BJD0-BJD9 delivered the release
-    artifact layout, strict adapter manifest, packaged runtime discovery,
-    deterministic package helper, Linux/macOS CI and release lanes,
-    package/install integration, checksum/SBOM/provenance evidence, operator
-    diagnostics, local plus Debian 13 `minicloud` installed-package proof, and
-    final broad verification while preserving default single-binary no-link
-    behavior. Closed with proof gate 66; the optional Bun/JSC adapter is now a
-    committed optional runtime backend contract beside the default Deno/V8/Node
-    lanes. Gate 67 hardened the baseline after audit by keeping diagnostics
-    discovery lazy, enforcing Linux root-owned packaged paths, reusing the
-    strict installer verifier, exact-matching checksum subjects, and making the
-    manual adapter artifact workflow self-sufficient by default.
 - `docs/plans/distribution-plan.md`
   - canonical plan for distributing nimbus across all channels: install
     script, apt repo (Debian/Ubuntu), COPR (Fedora), Homebrew + machine VM
@@ -140,14 +132,25 @@ This directory prefers a small-number-of-plans model with clear ownership.
     VM images (AWS AMI, GCP). Channel 4 covers the macOS machine VM
     architecture (krunkit, guest image, control channel, virtiofs, gvproxy).
     Activation gate met on 2026-04-13 (microVM service baseline `done`);
-    binary release, Homebrew/cask, and Linux package mirror lanes are in
-    flight under this plan.
+    binary release, Homebrew/cask, Linux package mirror, and release-owned OCI
+    image lanes are in flight under this plan.
+
 ## Current Reference Baselines
 
 Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
+- `docs/plans/storage-architecture-trust-hardening-plan.md`
+  - completed execution record for the storage architecture trust-hardening
+    wave (SATH0-SATH11, closed 2026-05-27). Added the durable tenant event
+    journal for document, schema, table lifecycle, index lifecycle, scheduler,
+    and replay-affecting state; retention-gated hard delete; first-class read
+    visibility; storage capability and health diagnostics; backend
+    format/version gates; shared table lifecycle transition rules;
+    generated/metamorphic cross-backend conformance; and operator evidence.
+    `/goal` control plane gated on
+    `bash scripts/verify-storage-architecture-trust-hardening.sh`.
 - `docs/plans/archive/ci-wall-acceleration-plan.md`
   - completed execution record for the CI Wall Acceleration wave
     (CW0-CW5, closed 2026-05-23). Attacked the post-CA wall poles on
@@ -268,7 +271,12 @@ archived plans only when you need historical execution detail.
     `uses:` reference (including the codeql-action sub-path refs) with
     a `# vX.Y.Z` version-name comment, pinned every `runs-on:
     ubuntu-latest` to `ubuntu-24.04`, dropped the
-    `actions/create-github-app-token@v3.2.0` patch over-pin to `@v3`,
+    `actions/create-github-app-token@v3.2.0` patch over-pin to `@v3`
+    during the CI modernization wave. The release workflow later
+    re-pinned those token steps to `@v3.2.0` because current
+    `actionlint` validates `client-id` cleanly for that exact ref while
+    still reporting stale legacy `app-id` metadata for the `@v3` major
+    ref; keep `client-id` as the canonical input.
     instrumented four high-value jobs (deny, coverage,
     rust-gate-summary, desktop-ui) with structured
     `$GITHUB_STEP_SUMMARY` markdown, and shipped
@@ -638,7 +646,7 @@ archived plans only when you need historical execution detail.
     `TenantWorkloadStableIdentity`; does not own secret values. Dependency
     review at
     `docs/plans/research/service-identity-provenance-dependency-audit.md`.
-- `docs/plans/artifact-provenance-verification-plan.md`
+- `docs/plans/archive/artifact-provenance-verification-plan.md`
   - canonical completed baseline for production artifact verification behind
     the landed `TenantImageVerificationProvider` seam: maintained OCI
     reference parsing, Cosign verification, SLSA provenance verification,
@@ -698,7 +706,7 @@ the work is explicitly a historical review.
 - For image signatures, SLSA provenance, SBOMs, OCI reference/referrer parsing,
   runtime bundle provenance, machine-image provenance, or any artifact
   verification code, start with
-  `docs/plans/artifact-provenance-verification-plan.md`. Do not hand-roll
+  `docs/plans/archive/artifact-provenance-verification-plan.md`. Do not hand-roll
   cryptographic verification in Nimbus.
 - For service identity, provider-auth exchange, OIDC/JWT minting,
   SPIFFE/SVIDs, mTLS certificates, service-account tokens, or promotion of the
@@ -719,6 +727,15 @@ the work is explicitly a historical review.
 - For microVM service security hardening, start with
   `docs/plans/archive/sandbox-microvm-hardening-plan.md` and
   `docs/plans/security/sandbox-isolation-audit.md`.
+- For sandbox tier work beyond the landed krun service baseline, hold the
+  three-tier roadmap in mind: Tier 1 Lambda (`firecracker-snapshot-invocation-backend-plan.md`),
+  Tier 2 computer use (`computer-use-sandbox-plan.md`), Tier 3 GPU AI workloads
+  (`gpu-accelerated-sandbox-plan.md`). Tier 2 and Tier 3 share the
+  `libkrun_session` backend designed in
+  `docs/plans/research/libkrun-session-sandbox.md`; the GPU mediation policy
+  matrix (Venus vs native-context vs CUDA-on-NVIDIA-fleet) lives at
+  `docs/plans/research/gpu-sandbox-backends.md`. Do not reflexively
+  recommend Firecracker for non-Lambda workloads.
 - For repo-wide reliability-proof posture or CI flake investigation, start
   with `docs/architecture/testing/reliability-posture.md` and
   `docs/architecture/testing/ci-failure-investigation.md`.

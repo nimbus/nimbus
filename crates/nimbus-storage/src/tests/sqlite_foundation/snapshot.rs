@@ -16,9 +16,12 @@ fn sqlite_materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
     let snapshot = live
         .export_materialized_journal_snapshot()
         .expect("snapshot export should succeed");
-    assert_eq!(snapshot.version, 1);
-    assert_eq!(snapshot.applied_sequence, SequenceNumber(1));
-    assert_eq!(snapshot.durable_head, SequenceNumber(1));
+    assert_eq!(
+        snapshot.version,
+        crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION
+    );
+    assert_eq!(snapshot.applied_sequence, SequenceNumber(2));
+    assert_eq!(snapshot.durable_head, SequenceNumber(2));
 
     let second = ranked_document(&table, "Second", 3);
     live.insert_with_indexes(&second, &table_schema.indexes)
@@ -34,8 +37,8 @@ fn sqlite_materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
     let bootstrap = live
         .export_durable_journal_bootstrap()
         .expect("bootstrap export should succeed");
-    assert_eq!(bootstrap.resume_after, SequenceNumber(3));
-    assert_eq!(bootstrap.bootstrap_cut, SequenceNumber(3));
+    assert_eq!(bootstrap.resume_after, SequenceNumber(4));
+    assert_eq!(bootstrap.bootstrap_cut, SequenceNumber(4));
     assert_eq!(bootstrap.cursor_floor, SequenceNumber(0));
 
     let tail = live
@@ -90,6 +93,7 @@ fn sqlite_materialized_snapshot_records_durable_boundary_and_rejects_incomplete_
         Timestamp(100),
         vec![WriteOp {
             table: document.table.clone(),
+            table_id: TableId::new(),
             op_type: WriteOpType::Insert,
             doc_id: document.id.clone(),
             resource_path_binding: None,

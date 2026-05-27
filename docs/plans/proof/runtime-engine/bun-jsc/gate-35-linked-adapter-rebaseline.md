@@ -2,7 +2,7 @@
 
 Date: 2026-05-23
 
-Nimbus plan: `docs/plans/bun-jsc-linked-adapter-plan.md`
+Nimbus plan: `docs/plans/archive/bun-jsc-linked-adapter-plan.md`
 
 ## Status
 

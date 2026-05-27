@@ -96,9 +96,24 @@ fn materialized_surface_handles_concurrent_reads_and_writes() {
         "concurrent writes may force one catch-up warm load beyond the initial publication"
     );
     assert!(stats.evaluation_count >= 66);
-    assert_eq!(
-        stats.latest_covered_sequence,
-        Some(journal_stats.applied_head)
+    let latest_document_sequence = service
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("durable journal should read")
+        .into_iter()
+        .filter(|record| !record.writes.is_empty())
+        .map(|record| record.sequence)
+        .max()
+        .expect("document writes should exist");
+    let latest_covered_sequence = stats
+        .latest_covered_sequence
+        .expect("materialized surface should publish a covered sequence");
+    assert!(
+        latest_covered_sequence.0 >= latest_document_sequence.0,
+        "materialized surface should cover every document write"
+    );
+    assert!(
+        latest_covered_sequence.0 <= journal_stats.applied_head.0,
+        "materialized surface should not report coverage beyond applied visibility"
     );
 }
 

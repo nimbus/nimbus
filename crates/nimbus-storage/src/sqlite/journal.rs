@@ -1,5 +1,9 @@
 use super::*;
 use crate::keys::{document_path_key, resource_locator_key};
+use crate::store::TRIGGER_DELIVERY_CURSOR_KEY;
+use crate::table_identity::{
+    DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
+};
 use nimbus_core::{DocumentLocator, ResourcePathBinding};
 
 impl SqliteTenantStore {
@@ -64,6 +68,9 @@ impl SqliteTenantStore {
         let conn = self.open_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
+        for identity in &snapshot.table_identities {
+            ensure_table_identity_in_conn(&conn, identity)?;
+        }
         for table_schema in snapshot.schema.tables.values() {
             conn.execute(
                 "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)",
@@ -72,11 +79,12 @@ impl SqliteTenantStore {
             .map_err(map_sqlite_error)?;
         }
         for document in &snapshot.documents {
+            let table_id = snapshot.default_table_id(&document.table)?;
             conn.execute(
-                "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
+                "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
-                    document.table.as_str(),
+                    table_id.as_str(),
                     document.id.to_string(),
                     serialize_document_fields(document)?,
                     serialize_document_typed_fields(document)?,
@@ -198,6 +206,7 @@ impl SqliteTenantStore {
             return Ok(());
         }
 
+        let schema_cache_dirty = records.iter().any(durable_record_changes_schema_cache);
         let conn = self.open_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
@@ -223,6 +232,9 @@ impl SqliteTenantStore {
         self.fault_injector
             .check(FaultPoint::StorageCommitBeforeVisibility)?;
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        if schema_cache_dirty {
+            self.replace_cached_schema(load_schema_from_conn(&conn)?)?;
+        }
         self.fault_injector
             .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
         Ok(())
@@ -246,6 +258,7 @@ impl SqliteTenantStore {
             || progress.applied_head.0 != 0
             || !snapshot.documents()?.is_empty()
             || !snapshot.load_schema()?.tables.is_empty()
+            || !snapshot.table_identities()?.is_empty()
             || !snapshot.scheduled_execution_ids()?.is_empty()
         {
             return Err(Error::Internal(
@@ -256,137 +269,337 @@ impl SqliteTenantStore {
     }
 }
 
+fn durable_record_changes_schema_cache(record: &DurableMutationRecord) -> bool {
+    record.events.iter().any(|event| {
+        matches!(
+            event,
+            TenantEventKind::SchemaChange { .. }
+                | TenantEventKind::TableLifecycle {
+                    lifecycle: TableLifecycleEvent::HardDelete { .. }
+                }
+        )
+    })
+}
+
 pub(super) fn append_commit_entry(
     conn: &Connection,
     timestamp: Timestamp,
     writes: Vec<WriteOp>,
+    events: Vec<TenantEventKind>,
 ) -> Result<CommitEntry> {
     let sequence = next_sequence_in_conn(conn)?;
-    let entry = CommitEntry {
-        sequence: SequenceNumber(sequence),
-        timestamp,
+    let record = append_tenant_event_record(conn, SequenceNumber(sequence), timestamp, events)?;
+    Ok(CommitEntry {
+        sequence: record.sequence,
+        timestamp: record.timestamp,
         writes,
-    };
-    let payload = serialize_commit(&entry)?;
+    })
+}
+
+pub(super) fn append_tenant_event_record(
+    conn: &Connection,
+    sequence: SequenceNumber,
+    timestamp: Timestamp,
+    events: Vec<TenantEventKind>,
+) -> Result<TenantEventRecord> {
+    let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
+    let payload = serialize_durable_record(&record)?;
     conn.execute(
         "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
-        params![sequence, payload],
+        params![sequence.0, payload],
     )
     .map_err(map_sqlite_error)?;
     put_metadata_in_conn(
         conn,
         NEXT_SEQUENCE_KEY,
-        &encode_u64(sequence.saturating_add(1)),
+        &encode_u64(sequence.0.saturating_add(1)),
     )?;
-    put_metadata_in_conn(conn, APPLIED_SEQUENCE_KEY, &encode_u64(sequence))?;
-    Ok(entry)
+    put_metadata_in_conn(conn, APPLIED_SEQUENCE_KEY, &encode_u64(sequence.0))?;
+    Ok(record)
 }
 
 pub(super) fn apply_durable_record_in_conn(
     conn: &Connection,
     record: &DurableMutationRecord,
 ) -> Result<()> {
-    if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
-        let _ = begin_scheduled_execution_in_conn(conn, Some(execution_id))?;
+    if record.events.is_empty() {
+        if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
+            let _ = begin_scheduled_execution_in_conn(conn, Some(execution_id))?;
+        }
+        return apply_document_writes_in_conn(conn, &record.writes);
     }
 
-    for write in &record.writes {
-        match (&write.previous, &write.current) {
-            (None, Some(current)) => {
-                let existing = load_document_from_conn(conn, &write.table, &write.doc_id)?;
-                match existing {
-                    Some(existing) if existing == *current => continue,
-                    Some(_) => {
-                        return Err(Error::Conflict(format!(
-                            "durable journal insert replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
-                    }
-                    None => {
-                        conn.execute(
-                            "INSERT INTO documents (table_name, id, data_json, typed_fields_json, creation_time, update_time)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                            params![
-                                write.table.as_str(),
-                                write.doc_id.to_string(),
-                                serialize_document_fields(current)?,
-                                serialize_document_typed_fields(current)?,
-                                current.creation_time.0,
-                                current.update_time.0,
-                            ],
-                        )
-                        .map_err(map_sqlite_error)?;
-                    }
-                }
-                if let Some(binding) = write.resource_path_binding.as_ref() {
-                    upsert_resource_path_binding_in_conn(conn, binding)?;
-                }
-            }
-            (Some(previous), Some(current)) => {
-                let existing = load_document_from_conn(conn, &write.table, &write.doc_id)?.ok_or(
-                    Error::Conflict(format!(
-                        "durable journal update replay missing document {}",
-                        write.doc_id
-                    )),
-                )?;
-                if existing == *current {
-                    continue;
-                }
-                if existing != *previous {
+    for event in &record.events {
+        apply_tenant_event_in_conn(conn, event)?;
+    }
+    Ok(())
+}
+
+fn apply_tenant_event_in_conn(conn: &Connection, event: &TenantEventKind) -> Result<()> {
+    match event {
+        TenantEventKind::DocumentWrite { writes } => apply_document_writes_in_conn(conn, writes),
+        TenantEventKind::SchemaChange { change } => apply_schema_change_in_conn(conn, change),
+        TenantEventKind::TableLifecycle { lifecycle } => {
+            apply_table_lifecycle_in_conn(conn, lifecycle)
+        }
+        TenantEventKind::IndexLifecycle { .. } | TenantEventKind::Barrier { .. } => Ok(()),
+        TenantEventKind::ScheduledExecution { execution_id } => {
+            let _ = begin_scheduled_execution_in_conn(conn, Some(execution_id))?;
+            Ok(())
+        }
+        TenantEventKind::TriggerDelivery { cursor } => put_metadata_in_conn(
+            conn,
+            TRIGGER_DELIVERY_CURSOR_KEY,
+            &encode_u64(cursor.materialized_through.0),
+        ),
+    }
+}
+
+fn apply_document_writes_in_conn(conn: &Connection, writes: &[WriteOp]) -> Result<()> {
+    for write in writes {
+        apply_document_write_in_conn(conn, write)?;
+    }
+    Ok(())
+}
+
+fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()> {
+    match (&write.previous, &write.current) {
+        (None, Some(current)) => {
+            ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
+            let existing = load_document_by_table_id_from_conn(
+                conn,
+                &write.table,
+                &write.table_id,
+                &write.doc_id,
+            )?;
+            match existing {
+                Some(existing) if existing == *current => return Ok(()),
+                Some(_) => {
                     return Err(Error::Conflict(format!(
-                        "durable journal update replay found conflicting state for document {}",
+                        "durable journal insert replay found conflicting state for document {}",
                         write.doc_id
                     )));
                 }
+                None => {
+                    conn.execute(
+                        "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![
+                            write.table_id.as_str(),
+                            write.doc_id.to_string(),
+                            serialize_document_fields(current)?,
+                            serialize_document_typed_fields(current)?,
+                            current.creation_time.0,
+                            current.update_time.0,
+                        ],
+                    )
+                    .map_err(map_sqlite_error)?;
+                }
+            }
+            if let Some(binding) = write.resource_path_binding.as_ref() {
+                upsert_resource_path_binding_in_conn(conn, binding)?;
+            }
+        }
+        (Some(previous), Some(current)) => {
+            ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
+            let existing = load_document_by_table_id_from_conn(
+                conn,
+                &write.table,
+                &write.table_id,
+                &write.doc_id,
+            )?
+            .ok_or(Error::Conflict(format!(
+                "durable journal update replay missing document {}",
+                write.doc_id
+            )))?;
+            if existing == *current {
+                return Ok(());
+            }
+            if existing != *previous {
+                return Err(Error::Conflict(format!(
+                    "durable journal update replay found conflicting state for document {}",
+                    write.doc_id
+                )));
+            }
+            conn.execute(
+                "UPDATE documents
+                 SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
+                 WHERE table_id = ?1 AND id = ?2",
+                params![
+                    write.table_id.as_str(),
+                    write.doc_id.to_string(),
+                    serialize_document_fields(current)?,
+                    serialize_document_typed_fields(current)?,
+                    current.creation_time.0,
+                    current.update_time.0,
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+            if let Some(binding) = write.resource_path_binding.as_ref() {
+                upsert_resource_path_binding_in_conn(conn, binding)?;
+            }
+        }
+        (Some(previous), None) => {
+            ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
+            match load_document_by_table_id_from_conn(
+                conn,
+                &write.table,
+                &write.table_id,
+                &write.doc_id,
+            )? {
+                Some(existing) if existing != *previous => {
+                    return Err(Error::Conflict(format!(
+                        "durable journal delete replay found conflicting state for document {}",
+                        write.doc_id
+                    )));
+                }
+                Some(_) => {
+                    conn.execute(
+                        "DELETE FROM documents WHERE table_id = ?1 AND id = ?2",
+                        params![write.table_id.as_str(), write.doc_id.to_string()],
+                    )
+                    .map_err(map_sqlite_error)?;
+                }
+                None => return Ok(()),
+            }
+            remove_resource_path_binding_in_conn(
+                conn,
+                &DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
+            )?;
+        }
+        (None, None) => {
+            return Err(Error::Internal(
+                "durable journal write must include a previous or current document".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn apply_schema_change_in_conn(conn: &Connection, change: &SchemaChangeEvent) -> Result<()> {
+    match change {
+        SchemaChangeEvent::SetTable {
+            table,
+            table_id,
+            previous,
+            current,
+        } => {
+            ensure_table_id_in_conn(conn, table, table_id)?;
+            if let Some(previous) = previous {
+                drop_sqlite_indexes_for_table_schema(conn, previous)?;
+            }
+            conn.execute(
+                "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)
+                 ON CONFLICT(table_name) DO UPDATE SET schema_json = excluded.schema_json",
+                params![table.as_str(), serialize_json(current)?],
+            )
+            .map_err(map_sqlite_error)?;
+            create_sqlite_indexes_for_table_schema(conn, current)
+        }
+        SchemaChangeEvent::DeleteTable {
+            table, previous, ..
+        } => {
+            if let Some(previous) = previous {
+                drop_sqlite_indexes_for_table_schema(conn, previous)?;
+            }
+            conn.execute(
+                "DELETE FROM schemas WHERE table_name = ?1",
+                params![table.as_str()],
+            )
+            .map_err(map_sqlite_error)?;
+            Ok(())
+        }
+    }
+}
+
+fn apply_table_lifecycle_in_conn(conn: &Connection, lifecycle: &TableLifecycleEvent) -> Result<()> {
+    match lifecycle {
+        TableLifecycleEvent::StageHidden { table, table_id } => {
+            conn.execute(
+                "INSERT INTO table_catalog (namespace, table_name, table_id, state)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    hidden_table_namespace(table_id),
+                    table.as_str(),
+                    table_id.as_str(),
+                    TableState::Hidden.as_str()
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+            Ok(())
+        }
+        TableLifecycleEvent::ActivateHidden {
+            table, table_id, ..
+        } => {
+            if let Some(active_table_id) = resolve_table_id_in_conn(conn, table)? {
                 conn.execute(
-                    "UPDATE documents
-                     SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
-                     WHERE table_name = ?1 AND id = ?2",
+                    "UPDATE table_catalog
+                     SET namespace = ?1, state = ?2
+                     WHERE namespace = ?3 AND table_name = ?4",
                     params![
-                        write.table.as_str(),
-                        write.doc_id.to_string(),
-                        serialize_document_fields(current)?,
-                        serialize_document_typed_fields(current)?,
-                        current.creation_time.0,
-                        current.update_time.0,
+                        deleting_table_namespace(&active_table_id),
+                        TableState::Deleting.as_str(),
+                        DEFAULT_TABLE_NAMESPACE,
+                        table.as_str()
                     ],
                 )
                 .map_err(map_sqlite_error)?;
-                if let Some(binding) = write.resource_path_binding.as_ref() {
-                    upsert_resource_path_binding_in_conn(conn, binding)?;
+            }
+            conn.execute(
+                "UPDATE table_catalog
+                 SET namespace = ?1, state = ?2
+                 WHERE namespace = ?3 AND table_name = ?4 AND table_id = ?5",
+                params![
+                    DEFAULT_TABLE_NAMESPACE,
+                    TableState::Active.as_str(),
+                    hidden_table_namespace(table_id),
+                    table.as_str(),
+                    table_id.as_str()
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+            Ok(())
+        }
+        TableLifecycleEvent::MarkDeleting { table, table_id } => {
+            conn.execute(
+                "UPDATE table_catalog
+                 SET namespace = ?1, state = ?2
+                 WHERE namespace = ?3 AND table_name = ?4 AND table_id = ?5",
+                params![
+                    deleting_table_namespace(table_id),
+                    TableState::Deleting.as_str(),
+                    DEFAULT_TABLE_NAMESPACE,
+                    table.as_str(),
+                    table_id.as_str()
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+            Ok(())
+        }
+        TableLifecycleEvent::HardDelete { table, table_id } => {
+            conn.execute(
+                "DELETE FROM documents WHERE table_id = ?1",
+                params![table_id.as_str()],
+            )
+            .map_err(map_sqlite_error)?;
+            conn.execute(
+                "DELETE FROM table_catalog WHERE table_id = ?1",
+                params![table_id.as_str()],
+            )
+            .map_err(map_sqlite_error)?;
+            if resolve_table_id_in_conn(conn, table)?.is_none() {
+                if let Some(schema) = load_table_schema_from_conn(conn, table)? {
+                    drop_sqlite_indexes_for_table_schema(conn, &schema)?;
                 }
+                conn.execute(
+                    "DELETE FROM schemas WHERE table_name = ?1",
+                    params![table.as_str()],
+                )
+                .map_err(map_sqlite_error)?;
             }
-            (Some(previous), None) => {
-                match load_document_from_conn(conn, &write.table, &write.doc_id)? {
-                    Some(existing) if existing != *previous => {
-                        return Err(Error::Conflict(format!(
-                            "durable journal delete replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
-                    }
-                    Some(_) => {
-                        conn.execute(
-                            "DELETE FROM documents WHERE table_name = ?1 AND id = ?2",
-                            params![write.table.as_str(), write.doc_id.to_string()],
-                        )
-                        .map_err(map_sqlite_error)?;
-                    }
-                    None => continue,
-                }
-                remove_resource_path_binding_in_conn(
-                    conn,
-                    &DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
-                )?;
-            }
-            (None, None) => {
-                return Err(Error::Internal(
-                    "durable journal write must include a previous or current document".to_string(),
-                ));
-            }
+            Ok(())
         }
     }
-
-    Ok(())
 }
 
 fn upsert_resource_path_binding_in_conn(
