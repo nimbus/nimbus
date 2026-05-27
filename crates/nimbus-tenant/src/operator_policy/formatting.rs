@@ -1,6 +1,6 @@
 use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge};
 
-use crate::tenant::TenantRuntimePolicyAdmission;
+use crate::TenantRuntimePolicyAdmission;
 
 use super::{
     OperatorImageProvenancePolicy, OperatorImageSignaturePolicy, OperatorPolicyImageSummary,

@@ -124,7 +124,7 @@ mod tests {
     use super::*;
 
     const VALID_POLICY: &str =
-        include_str!("../../nimbus-server/tests/fixtures/policy/valid-enterprise.yaml");
+        include_str!("../../nimbus-tenant/tests/fixtures/policy/valid-enterprise.yaml");
 
     #[test]
     fn load_policy_document_reports_parse_errors_with_path() {

@@ -331,7 +331,7 @@ impl TenantServiceAccessDecision {
         )))
     }
 
-    pub(crate) fn ensure_sandbox_spec_matches(
+    pub fn ensure_sandbox_spec_matches(
         &self,
         spec: &SandboxSpec,
         actual_backend: SandboxBackendKind,

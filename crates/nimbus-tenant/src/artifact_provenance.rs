@@ -11,9 +11,7 @@ use super::image_admission::{
 
 mod admission;
 
-pub use admission::{
-    ArtifactAdmission, admit_guest_executable_artifact, admit_runtime_bundle_artifact,
-};
+pub use admission::{ArtifactAdmission, admit_artifact_subject, normalize_artifact_sha256};
 
 pub const SLSA_PROVENANCE_V1_PREDICATE_TYPE: &str = "https://slsa.dev/provenance/v1";
 
@@ -665,7 +663,7 @@ const SENSITIVE_OUTPUT_FRAGMENTS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tenant::{TenantImageAdmissionSource, TenantImagePolicyDecision};
+    use crate::{TenantImageAdmissionSource, TenantImagePolicyDecision};
 
     const IMAGE: &str = "registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 

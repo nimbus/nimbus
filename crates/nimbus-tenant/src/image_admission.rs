@@ -455,7 +455,7 @@ impl TenantImagePolicyDecision {
     }
 }
 
-pub(crate) fn parse_oci_image_reference(image_reference: &str) -> Result<Reference> {
+pub fn parse_oci_image_reference(image_reference: &str) -> Result<Reference> {
     let stripped = image_reference
         .strip_prefix("docker://")
         .unwrap_or(image_reference);
@@ -466,7 +466,7 @@ pub(crate) fn parse_oci_image_reference(image_reference: &str) -> Result<Referen
     })
 }
 
-pub(crate) fn has_sha256_digest(reference: &Reference) -> bool {
+pub fn has_sha256_digest(reference: &Reference) -> bool {
     reference
         .digest()
         .is_some_and(|digest| digest.strip_prefix("sha256:").is_some_and(is_sha256_hex))

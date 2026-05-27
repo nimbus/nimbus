@@ -360,10 +360,7 @@ impl TenantIsolationEvent {
         self
     }
 
-    pub(crate) fn with_admitted_decision_id(
-        mut self,
-        decision_id: &TenantIsolationDecisionId,
-    ) -> Self {
+    pub fn with_admitted_decision_id(mut self, decision_id: &TenantIsolationDecisionId) -> Self {
         self.decision_id = Some(decision_id.as_str().to_owned());
         self
     }

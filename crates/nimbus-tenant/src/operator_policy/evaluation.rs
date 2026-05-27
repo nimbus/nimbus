@@ -3,7 +3,7 @@ use nimbus_runtime::RuntimePolicy;
 use nimbus_sandbox::SandboxBackendKind;
 use serde::Serialize;
 
-use crate::tenant::{
+use crate::{
     RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantIsolationContext,
     TenantIsolationDecision, TenantIsolationMode, TenantQuotaPolicyDecision,
     TenantRuntimePolicyAdmission, TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision,
@@ -141,7 +141,7 @@ impl OperatorPolicyDocument {
         }
 
         let decision = context.admit_decision(
-            crate::tenant::TenantIsolationPolicyInput::new(identity)
+            crate::TenantIsolationPolicyInput::new(identity)
                 .with_runtime_policy(&context, &runtime_policy, workload.runtime.tier, mode)
                 .with_services(TenantServiceGrantPolicyDecision::new(services.clone()))
                 .with_network(workload.network.to_decision()?)

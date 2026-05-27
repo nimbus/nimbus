@@ -11,7 +11,7 @@ use super::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TenantIsolationContext {
+pub struct TenantIsolationContext {
     pub(super) tenant_id: TenantId,
     pub(super) authority: TenantIsolationAuthority,
     pub(super) surface: &'static str,
@@ -20,7 +20,7 @@ pub(crate) struct TenantIsolationContext {
 }
 
 impl TenantIsolationContext {
-    pub(crate) fn operator(tenant_id: TenantId, surface: &'static str) -> Self {
+    pub fn operator(tenant_id: TenantId, surface: &'static str) -> Self {
         Self {
             tenant_id,
             authority: TenantIsolationAuthority::Operator,
@@ -30,7 +30,7 @@ impl TenantIsolationContext {
         }
     }
 
-    pub(crate) fn application(
+    pub fn application(
         tenant_id: TenantId,
         principal: PrincipalContext,
         surface: &'static str,
@@ -44,7 +44,7 @@ impl TenantIsolationContext {
         }
     }
 
-    pub(crate) fn system(tenant_id: TenantId, surface: &'static str) -> Self {
+    pub fn system(tenant_id: TenantId, surface: &'static str) -> Self {
         Self {
             tenant_id,
             authority: TenantIsolationAuthority::System,
@@ -54,12 +54,11 @@ impl TenantIsolationContext {
         }
     }
 
-    pub(crate) fn tenant_id(&self) -> &TenantId {
+    pub fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
     }
 
-    #[cfg(test)]
-    pub(crate) fn ensure_system_or_operator_authority(&self, context: &str) -> Result<()> {
+    pub fn ensure_system_or_operator_authority(&self, context: &str) -> Result<()> {
         if self.authority.is_system_or_operator() {
             return Ok(());
         }
@@ -69,7 +68,7 @@ impl TenantIsolationContext {
         )))
     }
 
-    pub(crate) fn reauthorize_application(
+    pub fn reauthorize_application(
         &self,
         principal: PrincipalContext,
         surface: &'static str,
@@ -82,24 +81,24 @@ impl TenantIsolationContext {
         context
     }
 
-    pub(crate) fn with_deployment_generation(mut self, generation: u64) -> Self {
+    pub fn with_deployment_generation(mut self, generation: u64) -> Self {
         self.deployment_generation = Some(generation);
         self
     }
 
-    pub(crate) fn with_workload_location(mut self, location: TenantWorkloadLocation) -> Self {
+    pub fn with_workload_location(mut self, location: TenantWorkloadLocation) -> Self {
         self.location = location;
         self
     }
 
-    pub(crate) fn admit_decision(
+    pub fn admit_decision(
         &self,
         input: TenantIsolationPolicyInput,
     ) -> Result<TenantIsolationDecision> {
         TenantIsolationDecision::admit(self, input)
     }
 
-    pub(crate) fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
+    pub fn ensure_tenant_matches(&self, actual: &TenantId, context: &str) -> Result<()> {
         if actual == &self.tenant_id {
             return Ok(());
         }
@@ -112,7 +111,7 @@ impl TenantIsolationContext {
         )))
     }
 
-    pub(crate) fn ensure_runtime_bundle_matches(
+    pub fn ensure_runtime_bundle_matches(
         &self,
         bundle: &RuntimeBundle,
         context: &str,
@@ -124,7 +123,7 @@ impl TenantIsolationContext {
         self.ensure_tenant_matches(&actual, context)
     }
 
-    pub(crate) fn ensure_deployment_generation_matches(
+    pub fn ensure_deployment_generation_matches(
         &self,
         actual_generation: u64,
         context: &str,
@@ -162,7 +161,7 @@ impl TenantIsolationContext {
         }
     }
 
-    pub(crate) fn ensure_application_principal_tenant_access(&self, context: &str) -> Result<()> {
+    pub fn ensure_application_principal_tenant_access(&self, context: &str) -> Result<()> {
         let TenantIsolationAuthority::Application { principal } = &self.authority else {
             return Ok(());
         };
@@ -202,7 +201,7 @@ pub(super) fn principal_tenant_claim(
     None
 }
 
-pub(crate) fn admit_runtime_invocation_decision(
+pub fn admit_runtime_invocation_decision(
     context: &TenantIsolationContext,
     function_name: &str,
     invocation_id: Option<&str>,

@@ -5,7 +5,7 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use crate::tenant::{
+use crate::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
     TenantImageVerificationRequest, TenantRuntimePolicyAdmission,
 };
@@ -13,15 +13,15 @@ use nimbus_sandbox::PublishedEndpointProtocol;
 
 use super::*;
 
-const VALID_POLICY: &str = include_str!("../../../tests/fixtures/policy/valid-enterprise.yaml");
-const INVALID_WILDCARD: &str = include_str!("../../../tests/fixtures/policy/invalid-wildcard.yaml");
-const INVALID_PORT: &str = include_str!("../../../tests/fixtures/policy/invalid-port.yaml");
-const INVALID_SECRET: &str = include_str!("../../../tests/fixtures/policy/invalid-secret.yaml");
-const INVALID_IMAGE: &str = include_str!("../../../tests/fixtures/policy/invalid-image.yaml");
-const UNKNOWN_FIELD: &str = include_str!("../../../tests/fixtures/policy/unknown-field.yaml");
-const NODE_ROUTE: &str = include_str!("../../../tests/fixtures/policy/node-route.yaml");
-const DIFF_FROM: &str = include_str!("../../../tests/fixtures/policy/diff-from.yaml");
-const DIFF_TO: &str = include_str!("../../../tests/fixtures/policy/diff-to.yaml");
+const VALID_POLICY: &str = include_str!("../../tests/fixtures/policy/valid-enterprise.yaml");
+const INVALID_WILDCARD: &str = include_str!("../../tests/fixtures/policy/invalid-wildcard.yaml");
+const INVALID_PORT: &str = include_str!("../../tests/fixtures/policy/invalid-port.yaml");
+const INVALID_SECRET: &str = include_str!("../../tests/fixtures/policy/invalid-secret.yaml");
+const INVALID_IMAGE: &str = include_str!("../../tests/fixtures/policy/invalid-image.yaml");
+const UNKNOWN_FIELD: &str = include_str!("../../tests/fixtures/policy/unknown-field.yaml");
+const NODE_ROUTE: &str = include_str!("../../tests/fixtures/policy/node-route.yaml");
+const DIFF_FROM: &str = include_str!("../../tests/fixtures/policy/diff-from.yaml");
+const DIFF_TO: &str = include_str!("../../tests/fixtures/policy/diff-to.yaml");
 const REGISTRY_WIDE_IMAGE_POLICY: &str = r#"
 schema_version: 1
 tenant: tenant-a
