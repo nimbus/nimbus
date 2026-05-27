@@ -32,6 +32,62 @@ pub(super) enum ComposeSubcommand {
     Logs(ComposeLogsCommand),
     /// Show the persisted PID snapshot for one service in the current Compose project.
     Top(ComposeTopCommand),
+    /// Export reviewed static artifacts from an admitted Compose plan.
+    Export(ComposeExportCommand),
+}
+
+#[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_GROUP_HELP_TEMPLATE,
+    after_help = cli_ux::COMPOSE_EXPORT_HELP_EXAMPLES,
+    subcommand_help_heading = "Available Commands"
+)]
+pub(super) struct ComposeExportCommand {
+    #[command(subcommand)]
+    pub(super) command: ComposeExportSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum ComposeExportSubcommand {
+    /// Render Podman Quadlet artifacts for operator review.
+    Quadlet(ComposeExportQuadletCommand),
+}
+
+#[derive(Debug, Args)]
+#[command(
+    help_template = cli_ux::COMMAND_HELP_TEMPLATE,
+    after_help = cli_ux::COMPOSE_EXPORT_QUADLET_HELP_EXAMPLES
+)]
+pub(super) struct ComposeExportQuadletCommand {
+    /// Compose files to read in order. Repeat `--file` to merge overlays. When
+    /// omitted, Nimbus uses `COMPOSE_FILE` when set, then discovers from the
+    /// current directory and parent directories.
+    #[arg(long)]
+    pub(super) file: Vec<PathBuf>,
+
+    /// Export only the named service. Repeat to export multiple services.
+    #[arg(long)]
+    pub(super) service: Vec<String>,
+
+    /// Quadlet export shape.
+    #[arg(long, value_enum, default_value_t = ComposeQuadletExportMode::Containers)]
+    pub(super) mode: ComposeQuadletExportMode,
+
+    /// Podman version the operator intends to target. Recorded in provenance.
+    #[arg(long)]
+    pub(super) podman_version: Option<String>,
+
+    /// Write artifacts to a directory instead of printing them to stdout.
+    #[arg(long, value_name = "DIR")]
+    pub(super) output_dir: Option<PathBuf>,
+
+    /// Replace existing artifact files under --output-dir.
+    #[arg(long)]
+    pub(super) overwrite: bool,
+
+    /// Treat every export warning as an error.
+    #[arg(long)]
+    pub(super) strict: bool,
 }
 
 #[derive(Debug, Args)]
@@ -214,4 +270,12 @@ pub(super) enum ComposeTopOutputFormat {
     Yaml,
     #[default]
     Table,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+pub(super) enum ComposeQuadletExportMode {
+    #[default]
+    Containers,
+    Pod,
+    Kube,
 }

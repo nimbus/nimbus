@@ -20,12 +20,14 @@ mod lifecycle;
 mod logs;
 mod process;
 mod project;
+mod quadlet_export;
 mod render;
 
 pub(crate) use self::commands::ComposeCommand;
 use self::commands::{
-    ComposeConfigCommand, ComposeDownCommand, ComposeInspectCommand, ComposeLogsCommand,
-    ComposePsCommand, ComposeSubcommand, ComposeTopCommand, ComposeUpCommand,
+    ComposeConfigCommand, ComposeDownCommand, ComposeExportCommand, ComposeExportQuadletCommand,
+    ComposeExportSubcommand, ComposeInspectCommand, ComposeLogsCommand, ComposePsCommand,
+    ComposeQuadletExportMode, ComposeSubcommand, ComposeTopCommand, ComposeUpCommand,
 };
 #[allow(unused_imports)]
 use self::commands::{ComposeInspectOutputFormat, ComposePsOutputFormat, ComposeTopOutputFormat};
@@ -50,6 +52,7 @@ use self::logs::run_compose_logs_for_platform;
 #[allow(unused_imports)]
 use self::process::ServiceProcessRow;
 use self::process::ServiceProcessSnapshot;
+use self::quadlet_export::run_compose_export_quadlet;
 use self::render::{
     ServiceSandboxSummaryView, render_service_inspect_view,
     render_service_lifecycle_action_summary, render_service_list_view,
@@ -71,6 +74,7 @@ pub(crate) async fn run_compose_command(
         ComposeSubcommand::Inspect(inspect) => run_compose_inspect(inspect, control_data_dir),
         ComposeSubcommand::Logs(logs) => run_compose_logs(logs, control_data_dir),
         ComposeSubcommand::Top(top) => run_compose_top(top, control_data_dir),
+        ComposeSubcommand::Export(export) => run_compose_export(export),
     }
 }
 
@@ -257,6 +261,12 @@ fn run_compose_logs(command: ComposeLogsCommand, control_data_dir: &Path) -> Res
         ServiceHostPlatform::current(),
         None,
     )
+}
+
+fn run_compose_export(command: ComposeExportCommand) -> Result<(), Error> {
+    match command.command {
+        ComposeExportSubcommand::Quadlet(command) => run_compose_export_quadlet(command),
+    }
 }
 
 fn run_compose_top(command: ComposeTopCommand, control_data_dir: &Path) -> Result<(), Error> {
