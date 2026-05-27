@@ -18,7 +18,7 @@ impl SandboxServiceManager {
         let actual_backend = self.sandbox_backend.kind();
         let binding = LocalEnforcementBinding::from_decision(decision)?;
         let service_access = binding.service_access(&key.service_name)?;
-        service_access.ensure_sandbox_launch_matches(&launch, actual_backend)?;
+        service_access.ensure_sandbox_spec_matches(launch.spec(), actual_backend)?;
         decision
             .network()
             .ensure_sandbox_egress_matches(launch.spec(), "sandbox service launch")?;
