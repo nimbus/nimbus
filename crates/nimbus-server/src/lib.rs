@@ -2,6 +2,7 @@
 
 mod adapters;
 mod application_auth;
+mod artifact_verifier_effects;
 mod construction;
 mod error_envelope;
 mod execution;
@@ -30,6 +31,12 @@ pub use adapters::cloud_functions::CloudFunctionsRegistry;
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::firebase::FirebaseConfig;
 pub use adapters::mongodb::{AuthConfig as MongoDbAuthConfig, MongoDbConfig};
+pub use artifact_verifier_effects::{
+    ArtifactVerifierCommandBackend, ArtifactVerifierCommandInvocation,
+    ArtifactVerifierCommandOutput, ArtifactVerifierCommandRunner, CosignVerifierBackend,
+    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OfflineVerificationConfig,
+    ProcessArtifactVerifierCommandRunner, SbomVerifierBackend, SlsaVerifierBackend,
+};
 pub mod adapters_mongodb {
     pub use super::adapters::mongodb::bson_bridge;
     pub use super::adapters::mongodb::listener;
@@ -62,11 +69,8 @@ pub use tenant::{
     ArtifactProvenanceRequirement, ArtifactSignatureEvidence, ArtifactSignatureRequirement,
     ArtifactVerificationEvidence, ArtifactVerificationPolicy, ArtifactVerificationRequest,
     ArtifactVerificationSubject, ArtifactVerificationSubjectKind, ArtifactVerifierBackend,
-    ArtifactVerifierBackendIdentity, ArtifactVerifierCommandBackend,
-    ArtifactVerifierCommandInvocation, ArtifactVerifierCommandOutput,
-    ArtifactVerifierCommandRunner, ArtifactVerifierError, ArtifactVerifierErrorKind,
-    ArtifactVerifierResult, CompositeArtifactVerifierBackend, CosignVerifierBackend,
-    DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OPERATOR_POLICY_SCHEMA_VERSION, OfflineVerificationConfig,
+    ArtifactVerifierBackendIdentity, ArtifactVerifierError, ArtifactVerifierErrorKind,
+    ArtifactVerifierResult, CompositeArtifactVerifierBackend, OPERATOR_POLICY_SCHEMA_VERSION,
     OperatorAuditPolicy, OperatorDeniedEgressEvent, OperatorExternalPolicyBackend,
     OperatorExternalPolicyBackendError, OperatorExternalPolicyBackendErrorKind,
     OperatorExternalPolicyBackendIdentity, OperatorExternalPolicyBackendResult,
@@ -83,8 +87,7 @@ pub use tenant::{
     OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorRuntimeProfile,
     OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy, OperatorSandboxPolicy,
     OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
-    ProcessArtifactVerifierCommandRunner, RuntimeIsolationTier, SLSA_PROVENANCE_V1_PREDICATE_TYPE,
-    SbomVerifierBackend, SlsaVerifierBackend, TENANT_ISOLATION_EVENT_SCHEMA_VERSION,
+    RuntimeIsolationTier, SLSA_PROVENANCE_V1_PREDICATE_TYPE, TENANT_ISOLATION_EVENT_SCHEMA_VERSION,
     TenantAuditRedactionPolicy, TenantImageAdmission, TenantImageAdmissionSource,
     TenantImageAttestationEvidence, TenantImagePolicyDecision, TenantImageProvenanceRequirement,
     TenantImageSignatureEvidence, TenantImageSignatureRequirement, TenantImageVerificationEvidence,
