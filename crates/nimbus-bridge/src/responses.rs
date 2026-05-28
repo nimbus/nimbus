@@ -192,6 +192,25 @@ impl RuntimeHostPublicError {
                     "Internal server failures require operator investigation.",
                 )),
             ),
+            Error::NotFound(_) => Self::new(
+                "op.not_found",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                false,
+                Value::Null,
+                None,
+            ),
+            Error::Transport(_) => Self::new(
+                "service.transport",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                true,
+                Value::Null,
+                Some(RuntimeHostErrorRemediation::new(
+                    "retry",
+                    "Retry once the transport or connection issue clears.",
+                )),
+            ),
         }
     }
 

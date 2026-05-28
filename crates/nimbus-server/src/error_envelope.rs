@@ -381,6 +381,25 @@ impl PublicError {
                     "Internal server failures require operator investigation.",
                 )),
             ),
+            Error::NotFound(_) => Self::new(
+                "op.not_found",
+                error.to_string(),
+                ErrorSeverity::Error,
+                false,
+                Value::Null,
+                None,
+            ),
+            Error::Transport(_) => Self::new(
+                "service.transport",
+                error.to_string(),
+                ErrorSeverity::Error,
+                true,
+                Value::Null,
+                Some(ErrorRemediation::new(
+                    "retry",
+                    "Retry once the transport or connection issue clears.",
+                )),
+            ),
         }
     }
 
@@ -476,13 +495,15 @@ impl StructuredHttpError {
                     Error::TenantNotFound(_)
                     | Error::DocumentNotFound(_)
                     | Error::ScheduledJobNotFound(_)
-                    | Error::SchemaNotFound(_) => StatusCode::NOT_FOUND,
+                    | Error::SchemaNotFound(_)
+                    | Error::NotFound(_) => StatusCode::NOT_FOUND,
                     Error::Conflict(_) => StatusCode::CONFLICT,
                     Error::ResourceExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
                     Error::PermissionDenied(_) => StatusCode::FORBIDDEN,
                     Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
                     Error::SchemaValidation(_) => StatusCode::UNPROCESSABLE_ENTITY,
                     Error::AlreadyExists(_) => StatusCode::CONFLICT,
+                    Error::Transport(_) => StatusCode::SERVICE_UNAVAILABLE,
                     Error::Storage { kind, .. } => match kind {
                         StorageErrorKind::Busy
                         | StorageErrorKind::Transient
