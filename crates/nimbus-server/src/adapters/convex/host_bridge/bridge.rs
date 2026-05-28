@@ -1,13 +1,13 @@
 use super::*;
-use crate::execution::host_state::RuntimeHostState;
-use crate::local_enforcement::LocalEnforcementBinding;
-use crate::runtime_host::capabilities::RuntimeCapabilityHost;
-use crate::runtime_host::{
+use nimbus_bridge::capabilities::RuntimeCapabilityHost;
+use nimbus_bridge::state::RuntimeHostState;
+use nimbus_bridge::{
     RuntimeHostBootstrapRequest, build_runtime_host_bootstrap,
     commit_runtime_mutation_execution_unit,
 };
-use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
+use nimbus_node::LocalEnforcementBinding;
+use nimbus_services::RuntimeServiceRegistry;
+use nimbus_tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
 
 #[derive(Clone)]
 pub(crate) struct ConvexHostBridgeScope {

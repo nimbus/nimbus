@@ -244,12 +244,12 @@ fn sqlite_tenant_event_journal_replays_mixed_history() {
         Timestamp(10),
         vec![
             TenantEventKind::SchemaChange {
-                change: SchemaChangeEvent::SetTable {
+                change: Box::new(SchemaChangeEvent::SetTable {
                     table: table.clone(),
                     table_id: table_id.clone(),
                     previous: None,
                     current: table_schema.clone(),
-                },
+                }),
             },
             TenantEventKind::IndexLifecycle {
                 index: IndexLifecycleEvent {

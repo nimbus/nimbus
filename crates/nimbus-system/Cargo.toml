@@ -1,0 +1,29 @@
+[package]
+name = "nimbus-system"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nimbus-core = { path = "../nimbus-core" }
+nimbus-engine = { path = "../nimbus-engine" }
+nimbus-machine = { path = "../nimbus-machine" }
+nimbus-node = { path = "../nimbus-node" }
+nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-tenant = { path = "../nimbus-tenant" }
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+nimbus-runtime = { path = "../nimbus-runtime" }
+tempfile.workspace = true

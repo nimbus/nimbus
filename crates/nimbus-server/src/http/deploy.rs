@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use axum::http::header::AUTHORIZATION;
 use nimbus_core::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,9 +16,11 @@ use crate::adapters::cloud_functions::{
 };
 use crate::adapters::convex::{
     ConvexFunctionDeploySummary, ConvexHttpRouteDeploySummary, ConvexRegistryDeploySummary,
+    convex_system_deployment_record_input,
 };
-use crate::application_auth::ApplicationAuthVerifier;
+use crate::local_server::authorize_deploy_admin_bearer;
 use crate::state::DeploymentState;
+use nimbus_auth::ApplicationAuthVerifier;
 
 static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -28,7 +29,7 @@ pub(crate) async fn deploy_app(
     headers: HeaderMap,
     Json(request): Json<DeployRequest>,
 ) -> Result<Json<DeployResponse>, AppError> {
-    authorize_deploy(&state, &headers)?;
+    authorize_deploy_admin_bearer(state.deploy_admin_token.as_deref(), &headers)?;
     let previous_deployment = state.current_deployment();
     let previous_generation = previous_deployment.generation;
     let previous_registry = previous_deployment.convex_registry();
@@ -94,12 +95,10 @@ pub(crate) async fn deploy_app(
         }
         let generation = state.current_deployment().generation;
         if let Some(registry) = state.current_deployment().convex_registry() {
-            crate::system_tenant::record_convex_deployment_state_async(
-                &state.service,
-                &registry.deploy_summary(),
-                &format!("deploy:generation:{generation}"),
-            )
-            .await?;
+            let summary = registry.deploy_summary();
+            let source_ref = format!("deploy:generation:{generation}");
+            let input = convex_system_deployment_record_input(&summary, &source_ref);
+            nimbus_system::record_deployment_state_async(&state.service, &input).await?;
         }
         generation
     };
@@ -111,31 +110,6 @@ pub(crate) async fn deploy_app(
         previous_generation,
         diff,
     }))
-}
-
-fn authorize_deploy(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
-    let Some(expected) = state.deploy_admin_token.as_deref() else {
-        return Err(AppError::unauthorized(
-            "deploy admin API is disabled; set NIMBUS_DEPLOY_TOKEN before starting the server",
-        ));
-    };
-    let Some(value) = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return Err(AppError::unauthorized(
-            "deploy admin API requires Authorization: Bearer <token>",
-        ));
-    };
-    let Some(token) = value.strip_prefix("Bearer ") else {
-        return Err(AppError::unauthorized(
-            "deploy admin API requires Authorization: Bearer <token>",
-        ));
-    };
-    if token != expected {
-        return Err(AppError::unauthorized("invalid deploy admin token"));
-    }
-    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

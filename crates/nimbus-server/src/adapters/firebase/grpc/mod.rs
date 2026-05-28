@@ -5,20 +5,19 @@ mod listen_websocket;
 mod unary;
 mod write_stream;
 
-// `F2.1` intentionally lands the generated Firestore gRPC surface before
-// `F2.2` threads it into the shared axum/tonic router.
-
-pub(crate) mod generated {
-    #![allow(dead_code, missing_docs, clippy::all)]
-
-    include!(concat!(env!("OUT_DIR"), "/firebase_grpc.rs"));
-}
+pub(crate) use nimbus_firebase::grpc::generated;
 
 use std::sync::Arc;
 
+use nimbus_auth::ResolvedApplicationAuth;
 use tonic::{Request, Response, Status};
 
+use crate::application_auth::{
+    extract_bearer_token_from_metadata, grpc_status_from_app_error,
+    resolve_application_auth_from_bearer,
+};
 use crate::state::AppState;
+use crate::state::record_authenticated_usage;
 
 use generated::google::firestore::v1::BatchGetDocumentsRequest;
 use generated::google::firestore::v1::BatchGetDocumentsResponse;
@@ -52,8 +51,8 @@ pub(crate) use listen_websocket::listen_websocket;
 #[derive(Clone)]
 pub(crate) struct FirestoreGrpcService {
     state: Option<Arc<AppState>>,
-    listen_targets: Arc<listen_stream::RetainedListenRegistry>,
-    write_streams: Arc<write_stream::WriteStreamRegistry>,
+    listen_targets: Arc<nimbus_firebase::grpc::RetainedListenRegistry>,
+    write_streams: Arc<nimbus_firebase::grpc::WriteStreamRegistry>,
 }
 
 impl std::fmt::Debug for FirestoreGrpcService {
@@ -74,16 +73,16 @@ impl FirestoreGrpcService {
     pub(crate) fn new() -> Self {
         Self {
             state: None,
-            listen_targets: Arc::new(listen_stream::RetainedListenRegistry::new()),
-            write_streams: Arc::new(write_stream::WriteStreamRegistry::new()),
+            listen_targets: Arc::new(nimbus_firebase::grpc::RetainedListenRegistry::new()),
+            write_streams: Arc::new(nimbus_firebase::grpc::WriteStreamRegistry::new()),
         }
     }
 
     pub(crate) fn from_state(state: Arc<AppState>) -> Self {
         Self {
             state: Some(state),
-            listen_targets: Arc::new(listen_stream::RetainedListenRegistry::new()),
-            write_streams: Arc::new(write_stream::WriteStreamRegistry::new()),
+            listen_targets: Arc::new(nimbus_firebase::grpc::RetainedListenRegistry::new()),
+            write_streams: Arc::new(nimbus_firebase::grpc::WriteStreamRegistry::new()),
         }
     }
 
@@ -96,6 +95,22 @@ impl FirestoreGrpcService {
             .clone()
             .ok_or_else(|| Status::unimplemented("Not yet implemented"))
     }
+}
+
+fn request_bearer<T>(request: &Request<T>) -> Result<Option<String>, Status> {
+    extract_bearer_token_from_metadata(request.metadata()).map_err(grpc_status_from_app_error)
+}
+
+async fn resolve_bearer_auth(
+    service: &FirestoreGrpcService,
+    bearer: Option<String>,
+) -> Result<(Arc<AppState>, ResolvedApplicationAuth), Status> {
+    let state = service.app_state()?;
+    let auth = resolve_application_auth_from_bearer(&state, bearer.as_deref())
+        .await
+        .map_err(grpc_status_from_app_error)?;
+    record_authenticated_usage(&state, auth.auth.as_ref()).await;
+    Ok((state, auth))
 }
 
 #[tonic::async_trait]

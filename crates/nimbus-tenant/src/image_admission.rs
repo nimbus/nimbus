@@ -1,3 +1,4 @@
+pub use nimbus_artifacts::{has_sha256_digest, parse_oci_image_reference};
 use nimbus_core::{Error, Result};
 use oci_client::Reference;
 use serde::Serialize;
@@ -453,27 +454,6 @@ impl TenantImagePolicyDecision {
             "tenant image policy requires SBOM evidence for `{image_reference}`"
         )))
     }
-}
-
-pub fn parse_oci_image_reference(image_reference: &str) -> Result<Reference> {
-    let stripped = image_reference
-        .strip_prefix("docker://")
-        .unwrap_or(image_reference);
-    Reference::try_from(stripped).map_err(|error| {
-        Error::InvalidInput(format!(
-            "invalid OCI image reference `{image_reference}`: {error}"
-        ))
-    })
-}
-
-pub fn has_sha256_digest(reference: &Reference) -> bool {
-    reference
-        .digest()
-        .is_some_and(|digest| digest.strip_prefix("sha256:").is_some_and(is_sha256_hex))
-}
-
-fn is_sha256_hex(digest: &str) -> bool {
-    digest.len() == 64 && digest.as_bytes().iter().all(u8::is_ascii_hexdigit)
 }
 
 #[cfg(test)]

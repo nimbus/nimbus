@@ -49,11 +49,14 @@ pub struct IndexDefinition {
 }
 
 /// Lifecycle state for a logical index identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexState {
     Pending,
     Backfilling,
+    #[default]
     Enabled,
     Deleting,
 }
@@ -74,12 +77,6 @@ impl IndexState {
 
     pub fn is_maintained(self) -> bool {
         matches!(self, Self::Backfilling | Self::Enabled)
-    }
-}
-
-impl Default for IndexState {
-    fn default() -> Self {
-        Self::Enabled
     }
 }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::execution::host_calls::{
+use nimbus_bridge::host_calls::{
     RuntimeAsyncHostCallTrace, execute_async_host_call, execute_host_call,
     execute_host_call_cancellable,
 };

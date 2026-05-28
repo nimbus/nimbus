@@ -6,17 +6,18 @@ use nimbus_runtime::{
 };
 use serde_json::Value;
 
-use super::super::super::types::{ConvexSubscriptionTransform, ConvexSubscriptionTransforms};
-use super::super::state::update_runtime_transform_read_set;
 use crate::adapters::convex::ConvexRegistry;
 use crate::adapters::convex::execution::{
-    ConvexSubscriptionEvent, RuntimeInvocationContext,
-    invoke_named_convex_function_with_trace_async_cancellable,
+    RuntimeInvocationContext, invoke_named_convex_function_with_trace_async_cancellable,
 };
 use crate::adapters::convex::subscriptions::next_runtime_subscription_server_request_id;
-use crate::execution::read_tracking::{RuntimeReadSet, commit_intersects_runtime_read_set};
-use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant::{TenantIsolationContext, TenantIsolationMode};
+use nimbus_bridge::read_tracking::{RuntimeReadSet, commit_intersects_runtime_read_set};
+use nimbus_convex::subscriptions::{
+    ConvexSubscriptionEvent, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
+    update_runtime_transform_read_set,
+};
+use nimbus_services::RuntimeServiceRegistry;
+use nimbus_tenant::{TenantIsolationContext, TenantIsolationMode};
 
 pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a> {
     pub(in crate::adapters::convex::subscriptions) service: &'a Arc<nimbus_engine::Service>,

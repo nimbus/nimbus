@@ -1,39 +1,27 @@
-pub(crate) mod batch_get_request;
-pub(crate) mod batch_write_request;
-pub(crate) mod commit_request;
-pub(crate) mod errors;
 pub(crate) mod grpc;
-pub(crate) mod list_collection_ids_request;
-pub(crate) mod operations;
-pub(crate) mod resource_names;
-pub(crate) mod response;
-pub(crate) mod run_aggregation_query_request;
-pub(crate) mod run_query_request;
-pub(crate) mod serializer;
-pub(crate) mod transaction_request;
 
-pub(crate) use self::errors::{
-    batch_get_request_error_to_core, batch_write_request_error_to_core,
-    commit_request_error_to_core, firebase_error_response, firebase_error_to_app,
-    firestore_grpc_code, list_collection_ids_request_error_to_core, resource_name_error_to_core,
-    run_aggregation_query_request_error_to_core, run_query_request_error_to_core,
-    transaction_request_error_to_core,
-};
-pub(crate) use self::operations::{
-    batch_get_documents_for_database, batch_write_for_database,
-    begin_transaction_session_for_database, commit_batch_for_database, get_document_for_database,
-    list_collection_ids_for_database, resolve_write_key, rollback_transaction_session_for_database,
-    run_aggregation_query_for_database, run_query_documents_for_database,
-    tenant_context_for_database,
-};
-pub(crate) use self::response::{
-    batch_get_entry_json, batch_write_response_json, commit_response_json, firestore_document_name,
-    format_timestamp, run_aggregation_query_response_entries, run_query_response_entries,
-    serialize_json_lines,
-};
+pub use nimbus_firebase::FirebaseConfig;
+
 #[cfg(test)]
-pub(crate) use crate::provider_family::firestore::locator_for_document_path;
-pub(crate) use crate::provider_family::firestore::storage_table_for_collection_path;
+pub(crate) use nimbus_firebase::locator_for_document_path;
+pub(crate) use nimbus_firebase::response::format_timestamp;
+#[cfg(test)]
+pub(crate) use nimbus_firebase::storage_table_for_collection_path;
+pub(crate) use nimbus_firebase::{
+    batch_get_documents_for_database, batch_get_entry_json, batch_get_request_error_to_core,
+    batch_write_for_database, batch_write_request_error_to_core, batch_write_response_json,
+    begin_transaction_session_for_database, commit_batch_for_database,
+    commit_request_error_to_core, commit_response_json, list_collection_ids_for_database,
+    list_collection_ids_request_error_to_core, resolve_write_key, resource_name_error_to_core,
+    rollback_transaction_session_for_database, run_aggregation_query_for_database,
+    run_aggregation_query_request_error_to_core, run_aggregation_query_response_entries,
+    run_query_documents_for_database, run_query_request_error_to_core, run_query_response_entries,
+    serialize_json_lines, tenant_context_for_database, transaction_request_error_to_core,
+};
+pub(crate) use nimbus_firebase::{
+    batch_get_request, batch_write_request, commit_request, list_collection_ids_request,
+    resource_names, run_aggregation_query_request, run_query_request, transaction_request,
+};
 
 use std::sync::Arc;
 
@@ -44,36 +32,13 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use nimbus_core::{
-    AtomicWriteResult, Document, DocumentPath, Error, Result, StructuredAggregationResult,
-    Timestamp,
-};
+use nimbus_core::{Error, Result};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::application_auth::resolve_application_auth_from_headers;
 use crate::state::record_authenticated_usage;
 use crate::state::{AppError, AppState};
-
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct FirebaseConfig {
-    allow_emulator_mock_user_token_auth: bool,
-}
-
-impl FirebaseConfig {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_emulator_mock_user_token_auth(mut self) -> Self {
-        self.allow_emulator_mock_user_token_auth = true;
-        self
-    }
-
-    pub(crate) fn allows_emulator_mock_user_token_auth(&self) -> bool {
-        self.allow_emulator_mock_user_token_auth
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct FirestoreRouteParams {
@@ -88,44 +53,13 @@ pub(crate) struct FirestoreDocumentRunQueryRouteParams {
     document_request: String,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct BatchGetDocumentsOutcome {
-    pub entries: Vec<BatchGetDocumentEntry>,
-    pub read_time: Timestamp,
+fn firebase_error_to_app(error: Error) -> AppError {
+    AppError::from(error)
 }
 
-pub(crate) struct BatchWriteOutcome {
-    pub entries: Vec<BatchWriteEntryOutcome>,
-}
-
-pub(crate) struct BatchWriteEntryOutcome {
-    pub write_result: Option<AtomicWriteResult>,
-    pub error: Option<Error>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct BatchGetDocumentEntry {
-    pub document_name: String,
-    pub document: Option<Document>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RunQueryOutcome {
-    pub documents: Vec<RunQueryDocument>,
-    pub read_time: Timestamp,
-    pub skipped_results: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RunQueryDocument {
-    pub document_path: DocumentPath,
-    pub document: Document,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RunAggregationQueryOutcome {
-    pub result: StructuredAggregationResult,
-    pub read_time: Timestamp,
+fn firebase_error_response(error: Error) -> (StatusCode, Json<Value>) {
+    let (status, body) = nimbus_firebase::firebase_error_response_json(error);
+    (status, Json(body))
 }
 
 pub(crate) async fn commit(
@@ -157,7 +91,7 @@ pub(crate) async fn commit(
     }
 
     let outcome = commit_batch_for_database(
-        &state,
+        &state.service,
         &tenant_context,
         &parsed_commit.database,
         &auth.principal,
@@ -219,7 +153,7 @@ pub(crate) async fn batch_write(
     };
 
     match batch_write_for_database(
-        &state,
+        &state.service,
         &tenant_context,
         &parsed_request.database,
         &auth.principal,
@@ -273,7 +207,7 @@ pub(crate) async fn batch_get_documents(
             }
         };
     let outcome = match batch_get_documents_for_database(
-        &state,
+        &state.service,
         &tenant_context,
         &route_database,
         &auth.principal,
@@ -353,7 +287,7 @@ pub(crate) async fn begin_transaction(
         }
     };
     let session = match begin_transaction_session_for_database(
-        &state,
+        &state.service,
         &tenant_context,
         &parsed_request.database,
         &auth.principal,
@@ -407,7 +341,7 @@ pub(crate) async fn rollback(
             }
         };
     match rollback_transaction_session_for_database(
-        &state,
+        &state.service,
         &tenant_context,
         &parsed_request.database,
         &auth.principal,
@@ -561,7 +495,7 @@ async fn list_collection_ids_for_parent_document(
             }
         };
     let page = match list_collection_ids_for_database(
-        &state,
+        &state.service,
         &tenant_context,
         &route_database,
         parent_document_path.as_ref(),
@@ -631,7 +565,7 @@ async fn run_query_for_parent_document(
         }
     };
     let outcome = match run_query_documents_for_database(
-        &state,
+        &state.service,
         &tenant_context,
         &route_database,
         &auth.principal,
@@ -717,7 +651,7 @@ async fn run_aggregation_query_for_parent_document(
             }
         };
     let outcome = match run_aggregation_query_for_database(
-        &state,
+        &state.service,
         &tenant_context,
         &route_database,
         &auth.principal,

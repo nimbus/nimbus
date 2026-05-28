@@ -8,13 +8,13 @@ use crate::local_server::{
     LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
-use crate::service_registry::RuntimeServiceRegistry;
 use nimbus_runtime::RuntimeLimits;
 use nimbus_sandbox::{
     PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
     SandboxFilesystemSpec, SandboxFuture, SandboxHandle, SandboxId, SandboxImageLaunchSpec,
     SandboxMountSpec, SandboxProcessSpec, SandboxSpec, SandboxStatus,
 };
+use nimbus_services::RuntimeServiceRegistry;
 
 struct HarnessSandboxServiceCatalog;
 

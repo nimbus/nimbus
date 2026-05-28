@@ -1,4 +1,5 @@
 use super::*;
+use nimbus_core::{DocumentId, ResolvedDocumentId};
 
 #[tokio::test]
 async fn convex_named_query_can_return_single_document_or_null() {
@@ -60,11 +61,17 @@ async fn convex_named_query_can_return_single_document_or_null() {
     assert_eq!(found_body["author"], json!("Ada"));
     assert_eq!(found_body["body"], json!("Hello"));
 
+    let missing_id = ResolvedDocumentId::encode_table_scoped(
+        &TableName::new("messages").expect("messages table should be valid"),
+        &DocumentId::from_key("01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string())
+            .expect("fixture document id should be valid"),
+    )
+    .expect("missing fixture id should encode as table-scoped");
     let missing = api
         .convex_named_query(
             "demo",
             "messages:byId",
-            json!({ "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV" }),
+            json!({ "id": missing_id.to_string() }),
         )
         .await;
     assert_eq!(missing.status(), StatusCode::OK);

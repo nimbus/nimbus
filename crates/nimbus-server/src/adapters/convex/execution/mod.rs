@@ -29,4 +29,4 @@ pub(super) use sync_ops::{
     execute_convex_action_cancellable_with_auth, execute_query_result_cancellable_with_auth,
     execute_schedule_command,
 };
-pub(super) use types::{ConvexHttpRequestContext, ConvexHttpRouteRequest, ConvexSubscriptionEvent};
+pub(in crate::adapters::convex) use types::ConvexHttpRouteRequest;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::application_auth::normalize_principal_context;
+use nimbus_auth::normalize_principal_context;
 
 pub(super) async fn query_documents_async_with_optional_cancellation(
     service: &Arc<nimbus_engine::Service>,

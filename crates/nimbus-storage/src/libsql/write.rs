@@ -439,11 +439,11 @@ impl LibsqlReplicaWriteTransaction {
             Ok(())
         })?;
         self.record_tenant_event(TenantEventKind::SchemaChange {
-            change: SchemaChangeEvent::DeleteTable {
+            change: Box::new(SchemaChangeEvent::DeleteTable {
                 table: table.clone(),
                 table_id,
                 previous,
-            },
+            }),
         });
         self.refresh_cache_after_commit = true;
         Ok(())
@@ -1046,12 +1046,12 @@ fn record_libsql_schema_set_events(
     table_schema: &TableSchema,
 ) {
     transaction.record_tenant_event(TenantEventKind::SchemaChange {
-        change: SchemaChangeEvent::SetTable {
+        change: Box::new(SchemaChangeEvent::SetTable {
             table: table_schema.table.clone(),
             table_id: table_id.clone(),
             previous,
             current: table_schema.clone(),
-        },
+        }),
     });
     for index in &table_schema.indexes {
         transaction.record_tenant_event(TenantEventKind::IndexLifecycle {

@@ -129,9 +129,10 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   trait at `crates/nimbus-node/src/systemd_transient.rs:15-32`.
   Decision rationale and option matrix in
   `docs/plans/research/systemd-dbus-binding-rust-2026.md`.
-  Signal-correlated job completion (subscribe to `JobRemoved`
-  *before* calling `StartTransientUnit`/`StopUnit`, complete only
-  on matching signal `result`) is the trust-critical NDB3
+  Signal-correlated job completion (call systemd `Manager.Subscribe`,
+  establish the `JobRemoved` stream *before* calling
+  `StartTransientUnit`/`StopUnit`, complete only on matching signal
+  `result`) is the trust-critical NDB3
   deliverable, not polling. Linux-gated integration tests against
   `systemctl --user` land in NDB5; CI lane `node-dbus-integration`
   on `ubuntu-24.04` lands in NDB6; default activation (Linux

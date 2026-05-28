@@ -1,8 +1,7 @@
 use super::*;
-use crate::application_auth::{
-    normalize_principal_context, verify_optional_application_auth_from_headers_in_deployment,
-};
-use crate::tenant::TenantIsolationContext;
+use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
+use nimbus_auth::normalize_principal_context;
+use nimbus_tenant::TenantIsolationContext;
 
 pub(in crate::adapters::convex) async fn dispatch_http_route(
     state: Arc<AppState>,

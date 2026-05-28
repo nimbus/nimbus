@@ -5798,6 +5798,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-adapters"
+version = "0.1.31"
+dependencies = [
+ "nimbus-cloud-functions",
+ "nimbus-convex",
+ "nimbus-firebase",
+ "nimbus-mongodb",
+]
+
+[[package]]
+name = "nimbus-artifacts"
+version = "0.1.31"
+dependencies = [
+ "nimbus-core",
+ "oci-client",
+ "serde",
+]
+
+[[package]]
+name = "nimbus-auth"
+version = "0.1.31"
+dependencies = [
+ "futures",
+ "nimbus-core",
+ "nimbus-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nimbus-bin"
 version = "0.1.31"
 dependencies = [
@@ -5833,6 +5863,66 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zstd",
+]
+
+[[package]]
+name = "nimbus-bridge"
+version = "0.1.31"
+dependencies = [
+ "base64 0.22.1",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-node",
+ "nimbus-runtime",
+ "nimbus-tenant",
+ "serde",
+ "serde_json",
+ "time",
+ "tracing",
+]
+
+[[package]]
+name = "nimbus-cloud-functions"
+version = "0.1.31"
+dependencies = [
+ "http 1.4.0",
+ "nimbus-artifacts",
+ "nimbus-auth",
+ "nimbus-bridge",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-firebase",
+ "nimbus-provenance",
+ "nimbus-runtime",
+ "nimbus-services",
+ "nimbus-tenant",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nimbus-convex"
+version = "0.1.31"
+dependencies = [
+ "base64 0.22.1",
+ "futures",
+ "http 1.4.0",
+ "nimbus-artifacts",
+ "nimbus-auth",
+ "nimbus-bridge",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-provenance",
+ "nimbus-runtime",
+ "reqwest 0.12.28",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -5878,11 +5968,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-firebase"
+version = "0.1.31"
+dependencies = [
+ "base64 0.22.1",
+ "futures",
+ "http 1.4.0",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-tenant",
+ "nimbus-testing",
+ "prost 0.13.5",
+ "prost-types 0.13.5",
+ "protoc-bin-vendored",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tonic 0.13.1",
+ "tonic-build",
+]
+
+[[package]]
+name = "nimbus-license"
+version = "0.1.31"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nimbus-machine"
 version = "0.1.31"
 dependencies = [
  "nimbus-core",
  "serde",
+]
+
+[[package]]
+name = "nimbus-mongodb"
+version = "0.1.31"
+dependencies = [
+ "base64 0.22.1",
+ "bson",
+ "crc32c",
+ "hmac 0.12.1",
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-tenant",
+ "nimbus-testing",
+ "pbkdf2",
+ "ring",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -5897,6 +6041,27 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+]
+
+[[package]]
+name = "nimbus-operator"
+version = "0.1.31"
+dependencies = [
+ "base64 0.22.1",
+ "fs2",
+ "http 1.4.0",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+]
+
+[[package]]
+name = "nimbus-provenance"
+version = "0.1.31"
+dependencies = [
+ "nimbus-artifacts",
 ]
 
 [[package]]
@@ -5983,19 +6148,30 @@ dependencies = [
  "hmac 0.12.1",
  "http 1.4.0",
  "libc",
+ "nimbus-artifacts",
+ "nimbus-auth",
+ "nimbus-bridge",
+ "nimbus-cloud-functions",
+ "nimbus-convex",
  "nimbus-core",
  "nimbus-engine",
+ "nimbus-firebase",
+ "nimbus-license",
  "nimbus-machine",
+ "nimbus-mongodb",
  "nimbus-node",
+ "nimbus-operator",
+ "nimbus-provenance",
  "nimbus-runtime",
  "nimbus-sandbox",
+ "nimbus-services",
  "nimbus-storage",
+ "nimbus-system",
  "nimbus-tenant",
  "nimbus-testing",
  "pbkdf2",
  "prost 0.13.5",
  "prost-types 0.13.5",
- "protoc-bin-vendored",
  "reqwest 0.12.28",
  "ring",
  "rust-embed",
@@ -6010,13 +6186,26 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tonic 0.13.1",
- "tonic-build",
  "tonic-web",
  "tower 0.5.3",
  "tower-http",
  "tracing",
  "windows-sys 0.59.0",
  "wiremock",
+]
+
+[[package]]
+name = "nimbus-services"
+version = "0.1.31"
+dependencies = [
+ "futures",
+ "nimbus-core",
+ "nimbus-node",
+ "nimbus-runtime",
+ "nimbus-sandbox",
+ "nimbus-tenant",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -6060,9 +6249,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-system"
+version = "0.1.31"
+dependencies = [
+ "nimbus-core",
+ "nimbus-engine",
+ "nimbus-machine",
+ "nimbus-node",
+ "nimbus-runtime",
+ "nimbus-sandbox",
+ "nimbus-tenant",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "nimbus-tenant"
 version = "0.1.31"
 dependencies = [
+ "nimbus-artifacts",
  "nimbus-core",
  "nimbus-runtime",
  "nimbus-sandbox",

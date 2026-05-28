@@ -11,7 +11,7 @@ use super::{
     DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, OfflineVerificationConfig,
     ProcessArtifactVerifierCommandRunner, redact_artifact_verifier_output,
 };
-use crate::tenant::{has_sha256_digest, parse_oci_image_reference};
+use nimbus_artifacts::{has_sha256_digest, parse_oci_image_reference};
 
 pub struct CosignVerifierBackend {
     program: String,
@@ -263,7 +263,7 @@ mod tests {
 
     use super::super::ArtifactVerifierCommandOutput;
     use super::*;
-    use crate::tenant::{
+    use nimbus_artifacts::{
         ArtifactVerificationPolicy, ArtifactVerificationSubjectKind, ArtifactVerifierErrorKind,
     };
 

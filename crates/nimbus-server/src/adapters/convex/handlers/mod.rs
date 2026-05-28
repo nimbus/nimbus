@@ -19,11 +19,11 @@ use super::execution::{
 };
 use super::http_actions::dispatch_http_route;
 use super::subscriptions::handle_convex_socket_for_tenant;
-use super::templates::{normalize_http_request_path, parse_job_id};
 use super::{
     ConvexActionRequest, ConvexExecutableAction, ConvexExecutableMutation, ConvexExecutableQuery,
     ConvexHttpRouteRequest, ConvexMutationRequest, ConvexPaginatedQueryRequest, ConvexQueryRequest,
     ConvexRegistry, ConvexScheduleAfterRequest, ConvexScheduleAtRequest,
+    normalize_http_request_path, parse_job_id,
 };
 use crate::protocol::ScheduleResponse;
 use crate::state::{AppError, AppState, RequestCancellationGuard, record_authenticated_usage};

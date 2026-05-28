@@ -1,7 +1,7 @@
 use crate::execution::subscriptions::RuntimeSubscriptionHandle;
 
 use super::*;
-use crate::application_auth::normalize_principal_context;
+use nimbus_auth::normalize_principal_context;
 
 struct RuntimeSubscriptionPublishContext<'a> {
     outbound_tx: &'a mpsc::Sender<ServerMessage>,

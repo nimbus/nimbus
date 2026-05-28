@@ -93,11 +93,11 @@ impl TenantWriteTransaction {
                 .map_err(map_redb_error)?;
         }
         self.record_tenant_event(TenantEventKind::SchemaChange {
-            change: SchemaChangeEvent::DeleteTable {
+            change: Box::new(SchemaChangeEvent::DeleteTable {
                 table: table.clone(),
                 table_id,
                 previous,
-            },
+            }),
         });
         Ok(())
     }
@@ -131,11 +131,11 @@ impl TenantWriteTransaction {
                 .map_err(map_redb_error)?;
         }
         self.record_tenant_event(TenantEventKind::SchemaChange {
-            change: SchemaChangeEvent::DeleteTable {
+            change: Box::new(SchemaChangeEvent::DeleteTable {
                 table: table.clone(),
                 table_id: Some(table_id),
                 previous,
-            },
+            }),
         });
         Ok(())
     }
@@ -356,12 +356,12 @@ fn record_schema_set_events(
     table_schema: &TableSchema,
 ) {
     transaction.record_tenant_event(TenantEventKind::SchemaChange {
-        change: SchemaChangeEvent::SetTable {
+        change: Box::new(SchemaChangeEvent::SetTable {
             table: table_schema.table.clone(),
             table_id: table_id.clone(),
             previous,
             current: table_schema.clone(),
-        },
+        }),
     });
     for index in &table_schema.indexes {
         transaction.record_tenant_event(TenantEventKind::IndexLifecycle {

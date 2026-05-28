@@ -214,9 +214,12 @@ impl IndexId {
 }
 
 /// Lifecycle state for a logical table identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TableState {
+    #[default]
     Active,
     Hidden,
     Deleting,
@@ -229,12 +232,6 @@ impl TableState {
             Self::Hidden => "hidden",
             Self::Deleting => "deleting",
         }
-    }
-}
-
-impl Default for TableState {
-    fn default() -> Self {
-        Self::Active
     }
 }
 

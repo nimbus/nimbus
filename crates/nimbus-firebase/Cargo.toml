@@ -1,0 +1,38 @@
+[package]
+name = "nimbus-firebase"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true
+futures.workspace = true
+http.workspace = true
+nimbus-core = { path = "../nimbus-core" }
+nimbus-engine = { path = "../nimbus-engine" }
+nimbus-tenant = { path = "../nimbus-tenant" }
+prost = "0.13.1"
+prost-types = "0.13.1"
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time = { workspace = true, features = ["formatting", "parsing"] }
+tokio.workspace = true
+tonic = "0.13.0"
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-build = "0.13.0"
+
+[dev-dependencies]
+nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
+nimbus-testing = { path = "../nimbus-testing" }

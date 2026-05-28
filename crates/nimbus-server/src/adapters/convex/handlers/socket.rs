@@ -20,7 +20,7 @@ pub(crate) async fn ws(
     .await?;
     let tenant_id = tenant_context.tenant_id().clone();
     let socket_tenant_context = tenant_context.clone();
-    if !crate::system_tenant::is_system_tenant_id(&tenant_id) {
+    if !nimbus_system::is_system_tenant_id(&tenant_id) {
         service
             .ensure_tenant_exists_async(tenant_id.clone())
             .await?;

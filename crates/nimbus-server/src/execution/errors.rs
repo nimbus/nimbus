@@ -1,5 +1,9 @@
 use nimbus_core::Error;
-use nimbus_runtime::{HostCallCancellation, NimbusRuntimeError};
+use nimbus_runtime::NimbusRuntimeError;
+
+pub(crate) use nimbus_bridge::cancellation::{
+    check_host_cancellation, ensure_runtime_host_not_cancelled,
+};
 
 pub(crate) fn runtime_error_to_core(error: NimbusRuntimeError) -> Error {
     match error {
@@ -9,18 +13,4 @@ pub(crate) fn runtime_error_to_core(error: NimbusRuntimeError) -> Error {
         }
         other => Error::Internal(format!("convex runtime error: {other}")),
     }
-}
-
-pub(crate) fn check_host_cancellation(cancellation: &HostCallCancellation) -> Result<(), Error> {
-    if cancellation.is_cancelled() {
-        Err(Error::Cancelled)
-    } else {
-        Ok(())
-    }
-}
-
-pub(crate) fn ensure_runtime_host_not_cancelled(
-    cancellation: &HostCallCancellation,
-) -> std::result::Result<(), NimbusRuntimeError> {
-    check_host_cancellation(cancellation).map_err(|_| NimbusRuntimeError::Cancelled)
 }

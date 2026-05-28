@@ -1,11 +1,14 @@
 use axum::Json;
 use axum::extract::State;
-use axum::http::{HeaderMap, header};
+use axum::http::HeaderMap;
 use serde::Serialize;
 use std::sync::Arc;
 
 use super::{AppError, AppState};
-use crate::local_server::{LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers};
+use crate::local_server::{
+    LocalServerAuditEvent, LocalServerRouteFamily, extract_required_bearer_token,
+    origin_from_headers,
+};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct RotateLocalAdminTokenResponse {
@@ -27,7 +30,10 @@ pub(crate) async fn rotate_local_admin_token(
             "local admin token rotation is unavailable because server access auth is not configured",
         )
     })?;
-    let bearer = extract_bearer_token(&headers)?;
+    let bearer = extract_required_bearer_token(
+        &headers,
+        "local admin rotation requires Authorization: Bearer <token>",
+    )?;
     if !local_server_security.authorize_bearer(bearer) {
         return Err(AppError::unauthorized("invalid local admin token"));
     }
@@ -65,7 +71,7 @@ pub(crate) async fn shutdown_system(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<ShutdownSystemResponse>, AppError> {
-    if let Err(error) = crate::system_tenant::record_system_event_async(
+    if let Err(error) = nimbus_system::record_system_event_async(
         &state.service,
         "system",
         "info",
@@ -91,16 +97,4 @@ pub(crate) async fn shutdown_system(
     });
     state.request_server_shutdown()?;
     Ok(Json(ShutdownSystemResponse { accepted: true }))
-}
-
-fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, AppError> {
-    let value = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| {
-            AppError::unauthorized("local admin rotation requires Authorization: Bearer <token>")
-        })?;
-    value.strip_prefix("Bearer ").ok_or_else(|| {
-        AppError::unauthorized("local admin rotation requires Authorization: Bearer <token>")
-    })
 }

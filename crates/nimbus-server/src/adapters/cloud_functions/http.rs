@@ -8,13 +8,12 @@ use axum::response::Response;
 
 mod callable;
 mod invocation;
-mod request;
 mod response;
 mod tenant;
 
 use callable::{CallableHttpRequest, handle_callable_target};
-use invocation::execute_http_target;
-use request::{build_http_request_args, header_value_contains, normalized_headers, request_url};
+use invocation::{ServerCloudFunctionsHttpInvocation, execute_http_target};
+use nimbus_cloud_functions::build_http_request_args;
 use tenant::resolve_cloud_functions_http_tenant;
 
 use super::{CloudFunctionsHttpExposure, CloudFunctionsRegistry, CloudFunctionsTargetBinding};
@@ -51,20 +50,22 @@ pub(crate) async fn http_handler(
             let args = build_http_request_args(
                 &method,
                 &headers,
-                &original_uri,
+                original_uri.0.query(),
                 &request_path,
                 query.0,
-                body,
+                &body,
             )?;
-            execute_http_target(
-                state,
+            execute_http_target(ServerCloudFunctionsHttpInvocation {
+                service: state.service.clone(),
+                runtime_service_registry: state.runtime_service_registry(),
+                tenant_isolation_mode: state.tenant_isolation_mode,
                 registry,
-                deployment.generation,
+                deployment_generation: deployment.generation,
                 tenant_id,
-                entrypoint,
+                function_name: entrypoint,
                 args,
-                None,
-            )
+                auth: None,
+            })
         }
         CloudFunctionsHttpExposure::Callable => {
             handle_callable_target(
@@ -117,15 +118,16 @@ mod tests {
 
     struct TenantClaimApplicationAuthVerifier;
 
-    impl crate::application_auth::ApplicationAuthVerifier for TenantClaimApplicationAuthVerifier {
+    impl nimbus_auth::ApplicationAuthVerifier for TenantClaimApplicationAuthVerifier {
         fn verify_bearer_token<'a>(
             &'a self,
             token: &'a str,
-        ) -> BoxFuture<'a, std::result::Result<InvocationAuth, AppError>> {
+        ) -> BoxFuture<'a, std::result::Result<InvocationAuth, nimbus_auth::ApplicationAuthError>>
+        {
             let token = token.to_string();
             Box::pin(async move {
                 let Some(tenant_id) = token.strip_prefix("tenant:") else {
-                    return Err(AppError::unauthorized(
+                    return Err(nimbus_auth::ApplicationAuthError::unauthorized(
                         "test bearer token must use tenant:<tenant_id>",
                     ));
                 };

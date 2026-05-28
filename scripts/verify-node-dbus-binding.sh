@@ -16,6 +16,7 @@ cd "${REPO_ROOT}"
 PLAN_ACTIVE="docs/plans/node-dbus-client-binding-plan.md"
 PLAN_ARCHIVED="docs/plans/archive/node-dbus-client-binding-plan.md"
 AGENTS_MD="CLAUDE.md"
+PLANS_README="docs/plans/README.md"
 PROOF_DIR="docs/plans/proof/node-dbus-client-binding"
 PROOF_NDB0="${PROOF_DIR}/ndb0-baseline.md"
 RESEARCH_NOTE="docs/plans/research/systemd-dbus-binding-rust-2026.md"
@@ -100,16 +101,24 @@ else
   fail "Plan missing" "Neither ${PLAN_ACTIVE} nor ${PLAN_ARCHIVED} exists"
 fi
 
-# 2. Routing entry exists in CLAUDE.md (= AGENTS.md).
-step 2 "Routing entry exists in CLAUDE.md"
+# 2. Routing entries exist in CLAUDE.md (= AGENTS.md) and docs/plans/README.md.
+step 2 "Routing entries exist"
+has_agents_route=0
+has_plans_route=0
 if [ -f "${AGENTS_MD}" ] || [ -L "${AGENTS_MD}" ]; then
   if grep -q 'node-dbus-client-binding-plan' "${AGENTS_MD}"; then
-    pass "${AGENTS_MD} references node-dbus-client-binding-plan"
-  else
-    fail "${AGENTS_MD} does not reference node-dbus-client-binding-plan"
+    has_agents_route=1
   fi
+fi
+if [ -f "${PLANS_README}" ]; then
+  if grep -q 'node-dbus-client-binding-plan' "${PLANS_README}"; then
+    has_plans_route=1
+  fi
+fi
+if [ "${has_agents_route}" = "1" ] && [ "${has_plans_route}" = "1" ]; then
+  pass "${AGENTS_MD} and ${PLANS_README} reference node-dbus-client-binding-plan"
 else
-  fail "${AGENTS_MD} missing"
+  fail "Routing entries incomplete" "agents=${has_agents_route} plans_readme=${has_plans_route}"
 fi
 
 # 3. NDB0: baseline proof + research note exist.
@@ -130,28 +139,45 @@ else
   fail "NDB0 deliverables incomplete" "${details}"
 fi
 
-# 4. NDB1: zbus_systemd workspace dep + systemd-dbus feature on nimbus-node.
-step 4 "NDB1: zbus_systemd workspace dep + systemd-dbus feature wired"
+# 4. NDB1: zbus_systemd + zbus workspace deps and nimbus-node features.
+step 4 "NDB1: zbus_systemd/zbus deps + nimbus-node features wired"
 if [ -f "${ROOT_CARGO}" ] && [ -f "${NODE_CARGO}" ]; then
-  has_workspace_dep=0
-  has_features=0
+  has_zbus_systemd_dep=0
+  has_zbus_dep=0
+  has_zbus_systemd_features=0
   has_node_feature=0
+  has_test_bus_feature=0
+  has_integration_feature=0
   if grep -qE '^[[:space:]]*zbus_systemd[[:space:]]*=' "${ROOT_CARGO}"; then
-    has_workspace_dep=1
+    has_zbus_systemd_dep=1
+  fi
+  if grep -qE '^[[:space:]]*zbus[[:space:]]*=' "${ROOT_CARGO}"; then
+    has_zbus_dep=1
   fi
   # Features must include both systemd1 and zbus-async-tokio.
   if grep -qE 'zbus_systemd' "${ROOT_CARGO}" && \
      grep -qE 'systemd1' "${ROOT_CARGO}" && \
      grep -qE 'zbus-async-tokio' "${ROOT_CARGO}"; then
-    has_features=1
+    has_zbus_systemd_features=1
   fi
   if grep -qE '^[[:space:]]*systemd-dbus[[:space:]]*=' "${NODE_CARGO}"; then
     has_node_feature=1
   fi
-  if [ "${has_workspace_dep}" = "1" ] && [ "${has_features}" = "1" ] && [ "${has_node_feature}" = "1" ]; then
-    pass "zbus_systemd workspace dep + features + systemd-dbus feature on nimbus-node"
+  if grep -qE '^[[:space:]]*systemd-dbus-test-bus[[:space:]]*=' "${NODE_CARGO}"; then
+    has_test_bus_feature=1
+  fi
+  if grep -qE '^[[:space:]]*systemd-dbus-integration-tests[[:space:]]*=' "${NODE_CARGO}"; then
+    has_integration_feature=1
+  fi
+  if [ "${has_zbus_systemd_dep}" = "1" ] && \
+     [ "${has_zbus_dep}" = "1" ] && \
+     [ "${has_zbus_systemd_features}" = "1" ] && \
+     [ "${has_node_feature}" = "1" ] && \
+     [ "${has_test_bus_feature}" = "1" ] && \
+     [ "${has_integration_feature}" = "1" ]; then
+    pass "zbus_systemd/zbus deps plus systemd-dbus test and integration features"
   else
-    fail "NDB1 wiring incomplete" "workspace_dep=${has_workspace_dep} features=${has_features} node_feature=${has_node_feature}"
+    fail "NDB1 wiring incomplete" "zbus_systemd=${has_zbus_systemd_dep} zbus=${has_zbus_dep} features=${has_zbus_systemd_features} node_feature=${has_node_feature} test_bus=${has_test_bus_feature} integration=${has_integration_feature}"
   fi
 else
   fail "${ROOT_CARGO} or ${NODE_CARGO} missing"
@@ -185,37 +211,45 @@ else
   fail "zbus_client module missing" "neither ${ZBUS_MOD_FILE} nor ${ZBUS_MOD_DIR} present"
 fi
 
-# 6. NDB3: signal-based completion (receive_job_removed before StartTransientUnit
-#    in source order).
-step 6 "NDB3: signal-correlated job completion"
+# 6. NDB3: signal-based completion (Manager.Subscribe + receive_job_removed
+#    before StartTransientUnit/StopUnit in source order) and centralized
+#    OwnedValue property encoding.
+step 6 "NDB3: signal-correlated job completion + property encoding"
 impl_files=$(zbus_impl_files)
 has_signal_pattern=0
+has_owned_value_encoder=0
 if [ -n "${impl_files}" ]; then
   while IFS= read -r f; do
     [ -z "${f}" ] && continue
-    # receive_job_removed (or equivalent MatchRule on JobRemoved) AND a
-    # start_transient_unit/stop_unit call AND the subscribe line numerically
-    # precedes the method call.
-    if grep -qE 'receive_job_removed|JobRemoved' "${f}" && \
-       grep -qE 'start_transient_unit|stop_unit' "${f}"; then
-      subscribe_line=$(grep -nE 'receive_job_removed|JobRemoved' "${f}" | head -n 1 | cut -d: -f1)
-      call_line=$(grep -nE 'start_transient_unit\(|stop_unit\(' "${f}" | head -n 1 | cut -d: -f1)
-      if [ -n "${subscribe_line}" ] && [ -n "${call_line}" ] && [ "${subscribe_line}" -lt "${call_line}" ]; then
+    # Manager.Subscribe must precede the JobRemoved stream, and both must
+    # precede the method call. Match method-call syntax to avoid passing on
+    # trait declarations alone.
+    if grep -qE '\.subscribe\(' "${f}" && \
+       grep -qE 'receive_job_removed|JobRemoved|MatchRule' "${f}" && \
+       grep -qE '\.(start_transient_unit|stop_unit)\(' "${f}"; then
+      subscribe_line=$(grep -nE '\.subscribe\(' "${f}" | head -n 1 | cut -d: -f1)
+      stream_line=$(grep -nE 'receive_job_removed|JobRemoved|MatchRule' "${f}" | head -n 1 | cut -d: -f1)
+      call_line=$(grep -nE '\.(start_transient_unit|stop_unit)\(' "${f}" | head -n 1 | cut -d: -f1)
+      if [ -n "${subscribe_line}" ] && [ -n "${stream_line}" ] && [ -n "${call_line}" ] && \
+         [ "${subscribe_line}" -lt "${stream_line}" ] && [ "${stream_line}" -lt "${call_line}" ]; then
         has_signal_pattern=1
       fi
     fi
+    if grep -qE 'OwnedValue' "${f}" && grep -qE 'StartTransientUnit|start_transient_unit|ExecStart|Description|WorkingDirectory|Environment' "${f}"; then
+      has_owned_value_encoder=1
+    fi
   done <<< "${impl_files}"
 fi
-if [ "${has_signal_pattern}" = "1" ]; then
-  pass "Subscribe-before-call pattern present in zbus_client module"
+if [ "${has_signal_pattern}" = "1" ] && [ "${has_owned_value_encoder}" = "1" ]; then
+  pass "Manager.Subscribe + JobRemoved stream before call, with OwnedValue encoder"
 else
-  fail "Signal-correlated completion not yet implemented" "receive_job_removed must appear before start_transient_unit/stop_unit in source"
+  fail "Signal-correlated completion not yet implemented" "signal_pattern=${has_signal_pattern} owned_value_encoder=${has_owned_value_encoder}"
 fi
 
 # 7. NDB4: error taxonomy module exists with documented variants.
 step 7 "NDB4: error taxonomy module"
 if [ -f "${ZBUS_ERROR}" ]; then
-  needed_variants=(Disconnected AccessDenied UnknownObject InvalidArgs)
+  needed_variants=(Disconnected AccessDenied UnknownObject NoSuchUnit InvalidArgs)
   missing=""
   for v in "${needed_variants[@]}"; do
     if ! grep -qE "${v}" "${ZBUS_ERROR}"; then
@@ -256,10 +290,16 @@ step 9 "NDB6: CI lane node-dbus-integration"
 if [ -f "${CI_WF}" ]; then
   if grep -qE '^[[:space:]]+node-dbus-integration:' "${CI_WF}"; then
     has_runner=0
+    has_bootstrap=0
     has_test_invocation=0
     has_gate_summary=0
     if grep -qE 'ubuntu-24\.04' "${CI_WF}"; then
       has_runner=1
+    fi
+    if grep -qE 'sudo apt-get' "${CI_WF}" && \
+       grep -qE 'loginctl' "${CI_WF}" && \
+       grep -qE 'systemctl --user' "${CI_WF}"; then
+      has_bootstrap=1
     fi
     if grep -qE 'systemd-dbus-integration-tests' "${CI_WF}"; then
       has_test_invocation=1
@@ -268,10 +308,10 @@ if [ -f "${CI_WF}" ]; then
     if awk '/^  rust-gate-summary:$/,/^  [a-z][a-z-]*:[[:space:]]*$/' "${CI_WF}" | grep -qE 'node-dbus-integration'; then
       has_gate_summary=1
     fi
-    if [ "${has_runner}" = "1" ] && [ "${has_test_invocation}" = "1" ] && [ "${has_gate_summary}" = "1" ]; then
-      pass "node-dbus-integration job present, gated by rust-gate-summary"
+    if [ "${has_runner}" = "1" ] && [ "${has_bootstrap}" = "1" ] && [ "${has_test_invocation}" = "1" ] && [ "${has_gate_summary}" = "1" ]; then
+      pass "node-dbus-integration job present, bootstrapped, gated by rust-gate-summary"
     else
-      fail "NDB6 CI wiring incomplete" "runner=${has_runner} invocation=${has_test_invocation} gate=${has_gate_summary}"
+      fail "NDB6 CI wiring incomplete" "runner=${has_runner} bootstrap=${has_bootstrap} invocation=${has_test_invocation} gate=${has_gate_summary}"
     fi
   else
     fail "node-dbus-integration job missing from ${CI_WF}"
@@ -284,13 +324,24 @@ fi
 #     latest main CI green.
 step 10 "NDB7: default activation + operator doc + ledger green + CI green"
 has_default=0
+has_live_factory=0
 has_doc=0
 ledger_clean=0
 ci_green=0
 if [ -f "${NODE_CARGO}" ]; then
   # Look for `default = [ ... "systemd-dbus" ... ]` in [features].
-  if awk '/^\[features\]/,/^\[/' "${NODE_CARGO}" | grep -qE '^[[:space:]]*default[[:space:]]*=.*systemd-dbus'; then
+  if awk '
+    /^\[features\]/ {in_features=1; next}
+    /^\[/ {in_features=0}
+    in_features {print}
+  ' "${NODE_CARGO}" | grep -qE '^[[:space:]]*default[[:space:]]*=.*systemd-dbus'; then
     has_default=1
+  fi
+fi
+impl_files=$(zbus_impl_files)
+if [ -n "${impl_files}" ]; then
+  if grep -qE 'linux_systemd_default|default_systemd|BusKind::System|ZbusSystemdClient::new' ${impl_files}; then
+    has_live_factory=1
   fi
 fi
 if [ -f "${OPERATOR_DOC}" ]; then
@@ -298,7 +349,12 @@ if [ -f "${OPERATOR_DOC}" ]; then
 fi
 PLAN_FILE="$(plan_file)"
 if [ -n "${PLAN_FILE}" ]; then
-  if ! awk '/^\| NDB/ {print}' "${PLAN_FILE}" | grep -vE '\| done \|' | grep -qE '^\| NDB[0-9]'; then
+  ledger_rows="$(awk '
+    /^\| NDB \| Description \| Status \|/ {in_ledger=1; next}
+    in_ledger && /^$/ {in_ledger=0}
+    in_ledger && /^\| NDB[0-9]/ {print}
+  ' "${PLAN_FILE}")"
+  if [ -n "${ledger_rows}" ] && ! printf '%s\n' "${ledger_rows}" | grep -vE '\| done \|' | grep -qE '^\| NDB[0-9]'; then
     ledger_clean=1
   fi
 fi
@@ -313,10 +369,10 @@ else
   # The CW verifier uses the same loose check shape.
   ci_green=1
 fi
-if [ "${has_default}" = "1" ] && [ "${has_doc}" = "1" ] && [ "${ledger_clean}" = "1" ] && [ "${ci_green}" = "1" ]; then
+if [ "${has_default}" = "1" ] && [ "${has_live_factory}" = "1" ] && [ "${has_doc}" = "1" ] && [ "${ledger_clean}" = "1" ] && [ "${ci_green}" = "1" ]; then
   pass "Activated, documented, ledger clean, CI green"
 else
-  fail "NDB7 closeout incomplete" "default=${has_default} doc=${has_doc} ledger=${ledger_clean} ci=${ci_green}"
+  fail "NDB7 closeout incomplete" "default=${has_default} live_factory=${has_live_factory} doc=${has_doc} ledger=${ledger_clean} ci=${ci_green}"
 fi
 
 # -------- summary ----------------------------------------------------------

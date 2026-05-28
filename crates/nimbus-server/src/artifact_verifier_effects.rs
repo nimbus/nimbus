@@ -1,24 +1,23 @@
 use std::collections::BTreeSet;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use nimbus_core::{Error, Result};
 use nimbus_runtime::RuntimeBundle;
 use serde::{Deserialize, Serialize};
 
 mod cosign;
+mod process;
 mod sbom;
 mod slsa;
 
 pub use cosign::CosignVerifierBackend;
+pub use process::ProcessArtifactVerifierCommandRunner;
 pub use sbom::SbomVerifierBackend;
 pub use slsa::SlsaVerifierBackend;
 
-pub(crate) use crate::tenant::{
+pub(crate) use nimbus_artifacts::{
     ArtifactAdmission, ArtifactVerificationEvidence, ArtifactVerificationPolicy,
     ArtifactVerificationRequest, ArtifactVerificationSubject, ArtifactVerificationSubjectKind,
     ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierError,
@@ -318,83 +317,6 @@ impl ArtifactVerifierCommandOutput {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ProcessArtifactVerifierCommandRunner;
-
-impl ArtifactVerifierCommandRunner for ProcessArtifactVerifierCommandRunner {
-    fn run(
-        &self,
-        invocation: &ArtifactVerifierCommandInvocation,
-    ) -> ArtifactVerifierResult<ArtifactVerifierCommandOutput> {
-        let mut command = Command::new(invocation.program());
-        command
-            .args(invocation.args())
-            .stdin(if invocation.stdin().is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = command.spawn().map_err(|error| {
-            ArtifactVerifierError::unavailable(format!(
-                "failed to start artifact verifier `{}`: {error}",
-                invocation.program()
-            ))
-        })?;
-        if let Some(stdin) = invocation.stdin() {
-            let mut child_stdin = child.stdin.take().ok_or_else(|| {
-                ArtifactVerifierError::unavailable(format!(
-                    "failed to open stdin for artifact verifier `{}`",
-                    invocation.program()
-                ))
-            })?;
-            child_stdin.write_all(stdin.as_bytes()).map_err(|error| {
-                ArtifactVerifierError::unavailable(format!(
-                    "failed to write request to artifact verifier `{}`: {error}",
-                    invocation.program()
-                ))
-            })?;
-        }
-        let deadline = Instant::now() + invocation.timeout();
-        loop {
-            match child.try_wait() {
-                Ok(Some(_status)) => {
-                    let output = child.wait_with_output().map_err(|error| {
-                        ArtifactVerifierError::unavailable(format!(
-                            "failed to collect artifact verifier `{}` output: {error}",
-                            invocation.program()
-                        ))
-                    })?;
-                    return Ok(ArtifactVerifierCommandOutput {
-                        status_code: output.status.code(),
-                        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                    });
-                }
-                Ok(None) if Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ArtifactVerifierError::timeout(format!(
-                        "artifact verifier `{}` exceeded {}ms",
-                        invocation.program(),
-                        invocation.timeout().as_millis()
-                    )));
-                }
-                Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ArtifactVerifierError::unavailable(format!(
-                        "failed to observe artifact verifier `{}`: {error}",
-                        invocation.program()
-                    )));
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Deserialize)]
 struct NormalizedVerifierOutput {
     #[serde(default)]
@@ -479,10 +401,12 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::tenant::{
-        ArtifactImageVerificationProvider, ArtifactProvenanceRequirement,
-        ArtifactSignatureRequirement, ArtifactVerificationPolicy, ArtifactVerifierErrorKind,
-        TenantImageAdmissionSource, TenantImagePolicyDecision,
+    use nimbus_artifacts::{
+        ArtifactProvenanceRequirement, ArtifactSignatureRequirement, ArtifactVerificationPolicy,
+        ArtifactVerifierErrorKind,
+    };
+    use nimbus_tenant::{
+        ArtifactImageVerificationProvider, TenantImageAdmissionSource, TenantImagePolicyDecision,
     };
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

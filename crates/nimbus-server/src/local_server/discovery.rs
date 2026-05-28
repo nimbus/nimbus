@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use super::paths::LocalServerPaths;
+use nimbus_operator::LocalServerPaths;
 
 pub const SERVER_DISCOVERY_PROTOCOL_VERSIONS: &[&str] = &["nimbus.v2"];
 

@@ -226,10 +226,10 @@ impl ShadowMaterializer {
         let active_table_ids = self
             .table_identities
             .iter()
-            .filter_map(|((namespace, table), (table_id, state))| {
-                (namespace == DEFAULT_TABLE_NAMESPACE && *state == TableState::Active)
-                    .then(|| (table.clone(), table_id.clone()))
+            .filter(|&((namespace, _), (_, state))| {
+                namespace == DEFAULT_TABLE_NAMESPACE && *state == TableState::Active
             })
+            .map(|((_, table), (table_id, _))| (table.clone(), table_id.clone()))
             .collect::<BTreeMap<_, _>>();
 
         self.documents

@@ -249,19 +249,18 @@ pub(crate) fn ensure_default_table_id_in_write_txn(
             if existing.table_id == *table_id && existing.state == TableState::Active =>
         {
             if staged_hidden {
-                return Err(Error::Conflict(format!(
+                Err(Error::Conflict(format!(
                     "logical table {} already has active table id {} and a duplicate hidden slot",
                     table, table_id
-                )));
+                )))
+            } else {
+                Ok(())
             }
-            return Ok(());
         }
-        Some(existing) if existing.table_id == *table_id => {
-            return Err(Error::Conflict(format!(
-                "logical table {} is assigned table id {} in {} lifecycle state",
-                table, table_id, existing.state
-            )));
-        }
+        Some(existing) if existing.table_id == *table_id => Err(Error::Conflict(format!(
+            "logical table {} is assigned table id {} in {} lifecycle state",
+            table, table_id, existing.state
+        ))),
         Some(existing) if existing.state == TableState::Active => {
             ensure_table_id_unassigned_in_catalog(&catalog, table_id, Some(hidden_key.as_str()))?;
             let deleting_key = catalog_key(&deleting_table_namespace(&existing.table_id), table);
