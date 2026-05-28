@@ -39,5 +39,24 @@ feature-branch pushes. The lane is exercised on the `node-dbus-binding` branch
 via `gh workflow run ci.yml --ref node-dbus-binding` (and finally on the PR),
 iterating the systemd bootstrap until the lane is green.
 
-First green `node-dbus-integration` run: `<run URL — filled after green>`
-Per-test results: `<filled after green>`
+First green `node-dbus-integration` run (on `855a7005`):
+https://github.com/nimbus/nimbus/actions/runs/26607785976/job/78406805639
+
+Per-test results (live, against `systemctl --user` on `ubuntu-24.04`):
+
+```
+test start_inspect_stop_roundtrip_against_session_systemd ... ok
+test failed_unit_is_observable_via_inspect ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+The bootstrap + verify steps both passed, confirming the systemd-user recipe
+works on GitHub runners.
+
+Note on the surrounding suite: the same run shows `Rust Runtime Tests` and
+`Bun/JSC Runtime Contract` red. Those failures are entirely in
+`crates/nimbus-runtime/` tests (`limits::runtime_modes_enforce_grant_ceilings`,
+`node_compat_canary_registry`, `node_compat_manifest_resolution`) — code NDB
+never touches and which has zero workspace deps, so NDB cannot affect it. They
+are the concurrent node-faas-runtime plan's in-flight failures on the base
+commit, not NDB regressions.
