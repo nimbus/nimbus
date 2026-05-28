@@ -400,14 +400,12 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
         assert_eq!(catalog.schema_version, 1);
         assert_eq!(catalog.family, expected_family);
         assert_eq!(catalog.batch_constant, expected_batch_constant);
-        let expected_execution_class = if matches!(
-            expected_family,
-            "process-and-timing-supplementary" | "runtime-supplementary-signal-lifecycle"
-        ) {
-            NodeCompatExecutionClass::ExpectedFailure
-        } else {
-            NodeCompatExecutionClass::Sequential
-        };
+        let expected_execution_class =
+            if expected_family == "runtime-supplementary-signal-lifecycle" {
+                NodeCompatExecutionClass::ExpectedFailure
+            } else {
+                NodeCompatExecutionClass::Sequential
+            };
         assert_eq!(catalog.execution_class, expected_execution_class);
         assert_eq!(catalog.presets, vec![NodeCompatPreset::Application]);
         if expected_family == "networking" {

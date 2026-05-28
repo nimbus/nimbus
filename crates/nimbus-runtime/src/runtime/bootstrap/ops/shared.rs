@@ -8,7 +8,8 @@ use crate::backends::v8::embedder::{CancelFuture, JsErrorBox, OpState, op2};
 use crate::executor::SharedInvocationPermit;
 use crate::host::{HostCallOperation, HostCallRequest};
 use crate::limits::{
-    RuntimeCompatibilityTarget, RuntimeGrants, RuntimeLanguage, RuntimeMode, RuntimePreset,
+    RuntimeCompatibilityTarget, RuntimeGrants, RuntimeLanguage, RuntimeMode,
+    RuntimeNodeSupportPhase, RuntimePreset,
 };
 use crate::runtime_capabilities::RuntimeContractPathsDescriptor;
 
@@ -22,11 +23,24 @@ use super::super::state::{
 #[serde(rename_all = "snake_case")]
 pub(super) struct RuntimeContractDescriptor {
     compatibility_target: RuntimeCompatibilityTarget,
+    node_api_contract: Option<RuntimeNodeApiContractDescriptor>,
     runtime_mode: RuntimeMode,
     runtime_language: RuntimeLanguage,
     runtime_preset: RuntimePreset,
     runtime_grants: RuntimeGrants,
     paths: RuntimeContractPathsDescriptor,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct RuntimeNodeApiContractDescriptor {
+    lane_name: &'static str,
+    support_phase: RuntimeNodeSupportPhase,
+    version: &'static str,
+    version_number: &'static str,
+    release_name: &'static str,
+    release_lts: Option<&'static str>,
+    module_version: &'static str,
 }
 
 #[op2]
@@ -37,6 +51,18 @@ pub(super) fn op_nimbus_runtime_contract(state: &mut OpState) -> RuntimeContract
     let limits = &contract.limits;
     RuntimeContractDescriptor {
         compatibility_target: limits.compatibility_target,
+        node_api_contract: limits
+            .compatibility_target
+            .node_lts_metadata()
+            .map(|metadata| RuntimeNodeApiContractDescriptor {
+                lane_name: metadata.lane_name.as_str(),
+                support_phase: metadata.support_phase,
+                version: metadata.upstream_tag.as_str(),
+                version_number: metadata.upstream_version.as_str(),
+                release_name: metadata.release_name.as_str(),
+                release_lts: metadata.codename.as_deref(),
+                module_version: metadata.node_module_version.as_str(),
+            }),
         runtime_mode: limits.mode,
         runtime_language: limits.language,
         runtime_preset: limits.preset,

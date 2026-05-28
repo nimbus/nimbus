@@ -63,8 +63,10 @@
           "runtime_compatibility_target",
           "support_phase",
           "codename",
+          "release_name",
           "upstream_version",
           "upstream_tag",
+          "node_module_version",
           "fixture_corpus_path",
           "fixture_corpus_upstream_tag",
           "lts_start",
@@ -103,6 +105,10 @@
               "null"
             ]
           },
+          "release_name": {
+            "type": "string",
+            "minLength": 1
+          },
           "upstream_version": {
             "type": "string",
             "minLength": 1
@@ -110,6 +116,10 @@
           "upstream_tag": {
             "type": "string",
             "minLength": 1
+          },
+          "node_module_version": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
           },
           "fixture_corpus_path": {
             "type": [

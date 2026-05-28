@@ -3,6 +3,7 @@
 const assert = require('assert');
 
 assert.strictEqual(process.release.name, 'node');
-assert.match(process.version, /^v24\./);
-assert.match(process.versions.node, /^24\./);
+assert.strictEqual(process.version, 'v24.16.0');
+assert.strictEqual(process.versions.node, '24.16.0');
+assert.strictEqual(process.versions.modules, '137');
 assert.strictEqual(process.release.lts, 'Krypton');

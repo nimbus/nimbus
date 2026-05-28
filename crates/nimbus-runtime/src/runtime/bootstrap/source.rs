@@ -732,26 +732,88 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
     return;
   }
   const compatibilityTarget = contract.compatibility_target;
+  const nodeApiContract =
+    contract.node_api_contract && typeof contract.node_api_contract === "object"
+      ? contract.node_api_contract
+      : null;
   const nodeMajorMatch =
     typeof compatibilityTarget === "string"
       ? /^node(\d+)$/.exec(compatibilityTarget)
       : null;
-  if (nodeMajorMatch) {
-    const nodeMajor = nodeMajorMatch[1];
+  if (nodeApiContract || nodeMajorMatch) {
+    const nodeMajor = nodeMajorMatch ? nodeMajorMatch[1] : null;
+    const nodeVersion =
+      typeof nodeApiContract?.version === "string"
+        ? nodeApiContract.version
+        : `v${nodeMajor ?? "0"}.0.0-nimbus`;
+    const nodeVersionNumber =
+      typeof nodeApiContract?.version_number === "string"
+        ? nodeApiContract.version_number
+        : nodeVersion.replace(/^v/, "");
+    const nodeModuleVersion =
+      typeof nodeApiContract?.module_version === "string"
+        ? nodeApiContract.module_version
+        : undefined;
+    const nodeReleaseName =
+      typeof nodeApiContract?.release_name === "string"
+        ? nodeApiContract.release_name
+        : "node";
+    const nodeReleaseLts =
+      typeof nodeApiContract?.release_lts === "string"
+        ? nodeApiContract.release_lts
+        : undefined;
     if (typeof globalThis.global === "undefined") {
       globalThis.global = globalThis;
     }
     const cwd = typeof contract.paths?.cwd === "string" ? contract.paths.cwd : "/";
     const env = __nimbusCreateProcessEnvProxy();
-    const processValue = globalThis.process ?? {};
+    const processBase = globalThis.process ?? {};
+    // Deno's Node shim owns non-configurable process fields such as
+    // process.release, so install a Nimbus-owned wrapper for lane metadata.
+    const processValue = Object.create(
+      Object.getPrototypeOf(processBase) ?? Object.prototype,
+    );
+    for (const property of Reflect.ownKeys(processBase)) {
+      if (
+        property === "cwd" ||
+        property === "env" ||
+        property === "version" ||
+        property === "versions" ||
+        property === "release"
+      ) {
+        continue;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(processBase, property);
+      if (descriptor) {
+        Object.defineProperty(processValue, property, descriptor);
+      }
+    }
     const existingVersions =
-      processValue.versions && typeof processValue.versions === "object"
-        ? processValue.versions
+      processBase.versions && typeof processBase.versions === "object"
+        ? processBase.versions
         : {};
-    const versions = Object.freeze({
+    const nextVersions = {
       ...existingVersions,
-      node: `${nodeMajor}.0.0-nimbus`,
-    });
+      node: nodeVersionNumber,
+    };
+    if (nodeModuleVersion !== undefined) {
+      nextVersions.modules = nodeModuleVersion;
+    }
+    const versions = Object.freeze(nextVersions);
+    const existingRelease =
+      processBase.release && typeof processBase.release === "object"
+        ? processBase.release
+        : {};
+    const nextRelease = {
+      ...existingRelease,
+      name: nodeReleaseName,
+    };
+    if (nodeReleaseLts === undefined) {
+      delete nextRelease.lts;
+    } else {
+      nextRelease.lts = nodeReleaseLts;
+    }
+    const release = Object.freeze(nextRelease);
     Object.defineProperty(processValue, "cwd", {
       value() {
         return cwd;
@@ -767,13 +829,19 @@ function __nimbusInstallRuntimeContractGlobals(contract) {
       writable: false,
     });
     Object.defineProperty(processValue, "version", {
-      value: `v${nodeMajor}.0.0-nimbus`,
+      value: nodeVersion,
       configurable: true,
       enumerable: true,
       writable: false,
     });
     Object.defineProperty(processValue, "versions", {
       value: versions,
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    Object.defineProperty(processValue, "release", {
+      value: release,
       configurable: true,
       enumerable: true,
       writable: false,

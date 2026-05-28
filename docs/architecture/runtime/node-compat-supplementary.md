@@ -25,12 +25,15 @@ Current measured slices:
 - `supplementary-process-release-shape`
   - Category: `process_object_shape`
   - Scope: lane-specific `process.version`, `process.versions.node`, and
-    `process.release.lts` shape for the carried Node20, Node22, and Node24
-    lines
-  - Measured outcome:
-    - `node20`: expected failure, still reports `v22.0.0-nimbus` instead of a Node20 line
-    - `node22`: expected failure, still omits the expected `process.release.lts` label
-    - `node24`: expected failure, still reports `v22.0.0-nimbus` instead of a Node24 line
+    `process.release` shape plus `process.versions.modules` ABI metadata for
+    the carried Node20, Node22, and Node24 lines
+  - Measured outcome: green on `node20`, `node22`, and `node24`
+  - Contract note: `process.version`, `process.versions.node`,
+    `process.release.*`, and `process.versions.modules` are lane-contract
+    metadata sourced from `node-lts-lanes.json`. Other embedded component
+    values, such as the actual V8/Deno substrate, remain diagnostics for the
+    Nimbus runtime substrate rather than a claim of full native Node patch
+    parity.
 - `supplementary-resource-safety`
   - Category: `resource_safety`
   - Scope: file-handle close/use-after-close behavior, abortable

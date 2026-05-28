@@ -1208,14 +1208,14 @@ fn node_compat_supplementary_process_shape_node20() {
             .expect("supplementary process release shape node20 outcome should resolve");
     assert_eq!(
         outcome.state,
-        node_compat_manifest_report::NodeCompatObservedFixtureState::Fail
+        node_compat_manifest_report::NodeCompatObservedFixtureState::Pass,
+        "node20 supplementary process shape detail: {:?}",
+        outcome.detail
     );
-    let detail = outcome
-        .detail
-        .expect("node20 supplementary process shape failure should record detail");
     assert!(
-        detail.contains("v22.0.0-nimbus") && detail.contains("/^v20\\./"),
-        "node20 supplementary process shape should record the cross-lane version drift: {detail}",
+        outcome.detail.is_none(),
+        "node20 supplementary process shape should pass without failure detail: {:?}",
+        outcome.detail
     );
 }
 
@@ -1226,14 +1226,14 @@ fn node_compat_supplementary_process_shape_node22() {
             .expect("supplementary process release shape node22 outcome should resolve");
     assert_eq!(
         outcome.state,
-        node_compat_manifest_report::NodeCompatObservedFixtureState::Fail
+        node_compat_manifest_report::NodeCompatObservedFixtureState::Pass,
+        "node22 supplementary process shape detail: {:?}",
+        outcome.detail
     );
-    let detail = outcome
-        .detail
-        .expect("node22 supplementary process shape failure should record detail");
     assert!(
-        detail.contains("undefined !== 'Jod'"),
-        "node22 supplementary process shape should record the missing LTS label: {detail}",
+        outcome.detail.is_none(),
+        "node22 supplementary process shape should pass without failure detail: {:?}",
+        outcome.detail
     );
 }
 
@@ -1244,14 +1244,14 @@ fn node_compat_supplementary_process_shape_node24() {
             .expect("supplementary process release shape node24 outcome should resolve");
     assert_eq!(
         outcome.state,
-        node_compat_manifest_report::NodeCompatObservedFixtureState::Fail
+        node_compat_manifest_report::NodeCompatObservedFixtureState::Pass,
+        "node24 supplementary process shape detail: {:?}",
+        outcome.detail
     );
-    let detail = outcome
-        .detail
-        .expect("node24 supplementary process shape failure should record detail");
     assert!(
-        detail.contains("v22.0.0-nimbus") && detail.contains("/^v24\\./"),
-        "node24 supplementary process shape should record the supported-lane version drift: {detail}",
+        outcome.detail.is_none(),
+        "node24 supplementary process shape should pass without failure detail: {:?}",
+        outcome.detail
     );
 }
 
