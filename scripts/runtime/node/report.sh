@@ -91,6 +91,7 @@ NIMBUS_NODE_COMPAT_REPORT_SLICE="${slice}" \
 NIMBUS_NODE_COMPAT_REPORT_OUTPUT_ROOT="${output_root}" \
 NIMBUS_NODE_COMPAT_REPORT_CAPTURE_MODE="${capture_mode}" \
 NIMBUS_NODE_COMPAT_REPORT_OBSERVED_RESULTS="${observed_results}" \
+NIMBUS_NODE_COMPAT_DIAGNOSTIC_ROOT="${output_root}/diagnostics" \
 bash "${REPO_ROOT}/scripts/single-flight.sh" \
   --key "node-compat-report-${family}-${slice}" \
   -- cargo test -p nimbus-runtime \
