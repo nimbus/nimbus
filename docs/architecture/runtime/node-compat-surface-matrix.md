@@ -66,6 +66,25 @@ processes, native addons, and filesystem or network access is supported only
 where the generated evidence names the specific fixture, canary, or
 classification.
 
+## Package And Framework Canaries
+
+Package/framework canary claims are registered in
+`tests/runtime/node/canary-registry.json` and summarized in the generated
+dashboard. The current registry uses lane-local checks for the supported LTS
+lanes, Node22 and Node24; Node20 may appear only as legacy-grace regression
+coverage and is not required for active support claims.
+
+Current registered canary packages:
+
+- Application/runtime: `node-platform-builtins`, `express`, `fastify`,
+  `socket.io`, `undici`, `axios`, and `convex-use-node-action`.
+- Tooling: `tsx`, `ts-node`, `jest`, `prisma`, and `next`.
+
+The `node-platform-builtins` canary covers ESM/CJS loading, process metadata,
+fs/path, streams, timers, crypto, and fetch/http. The
+`convex-use-node-action` canary covers Convex-compatible `"use node"` action
+package metadata for Node external packages.
+
 ## Refresh Workflow
 
 Use [`docs/runtimes/nodejs/evidence/refreshing.md`](../../runtimes/nodejs/evidence/refreshing.md)

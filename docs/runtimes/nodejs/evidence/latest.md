@@ -25,21 +25,36 @@ It is a support summary, not a blanket Node.js compatibility claim.
 | `express` | Application | Node20 | `4.19.2` | Passed |
 | `fastify` | Application | Node20 | `4.28.1` | Passed |
 | `axios` | Application | Node22 | `1.7.7` | Passed |
+| `convex-use-node-action` | Application | Node22 | `nimbus` | Passed |
 | `express` | Application | Node22 | `4.19.2` | Passed |
 | `fastify` | Application | Node22 | `4.28.1` | Passed |
+| `node-platform-builtins` | Application | Node22 | `builtin` | Passed |
 | `socket.io` | Application | Node22 | `4.7.5` | Passed |
 | `undici` | Application | Node22 | `6.19.8` | Passed |
+| `axios` | Application | Node24 | `1.7.7` | Passed |
+| `convex-use-node-action` | Application | Node24 | `nimbus` | Passed |
+| `express` | Application | Node24 | `4.19.2` | Passed |
+| `fastify` | Application | Node24 | `4.28.1` | Passed |
+| `node-platform-builtins` | Application | Node24 | `builtin` | Passed |
+| `socket.io` | Application | Node24 | `4.7.5` | Passed |
+| `undici` | Application | Node24 | `6.19.8` | Passed |
 | `jest` | Tooling | Node22 | `30.4.2` | Passed |
 | `next` | Tooling | Node22 | `16.2.6` | Passed |
 | `prisma` | Tooling | Node22 | `7.8.0` | Passed |
 | `ts-node` | Tooling | Node22 | `10.9.2` | Passed |
 | `tsx` | Tooling | Node22 | `4.21.0` | Passed |
+| `jest` | Tooling | Node24 | `30.4.2` | Passed |
+| `next` | Tooling | Node24 | `16.2.6` | Passed |
+| `prisma` | Tooling | Node24 | `7.8.0` | Passed |
+| `ts-node` | Tooling | Node24 | `10.9.2` | Passed |
+| `tsx` | Tooling | Node24 | `4.21.0` | Passed |
 
 ## Oracle Checks
 
 | Lane | Fixture | Runtime | Oracle | Drift | Node oracle |
 | --- | --- | --- | --- | --- | --- |
 | Node22 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v22.22.2` |
+| Node24 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v24.16.0` |
 
 ## Notes
 

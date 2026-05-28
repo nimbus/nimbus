@@ -268,6 +268,103 @@ mod tests {
         }
     }
 
+    fn assert_convex_use_node_action_package_canary(
+        target: RuntimeCompatibilityTarget,
+        target_manifest_value: &str,
+    ) {
+        let tempdir = tempdir().expect("convex manifest tempdir should build");
+        let convex_dir = tempdir.path().join(".nimbus").join("convex");
+        let staged_package_dir = convex_dir.join("node_modules").join("left-pad");
+        fs::create_dir_all(&staged_package_dir).expect("staged package directory should build");
+        fs::write(
+            staged_package_dir.join("package.json"),
+            r#"{"name":"left-pad","version":"1.3.0","main":"index.js"}"#,
+        )
+        .expect("staged package metadata should write");
+        fs::write(
+            convex_dir.join("functions.json"),
+            serde_json::to_vec_pretty(&json!({
+                "functions": [
+                    {
+                        "name": "messages:nodePackageAction",
+                        "kind": "action",
+                        "visibility": "public",
+                        "runtime_environment": "node",
+                        "runtime_compatibility_target": target_manifest_value,
+                        "runtime_package_resolution": "node_external_packages",
+                        "runtime_handler": "() => null",
+                        "plan": null
+                    }
+                ]
+            }))
+            .expect("convex manifest json should serialize"),
+        )
+        .expect("convex manifest should write");
+        fs::write(
+            convex_dir.join("http_routes.json"),
+            serde_json::to_vec_pretty(&json!({ "routes": [] }))
+                .expect("convex http route manifest should serialize"),
+        )
+        .expect("convex http route manifest should write");
+        fs::write(
+            convex_dir.join("node_external_packages.json"),
+            serde_json::to_vec_pretty(&json!({
+                "version": 1,
+                "mode": "explicit",
+                "configuredExternalPackages": ["left-pad"],
+                "stagingRoot": ".nimbus/convex/node_modules",
+                "packages": [
+                    {
+                        "packageName": "left-pad",
+                        "packageRoot": "node_modules/left-pad",
+                        "stagedPackageRoot": ".nimbus/convex/node_modules/left-pad",
+                        "sizeBytes": 128,
+                        "resolvedSpecifiers": ["left-pad"],
+                        "importers": [
+                            {
+                                "file": "messages.ts",
+                                "kind": "import",
+                                "specifier": "left-pad"
+                            }
+                        ]
+                    }
+                ]
+            }))
+            .expect("node external package manifest should serialize"),
+        )
+        .expect("node external package manifest should write");
+
+        let registry =
+            ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
+        let definition = registry
+            .function_definition("messages:nodePackageAction")
+            .expect("canary action should load");
+        let selection = definition.runtime_selection();
+        assert_eq!(selection.compatibility_target, target);
+        assert_eq!(
+            selection.package_resolution,
+            ConvexRuntimePackageResolution::NodeExternalPackages
+        );
+        assert_eq!(
+            registry
+                .runtime_limits_for_function("messages:nodePackageAction")
+                .compatibility_target,
+            target
+        );
+    }
+
+    #[test]
+    #[ignore = "Convex use-node action package canary: executed by node-compat canary registry"]
+    fn convex_use_node_action_package_canary_node22() {
+        assert_convex_use_node_action_package_canary(RuntimeCompatibilityTarget::Node22, "22");
+    }
+
+    #[test]
+    #[ignore = "Convex use-node action package canary: executed by node-compat canary registry"]
+    fn convex_use_node_action_package_canary_node24() {
+        assert_convex_use_node_action_package_canary(RuntimeCompatibilityTarget::Node24, "24");
+    }
+
     #[test]
     fn bun_jsc_function_fails_closed_when_adapter_is_not_linked() {
         let tempdir = tempdir().expect("convex manifest tempdir should build");

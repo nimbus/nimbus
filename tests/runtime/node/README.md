@@ -6,7 +6,8 @@ upstream Node fixture corpus:
 - `canary-registry.json`
   - package/framework claim map for pinned runtime-preset canaries
 - `networking-canaries/`
-  - current `Application`-preset networking canary root
+  - current `Application`-preset platform, networking, and Convex package
+    metadata canary root
 - `tooling-canaries/`
   - current `Tooling`-preset package canary root for `tsx`, `ts-node`,
     `jest`, `prisma`, and `next`
@@ -33,6 +34,7 @@ make node-compat-canaries PRESET=application
 make node-compat-canaries-bootstrap PRESET=tooling
 make node-compat-canaries PRESET=tooling
 make node-compat-oracle LANE=node22 SAMPLE=test/parallel/test-buffer-alloc.js
+bash scripts/verify-node-lts-canaries-and-oracles.sh
 make node-compat-validate-watchpoints
 make node-compat-sync LANE=node22 DRY_RUN=1
 make node-compat-refresh LANE=node22 TAG=v22.15.0 DRY_RUN=1
@@ -46,6 +48,11 @@ The nightly evidence workflow in `.github/workflows/node-compat-nightly.yml`
 replays the representative Node test checks, both canary presets, and a
 version-matched Node20 / Node22 / Node24 oracle sample sweep before emitting
 the retained dashboard bundle.
+
+The active-LTS canary/oracle verifier requires lane-local Node22 and Node24
+canary results for every registered package claim, a version-matched oracle
+artifact for each supported LTS lane, and zero required canary gaps in the
+published dashboard.
 
 Generated evidence lands under `target/node-compat/`, including:
 
@@ -98,9 +105,7 @@ Current checked-in supplementary outcomes:
 - `loader-context-supplementary-global-injection:supplementary-global-injection-fidelity`
   - measured green across `node20`, `node22`, and `node24`
 - `process-and-timing-supplementary:supplementary-process-release-shape`
-  - measured expected-failure check; currently fails on all three lanes because
-    the runtime still exposes a Node22-shaped `process.version` surface and
-    omits the expected Node22 `process.release.lts` label
+  - measured green across `node20`, `node22`, and `node24`
 - `runtime-supplementary:supplementary-resource-safety`
   - measured green across `node20`, `node22`, and `node24`
 - `runtime-supplementary:supplementary-framework-loader-patterns`

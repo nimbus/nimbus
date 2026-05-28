@@ -96,12 +96,13 @@ def command_run(args: argparse.Namespace) -> None:
     for root in sorted(roots):
         ensure_bootstrapped(root)
 
-    cargo_tests: list[str] = []
+    cargo_tests: list[tuple[str, str]] = []
     lane_runs: list[dict] = []
     for canary in canaries:
         for lane_run in canary["lane_runs"]:
             if args.lane and lane_run["lane"] != args.lane:
                 continue
+            cargo_package = lane_run.get("cargo_package", "nimbus-runtime")
             lane_runs.append(
                 {
                     "canary_id": canary["id"],
@@ -111,11 +112,12 @@ def command_run(args: argparse.Namespace) -> None:
                     "claim_ids": canary["claim_ids"],
                     "lane": lane_run["lane"],
                     "compatibility_target": lane_run["compatibility_target"],
+                    "cargo_package": cargo_package,
                     "cargo_test": lane_run["cargo_test"],
                     "lane_metadata": lane_metadata_by_lane[lane_run["lane"]],
                 }
             )
-            cargo_test = lane_run["cargo_test"]
+            cargo_test = (cargo_package, lane_run["cargo_test"])
             if cargo_test not in cargo_tests:
                 cargo_tests.append(cargo_test)
 
@@ -124,15 +126,15 @@ def command_run(args: argparse.Namespace) -> None:
             f"no active canary cargo tests matched preset={args.preset} lane={args.lane or 'all'}"
         )
 
-    cargo_test_status: dict[str, str] = {}
+    cargo_test_status: dict[tuple[str, str], str] = {}
     any_failures = False
-    for cargo_test in cargo_tests:
+    for cargo_package, cargo_test in cargo_tests:
         completed = subprocess.run(
             [
                 "cargo",
                 "test",
                 "-p",
-                "nimbus-runtime",
+                cargo_package,
                 cargo_test,
                 "--",
                 "--nocapture",
@@ -143,15 +145,15 @@ def command_run(args: argparse.Namespace) -> None:
             cwd=repo_root(),
         )
         if completed.returncode == 0:
-            cargo_test_status[cargo_test] = "pass"
+            cargo_test_status[(cargo_package, cargo_test)] = "pass"
         else:
-            cargo_test_status[cargo_test] = "fail"
+            cargo_test_status[(cargo_package, cargo_test)] = "fail"
             any_failures = True
 
     lane_summary_map: dict[tuple[str, str], dict] = {}
     canary_results: list[dict] = []
     for lane_run in lane_runs:
-        status = cargo_test_status[lane_run["cargo_test"]]
+        status = cargo_test_status[(lane_run["cargo_package"], lane_run["cargo_test"])]
         canary_results.append(
             {
                 "id": lane_run["canary_id"],
@@ -161,6 +163,7 @@ def command_run(args: argparse.Namespace) -> None:
                 "claim_ids": lane_run["claim_ids"],
                 "lane": lane_run["lane"],
                 "compatibility_target": lane_run["compatibility_target"],
+                "cargo_package": lane_run["cargo_package"],
                 "cargo_test": lane_run["cargo_test"],
                 "upstream_fixture_line": lane_run["lane_metadata"]["upstream_fixture_line"],
                 "lane_role": lane_run["lane_metadata"]["lane_role"],
@@ -187,8 +190,9 @@ def command_run(args: argparse.Namespace) -> None:
                 "failed": 0,
             },
         )
-        if lane_run["cargo_test"] not in summary["cargo_tests"]:
-            summary["cargo_tests"].append(lane_run["cargo_test"])
+        cargo_test_label = f"{lane_run['cargo_package']}::{lane_run['cargo_test']}"
+        if cargo_test_label not in summary["cargo_tests"]:
+            summary["cargo_tests"].append(cargo_test_label)
         summary["canary_count"] += 1
         if status == "pass":
             summary["passed"] += 1

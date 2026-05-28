@@ -25,10 +25,10 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 ## Dashboard Coverage
 
 - representative Node test checks: 8
-- package/framework canary claims: 10
-- package/framework canary checks: 12
+- package/framework canary claims: 12
+- package/framework canary checks: 26
 - canary artifact bundles: 2
-- oracle reports: 1
+- oracle reports: 2
 - required canary gaps: 0
 
 ## Trend Coverage

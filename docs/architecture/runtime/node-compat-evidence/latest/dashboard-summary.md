@@ -1,10 +1,10 @@
 # Node.js Runtime Support Dashboard
 
 - Representative Node test checks: 8
-- Package/framework canary claims: 10
-- Package/framework canary checks: 12
+- Package/framework canary claims: 12
+- Package/framework canary checks: 26
 - Canary artifact bundles: 2
-- Oracle reports: 1
+- Oracle reports: 2
 - Inventory reports: 3
 
 ## Suite Status
@@ -45,16 +45,18 @@
 
 | Claim | Preset | Status | Required lanes | Observed lanes |
 | --- | --- | --- | --- | --- |
-| `application-networking-express` | `Application` | Passed | node22, node20 | node20:Node20/legacy/legacy_contract, node22:Node22/default/default_contract |
-| `application-networking-fastify` | `Application` | Passed | node22, node20 | node20:Node20/legacy/legacy_contract, node22:Node22/default/default_contract |
-| `application-networking-socket-io` | `Application` | Passed | node22 | node22:Node22/default/default_contract |
-| `application-networking-undici` | `Application` | Passed | node22 | node22:Node22/default/default_contract |
-| `application-networking-axios` | `Application` | Passed | node22 | node22:Node22/default/default_contract |
-| `tooling-loader-tsx` | `Tooling` | Passed | node22 | node22:Node22/default/default_contract |
-| `tooling-loader-ts-node` | `Tooling` | Passed | node22 | node22:Node22/default/default_contract |
-| `tooling-loader-jest` | `Tooling` | Passed | node22 | node22:Node22/default/default_contract |
-| `tooling-loader-prisma` | `Tooling` | Passed | node22 | node22:Node22/default/default_contract |
-| `tooling-loader-next` | `Tooling` | Passed | node22 | node22:Node22/default/default_contract |
+| `application-platform-builtins` | `Application` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `application-networking-express` | `Application` | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `application-networking-fastify` | `Application` | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `application-networking-socket-io` | `Application` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `application-networking-undici` | `Application` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `application-networking-axios` | `Application` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `convex-use-node-action-packaging` | `Application` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `tooling-loader-tsx` | `Tooling` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `tooling-loader-ts-node` | `Tooling` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `tooling-loader-jest` | `Tooling` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `tooling-loader-prisma` | `Tooling` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
+| `tooling-loader-next` | `Tooling` | Passed | node22, node24 | node22:Node22/default/default_contract, node24:Node24/supported/supported_contract |
 
 ## Required Canary Gaps
 - none
@@ -64,3 +66,4 @@
 | Lane | Fixture | Runtime | Oracle | Drift | Node | Role |
 | --- | --- | --- | --- | --- | --- | --- |
 | `node22` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v22.22.2` | `default/default_contract` |
+| `node24` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v24.16.0` | `supported/supported_contract` |

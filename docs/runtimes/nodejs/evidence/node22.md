@@ -33,8 +33,10 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 | Package | Preset | Pinned version | Status |
 | --- | --- | --- | --- |
 | `axios` | Application | `1.7.7` | Passed |
+| `convex-use-node-action` | Application | `nimbus` | Passed |
 | `express` | Application | `4.19.2` | Passed |
 | `fastify` | Application | `4.28.1` | Passed |
+| `node-platform-builtins` | Application | `builtin` | Passed |
 | `socket.io` | Application | `4.7.5` | Passed |
 | `undici` | Application | `6.19.8` | Passed |
 | `jest` | Tooling | `30.4.2` | Passed |

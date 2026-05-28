@@ -16,11 +16,11 @@
 
 | Metric | Current | Baseline | Delta |
 | --- | ---: | ---: | ---: |
-| `canary_report_count` | 2 | 0 | +2 |
+| `canary_report_count` | 2 | 2 | +0 |
 | `expectation_catalog_entry_count` | 67 | 67 | +0 |
-| `oracle_report_count` | 1 | 0 | +1 |
+| `oracle_report_count` | 2 | 2 | +0 |
 | `required_canary_gap_count` | 0 | 0 | +0 |
 | `rust_ignore_count` | 67 | 67 | +0 |
-| `slice_report_count` | 8 | 0 | +8 |
+| `slice_report_count` | 8 | 8 | +0 |
 | `unexpected_pass_count` | 0 | 0 | +0 |
 | `warning_count` | 0 | 0 | +0 |

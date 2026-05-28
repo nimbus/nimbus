@@ -123,33 +123,69 @@ async fn application_node22_networking_package_canary_batch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let app = prepare_application_networking_canary_app();
     let bundles = [
+        "platform.mjs",
         "express.mjs",
         "fastify.mjs",
         "axios.mjs",
         "undici.mjs",
         "socket-io.mjs",
     ];
-    run_application_networking_canary_batch(&app, &bundles).await;
+    run_application_networking_canary_batch(
+        &app,
+        &bundles,
+        RuntimeLimits::application_node22_local_development(),
+    )
+    .await;
 }
 
 #[tokio::test]
-#[ignore = "Pinned networking Node20 supported canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
-async fn application_node20_networking_supported_canary_batch() {
+#[ignore = "Pinned networking Node24 supported canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
+async fn application_node24_networking_package_canary_batch() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let app = prepare_application_networking_canary_app();
+    let bundles = [
+        "platform.mjs",
+        "express.mjs",
+        "fastify.mjs",
+        "axios.mjs",
+        "undici.mjs",
+        "socket-io.mjs",
+    ];
+    run_application_networking_canary_batch(
+        &app,
+        &bundles,
+        RuntimeLimits::application_node24_local_development(),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "Pinned networking Node20 legacy canary batch: requires `npm ci --prefix tests/runtime/node/networking-canaries` before execution"]
+async fn application_node20_networking_legacy_canary_batch() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let app = prepare_application_networking_canary_app();
     let bundles = ["express.mjs", "fastify.mjs"];
-    run_application_networking_canary_batch(&app, &bundles).await;
+    run_application_networking_canary_batch(
+        &app,
+        &bundles,
+        RuntimeLimits::application_node20_local_development(),
+    )
+    .await;
 }
 
 async fn run_application_networking_canary_batch(
     app: &PreparedApplicationCanaryApp,
     bundles: &[&str],
+    limits: RuntimeLimits,
 ) {
     let mut failures = Vec::new();
+    let target = limits.compatibility_target;
 
     for bundle_fixture_name in bundles {
-        let actual = run_application_networking_canary_bundle(app, bundle_fixture_name).await;
-        let expected = networking_canary_expected_result(bundle_fixture_name);
+        let actual =
+            run_application_networking_canary_bundle(app, bundle_fixture_name, limits.clone())
+                .await;
+        let expected = networking_canary_expected_result(bundle_fixture_name, target);
         if actual != expected {
             failures.push(format!(
                 "{bundle_fixture_name} mismatch\nexpected: {expected}\nactual: {actual}"
@@ -178,10 +214,33 @@ async fn tooling_node22_package_canary_batch() {
         "prisma.mjs",
         "next.mjs",
     ];
+    run_tooling_package_canary_batch(&app, &bundles, RuntimeLimits::tooling_node22()).await;
+}
+
+#[tokio::test]
+#[ignore = "Pinned Node24 tooling package canary batch: requires `npm ci --prefix tests/runtime/node/tooling-canaries` before execution"]
+async fn tooling_node24_package_canary_batch() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let app = prepare_tooling_canary_app();
+    let bundles = [
+        "tsx.mjs",
+        "ts-node.mjs",
+        "jest.mjs",
+        "prisma.mjs",
+        "next.mjs",
+    ];
+    run_tooling_package_canary_batch(&app, &bundles, RuntimeLimits::tooling_node24()).await;
+}
+
+async fn run_tooling_package_canary_batch(
+    app: &PreparedToolingCanaryApp,
+    bundles: &[&str],
+    limits: RuntimeLimits,
+) {
     let mut failures = Vec::new();
 
     for bundle_fixture_name in bundles {
-        let actual = run_tooling_canary_bundle(&app, bundle_fixture_name).await;
+        let actual = run_tooling_canary_bundle(app, bundle_fixture_name, limits.clone()).await;
         if let Err(error) = assert_tooling_canary_result(bundle_fixture_name, &actual) {
             failures.push(format!(
                 "{bundle_fixture_name} mismatch\nerror: {error}\nactual: {actual}"
