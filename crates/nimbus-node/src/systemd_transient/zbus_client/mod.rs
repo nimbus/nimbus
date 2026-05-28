@@ -142,9 +142,7 @@ fn classify_probe_error(err: &zbus::Error) -> SystemdTransientCapabilities {
         zbus::Error::MethodError(name, _, _) => match name.as_str() {
             "org.freedesktop.DBus.Error.Disconnected"
             | "org.freedesktop.DBus.Error.NoServer"
-            | "org.freedesktop.DBus.Error.NoNetwork" => {
-                SystemdTransientCapabilities::unavailable()
-            }
+            | "org.freedesktop.DBus.Error.NoNetwork" => SystemdTransientCapabilities::unavailable(),
             "org.freedesktop.DBus.Error.UnknownMethod"
             | "org.freedesktop.DBus.Error.UnknownInterface"
             | "org.freedesktop.DBus.Error.ServiceUnknown" => {
@@ -317,7 +315,9 @@ mod tests {
 
     #[test]
     fn internal_unknown_method_disables_transient_units() {
-        let err = zbus::Error::FDO(Box::new(zbus::fdo::Error::UnknownMethod("no GetUnit".into())));
+        let err = zbus::Error::FDO(Box::new(zbus::fdo::Error::UnknownMethod(
+            "no GetUnit".into(),
+        )));
         let caps = classify_probe_error(&err);
         assert!(caps.dbus_available());
         assert!(!caps.transient_units());

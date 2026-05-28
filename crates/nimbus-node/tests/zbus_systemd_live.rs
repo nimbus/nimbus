@@ -59,7 +59,9 @@ async fn start_inspect_stop_roundtrip_against_session_systemd() {
         .await
         .expect("StartTransientUnit should complete with JobRemoved=done");
     assert!(
-        response.job_path().starts_with("/org/freedesktop/systemd1/job/"),
+        response
+            .job_path()
+            .starts_with("/org/freedesktop/systemd1/job/"),
         "unexpected job path: {}",
         response.job_path()
     );
