@@ -11,6 +11,8 @@ document.
 
 Use these generated artifacts for current support numbers and lane details:
 
+- [`node-lts-compat/node-lts-lanes.md`](node-lts-compat/node-lts-lanes.md)
+- [`node-lts-compat/node-lts-lanes.json`](node-lts-compat/node-lts-lanes.json)
 - [`docs/runtimes/nodejs/evidence/latest.md`](../../runtimes/nodejs/evidence/latest.md)
 - [`docs/runtimes/nodejs/evidence/node20.md`](../../runtimes/nodejs/evidence/node20.md)
 - [`docs/runtimes/nodejs/evidence/node22.md`](../../runtimes/nodejs/evidence/node22.md)
@@ -40,8 +42,8 @@ The broad Node LTS source baseline remains generated separately:
 
 ## Public Contract
 
-- Node22 is the default compatibility target.
-- Node20 and Node24 are supported selectable targets.
+- Node lane support phase, product default, upstream release line, and evidence
+  policy are defined by the checked-in Node LTS lane registry.
 - Nimbus does not claim full Node built-in compatibility for any target.
 - A surface is supported only when a passed fixture, canary, oracle check, or
   explicit classification supports that claim.

@@ -1,0 +1,152 @@
+{
+  "type": "object",
+  "required": [
+    "schema_version",
+    "registry_kind",
+    "as_of",
+    "source_urls",
+    "product_default_lane",
+    "consumer_crates",
+    "lanes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "registry_kind": {
+      "const": "nimbus_node_lts_lane_registry"
+    },
+    "as_of": {
+      "type": "string",
+      "minLength": 10
+    },
+    "source_urls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "product_default_lane": {
+      "type": "string",
+      "minLength": 1
+    },
+    "consumer_crates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "crate",
+          "responsibility"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "crate": {
+            "type": "string",
+            "minLength": 1
+          },
+          "responsibility": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "lanes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "major",
+          "lane_name",
+          "runtime_compatibility_target",
+          "support_phase",
+          "codename",
+          "upstream_version",
+          "upstream_tag",
+          "fixture_corpus_path",
+          "fixture_corpus_upstream_tag",
+          "lts_start",
+          "maintenance_start",
+          "eol_date",
+          "product_default",
+          "evidence_policy"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "major": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "lane_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtime_compatibility_target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "support_phase": {
+            "enum": [
+              "eol_legacy",
+              "maintenance_lts",
+              "active_lts",
+              "preview_current"
+            ]
+          },
+          "codename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upstream_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "upstream_tag": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fixture_corpus_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fixture_corpus_upstream_tag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lts_start": {
+            "type": "string",
+            "minLength": 10
+          },
+          "maintenance_start": {
+            "type": "string",
+            "minLength": 10
+          },
+          "eol_date": {
+            "type": "string",
+            "minLength": 10
+          },
+          "product_default": {
+            "type": "boolean"
+          },
+          "evidence_policy": {
+            "enum": [
+              "legacy_grace_regression_only",
+              "supported_lts_lane_local_evidence",
+              "preview_no_enterprise_support_until_lts_and_evidence"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
