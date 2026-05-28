@@ -48,6 +48,25 @@ impl SystemdTransientUnitBackend<UnavailableSystemdDbusClient> {
     }
 }
 
+#[cfg(all(target_os = "linux", feature = "systemd-dbus"))]
+impl SystemdTransientUnitBackend<zbus_client::ZbusSystemdClient> {
+    /// The default Linux production backend: a live `ZbusSystemdClient` bound
+    /// to the system bus.
+    ///
+    /// `ZbusSystemdClient::new` is async and fallible (it opens a D-Bus
+    /// connection and probes capabilities), so this is an explicit factory
+    /// rather than a `Default`/type-parameter default — a generic default type
+    /// parameter cannot construct the live client by itself. Non-Linux builds
+    /// keep the fail-closed `SystemdTransientUnitBackend::unavailable(...)`
+    /// path. Returns `Err` if the system bus cannot be opened (callers may fall
+    /// back to `unavailable`).
+    pub async fn linux_systemd_default() -> Result<Self> {
+        let client =
+            zbus_client::ZbusSystemdClient::new(zbus_client::BusKind::System).await?;
+        Ok(Self::new(client))
+    }
+}
+
 impl<C> SystemdTransientUnitBackend<C>
 where
     C: SystemdDbusClient,
