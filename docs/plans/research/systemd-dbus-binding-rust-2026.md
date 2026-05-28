@@ -182,12 +182,21 @@ systemd instance; no privilege required, no polkit interaction.
 
 (Full mapping landed in NDB4.)
 
+NDB4 first extends `nimbus_core::Error` (crates/nimbus-core/src/error.rs)
+with two new variants — `Transport(String)` and `NotFound(String)` —
+because the existing enum has no honest home for a D-Bus transport
+failure or a generic "object not found" (its not-found variants are all
+*typed*: `TenantNotFound`, `DocumentNotFound`, …). The remaining targets
+below are existing variants; the names are verified against the enum
+(there is **no** `Permission` or `Invariant` variant — they are
+`PermissionDenied` and `InvalidInput`).
+
 | `zbus::fdo::Error` variant | `nimbus_core::Error` |
 |---|---|
-| `Disconnected`, `IOError`, `InputOutput` | `Transport` |
-| `AuthFailed`, `AccessDenied` | `Permission` |
-| `UnknownObject`, `UnknownInterface`, `UnknownMethod` | `NotFound` or capability degradation depending on probe context |
-| `InvalidArgs`, `Failed` | `Invariant` |
+| `Disconnected`, `IOError`, `InputOutput` | `Transport` *(new)* |
+| `AuthFailed`, `AccessDenied` | `PermissionDenied` |
+| `UnknownObject`, `UnknownInterface`, `UnknownMethod` | `NotFound` *(new)* — or capability degradation depending on probe context |
+| `InvalidArgs`, `Failed` | `InvalidInput` |
 | `NoMemory`, `LimitsExceeded` | `ResourceExhausted` |
 | (any other) | `Internal` |
 

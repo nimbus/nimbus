@@ -27,6 +27,7 @@ NODE_LIB="crates/nimbus-node/src/lib.rs"
 ZBUS_MOD_FILE="crates/nimbus-node/src/systemd_transient/zbus_client.rs"
 ZBUS_MOD_DIR="crates/nimbus-node/src/systemd_transient/zbus_client/mod.rs"
 ZBUS_ERROR="crates/nimbus-node/src/systemd_transient/zbus_client/error.rs"
+CORE_ERROR="crates/nimbus-core/src/error.rs"
 INTEGRATION_TEST="crates/nimbus-node/tests/zbus_systemd_live.rs"
 CI_WF=".github/workflows/ci.yml"
 OPERATOR_DOC="docs/operating/node-dbus-binding.md"
@@ -246,9 +247,17 @@ else
   fail "Signal-correlated completion not yet implemented" "signal_pattern=${has_signal_pattern} owned_value_encoder=${has_owned_value_encoder}"
 fi
 
-# 7. NDB4: error taxonomy module exists with documented variants.
-step 7 "NDB4: error taxonomy module"
-if [ -f "${ZBUS_ERROR}" ]; then
+# 7. NDB4: nimbus_core::Error gains Transport + NotFound, and the error
+#    taxonomy module exists with documented source-error variants.
+step 7 "NDB4: core Error variants + zbus error taxonomy module"
+core_variants_ok=0
+if [ -f "${CORE_ERROR}" ]; then
+  if grep -qE '^[[:space:]]*Transport\(' "${CORE_ERROR}" && \
+     grep -qE '^[[:space:]]*NotFound\(' "${CORE_ERROR}"; then
+    core_variants_ok=1
+  fi
+fi
+if [ -f "${ZBUS_ERROR}" ] && [ "${core_variants_ok}" = "1" ]; then
   needed_variants=(Disconnected AccessDenied UnknownObject NoSuchUnit InvalidArgs)
   missing=""
   for v in "${needed_variants[@]}"; do
@@ -257,10 +266,12 @@ if [ -f "${ZBUS_ERROR}" ]; then
     fi
   done
   if [ -z "${missing}" ]; then
-    pass "Error taxonomy covers ${needed_variants[*]}"
+    pass "core Error has Transport+NotFound; taxonomy covers ${needed_variants[*]}"
   else
     fail "Error taxonomy incomplete" "missing variants:${missing}"
   fi
+elif [ "${core_variants_ok}" != "1" ]; then
+  fail "nimbus_core::Error missing Transport/NotFound variants" "expected both in ${CORE_ERROR}"
 else
   fail "${ZBUS_ERROR} missing"
 fi
