@@ -1,11 +1,11 @@
 # Node LTS Runtime Trust Plan (NLRT)
 
-Status: `active`
+Status: `done`
 Owner: `runtime / tenant / bridge / convex node-compat`
 Research baseline:
 `docs/plans/research/node-lts-runtime-and-deno-fork-strategy.md`
 Proof directory: `docs/plans/proof/node-lts-runtime-trust/`
-Verifier: `scripts/verify-node-lts-runtime-trust.sh` (created in NLRT11)
+Verifier: `scripts/verify-node-lts-runtime-trust.sh`
 
 ## Goal
 
@@ -161,7 +161,7 @@ Non-goals:
 | NLRT8 | Split runtime permission profiles by deployment intent. Add local-dev Node grants, production in-process Node grants, and production service/microVM Node grants as separate constructors or typed profiles. Remove generic loopback/listen/worker/inspector authority from the production in-process profile, virtualize or remove ambient `NODE_TLS_REJECT_UNAUTHORIZED`, keep `nimbus-tenant` production admission as a fail-closed policy backstop, and keep `nimbus-bridge` execution admission fail-closed when no fallback route is available. | done |
 | NLRT9 | Define the Deno fork upstream-first policy in operating docs. For each fork bump, record whether the patch is upstream Deno, Nimbus-only host integration, or temporary carry. Require publish/tag/repin proof before release. | done |
 | NLRT10 | Expand active-LTS package canaries and oracle comparisons. For every supported LTS lane, run package canaries that exercise ESM/CJS loading, process metadata, fs/path, streams, timers, crypto, fetch/http, and `nimbus-convex` Convex `"use node"` action packaging. No lane may borrow the default lane's canary result. | done |
-| NLRT11 | Closeout. Add `scripts/verify-node-lts-runtime-trust.sh`, update public runtime docs, archive or supersede stale Node support prose, run the verifier plus focused runtime tests, and move this plan to `docs/plans/archive/` with proof links. | pending |
+| NLRT11 | Closeout. Add `scripts/verify-node-lts-runtime-trust.sh`, update public runtime docs, archive or supersede stale Node support prose, run the verifier plus focused runtime tests, and move this plan to `docs/plans/archive/` with proof links. | done |
 
 ## Per-Phase Acceptance Criteria
 
@@ -214,7 +214,7 @@ Expected final verification:
 ```bash
 cargo fmt --all --check
 bash scripts/verify-node-lts-runtime-trust.sh
-cargo test -p nimbus-runtime process_release_shape -- --nocapture
+cargo test -p nimbus-runtime node_compat_supplementary_process_shape -- --nocapture --test-threads=1
 cargo test -p nimbus-tenant production_untrusted_runtime_admission -- --nocapture
 cargo test -p nimbus-bridge runtime_execution_admission -- --nocapture
 cargo test -p nimbus-convex runtime_access -- --nocapture
@@ -238,6 +238,7 @@ refresh path for the affected lanes before closeout.
 | 2026-05-28 | NLRT8 | done | `crates/nimbus-runtime/src/limits/grants.rs`, `crates/nimbus-runtime/src/limits/resources.rs`, `crates/nimbus-runtime/src/limits/tests.rs`, `crates/nimbus-runtime/src/runtime_capabilities.rs`, `crates/nimbus-runtime/src/runtime/tests/basic_invocation/node_capabilities.rs`, `crates/nimbus-runtime/src/runtime/tests/basic_invocation/support.rs`, `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`, `crates/nimbus-tenant/src/runtime_admission.rs`, `crates/nimbus-tenant/src/tests.rs`, `crates/nimbus-tenant/src/operator_policy.rs`, `crates/nimbus-tenant/src/operator_policy/evaluation.rs`, `crates/nimbus-tenant/src/operator_policy/validation.rs`, `crates/nimbus-tenant/src/operator_policy/tests.rs`, `crates/nimbus-convex/src/registry/resolution/runtime_access.rs`, `docs/architecture/runtime/permission-model.md`, `docs/plans/proof/node-lts-runtime-trust/nlrt8-permission-profile-split.md` | `cargo test -p nimbus-runtime node_permission_profiles -- --nocapture`: 1 passed; `cargo test -p nimbus-runtime node_capabilities -- --nocapture`: 7 passed; `cargo test -p nimbus-runtime package_resolution -- --nocapture`: 6 passed, 3 ignored; `cargo test -p nimbus-tenant production_untrusted_runtime_admission -- --nocapture`: 8 passed; `cargo test -p nimbus-tenant node_profile -- --nocapture`: 4 passed; `cargo test -p nimbus-bridge runtime_execution_admission -- --nocapture`: 2 passed; `cargo test -p nimbus-convex runtime_access -- --nocapture`: 2 passed; `cargo fmt --all --check`: pass; `npm run docs:validate-refs:strict`: pass; `git diff --check`: pass | `application_node*()` is now the safe production in-process profile; local-dev and service/microVM Node profiles are explicit constructors; tenant admission still rejects unsafe custom Node grants and bridge execution still fails closed when fallback routing is unavailable. |
 | 2026-05-28 | NLRT9 | done | `docs/operating/deno-fork-workflow.md`, `docs/architecture/runtime/deno-fork-bump-ledger.md`, `docs/architecture/runtime/deno-vs-neovex-node-compat.md`, `docs/README.md`, `scripts/verify-deno-fork-upstream-policy.sh`, `docs/plans/proof/node-lts-runtime-trust/nlrt9-deno-fork-upstream-policy.md` | `bash scripts/verify-deno-fork-upstream-policy.sh`: 27 passed, 0 failed; `bash scripts/verify-deno-fork-provenance.sh`: 5 passed, 0 failed, 40 forked and 15 allowlisted runtime Deno-family crates | Fork workflow now requires classify, unpin to canonical local fork, prove, commit/tag/push, repin, verify, and record release proof; current Deno and `rusty_v8` carried patches have upstream/Nimbus-only/temporary dispositions and removal/upstream triggers. |
 | 2026-05-28 | NLRT10 | done | `crates/nimbus-runtime/src/limits/resources.rs`, `crates/nimbus-runtime/src/limits/tests.rs`, `crates/nimbus-runtime/src/runtime/tests/basic_invocation/package_resolution.rs`, `crates/nimbus-runtime/src/runtime/tests/basic_invocation/support.rs`, `crates/nimbus-convex/src/registry/resolution/runtime_access.rs`, `tests/runtime/node/canary-registry.json`, `tests/runtime/node/networking-canaries/bundles/platform.mjs`, `scripts/runtime/node/canary_registry.py`, `scripts/runtime/node/dashboard.py`, `scripts/verify-node-lts-canaries-and-oracles.sh`, `docs/architecture/runtime/node-compat-surface-matrix.md`, `docs/architecture/runtime/node-compat-evidence/latest/*`, `docs/runtimes/nodejs/evidence/*.md`, `docs/plans/proof/node-lts-runtime-trust/nlrt10-active-lts-canaries-and-oracles.md` | `make node-compat-canaries PRESET=application`: pass, 16 canary checks passed, 0 failed; `make node-compat-canaries PRESET=tooling`: pass, 10 checks passed, 0 failed; `make node-compat-oracle LANE=node24 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN=/Users/jack/.local/share/mise/installs/node/24.16.0/bin/node`: pass, 1 oracle test; `bash scripts/verify-node-lts-canaries-and-oracles.sh`: 12 passed, 0 failed; `bash scripts/runtime/node/validate-claims.sh`: 12 claims; `cargo test -p nimbus-runtime package_resolution -- --nocapture`: 6 passed, 5 ignored; `cargo test -p nimbus-convex runtime_access -- --nocapture`: 2 passed, 2 ignored; `bash scripts/verify-node-lts-docs.sh`: pass; `python3 scripts/runtime/node/publish_docs.py --check`: pass; `cargo fmt --all --check`: pass; `npm run docs:validate-refs:strict`: pass; `git diff --check`: pass | Active public canary claims are scoped to Node22 and Node24; Node20 remains only legacy-grace extra canary coverage; published dashboard now has 12 canary claims, 26 canary checks, 2 oracle reports, and zero required canary gaps. |
+| 2026-05-28 | NLRT11 | done | `scripts/verify-node-lts-runtime-trust.sh`, `docs/plans/archive/node-lts-runtime-trust-plan.md`, `docs/plans/README.md`, `docs/plans/proof/node-lts-runtime-trust/README.md`, `docs/plans/proof/node-lts-runtime-trust/nlrt11-closeout.md` | `bash scripts/verify-node-lts-runtime-trust.sh`: pass, 16 checks; focused final tests pass as listed in `nlrt11-closeout.md` | Plan archived with all ledger rows done; final verifier composes lane, fork, docs, fixture provenance, harness hardening, canary/oracle, metadata, permission, and admission gates. |
 
 ## Risk Register
 
@@ -279,6 +280,21 @@ Findings:
   in `nimbus-convex`.
 - Acceptance criteria and final verification now include the extracted owners,
   so completion cannot be claimed by updating only one crate.
+
+Closeout audit on 2026-05-28:
+
+- NLRT0 through NLRT11 are complete and proof-backed under
+  `docs/plans/proof/node-lts-runtime-trust/`.
+- The final control plane is
+  `scripts/verify-node-lts-runtime-trust.sh`, which composes the focused
+  lane-registry, Deno fork provenance, Deno upstream-policy, fixture
+  provenance, harness hardening, canary/oracle, generated-docs, metadata,
+  permission-profile, tenant-admission, bridge-admission, Convex lane, format,
+  and markdown-reference gates.
+- Public Node.js runtime support prose is subordinate to generated evidence in
+  `docs/runtimes/nodejs/evidence/latest.md`; Node22 remains a product default,
+  not an evidence priority, and Node20 remains legacy-grace after its
+  2026-04-30 EOL.
 
 ## References
 

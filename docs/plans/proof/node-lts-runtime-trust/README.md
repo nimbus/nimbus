@@ -1,7 +1,7 @@
 # Node LTS Runtime Trust Proofs
 
-This directory stores proof artifacts for
-`docs/plans/node-lts-runtime-trust-plan.md`.
+This directory stores proof artifacts for the completed
+`docs/plans/archive/node-lts-runtime-trust-plan.md`.
 
 Rules:
 
@@ -14,5 +14,5 @@ Rules:
 - If context is compacted, resume from the plan ledger, this directory, and the
   execution log in the plan.
 
-Current state: plan active; NLRT0 through NLRT10 completed; NLRT11 is the next
-pending row.
+Current state: plan archived; NLRT0 through NLRT11 completed. The closeout
+verifier is `scripts/verify-node-lts-runtime-trust.sh`.

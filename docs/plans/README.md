@@ -14,15 +14,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     lifecycle, AppState construction, shutdown, and global composition in
     `nimbus-server`. `nimbus-adapters` is allowed only as a final thin
     re-export facade after per-adapter crates are clean.
-- `docs/plans/node-lts-runtime-trust-plan.md`
-  - proposed Node LTS runtime trust plan. Starts from the current Deno-family
-    Cargo patch graph and generated Node compatibility evidence, then removes
-    Node22-as-center from the support architecture by adding a data-driven LTS
-    lane registry, truthful per-lane runtime metadata, Deno fork provenance and
-    patch-closure verification, equal active-LTS evidence, harness timeout/hang
-    diagnostics, and separate local-dev versus production Node permission
-    profiles. Research baseline:
-    `docs/plans/research/node-lts-runtime-and-deno-fork-strategy.md`.
 - `docs/plans/storage-engine-quality-and-mvcc-plan.md`
   - proposed follow-on plan after storage architecture trust hardening
     completes. Targets the larger storage-engine quality features that would
@@ -159,6 +150,15 @@ archived plans only when you need historical execution detail.
     effects, provenance, services, and operator/local admin. Completion is
     gated on `scripts/verify-server-seam-extraction-readiness.sh`, focused
     behavior tests, formatting, and `cargo check --workspace`.
+- `docs/plans/archive/node-lts-runtime-trust-plan.md`
+  - completed execution record for the Node LTS runtime trust wave (NLRT0-NLRT11,
+    closed 2026-05-28). Added a data-driven Node LTS lane registry, truthful
+    per-lane runtime metadata, Deno fork provenance and upstream-policy gates,
+    generated equal-lane public evidence, fixture provenance automation,
+    harness timeout/watchpoint diagnostics, separated local-dev versus
+    production Node permission profiles, and active-LTS canary/oracle evidence
+    for Node22 and Node24. `/goal` control plane gated on
+    `bash scripts/verify-node-lts-runtime-trust.sh`.
 - `docs/plans/archive/storage-architecture-trust-hardening-plan.md`
   - completed execution record for the storage architecture trust-hardening
     wave (SATH0-SATH11, closed 2026-05-27). Added the durable tenant event
