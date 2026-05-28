@@ -49,6 +49,13 @@ impl TenantWorkloadId {
         Self(format!("tw_{:x}", digest.finalize()))
     }
 
+    /// Build a workload id from a raw string for NDB5's live integration
+    /// tests, which need a unique id without a full `TenantWorkloadSpec`.
+    #[cfg(feature = "systemd-dbus-integration-tests")]
+    pub fn for_integration_test(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

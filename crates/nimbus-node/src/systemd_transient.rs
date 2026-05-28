@@ -360,6 +360,42 @@ impl SystemdStartTransientUnitRequest {
         })
     }
 
+    /// Build a request directly from a workload id and executable, without a
+    /// full `HostLifecyclePlan`. Used by NDB5's live integration tests to
+    /// drive `StartTransientUnit` against a real session bus. Uses
+    /// `StartTransientMode::Fail` so a stale unit surfaces instead of being
+    /// silently replaced.
+    #[cfg(feature = "systemd-dbus-integration-tests")]
+    pub fn for_integration_test(
+        workload_id: TenantWorkloadId,
+        executable: impl Into<String>,
+        args: Vec<String>,
+    ) -> Result<Self> {
+        let unit_name = systemd_unit_for_workload(&workload_id)?;
+        let properties = vec![
+            SystemdDbusProperty::Description(format!(
+                "Nimbus NDB5 integration test {}",
+                workload_id.as_str()
+            )),
+            SystemdDbusProperty::ExecStart(SystemdExecStart {
+                executable: executable.into(),
+                args,
+                ignore_failure: false,
+            }),
+        ];
+        Ok(Self {
+            cgroup_path: cgroup_path_for_unit(&unit_name),
+            journal_selectors: vec![
+                SystemdJournalSelector::new("_SYSTEMD_UNIT", unit_name.as_str())?,
+                SystemdJournalSelector::new("NIMBUS_WORKLOAD_ID", workload_id.as_str())?,
+            ],
+            unit_name,
+            mode: StartTransientMode::Fail,
+            properties,
+            workload_id,
+        })
+    }
+
     pub fn unit_name(&self) -> &SystemdUnitName {
         &self.unit_name
     }
