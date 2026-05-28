@@ -61,8 +61,7 @@ impl SystemdTransientUnitBackend<zbus_client::ZbusSystemdClient> {
     /// path. Returns `Err` if the system bus cannot be opened (callers may fall
     /// back to `unavailable`).
     pub async fn linux_systemd_default() -> Result<Self> {
-        let client =
-            zbus_client::ZbusSystemdClient::new(zbus_client::BusKind::System).await?;
+        let client = zbus_client::ZbusSystemdClient::new(zbus_client::BusKind::System).await?;
         Ok(Self::new(client))
     }
 }

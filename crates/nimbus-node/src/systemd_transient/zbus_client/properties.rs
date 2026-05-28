@@ -34,10 +34,9 @@ fn encode_property(property: &SystemdDbusProperty) -> Result<(String, OwnedValue
         SystemdDbusProperty::Restart(policy) => ("Restart", str_value(restart_str(*policy))?),
         // systemd transient time properties use the `USec` suffix and
         // microseconds, not `RestartSec`/seconds.
-        SystemdDbusProperty::RestartSec(seconds) => (
-            "RestartUSec",
-            u64_value(seconds.saturating_mul(1_000_000)),
-        ),
+        SystemdDbusProperty::RestartSec(seconds) => {
+            ("RestartUSec", u64_value(seconds.saturating_mul(1_000_000)))
+        }
         SystemdDbusProperty::MemoryMax(bytes) => ("MemoryMax", u64_value(*bytes)),
         SystemdDbusProperty::CpuWeight(weight) => ("CPUWeight", u64_value(*weight)),
         SystemdDbusProperty::TasksMax(max) => ("TasksMax", u64_value(*max)),
@@ -78,7 +77,9 @@ fn u64_value(value: u64) -> OwnedValue {
 
 fn to_owned(value: Value<'_>) -> Result<OwnedValue> {
     OwnedValue::try_from(value).map_err(|err| {
-        Error::Internal(format!("failed to encode systemd property as OwnedValue: {err}"))
+        Error::Internal(format!(
+            "failed to encode systemd property as OwnedValue: {err}"
+        ))
     })
 }
 
@@ -118,7 +119,10 @@ mod tests {
         assert_eq!(find(&props, "TasksMax"), &OwnedValue::from(64u64));
         assert_eq!(find(&props, "RestartUSec"), &OwnedValue::from(2_000_000u64));
         // Description / Restart are strings.
-        assert_eq!(find(&props, "Description").value_signature().to_string(), "s");
+        assert_eq!(
+            find(&props, "Description").value_signature().to_string(),
+            "s"
+        );
         assert_eq!(find(&props, "Restart"), &str_value("on-failure").unwrap());
     }
 

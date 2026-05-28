@@ -35,9 +35,9 @@ fn map_fdo(fdo: &zbus::fdo::Error, message: String) -> Error {
         | Fdo::NoReply(_)
         | Fdo::Timeout(_)
         | Fdo::TimedOut(_) => Error::Transport(message),
-        Fdo::AccessDenied(_)
-        | Fdo::AuthFailed(_)
-        | Fdo::InteractiveAuthorizationRequired(_) => Error::PermissionDenied(message),
+        Fdo::AccessDenied(_) | Fdo::AuthFailed(_) | Fdo::InteractiveAuthorizationRequired(_) => {
+            Error::PermissionDenied(message)
+        }
         Fdo::UnknownObject(_)
         | Fdo::UnknownInterface(_)
         | Fdo::UnknownMethod(_)
@@ -45,10 +45,9 @@ fn map_fdo(fdo: &zbus::fdo::Error, message: String) -> Error {
         | Fdo::ServiceUnknown(_)
         | Fdo::NameHasNoOwner(_)
         | Fdo::FileNotFound(_) => Error::NotFound(message),
-        Fdo::InvalidArgs(_)
-        | Fdo::InvalidSignature(_)
-        | Fdo::NotSupported(_)
-        | Fdo::Failed(_) => Error::InvalidInput(message),
+        Fdo::InvalidArgs(_) | Fdo::InvalidSignature(_) | Fdo::NotSupported(_) | Fdo::Failed(_) => {
+            Error::InvalidInput(message)
+        }
         Fdo::NoMemory(_) | Fdo::LimitsExceeded(_) => Error::ResourceExhausted(message),
         _ => Error::Internal(message),
     }
@@ -119,14 +118,23 @@ mod tests {
             ("org.freedesktop.systemd1.NoSuchUnit", "NotFound"),
             ("org.freedesktop.DBus.Error.UnknownObject", "NotFound"),
             ("org.freedesktop.DBus.Error.UnknownMethod", "NotFound"),
-            ("org.freedesktop.DBus.Error.AccessDenied", "PermissionDenied"),
+            (
+                "org.freedesktop.DBus.Error.AccessDenied",
+                "PermissionDenied",
+            ),
             ("org.freedesktop.DBus.Error.AuthFailed", "PermissionDenied"),
             ("org.freedesktop.DBus.Error.InvalidArgs", "InvalidInput"),
-            ("org.freedesktop.systemd1.TransactionIsDestructive", "Internal"),
+            (
+                "org.freedesktop.systemd1.TransactionIsDestructive",
+                "Internal",
+            ),
             ("org.freedesktop.DBus.Error.Failed", "InvalidInput"),
             ("org.freedesktop.DBus.Error.Disconnected", "Transport"),
             ("org.freedesktop.DBus.Error.NoReply", "Transport"),
-            ("org.freedesktop.DBus.Error.LimitsExceeded", "ResourceExhausted"),
+            (
+                "org.freedesktop.DBus.Error.LimitsExceeded",
+                "ResourceExhausted",
+            ),
             ("org.freedesktop.DBus.Error.NoMemory", "ResourceExhausted"),
         ];
         for (name, expected) in cases {
@@ -139,7 +147,10 @@ mod tests {
     fn transport_and_internal_zbus_errors_map_directly() {
         let io = zbus::Error::InputOutput(std::sync::Arc::new(std::io::Error::other("x")));
         assert_eq!(variant(&map_zbus(io)), "Transport");
-        assert_eq!(variant(&map_zbus(zbus::Error::InterfaceNotFound)), "NotFound");
+        assert_eq!(
+            variant(&map_zbus(zbus::Error::InterfaceNotFound)),
+            "NotFound"
+        );
         assert_eq!(variant(&map_zbus(zbus::Error::InvalidReply)), "Transport");
     }
 
@@ -148,6 +159,9 @@ mod tests {
         let denied = zbus::fdo::Error::AccessDenied("no".into());
         assert_eq!(variant(&map_fdo(&denied, "msg".into())), "PermissionDenied");
         let limits = zbus::fdo::Error::LimitsExceeded("too many".into());
-        assert_eq!(variant(&map_fdo(&limits, "msg".into())), "ResourceExhausted");
+        assert_eq!(
+            variant(&map_fdo(&limits, "msg".into())),
+            "ResourceExhausted"
+        );
     }
 }
