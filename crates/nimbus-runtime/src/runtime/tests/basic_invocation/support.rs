@@ -1,5 +1,5 @@
 use super::*;
-use crate::RuntimeLimits;
+use crate::{RuntimeCompatibilityTarget, RuntimeLimits};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -218,8 +218,32 @@ pub(super) fn stage_tooling_canary_bundle(
     });
 }
 
-pub(super) fn networking_canary_expected_result(bundle_fixture_name: &str) -> Value {
+pub(super) fn networking_canary_expected_result(
+    bundle_fixture_name: &str,
+    target: RuntimeCompatibilityTarget,
+) -> Value {
     match bundle_fixture_name {
+        "platform.mjs" => {
+            let metadata = target
+                .node_lts_metadata()
+                .expect("platform canary target should be a Node lane");
+            serde_json::json!({
+                "nodeMajor": metadata.major,
+                "releaseLts": metadata.codename,
+                "esmValue": "esm-ok",
+                "cjsValue": "cjs-ok",
+                "fileRoundtrip": "platform-canary",
+                "pathBasename": "platform-canary.txt",
+                "cryptoHash": "d4db462df901",
+                "streamText": "stream-ok",
+                "timerValue": "timer-ok",
+                "fetchStatus": 200,
+                "fetchBody": {
+                    "ok": true,
+                    "source": "platform",
+                },
+            })
+        }
         "express.mjs" => serde_json::json!({
             "okStatus": 200,
             "okBody": {
@@ -288,13 +312,12 @@ pub(super) fn networking_canary_expected_result(bundle_fixture_name: &str) -> Va
 pub(super) async fn run_application_networking_canary_bundle(
     app: &PreparedApplicationCanaryApp,
     bundle_fixture_name: &str,
+    limits: RuntimeLimits,
 ) -> Value {
     stage_networking_canary_bundle(app, bundle_fixture_name);
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(
-            RuntimeLimits::application_node22_local_development(),
-        )),
+        Arc::new(RuntimePolicy::new(limits)),
     );
     runtime
         .invoke_bundle(
@@ -318,11 +341,12 @@ pub(super) async fn run_application_networking_canary_bundle(
 pub(super) async fn run_tooling_canary_bundle(
     app: &PreparedToolingCanaryApp,
     bundle_fixture_name: &str,
+    limits: RuntimeLimits,
 ) -> Value {
     stage_tooling_canary_bundle(app, bundle_fixture_name);
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::tooling_node22())),
+        Arc::new(RuntimePolicy::new(limits)),
     );
     runtime
         .invoke_bundle(

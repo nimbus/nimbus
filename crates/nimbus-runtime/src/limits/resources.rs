@@ -194,8 +194,21 @@ impl RuntimeLimits {
     }
 
     pub fn tooling_node22() -> Self {
+        Self::tooling_node(RuntimeCompatibilityTarget::Node22)
+    }
+
+    pub fn tooling_node20() -> Self {
+        Self::tooling_node(RuntimeCompatibilityTarget::Node20)
+    }
+
+    pub fn tooling_node24() -> Self {
+        Self::tooling_node(RuntimeCompatibilityTarget::Node24)
+    }
+
+    pub fn tooling_node(target: RuntimeCompatibilityTarget) -> Self {
+        assert!(target.is_node(), "tooling_node requires a Node target");
         Self {
-            compatibility_target: RuntimeCompatibilityTarget::Node22,
+            compatibility_target: target,
             mode: RuntimeMode::Standard,
             language: RuntimeLanguage::JavaScript,
             preset: RuntimePreset::Tooling,
@@ -260,27 +273,17 @@ impl RuntimeLimits {
     pub fn normalized(&self) -> Self {
         validate_backend_policy_axes(self);
 
-        if matches!(self.preset, RuntimePreset::Tooling)
-            && !matches!(
-                self.compatibility_target,
-                RuntimeCompatibilityTarget::Node22
-            )
-        {
+        if matches!(self.preset, RuntimePreset::Tooling) && !self.compatibility_target.is_node() {
             panic!(
-                "Tooling runtime preset currently requires Node22 compatibility target, \
+                "Tooling runtime preset requires a Node compatibility target, \
                  got {:?}",
                 self.compatibility_target
             );
         }
 
-        if !self.grants.run.is_empty()
-            && !matches!(
-                self.compatibility_target,
-                RuntimeCompatibilityTarget::Node22
-            )
-        {
+        if !self.grants.run.is_empty() && !self.compatibility_target.is_node() {
             panic!(
-                "runtime run grants currently require Node22 compatibility target, got {:?}",
+                "runtime run grants require a Node compatibility target, got {:?}",
                 self.compatibility_target
             );
         }

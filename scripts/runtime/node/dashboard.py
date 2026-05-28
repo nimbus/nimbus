@@ -8,11 +8,13 @@ from pathlib import Path
 
 
 REQUIRED_CANARY_PACKAGES: tuple[tuple[str, str], ...] = (
+    ("node-platform-builtins", "Application"),
     ("express", "Application"),
     ("fastify", "Application"),
     ("socket.io", "Application"),
     ("undici", "Application"),
     ("axios", "Application"),
+    ("convex-use-node-action", "Application"),
     ("jest", "Tooling"),
     ("tsx", "Tooling"),
     ("ts-node", "Tooling"),

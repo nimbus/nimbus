@@ -220,22 +220,24 @@ fn node_permission_profiles_are_separated_by_deployment_intent() {
 }
 
 #[test]
-fn tooling_preset_requires_node22_target() {
-    let valid = RuntimeLimits::tooling_node22().normalized();
-    assert_eq!(valid.mode, RuntimeMode::Standard);
-    assert_eq!(valid.preset, RuntimePreset::Tooling);
-    assert_eq!(
-        valid.grants.run,
-        vec![
-            "$discovered_tooling".to_string(),
-            "$runtime_self_exec".to_string(),
-            "$runtime_host_exec".to_string(),
-        ]
-    );
-    assert_eq!(
-        valid.compatibility_target,
-        RuntimeCompatibilityTarget::Node22
-    );
+fn tooling_preset_requires_node_target() {
+    for valid in [
+        RuntimeLimits::tooling_node20().normalized(),
+        RuntimeLimits::tooling_node22().normalized(),
+        RuntimeLimits::tooling_node24().normalized(),
+    ] {
+        assert_eq!(valid.mode, RuntimeMode::Standard);
+        assert_eq!(valid.preset, RuntimePreset::Tooling);
+        assert_eq!(
+            valid.grants.run,
+            vec![
+                "$discovered_tooling".to_string(),
+                "$runtime_self_exec".to_string(),
+                "$runtime_host_exec".to_string(),
+            ]
+        );
+        assert!(valid.compatibility_target.is_node());
+    }
 
     let err = std::panic::catch_unwind(|| {
         RuntimeLimits {
@@ -250,13 +252,13 @@ fn tooling_preset_requires_node22_target() {
 }
 
 #[test]
-fn runtime_self_exec_run_grant_requires_node22_target() {
+fn runtime_self_exec_run_grant_requires_node_target() {
     let valid = RuntimeLimits {
         grants: RuntimeGrants {
             run: vec!["$runtime_self_exec".to_string()],
             ..RuntimeGrants::application_node()
         },
-        ..RuntimeLimits::application_node22()
+        ..RuntimeLimits::application_node24()
     }
     .normalized();
     assert_eq!(valid.grants.run, vec!["$runtime_self_exec".to_string()]);
