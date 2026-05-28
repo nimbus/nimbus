@@ -17,6 +17,7 @@ nimbus-core = { path = "../nimbus-core" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
 sha2.workspace = true
+futures = { workspace = true, optional = true }
 zbus = { workspace = true, optional = true }
 zbus_systemd = { workspace = true, optional = true }
 
@@ -29,7 +30,7 @@ zbus_systemd = { workspace = true, optional = true }
 # layers the in-process peer-to-peer/test-bus shapes used by NDB2 unit tests.
 # `systemd-dbus-integration-tests` is the explicit opt-in that NDB5's
 # Linux-gated `systemctl --user` tests require — it never turns on implicitly.
-systemd-dbus = ["dep:zbus", "dep:zbus_systemd"]
+systemd-dbus = ["dep:zbus", "dep:zbus_systemd", "dep:futures"]
 systemd-dbus-test-bus = ["systemd-dbus"]
 systemd-dbus-integration-tests = ["systemd-dbus"]
 
