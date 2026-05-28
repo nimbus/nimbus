@@ -13,36 +13,38 @@
       {
         "lane": "node20",
         "upstream_fixture_line": "Node20",
-        "lane_role": "supported",
-        "public_contract_role": "supported_contract",
+        "lane_role": "legacy",
+        "public_contract_role": "legacy_contract",
         "runtime_execution_target": "Node20",
         "runtime_limits_preset": "application_node20",
         "upstream": {
           "repo": "nodejs/node",
           "tag": "v20.20.2",
+          "commit": "3626fea570e44896ad99aaf3bf6e59def5adede5",
+          "tag_object": "35e07843146797923006aa01c6daabf4f53a4fb9",
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
+        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1308,
-        "documented_manifested_green_count": 904,
+        "documented_manifested_green_count": 901,
         "documented_manifested_green_source": "rust_nonignored_path_owned_fixture_inventory_minus_classified_red_skip",
-        "documented_family_green_count": 894,
-        "path_owned_manifested_green_count": 904,
-        "classified_red_skip_count": 404,
-        "classified_total_count": 404,
-        "known_red_or_gap_count": 399,
+        "documented_family_green_count": 893,
+        "path_owned_manifested_green_count": 901,
+        "classified_red_skip_count": 407,
+        "classified_total_count": 407,
+        "known_red_or_gap_count": 402,
         "skipped_or_excluded_count": 5,
         "documented_or_classified_count": 1308,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.691131,
+        "documented_manifested_green_ratio": 0.688838,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node20.json",
           "catalog_present": true,
-          "classified_red_skip_count": 404,
+          "classified_red_skip_count": 407,
           "by_expectation": {
-            "expected_failure": 36,
+            "expected_failure": 39,
             "expected_gap": 363,
             "expected_skip": 5
           },
@@ -53,7 +55,7 @@
             "requires_sequential_host_state_harness": 13,
             "requires_unpromoted_node_surface": 322,
             "requires_wpt_harness": 2,
-            "rust_watchpoint_expected_failure": 36,
+            "rust_watchpoint_expected_failure": 39,
             "support_fixture_not_top_level_test": 3,
             "upstream_known_issue_or_platform_boundary": 2,
             "vendored_non_official_placeholder": 2
@@ -101,6 +103,20 @@
               "classification": "rust_watchpoint_expected_failure",
               "owner": "core-semantics/console",
               "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_console_issue_43095_watchpoint, node22_console_issue_43095_watchpoint"
+            },
+            {
+              "test_path": "test/parallel/test-crypto-authenticated.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "networking/crypto",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_supported_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+            },
+            {
+              "test_path": "test/parallel/test-crypto-des3-wrap.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "networking/crypto",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
             },
             {
               "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
@@ -248,6 +264,13 @@
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/https",
               "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+            },
+            {
+              "test_path": "test/parallel/test-module-loading-error.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "loader-context/module",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture, node22_loader_context_followup_module_commonjs_remainder_batch_fixture, node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
             },
             {
               "test_path": "test/parallel/test-path-resolve.js",
@@ -3269,29 +3292,31 @@
         "upstream": {
           "repo": "nodejs/node",
           "tag": "v22.15.0",
+          "commit": "b009466555c360513b8012ce549f716501090ee5",
+          "tag_object": "fba004eabc89c2b92d21e56d8ba24c23a952119f",
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
+        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1283,
-        "documented_manifested_green_count": 876,
+        "documented_manifested_green_count": 873,
         "documented_manifested_green_source": "rust_nonignored_path_owned_fixture_inventory_minus_classified_red_skip",
-        "documented_family_green_count": 840,
-        "path_owned_manifested_green_count": 876,
-        "classified_red_skip_count": 407,
-        "classified_total_count": 407,
-        "known_red_or_gap_count": 403,
+        "documented_family_green_count": 839,
+        "path_owned_manifested_green_count": 873,
+        "classified_red_skip_count": 410,
+        "classified_total_count": 410,
+        "known_red_or_gap_count": 406,
         "skipped_or_excluded_count": 4,
         "documented_or_classified_count": 1283,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.682775,
+        "documented_manifested_green_ratio": 0.680436,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node22.json",
           "catalog_present": true,
-          "classified_red_skip_count": 407,
+          "classified_red_skip_count": 410,
           "by_expectation": {
-            "expected_failure": 25,
+            "expected_failure": 28,
             "expected_gap": 378,
             "expected_skip": 4
           },
@@ -3302,13 +3327,27 @@
             "requires_sequential_host_state_harness": 13,
             "requires_unpromoted_node_surface": 338,
             "requires_wpt_harness": 2,
-            "rust_watchpoint_expected_failure": 25,
+            "rust_watchpoint_expected_failure": 28,
             "support_fixture_not_top_level_test": 3,
             "upstream_known_issue_or_platform_boundary": 2,
             "vendored_non_official_placeholder": 1
           },
           "validation_errors": [],
           "entries": [
+            {
+              "test_path": "test/parallel/test-crypto-authenticated.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "networking/crypto",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_supported_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+            },
+            {
+              "test_path": "test/parallel/test-crypto-des3-wrap.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "networking/crypto",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+            },
             {
               "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
               "expectation": "expected_failure",
@@ -3441,6 +3480,13 @@
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/https",
               "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+            },
+            {
+              "test_path": "test/parallel/test-module-loading-error.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "loader-context/module",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture, node22_loader_context_followup_module_commonjs_remainder_batch_fixture, node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
             },
             {
               "test_path": "test/parallel/test-path-makelong.js",
@@ -6553,29 +6599,31 @@
         "upstream": {
           "repo": "nodejs/node",
           "tag": "v24.15.0",
+          "commit": "848430679556aed0bd073f2bc263331ad84fa119",
+          "tag_object": "a20a24415694b80361d661d6ecc1ea0e260d9c32",
           "fixture_subtree": "test",
           "source_kind": "vendored_official_fixture_corpus"
         },
-        "vendored_fixture_root": "crates/neovex-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
+        "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
         "denominator_kind": "vendored_fixture_root_test_files",
         "vendored_test_file_count": 1495,
-        "documented_manifested_green_count": 925,
+        "documented_manifested_green_count": 922,
         "documented_manifested_green_source": "rust_nonignored_path_owned_fixture_inventory_minus_classified_red_skip",
-        "documented_family_green_count": 915,
-        "path_owned_manifested_green_count": 925,
-        "classified_red_skip_count": 570,
-        "classified_total_count": 570,
-        "known_red_or_gap_count": 567,
+        "documented_family_green_count": 914,
+        "path_owned_manifested_green_count": 922,
+        "classified_red_skip_count": 573,
+        "classified_total_count": 573,
+        "known_red_or_gap_count": 570,
         "skipped_or_excluded_count": 3,
         "documented_or_classified_count": 1495,
         "unmanifested_or_unclassified_count": 0,
-        "documented_manifested_green_ratio": 0.618729,
+        "documented_manifested_green_ratio": 0.616722,
         "classification_catalog": {
           "catalog_path": "tests/runtime/node/classifications/node24.json",
           "catalog_present": true,
-          "classified_red_skip_count": 570,
+          "classified_red_skip_count": 573,
           "by_expectation": {
-            "expected_failure": 29,
+            "expected_failure": 32,
             "expected_gap": 538,
             "expected_skip": 3
           },
@@ -6586,7 +6634,7 @@
             "requires_sequential_host_state_harness": 13,
             "requires_unpromoted_node_surface": 491,
             "requires_wpt_harness": 2,
-            "rust_watchpoint_expected_failure": 29,
+            "rust_watchpoint_expected_failure": 32,
             "support_fixture_not_top_level_test": 3,
             "upstream_known_issue_or_platform_boundary": 8
           },
@@ -6626,6 +6674,20 @@
               "classification": "rust_watchpoint_expected_failure",
               "owner": "core-semantics/console",
               "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_console_issue_43095_watchpoint, node22_console_issue_43095_watchpoint"
+            },
+            {
+              "test_path": "test/parallel/test-crypto-authenticated.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "networking/crypto",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_supported_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+            },
+            {
+              "test_path": "test/parallel/test-crypto-des3-wrap.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "networking/crypto",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
             },
             {
               "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
@@ -6759,6 +6821,13 @@
               "classification": "rust_watchpoint_expected_failure",
               "owner": "networking/https",
               "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+            },
+            {
+              "test_path": "test/parallel/test-module-loading-error.js",
+              "expectation": "expected_failure",
+              "classification": "rust_watchpoint_expected_failure",
+              "owner": "loader-context/module",
+              "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture, node22_loader_context_followup_module_commonjs_remainder_batch_fixture, node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
             },
             {
               "test_path": "test/parallel/test-path-resolve.js",
@@ -11127,7 +11196,7 @@
         }
       }
     ],
-    "rust_ignore_count": 61,
+    "rust_ignore_count": 67,
     "warnings": []
   },
   "inventory_reports": [
@@ -11137,21 +11206,23 @@
       "upstream": {
         "repo": "nodejs/node",
         "tag": "v20.20.2",
+        "commit": "3626fea570e44896ad99aaf3bf6e59def5adede5",
+        "tag_object": "35e07843146797923006aa01c6daabf4f53a4fb9",
         "fixture_subtree": "test",
         "source_kind": "vendored_official_fixture_corpus"
       },
       "counts": {
         "vendored_test_file_count": 1308,
-        "documented_manifested_green_count": 904,
-        "classified_red_skip_count": 404,
+        "documented_manifested_green_count": 901,
+        "classified_red_skip_count": 407,
         "documented_or_classified_count": 1308,
         "documented_unmanifested_or_unclassified_count": 0,
-        "rust_referenced_test_file_count": 904,
-        "rust_unreferenced_test_file_count": 404,
-        "rust_unreferenced_classified_red_skip_count": 404,
+        "rust_referenced_test_file_count": 902,
+        "rust_unreferenced_test_file_count": 406,
+        "rust_unreferenced_classified_red_skip_count": 406,
         "rust_unreferenced_unclassified_count": 0,
-        "classified_red_skip_not_rust_unreferenced_count": 0,
-        "path_owned_green_test_count": 904,
+        "classified_red_skip_not_rust_unreferenced_count": 1,
+        "path_owned_green_test_count": 901,
         "documented_green_reconstructability_gap_count": 0
       },
       "warnings": []
@@ -11162,21 +11233,23 @@
       "upstream": {
         "repo": "nodejs/node",
         "tag": "v22.15.0",
+        "commit": "b009466555c360513b8012ce549f716501090ee5",
+        "tag_object": "fba004eabc89c2b92d21e56d8ba24c23a952119f",
         "fixture_subtree": "test",
         "source_kind": "vendored_official_fixture_corpus"
       },
       "counts": {
         "vendored_test_file_count": 1283,
-        "documented_manifested_green_count": 876,
-        "classified_red_skip_count": 407,
+        "documented_manifested_green_count": 873,
+        "classified_red_skip_count": 410,
         "documented_or_classified_count": 1283,
         "documented_unmanifested_or_unclassified_count": 0,
-        "rust_referenced_test_file_count": 876,
-        "rust_unreferenced_test_file_count": 407,
-        "rust_unreferenced_classified_red_skip_count": 407,
+        "rust_referenced_test_file_count": 873,
+        "rust_unreferenced_test_file_count": 410,
+        "rust_unreferenced_classified_red_skip_count": 410,
         "rust_unreferenced_unclassified_count": 0,
         "classified_red_skip_not_rust_unreferenced_count": 0,
-        "path_owned_green_test_count": 876,
+        "path_owned_green_test_count": 873,
         "documented_green_reconstructability_gap_count": 0
       },
       "warnings": []
@@ -11187,21 +11260,23 @@
       "upstream": {
         "repo": "nodejs/node",
         "tag": "v24.15.0",
+        "commit": "848430679556aed0bd073f2bc263331ad84fa119",
+        "tag_object": "a20a24415694b80361d661d6ecc1ea0e260d9c32",
         "fixture_subtree": "test",
         "source_kind": "vendored_official_fixture_corpus"
       },
       "counts": {
         "vendored_test_file_count": 1495,
-        "documented_manifested_green_count": 925,
-        "classified_red_skip_count": 570,
+        "documented_manifested_green_count": 922,
+        "classified_red_skip_count": 573,
         "documented_or_classified_count": 1495,
         "documented_unmanifested_or_unclassified_count": 0,
-        "rust_referenced_test_file_count": 925,
-        "rust_unreferenced_test_file_count": 570,
-        "rust_unreferenced_classified_red_skip_count": 570,
+        "rust_referenced_test_file_count": 922,
+        "rust_unreferenced_test_file_count": 573,
+        "rust_unreferenced_classified_red_skip_count": 573,
         "rust_unreferenced_unclassified_count": 0,
         "classified_red_skip_not_rust_unreferenced_count": 0,
-        "path_owned_green_test_count": 925,
+        "path_owned_green_test_count": 922,
         "documented_green_reconstructability_gap_count": 0
       },
       "warnings": []
@@ -11231,8 +11306,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_builtin_completeness_node20",
@@ -11304,8 +11379,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_global_injection_node20",
@@ -11377,8 +11452,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_module_bridge_node20",
@@ -11451,8 +11526,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node20_supported_lane_executes_official_networking_subset",
@@ -11505,7 +11580,7 @@
       "path": "target/node-compat/process-and-timing-supplementary/supplementary-process-release-shape/slice-observed-process-and-timing-supplementary-supplementary-process-release-shape.json",
       "family": "process-and-timing-supplementary",
       "slice": "supplementary-process-release-shape",
-      "execution_class": "expected_failure",
+      "execution_class": "sequential",
       "presets": [
         "Application"
       ],
@@ -11513,9 +11588,9 @@
         "bundle-root-fs"
       ],
       "counts": {
-        "passed": 0,
+        "passed": 3,
         "skipped": 0,
-        "failed": 3,
+        "failed": 0,
         "missing": 0
       },
       "total_expected_results": 3,
@@ -11524,17 +11599,17 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_process_shape_node20",
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
           "counts": {
-            "passed": 0,
+            "passed": 1,
             "skipped": 0,
-            "failed": 1,
+            "failed": 0,
             "missing": 0
           }
         },
@@ -11549,9 +11624,9 @@
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
           "counts": {
-            "passed": 0,
+            "passed": 1,
             "skipped": 0,
-            "failed": 1,
+            "failed": 0,
             "missing": 0
           }
         },
@@ -11566,9 +11641,9 @@
           "expected_fixture_count": 1,
           "observed_fixture_count": 1,
           "counts": {
-            "passed": 0,
+            "passed": 1,
             "skipped": 0,
-            "failed": 1,
+            "failed": 0,
             "missing": 0
           }
         }
@@ -11597,8 +11672,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node20",
@@ -11670,8 +11745,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_runtime_node20",
@@ -11743,8 +11818,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "subset_test": "runtime::tests::node_compat::node_compat_supplementary_signal_lifecycle_watchpoint_node20",
@@ -11806,8 +11881,8 @@
           "lane": "node20",
           "compatibility_target": "Node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "cargo_tests": [
@@ -11846,8 +11921,8 @@
           "compatibility_target": "Node20",
           "cargo_test": "application_node20_networking_supported_canary_batch",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "status": "pass"
@@ -11864,8 +11939,8 @@
           "compatibility_target": "Node20",
           "cargo_test": "application_node20_networking_supported_canary_batch",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "status": "pass"
@@ -12113,8 +12188,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract"
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract"
         },
         {
           "lane": "node22",
@@ -12136,8 +12211,8 @@
           "compatibility_target": "Node20",
           "cargo_test": "application_node20_networking_supported_canary_batch",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "status": "pass"
@@ -12177,8 +12252,8 @@
         {
           "lane": "node20",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract"
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract"
         },
         {
           "lane": "node22",
@@ -12200,8 +12275,8 @@
           "compatibility_target": "Node20",
           "cargo_test": "application_node20_networking_supported_canary_batch",
           "upstream_fixture_line": "Node20",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
           "runtime_execution_target": "Node20",
           "runtime_limits_preset": "application_node20",
           "status": "pass"

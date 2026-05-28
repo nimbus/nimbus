@@ -14,5 +14,5 @@ Rules:
 - If context is compacted, resume from the plan ledger, this directory, and the
   execution log in the plan.
 
-Current state: plan active; NLRT0 through NLRT6 completed; NLRT7 is the next
+Current state: plan active; NLRT0 through NLRT7 completed; NLRT8 is the next
 pending row.

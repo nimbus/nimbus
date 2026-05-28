@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-12T16:56:28.791135+00:00",
+  "generated_at": "2026-05-28T17:31:05.092428+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -18,11 +18,11 @@
       "baseline_upstream_tag": "v20.20.2",
       "vendored_test_file_count": 1308,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 904,
+      "documented_manifested_green_count": 901,
       "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.691131,
+      "documented_manifested_green_ratio": 0.688838,
       "documented_manifested_green_ratio_delta": 0.0
     },
     {
@@ -31,11 +31,11 @@
       "baseline_upstream_tag": "v22.15.0",
       "vendored_test_file_count": 1283,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 876,
+      "documented_manifested_green_count": 873,
       "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.682775,
+      "documented_manifested_green_ratio": 0.680436,
       "documented_manifested_green_ratio_delta": 0.0
     },
     {
@@ -44,29 +44,29 @@
       "baseline_upstream_tag": "v24.15.0",
       "vendored_test_file_count": 1495,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 925,
+      "documented_manifested_green_count": 922,
       "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.618729,
+      "documented_manifested_green_ratio": 0.616722,
       "documented_manifested_green_ratio_delta": 0.0
     }
   ],
   "evidence_trends": {
     "canary_report_count": {
       "current": 2,
-      "baseline": 2,
-      "delta": 0
+      "baseline": 0,
+      "delta": 2
     },
     "expectation_catalog_entry_count": {
-      "current": 61,
-      "baseline": 61,
+      "current": 67,
+      "baseline": 67,
       "delta": 0
     },
     "oracle_report_count": {
       "current": 1,
-      "baseline": 1,
-      "delta": 0
+      "baseline": 0,
+      "delta": 1
     },
     "required_canary_gap_count": {
       "current": 0,
@@ -74,14 +74,14 @@
       "delta": 0
     },
     "rust_ignore_count": {
-      "current": 61,
-      "baseline": 61,
+      "current": 67,
+      "baseline": 67,
       "delta": 0
     },
     "slice_report_count": {
       "current": 8,
-      "baseline": 8,
-      "delta": 0
+      "baseline": 0,
+      "delta": 8
     },
     "unexpected_pass_count": {
       "current": 0,

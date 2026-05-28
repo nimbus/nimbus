@@ -2,6 +2,9 @@
 
 Generated machine-owned Node compatibility baseline.
 
+Harness timeout, hang diagnostic, and watchpoint-accounting rules live in
+[`harness-timeouts-and-hangs.md`](harness-timeouts-and-hangs.md).
+
 ## Metadata
 
 - `generated_at_utc`: `2026-04-29T14:58:57+00:00`

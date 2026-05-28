@@ -1,63 +1,65 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-05-13T15:56:21.288386+00:00",
+  "generated_at": "2026-05-28T17:25:48.420213+00:00",
   "report_kind": "node_compat_suite_status",
   "status_contract": "Counts every vendored lane-local test-* JS/CJS/MJS fixture, then compares that denominator to the documented manifested passed subset plus explicit lane classification catalogs. Supported lanes use non-ignored Rust fixture evidence minus explicit expected-failure, known-gap, and skipped classifications as the passed numerator. Ignored watchpoints never count as passed. Expected failures, known gaps, and skipped/excluded entries are not pass claims; the remaining remainder is intentionally reported as unmanifested_or_unclassified, not as pass or fail.",
   "lane_count": 3,
   "family_count": 5,
-  "rust_ignore_count": 61,
+  "rust_ignore_count": 67,
   "expectation_catalog": {
     "catalog_path": "tests/runtime/node/expectations/rust-watchpoints.json",
     "catalog_present": true,
-    "catalog_entry_count": 61,
+    "catalog_entry_count": 67,
     "by_expectation": {
       "diagnostic_expected_failure": 1,
-      "expected_failure": 60
+      "expected_failure": 66
     },
     "by_classification": {
       "local_patch_regression": 1,
-      "watchpoint": 60
+      "watchpoint": 66
     },
     "validation_errors": [],
     "observed_results_path": null,
     "unexpected_passes": []
   },
   "total_vendored_test_file_count": 4086,
-  "total_documented_manifested_green_count": 2705,
+  "total_documented_manifested_green_count": 2696,
   "lane_summaries": [
     {
       "lane": "node20",
       "upstream_fixture_line": "Node20",
-      "lane_role": "supported",
-      "public_contract_role": "supported_contract",
+      "lane_role": "legacy",
+      "public_contract_role": "legacy_contract",
       "runtime_execution_target": "Node20",
       "runtime_limits_preset": "application_node20",
       "upstream": {
         "repo": "nodejs/node",
         "tag": "v20.20.2",
+        "commit": "3626fea570e44896ad99aaf3bf6e59def5adede5",
+        "tag_object": "35e07843146797923006aa01c6daabf4f53a4fb9",
         "fixture_subtree": "test",
         "source_kind": "vendored_official_fixture_corpus"
       },
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node20/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 1308,
-      "documented_manifested_green_count": 904,
+      "documented_manifested_green_count": 901,
       "documented_manifested_green_source": "rust_nonignored_path_owned_fixture_inventory_minus_classified_red_skip",
-      "documented_family_green_count": 894,
-      "path_owned_manifested_green_count": 904,
-      "classified_red_skip_count": 404,
-      "classified_total_count": 404,
-      "known_red_or_gap_count": 399,
+      "documented_family_green_count": 893,
+      "path_owned_manifested_green_count": 901,
+      "classified_red_skip_count": 407,
+      "classified_total_count": 407,
+      "known_red_or_gap_count": 402,
       "skipped_or_excluded_count": 5,
       "documented_or_classified_count": 1308,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.691131,
+      "documented_manifested_green_ratio": 0.688838,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node20.json",
         "catalog_present": true,
-        "classified_red_skip_count": 404,
+        "classified_red_skip_count": 407,
         "by_expectation": {
-          "expected_failure": 36,
+          "expected_failure": 39,
           "expected_gap": 363,
           "expected_skip": 5
         },
@@ -68,7 +70,7 @@
           "requires_sequential_host_state_harness": 13,
           "requires_unpromoted_node_surface": 322,
           "requires_wpt_harness": 2,
-          "rust_watchpoint_expected_failure": 36,
+          "rust_watchpoint_expected_failure": 39,
           "support_fixture_not_top_level_test": 3,
           "upstream_known_issue_or_platform_boundary": 2,
           "vendored_non_official_placeholder": 2
@@ -116,6 +118,20 @@
             "classification": "rust_watchpoint_expected_failure",
             "owner": "core-semantics/console",
             "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_console_issue_43095_watchpoint, node22_console_issue_43095_watchpoint"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-authenticated.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "networking/crypto",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_supported_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-des3-wrap.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "networking/crypto",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
           },
           {
             "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
@@ -263,6 +279,13 @@
             "classification": "rust_watchpoint_expected_failure",
             "owner": "networking/https",
             "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+          },
+          {
+            "test_path": "test/parallel/test-module-loading-error.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "loader-context/module",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture, node22_loader_context_followup_module_commonjs_remainder_batch_fixture, node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
           },
           {
             "test_path": "test/parallel/test-path-resolve.js",
@@ -3284,29 +3307,31 @@
       "upstream": {
         "repo": "nodejs/node",
         "tag": "v22.15.0",
+        "commit": "b009466555c360513b8012ce549f716501090ee5",
+        "tag_object": "fba004eabc89c2b92d21e56d8ba24c23a952119f",
         "fixture_subtree": "test",
         "source_kind": "vendored_official_fixture_corpus"
       },
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 1283,
-      "documented_manifested_green_count": 876,
+      "documented_manifested_green_count": 873,
       "documented_manifested_green_source": "rust_nonignored_path_owned_fixture_inventory_minus_classified_red_skip",
-      "documented_family_green_count": 840,
-      "path_owned_manifested_green_count": 876,
-      "classified_red_skip_count": 407,
-      "classified_total_count": 407,
-      "known_red_or_gap_count": 403,
+      "documented_family_green_count": 839,
+      "path_owned_manifested_green_count": 873,
+      "classified_red_skip_count": 410,
+      "classified_total_count": 410,
+      "known_red_or_gap_count": 406,
       "skipped_or_excluded_count": 4,
       "documented_or_classified_count": 1283,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.682775,
+      "documented_manifested_green_ratio": 0.680436,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node22.json",
         "catalog_present": true,
-        "classified_red_skip_count": 407,
+        "classified_red_skip_count": 410,
         "by_expectation": {
-          "expected_failure": 25,
+          "expected_failure": 28,
           "expected_gap": 378,
           "expected_skip": 4
         },
@@ -3317,13 +3342,27 @@
           "requires_sequential_host_state_harness": 13,
           "requires_unpromoted_node_surface": 338,
           "requires_wpt_harness": 2,
-          "rust_watchpoint_expected_failure": 25,
+          "rust_watchpoint_expected_failure": 28,
           "support_fixture_not_top_level_test": 3,
           "upstream_known_issue_or_platform_boundary": 2,
           "vendored_non_official_placeholder": 1
         },
         "validation_errors": [],
         "entries": [
+          {
+            "test_path": "test/parallel/test-crypto-authenticated.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "networking/crypto",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_supported_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-des3-wrap.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "networking/crypto",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+          },
           {
             "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
             "expectation": "expected_failure",
@@ -3456,6 +3495,13 @@
             "classification": "rust_watchpoint_expected_failure",
             "owner": "networking/https",
             "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+          },
+          {
+            "test_path": "test/parallel/test-module-loading-error.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "loader-context/module",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture, node22_loader_context_followup_module_commonjs_remainder_batch_fixture, node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
           },
           {
             "test_path": "test/parallel/test-path-makelong.js",
@@ -6568,29 +6614,31 @@
       "upstream": {
         "repo": "nodejs/node",
         "tag": "v24.15.0",
+        "commit": "848430679556aed0bd073f2bc263331ad84fa119",
+        "tag_object": "a20a24415694b80361d661d6ecc1ea0e260d9c32",
         "fixture_subtree": "test",
         "source_kind": "vendored_official_fixture_corpus"
       },
       "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
       "denominator_kind": "vendored_fixture_root_test_files",
       "vendored_test_file_count": 1495,
-      "documented_manifested_green_count": 925,
+      "documented_manifested_green_count": 922,
       "documented_manifested_green_source": "rust_nonignored_path_owned_fixture_inventory_minus_classified_red_skip",
-      "documented_family_green_count": 915,
-      "path_owned_manifested_green_count": 925,
-      "classified_red_skip_count": 570,
-      "classified_total_count": 570,
-      "known_red_or_gap_count": 567,
+      "documented_family_green_count": 914,
+      "path_owned_manifested_green_count": 922,
+      "classified_red_skip_count": 573,
+      "classified_total_count": 573,
+      "known_red_or_gap_count": 570,
       "skipped_or_excluded_count": 3,
       "documented_or_classified_count": 1495,
       "unmanifested_or_unclassified_count": 0,
-      "documented_manifested_green_ratio": 0.618729,
+      "documented_manifested_green_ratio": 0.616722,
       "classification_catalog": {
         "catalog_path": "tests/runtime/node/classifications/node24.json",
         "catalog_present": true,
-        "classified_red_skip_count": 570,
+        "classified_red_skip_count": 573,
         "by_expectation": {
-          "expected_failure": 29,
+          "expected_failure": 32,
           "expected_gap": 538,
           "expected_skip": 3
         },
@@ -6601,7 +6649,7 @@
           "requires_sequential_host_state_harness": 13,
           "requires_unpromoted_node_surface": 491,
           "requires_wpt_harness": 2,
-          "rust_watchpoint_expected_failure": 29,
+          "rust_watchpoint_expected_failure": 32,
           "support_fixture_not_top_level_test": 3,
           "upstream_known_issue_or_platform_boundary": 8
         },
@@ -6641,6 +6689,20 @@
             "classification": "rust_watchpoint_expected_failure",
             "owner": "core-semantics/console",
             "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_console_issue_43095_watchpoint, node22_console_issue_43095_watchpoint"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-authenticated.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "networking/crypto",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_supported_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+          },
+          {
+            "test_path": "test/parallel/test-crypto-des3-wrap.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "networking/crypto",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
           },
           {
             "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
@@ -6774,6 +6836,13 @@
             "classification": "rust_watchpoint_expected_failure",
             "owner": "networking/https",
             "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+          },
+          {
+            "test_path": "test/parallel/test-module-loading-error.js",
+            "expectation": "expected_failure",
+            "classification": "rust_watchpoint_expected_failure",
+            "owner": "loader-context/module",
+            "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture, node22_loader_context_followup_module_commonjs_remainder_batch_fixture, node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
           },
           {
             "test_path": "test/parallel/test-path-resolve.js",
@@ -11160,9 +11229,9 @@
       "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/loader-context.md",
       "failure_doc": "docs/architecture/runtime/node-lts-compat/failures/loader-context.md",
       "documented_manifested_green_by_lane": {
-        "node20": 162,
-        "node22": 188,
-        "node24": 164
+        "node20": 161,
+        "node22": 187,
+        "node24": 163
       },
       "has_complete_lane_counts": true,
       "missing_count_lanes": []
@@ -11338,6 +11407,24 @@
       "source_line": 853
     },
     {
+      "test_name": "node22_loader_context_followup_module_commonjs_remainder_batch_fixture",
+      "reason": "Pinned native-addon/FFI gap: test-module-loading-error.js requires attempting to dlopen a .node fixture, while the default Nimbus Node-compat runtime intentionally has no ffi grant",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
+      "source_line": 146
+    },
+    {
+      "test_name": "node20_loader_context_followup_module_commonjs_remainder_batch_fixture",
+      "reason": "Pinned native-addon/FFI gap: test-module-loading-error.js requires attempting to dlopen a .node fixture, while the default Nimbus Node-compat runtime intentionally has no ffi grant",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
+      "source_line": 156
+    },
+    {
+      "test_name": "node24_loader_context_followup_module_commonjs_remainder_batch_fixture",
+      "reason": "Pinned native-addon/FFI gap: test-module-loading-error.js requires attempting to dlopen a .node fixture, while the default Nimbus Node-compat runtime intentionally has no ffi grant",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_loader_and_tools.rs",
+      "source_line": 166
+    },
+    {
       "test_name": "node22_node_tools_sqlite_build_preset_watchpoint",
       "reason": "Pinned node-tools sqlite build-preset watchpoint: test-sqlite.js now narrows to the bundled percentile capability seam because the current bundled SQLCipher sqlite source does not expose percentile() even after the Node-style URI/path and SQLTagStore fixes",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
@@ -11368,208 +11455,226 @@
       "source_line": 519
     },
     {
+      "test_name": "node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture",
+      "reason": "Pinned Deno-family crypto gap: authenticated-stream and DES3 wrap fixtures require cipher families not exposed by the embedded crypto backend yet",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
+      "source_line": 529
+    },
+    {
+      "test_name": "node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture",
+      "reason": "Pinned Deno-family crypto gap: authenticated-stream and DES3 wrap fixtures require cipher families not exposed by the embedded crypto backend yet",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
+      "source_line": 539
+    },
+    {
+      "test_name": "node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture",
+      "reason": "Pinned Deno-family crypto gap: authenticated-stream/authenticated error text and DES3 wrap fixtures require cipher behavior not exposed by the embedded crypto backend yet",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
+      "source_line": 549
+    },
+    {
       "test_name": "node20_loader_context_crypto_authenticated_supported_watchpoint_batch",
       "reason": "Pinned Node20 supported-lane divergence: test-crypto-authenticated.js still expects the older deprecation-warning ordering without DEP0182",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 556
+      "source_line": 559
     },
     {
       "test_name": "node20_https_hwm_watchpoint",
       "reason": "Pinned Node20 supported-lane divergence: test-https-hwm.js still times out on the current Node20 lane while the Node22/Node24 official files complete",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 593
+      "source_line": 596
     },
     {
       "test_name": "node20_tls_connect_hwm_option_watchpoint",
       "reason": "Pinned Node20 supported-lane divergence: test-tls-connect-hwm-option.js still times out on the current Node20 lane while the Node22/Node24 official files complete",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 603
+      "source_line": 606
     },
     {
       "test_name": "node22_networking_https_address_boundary_batch_watchpoint",
       "reason": "Pinned networking host/preset boundary batch: these https files currently stop at explicit local-address or IPv6 capability boundaries rather than plain HTTPS semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 613
+      "source_line": 616
     },
     {
       "test_name": "node22_networking_dgram_cluster_boundary_batch_watchpoint",
       "reason": "Pinned networking cross-family boundary batch: these dgram files currently depend on cluster/child-process script-path behavior rather than plain UDP runtime semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 624
+      "source_line": 627
     },
     {
       "test_name": "node22_networking_dgram_host_preset_boundary_batch_watchpoint",
       "reason": "Pinned networking host/preset boundary batch: these dgram files currently depend on external-net or IPv6 capability beyond the current application preset",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 635
+      "source_line": 638
     },
     {
       "test_name": "node22_dgram_reuseport_watchpoint",
       "reason": "Pinned networking dgram watchpoint: test-dgram-reuseport.js now materializes ../common/udp but blocks in reusePort bind/lifecycle semantics, so it stays explicit until that owner seam is fixed",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 646
+      "source_line": 649
     },
     {
       "test_name": "node22_http_agent_reuse_drained_socket_only_watchpoint",
       "reason": "Pinned networking cross-family watchpoint: test-http-agent-reuse-drained-socket-only.js currently blocks in process.report.getReport() and then reaches process.exit(), so it stays explicit as a process/report and embedded-exit dependency rather than a pure http.Agent seam",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 656
+      "source_line": 659
     },
     {
       "test_name": "node22_https_agent_additional_options_watchpoint",
       "reason": "Pinned networking/loader-context boundary watchpoint: test-https-agent-additional-options.js currently reaches the legacy TLSv1.1 secureProtocol path (TLSv1_1_method / minVersion TLSv1.1) that the current rustls-backed TLS owner layer does not negotiate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 666
+      "source_line": 669
     },
     {
       "test_name": "node22_stream_writable_samecb_singletick_watchpoint",
       "reason": "Pinned later-family dependency: test-stream-writable-samecb-singletick.js asserts async_hooks TickObject allocation counts, which are owned by the broader async_hooks/task-accounting family rather than the current pure-stream contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 676
+      "source_line": 679
     },
     {
       "test_name": "node24_stream_pipeline_watchpoint",
       "reason": "Pinned Node24 supported-lane divergence: test-stream-pipeline.js currently returns an AbortError-style 'The operation was aborted' message where the staged Node24 fixture still expects the inner 'Boom!' pipeline error message",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 713
+      "source_line": 716
     },
     {
       "test_name": "node20_fs_stat_watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-fs-stat.js still requires the older JSON.stringify(Stats) field shape that the current runtime no longer preserves while matching the newer Node22/Node24 file contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 813
+      "source_line": 816
     },
     {
       "test_name": "node24_fs_constants_watchpoint",
       "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-constants.js expects a newer constant-surface TypeError gate that Nimbus has not adopted into the current Node22 contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 823
+      "source_line": 826
     },
     {
       "test_name": "node24_fs_promises_file_handle_dispose_watchpoint",
       "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-promises-file-handle-dispose.js now also asserts opendir Dir[Symbol.asyncDispose]() close semantics that the current runtime does not yet match",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 833
+      "source_line": 836
     },
     {
       "test_name": "node24_fs_write_stream_watchpoint",
       "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current Node22 contract still follows the older file semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 843
+      "source_line": 846
     },
     {
       "test_name": "node24_fs_write_stream_autoclose_option_watchpoint",
       "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current Node22 contract still follows the older surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 853
+      "source_line": 856
     },
     {
       "test_name": "node24_fs_symlink_watchpoint",
       "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the Node22 ERR_FS_INVALID_SYMLINK_TYPE behavior",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 863
+      "source_line": 866
     },
     {
       "test_name": "node24_fs_opendir_watchpoint",
       "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-opendir.js now also asserts ERR_INVALID_THIS for newer Dir handle receiver checks, while the current runtime intentionally keeps the Node22 directory-handle surface",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 873
+      "source_line": 876
     },
     {
       "test_name": "node24_fs_promises_watch_watchpoint",
       "reason": "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the current Node22-based fs.watch contract",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 883
+      "source_line": 886
     },
     {
       "test_name": "node22_buffer_isascii_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 893
+      "source_line": 896
     },
     {
       "test_name": "node20_buffer_isascii_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isascii.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 903
+      "source_line": 906
     },
     {
       "test_name": "node22_buffer_isutf8_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 913
+      "source_line": 916
     },
     {
       "test_name": "node20_buffer_isutf8_watchpoint",
       "reason": "Pinned shared runtime gap: structuredClone transfer currently leaves ArrayBuffer usable in the embedded runtime, so test-buffer-isutf8.js does not raise ERR_INVALID_STATE on detached buffers",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 923
+      "source_line": 926
     },
     {
       "test_name": "node20_buffer_slow_watchpoint",
       "reason": "Pinned Node20 divergence: official v20.20.2 test-buffer-slow.js still exercises SlowBuffer(buffer.kMaxLength), and the embedded runtime hits its 128 MB heap ceiling before Node-style range semantics",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 933
+      "source_line": 936
     },
     {
       "test_name": "node22_path_normalize_watchpoint",
       "reason": "Pinned Node22-only path gap: official v22.15.0 expects the post-CVE path.win32.normalize() semantics that preserve the test segment in \\\\\\\\? and \\\\\\\\. device paths",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 943
+      "source_line": 946
     },
     {
       "test_name": "node22_path_makelong_watchpoint",
       "reason": "Pinned Node22 path gap: official v22.15.0 expects path.win32.toNamespacedPath('\\\\\\\\?\\\\\\\\foo') to retain the trailing slash, but the current runtime still returns the older Node20 shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 953
+      "source_line": 956
     },
     {
       "test_name": "node22_path_resolve_watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 963
+      "source_line": 966
     },
     {
       "test_name": "node20_path_resolve_watchpoint",
       "reason": "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 973
+      "source_line": 976
     },
     {
       "test_name": "node22_url_parse_deprecation_watchpoint",
       "reason": "Pinned vendored fixture tracks post-22 url.parse deprecation semantics; official Node22 v22.15.0 has no counterpart",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 983
+      "source_line": 986
     },
     {
       "test_name": "node24_supported_lane_core_semantics_watchpoint",
       "reason": "Node24 supported lane watchpoint: the broad core semantics batch includes known newer-console-clear drift and remains classified until that fixture is promoted green",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1011
+      "source_line": 1014
     },
     {
       "test_name": "node24_supported_lane_process_and_timing_watchpoint",
       "reason": "Node24 supported lane watchpoint: the broad process/timing batch is classified until each carried fixture is replayed and promoted under the supported-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1039
+      "source_line": 1042
     },
     {
       "test_name": "node24_supported_lane_streams_and_local_io_watchpoint",
       "reason": "Node24 supported lane watchpoint: the broad streams/local-I/O batch is classified until each carried fixture is replayed and promoted under the supported-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1067
+      "source_line": 1070
     },
     {
       "test_name": "node24_supported_lane_networking_watchpoint",
       "reason": "Node24 supported lane watchpoint: the broad networking batch is classified until each carried fixture is replayed and promoted under the supported-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1087
+      "source_line": 1090
     },
     {
       "test_name": "node24_supported_lane_loader_context_watchpoint",
       "reason": "Node24 supported lane watchpoint: the broad loader/context batch is classified until each carried fixture is replayed and promoted under the supported-lane gate",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs",
-      "source_line": 1111
+      "source_line": 1114
     }
   ],
   "warnings": []

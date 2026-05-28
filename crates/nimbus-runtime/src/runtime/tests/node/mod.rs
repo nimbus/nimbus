@@ -1,8 +1,8 @@
 use std::ffi::OsString;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::*;
 use crate::test_support::acquire_runtime_suite_lock;
@@ -20,7 +20,7 @@ struct NodeCompatExtraFixtureEntry {
     fixture_source_path: &'static str,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum NodeCompatLane {
     Node20,
     Node22,
@@ -97,6 +97,68 @@ pub(super) struct NodeCompatBatchEntrySnapshot {
 
 struct NodeCompatFixtureOutcome {
     skipped: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeCompatFixtureDiagnosticFamily {
+    EventLoop,
+    Vm,
+    Worker,
+    MessagePort,
+    Subprocess,
+    General,
+}
+
+impl NodeCompatFixtureDiagnosticFamily {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EventLoop => "event_loop",
+            Self::Vm => "vm",
+            Self::Worker => "worker",
+            Self::MessagePort => "message_port",
+            Self::Subprocess => "subprocess",
+            Self::General => "general",
+        }
+    }
+
+    fn exit_criterion(self) -> &'static str {
+        match self {
+            Self::MessagePort => {
+                "Worker MessagePort fixtures may be promoted only after NLRT8 proves production in-process profiles do not grant worker_threads authority, or after the fixture passes with bounded teardown diagnostics and the watchpoint catalog removes the corresponding ignore."
+            }
+            Self::Worker => {
+                "Worker fixtures may be promoted only after worker lifecycle, cancellation, and policy inheritance are bounded by production profile tests."
+            }
+            Self::Vm => {
+                "VM fixtures may be promoted only after dynamic-code execution remains bounded by runtime timeout diagnostics and production admission policy."
+            }
+            Self::Subprocess => {
+                "Subprocess-shaped fixtures may be promoted only through the runtime self-exec seam or a service/microVM profile, never by granting ambient process execution."
+            }
+            Self::EventLoop => {
+                "Event-loop fixtures may be promoted only when timer, microtask, and nextTick drains settle inside the per-fixture wall-clock budget."
+            }
+            Self::General => {
+                "General fixture failures require a specific owner classification before they can become support claims."
+            }
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct NodeCompatFixtureExecutionDiagnostic<'a> {
+    schema_version: u32,
+    report_kind: &'static str,
+    generated_at_unix_ms: u64,
+    lane: &'a str,
+    test_relative_path: &'a str,
+    bundle_path: &'a str,
+    diagnostic_family: &'static str,
+    outcome: &'a str,
+    timeout_ms: u64,
+    elapsed_ms: u64,
+    detail: &'a str,
+    exit_criterion: &'static str,
 }
 
 #[derive(Debug)]
@@ -197,6 +259,117 @@ impl NodeCompatBatchEntry {
 
 fn node_compat_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime/tests/node_compat_fixtures")
+}
+
+fn node_compat_repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("nimbus-runtime should live under crates/")
+        .to_path_buf()
+}
+
+fn duration_millis_u64(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn node_compat_fixture_wall_clock_timeout(limits: &RuntimeLimits) -> Duration {
+    limits
+        .execution_timeout
+        .checked_add(Duration::from_secs(5))
+        .expect("node_compat wall-clock timeout slack should not overflow")
+}
+
+fn node_compat_fixture_diagnostic_family(
+    test_relative_path: &str,
+) -> NodeCompatFixtureDiagnosticFamily {
+    if test_relative_path.contains("message-port") {
+        NodeCompatFixtureDiagnosticFamily::MessagePort
+    } else if test_relative_path.contains("worker") {
+        NodeCompatFixtureDiagnosticFamily::Worker
+    } else if test_relative_path.contains("vm") {
+        NodeCompatFixtureDiagnosticFamily::Vm
+    } else if node_compat_fixture_requires_runtime_self_exec(test_relative_path)
+        || test_relative_path.contains("cluster")
+        || test_relative_path.contains("child")
+    {
+        NodeCompatFixtureDiagnosticFamily::Subprocess
+    } else if test_relative_path.contains("async")
+        || test_relative_path.contains("next-tick")
+        || test_relative_path.contains("timer")
+        || test_relative_path.contains("timeout")
+        || test_relative_path.contains("promise")
+        || test_relative_path.contains("immediate")
+    {
+        NodeCompatFixtureDiagnosticFamily::EventLoop
+    } else {
+        NodeCompatFixtureDiagnosticFamily::General
+    }
+}
+
+fn node_compat_diagnostic_root() -> PathBuf {
+    std::env::var_os("NIMBUS_NODE_COMPAT_DIAGNOSTIC_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| node_compat_repo_root().join("target/node-compat/diagnostics"))
+}
+
+fn sanitize_node_compat_artifact_stem(value: &str) -> String {
+    let mut sanitized = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() {
+            sanitized.push(character);
+        } else {
+            sanitized.push('_');
+        }
+    }
+    sanitized.trim_matches('_').to_string()
+}
+
+fn write_node_compat_fixture_diagnostic(
+    lane_name: &str,
+    test_relative_path: &str,
+    bundle_path: &Path,
+    timeout: Duration,
+    elapsed: Duration,
+    outcome: &str,
+    detail: &str,
+) -> Option<PathBuf> {
+    let diagnostic_family = node_compat_fixture_diagnostic_family(test_relative_path);
+    let bundle_path_string = bundle_path.to_string_lossy().to_string();
+    let generated_at_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(duration_millis_u64)
+        .unwrap_or_default();
+    let diagnostic = NodeCompatFixtureExecutionDiagnostic {
+        schema_version: 1,
+        report_kind: "node_compat_fixture_execution_diagnostic",
+        generated_at_unix_ms,
+        lane: lane_name,
+        test_relative_path,
+        bundle_path: bundle_path_string.as_str(),
+        diagnostic_family: diagnostic_family.as_str(),
+        outcome,
+        timeout_ms: duration_millis_u64(timeout),
+        elapsed_ms: duration_millis_u64(elapsed),
+        detail,
+        exit_criterion: diagnostic_family.exit_criterion(),
+    };
+    let path = node_compat_diagnostic_root()
+        .join(diagnostic_family.as_str())
+        .join(format!(
+            "{}__{}.json",
+            lane_name,
+            sanitize_node_compat_artifact_stem(test_relative_path)
+        ));
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return None;
+    }
+    let bytes = serde_json::to_vec_pretty(&diagnostic).ok()?;
+    std::fs::write(&path, bytes).ok()?;
+    Some(path)
 }
 
 fn read_node_compat_fixture_bytes(fixture_source_path: &str) -> Vec<u8> {
@@ -552,12 +725,12 @@ fn execute_upstream_node_compat_test_with_extra_files(
         postlude_script,
         mode: NodeCompatBundleMode::Runtime,
     });
+    let limits = runtime_limits_for_node_compat_fixture(test_relative_path, lane);
+    let wall_clock_timeout = node_compat_fixture_wall_clock_timeout(&limits);
+    let lane_name = lane.map(node_compat_lane_name).unwrap_or("unspecified");
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(runtime_limits_for_node_compat_fixture(
-            test_relative_path,
-            lane,
-        ))),
+        Arc::new(RuntimePolicy::new(limits)),
     );
     let request = InvocationRequest {
         kind: InvocationKind::Query,
@@ -569,15 +742,43 @@ fn execute_upstream_node_compat_test_with_extra_files(
         services: Default::default(),
     };
 
+    let started_at = Instant::now();
     let result = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime should build")
         .block_on(async {
-            runtime
-                .invoke_bundle(&RuntimeBundle::new(&bundle_path), &request)
-                .await
+            tokio::time::timeout(
+                wall_clock_timeout,
+                runtime.invoke_bundle(&RuntimeBundle::new(&bundle_path), &request),
+            )
+            .await
         });
+
+    let result = match result {
+        Ok(result) => result,
+        Err(_) => {
+            let elapsed = started_at.elapsed();
+            let detail = format!(
+                "fixture exceeded harness wall-clock timeout of {:?} after {:?}",
+                wall_clock_timeout, elapsed
+            );
+            let artifact = write_node_compat_fixture_diagnostic(
+                lane_name,
+                test_relative_path,
+                &bundle_path,
+                wall_clock_timeout,
+                elapsed,
+                "wall_clock_timeout",
+                &detail,
+            )
+            .map(|path| format!("; diagnostic artifact: {}", path.display()))
+            .unwrap_or_default();
+            return Err(format!(
+                "upstream node_compat fixture `{test_relative_path}` exceeded wall-clock timeout{artifact}"
+            ));
+        }
+    };
 
     let result = match result {
         Ok(result) => result,
@@ -591,25 +792,71 @@ fn execute_upstream_node_compat_test_with_extra_files(
                 if exit_code == 0 {
                     return Ok(NodeCompatFixtureOutcome { skipped: false });
                 }
+                let artifact = write_node_compat_fixture_diagnostic(
+                    lane_name,
+                    test_relative_path,
+                    &bundle_path,
+                    wall_clock_timeout,
+                    started_at.elapsed(),
+                    "process_exit",
+                    &error,
+                )
+                .map(|path| format!("; diagnostic artifact: {}", path.display()))
+                .unwrap_or_default();
                 return Err(format!(
-                    "upstream node_compat fixture `{test_relative_path}` exited with non-zero code {exit_code}: {error}"
+                    "upstream node_compat fixture `{test_relative_path}` exited with non-zero code {exit_code}: {error}{artifact}"
                 ));
             }
+            let artifact = write_node_compat_fixture_diagnostic(
+                lane_name,
+                test_relative_path,
+                &bundle_path,
+                wall_clock_timeout,
+                started_at.elapsed(),
+                "runtime_error",
+                &error,
+            )
+            .map(|path| format!("; diagnostic artifact: {}", path.display()))
+            .unwrap_or_default();
             return Err(format!(
-                "upstream node_compat fixture `{test_relative_path}` should execute: {error}"
+                "upstream node_compat fixture `{test_relative_path}` should execute: {error}{artifact}"
             ));
         }
     };
 
     if result.get("ok") != Some(&serde_json::json!(true)) {
+        let detail = format!("fixture returned non-ok payload: {result}");
+        let artifact = write_node_compat_fixture_diagnostic(
+            lane_name,
+            test_relative_path,
+            &bundle_path,
+            wall_clock_timeout,
+            started_at.elapsed(),
+            "non_ok_payload",
+            &detail,
+        )
+        .map(|path| format!("; diagnostic artifact: {}", path.display()))
+        .unwrap_or_default();
         return Err(format!(
-            "upstream node_compat fixture `{test_relative_path}` returned non-ok payload: {result}"
+            "upstream node_compat fixture `{test_relative_path}` returned non-ok payload: {result}{artifact}"
         ));
     }
 
     if result.get("testPath") != Some(&serde_json::json!(test_relative_path)) {
+        let detail = format!("fixture returned mismatched testPath payload: {result}");
+        let artifact = write_node_compat_fixture_diagnostic(
+            lane_name,
+            test_relative_path,
+            &bundle_path,
+            wall_clock_timeout,
+            started_at.elapsed(),
+            "mismatched_test_path",
+            &detail,
+        )
+        .map(|path| format!("; diagnostic artifact: {}", path.display()))
+        .unwrap_or_default();
         return Err(format!(
-            "upstream node_compat fixture `{test_relative_path}` returned mismatched testPath payload: {result}"
+            "upstream node_compat fixture `{test_relative_path}` returned mismatched testPath payload: {result}{artifact}"
         ));
     }
 
@@ -702,6 +949,116 @@ fn node_compat_runtime_limits_only_grant_self_exec_to_known_respawn_fixtures() {
         RuntimeCompatibilityTarget::Node22
     );
     assert!(non_respawn_limits.grants.run.is_empty());
+}
+
+#[test]
+fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
+    let ordinary_limits = runtime_limits_for_node_compat_fixture(
+        "test/parallel/test-repl-mode.js",
+        Some(NodeCompatLane::Node22),
+    );
+    assert_eq!(
+        node_compat_fixture_wall_clock_timeout(&ordinary_limits),
+        Duration::from_secs(35),
+        "ordinary fixtures get the 30s runtime budget plus harness slack",
+    );
+
+    let nested_runner_limits = runtime_limits_for_node_compat_fixture(
+        "test/parallel/test-runner-reporters.js",
+        Some(NodeCompatLane::Node22),
+    );
+    assert_eq!(
+        nested_runner_limits.execution_timeout,
+        Duration::from_secs(120)
+    );
+    assert_eq!(
+        node_compat_fixture_wall_clock_timeout(&nested_runner_limits),
+        Duration::from_secs(125),
+        "long-running subprocess fixtures still have a finite wall-clock budget",
+    );
+}
+
+#[test]
+fn node_compat_harness_diagnostics_cover_hang_families() {
+    let _guard = acquire_runtime_suite_lock();
+    let tempdir = tempfile::tempdir().expect("diagnostic tempdir should build");
+    let _diagnostic_root_guard = ScopedProcessEnvVar::set(
+        "NIMBUS_NODE_COMPAT_DIAGNOSTIC_ROOT",
+        tempdir.path().to_string_lossy().as_ref(),
+    );
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(&bundle_path, "export {};").expect("synthetic bundle should write");
+
+    let cases = [
+        (
+            "test/parallel/test-next-tick-doesnt-hang.js",
+            NodeCompatFixtureDiagnosticFamily::EventLoop,
+        ),
+        (
+            "test/parallel/test-vm-basic.js",
+            NodeCompatFixtureDiagnosticFamily::Vm,
+        ),
+        (
+            "test/parallel/test-worker.js",
+            NodeCompatFixtureDiagnosticFamily::Worker,
+        ),
+        (
+            "test/parallel/test-worker-message-port.js",
+            NodeCompatFixtureDiagnosticFamily::MessagePort,
+        ),
+        (
+            "test/parallel/test-runner-reporters.js",
+            NodeCompatFixtureDiagnosticFamily::Subprocess,
+        ),
+    ];
+
+    for (test_relative_path, expected_family) in cases {
+        assert_eq!(
+            node_compat_fixture_diagnostic_family(test_relative_path),
+            expected_family
+        );
+        let artifact = write_node_compat_fixture_diagnostic(
+            "node22",
+            test_relative_path,
+            &bundle_path,
+            Duration::from_secs(35),
+            Duration::from_secs(35),
+            "synthetic_timeout",
+            "synthetic diagnostic coverage probe",
+        )
+        .expect("diagnostic artifact should write");
+        let payload: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&artifact).expect("diagnostic artifact should read"),
+        )
+        .expect("diagnostic artifact should parse");
+        assert_eq!(
+            payload["report_kind"],
+            "node_compat_fixture_execution_diagnostic"
+        );
+        assert_eq!(payload["diagnostic_family"], expected_family.as_str());
+        assert_eq!(payload["timeout_ms"], 35_000);
+        assert!(
+            payload["exit_criterion"]
+                .as_str()
+                .expect("exit criterion should serialize")
+                .len()
+                > 20,
+            "diagnostic artifact should carry a real exit criterion",
+        );
+    }
+}
+
+#[test]
+fn node_compat_harness_message_port_exit_criterion_blocks_unqualified_worker_promotion() {
+    let criterion = NodeCompatFixtureDiagnosticFamily::MessagePort.exit_criterion();
+    assert!(
+        criterion.contains("NLRT8"),
+        "MessagePort worker hazards should point at the production profile split"
+    );
+    assert!(
+        criterion.contains("production in-process"),
+        "MessagePort worker hazards should not be promoted into production in-process profiles by implication"
+    );
 }
 
 fn execute_manifested_node_compat_test(

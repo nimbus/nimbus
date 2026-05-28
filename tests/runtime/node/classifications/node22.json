@@ -5,6 +5,20 @@
   "contract": "Classifies vendored lane-local test files that are not green in the non-ignored Rust compatibility lane. Entries must not be counted as pass claims; they reduce only the unmanifested/unclassified remainder.",
   "entries": [
     {
+      "test_path": "test/parallel/test-crypto-authenticated.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/crypto",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node20_loader_context_crypto_authenticated_supported_watchpoint_batch, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+    },
+    {
+      "test_path": "test/parallel/test-crypto-des3-wrap.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "networking/crypto",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture, node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
+    },
+    {
       "test_path": "test/parallel/test-dgram-bind-socket-close-before-cluster-reply.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
@@ -136,6 +150,13 @@
       "classification": "rust_watchpoint_expected_failure",
       "owner": "networking/https",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node22_networking_https_address_boundary_batch_watchpoint"
+    },
+    {
+      "test_path": "test/parallel/test-module-loading-error.js",
+      "expectation": "expected_failure",
+      "classification": "rust_watchpoint_expected_failure",
+      "owner": "loader-context/module",
+      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture, node22_loader_context_followup_module_commonjs_remainder_batch_fixture, node24_loader_context_followup_module_commonjs_remainder_batch_fixture"
     },
     {
       "test_path": "test/parallel/test-path-makelong.js",

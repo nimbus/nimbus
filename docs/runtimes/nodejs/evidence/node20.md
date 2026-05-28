@@ -11,11 +11,11 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 - upstream fixture line: `v20.20.2`
 - runtime execution target: `Node20`
 - vendored official fixtures: `1308`
-- passed official fixtures: `904`
-- expected failure / known gap fixtures: `399`
+- passed official fixtures: `901`
+- expected failure / known gap fixtures: `402`
 - skipped / excluded fixtures: `5`
 - unclassified fixtures: `0`
-- official fixture pass rate: `69.1%`
+- official fixture pass rate: `68.9%`
 - classified coverage: `100.0%`
 
 ## Classification Catalog
@@ -24,7 +24,7 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 | Expectation | Count |
 | --- | ---: |
-| Expected failure | 36 |
+| Expected failure | 39 |
 | Known gap | 363 |
 | Skipped / excluded | 5 |
 
