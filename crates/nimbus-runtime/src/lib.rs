@@ -46,9 +46,9 @@ pub use limits::{
     RuntimeExecutionAdapterArtifactStatus, RuntimeExecutionAdapterExpectedArtifact,
     RuntimeExecutionAdapterManifestArtifact, RuntimeExecutionAdapterState, RuntimeExecutionModel,
     RuntimeGrants, RuntimeJavaScriptEvaluationFormat, RuntimeLanguage, RuntimeLimits,
-    RuntimeMemoryEnforcement, RuntimeMode, RuntimeModuleStateSemantics, RuntimePolicy,
-    RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
-    RuntimeTenantBudget,
+    RuntimeMemoryEnforcement, RuntimeMode, RuntimeModuleStateSemantics, RuntimeNodeLtsLane,
+    RuntimeNodeSupportPhase, RuntimePolicy, RuntimePoolKind, RuntimePreset,
+    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeTenantBudget,
 };
 pub use metrics::{
     RuntimeDurationDistributionSnapshot, RuntimeHostOperationMetricsSnapshot, RuntimeMetrics,

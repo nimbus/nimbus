@@ -967,6 +967,63 @@ fn policy_fixtures_reject_invalid_port_secret_and_image_shapes() {
 }
 
 #[test]
+fn node_runtime_profiles_follow_lts_registry_targets() {
+    for (profile, expected_target, expected_phase, product_default) in [
+        (
+            OperatorRuntimeProfile::Node20,
+            nimbus_runtime::RuntimeCompatibilityTarget::Node20,
+            nimbus_runtime::RuntimeNodeSupportPhase::EolLegacy,
+            false,
+        ),
+        (
+            OperatorRuntimeProfile::Node22,
+            nimbus_runtime::RuntimeCompatibilityTarget::Node22,
+            nimbus_runtime::RuntimeNodeSupportPhase::MaintenanceLts,
+            true,
+        ),
+        (
+            OperatorRuntimeProfile::Node24,
+            nimbus_runtime::RuntimeCompatibilityTarget::Node24,
+            nimbus_runtime::RuntimeNodeSupportPhase::ActiveLts,
+            false,
+        ),
+    ] {
+        let limits = profile.runtime_limits();
+        let metadata = limits
+            .compatibility_target
+            .node_lts_metadata()
+            .expect("operator Node profile should map to registry-backed target");
+        assert_eq!(limits.compatibility_target, expected_target);
+        assert_eq!(
+            limits.compatibility_target.node_support_phase(),
+            Some(expected_phase)
+        );
+        assert_eq!(metadata.product_default, product_default);
+    }
+
+    let numeric: OperatorPolicyDocument = serde_yaml::from_str(
+        r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "messages:send"
+    runtime:
+      profile: "22"
+"#,
+    )
+    .expect("numeric Node LTS profile alias should parse");
+    assert_eq!(
+        numeric.workloads[0].runtime.profile,
+        OperatorRuntimeProfile::Node22
+    );
+    assert_eq!(
+        nimbus_runtime::RuntimeCompatibilityTarget::product_default_node_lts_target(),
+        nimbus_runtime::RuntimeCompatibilityTarget::Node22
+    );
+}
+
+#[test]
 fn node_profile_routes_away_from_production_in_process_untrusted() {
     let policy = parse_policy(NODE_ROUTE);
 

@@ -1,5 +1,5 @@
 use nimbus_core::{Error, Result};
-use nimbus_runtime::RuntimeLimits;
+use nimbus_runtime::{RuntimeCompatibilityTarget, RuntimeLimits};
 use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge};
 use serde::{Deserialize, Serialize};
 
@@ -186,9 +186,13 @@ impl OperatorPolicyWorkload {
 #[serde(rename_all = "snake_case")]
 pub enum OperatorRuntimeProfile {
     #[default]
+    #[serde(alias = "web")]
     WebStandard,
+    #[serde(alias = "20", alias = "Node20")]
     Node20,
+    #[serde(alias = "22", alias = "Node22")]
     Node22,
+    #[serde(alias = "24", alias = "Node24")]
     Node24,
 }
 
@@ -203,11 +207,18 @@ impl OperatorRuntimeProfile {
     }
 
     fn runtime_limits(self) -> RuntimeLimits {
+        match self.runtime_compatibility_target() {
+            None => RuntimeLimits::application_web_standard(),
+            Some(target) => RuntimeLimits::application_node(target),
+        }
+    }
+
+    fn runtime_compatibility_target(self) -> Option<RuntimeCompatibilityTarget> {
         match self {
-            Self::WebStandard => RuntimeLimits::application_web_standard(),
-            Self::Node20 => RuntimeLimits::application_node20(),
-            Self::Node22 => RuntimeLimits::application_node22(),
-            Self::Node24 => RuntimeLimits::application_node24(),
+            Self::WebStandard => None,
+            Self::Node20 => Some(RuntimeCompatibilityTarget::Node20),
+            Self::Node22 => Some(RuntimeCompatibilityTarget::Node22),
+            Self::Node24 => Some(RuntimeCompatibilityTarget::Node24),
         }
     }
 }

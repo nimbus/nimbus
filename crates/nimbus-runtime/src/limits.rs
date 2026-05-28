@@ -16,7 +16,8 @@ pub use axes::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeJavaScriptEvaluationFormat, RuntimeMemoryEnforcement,
-    RuntimeModuleStateSemantics, RuntimePoolKind, RuntimeResetCapabilities, RuntimeRoutingAffinity,
+    RuntimeModuleStateSemantics, RuntimeNodeLtsLane, RuntimeNodeSupportPhase, RuntimePoolKind,
+    RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 pub use grants::{RuntimeGrants, RuntimeLanguage, RuntimeMode, RuntimePreset};
 pub use policy::RuntimePolicy;

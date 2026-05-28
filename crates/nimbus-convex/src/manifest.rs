@@ -91,7 +91,9 @@ impl ConvexFunctionDefinition {
             .or(self.node_runtime_target)
             .unwrap_or(match self.runtime_environment {
                 ConvexRuntimeEnvironment::Default => RuntimeCompatibilityTarget::WebStandardIsolate,
-                ConvexRuntimeEnvironment::Node => RuntimeCompatibilityTarget::Node22,
+                ConvexRuntimeEnvironment::Node => {
+                    RuntimeCompatibilityTarget::product_default_node_lts_target()
+                }
                 ConvexRuntimeEnvironment::Bun => RuntimeCompatibilityTarget::BunJsc,
             });
         let package_resolution =
