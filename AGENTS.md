@@ -95,6 +95,53 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   `docs/architecture/sandbox/macos-machine-flow.md` when relevant,
   `docs/operating/cli.md`, and the active platform plan from
   `docs/plans/README.md`
+- Sandbox backend / snapshot / desktop / GPU (unified-lift roadmap on
+  `nimbus-libkrun`): `docs/plans/nimbus-sandbox-plan.md` is the single
+  active execution plan. Bands route as **B** (backend / capability
+  profiles / nimbus-guest), **S** (Linux-KVM snapshot + fork, S0..S5),
+  **D** (desktop profile / computer use, D1..D10), **G** (GPU profile,
+  G1..G13). Decision baseline D1-D12 in
+  `docs/plans/research/vmm-landscape-2026.md`. Subject research:
+  `docs/plans/research/libkrun-session-sandbox.md` (backend),
+  `docs/plans/research/gpu-sandbox-backends.md` (GPU mediation),
+  `docs/plans/research/computer-use-capabilities-audit.md` (desktop
+  capability gaps), `docs/plans/research/nimbus-libkrun-fork-inventory.md`
+  (fork delta + muvm lift map),
+  `docs/plans/research/macos-host-vs-guest-control-plane-rationale.md`
+  (per-host topology), `docs/architecture/sandbox/macos-machine-flow.md`
+  (macOS outer-VM flow). Archived predecessors:
+  `docs/plans/archive/computer-use-sandbox-plan.md` (→ Band D),
+  `docs/plans/archive/gpu-accelerated-sandbox-plan.md` (→ Band G),
+  `docs/plans/archive/nimbus-libkrun-snapshot-port-plan.md` (→ Band S),
+  `docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md`
+  (Firecracker-as-separate-VMM dropped per D2). Macros: Linux production
+  runs direct libkrun-on-KVM microVMs per service; macOS dev runs ONE
+  outer machine-os Linux VM and per-workload sandboxes inside it are
+  standard Linux containers (crun), NOT nested microVMs (D11/D12).
+  Snapshot/fork S0..S5 is Linux-KVM-only by construction.
+- Node-side systemd D-Bus binding (`SystemdDbusClient` /
+  `SystemdTransientUnitBackend` / `NodeWorkloadReconciler`):
+  `docs/plans/node-dbus-client-binding-plan.md` is the active
+  execution plan (NDB0..NDB7). Lifts the TSB7 deferral recorded in
+  `docs/plans/proof/tenant-domain-and-node-enforcement-boundary/tsb7-systemd-transient.md`
+  by attaching `lucab/zbus_systemd` (pin `=0.26000.0`, features
+  `systemd1` + `zbus-async-tokio`) and direct `zbus` to the existing
+  trait at `crates/nimbus-node/src/systemd_transient.rs:15-32`.
+  Decision rationale and option matrix in
+  `docs/plans/research/systemd-dbus-binding-rust-2026.md`.
+  Signal-correlated job completion (subscribe to `JobRemoved`
+  *before* calling `StartTransientUnit`/`StopUnit`, complete only
+  on matching signal `result`) is the trust-critical NDB3
+  deliverable, not polling. Linux-gated integration tests against
+  `systemctl --user` land in NDB5; CI lane `node-dbus-integration`
+  on `ubuntu-24.04` lands in NDB6; default activation (Linux
+  builds default to `ZbusSystemdClient` instead of
+  `UnavailableSystemdDbusClient`) lands in NDB7. `/goal` control
+  plane gated on `bash scripts/verify-node-dbus-binding.sh` (10
+  conditions). Plan does NOT wire a production caller for
+  `NodeWorkloadReconciler` — TSB14's deferral of that work
+  (`docs/plans/proof/tenant-domain-and-node-enforcement-boundary/tsb14-node-extraction-decision.md:28-37`)
+  needs its own follow-up plan.
 - CLI daemon canonicalization, walk-up boundaries, or banner shape:
   `docs/plans/archive/cli-daemon-canonicalization-plan.md` (completed
   baseline, closed 2026-05-19), `docs/operating/cli.md`,
@@ -378,6 +425,7 @@ A table without a schema accepts any document. Setting a schema adds constraints
 - **Full test suite:** `make test`
 - **Lint:** `make clippy`
 - **Dependency audit:** `make deny`
+- **Third-party attribution gate (G4):** `make verify-third-party-attribution` (unit tests: `make verify-third-party-attribution-helper`)
 - **Harness focused lanes:** `make verify-harness` or `make verify-harness SURFACE=runtime`
 - **Harness nightly lanes:** `make verify-harness-nightly` or `make verify-harness-nightly SURFACE=server`
 - **Harness repro:** `make verify-harness-repro SURFACE=runtime MODE=pr CASE=<case-id>`
@@ -403,4 +451,7 @@ on the shared target. Do not treat alternate artifact directories as the
 default recovery path.
 
 Run `cargo fmt --all --check` and `make clippy` before opening a PR. CI enforces
-those checks plus `make deny`.
+those checks plus `make deny` and `make verify-third-party-attribution`
+(the latter is currently a pre-existence pass — it begins enforcing
+provenance headers once `crates/nimbus-guest/` or
+`crates/nimbus-libkrun-*/` lands).
