@@ -39,6 +39,8 @@ pub use systemd_transient::{
     SystemdTransientCapabilities, SystemdTransientUnitBackend, SystemdUnitStatus,
     UnavailableSystemdDbusClient,
 };
+#[cfg(feature = "systemd-dbus")]
+pub use systemd_transient::zbus_client::{BusKind, ZbusSystemdClient};
 
 #[cfg(test)]
 mod tests;
