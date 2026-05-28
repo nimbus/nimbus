@@ -1,6 +1,6 @@
 # Node LTS Runtime Trust Plan (NLRT)
 
-Status: `ready for execution, not yet started`
+Status: `active`
 Owner: `runtime / tenant / bridge / convex node-compat`
 Research baseline:
 `docs/plans/research/node-lts-runtime-and-deno-fork-strategy.md`
@@ -150,7 +150,7 @@ Non-goals:
 
 | NLRT | Description | Status |
 | --- | --- | --- |
-| NLRT0 | Accept this plan and checkpoint the research baseline. Add routing from `docs/plans/README.md`. Capture the current dirty-worktree caveat, the post-refactor owner-crate map, and make sure this plan does not overwrite the active NCG cron-greening work. | pending |
+| NLRT0 | Accept this plan and checkpoint the research baseline. Add routing from `docs/plans/README.md`. Capture the current dirty-worktree caveat, the post-refactor owner-crate map, and make sure this plan does not overwrite the active NCG cron-greening work. | done |
 | NLRT1 | Add a Deno fork provenance verifier. It must inspect `Cargo.toml`, `Cargo.lock`, and `cargo tree -p nimbus-runtime`, require the expected `nimbus/deno` and `nimbus/rusty_v8` tags/SHAs for patch-sensitive crates, and require an allowlist with reasons for Deno-family crates that intentionally remain on crates.io. | pending |
 | NLRT2 | Introduce a data-driven Node LTS lane registry. Include major, lane name, support phase, codename, upstream version, upstream tag, fixture corpus path, LTS start, maintenance start, EOL date, product-default flag, and evidence policy. Mark Node20 as EOL legacy/grace, Node22 and Node24 as supported LTS, and Node26 as preview-current. Name every owner crate that consumes the registry. | pending |
 | NLRT3 | Generate `RuntimeCompatibilityTarget` metadata from the lane registry or make the enum a thin wrapper around registry records. Remove hard-coded synthetic version strings from `axes.rs`; keep compatibility-target parsing stable for public config and synchronized across `nimbus-tenant` operator policy and `nimbus-convex` runtime lane selection. | pending |
@@ -226,7 +226,7 @@ refresh path for the affected lanes before closeout.
 
 | Date | NLRT | Status | Files touched | Verification | Notes |
 | --- | --- | --- | --- | --- | --- |
-| _pending_ | NLRT0 | pending | | | Start by creating `docs/plans/proof/node-lts-runtime-trust/nlrt0-baseline-and-control-plane.md`. |
+| 2026-05-28 | NLRT0 | done | `docs/plans/node-lts-runtime-trust-plan.md`, `docs/plans/proof/node-lts-runtime-trust/README.md`, `docs/plans/proof/node-lts-runtime-trust/nlrt0-baseline-and-control-plane.md` | `npm run docs:validate-refs:strict`: pass, 218 working-tree Markdown files | Baseline commit `9995f65d`; plan activated after the crate-extraction refactor; NCG overlap remains a named coordination hazard. |
 
 ## Risk Register
 
