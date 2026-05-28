@@ -1,7 +1,14 @@
+use std::collections::BTreeSet;
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
+use serde::{Deserializer, de};
 
 use super::grants::RuntimeLanguage;
 use super::resources::RuntimeLimits;
+
+const NODE_LTS_LANES_JSON: &str =
+    include_str!("../../../../docs/architecture/runtime/node-lts-compat/node-lts-lanes.json");
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,7 +70,7 @@ pub enum RuntimeJavaScriptEvaluationFormat {
     ProgramWrapper,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeCompatibilityTarget {
     WebStandardIsolate,
@@ -73,27 +80,221 @@ pub enum RuntimeCompatibilityTarget {
     Node24,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeNodeSupportPhase {
+    EolLegacy,
+    MaintenanceLts,
+    ActiveLts,
+    PreviewCurrent,
+}
+
+impl RuntimeNodeSupportPhase {
+    pub fn is_supported_lts(self) -> bool {
+        matches!(self, Self::MaintenanceLts | Self::ActiveLts)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeNodeLtsRegistry {
+    schema_version: u32,
+    registry_kind: String,
+    product_default_lane: String,
+    lanes: Vec<RuntimeNodeLtsLane>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RuntimeNodeLtsLane {
+    pub major: u16,
+    pub lane_name: String,
+    pub runtime_compatibility_target: Option<RuntimeCompatibilityTarget>,
+    pub support_phase: RuntimeNodeSupportPhase,
+    pub codename: Option<String>,
+    pub upstream_version: String,
+    pub upstream_tag: String,
+    pub fixture_corpus_path: Option<String>,
+    pub fixture_corpus_upstream_tag: Option<String>,
+    pub lts_start: String,
+    pub maintenance_start: String,
+    pub eol_date: String,
+    pub product_default: bool,
+    pub evidence_policy: String,
+}
+
+static NODE_LTS_REGISTRY: OnceLock<RuntimeNodeLtsRegistry> = OnceLock::new();
+
+fn node_lts_registry() -> &'static RuntimeNodeLtsRegistry {
+    NODE_LTS_REGISTRY.get_or_init(|| {
+        let registry: RuntimeNodeLtsRegistry =
+            serde_json::from_str(NODE_LTS_LANES_JSON).expect("Node LTS registry should parse");
+        registry
+            .validate()
+            .expect("Node LTS registry should validate");
+        registry
+    })
+}
+
+impl RuntimeNodeLtsRegistry {
+    fn validate(&self) -> Result<(), String> {
+        if self.schema_version != 1 {
+            return Err(format!(
+                "Node LTS registry schema_version must be 1, got {}",
+                self.schema_version
+            ));
+        }
+        if self.registry_kind != "nimbus_node_lts_lane_registry" {
+            return Err(format!(
+                "Node LTS registry has unexpected kind {}",
+                self.registry_kind
+            ));
+        }
+        let mut seen_lanes = BTreeSet::new();
+        let mut default_lanes = Vec::new();
+        for lane in &self.lanes {
+            if !seen_lanes.insert(lane.lane_name.as_str()) {
+                return Err(format!("duplicate Node LTS lane {}", lane.lane_name));
+            }
+            if lane.lane_name != format!("node{}", lane.major) {
+                return Err(format!(
+                    "Node LTS lane {} does not match major {}",
+                    lane.lane_name, lane.major
+                ));
+            }
+            if lane.product_default {
+                default_lanes.push(lane.lane_name.as_str());
+            }
+            if let Some(target) = lane.runtime_compatibility_target
+                && target.node_lts_lane_name() != Some(lane.lane_name.as_str())
+            {
+                return Err(format!(
+                    "Node LTS lane {} has mismatched target {:?}",
+                    lane.lane_name, target
+                ));
+            }
+        }
+        if default_lanes.as_slice() != [self.product_default_lane.as_str()] {
+            return Err(format!(
+                "Node LTS registry product_default_lane {} does not match exactly one default lane {:?}",
+                self.product_default_lane, default_lanes
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl RuntimeCompatibilityTarget {
+    pub fn from_config_str(value: &str) -> Option<Self> {
+        match value.trim() {
+            "web_standard_isolate"
+            | "web-standard-isolate"
+            | "web_standard"
+            | "WebStandardIsolate"
+            | "web" => Some(Self::WebStandardIsolate),
+            "bun_jsc" | "bun-jsc" | "bun" | "BunJsc" => Some(Self::BunJsc),
+            "node20" | "node_20" | "node-20" | "Node20" | "20" => Some(Self::Node20),
+            "node22" | "node_22" | "node-22" | "Node22" | "22" => Some(Self::Node22),
+            "node24" | "node_24" | "node-24" | "Node24" | "24" => Some(Self::Node24),
+            _ => None,
+        }
+    }
+
+    pub fn product_default_node_lts_target() -> Self {
+        node_lts_registry()
+            .lanes
+            .iter()
+            .find(|lane| lane.product_default)
+            .and_then(|lane| lane.runtime_compatibility_target)
+            .expect("Node LTS registry product default should have a runtime target")
+    }
+
+    pub fn configured_node_lts_targets() -> Vec<Self> {
+        node_lts_registry()
+            .lanes
+            .iter()
+            .filter_map(|lane| lane.runtime_compatibility_target)
+            .collect()
+    }
+
+    pub fn supported_node_lts_targets() -> Vec<Self> {
+        node_lts_registry()
+            .lanes
+            .iter()
+            .filter(|lane| lane.support_phase.is_supported_lts())
+            .filter_map(|lane| lane.runtime_compatibility_target)
+            .collect()
+    }
+
     pub fn is_node(self) -> bool {
         matches!(self, Self::Node20 | Self::Node22 | Self::Node24)
     }
 
-    pub fn node_major_version(self) -> Option<u16> {
+    pub fn is_supported_node_lts(self) -> bool {
+        self.node_support_phase()
+            .is_some_and(RuntimeNodeSupportPhase::is_supported_lts)
+    }
+
+    pub fn node_lts_lane_name(self) -> Option<&'static str> {
         match self {
-            Self::Node20 => Some(20),
-            Self::Node22 => Some(22),
-            Self::Node24 => Some(24),
+            Self::Node20 => Some("node20"),
+            Self::Node22 => Some("node22"),
+            Self::Node24 => Some("node24"),
             Self::WebStandardIsolate | Self::BunJsc => None,
         }
     }
 
+    pub fn node_lts_metadata(self) -> Option<&'static RuntimeNodeLtsLane> {
+        let lane_name = self.node_lts_lane_name()?;
+        node_lts_registry()
+            .lanes
+            .iter()
+            .find(|lane| lane.lane_name == lane_name)
+    }
+
+    pub fn node_support_phase(self) -> Option<RuntimeNodeSupportPhase> {
+        self.node_lts_metadata().map(|lane| lane.support_phase)
+    }
+
+    pub fn node_major_version(self) -> Option<u16> {
+        self.node_lts_metadata().map(|lane| lane.major)
+    }
+
     pub fn node_runtime_version(self) -> Option<&'static str> {
-        match self {
-            Self::Node20 => Some("v20.0.0-nimbus"),
-            Self::Node22 => Some("v22.0.0-nimbus"),
-            Self::Node24 => Some("v24.0.0-nimbus"),
-            Self::WebStandardIsolate | Self::BunJsc => None,
-        }
+        self.node_lts_metadata()
+            .map(|lane| lane.upstream_tag.as_str())
+    }
+
+    pub fn node_runtime_version_number(self) -> Option<&'static str> {
+        self.node_lts_metadata()
+            .map(|lane| lane.upstream_version.as_str())
+    }
+
+    pub fn node_release_lts_codename(self) -> Option<&'static str> {
+        self.node_lts_metadata()
+            .and_then(|lane| lane.codename.as_deref())
+    }
+}
+
+impl<'de> Deserialize<'de> for RuntimeCompatibilityTarget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_config_str(&value).ok_or_else(|| {
+            de::Error::unknown_variant(
+                &value,
+                &[
+                    "web_standard_isolate",
+                    "bun_jsc",
+                    "node20",
+                    "node22",
+                    "node24",
+                    "20",
+                    "22",
+                    "24",
+                ],
+            )
+        })
     }
 }
 

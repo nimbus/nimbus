@@ -173,10 +173,87 @@ impl ConvexRegistry {
 #[cfg(all(test, not(feature = "bun-jsc-linked-adapter")))]
 mod tests {
     use super::*;
-    use nimbus_runtime::RuntimeBundle;
+    use nimbus_runtime::{RuntimeBundle, RuntimeCompatibilityTarget, RuntimeNodeSupportPhase};
     use serde_json::json;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn convex_node_runtime_lanes_follow_lts_registry_targets() {
+        let tempdir = tempdir().expect("convex manifest tempdir should build");
+        let convex_dir = tempdir.path().join(".nimbus").join("convex");
+        fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+        fs::write(
+            convex_dir.join("functions.json"),
+            serde_json::to_vec_pretty(&json!({
+                "functions": [
+                    {
+                        "name": "messages:legacyNode20",
+                        "kind": "action",
+                        "runtime_environment": "node",
+                        "node_runtime_target": "20",
+                        "plan": null
+                    },
+                    {
+                        "name": "messages:defaultNode",
+                        "kind": "action",
+                        "runtime_environment": "node",
+                        "plan": null
+                    },
+                    {
+                        "name": "messages:activeNode24",
+                        "kind": "action",
+                        "runtime_environment": "node",
+                        "runtime_compatibility_target": "24",
+                        "plan": null
+                    }
+                ]
+            }))
+            .expect("convex manifest json should serialize"),
+        )
+        .expect("convex manifest should write");
+        fs::write(
+            convex_dir.join("http_routes.json"),
+            serde_json::to_vec_pretty(&json!({ "routes": [] }))
+                .expect("convex http route manifest should serialize"),
+        )
+        .expect("convex http route manifest should write");
+
+        let registry =
+            ConvexRegistry::from_app_dir(tempdir.path()).expect("convex registry should load");
+        for (function_name, expected_target, expected_phase, product_default) in [
+            (
+                "messages:legacyNode20",
+                RuntimeCompatibilityTarget::Node20,
+                RuntimeNodeSupportPhase::EolLegacy,
+                false,
+            ),
+            (
+                "messages:defaultNode",
+                RuntimeCompatibilityTarget::product_default_node_lts_target(),
+                RuntimeNodeSupportPhase::MaintenanceLts,
+                true,
+            ),
+            (
+                "messages:activeNode24",
+                RuntimeCompatibilityTarget::Node24,
+                RuntimeNodeSupportPhase::ActiveLts,
+                false,
+            ),
+        ] {
+            let limits = registry.runtime_limits_for_function(function_name);
+            let metadata = limits
+                .compatibility_target
+                .node_lts_metadata()
+                .expect("Convex Node lane should map to registry metadata");
+            assert_eq!(limits.compatibility_target, expected_target);
+            assert_eq!(
+                limits.compatibility_target.node_support_phase(),
+                Some(expected_phase)
+            );
+            assert_eq!(metadata.product_default, product_default);
+        }
+    }
 
     #[test]
     fn bun_jsc_function_fails_closed_when_adapter_is_not_linked() {

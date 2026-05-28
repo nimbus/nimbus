@@ -2,6 +2,115 @@ use super::*;
 use std::time::Duration;
 
 #[test]
+fn runtime_compatibility_target_parses_public_node_lts_aliases() {
+    for (raw, expected) in [
+        ("\"20\"", RuntimeCompatibilityTarget::Node20),
+        ("\"node20\"", RuntimeCompatibilityTarget::Node20),
+        ("\"Node20\"", RuntimeCompatibilityTarget::Node20),
+        ("\"22\"", RuntimeCompatibilityTarget::Node22),
+        ("\"node22\"", RuntimeCompatibilityTarget::Node22),
+        ("\"Node22\"", RuntimeCompatibilityTarget::Node22),
+        ("\"24\"", RuntimeCompatibilityTarget::Node24),
+        ("\"node24\"", RuntimeCompatibilityTarget::Node24),
+        ("\"Node24\"", RuntimeCompatibilityTarget::Node24),
+    ] {
+        let parsed: RuntimeCompatibilityTarget =
+            serde_json::from_str(raw).expect("target alias should parse");
+        assert_eq!(parsed, expected, "{raw} should parse to {expected:?}");
+    }
+
+    assert!(
+        serde_json::from_str::<RuntimeCompatibilityTarget>("\"26\"").is_err(),
+        "Node26 must not parse until the registry promotes a runtime target"
+    );
+}
+
+#[test]
+fn runtime_node_lts_metadata_is_derived_from_registry() {
+    assert_eq!(
+        RuntimeCompatibilityTarget::product_default_node_lts_target(),
+        RuntimeCompatibilityTarget::Node22
+    );
+    assert_eq!(
+        RuntimeCompatibilityTarget::configured_node_lts_targets(),
+        vec![
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+        ]
+    );
+    assert_eq!(
+        RuntimeCompatibilityTarget::supported_node_lts_targets(),
+        vec![
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+        ],
+        "Node20 is EOL legacy and Node26 is preview-current without a runtime target"
+    );
+
+    for (target, major, phase, version, tag, codename, product_default) in [
+        (
+            RuntimeCompatibilityTarget::Node20,
+            20,
+            RuntimeNodeSupportPhase::EolLegacy,
+            "20.20.2",
+            "v20.20.2",
+            Some("Iron"),
+            false,
+        ),
+        (
+            RuntimeCompatibilityTarget::Node22,
+            22,
+            RuntimeNodeSupportPhase::MaintenanceLts,
+            "22.22.3",
+            "v22.22.3",
+            Some("Jod"),
+            true,
+        ),
+        (
+            RuntimeCompatibilityTarget::Node24,
+            24,
+            RuntimeNodeSupportPhase::ActiveLts,
+            "24.16.0",
+            "v24.16.0",
+            Some("Krypton"),
+            false,
+        ),
+    ] {
+        let metadata = target
+            .node_lts_metadata()
+            .expect("node target should have registry metadata");
+        assert_eq!(target.node_major_version(), Some(major));
+        assert_eq!(target.node_support_phase(), Some(phase));
+        assert_eq!(target.node_runtime_version_number(), Some(version));
+        assert_eq!(target.node_runtime_version(), Some(tag));
+        assert_eq!(target.node_release_lts_codename(), codename);
+        assert_eq!(target.is_supported_node_lts(), phase.is_supported_lts());
+        assert_eq!(metadata.product_default, product_default);
+        assert_eq!(
+            metadata.runtime_compatibility_target,
+            Some(target),
+            "registry target should round-trip for {target:?}"
+        );
+    }
+
+    assert!(
+        !RuntimeCompatibilityTarget::Node20.is_supported_node_lts(),
+        "Node20 must not be treated as active enterprise LTS after EOL"
+    );
+    assert!(
+        RuntimeCompatibilityTarget::WebStandardIsolate
+            .node_lts_metadata()
+            .is_none()
+    );
+    assert!(
+        RuntimeCompatibilityTarget::BunJsc
+            .node_lts_metadata()
+            .is_none()
+    );
+}
+
+#[test]
 fn application_preset_supports_node_lts_targets() {
     let web_limits = RuntimeLimits::application_web_standard().normalized();
     assert_eq!(web_limits.mode, RuntimeMode::Standard);
