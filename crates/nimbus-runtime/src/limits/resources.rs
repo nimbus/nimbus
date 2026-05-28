@@ -103,13 +103,71 @@ impl RuntimeLimits {
     }
 
     pub fn application_node(target: RuntimeCompatibilityTarget) -> Self {
+        Self::application_node_production_in_process(target)
+    }
+
+    pub fn application_node_production_in_process(target: RuntimeCompatibilityTarget) -> Self {
         assert!(target.is_node(), "application_node requires a Node target");
         Self {
             compatibility_target: target,
             mode: RuntimeMode::Standard,
             language: RuntimeLanguage::JavaScript,
             preset: RuntimePreset::Application,
-            grants: RuntimeGrants::application_node(),
+            grants: RuntimeGrants::application_node_production_in_process(),
+            ..Self::default()
+        }
+    }
+
+    pub fn application_node20_local_development() -> Self {
+        Self::application_node_local_development(RuntimeCompatibilityTarget::Node20)
+    }
+
+    pub fn application_node22_local_development() -> Self {
+        Self::application_node_local_development(RuntimeCompatibilityTarget::Node22)
+    }
+
+    pub fn application_node24_local_development() -> Self {
+        Self::application_node_local_development(RuntimeCompatibilityTarget::Node24)
+    }
+
+    pub fn application_node_local_development(target: RuntimeCompatibilityTarget) -> Self {
+        assert!(
+            target.is_node(),
+            "application_node_local_development requires a Node target"
+        );
+        Self {
+            compatibility_target: target,
+            mode: RuntimeMode::Standard,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Application,
+            grants: RuntimeGrants::application_node_local_development(),
+            ..Self::default()
+        }
+    }
+
+    pub fn application_node20_service_microvm() -> Self {
+        Self::application_node_service_microvm(RuntimeCompatibilityTarget::Node20)
+    }
+
+    pub fn application_node22_service_microvm() -> Self {
+        Self::application_node_service_microvm(RuntimeCompatibilityTarget::Node22)
+    }
+
+    pub fn application_node24_service_microvm() -> Self {
+        Self::application_node_service_microvm(RuntimeCompatibilityTarget::Node24)
+    }
+
+    pub fn application_node_service_microvm(target: RuntimeCompatibilityTarget) -> Self {
+        assert!(
+            target.is_node(),
+            "application_node_service_microvm requires a Node target"
+        );
+        Self {
+            compatibility_target: target,
+            mode: RuntimeMode::Standard,
+            language: RuntimeLanguage::JavaScript,
+            preset: RuntimePreset::Application,
+            grants: RuntimeGrants::application_node_service_microvm(),
             ..Self::default()
         }
     }
@@ -244,7 +302,7 @@ impl RuntimeLimits {
             && self.compatibility_target.is_node()
             && self.grants == RuntimeGrants::application_web_standard()
         {
-            RuntimeGrants::application_node()
+            RuntimeGrants::application_node_production_in_process()
         } else {
             self.grants.clone()
         };

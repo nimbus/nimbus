@@ -1200,7 +1200,7 @@ mod tests {
     }
 
     #[test]
-    fn application_node22_permissions_allow_local_network_hosts() {
+    fn application_node22_local_development_permissions_allow_local_network_hosts() {
         let tempdir = tempfile::tempdir().expect("tempdir should build");
         let bundle_root = tempdir.path().join("app/.nimbus/convex");
         std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
@@ -1208,7 +1208,7 @@ mod tests {
         std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
         let bundle = RuntimeBundle::new(&bundle_path);
 
-        let limits = RuntimeLimits::application_node22();
+        let limits = RuntimeLimits::application_node22_local_development();
         let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
         let env = RuntimeEnvPolicy::for_grants(&limits.grants);
         let mut permissions =
@@ -1240,9 +1240,7 @@ mod tests {
         std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
         let bundle = RuntimeBundle::new(&bundle_path);
 
-        let mut limits = RuntimeLimits::application_node22();
-        limits.grants.net_connect.clear();
-        limits.grants.net_listen.clear();
+        let limits = RuntimeLimits::application_node22();
         let policy = RuntimePathPolicy::for_bundle(&bundle, &limits).expect("policy should build");
         let env = RuntimeEnvPolicy::for_grants(&limits.grants);
         let mut permissions =

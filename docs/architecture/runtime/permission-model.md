@@ -71,7 +71,9 @@ the current `in_process_untrusted` gate and its canonical routing fallbacks:
 | Workload or backend | Tier assignment | Notes |
 | --- | --- | --- |
 | Deno/V8 `WebStandardIsolate` application functions | `in_process_untrusted` | Production default when policy normalization keeps grants within the untrusted subset. |
-| Deno/V8 `Node20`, `Node22`, and `Node24` application functions | `in_process_untrusted` | Node compatibility target is API shape only. Host-sensitive Node APIs still depend on `RuntimeGrants` and runtime enforcement. |
+| Deno/V8 `Node20`, `Node22`, and `Node24` production application functions | `in_process_untrusted` | Node compatibility target is API shape only. The production in-process profile has no generic loopback, listen, worker, inspector, subprocess, FFI, or ambient TLS-disable env grants. |
+| Deno/V8 `Node20`, `Node22`, and `Node24` local-development application functions | `in_process_untrusted` in local-development mode only | Uses explicit local-dev grants for loopback/listen, inspector, worker threads, and `NODE_TLS_REJECT_UNAUTHORIZED` compatibility. Production admission routes the same grant set away from in-process untrusted execution. |
+| Deno/V8 `Node20`, `Node22`, and `Node24` service profiles | `microvm_service` | Uses the broad service/microVM grant constructor for host-heavy Node behavior; the microVM tier owns OS isolation outside the in-process gate. |
 | Deno/V8 tooling or operator workloads with `run`, `tool`, `identity`, or `Privileged` grants | `in_process_trusted_only` | These are trusted workload classes even when the engine is V8. |
 | Bun/JSC fresh/discard application profile | `in_process_untrusted` | Admitted only as `RuntimeBackendKind::BunJsc`, `RuntimeCompatibilityTarget::BunJsc`, `BackendOwnedEventLoop`, `bun_jsc_in_process_untrusted`, `bun_jsc_fresh_discard_pool_outer_quota_required`, and `bun_jsc_fresh_discard`. Default builds remain adapter-not-linked; linked builds must load the verified Bun/JSC shared adapter before execution. |
 | Bun/JSC proof or retained-VM profiles | `in_process_trusted_only` | Retained reuse is trusted-only until a hard isolation boundary and deliberate promotion exist. |
@@ -185,6 +187,14 @@ mode names in public or operator-facing contracts.
 | `Oracle` | Evidence workflow grants, selected by the workflow owner |
 | `Operator` | `Privileged + operator grants` |
 | `Code` | `Restricted + narrow code-execution grants` |
+
+Node application presets have deployment-specific constructors:
+
+| Constructor family | Intended deployment | Grant shape |
+| --- | --- | --- |
+| `RuntimeLimits::application_node*()` / `application_node_production_in_process(...)` | Production in-process | Generated bundle filesystem roots plus narrow system metadata only; no loopback/listen, worker, inspector, run, FFI, or `NODE_TLS_REJECT_UNAUTHORIZED`. |
+| `RuntimeLimits::application_node*_local_development()` / `application_node_local_development(...)` | Local development and compatibility harnesses | Adds loopback/listen, inspector, worker, and TLS-disable env compatibility grants. |
+| `RuntimeLimits::application_node*_service_microvm()` / `application_node_service_microvm(...)` | Production service/microVM routing | Uses the broad Node service grants for behavior that must run behind the service isolation boundary. |
 
 ## Compatibility Targets
 

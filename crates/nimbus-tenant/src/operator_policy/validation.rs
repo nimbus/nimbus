@@ -84,9 +84,8 @@ impl OperatorRuntimePolicy {
                 | OperatorRuntimeProfile::Node24
         ) && matches!(self.tier, RuntimeIsolationTier::InProcessUntrusted)
         {
-            // This is allowed, but it should be visible in explain output because
-            // production admission routes broad Node localhost/listen grants away
-            // from in-process untrusted execution.
+            // This is allowed: Node runtime profile selects API shape. The
+            // deployment mode and tier choose the concrete grant profile.
             return Ok(());
         }
         let _ = workload_key;

@@ -241,6 +241,16 @@ pub(super) fn validate_production_in_process_untrusted_policy(
             "includes inspector sys grant",
         ));
     }
+    if limits.compatibility_target.is_node()
+        && grants
+            .env_read
+            .iter()
+            .any(|grant| grant == "NODE_TLS_REJECT_UNAUTHORIZED")
+    {
+        return Err(ProductionRuntimePolicyRejection::trusted_only(
+            "includes ambient NODE_TLS_REJECT_UNAUTHORIZED env read grant",
+        ));
+    }
     if let Some(grant) = broad_filesystem_grant(grants) {
         return Err(ProductionRuntimePolicyRejection::microvm_service(format!(
             "includes broad filesystem/package-loading grant `{grant}`"

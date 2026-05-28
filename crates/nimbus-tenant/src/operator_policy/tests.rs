@@ -988,7 +988,11 @@ fn node_runtime_profiles_follow_lts_registry_targets() {
             false,
         ),
     ] {
-        let limits = profile.runtime_limits();
+        let limits = OperatorRuntimePolicy {
+            profile,
+            ..OperatorRuntimePolicy::default()
+        }
+        .runtime_limits(TenantIsolationMode::Production);
         let metadata = limits
             .compatibility_target
             .node_lts_metadata()
@@ -1024,24 +1028,113 @@ workloads:
 }
 
 #[test]
-fn node_profile_routes_away_from_production_in_process_untrusted() {
+fn node_profile_defaults_to_production_in_process_grants() {
     let policy = parse_policy(NODE_ROUTE);
 
     let evaluation = policy.evaluate().expect("policy should evaluate");
 
     let admission = &evaluation.decisions[0].runtime_admission;
+    assert_eq!(
+        admission,
+        &TenantRuntimePolicyAdmission::AdmitInProcess,
+        "production Node profile should use the safe in-process grant constructor: {admission:?}"
+    );
+    let grants = evaluation.decisions[0].decision.runtime().grants();
+    assert!(grants.net_connect.is_empty());
+    assert!(grants.net_listen.is_empty());
+    assert!(grants.worker.is_empty());
+    assert!(grants.run.is_empty());
+    assert!(grants.ffi.is_empty());
+    assert!(!grants.sys.contains(&"inspector".to_string()));
     assert!(
-        matches!(
-            admission,
-            TenantRuntimePolicyAdmission::Route {
-                recommended_tier: RuntimeIsolationTier::MicroVmService,
-                ..
-            }
-        ),
-        "existing runtime admission should route broad Node grants: {admission:?}"
+        !grants
+            .env_read
+            .contains(&"NODE_TLS_REJECT_UNAUTHORIZED".to_string()),
+        "operator production Node profile should not read ambient TLS-disable env"
     );
     let rendered = evaluation.render_explain_text();
-    assert!(rendered.contains("route_to_microvm_service"));
+    assert!(rendered.contains("runtime_admission: admit_in_process"));
+}
+
+#[test]
+fn node_profile_uses_local_development_grants_when_mode_opts_out_of_production() {
+    let policy = parse_policy(
+        r#"
+schema_version: 1
+tenant: tenant-a
+metadata:
+  name: node-local-dev
+defaults:
+  tenant_isolation_mode: local_development
+workloads:
+  - kind: runtime_function
+    name: "actions:sendEmail"
+    runtime:
+      profile: node22
+"#,
+    );
+
+    let evaluation = policy.evaluate().expect("policy should evaluate");
+    let decision = &evaluation.decisions[0];
+
+    assert_eq!(
+        decision.runtime_admission,
+        TenantRuntimePolicyAdmission::AdmitInProcess
+    );
+    assert!(
+        decision
+            .decision
+            .runtime()
+            .grants()
+            .worker
+            .contains(&"thread".to_string()),
+        "local development Node profile should keep worker compatibility grants"
+    );
+    assert!(
+        decision
+            .decision
+            .runtime()
+            .grants()
+            .net_listen
+            .contains(&"0.0.0.0".to_string()),
+        "local development Node profile should keep loopback/listen compatibility grants"
+    );
+}
+
+#[test]
+fn node_profile_uses_service_microvm_grants_when_tier_requests_microvm() {
+    let policy = parse_policy(
+        r#"
+schema_version: 1
+tenant: tenant-a
+metadata:
+  name: node-service
+workloads:
+  - kind: runtime_function
+    name: "actions:sendEmail"
+    runtime:
+      profile: node22
+      tier: micro_vm_service
+"#,
+    );
+
+    let evaluation = policy.evaluate().expect("policy should evaluate");
+    let decision = &evaluation.decisions[0];
+
+    assert_eq!(
+        decision.runtime_admission,
+        TenantRuntimePolicyAdmission::AdmitInProcess,
+        "microVM tier owns isolation outside the in-process admission gate"
+    );
+    assert!(
+        decision
+            .decision
+            .runtime()
+            .grants()
+            .net_listen
+            .contains(&"[::]".to_string()),
+        "service/microVM Node profile should use the broad service grant constructor"
+    );
 }
 
 #[test]
