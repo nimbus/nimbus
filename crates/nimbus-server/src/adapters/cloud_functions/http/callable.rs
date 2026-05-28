@@ -153,7 +153,13 @@ pub(super) fn callable_response_for_app_error(headers: &HeaderMap, error: AppErr
             Error::TenantNotFound(_)
             | Error::DocumentNotFound(_)
             | Error::ScheduledJobNotFound(_)
-            | Error::SchemaNotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND", error.to_string()),
+            | Error::SchemaNotFound(_)
+            | Error::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND", error.to_string()),
+            Error::Transport(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "UNAVAILABLE",
+                error.to_string(),
+            ),
             Error::Conflict(_) => (StatusCode::CONFLICT, "ABORTED", error.to_string()),
             Error::ResourceExhausted(_) => (
                 StatusCode::TOO_MANY_REQUESTS,

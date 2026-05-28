@@ -64,6 +64,9 @@ pub enum Error {
     #[error("scheduled job not found: {0}")]
     ScheduledJobNotFound(DocumentId),
 
+    #[error("not found: {0}")]
+    NotFound(String),
+
     #[error("resource already exists: {0}")]
     AlreadyExists(String),
 
@@ -93,6 +96,9 @@ pub enum Error {
 
     #[error("serialization error: {0}")]
     Serialization(String),
+
+    #[error("transport error: {0}")]
+    Transport(String),
 
     #[error("internal error: {0}")]
     Internal(String),

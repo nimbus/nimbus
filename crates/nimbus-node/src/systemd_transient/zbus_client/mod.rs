@@ -24,9 +24,11 @@ use super::{
 };
 use crate::HostLifecycleFuture;
 
+mod error;
 mod properties;
 mod signals;
 
+use error::map_zbus;
 use signals::JobOutcome;
 
 /// Which systemd D-Bus instance the client speaks to.
@@ -167,26 +169,6 @@ fn classify_probe_error(err: &zbus::Error) -> SystemdTransientCapabilities {
         }
         // Anything else: the daemon answered, so treat it as reachable.
         _ => SystemdTransientCapabilities::available(),
-    }
-}
-
-/// Temporary zbus → `nimbus_core::Error` mapping for NDB3. NDB4 replaces this
-/// with the full taxonomy in `error.rs` (adding `Transport`/`NotFound`
-/// variants); call sites route through this single function so that swap is
-/// localized.
-pub(super) fn map_zbus(err: zbus::Error) -> Error {
-    match &err {
-        zbus::Error::MethodError(name, _, _) => {
-            let dbus_name = name.as_str();
-            if dbus_name.ends_with(".AccessDenied") || dbus_name.ends_with(".AuthFailed") {
-                Error::PermissionDenied(format!("systemd D-Bus: {err}"))
-            } else if dbus_name.ends_with(".NoSuchUnit") || dbus_name.ends_with(".UnknownObject") {
-                Error::InvalidInput(format!("systemd D-Bus: {err}"))
-            } else {
-                Error::Internal(format!("systemd D-Bus method error: {err}"))
-            }
-        }
-        _ => Error::Internal(format!("systemd D-Bus error: {err}")),
     }
 }
 
