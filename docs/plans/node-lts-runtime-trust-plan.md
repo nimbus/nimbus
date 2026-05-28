@@ -151,7 +151,7 @@ Non-goals:
 | NLRT | Description | Status |
 | --- | --- | --- |
 | NLRT0 | Accept this plan and checkpoint the research baseline. Add routing from `docs/plans/README.md`. Capture the current dirty-worktree caveat, the post-refactor owner-crate map, and make sure this plan does not overwrite the active NCG cron-greening work. | done |
-| NLRT1 | Add a Deno fork provenance verifier. It must inspect `Cargo.toml`, `Cargo.lock`, and `cargo tree -p nimbus-runtime`, require the expected `nimbus/deno` and `nimbus/rusty_v8` tags/SHAs for patch-sensitive crates, and require an allowlist with reasons for Deno-family crates that intentionally remain on crates.io. | pending |
+| NLRT1 | Add a Deno fork provenance verifier. It must inspect `Cargo.toml`, `Cargo.lock`, and `cargo tree -p nimbus-runtime`, require the expected `nimbus/deno` and `nimbus/rusty_v8` tags/SHAs for patch-sensitive crates, and require an allowlist with reasons for Deno-family crates that intentionally remain on crates.io. | done |
 | NLRT2 | Introduce a data-driven Node LTS lane registry. Include major, lane name, support phase, codename, upstream version, upstream tag, fixture corpus path, LTS start, maintenance start, EOL date, product-default flag, and evidence policy. Mark Node20 as EOL legacy/grace, Node22 and Node24 as supported LTS, and Node26 as preview-current. Name every owner crate that consumes the registry. | pending |
 | NLRT3 | Generate `RuntimeCompatibilityTarget` metadata from the lane registry or make the enum a thin wrapper around registry records. Remove hard-coded synthetic version strings from `axes.rs`; keep compatibility-target parsing stable for public config and synchronized across `nimbus-tenant` operator policy and `nimbus-convex` runtime lane selection. | pending |
 | NLRT4 | Make runtime Node metadata truthful per lane. `process.version`, `process.versions.node`, `process.release.lts`, ABI/module metadata, and supplementary process-release-shape probes must match the lane registry or document an intentional non-Node component value. Close the active supplementary process-release-shape failure. | pending |
@@ -227,6 +227,7 @@ refresh path for the affected lanes before closeout.
 | Date | NLRT | Status | Files touched | Verification | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 2026-05-28 | NLRT0 | done | `docs/plans/node-lts-runtime-trust-plan.md`, `docs/plans/proof/node-lts-runtime-trust/README.md`, `docs/plans/proof/node-lts-runtime-trust/nlrt0-baseline-and-control-plane.md` | `npm run docs:validate-refs:strict`: pass, 218 working-tree Markdown files | Baseline commit `9995f65d`; plan activated after the crate-extraction refactor; NCG overlap remains a named coordination hazard. |
+| 2026-05-28 | NLRT1 | done | `scripts/verify-deno-fork-provenance.sh`, `docs/architecture/runtime/deno-fork-provenance-allowlist.tsv`, `docs/plans/proof/node-lts-runtime-trust/nlrt1-deno-fork-provenance.md` | `bash scripts/verify-deno-fork-provenance.sh`: 5 passed, 0 failed; `npm run docs:validate-refs:strict`: pass, 218 working-tree Markdown files | Verifier classifies 55 runtime Deno-family crates: 40 on expected Nimbus fork revisions and 15 crates.io exceptions with reasons. |
 
 ## Risk Register
 
