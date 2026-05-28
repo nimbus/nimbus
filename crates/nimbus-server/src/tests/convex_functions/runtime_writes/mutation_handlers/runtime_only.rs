@@ -1,5 +1,5 @@
 use super::*;
-use nimbus_core::DocumentId;
+use nimbus_core::{DocumentId, ResolvedDocumentId, TableName};
 use std::str::FromStr;
 
 #[tokio::test]
@@ -86,7 +86,14 @@ export {};
         .as_str()
         .expect("runtime-only mutation should return the first inserted id")
         .to_string();
-    DocumentId::from_str(&returned_id).expect("returned id should remain a valid document id");
+    let scoped_returned_id =
+        DocumentId::from_str(&returned_id).expect("returned id should remain a valid document id");
+    let raw_returned_id = ResolvedDocumentId::resolve_table_scoped(
+        &TableName::new("messages").expect("messages table should be valid"),
+        scoped_returned_id,
+    )
+    .expect("runtime insert should return a table-scoped Convex id")
+    .into_document_id();
 
     let listed = api.list_documents("demo", "messages").await;
     assert_eq!(listed.status(), StatusCode::OK);
@@ -100,7 +107,7 @@ export {};
             .as_array()
             .expect("list payload should include data rows")
             .iter()
-            .any(|document| document["_id"] == returned_id),
+            .any(|document| document["_id"].as_str() == Some(raw_returned_id.as_str())),
         "listed documents should include the returned insert id"
     );
 }

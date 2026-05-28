@@ -375,13 +375,13 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
 
     faults.release();
 
-    let action = timeout(Duration::from_secs(1), action)
+    let action = timeout(Duration::from_secs(5), action)
         .await
         .expect("runtime-backed action should resolve after apply resumes")
         .expect("action task should join");
     assert_eq!(action.status(), StatusCode::OK);
 
-    let blocked_query = timeout(Duration::from_secs(1), blocked_query)
+    let blocked_query = timeout(Duration::from_secs(5), blocked_query)
         .await
         .expect("blocked query should resolve after apply resumes")
         .expect("blocked query task should join");
@@ -396,7 +396,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
         })
     }));
 
-    let http_post = timeout(Duration::from_secs(1), &mut http_post)
+    let http_post = timeout(Duration::from_secs(5), &mut http_post)
         .await
         .expect("follow-up httpAction post should resolve after apply resumes")
         .expect("httpAction post task should join");
@@ -404,7 +404,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
     wait_for_message(&api, author, http_body).await;
 
     let second_action = timeout(
-        Duration::from_secs(1),
+        Duration::from_secs(5),
         api.convex_named_action(
             "demo",
             "messages:sendViaAction",

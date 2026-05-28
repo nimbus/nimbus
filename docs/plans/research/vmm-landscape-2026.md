@@ -2,9 +2,11 @@
 status: research
 owners: sandbox-tier-roadmap
 related:
-  - docs/plans/firecracker-snapshot-invocation-backend-plan.md
-  - docs/plans/computer-use-sandbox-plan.md
-  - docs/plans/gpu-accelerated-sandbox-plan.md
+  - docs/plans/nimbus-sandbox-plan.md
+  - docs/plans/archive/nimbus-libkrun-snapshot-port-plan.md
+  - docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md
+  - docs/plans/archive/computer-use-sandbox-plan.md
+  - docs/plans/archive/gpu-accelerated-sandbox-plan.md
   - docs/plans/research/libkrun-session-sandbox.md
   - docs/plans/research/gpu-sandbox-backends.md
   - docs/plans/research/nimbus-libkrun-fork-inventory.md
@@ -12,21 +14,23 @@ related:
   - docs/plans/agent-browser-service-plan.md
 ---
 
-# VMM Landscape 2026 — Evidence Base for the Three-Tier Sandbox Roadmap
+# VMM Landscape 2026 — Evidence Base for the Unified-Lift Sandbox Roadmap
 
 This doc resolves the recurring "could we just use one VMM for everything"
 question by recording the May 2026 state of the rust-vmm VMM family
 (Firecracker, Cloud Hypervisor, libkrun) and the Firecracker-derivative
 AI-sandbox projects (zeroboot, Fly.io Sprites, Northflank's Kata
-layering). Cite this doc from FSI / CUS / GAW plans rather than restating
-the evidence.
+layering). Decisions D1–D12 in §9 are the durable record; cite them from
+consumer plans rather than restating the evidence.
 
 ## 1. Scope
 
 - Per-VMM capability state (devices, snapshot, host platforms, license).
 - Lineage between VMMs — they are not three independent siblings.
 - Production-platform mapping — who actually ships what in 2026.
-- Decision implications for the three-tier roadmap (Tier 1 / 2 / 3).
+- Decision implications for the unified-lift roadmap (D1–D12 below).
+- Per-host deployment topology (Linux KVM vs macOS HVF) and what each
+  host actually runs in production (D11, D12).
 
 Out of scope: gVisor (not a VMM), QEMU microvm (not rust-vmm family),
 CRIU-only checkpointing (orthogonal).
@@ -58,10 +62,20 @@ rust-vmm crates
         |
         ├──→ Cloud Hypervisor (Intel/IBM + community, Apache-2.0)
         |
-        └──→ libkrun (Red Hat / containers org, LGPL-2.1)
+        └──→ libkrun (Red Hat / containers org, Apache-2.0)
                 ↑
                 └── also absorbs code from Cloud Hypervisor
 ```
+
+libkrun depends on a **subset** of the rust-vmm crate family at the
+Cargo.toml level: `kvm-ioctls` 0.22, `vm-memory` 0.17, `linux-loader`
+0.13.2 (verified across `src/{libkrun,cpuid,smbios,vmm,arch,kernel,devices}/Cargo.toml`
+on the `nimbus/v1.18.1` branch). It carries its own forked virtio queue
+implementation at `src/devices/src/virtio/queue.rs` rather than
+depending on the rust-vmm `virtio-queue` crate, and it does not use
+`vm-superio`. This matters for the snapshot port plan: device-side
+serializers must be designed against libkrun's queue impl, not against
+upstream rust-vmm types.
 
 libkrun's upstream README states verbatim: libkrun "incorporates code
 from Firecracker, rust-vmm and Cloud-Hypervisor." This matters for two
@@ -70,8 +84,9 @@ reasons:
 1. Porting Firecracker's snapshot machinery into libkrun is lineage-
    consistent, not a clean-room exercise.
 2. Bug fixes and security patches sometimes flow across all three; we
-   should track Firecracker security advisories even if our Tier 2/3
-   lane is libkrun.
+   should track Firecracker security advisories even though Nimbus's
+   unified backend is libkrun-based (lifting Firecracker snapshot
+   patterns per D4).
 
 ## 4. Per-VMM evidence (May 2026)
 
@@ -112,7 +127,10 @@ reasons:
 
 ### 4.2 libkrun
 
-- v1.18.1 (2026-05-20). LGPL-2.1.
+- v1.18.1 (2026-05-20). **Apache-2.0** (corrected 2026-05-27 against
+  upstream `containers/libkrun/LICENSE` and the local fork's `LICENSE`
+  + `krun-sys/Cargo.toml`; earlier internal notes calling it LGPL-2.1
+  were wrong).
 - **Devices** (per upstream README):
   `virtio-console, virtio-block, virtio-fs, virtio-gpu (venus +
   native-context), virtio-net, virtio-vsock, virtio-balloon (free-page
@@ -121,7 +139,8 @@ reasons:
   to confirm before relying on either. Audio in particular is a
   follow-on per `nimbus-libkrun-fork-inventory.md` §6.2.
 - **Snapshot/restore — not in mainline, not on any branch, not on the
-  roadmap.** Major asymmetry vs Firecracker.
+  upstream roadmap.** Major asymmetry vs Firecracker. Nimbus closes
+  this in-fork via D4 (`docs/plans/nimbus-sandbox-plan.md` Band S).
 - **Networking**: TSI (Transparent Socket Impersonation, userspace
   network stack) for unprivileged use, plus passt support. Nimbus's
   only functional fork patch (`15bcf49`) is a passt-mode bind-address
@@ -181,13 +200,21 @@ reasons:
 | zeroboot | Firecracker | AI agent code execution | OSS sub-ms fork-on-demand |
 | Asahi muvm | libkrun | Desktop apps on Asahi Linux | Unprivileged; GPU |
 | Red Hat krun | libkrun | OCI runtime | Containers org |
-| Nimbus (planned) | Firecracker (Tier 1) + libkrun (Tier 2/3) | Three-tier roadmap | This roadmap |
+| Nimbus (planned) | nimbus-libkrun (unified fork) | Capability-profile sandbox backend | This roadmap (D1–D12) |
 
 The industry split-by-workload pattern is the dominant shape in 2026:
 **fast-cold-start serverless ⇒ Firecracker; full desktop / GPU /
-macOS-native ⇒ libkrun.** Nobody ships serverless on libkrun. Nobody
-ships desktop / GPU on Firecracker. Nimbus's three-tier roadmap is
-aligned with this pattern, not against it.
+macOS-native ⇒ libkrun.** Nobody mainline-ships serverless on libkrun;
+nobody mainline-ships desktop / GPU on Firecracker. Nimbus's unified-lift
+roadmap (D1) closes that split inside a single fork by porting
+Firecracker's snapshot mechanism into libkrun — the first rust-vmm-family
+path that targets both shapes from one codebase.
+
+Production-host topology footnote: Nimbus's per-request fork-fast
+workloads run on **Linux KVM** (every production host class). macOS dev
+hosts run an outer machine-os Linux VM via libkrun-on-HVF (krunkit) and
+schedule per-service workloads as standard Linux containers **inside**
+that outer VM, not as nested microVMs. See D11 + D12.
 
 ## 6. Capability matrix (mainline, 2026-05)
 
@@ -225,11 +252,13 @@ without modifying Firecracker. The charter's "no fs/gpu/snd in
 Firecracker proper" rule applies to in-tree devices only and doesn't
 block vhost-user delegated devices.
 
-Implication: if Tier 1 ever needs warm bundle delivery via virtiofs
-(e.g., to share a multi-GiB Python wheel cache across forks), the path
-is "run virtiofsd alongside Firecracker over vhost-user-fs," not "fork
-Firecracker." This is a real escape hatch the original two-VMM
-analysis under-credited.
+Implication (historical, pre-D2): under the dropped "Firecracker for
+Lambda" framing, warm bundle delivery via virtiofs (e.g., a multi-GiB
+Python wheel cache shared across forks) would have used "run
+virtiofsd alongside Firecracker over vhost-user-fs," not a Firecracker
+fork. The unified-lift decision (D1/D2) made this moot: the lambda
+profile rides the same libkrun-based backend with native in-process
+virtio-fs (D6).
 
 ## 8. zeroboot mechanism deep-dive
 
@@ -262,65 +291,189 @@ The primitive is incorporable into Nimbus as a Rust crate under
 shell would be Nimbus-native (admission, policy, audit, observability),
 not zeroboot's HTTP surface.
 
-## 9. Decision implications
+## 9. Decisions (D1–D12)
 
-### 9.1 Tier 1 VMM
+The "could we use one VMM for everything" question reopened in late May
+2026 and resolved with a unified-lift decision: produce a single VMM
+family (`nimbus-libkrun`) that carries libkrun's device/GPU breadth +
+Firecracker's snapshot mechanism + zeroboot's MAP_PRIVATE fork
+primitive. Decisions D1–D12 below are the durable record; cite this
+section from consumer plans.
 
-**Decided:** Firecracker. Every 2026 production fast-cold-start
-serverless platform converges on Firecracker (or gVisor — different
-trust model). libkrun's snapshot gap is load-bearing and not closing.
+### 9.1 The "one VMM" fantasy is closeable in-fork
 
-### 9.2 Tier 1 mechanism (open — see §9 below in conversation)
+Mainline, the answer is still no: no rust-vmm-family VMM
+simultaneously has Firecracker's snapshot maturity + libkrun's
+GPU/HVF/input + Cloud Hypervisor's hotplug. The two-VMM split is the
+forced choice if you only consume upstream releases.
 
-Three options on the same VMM:
+D1 changes the equation: **we will produce that one VMM** by porting
+Firecracker's snapshot machinery (Apache-2.0, lineage-consistent —
+libkrun's README states it "incorporates code from Firecracker,
+rust-vmm and Cloud-Hypervisor") and zeroboot's MAP_PRIVATE fork
+primitive (Apache-2.0) into `nimbus-libkrun`. The lift is sized at
+~9,450 LoC across the fork (see D4), not a multi-quarter clean-room.
 
-1. **Cold boot** (~125 ms): Firecracker fresh-boots every invocation.
-2. **Snapshot-restore** (~10 ms warm path): boot once, snapshot once,
-   restore on each invocation. UFFD + MAP_PRIVATE.
-3. **Template-fork** (~0.8 ms, zeroboot model): boot+snapshot once,
-   then mmap(MAP_PRIVATE) + new KVM VM per invocation.
+### 9.2 D1 — Unified lift
 
-The right answer depends on Tier 1's actual product surface — see
-open question §2 in the surfacing-decisions conversation.
+One VMM family carries every Nimbus sandbox workload (Lambda-style
+invocation, agentic desktop, GPU inference). Lift libkrun base + muvm
+GPU/media wiring + Firecracker snapshot patterns + zeroboot
+MAP_PRIVATE fork primitive into `nimbus-libkrun`.
 
-### 9.3 Tier 2/3 VMM
+### 9.3 D2 — nimbus-libkrun only; Firecracker-as-separate-VMM dropped
 
-**Decided:** libkrun. The only mainline VMM with virtio-gpu +
-virtio-input + production HVF on Apple Silicon. Cloud Hypervisor is
-not a viable substitute today (no GPU/input; weaker macOS posture).
+Firecracker is not run alongside nimbus-libkrun. The Firecracker
+Snapshot Invocation (FSI) plan was archived 2026-05-27 without
+execution. Firecracker code and patterns flow **into** nimbus-libkrun
+under Apache-2.0; the two-VMM CI/device-set/test surface is collapsed
+to one.
 
-### 9.4 Tier 2/3 snapshot/restore gap
+### 9.4 D3 — Tier collapse; capability profiles on a single backend
 
-**Open.** Three responses:
+No Tier 1 / Tier 2 / Tier 3 split. Single sandbox backend with
+capability profiles (`lambda`, `desktop`, `gpu`, `snapshot`); profiles
+tune device set + memory + boot path on the same VMM binary. See
+`docs/plans/research/libkrun-session-sandbox.md` §profiles for the
+device-set mapping.
 
-1. **Accept the gap for v0.** Reserve `Sandbox::snapshot/branch/restore`
-   trait methods as `unimplemented!()`. CUS-Snap implements them
-   later. (Current plan choice.)
-2. **Port Firecracker's snapshot machinery into libkrun.** Multi-
-   quarter project; lineage-consistent (libkrun already absorbs
-   Firecracker code); high competitive leverage ("branch a desktop
-   session in 0.8 ms" would be unique in 2026).
-3. **Wait for upstream libkrun.** No evidence this is coming. Not a
-   viable path.
+### 9.5 D4 — Phased snapshot port
 
-Recommendation: **(1) for v0** plus **a scoping spike for (2)** before
-committing to a follow-on plan.
+S0–S5 phases in `docs/plans/nimbus-sandbox-plan.md` Band S (Linux-KVM
+snapshot/fork). Total SWAG ~7,050 LoC net new + ~2,400 LoC tests =
+~9,450 LoC across the fork. Phases are individually shippable: S0–S2
+cover the Lambda-style invocation profile; S3 covers the desktop and
+GPU profiles; S4 unlocks the sub-ms session fork; S5 is latency
+optimization. See [[feedback_engineering_sizing_loc_swag]] for sizing
+convention.
 
-### 9.5 The "one VMM" fantasy
+### 9.6 D5 — GPU re-init on restore
 
-There is no rust-vmm-family VMM that simultaneously has Firecracker's
-snapshot maturity + libkrun's GPU/HVF/input + Cloud Hypervisor's
-hotplug. The two-VMM split is a forced choice today.
+Do not serialize Venus / native-context state. Re-init virtio-gpu /
+virtio-input / virtio-snd on restore. Data lives in guest memory +
+virtio-fs payload, not in the device-private state machine. Guest
+userspace must handle `VK_ERROR_DEVICE_LOST` (same recovery path as a
+real GPU hot-unplug); workloads that cannot are documented as known
+limitation.
 
-Cloud Hypervisor is the natural future unification candidate if it
-ever closes the GPU/input gap. We should re-evaluate every 6–12 months
-or whenever either fork ships material new device support.
+### 9.7 D6 — virtio-fs over virtiofsd
+
+libkrun's virtio-fs is in-process passthrough
+(`src/devices/src/virtio/fs/linux/passthrough.rs`, ~2,200 LoC Linux /
+~2,500 LoC macOS) — **not** an out-of-process virtiofsd. Snapshot
+serializes mount metadata only; payload data lives on the host
+filesystem and survives the round-trip via re-mount on restore.
+
+### 9.8 D7 — License composition (all Apache-2.0 / MIT, no LGPL)
+
+- libkrun base: **Apache-2.0** (verified 2026-05-27 against
+  `~/src/github.com/nimbus/nimbus-libkrun/LICENSE` and upstream
+  `containers/libkrun/LICENSE`; earlier internal notes calling it
+  LGPL-2.1 were wrong).
+- Firecracker patterns lifted into the fork: Apache-2.0.
+- zeroboot primitive: Apache-2.0.
+- muvm-derived bits: MIT (via `AsahiLinux/muvm/crates/muvm/Cargo.toml`;
+  no root LICENSE, so Cargo.toml SPDX is authoritative).
+
+All permissive; no LGPL relinking constraint. See
+[[feedback_apache_license_posture]].
+
+### 9.9 D8 — Sub-ms session fork is the 2026 product differentiator
+
+MAP_PRIVATE fork (zeroboot baseline: 0.79 ms p50, 265 KB / sandbox on
+minimal serial guests) is the load-bearing capability for per-request
+invocation workloads. Profile-specific targets (lambda ~3 ms p50,
+desktop ~10 ms p50) since full device sets fork more slowly than the
+zeroboot minimal-serial baseline.
+
+### 9.10 D9 — Port primitive, not project
+
+zeroboot stays a credited reference. The mechanism (MAP_PRIVATE +
+KVM_SET_REGS resume) is ported into nimbus-libkrun as a Rust crate;
+the zeroboot codebase is not vendored. Attribution is Apache-2.0.
+
+### 9.11 D10 — Stop tracking Cloud Hypervisor as a unification candidate
+
+Cloud Hypervisor's GPU/input gap remains, snapshot wire format is
+version-locked, and tracking it as a dual path adds CI cost without
+competitive leverage. libkrun already inherits the relevant rust-vmm
+lineage. Re-evaluate only if Cloud Hypervisor ships material GPU /
+input / HVF parity in a future release.
+
+### 9.12 D11 — Snapshot/fork is Linux-KVM-only by construction
+
+P0–P5 of the snapshot port ship **no macOS HVF code path**. macOS HVF's
+role in the deployed Nimbus topology is limited to running the
+existing outer machine-os Linux VM via krunkit (libkrun-on-HVF —
+today's shipped contract on `ghcr.io/nimbus/machine-os` v0.1.30,
+pinned 2026-05-14). That outer VM is **single-instance, long-lived
+per developer environment**; it does not need snapshot/restore or
+sub-ms fork.
+
+Reasons the scoping is sound:
+
+- every per-request fork-fast workload runs on Linux KVM in production
+  (lambda / serverless invocation profile);
+- macOS dev per-service workloads are containers inside the outer VM
+  (D12), not nested microVMs, so there is no HVF consumer for the
+  snapshot path;
+- `docs/architecture/sandbox/macos-machine-flow.md` §"Flow 6: Linux
+  Production Contrast" documents the topology that makes this scoping
+  valid.
+
+Implementation implication: CI matrix and benchmarks for P0–P5 target
+Linux KVM only; macOS proof helpers
+(`make collect-nimbus-machine-cli-proof` etc.) cover the outer-VM
+lifecycle but do not exercise snapshot/fork code paths. macOS HVF
+parity for the snapshot mechanism is **not "track separately" —
+it is out of scope by construction** because the topology has no
+consumer for it.
+
+### 9.13 D12 — macOS dev parity is "container-in-outer-VM," not nested microVM
+
+Per-service workloads on macOS dev hosts run as standard Linux
+containers (conmon → crun → standard container) **inside** the
+machine-os outer VM, managed by the guest machine API
+(`/run/nimbus/nimbus.sock`) and orchestrated by the host `nimbus`
+server via the forwarded `<machine>-api.sock`. They do **not** run as
+nested libkrun-microVMs via nested KVM on Apple Silicon.
+
+Production fork-semantics parity is enforced through Linux CI rather
+than nested-virt-on-macOS. This preserves the Option-A hybrid
+control-plane decision
+(`docs/plans/research/macos-host-vs-guest-control-plane-rationale.md`)
+and explicitly defers:
+
+- nested-virt performance overhead (typically 10–30% per layer);
+- Apple Silicon nested HVF maturity (added in macOS 15 Sequoia, 2024 —
+  recent);
+- nested GPU passthrough complexity through HVF → outer libkrun →
+  inner KVM → inner libkrun.
+
+The trade is acceptable: macOS dev gets crun's ~10–50 ms container
+cold start; production gets libkrun-on-KVM with snapshot fork (P4
+target ~3 ms p50 lambda / ~10 ms p50 desktop). Re-evaluate D12 if
+container/microVM divergence (memory model, signal handling, /proc
+visibility, IPC semantics) becomes a recurring DX problem.
+
+### 9.14 What unified lift changes vs the prior framing
+
+Prior framing (pre-2026-05-27): "two VMMs, three tiers" —
+Firecracker for Tier 1 invocation, libkrun for Tier 2/3 session/GPU,
+duplicate snapshot/device/test surfaces, cross-fork bug propagation
+manual.
+
+Current framing (D1–D12): one VMM family, four capability profiles,
+one device set, one snapshot mechanism, one CI matrix on Linux KVM
+(D11), macOS dev parity via containers-in-outer-VM (D12), Cloud
+Hypervisor dropped from active tracking (D10).
 
 ## 10. Risk register
 
 - **Charter lock on Firecracker features.** AWS will not accept
-  virtio-gpu / virtio-snd in mainline. If Tier 1 ever needs them, we
-  must go vhost-user delegated devices or accept a Firecracker fork.
+  virtio-gpu / virtio-snd in mainline. Moot after D2 (Nimbus does not
+  depend on Firecracker mainline for device coverage); listed for
+  reviewers comparing back to the dropped framing.
 - **libkrun snapshot gap is structural.** No upstream momentum. If our
   product surface depends on session-fork latency, we own the porting
   effort.
@@ -334,11 +487,25 @@ or whenever either fork ships material new device support.
 ## 11. Open follow-ups (deferred to other docs / spikes)
 
 - Security audit of zeroboot's `mmap(MAP_PRIVATE)` + KVM VM creation
-  path under multi-tenant load.
-- Sizing spike for porting Firecracker snapshot machinery into
-  libkrun (1–2 person-weeks).
-- Tier 1 mechanism decision (cold boot vs snapshot vs template-fork) —
-  driven by Tier 1 product-surface answer.
-- Sandbox trait split (`InvocationSandbox` vs `SessionSandbox`) — design
-  spike, see open question §5.
-- Cloud Hypervisor unification re-evaluation cadence (6–12 months).
+  path under multi-tenant load — Nimbus owns the audit once the
+  primitive lands in nimbus-libkrun (D9).
+- Sandbox trait split — `InvocationSandbox` vs `SessionSandbox`, or a
+  unified `Sandbox` with profile-tagged capability methods. Design
+  spike to match the capability-profile contract (D3).
+- macOS dev container/microVM divergence watch (D12) — re-evaluate if
+  guest-container behavior on macOS drifts from production microVM
+  behavior enough to break DX (memory model, signal handling, /proc
+  visibility, IPC semantics).
+- Snapshot signing / attestation integration with Nimbus artifact
+  admission — separate plan once P2 lands.
+
+The items previously listed here that D1–D12 settled:
+
+- ~~Sizing spike for porting Firecracker snapshot machinery into
+  libkrun~~ — settled by D4 and the snapshot-port plan
+  (~9,450 LoC SWAG).
+- ~~Tier 1 mechanism decision (cold boot vs snapshot vs
+  template-fork)~~ — settled by D8 + D9 (snapshot + MAP_PRIVATE fork on
+  the unified backend).
+- ~~Cloud Hypervisor unification re-evaluation cadence (6–12 months)~~
+  — settled by D10 (stop tracking).

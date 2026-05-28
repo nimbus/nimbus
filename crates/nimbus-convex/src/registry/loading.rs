@@ -1,0 +1,472 @@
+use super::*;
+use std::path::Component;
+use std::sync::Arc;
+
+use nimbus_artifacts::{ArtifactVerificationPolicy, ArtifactVerifierBackend};
+
+const SYSTEM_AUTH_CONFIG_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/auth.config.json"
+));
+const SYSTEM_BUNDLE_MJS: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/bundle.mjs"
+));
+const SYSTEM_BUNDLE_SHA256: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/bundle.sha256"
+));
+const SYSTEM_FUNCTIONS_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/functions.json"
+));
+const SYSTEM_HTTP_ROUTES_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/http_routes.json"
+));
+const SYSTEM_NODE_EXTERNAL_PACKAGES_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/node_external_packages.json"
+));
+const SYSTEM_SCHEMA_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../packages/nimbus-ui/.nimbus/convex/schema.json"
+));
+
+impl ConvexRegistry {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn from_app_dir(app_dir: impl AsRef<Path>) -> Result<Self, Error> {
+        let convex_dir = app_dir.as_ref().join(".nimbus").join("convex");
+        Self::from_manifest_paths(
+            convex_dir.join("functions.json"),
+            Some(convex_dir.join("http_routes.json")),
+        )
+    }
+
+    pub fn from_embedded_system_bundle() -> Result<Self, Error> {
+        let artifact_guard = Arc::new(
+            tempfile::Builder::new()
+                .prefix("nimbus-system-convex-")
+                .tempdir()
+                .map_err(|error| {
+                    Error::Internal(format!(
+                        "failed to create embedded _nimbus bundle directory: {error}"
+                    ))
+                })?,
+        );
+        let convex_dir = artifact_guard.path().join(".nimbus").join("convex");
+        std::fs::create_dir_all(&convex_dir).map_err(|error| {
+            Error::Internal(format!(
+                "failed to create embedded _nimbus Convex directory {}: {error}",
+                convex_dir.display()
+            ))
+        })?;
+        write_embedded_system_file(
+            &convex_dir,
+            "auth.config.json",
+            SYSTEM_AUTH_CONFIG_JSON.as_bytes(),
+        )?;
+        write_embedded_system_file(&convex_dir, "bundle.mjs", SYSTEM_BUNDLE_MJS)?;
+        write_embedded_system_file(
+            &convex_dir,
+            "bundle.sha256",
+            SYSTEM_BUNDLE_SHA256.as_bytes(),
+        )?;
+        write_embedded_system_file(
+            &convex_dir,
+            "functions.json",
+            SYSTEM_FUNCTIONS_JSON.as_bytes(),
+        )?;
+        write_embedded_system_file(
+            &convex_dir,
+            "http_routes.json",
+            SYSTEM_HTTP_ROUTES_JSON.as_bytes(),
+        )?;
+        write_embedded_system_file(
+            &convex_dir,
+            "node_external_packages.json",
+            SYSTEM_NODE_EXTERNAL_PACKAGES_JSON.as_bytes(),
+        )?;
+        write_embedded_system_file(&convex_dir, "schema.json", SYSTEM_SCHEMA_JSON.as_bytes())?;
+
+        let mut registry = Self::from_app_dir(artifact_guard.path())?;
+        registry.artifact_guard = Some(artifact_guard);
+        Ok(registry)
+    }
+
+    pub fn from_manifest_path(path: impl AsRef<Path>) -> Result<Self, Error> {
+        Self::from_manifest_paths(path, None::<&Path>)
+    }
+
+    pub fn from_manifest_paths(
+        functions_path: impl AsRef<Path>,
+        http_routes_path: Option<impl AsRef<Path>>,
+    ) -> Result<Self, Error> {
+        let path = functions_path.as_ref();
+        let contents = std::fs::read_to_string(path).map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to read Convex manifest {}: {error}",
+                path.display()
+            ))
+        })?;
+        let manifest: ConvexManifest = serde_json::from_str(&contents).map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to parse Convex manifest {}: {error}",
+                path.display()
+            ))
+        })?;
+        for function in &manifest.functions {
+            function.validate_runtime_selection().map_err(|message| {
+                Error::InvalidInput(format!(
+                    "invalid Convex runtime selection in {}: {message}",
+                    path.display()
+                ))
+            })?;
+        }
+
+        let functions = manifest
+            .functions
+            .into_iter()
+            .map(|function| (function.name.clone(), function))
+            .collect();
+        let http_routes = match http_routes_path {
+            Some(path) => read_http_route_manifest(path.as_ref())?,
+            None => Vec::new(),
+        };
+        let schema = path
+            .parent()
+            .map(|directory| directory.join("schema.json"))
+            .as_deref()
+            .map(read_schema_manifest)
+            .transpose()?
+            .flatten();
+        if let Some(directory) = path.parent() {
+            read_node_external_packages_manifest(directory)?;
+        }
+        let runtime_bundle = path
+            .parent()
+            .map(|directory| directory.join("bundle.mjs"))
+            .filter(|bundle_path| bundle_path.is_file())
+            .map(|bundle_path| load_runtime_bundle(&bundle_path))
+            .transpose()?;
+        let bun_jsc_runtime_bundle = path
+            .parent()
+            .map(|directory| directory.join("bun_program_bundle.js"))
+            .filter(|bundle_path| bundle_path.is_file())
+            .map(|bundle_path| load_runtime_bundle(&bundle_path))
+            .transpose()?;
+        let auth_verifier = path
+            .parent()
+            .map(|directory| directory.join("auth.config.json"))
+            .map(read_auth_config)
+            .transpose()?
+            .map(ConvexAuthVerifier::from_config)
+            .map(Arc::new)
+            .unwrap_or_else(|| Arc::new(ConvexAuthVerifier::empty()));
+
+        let runtime_lane = convex_default_runtime_lane(RuntimeLimits::default());
+        let node20_runtime_lane =
+            convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node20);
+        let node22_runtime_lane =
+            convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node22);
+        let node24_runtime_lane =
+            convex_node_runtime_lane(RuntimeLimits::default(), RuntimeCompatibilityTarget::Node24);
+        let bun_jsc_runtime_lane = convex_bun_jsc_runtime_lane(RuntimeLimits::default());
+        Ok(Self {
+            functions,
+            http_routes,
+            schema,
+            runtime_bundle,
+            bun_jsc_runtime_bundle,
+            artifact_guard: None,
+            auth_verifier,
+            runtime_lane,
+            node20_runtime_lane,
+            node22_runtime_lane,
+            node24_runtime_lane,
+            bun_jsc_runtime_lane,
+            runtime_bundle_provenance: None,
+        })
+    }
+
+    pub fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
+        self.runtime_lane = convex_default_runtime_lane(limits.clone());
+        self.node20_runtime_lane =
+            convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node20);
+        self.node22_runtime_lane =
+            convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node22);
+        self.node24_runtime_lane =
+            convex_node_runtime_lane(limits.clone(), RuntimeCompatibilityTarget::Node24);
+        self.bun_jsc_runtime_lane = convex_bun_jsc_runtime_lane(limits);
+        self
+    }
+
+    pub fn with_runtime_bundle_provenance_verifier(
+        mut self,
+        policy: ArtifactVerificationPolicy,
+        verifier: impl ArtifactVerifierBackend + 'static,
+    ) -> Self {
+        self.runtime_bundle_provenance = Some(RuntimeBundleProvenanceConfig::new(
+            policy,
+            Arc::new(verifier),
+            "convex runtime bundle",
+        ));
+        self
+    }
+
+    pub fn with_runtime_bundle_provenance_verifier_arc(
+        mut self,
+        policy: ArtifactVerificationPolicy,
+        verifier: Arc<dyn ArtifactVerifierBackend>,
+    ) -> Self {
+        self.runtime_bundle_provenance = Some(RuntimeBundleProvenanceConfig::new(
+            policy,
+            verifier,
+            "convex runtime bundle",
+        ));
+        self
+    }
+}
+
+fn write_embedded_system_file(
+    convex_dir: &Path,
+    file_name: &str,
+    contents: &[u8],
+) -> Result<(), Error> {
+    let path = convex_dir.join(file_name);
+    std::fs::write(&path, contents).map_err(|error| {
+        Error::Internal(format!(
+            "failed to write embedded _nimbus Convex artifact {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn read_http_route_manifest(path: &Path) -> Result<Vec<ConvexHttpRouteDefinition>, Error> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(Error::InvalidInput(format!(
+                "failed to read convex HTTP route manifest {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    let manifest: ConvexHttpRouteManifest = serde_json::from_str(&contents).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to parse convex HTTP route manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(manifest.routes)
+}
+
+fn load_runtime_bundle(bundle_path: &Path) -> Result<RuntimeBundle, Error> {
+    let hash_path = bundle_path.with_extension("sha256");
+    let expected_sha256 = std::fs::read_to_string(&hash_path).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to read convex runtime bundle hash {}: {error}",
+            hash_path.display()
+        ))
+    })?;
+    RuntimeBundle::with_expected_sha256(bundle_path, expected_sha256).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to load convex runtime bundle {}: {error}",
+            bundle_path.display()
+        ))
+    })
+}
+
+fn read_schema_manifest(path: &Path) -> Result<Option<Schema>, Error> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(Error::InvalidInput(format!(
+                "failed to read convex schema manifest {}: {error}",
+                path.display()
+            )));
+        }
+    };
+
+    let manifest: ConvexSchemaManifest = serde_json::from_str(&contents).map_err(|error| {
+        Error::InvalidInput(format!(
+            "failed to parse convex schema manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    let schema = manifest.into_schema()?;
+    if let Some(schema) = &schema {
+        validate_schema_manifest(schema)?;
+    }
+    Ok(schema)
+}
+
+fn read_node_external_packages_manifest(convex_dir: &Path) -> Result<(), Error> {
+    let path = convex_dir.join("node_external_packages.json");
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(Error::InvalidInput(format!(
+                "failed to read convex Node external packages manifest {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    let manifest: ConvexNodeExternalPackagesManifest =
+        serde_json::from_str(&contents).map_err(|error| {
+            Error::InvalidInput(format!(
+                "failed to parse convex Node external packages manifest {}: {error}",
+                path.display()
+            ))
+        })?;
+    validate_node_external_packages_manifest(convex_dir, &manifest)
+}
+
+fn validate_node_external_packages_manifest(
+    convex_dir: &Path,
+    manifest: &ConvexNodeExternalPackagesManifest,
+) -> Result<(), Error> {
+    if manifest.version != 1 {
+        return Err(Error::InvalidInput(format!(
+            "convex Node external packages manifest version {} is unsupported; expected 1",
+            manifest.version
+        )));
+    }
+    validate_relative_manifest_path("stagingRoot", &manifest.staging_root)?;
+    match manifest.mode {
+        ConvexNodeExternalPackageMode::None => {
+            if !manifest.configured_external_packages.is_empty() || !manifest.packages.is_empty() {
+                return Err(Error::InvalidInput(
+                    "convex Node external packages manifest mode `none` must not declare configured packages or package entries".to_string(),
+                ));
+            }
+        }
+        ConvexNodeExternalPackageMode::All => {
+            if manifest.configured_external_packages.len() != 1
+                || manifest.configured_external_packages[0] != "*"
+            {
+                return Err(Error::InvalidInput(
+                    "convex Node external packages manifest mode `all` must declare configuredExternalPackages as [\"*\"]".to_string(),
+                ));
+            }
+        }
+        ConvexNodeExternalPackageMode::Explicit => {
+            if manifest.configured_external_packages.is_empty()
+                || manifest
+                    .configured_external_packages
+                    .iter()
+                    .any(|package| package == "*")
+            {
+                return Err(Error::InvalidInput(
+                    "convex Node external packages manifest mode `explicit` must declare explicit package names without `*`".to_string(),
+                ));
+            }
+        }
+    }
+
+    let app_dir = convex_dir.parent().and_then(Path::parent).ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "convex Node external packages manifest directory {} is not under .nimbus/convex",
+            convex_dir.display()
+        ))
+    })?;
+    let staging_root = app_dir.join(&manifest.staging_root);
+
+    for package in &manifest.packages {
+        if package.package_name.trim().is_empty() {
+            return Err(Error::InvalidInput(
+                "convex Node external packages manifest contains a package with an empty packageName"
+                    .to_string(),
+            ));
+        }
+        if package.resolved_specifiers.is_empty() {
+            return Err(Error::InvalidInput(format!(
+                "convex Node external package `{}` must list at least one resolved specifier",
+                package.package_name
+            )));
+        }
+        if package.importers.is_empty() {
+            return Err(Error::InvalidInput(format!(
+                "convex Node external package `{}` must list at least one importer",
+                package.package_name
+            )));
+        }
+        if package.size_bytes == 0 {
+            return Err(Error::InvalidInput(format!(
+                "convex Node external package `{}` must report a non-zero sizeBytes value",
+                package.package_name
+            )));
+        }
+        let package_root = package.package_root.as_deref().ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "convex Node external package `{}` is missing packageRoot",
+                package.package_name
+            ))
+        })?;
+        let staged_package_root = package.staged_package_root.as_deref().ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "convex Node external package `{}` is missing stagedPackageRoot",
+                package.package_name
+            ))
+        })?;
+        validate_relative_manifest_path("packageRoot", package_root)?;
+        validate_relative_manifest_path("stagedPackageRoot", staged_package_root)?;
+        for importer in &package.importers {
+            validate_relative_manifest_path("importer.file", &importer.file)?;
+            if importer.kind.trim().is_empty() || importer.specifier.trim().is_empty() {
+                return Err(Error::InvalidInput(format!(
+                    "convex Node external package `{}` has an importer with an empty kind or specifier",
+                    package.package_name
+                )));
+            }
+        }
+        let staged_path = app_dir.join(staged_package_root);
+        if !staged_path.starts_with(&staging_root) {
+            return Err(Error::InvalidInput(format!(
+                "convex Node external package `{}` staged path must be under stagingRoot",
+                package.package_name
+            )));
+        }
+        if !staged_path.is_dir() {
+            return Err(Error::InvalidInput(format!(
+                "convex Node external package `{}` staged path {} does not exist or is not a directory",
+                package.package_name,
+                staged_path.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_relative_manifest_path(field: &str, value: &str) -> Result<(), Error> {
+    let path = Path::new(value);
+    if value.trim().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
+            )
+        })
+    {
+        return Err(Error::InvalidInput(format!(
+            "convex Node external packages manifest field `{field}` must be a non-empty relative path without parent traversal"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_schema_manifest(schema: &Schema) -> Result<(), Error> {
+    for table_schema in schema.tables.values() {
+        table_schema.validate_indexes()?;
+        table_schema.validate_access_policy()?;
+    }
+    Ok(())
+}

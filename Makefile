@@ -208,6 +208,13 @@ collect-encryption-benchmark-evidence:
 deny:
 	$(SINGLE_FLIGHT) --key cargo-deny-check -- cargo deny check
 
+# Third-party attribution gate (G4 of nimbus-sandbox-plan.md Fork-Health Guardrails)
+verify-third-party-attribution:
+	bash scripts/verify-third-party-attribution.sh
+
+verify-third-party-attribution-helper:
+	bash scripts/verify-third-party-attribution-helper.sh
+
 # Verify that release tags, crate/package versions, and changelog entry agree
 verify-release-version-contract:
 	@test -n "$(VERSION)" || (echo "set VERSION=vX.Y.Z or VERSION=X.Y.Z" && exit 1)

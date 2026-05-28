@@ -131,9 +131,9 @@ Current local-enforcement shape is planned, not implemented as production code:
 
 | Source | Classification | Baseline finding |
 | --- | --- | --- |
-| `docs/plans/firecracker-snapshot-invocation-backend-plan.md` | local-enforcement consumer plan | Snapshot invocation flows from `TenantIsolationDecision` to invocation spec, pool restore, cleanup, and `TenantWorkloadStatus`. It names `nimbus-node / local_enforcement` as owner of host lifecycle and invocation-pool evidence. |
-| `docs/plans/computer-use-sandbox-plan.md` | local-enforcement consumer plan | Session lifecycle, tenant binding, status, and evidence belong to `local_enforcement` / future `nimbus-node`; libkrun process details stay out of `nimbus-runtime`. |
-| `docs/plans/gpu-accelerated-sandbox-plan.md` | local-enforcement consumer plan | Benchmark gate and evidence shape belong to `local_enforcement` / future `nimbus-node`; GPU backend primitives stay in sandbox-owned modules. |
+| `docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md` (archived 2026-05-27; superseded by `docs/plans/nimbus-sandbox-plan.md` Band S) | local-enforcement consumer plan | Snapshot invocation flows from `TenantIsolationDecision` to invocation spec, pool restore, cleanup, and `TenantWorkloadStatus`. It names `nimbus-node / local_enforcement` as owner of host lifecycle and invocation-pool evidence. |
+| `docs/plans/nimbus-sandbox-plan.md` Band D (supersedes archived `docs/plans/archive/computer-use-sandbox-plan.md`) | local-enforcement consumer plan | Session lifecycle, tenant binding, status, and evidence belong to `local_enforcement` / future `nimbus-node`; libkrun process details stay out of `nimbus-runtime`. |
+| `docs/plans/nimbus-sandbox-plan.md` Band G (supersedes archived `docs/plans/archive/gpu-accelerated-sandbox-plan.md`) | local-enforcement consumer plan | Benchmark gate and evidence shape belong to `local_enforcement` / future `nimbus-node`; GPU backend primitives stay in sandbox-owned modules. |
 | `docs/plans/service-identity-provider-auth-plan.md` | credential projection plan | Credentials must derive from `TenantWorkloadStableIdentity` and an admitted decision, not raw tenant strings, caller claims, process context, session IDs, or sandbox metadata. |
 
 Current container-image contract is operator/runtime deployment context for

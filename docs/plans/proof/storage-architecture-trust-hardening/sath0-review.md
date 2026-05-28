@@ -36,8 +36,8 @@ storage posture complete, durable, observable, and cross-backend tested.
 
 ## SATH0 Artifacts
 
-- `docs/plans/storage-architecture-trust-hardening-plan.md` is the active
-  plan.
+- `docs/plans/archive/storage-architecture-trust-hardening-plan.md` is the
+  completed execution record.
 - `scripts/verify-storage-architecture-trust-hardening.sh` is the reusable
   aggregate completion gate.
 - `docs/technical-debt.md` now has SATH-owned rows for every implementation

@@ -13,6 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+nimbus-artifacts = { path = "../nimbus-artifacts" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }

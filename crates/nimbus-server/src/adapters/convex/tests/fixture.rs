@@ -1,5 +1,5 @@
 use super::*;
-use crate::service_registry::SandboxCatalogRuntimeServiceRegistry;
+use nimbus_services::SandboxCatalogRuntimeServiceRegistry;
 
 pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
 -> (TempDir, Arc<Service>, TenantId, ConvexHostBridge) {
@@ -10,18 +10,18 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
         .create_tenant(tenant_id.clone())
         .expect("tenant should be created");
     let registry = Arc::new(ConvexRegistry::empty());
-    let isolation = crate::tenant::TenantIsolationContext::application(
+    let isolation = nimbus_tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         nimbus_core::PrincipalContext::anonymous(),
         "convex_fixture",
     );
-    let decision = crate::tenant::admit_runtime_invocation_decision(
+    let decision = nimbus_tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_fixture",
         None,
         &registry.runtime_policy(),
-        crate::tenant::RuntimeIsolationTier::InProcessUntrusted,
-        crate::tenant::TenantIsolationMode::LocalDevelopment,
+        nimbus_tenant::RuntimeIsolationTier::InProcessUntrusted,
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
     )
     .expect("fixture tenant isolation decision should build");

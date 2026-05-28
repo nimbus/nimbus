@@ -11,9 +11,9 @@ use crate::license::LicenseState;
 use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
-use crate::sandbox::SandboxCatalog;
-use crate::service_manager::SandboxServiceManager;
 use crate::tenant::TenantIsolationMode;
+use nimbus_services::SandboxCatalog;
+use nimbus_services::SandboxServiceManager;
 
 /// Canonical public option bundle for serving Nimbus on a listener.
 pub struct ServeOptions {

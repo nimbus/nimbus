@@ -11,7 +11,14 @@ pub(crate) async fn license_status(
 ) -> Result<Json<crate::license::LicenseSnapshot>, AppError> {
     let service = state.service.clone();
     let usage = service.current_monthly_active_users_async().await?;
-    Ok(Json(state.license_state.snapshot_with_usage(Some(usage))))
+    Ok(Json(state.license_state.snapshot_with_usage(Some(
+        crate::license::LicenseUsageInput {
+            month: usage.month,
+            month_start_unix_ms: usage.month_start_unix_ms,
+            monthly_active_users: usage.monthly_active_users,
+            last_recorded_at_unix_ms: usage.last_recorded_at_unix_ms,
+        },
+    ))))
 }
 
 /// Returns runtime limits and live runtime metrics for diagnostics.

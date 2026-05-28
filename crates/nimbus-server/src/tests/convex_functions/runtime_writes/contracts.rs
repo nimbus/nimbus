@@ -123,6 +123,10 @@ async fn convex_named_mutation_dispatches_compiled_patch_and_delete() {
         .await
         .expect("rename response should parse");
     assert_eq!(renamed_status, StatusCode::OK, "{renamed_body}");
+    let renamed_id = renamed_body
+        .as_str()
+        .expect("rename mutation should return the table-scoped document id")
+        .to_string();
 
     let after_rename = api.list_documents("demo", "messages").await;
     assert_eq!(after_rename.status(), StatusCode::OK);
@@ -133,11 +137,7 @@ async fn convex_named_mutation_dispatches_compiled_patch_and_delete() {
     assert_eq!(after_rename_body["data"][0]["body"], json!("Edited"));
 
     let deleted = api
-        .convex_named_mutation(
-            "demo",
-            "messages:remove",
-            json!({ "id": after_rename_body["data"][0]["_id"].clone() }),
-        )
+        .convex_named_mutation("demo", "messages:remove", json!({ "id": renamed_id }))
         .await;
     let deleted_status = deleted.status();
     let deleted_body = deleted

@@ -407,7 +407,7 @@ impl PostgresWriteTransaction {
         let mut table_schema = table_schema.clone();
         table_schema.reconcile_index_metadata(previous.as_ref());
         if let Some(previous) = previous.as_ref() {
-            self.drop_table_indexes(&previous)?;
+            self.drop_table_indexes(previous)?;
         }
         self.upsert_table_schema(&table_schema)?;
         self.create_table_indexes(&table_schema)?;
@@ -422,17 +422,17 @@ impl PostgresWriteTransaction {
         let previous = self.load_table_schema(table)?;
         let table_id = self.load_table_id(table)?;
         if let Some(previous) = previous.as_ref() {
-            self.drop_table_indexes(&previous)?;
+            self.drop_table_indexes(previous)?;
         }
         self.delete_table_schema_entry(table)?;
         self.notification.schema_changed = true;
         self.schema_cache_changed = true;
         self.record_tenant_event(TenantEventKind::SchemaChange {
-            change: SchemaChangeEvent::DeleteTable {
+            change: Box::new(SchemaChangeEvent::DeleteTable {
                 table: table.clone(),
                 table_id,
                 previous,
-            },
+            }),
         });
         Ok(())
     }
@@ -1365,12 +1365,12 @@ fn record_postgres_schema_set_events(
     table_schema: &TableSchema,
 ) {
     transaction.record_tenant_event(TenantEventKind::SchemaChange {
-        change: SchemaChangeEvent::SetTable {
+        change: Box::new(SchemaChangeEvent::SetTable {
             table: table_schema.table.clone(),
             table_id: table_id.clone(),
             previous,
             current: table_schema.clone(),
-        },
+        }),
     });
     for index in &table_schema.indexes {
         transaction.record_tenant_event(TenantEventKind::IndexLifecycle {

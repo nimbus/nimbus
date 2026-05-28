@@ -1,7 +1,7 @@
 # Storage Engine Quality And MVCC Plan
 
 This is the follow-on roadmap after
-`docs/plans/storage-architecture-trust-hardening-plan.md`. Its purpose is to
+`docs/plans/archive/storage-architecture-trust-hardening-plan.md`. Its purpose is to
 raise Nimbus storage from a trustworthy latest-row reactive document store to a
 storage engine with quality comparable to the codebases reviewed locally:
 Convex for application-level MVCC and table/index identity, CockroachDB for

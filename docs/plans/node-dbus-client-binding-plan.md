@@ -11,7 +11,10 @@ The TSB7 proof note recorded the deferral explicitly: *"A live zbus
 adapter can be added behind `SystemdDbusClient` when product packaging
 chooses the concrete dependency."* That dependency choice has now been
 made (see `docs/plans/research/systemd-dbus-binding-rust-2026.md`); this
-plan executes the binding.
+plan executes the binding. Use the local upstream checkout at
+`~/src/github.com/lucab/zbus_systemd` as implementation reference; as of
+the plan audit it is at `81ac9452` (`v0.26000.0-3-g81ac945`) and contains
+package version `0.26000.0`.
 
 ## Why this plan exists
 
@@ -53,6 +56,9 @@ In scope:
   (new module — `zbus::Error` / `zbus::fdo::Error` → `nimbus_core::Error`)
 - `crates/nimbus-node/src/systemd_transient/zbus_client/signals.rs`
   (new module — JobRemoved correlation)
+- `crates/nimbus-node/src/systemd_transient/zbus_client/properties.rs`
+  (new module — typed transient-unit property marshalling to
+  `zbus_systemd::zvariant::OwnedValue`)
 - `crates/nimbus-node/src/lib.rs` (re-export `ZbusSystemdClient`)
 - `crates/nimbus-node/tests/zbus_systemd_live.rs` (new integration
   test, Linux + feature gated)
@@ -82,18 +88,42 @@ Out of scope:
   whole point of the seam-first design is that this plan slots in
   beneath it without API churn)
 
+## Upstream API anchors
+
+The coding agent should verify method names and signatures against
+`~/src/github.com/lucab/zbus_systemd/src/systemd1/generated.rs`, not from
+memory:
+
+- `zbus_systemd::systemd1::ManagerProxy` exposes `subscribe()`,
+  `receive_job_removed()`, `start_transient_unit(name, mode, properties,
+  aux)`, `stop_unit(name, mode)`, `get_unit(name)`, and
+  `reset_failed_unit(name)`.
+- `JobRemoved` args are `(id, job, unit, result)`; correlate completion by
+  the `job` object path returned from `start_transient_unit` or `stop_unit`.
+- `start_transient_unit` takes `Vec<(String, OwnedValue)>` properties and
+  `Vec<(String, Vec<(String, OwnedValue)>)>` auxiliary units. Add a focused
+  property encoder rather than scattering `OwnedValue` construction through
+  the client.
+- Unit/service inspection can use generated `UnitProxy` and `ServiceProxy`
+  property accessors for `load_state`, `active_state`, `sub_state`,
+  `main_pid`, `control_group`, and `result`; use direct generated getters
+  unless a bulk `GetAll` helper proves cleaner in code review.
+- `zbus_systemd::lib.rs` re-exports both `zbus` and `zbus::zvariant`; prefer
+  those re-exports inside the binding so the generated crate and direct
+  `zbus` usage cannot drift.
+
 ## Ledger
 
 | NDB | Description | Status |
 |-----|-------------|--------|
-| NDB0 | Scaffold this plan + verifier at `scripts/verify-node-dbus-binding.sh` (10 conditions, mostly FAIL until later bands flip them); baseline proof at `docs/plans/proof/node-dbus-client-binding/ndb0-baseline.md` recording the starting state (no `zbus*` deps, trait abstract, all tests use mocks); research note at `docs/plans/research/systemd-dbus-binding-rust-2026.md` recording the dependency decision (zbus_systemd vs alternatives, pin strategy, signal-vs-polling, bus selection, authorization model); routing entry in `AGENTS.md`. | pending |
-| NDB1 | Workspace + crate Cargo wiring. Add `zbus_systemd` (pin `=0.26000.0`, default-features off, features `["systemd1", "zbus-async-tokio"]`) and `zbus` (pin to whatever zbus_systemd 0.26000 selects) to root `Cargo.toml` `[workspace.dependencies]`. Add `systemd-dbus` feature to `crates/nimbus-node/Cargo.toml` that gates the new deps. Default is OFF until NDB7. `deny.toml` gets a comment explaining the 0.26000.x scheme. `make deny` stays green. | pending |
-| NDB2 | `ZbusSystemdClient` skeleton + capability detection. New module tree under `crates/nimbus-node/src/systemd_transient/zbus_client/`: `mod.rs` exposes `ZbusSystemdClient` and `BusKind::{System, Session}`. Constructor accepts `BusKind`, opens `zbus::Connection`, caches `ManagerProxy<'static>`. `capabilities()` probes the daemon via a cheap `GetUnit("init.scope")` call; maps `Disconnected` → `dbus_available=false`, `UnknownMethod`/`InterfaceNotFound` → `transient_units=false`. Implements `SystemdDbusClient` with `start/stop/inspect` returning `not yet implemented` errors. Unit tests use a mocked `zbus::Connection` (via `zbus::conn::Builder::p2p()` paired sockets) to prove constructor and probe paths. | pending |
-| NDB3 | Signal-based completion. New `signals.rs` submodule. Implements: subscribe to `JobRemoved` *before* calling `StartTransientUnit`/`StopUnit`; correlate by the `job_path` returned from the method call; the future resolves only when the matching `JobRemoved` signal with `result` ∈ `{"done","failed","canceled","timeout","dependency","skipped"}` is observed. Drop semantics for the subscription on cancel are verified. The `inspect_unit` impl uses `GetUnit` → unit object path → `org.freedesktop.DBus.Properties.GetAll` on the `Unit` + `Service` interfaces, populating `SystemdUnitStatus` (active_state, sub_state, main_pid, cgroup_path). Race tests prove no signal loss when the unit transitions faster than the method response arrives. | pending |
-| NDB4 | Error taxonomy. New `error.rs` submodule. Exhaustive match on `zbus::fdo::Error` variants and the general `zbus::Error` shape: `Disconnected`/`InputOutput` → `nimbus_core::Error::Transport`; `AuthFailed`/`AccessDenied` → `Permission`; `UnknownObject`/`NoSuchUnit` → `NotFound`; `InvalidArgs` → `Invariant`; capability-missing per NDB2 → `ResourceExhausted`. Unit tests instantiate each variant via mock and assert the mapped Nimbus error. Every D-Bus call in NDB3 flows through this mapper. | pending |
-| NDB5 | Linux-gated integration tests. New `crates/nimbus-node/tests/zbus_systemd_live.rs` gated on `#[cfg(all(target_os = "linux", feature = "systemd-dbus-integration-tests"))]`. Each test: builds `ZbusSystemdClient` against the session bus (`systemctl --user`); starts a `sleep 30` transient unit with a unique UUID-suffixed name; observes JobRemoved with `"done"`; reads properties to verify active+running state; calls `stop_unit`; observes JobRemoved with `"done"`; verifies the unit reaches `inactive`/`dead`; teardown calls `ResetFailedUnit` to clean up. Additional cases: ExecStart-not-found path (verifies `"failed"` result mapping), permission-denied path (forces system bus when not root). | pending |
-| NDB6 | CI lane. New `node-dbus-integration` job in `.github/workflows/ci.yml` on `ubuntu-24.04`. Pre-steps: `apt-get install -y dbus-user-session systemd-container`; `loginctl enable-linger $USER`; verify `systemctl --user is-system-running` returns. Uses the `setup-rust-cached` composite. Runs `cargo test -p nimbus-node --features systemd-dbus,systemd-dbus-integration-tests --test zbus_systemd_live --no-fail-fast`. Job is on the PR critical path (gates `rust-gate-summary.needs:`). Step summary emits a markdown table of pass/fail per test for the CI dashboard. | pending |
-| NDB7 | Activation + docs + closeout. Flip `systemd-dbus` to a default feature on `nimbus-node`. Swap the default type parameter on `SystemdTransientUnitBackend<C>` from `UnavailableSystemdDbusClient` to `ZbusSystemdClient` *only on Linux* (cfg-gated default); other platforms keep the unavailable default. Add `docs/operating/node-dbus-binding.md` with: bus selection rationale, signal-completion semantics, error taxonomy, capability degradation matrix, privilege model. Refresh `docs/operating/node-lifecycle.md` + `docs/architecture/runtime/adapter-boundary.md` to point at the new operator doc. Flip every ledger row to `done`; append Execution Log with real SHAs; move plan to `docs/plans/archive/`; verifier's `plan_file()` accepts both paths; update routing in `AGENTS.md` + `docs/plans/README.md`. | pending |
+| NDB0 | Scaffold this plan + verifier at `scripts/verify-node-dbus-binding.sh` (10 conditions, mostly FAIL until later bands flip them); baseline proof at `docs/plans/proof/node-dbus-client-binding/ndb0-baseline.md` recording the starting state (no `zbus*` deps, trait abstract, all tests use mocks); research note at `docs/plans/research/systemd-dbus-binding-rust-2026.md` recording the dependency decision (zbus_systemd vs alternatives, pin strategy, signal-vs-polling, bus selection, authorization model); routing entry in `AGENTS.md`. | done |
+| NDB1 | Workspace + crate Cargo wiring. Add `zbus_systemd` (pin `=0.26000.0`, default-features off, features `["systemd1", "zbus-async-tokio"]`) and direct `zbus` (same major/minor selected by zbus_systemd; root dep required for test-bus utilities and any hand-rolled proxy escape hatch) to root `Cargo.toml` `[workspace.dependencies]`. Add `systemd-dbus` and `systemd-dbus-test-bus` features to `crates/nimbus-node/Cargo.toml`; add `systemd-dbus-integration-tests` as an explicit opt-in feature layered on `systemd-dbus`. Default is OFF until NDB7. `deny.toml` gets a comment explaining the 0.26000.x scheme. `make deny` stays green. | pending |
+| NDB2 | `ZbusSystemdClient` skeleton + capability detection. New module tree under `crates/nimbus-node/src/systemd_transient/zbus_client/`: `mod.rs` exposes `ZbusSystemdClient` and `BusKind::{System, Session}`. Constructor accepts `BusKind` and an internal test-only connection injection hook, opens `zbus::Connection`, caches `ManagerProxy<'static>`. `capabilities()` probes the daemon via a cheap `GetUnit("init.scope")` call; maps `Disconnected` to `dbus_available=false`, `UnknownMethod`/`InterfaceNotFound` to `transient_units=false`. Implement the `SystemdDbusClient` trait methods behind temporary "not implemented" errors only in this band. Unit tests use a mocked zbus peer-to-peer or test-bus connection shape gated by `systemd-dbus-test-bus` to prove constructor and probe paths. | pending |
+| NDB3 | Signal-based completion and property marshalling. Add `signals.rs` plus `properties.rs`. Correct flow is: call `ManagerProxy::subscribe()`, create `receive_job_removed()` stream, then call `start_transient_unit`/`stop_unit`; correlate by the `job` object path returned from the method call; resolve only when the matching `JobRemoved` signal has `result` in `{"done","failed","canceled","timeout","dependency","skipped"}`. Drop semantics for the subscription on cancel are verified. `properties.rs` owns all `OwnedValue` construction for transient unit properties, including `Description`, `Type`, `Slice`, `WorkingDirectory`, `Environment`, and write-side `ExecStart`; a test asserts the encoded values round-trip through zvariant signatures expected by systemd's `StartTransientUnit`. The `inspect_unit` impl uses `GetUnit` to build generated `UnitProxy`/`ServiceProxy` property reads for `load_state`, `active_state`, `sub_state`, `main_pid`, `control_group`, and `result`, populating `SystemdUnitStatus`. Race tests prove no signal loss when the unit transitions faster than the method response arrives. | pending |
+| NDB4 | Error taxonomy. New `error.rs` submodule. Map the general `zbus::Error` shape and method-error names explicitly: `Disconnected`/`InputOutput` to `nimbus_core::Error::Transport`; authentication or access-denied failures to `Permission`; `org.freedesktop.systemd1.NoSuchUnit`, `org.freedesktop.DBus.Error.UnknownObject`, and equivalent method-error names to `NotFound`; invalid-argument method errors to `Invariant`; capability-missing per NDB2 to `ResourceExhausted`; unknown method errors to the capability path only during capability probing and to `Internal` elsewhere. Unit tests instantiate each mapped path via mock errors and assert the Nimbus error. Every D-Bus call in NDB3 flows through this mapper. | pending |
+| NDB5 | Linux-gated integration tests. New `crates/nimbus-node/tests/zbus_systemd_live.rs` gated on `#[cfg(all(target_os = "linux", feature = "systemd-dbus-integration-tests"))]`. Each test builds `ZbusSystemdClient` against the session bus (`systemctl --user`), starts a unique UUID-suffixed transient unit with `Type=exec` and a deterministic shell-free executable such as `/usr/bin/sleep`, observes JobRemoved with `"done"` for start, reads generated properties to verify active/running state, calls `stop_unit`, observes JobRemoved with a classified terminal result, verifies the unit reaches `inactive`/`dead`, and calls `ResetFailedUnit` in teardown. Additional cases: ExecStart-not-found path verifies `"failed"` result mapping, and permission-denied path forces system bus when not root. | pending |
+| NDB6 | CI lane. New `node-dbus-integration` job in `.github/workflows/ci.yml` on `ubuntu-24.04`. Pre-steps use `sudo apt-get update` and `sudo apt-get install -y dbus-user-session systemd-container`; enable or verify a user systemd session with `loginctl enable-linger "$USER"`, `XDG_RUNTIME_DIR=/run/user/$(id -u)`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${XDG_RUNTIME_DIR}/bus`, and `systemctl --user is-system-running` with an accepted degraded/starting fallback if GitHub's runner reports transient state. Uses the `setup-rust-cached` composite. Runs `cargo test -p nimbus-node --features systemd-dbus,systemd-dbus-integration-tests --test zbus_systemd_live --no-fail-fast`. Job is on the PR critical path (gates `rust-gate-summary.needs:`). Step summary emits a markdown table of pass/fail per test for the CI dashboard. | pending |
+| NDB7 | Activation + docs + closeout. Flip `systemd-dbus` to a default feature on `nimbus-node`. Because `ZbusSystemdClient::new(BusKind::System)` is async/fallible, add an explicit Linux constructor/factory such as `SystemdTransientUnitBackend::linux_systemd_default().await` instead of pretending a generic default type parameter can construct the live client by itself; other platforms keep the unavailable constructor path. Add `docs/operating/node-dbus-binding.md` with: bus selection rationale, `Manager.Subscribe` + JobRemoved signal-completion semantics, property encoding contract, error taxonomy, capability degradation matrix, privilege model. Refresh `docs/operating/node-lifecycle.md` + `docs/architecture/runtime/adapter-boundary.md` to point at the new operator doc. Flip every ledger row to `done`; append Execution Log with real SHAs; move plan to `docs/plans/archive/`; verifier's `plan_file()` accepts both paths; update routing in `AGENTS.md` + `docs/plans/README.md`. | pending |
 
 ## Completion Gate
 
@@ -102,38 +132,44 @@ Out of scope:
 
 1. Plan file exists (`docs/plans/node-dbus-client-binding-plan.md` or
    `docs/plans/archive/node-dbus-client-binding-plan.md`).
-2. Routing entry exists in `CLAUDE.md` (= `AGENTS.md`) naming this
-   plan.
+2. Routing entries exist in both `CLAUDE.md` (= `AGENTS.md`) and
+   `docs/plans/README.md` naming this plan.
 3. NDB0 deliverables present: baseline proof at
    `docs/plans/proof/node-dbus-client-binding/ndb0-baseline.md` and
    research note at
    `docs/plans/research/systemd-dbus-binding-rust-2026.md`.
 4. NDB1: `zbus_systemd` declared in workspace deps with feature set
-   `systemd1` + `zbus-async-tokio`; `crates/nimbus-node/Cargo.toml`
-   declares a `systemd-dbus` feature that pulls it in.
+   `systemd1` + `zbus-async-tokio`; direct `zbus` workspace dep
+   present; `crates/nimbus-node/Cargo.toml` declares `systemd-dbus`,
+   `systemd-dbus-test-bus`, and `systemd-dbus-integration-tests`
+   features.
 5. NDB2: `ZbusSystemdClient` type exists at
    `crates/nimbus-node/src/systemd_transient/zbus_client/mod.rs` (or
    `crates/nimbus-node/src/systemd_transient/zbus_client.rs`), is
    re-exported from `crates/nimbus-node/src/lib.rs`, and accepts a
    `BusKind` argument.
-6. NDB3: signal-based completion — source contains a
-   `receive_job_removed` (or equivalent
+6. NDB3: signal-based completion — source contains `subscribe()`
+   established before a `receive_job_removed` stream (or equivalent
    `MatchRule::new().interface("org.freedesktop.systemd1.Manager").member("JobRemoved")`)
-   call established *before* `StartTransientUnit`/`StopUnit` is
-   invoked (lexical order in source).
+   and both appear *before* `StartTransientUnit`/`StopUnit` is invoked
+   (lexical order in source). Source also contains centralized
+   `OwnedValue` property encoding for `StartTransientUnit`.
 7. NDB4: error taxonomy module exists at
    `crates/nimbus-node/src/systemd_transient/zbus_client/error.rs`
    with documented mapping for at least `Disconnected`,
-   `AccessDenied`, `UnknownObject`, `InvalidArgs`.
+   `AccessDenied`, `UnknownObject`, `NoSuchUnit`, `InvalidArgs`.
 8. NDB5: integration test file exists at
    `crates/nimbus-node/tests/zbus_systemd_live.rs` and is gated by
    both `target_os = "linux"` and the
    `systemd-dbus-integration-tests` feature.
 9. NDB6: CI job `node-dbus-integration` exists in
-   `.github/workflows/ci.yml`, runs on `ubuntu-24.04`, invokes the
-   integration test, and is listed in `rust-gate-summary.needs:`.
+   `.github/workflows/ci.yml`, runs on `ubuntu-24.04`, bootstraps
+   user-mode systemd with `sudo apt-get`, `loginctl`, and
+   `systemctl --user`, invokes the integration test, and is listed in
+   `rust-gate-summary.needs:`.
 10. NDB7: `systemd-dbus` is in the `default` feature list of
-    `crates/nimbus-node/Cargo.toml`, operator doc at
+    `crates/nimbus-node/Cargo.toml`, Linux live-client factory or
+    constructor is present, operator doc at
     `docs/operating/node-dbus-binding.md` exists, every ledger row in
     this plan is marked `done`, and latest CI run on `main` is green.
 
@@ -145,7 +181,8 @@ What this plan changes about the trust posture:
   Enterprise-cautious — defensible architecture, no evidence of
   liveness.
 - **After NDB3**: A real client speaks the systemd Manager1 D-Bus
-  protocol, including signal-correlated job completion (no polling).
+  protocol, including `Manager.Subscribe` plus signal-correlated job
+  completion (no polling).
 - **After NDB5**: Local integration tests prove start/stop/inspect
   round-trips against real systemd-user with negative-path coverage
   (ExecStart not found, permission denied).
@@ -170,7 +207,8 @@ What this plan changes about the trust posture:
 - `ndb2-skeleton.md` — module tree, constructor surface, capability
   probe sequence with sample trace
 - `ndb3-signal-completion.md` — race-test results (signal arrival
-  before/after method response); JobRemoved correlation diagram
+  before/after method response); `Manager.Subscribe` + JobRemoved
+  correlation diagram; `OwnedValue` property encoder evidence
 - `ndb4-error-taxonomy.md` — error mapping table; mock-driven unit
   test evidence
 - `ndb5-live-integration.md` — `cargo test` output showing all
@@ -183,10 +221,10 @@ What this plan changes about the trust posture:
 
 | NDB | Commit | Subject |
 |-----|--------|---------|
-| NDB0 | _pending_ | scaffold Node D-Bus Binding plan + verifier + research note |
+| NDB0 | 7686d55b | scaffold Node D-Bus Binding plan + verifier + research note |
 | NDB1 | _pending_ | wire zbus_systemd workspace dep behind systemd-dbus feature |
 | NDB2 | _pending_ | ZbusSystemdClient skeleton with bus selection + capability probe |
-| NDB3 | _pending_ | signal-correlated job completion via JobRemoved subscription |
+| NDB3 | _pending_ | signal-correlated job completion via Manager.Subscribe + JobRemoved |
 | NDB4 | _pending_ | zbus error taxonomy → nimbus_core::Error mapping |
 | NDB5 | _pending_ | Linux-gated integration tests against systemctl --user |
 | NDB6 | _pending_ | CI lane: node-dbus-integration on ubuntu-24.04 |

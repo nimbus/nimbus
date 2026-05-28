@@ -4,6 +4,16 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
+- `docs/plans/server-crate-extraction-completion-plan.md`
+  - proposed final extraction wave after the completed server seam readiness
+    plan. Ends in real crate extraction for `nimbus-artifacts`,
+    `nimbus-provenance`, `nimbus-services`, `nimbus-operator`, and the
+    per-adapter crates (`nimbus-mongodb`,
+    `nimbus-firebase`, `nimbus-cloud-functions`,
+    `nimbus-convex`) while keeping route mounting, listener
+    lifecycle, AppState construction, shutdown, and global composition in
+    `nimbus-server`. `nimbus-adapters` is allowed only as a final thin
+    re-export facade after per-adapter crates are clean.
 - `docs/plans/node-lts-runtime-trust-plan.md`
   - proposed Node LTS runtime trust plan. Starts from the current Deno-family
     Cargo patch graph and generated Node compatibility evidence, then removes
@@ -36,39 +46,40 @@ This directory prefers a small-number-of-plans model with clear ownership.
     rendering, and explicit system-tenant boundaries. The plan now includes a
     resumable agent-control-plane protocol and proof bundle under
     `docs/plans/proof/tenant-domain-and-node-enforcement-boundary/`.
-- `docs/plans/firecracker-snapshot-invocation-backend-plan.md`
-  - proposed follow-on plan for a Lambda-like Firecracker snapshot invocation
-    backend. Keeps this separate from long-lived krun service microVMs and
-    in-process V8/Deno/Node/Bun runtime pools, starts with upstream
-    Firecracker sidecar plus jailer, and gates product selectability on
-    verified OCI-to-rootfs template snapshots, snapshot restore invocation,
-    tenant-safe post-restore identity/config/credential projection,
-    storage/network/compute isolation, provenance checks, diagnostics,
-    latency evidence, and Linux/minicloud verification. Tier 1 of the
-    three-tier sandbox roadmap; pairs with the libkrun-session backend
-    that covers Tier 2 and Tier 3.
-- `docs/plans/computer-use-sandbox-plan.md`
-  - proposed plan for Tier 2 of the three-tier sandbox roadmap: long-lived
-    desktop sessions for agent computer use (browser/terminal/IDE inside a
-    libkrun guest with frame capture and input injection). Builds on the
-    shared `libkrun_session` backend, `nimbus-init` PID-1 guest agent
-    (muvm-guest-derived under MIT), virtio-input HID injection, optional
-    headless Wayland compositor, virtiofs/passt/vsock plumbing, and the
-    operator surface `nimbus sandbox session start/list/inspect/stop/screencast/input`.
-    Covers CUS0..CUS11. Backend design at
-    `docs/plans/research/libkrun-session-sandbox.md`.
-- `docs/plans/gpu-accelerated-sandbox-plan.md`
-  - proposed plan for Tier 3 of the three-tier sandbox roadmap: GPU-accelerated
-    AI workloads (model inference/training inside the sandbox with host GPU
-    exposed to guest). Shares the `libkrun_session` backend with Tier 2 but
-    layers a `GpuMediationPolicy` selector — Venus by default (Linux + macOS
-    via krunkit + virglrenderer + MoltenVK; ~75-80% native Metal on Apple
-    Silicon per llama.cpp evidence in libkrun #353/#377), virtio-gpu
-    native-context opt-in for trusted AMD/Adreno/Asahi tenants with strict
-    ioctl filters, CUDA workloads routed to a separate NVIDIA Linux fleet,
-    ROCm deferred. Operator surface `nimbus sandbox gpu doctor/benchmark/admit`.
-    Covers GAW0..GAW13. Backend decision doc at
-    `docs/plans/research/gpu-sandbox-backends.md`.
+- `docs/plans/node-dbus-client-binding-plan.md`
+  - active Node-side systemd D-Bus binding plan (NDB0..NDB7). Attaches
+    `lucab/zbus_systemd` (pin `=0.26000.0`, features `systemd1` +
+    `zbus-async-tokio`) and direct `zbus` to the existing
+    `SystemdDbusClient` trait, with `Manager.Subscribe` + JobRemoved
+    completion, centralized `OwnedValue` property encoding, Linux-gated
+    `systemctl --user` tests, `node-dbus-integration` CI, and Linux
+    default-constructor/factory closeout. Does not wire a production
+    `NodeWorkloadReconciler` caller.
+- `docs/plans/nimbus-sandbox-plan.md`
+  - proposed unified sandbox plan for every Nimbus workload on the
+    `nimbus-libkrun` fork via capability profiles (lambda / desktop / gpu).
+    Four bands ship semi-independently with per-band `/goal` prompts and
+    per-band success criteria: **Band B** — shared `libkrun_session`
+    backend skeleton, profile dispatch trait surface, and `nimbus-init`
+    PID-1 binary (B0..B2). **Band S** — Linux-KVM-only snapshot/restore
+    + MAP_PRIVATE fork-on-demand primitive port into `nimbus-libkrun`
+    (S0..S5, ~7,050 LoC net new + ~2,400 LoC tests = ~9,450 LoC across
+    the fork; lifts Firecracker snapshot patterns and zeroboot's
+    MAP_PRIVATE primitive, both Apache-2.0). **Band D** — desktop
+    profile: tenant-isolated sessions with headless compositor + frame
+    capture + virtio-input RPC; operator surface
+    `nimbus sandbox session start/list/inspect/stop/screencast/input`
+    (D1..D10). **Band G** — GPU profile: Venus default (Linux + macOS
+    via krunkit + virglrenderer + MoltenVK; ~75-80% native Metal on
+    Apple Silicon per libkrun #353/#377), virtio-gpu native-context
+    opt-in for trusted AMD/Adreno tenants with strict ioctl filters,
+    CUDA routed to a separate NVIDIA fleet, ROCm deferred (G1..G13).
+    Subsumes archived FSI, CUS, and GAW plans plus the standalone
+    snapshot-port plan (all archived 2026-05-27). Decision baseline
+    (D1-D12) at `docs/plans/research/vmm-landscape-2026.md`. Per-host
+    topology: Linux production runs direct libkrun-on-KVM microVMs;
+    macOS dev runs one outer machine-os VM with crun containers per
+    workload (D11/D12, no nested microVMs on macOS).
 - `docs/plans/research/nimbus-libkrun-fork-inventory.md`
   - load-bearing research doc that satisfies CUS0 + GAW0: the
     `nimbus-libkrun` fork has exactly one functional patch (TSI
@@ -84,7 +95,7 @@ This directory prefers a small-number-of-plans model with clear ownership.
     implementation phases instead of re-stating the assumptions.
 - `docs/plans/research/computer-use-capabilities-audit.md`
   - companion research doc to the fork inventory, satisfying the
-    "missing core computer-use capabilities" review for Tier 2.
+    "missing core computer-use capabilities" review for the desktop profile.
     Audits the plan against Anthropic Computer Use, OpenAI Operator,
     browser-use, OSWorld, AgentBench, Manus, Devin, and Genspark
     across six dimensions (perception, input, state/lifecycle,
@@ -98,11 +109,10 @@ This directory prefers a small-number-of-plans model with clear ownership.
     CUS-Snap, CUS-Trace v1, CUS-Red, CUS-Persist, CUS-DnD, CUS-Evt,
     CUS-Out, CUS-Net-Obs, CUS-Multi).
 - `docs/plans/research/vmm-landscape-2026.md`
-  - evidence base for the three-tier sandbox roadmap. Resolves the
-    recurring "could we use one VMM for everything" question by
-    recording May 2026 state of Firecracker (head `eaa62396d`,
-    Apache-2.0, charter-locked minimalism, vhost-user wired, prod-
-    grade snapshot/restore), libkrun (v1.18.1, LGPL-2.1, no
+  - decision baseline for the unified nimbus-libkrun sandbox architecture
+    (D1-D10, ratified 2026-05-27). Records May 2026 state of Firecracker
+    (head `eaa62396d`, Apache-2.0, charter-locked minimalism, vhost-user
+    wired, prod-grade snapshot/restore), libkrun (v1.18.1, Apache-2.0, no
     snapshot/restore on any branch, GPU+HVF+virtio-input strengths),
     Cloud Hypervisor (v52.0, Apache-2.0, snapshot version-locked, no
     GPU/input mainline), and the zeroboot Firecracker-derivative
@@ -110,14 +120,13 @@ This directory prefers a small-number-of-plans model with clear ownership.
     serial-I/O-only fork primitive). Captures the rust-vmm lineage
     (libkrun "incorporates code from Firecracker, rust-vmm and
     Cloud-Hypervisor"), the 2026 production-platform mapping
-    (AWS Lambda / Fly.io / Koyeb / Northflank / Modal / zeroboot),
-    a capability matrix, and the Firecracker vhost-user escape hatch
-    for delegated fs/gpu/snd. Surfaces six open decisions: Tier 1
-    mechanism (cold boot vs snapshot vs template-fork), zeroboot
-    build-vs-incorporate, libkrun snapshot porting, Sandbox trait
-    split (`InvocationSandbox` vs `SessionSandbox`), browser-only
-    agent lane, and Cloud Hypervisor unification re-evaluation
-    cadence.
+    (AWS Lambda / Fly.io / Koyeb / Northflank / Modal / zeroboot), a
+    capability matrix, and the Firecracker vhost-user escape hatch for
+    delegated fs/gpu/snd. Resolution: one VMM family (nimbus-libkrun)
+    carries every workload via capability profiles; FSI plan archived;
+    Firecracker snapshot/restore patterns and the zeroboot MAP_PRIVATE
+    fork primitive are lifted into the fork (see
+    `docs/plans/nimbus-sandbox-plan.md` Band S).
 - `docs/plans/final-nimbus-release-readiness-plan.md`
   - ready execution plan for tying the standardized fork releases back into
     the final `nimbus/nimbus` product release. Gates on live fork health,
@@ -141,7 +150,16 @@ Completed execution plans live under `docs/plans/archive/` and are not
 enumerated here. Use current architecture and operating docs first; open
 archived plans only when you need historical execution detail.
 
-- `docs/plans/storage-architecture-trust-hardening-plan.md`
+- `docs/plans/server-seam-extraction-readiness-plan.md`
+  - completed readiness baseline after
+    `docs/plans/nimbus-system-bridge-adapters-extraction-plan.md`. Prepared
+    the remaining server seams for honest extraction without creating
+    decorative crates: per-adapter readiness in MongoDB →
+    Firebase/provider-family → Cloud Functions → Convex order, artifact
+    effects, provenance, services, and operator/local admin. Completion is
+    gated on `scripts/verify-server-seam-extraction-readiness.sh`, focused
+    behavior tests, formatting, and `cargo check --workspace`.
+- `docs/plans/archive/storage-architecture-trust-hardening-plan.md`
   - completed execution record for the storage architecture trust-hardening
     wave (SATH0-SATH11, closed 2026-05-27). Added the durable tenant event
     journal for document, schema, table lifecycle, index lifecycle, scheduler,
@@ -727,15 +745,30 @@ the work is explicitly a historical review.
 - For microVM service security hardening, start with
   `docs/plans/archive/sandbox-microvm-hardening-plan.md` and
   `docs/plans/security/sandbox-isolation-audit.md`.
-- For sandbox tier work beyond the landed krun service baseline, hold the
-  three-tier roadmap in mind: Tier 1 Lambda (`firecracker-snapshot-invocation-backend-plan.md`),
-  Tier 2 computer use (`computer-use-sandbox-plan.md`), Tier 3 GPU AI workloads
-  (`gpu-accelerated-sandbox-plan.md`). Tier 2 and Tier 3 share the
-  `libkrun_session` backend designed in
-  `docs/plans/research/libkrun-session-sandbox.md`; the GPU mediation policy
-  matrix (Venus vs native-context vs CUDA-on-NVIDIA-fleet) lives at
-  `docs/plans/research/gpu-sandbox-backends.md`. Do not reflexively
-  recommend Firecracker for non-Lambda workloads.
+- For sandbox profile work beyond the landed krun service baseline, start
+  with `docs/plans/nimbus-sandbox-plan.md` — the single unified plan for
+  every Nimbus sandbox workload via capability profiles on the
+  `nimbus-libkrun` fork. Bands: B (shared backend skeleton + nimbus-init),
+  S (snapshot/fork mechanism, Linux-KVM-only per D11), D (desktop
+  profile), G (GPU profile). The `libkrun_session` backend design lives
+  in `docs/plans/research/libkrun-session-sandbox.md`; the GPU mediation
+  policy matrix (Venus vs native-context vs CUDA-on-NVIDIA-fleet) lives
+  at `docs/plans/research/gpu-sandbox-backends.md`; the decision baseline
+  (D1-D12) and snapshot/fork mechanism research live at
+  `docs/plans/research/vmm-landscape-2026.md`; the desktop product
+  capability audit is at
+  `docs/plans/research/computer-use-capabilities-audit.md`; the fork
+  patch inventory is at
+  `docs/plans/research/nimbus-libkrun-fork-inventory.md`; macOS host
+  topology rationale is at
+  `docs/plans/research/macos-host-vs-guest-control-plane-rationale.md`.
+  Firecracker is a reference baseline only — do not propose it as a
+  Nimbus VMM family. Archived predecessors at
+  `docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md`,
+  `docs/plans/archive/nimbus-libkrun-snapshot-port-plan.md`,
+  `docs/plans/archive/computer-use-sandbox-plan.md`, and
+  `docs/plans/archive/gpu-accelerated-sandbox-plan.md` (all retained as
+  baseline content for the unified plan's bands).
 - For repo-wide reliability-proof posture or CI flake investigation, start
   with `docs/architecture/testing/reliability-posture.md` and
   `docs/architecture/testing/ci-failure-investigation.md`.

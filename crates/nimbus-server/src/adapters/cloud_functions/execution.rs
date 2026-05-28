@@ -1,182 +1,58 @@
-use std::sync::Arc;
+use nimbus_cloud_functions::{CloudFunctionsRuntimeInvocation, CloudFunctionsRuntimeInvoker};
+use nimbus_core::Result;
 
-use nimbus_core::{Error, Result, StorageErrorKind, TenantId, TriggerInvocationRecord};
-use nimbus_engine::{Service, TriggerInvocationExecution, TriggerInvocationExecutor};
-use nimbus_runtime::{InvocationKind, InvocationRequest};
+#[cfg(test)]
+use nimbus_cloud_functions::CloudFunctionsTriggerExecutor;
 
-use super::host_bridge::CloudFunctionsHostBridge;
-use super::registry::CloudFunctionsRegistry;
 use crate::execution::errors::runtime_error_to_core;
 use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host,
-    next_runtime_server_request_id,
-};
-use crate::execution::runtime_admission::RuntimeExecutionAdmission;
-use crate::runtime_host::{RuntimeHostInvocation, RuntimeHostScope};
-use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
-    admit_runtime_invocation_decision,
 };
 
-pub(crate) struct CloudFunctionsTriggerExecutor {
-    service: Arc<Service>,
-    registry: Arc<CloudFunctionsRegistry>,
-    deployment_generation: u64,
-    runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-    tenant_isolation_mode: TenantIsolationMode,
-}
+#[derive(Debug, Clone)]
+pub(crate) struct ServerCloudFunctionsRuntimeInvoker;
 
-impl CloudFunctionsTriggerExecutor {
-    pub(crate) fn new(
-        service: Arc<Service>,
-        registry: Arc<CloudFunctionsRegistry>,
-        deployment_generation: u64,
-        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
-        tenant_isolation_mode: TenantIsolationMode,
-    ) -> Self {
-        Self {
-            service,
-            registry,
-            deployment_generation,
-            runtime_service_registry,
-            tenant_isolation_mode,
-        }
-    }
-}
-
-impl TriggerInvocationExecutor for CloudFunctionsTriggerExecutor {
-    fn execute_invocation(
+impl CloudFunctionsRuntimeInvoker for ServerCloudFunctionsRuntimeInvoker {
+    fn invoke_runtime_bundle(
         &self,
-        tenant_id: &TenantId,
-        record: &TriggerInvocationRecord,
-    ) -> TriggerInvocationExecution {
-        match self.execute_invocation_once(tenant_id, record) {
-            Ok(()) => TriggerInvocationExecution::completed(),
-            Err(error) => classify_cloud_functions_trigger_error(error),
-        }
-    }
-}
-
-impl CloudFunctionsTriggerExecutor {
-    fn execute_invocation_once(
-        &self,
-        tenant_id: &TenantId,
-        record: &TriggerInvocationRecord,
-    ) -> Result<()> {
-        let target = self
-            .registry
-            .required_firestore_trigger_target(&record.key.registration_id)?;
-        let args = serde_json::to_value(&record.event)
-            .map_err(|error| Error::Serialization(error.to_string()))?;
-        let server_request_id = next_runtime_server_request_id("cloud-functions-trigger");
-        let isolation =
-            TenantIsolationContext::system(tenant_id.clone(), "cloud_functions.trigger_runtime")
-                .with_deployment_generation(self.deployment_generation);
-        isolation.ensure_deployment_generation_matches(
-            self.deployment_generation,
-            "cloud functions trigger runtime deployment",
-        )?;
-        let bundle = self.registry.runtime_bundle();
-        isolation
-            .ensure_runtime_bundle_matches(&bundle, "cloud functions trigger runtime bundle")?;
-        let services = self
-            .runtime_service_registry
-            .snapshot_for_tenant(isolation.tenant_id());
-        let runtime_policy = self.registry.runtime_policy();
-        let decision = admit_runtime_invocation_decision(
-            &isolation,
-            &target.entrypoint,
-            Some(server_request_id.as_str()),
-            &runtime_policy,
-            RuntimeIsolationTier::InProcessUntrusted,
-            self.tenant_isolation_mode,
-            services.keys().cloned(),
-        )?;
-        decision
-            .ensure_runtime_bundle_matches(&bundle, "cloud functions trigger runtime bundle")?;
-        RuntimeExecutionAdmission::for_decision(&decision)
-            .ensure_in_process_available("cloud functions trigger runtime invocation")?;
-        let request = InvocationRequest {
-            kind: InvocationKind::Mutation,
-            function_name: target.entrypoint.clone(),
-            args,
-            page_size: None,
-            cursor: None,
-            auth: None,
-            services: services.clone(),
-        };
-        let bridge = Arc::new(CloudFunctionsHostBridge::build(
-            RuntimeHostScope::new(
-                self.service.clone(),
-                self.registry.runtime_policy(),
-                decision.clone(),
-            ),
-            RuntimeHostInvocation::new(
-                record.event.execution.principal().clone(),
-                Some(server_request_id.clone()),
-                InvocationKind::Mutation,
-            )
-            .with_trigger_write_origin(nimbus_core::TriggerWriteOrigin::new(
-                record.key.clone(),
-                record.depth(),
-            )),
-        )?);
-
+        invocation: CloudFunctionsRuntimeInvocation,
+    ) -> Result<serde_json::Value> {
         invoke_runtime_bundle_blocking_with_host(
-            &self.registry.runtime_executor(),
-            self.registry.runtime_policy(),
-            bridge.clone(),
-            bundle,
-            request,
+            &invocation.runtime_executor,
+            invocation.runtime_policy,
+            invocation.host_bridge,
+            invocation.bundle,
+            invocation.request,
             RuntimeBundleInvocationOptions::enforcing_policy_limit(
-                decision.tenant_id(),
-                Some(server_request_id.as_str()),
+                &invocation.tenant_id,
+                invocation.server_request_id.as_deref(),
                 None,
             )
-            .with_runtime_bundle_provenance_gate(self.registry.runtime_bundle_provenance()),
+            .with_runtime_bundle_provenance_gate(invocation.provenance_gate.as_ref()),
         )
-        .map_err(runtime_error_to_core)?;
-        bridge.commit_mutation_execution_unit()?;
-        Ok(())
-    }
-}
-
-fn classify_cloud_functions_trigger_error(error: Error) -> TriggerInvocationExecution {
-    let message = error.to_string();
-    match error {
-        Error::Cancelled | Error::ResourceExhausted(_) => {
-            TriggerInvocationExecution::retryable(message)
-        }
-        Error::Storage {
-            kind:
-                StorageErrorKind::Busy
-                | StorageErrorKind::Io
-                | StorageErrorKind::Transient
-                | StorageErrorKind::Unavailable,
-            ..
-        } => TriggerInvocationExecution::retryable(message),
-        _ => TriggerInvocationExecution::terminal(message),
+        .map_err(runtime_error_to_core)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::provider_family::firestore::locator_for_document_path;
+    use crate::adapters::firebase::locator_for_document_path;
 
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
     use std::process::Command;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use nimbus_core::{
         AtomicWrite, AtomicWriteBatch, Document, DocumentEventData, DocumentEventDocument,
-        DocumentPath, FirestoreCloudEventType, FirestoreTriggerMetadata, PrincipalContext,
-        ResourcePathBinding, SequenceNumber, TableName, Timestamp, TriggerCloudEvent,
+        DocumentPath, Error, FirestoreCloudEventType, FirestoreTriggerMetadata, PrincipalContext,
+        ResourcePathBinding, SequenceNumber, TableName, TenantId, Timestamp, TriggerCloudEvent,
         TriggerCommitMetadata, TriggerEvent, TriggerExecutionPrincipal, TriggerInvocationKey,
-        WriteKey, WritePrecondition, WriteSetMode,
+        TriggerInvocationRecord, WriteKey, WritePrecondition, WriteSetMode,
     };
+    use nimbus_engine::{Service, TriggerInvocationExecution, TriggerInvocationExecutor};
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -185,13 +61,33 @@ mod tests {
     use crate::adapters::cloud_functions::{
         CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
         CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsArtifactManifest,
-        CloudFunctionsAuthoringSurface, CloudFunctionsExecutionBinding,
+        CloudFunctionsAuthoringSurface, CloudFunctionsExecutionBinding, CloudFunctionsRegistry,
         CloudFunctionsSignatureType, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
         CloudFunctionsTargetsManifest,
     };
     use crate::router::RouterBuildConfig;
-    use crate::service_registry::SandboxCatalogRuntimeServiceRegistry;
+    use nimbus_artifacts::{
+        ArtifactVerificationEvidence, ArtifactVerificationPolicy, ArtifactVerificationRequest,
+        ArtifactVerifierBackend, ArtifactVerifierBackendIdentity, ArtifactVerifierResult,
+        SLSA_PROVENANCE_V1_PREDICATE_TYPE,
+    };
+    use nimbus_services::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
+    use nimbus_tenant::TenantIsolationMode;
     use nimbus_testing::{ServerFixture, wait_for_value};
+
+    #[derive(Debug)]
+    struct EmptyProvenanceVerifier;
+
+    impl ArtifactVerifierBackend for EmptyProvenanceVerifier {
+        fn verify_artifact(
+            &self,
+            _request: &ArtifactVerificationRequest,
+        ) -> ArtifactVerifierResult<ArtifactVerificationEvidence> {
+            Ok(ArtifactVerificationEvidence::new(
+                ArtifactVerifierBackendIdentity::new("fixture", "empty-provenance"),
+            ))
+        }
+    }
 
     #[test]
     fn cloud_functions_trigger_executor_reads_and_writes_via_runtime_bundle() {
@@ -266,6 +162,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
+            Arc::new(ServerCloudFunctionsRuntimeInvoker),
         );
 
         assert_eq!(
@@ -354,6 +251,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
+            Arc::new(ServerCloudFunctionsRuntimeInvoker),
         );
 
         assert_eq!(
@@ -446,6 +344,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
+            Arc::new(ServerCloudFunctionsRuntimeInvoker),
         );
 
         let users = TableName::new("users").expect("users table should parse");
@@ -947,6 +846,7 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
+            Arc::new(ServerCloudFunctionsRuntimeInvoker),
         );
 
         let outcome = executor.execute_invocation(
@@ -958,6 +858,89 @@ export {};
             TriggerInvocationExecution::TerminalFailure { ref error }
                 if error.contains("unknown handler exports.missing")
         ));
+    }
+
+    #[test]
+    fn cloud_functions_trigger_executor_fails_closed_when_runtime_bundle_provenance_is_rejected() {
+        let service_dir = tempdir().expect("service tempdir should build");
+        let service = Arc::new(Service::new(service_dir.path()).expect("service should build"));
+        let tenant_id = TenantId::new("demo").expect("tenant id should build");
+        service
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+
+        let users = TableName::new("users").expect("users table should parse");
+        let audit = TableName::new("audit").expect("audit table should parse");
+        let user_id = nimbus_core::DocumentId::from_key("alice").expect("user id should parse");
+        let app_dir = tempdir().expect("app tempdir should build");
+        write_cloud_functions_artifact(
+            app_dir.path(),
+            &[CloudFunctionsTargetDefinition {
+                name: "syncUser".to_string(),
+                entrypoint: "exports.syncUser".to_string(),
+                authoring_surface: CloudFunctionsAuthoringSurface::FirebaseV2,
+                signature_type: CloudFunctionsSignatureType::CloudEvent,
+                binding: CloudFunctionsTargetBinding::FirestoreDocument {
+                    event_type: FirestoreCloudEventType::Written,
+                    database: "(default)".to_string(),
+                    document: "users/{userId}".to_string(),
+                    namespace: None,
+                    execution: CloudFunctionsExecutionBinding::Service,
+                },
+            }],
+            r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({
+    request,
+    sessionId: `trigger:${request.function_name}`,
+  });
+  await ctx.db.insert("audit", { ran: true });
+  return { ok: true };
+};
+
+export {};
+"#,
+        );
+        let policy = ArtifactVerificationPolicy::new().require_provenance_from_source(
+            "https://github.com/nimbus/builder",
+            "github.com/nimbus/nimbus",
+            [SLSA_PROVENANCE_V1_PREDICATE_TYPE],
+        );
+        let registry = Arc::new(
+            CloudFunctionsRegistry::from_app_dir(app_dir.path())
+                .expect("registry should load")
+                .with_runtime_bundle_provenance_verifier(policy, EmptyProvenanceVerifier),
+        );
+        let runtime_service_registry: Arc<dyn RuntimeServiceRegistry> = Arc::new(
+            SandboxCatalogRuntimeServiceRegistry::new(Arc::new(EmptySandboxCatalog)),
+        );
+        let executor = CloudFunctionsTriggerExecutor::new(
+            service.clone(),
+            registry,
+            1,
+            runtime_service_registry,
+            TenantIsolationMode::LocalDevelopment,
+            Arc::new(ServerCloudFunctionsRuntimeInvoker),
+        );
+
+        let outcome = executor.execute_invocation(
+            &tenant_id,
+            &sample_trigger_record("syncUser", &users, &user_id),
+        );
+
+        match outcome {
+            TriggerInvocationExecution::TerminalFailure { error } => {
+                assert!(error.contains("runtime bundle provenance admission failed"));
+                assert!(error.contains("requires provenance predicate"));
+            }
+            other => panic!("expected terminal provenance failure, got {other:?}"),
+        }
+        assert!(
+            table_documents(&service, &tenant_id, audit.as_str())
+                .expect("audit query should succeed")
+                .is_empty(),
+            "provenance rejection must happen before runtime side effects"
+        );
     }
 
     fn sample_trigger_record(
@@ -1411,6 +1394,26 @@ functions.cloudEvent("syncUser", async (event) => {
         document_path: &str,
         fields: serde_json::Map<String, serde_json::Value>,
     ) {
+        const MAX_ATTEMPTS: usize = 5;
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            match seed_firebase_document_once(service, tenant_id, document_path, fields.clone()) {
+                Ok(()) => return,
+                Err(Error::Conflict(_)) if attempt < MAX_ATTEMPTS => {
+                    std::thread::sleep(Duration::from_millis(10 * attempt as u64));
+                }
+                Err(error) => panic!("batch should execute: {error:?}"),
+            }
+        }
+        panic!("batch should execute after conflict retries");
+    }
+
+    fn seed_firebase_document_once(
+        service: &Arc<Service>,
+        tenant_id: &TenantId,
+        document_path: &str,
+        fields: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<()> {
         let document_path = DocumentPath::from_segments(document_path.split('/'))
             .expect("document path should parse");
         let locator =
@@ -1418,18 +1421,17 @@ functions.cloudEvent("syncUser", async (event) => {
         let execution_unit = service
             .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
             .expect("execution unit should start");
-        execution_unit
-            .execute_atomic_write_batch(
-                AtomicWriteBatch::new(vec![AtomicWrite::Set {
-                    key: WriteKey::from(ResourcePathBinding::new(locator, document_path)),
-                    document: fields,
-                    mode: WriteSetMode::Overwrite,
-                    precondition: WritePrecondition::default(),
-                    transforms: Vec::new(),
-                }])
-                .expect("batch should build"),
-            )
-            .expect("batch should execute");
+        execution_unit.execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Set {
+                key: WriteKey::from(ResourcePathBinding::new(locator, document_path)),
+                document: fields,
+                mode: WriteSetMode::Overwrite,
+                precondition: WritePrecondition::default(),
+                transforms: Vec::new(),
+            }])
+            .expect("batch should build"),
+        )?;
+        Ok(())
     }
 
     fn firebase_document(

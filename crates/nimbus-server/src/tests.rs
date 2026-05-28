@@ -153,7 +153,7 @@ fn router_for_convex_sandbox_service_manager(
 fn router_for_convex_runtime_service_registry(
     service: Arc<Service>,
     convex_registry: ConvexRegistry,
-    runtime_service_registry: Arc<dyn crate::service_registry::RuntimeServiceRegistry>,
+    runtime_service_registry: Arc<dyn nimbus_services::RuntimeServiceRegistry>,
 ) -> Router {
     crate::router::build_router_for_test_runtime(
         RouterOptions::new(service).with_convex_registry(convex_registry),
@@ -999,8 +999,8 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
     );
 
     let runtime_capabilities =
-        fs::read_to_string(workspace_root.join("src/runtime_host/capabilities.rs"))
-            .expect("runtime host capabilities module should be readable");
+        fs::read_to_string(workspace_root.join("../nimbus-bridge/src/capabilities.rs"))
+            .expect("runtime host bridge capabilities module should be readable");
     assert!(
         !runtime_capabilities.contains("spawn_blocking("),
         "runtime host capabilities should not hide async write execution behind spawn_blocking"

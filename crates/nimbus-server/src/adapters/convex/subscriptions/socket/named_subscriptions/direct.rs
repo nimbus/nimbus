@@ -1,5 +1,5 @@
 use super::*;
-use crate::application_auth::normalize_principal_context;
+use nimbus_auth::normalize_principal_context;
 
 pub(super) async fn handle_direct_named_subscription(
     ctx: &SocketSessionCtx<'_>,
@@ -25,14 +25,20 @@ pub(super) async fn handle_direct_named_subscription(
             }
         };
 
-        subscription_plan_for_named_query(
+        match subscription_plan_for_named_query(
             ctx.convex_registry,
             &name,
             &args,
             page_size,
             cursor,
             query,
-        )
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                super::send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
+                return;
+            }
+        }
     };
     set_pending_transform(ctx.transforms, request_id.clone(), transform.clone());
     let request_id_for_worker = request_id.clone();

@@ -9,37 +9,30 @@ use super::execution::{
 use super::http_actions::{
     prepare_http_action_response_async, prepare_http_action_response_cancellable,
 };
-use super::registry::validate_runtime_http_route;
 use super::subscriptions::{
     is_scalar_filter_value, should_replace_lower_bound, should_replace_upper_bound,
 };
 use super::*;
+use nimbus_convex::validate_runtime_http_route;
 
 mod async_bridge;
 mod bridge;
-mod contract;
 mod db_ops;
 mod function_ops;
-mod pagination;
-mod payloads;
 mod read_tracking;
-mod responses;
 
 pub(crate) use bridge::{ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope};
-#[cfg(test)]
-pub(in crate::adapters::convex) use contract::ConvexHostCallRequest;
-pub(in crate::adapters::convex) use contract::convex_host_operation_name;
-#[cfg(test)]
-pub(in crate::adapters::convex) use contract::{ConvexHostCallFamily, ConvexHostCallOperation};
-pub(in crate::adapters::convex) use pagination::synthesize_runtime_paginate_cursor;
-pub(in crate::adapters::convex) use payloads::*;
-pub(crate) use responses::*;
-
-pub(in crate::adapters::convex) fn runtime_host_payload_value<T>(
-    payload: T,
-) -> std::result::Result<Value, NimbusRuntimeError>
-where
-    T: serde::Serialize,
-{
-    serde_json::to_value(payload).map_err(NimbusRuntimeError::from)
-}
+pub(in crate::adapters::convex) use nimbus_convex::host_bridge::convex_host_operation_name;
+pub(in crate::adapters::convex) use nimbus_convex::host_bridge::{
+    ConvexRuntimeActionPayload, ConvexRuntimeDbDeletePayload, ConvexRuntimeDbGetPayload,
+    ConvexRuntimeDbInsertPayload, ConvexRuntimeDbPatchPayload, ConvexRuntimeFunctionCallPayload,
+    ConvexRuntimeHttpRouteInvokePayload, ConvexRuntimeMutationPayload,
+    ConvexRuntimePaginatedQueryPayload, ConvexRuntimeQueryBuilderState, ConvexRuntimeQueryBuilders,
+    ConvexRuntimeQueryFilterPayload, ConvexRuntimeQueryOrderPayload,
+    ConvexRuntimeQueryPaginatePayload, ConvexRuntimeQueryPayload, ConvexRuntimeQueryStartPayload,
+    ConvexRuntimeQueryTakePayload, ConvexRuntimeQueryTerminalPayload,
+    ConvexRuntimeQueryWithIndexPayload, ConvexRuntimeResponseEnvelope,
+    ConvexRuntimeSchedulerCancelPayload, ConvexRuntimeSchedulerRunAfterPayload,
+    ConvexRuntimeSchedulerRunAtPayload, ConvexRuntimeServiceLookupPayload,
+    runtime_host_payload_value, synthesize_runtime_paginate_cursor,
+};

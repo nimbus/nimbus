@@ -1,7 +1,7 @@
 # Node LTS Runtime Trust Plan (NLRT)
 
 Status: `ready for execution, not yet started`
-Owner: `runtime / node-compat`
+Owner: `runtime / tenant / bridge / convex node-compat`
 Research baseline:
 `docs/plans/research/node-lts-runtime-and-deno-fork-strategy.md`
 Proof directory: `docs/plans/proof/node-lts-runtime-trust/`
@@ -37,8 +37,8 @@ the research baseline, proof files, and the current working tree.
    hidden assumptions.
 4. Inspect the ledger and execution log. Continue the single `in_progress` row
    if one exists. If none exists, start the lowest-numbered `pending` row.
-5. Load only the files named by that row, the acceptance criteria table, and
-   the immediately relevant tests.
+5. Load only the files named by that row, the ownership baseline below, the
+   acceptance criteria table, and the immediately relevant tests.
 6. Before handoff, context loss, or final response, update the row status,
    execution log, and proof artifact for completed work.
 
@@ -88,6 +88,26 @@ As of 2026-05-27:
   the currently failing Node Compatibility cron. NLRT does not silence that
   plan; it builds the next support architecture around it.
 
+Re-audited on 2026-05-28 after the crate extraction/refactor:
+
+- The Deno-family dependency shape in root `Cargo.toml` is still the same plan
+  risk: `deno_core` and `deno_node` are resolved through the `nimbus/deno` patch,
+  and `v8` is resolved through the `nimbus/rusty_v8` patch. NLRT1 still needs to
+  verify Cargo source closure rather than relying on hand inspection.
+- `nimbus-runtime` owns runtime compatibility targets, runtime limits/policies,
+  process metadata/bootstrap behavior, node-compat harness manifests, and the
+  eventual data-driven Node LTS registry.
+- `nimbus-tenant` now owns tenant-facing runtime admission and operator policy
+  mapping for Node20/Node22/Node24 profiles. Production permission acceptance
+  and rejection evidence belongs there.
+- `nimbus-bridge` now owns execution-time admission from tenant policy decisions
+  into runtime invocation. Fail-closed fallback behavior belongs there.
+- `nimbus-convex` now owns Convex manifest runtime selection, runtime lane
+  diagnostics, and `"use node"` action packaging/routing. Lane registry changes
+  must prove this extracted owner stays in sync.
+- `nimbus-server` remains a composition and transport owner for NLRT only where
+  HTTP/WebSocket wiring or end-to-end service behavior is being verified.
+
 ## Principles
 
 - Compatibility target is API shape, not host authority.
@@ -114,6 +134,8 @@ In scope:
 - Harness timeout/hang behavior for VM, worker, MessagePort, and subprocess
   fixtures.
 - Production versus local-development runtime grant profiles.
+- Extracted owner-crate contracts across `nimbus-runtime`, `nimbus-tenant`,
+  `nimbus-bridge`, and `nimbus-convex`.
 - `nimbus/deno` fork bump workflow documentation and verification.
 
 Non-goals:
@@ -128,34 +150,34 @@ Non-goals:
 
 | NLRT | Description | Status |
 | --- | --- | --- |
-| NLRT0 | Accept this plan and checkpoint the research baseline. Add routing from `docs/plans/README.md`. Capture the current dirty-worktree caveat and make sure this plan does not overwrite the active NCG cron-greening work. | pending |
+| NLRT0 | Accept this plan and checkpoint the research baseline. Add routing from `docs/plans/README.md`. Capture the current dirty-worktree caveat, the post-refactor owner-crate map, and make sure this plan does not overwrite the active NCG cron-greening work. | pending |
 | NLRT1 | Add a Deno fork provenance verifier. It must inspect `Cargo.toml`, `Cargo.lock`, and `cargo tree -p nimbus-runtime`, require the expected `nimbus/deno` and `nimbus/rusty_v8` tags/SHAs for patch-sensitive crates, and require an allowlist with reasons for Deno-family crates that intentionally remain on crates.io. | pending |
-| NLRT2 | Introduce a data-driven Node LTS lane registry. Include major, lane name, support phase, codename, upstream version, upstream tag, fixture corpus path, LTS start, maintenance start, EOL date, product-default flag, and evidence policy. Mark Node20 as EOL legacy/grace, Node22 and Node24 as supported LTS, and Node26 as preview-current. | pending |
-| NLRT3 | Generate `RuntimeCompatibilityTarget` metadata from the lane registry or make the enum a thin wrapper around registry records. Remove hard-coded synthetic version strings from `axes.rs`; keep compatibility-target parsing stable for public config. | pending |
+| NLRT2 | Introduce a data-driven Node LTS lane registry. Include major, lane name, support phase, codename, upstream version, upstream tag, fixture corpus path, LTS start, maintenance start, EOL date, product-default flag, and evidence policy. Mark Node20 as EOL legacy/grace, Node22 and Node24 as supported LTS, and Node26 as preview-current. Name every owner crate that consumes the registry. | pending |
+| NLRT3 | Generate `RuntimeCompatibilityTarget` metadata from the lane registry or make the enum a thin wrapper around registry records. Remove hard-coded synthetic version strings from `axes.rs`; keep compatibility-target parsing stable for public config and synchronized across `nimbus-tenant` operator policy and `nimbus-convex` runtime lane selection. | pending |
 | NLRT4 | Make runtime Node metadata truthful per lane. `process.version`, `process.versions.node`, `process.release.lts`, ABI/module metadata, and supplementary process-release-shape probes must match the lane registry or document an intentional non-Node component value. Close the active supplementary process-release-shape failure. | pending |
 | NLRT5 | De-center Node22 in docs and evidence. Keep a product default, but change dashboards, support tables, and prose so active LTS lanes are peers. Rename Node22-shaped internal composition roots only where it improves clarity without destabilizing bootstrap order. Add a stale-prose check for hand-written Node support claims. | pending |
 | NLRT6 | Add fixture provenance and sync automation. Every vendored Node fixture corpus must record upstream tag, commit, sync date, and selection command. The refresh path must fail if a supported LTS lane has unknown provenance or unclassified generated results. | pending |
 | NLRT7 | Harden the Node compatibility harness against hangs. Add per-fixture wall-clock timeouts, diagnostic artifacts for stalled event-loop or MessagePort cases, and a rule that ignored watchpoints are counted as watchpoints, not green support. Revisit the worker MessagePort VM hang before worker threads remain in any production in-process profile. | pending |
-| NLRT8 | Split runtime permission profiles by deployment intent. Add local-dev Node grants, production in-process Node grants, and production service/microVM Node grants as separate constructors or typed profiles. Remove generic loopback/listen/worker/inspector authority from the production in-process profile, virtualize or remove ambient `NODE_TLS_REJECT_UNAUTHORIZED`, and keep production admission as a fail-closed backstop. | pending |
+| NLRT8 | Split runtime permission profiles by deployment intent. Add local-dev Node grants, production in-process Node grants, and production service/microVM Node grants as separate constructors or typed profiles. Remove generic loopback/listen/worker/inspector authority from the production in-process profile, virtualize or remove ambient `NODE_TLS_REJECT_UNAUTHORIZED`, keep `nimbus-tenant` production admission as a fail-closed policy backstop, and keep `nimbus-bridge` execution admission fail-closed when no fallback route is available. | pending |
 | NLRT9 | Define the Deno fork upstream-first policy in operating docs. For each fork bump, record whether the patch is upstream Deno, Nimbus-only host integration, or temporary carry. Require publish/tag/repin proof before release. | pending |
-| NLRT10 | Expand active-LTS package canaries and oracle comparisons. For every supported LTS lane, run package canaries that exercise ESM/CJS loading, process metadata, fs/path, streams, timers, crypto, fetch/http, and Convex `"use node"` action packaging. No lane may borrow the default lane's canary result. | pending |
+| NLRT10 | Expand active-LTS package canaries and oracle comparisons. For every supported LTS lane, run package canaries that exercise ESM/CJS loading, process metadata, fs/path, streams, timers, crypto, fetch/http, and `nimbus-convex` Convex `"use node"` action packaging. No lane may borrow the default lane's canary result. | pending |
 | NLRT11 | Closeout. Add `scripts/verify-node-lts-runtime-trust.sh`, update public runtime docs, archive or supersede stale Node support prose, run the verifier plus focused runtime tests, and move this plan to `docs/plans/archive/` with proof links. | pending |
 
 ## Per-Phase Acceptance Criteria
 
 | NLRT | Required proof artifact | Acceptance criteria |
 | --- | --- | --- |
-| NLRT0 | `nlrt0-baseline-and-control-plane.md` | Plan status flipped to `active`; proof directory README exists; `docs/plans/README.md` routes to this plan; research baseline exists; current dirty worktree caveat captured; NCG overlap note captured; execution log initialized; `npm run docs:validate-refs:strict` passes. |
+| NLRT0 | `nlrt0-baseline-and-control-plane.md` | Plan status flipped to `active`; proof directory README exists; `docs/plans/README.md` routes to this plan; research baseline exists; current dirty worktree caveat captured; post-refactor owner-crate map captured with relevant Cargo patch tags; NCG overlap note captured; execution log initialized; `npm run docs:validate-refs:strict` passes. |
 | NLRT1 | `nlrt1-deno-fork-provenance.md` | A verifier or verifier subcommand prints resolved Deno-family crate sources; patch-sensitive crates resolve to the expected `nimbus/deno` or `nimbus/rusty_v8` tag and SHA; crates.io Deno-family exceptions are allowlisted with reasons; missing or mixed-source crates fail the verifier; proof records `cargo tree -p nimbus-runtime` evidence. |
-| NLRT2 | `nlrt2-node-lts-lane-registry.md` | A checked-in lane registry exists; registry schema is validated by a test or script; Node20 is `eol_legacy` or equivalent, Node22 is Maintenance LTS, Node24 is Active LTS, Node26 is Current preview; product default is explicit and separate from evidence policy; docs cite the registry rather than duplicated hand-maintained lane facts. |
-| NLRT3 | `nlrt3-runtime-target-metadata.md` | Runtime compatibility target metadata is derived from the registry or validated against it; public config parsing for `"20"`, `"22"`, and `"24"` still works; unsupported or EOL-active mistakes fail tests; hard-coded synthetic version strings in `axes.rs` are removed or made unreachable for supported LTS metadata. |
+| NLRT2 | `nlrt2-node-lts-lane-registry.md` | A checked-in lane registry exists; registry schema is validated by a test or script; Node20 is `eol_legacy` or equivalent, Node22 is Maintenance LTS, Node24 is Active LTS, Node26 is Current preview; product default is explicit and separate from evidence policy; `nimbus-runtime`, `nimbus-tenant`, and `nimbus-convex` registry consumers are named; docs cite the registry rather than duplicated hand-maintained lane facts. |
+| NLRT3 | `nlrt3-runtime-target-metadata.md` | Runtime compatibility target metadata is derived from the registry or validated against it; public config parsing for `"20"`, `"22"`, and `"24"` still works; unsupported or EOL-active mistakes fail tests; `nimbus-tenant` operator policy mapping and `nimbus-convex` selected runtime lane behavior are tested against the registry; hard-coded synthetic version strings in `axes.rs` are removed or made unreachable for supported LTS metadata. |
 | NLRT4 | `nlrt4-truthful-process-metadata.md` | Per-lane tests assert `process.version`, `process.versions.node`, `process.release.name`, `process.release.lts`, and ABI/module metadata; supported LTS lanes pass supplementary process-release-shape probes; intentional differences between Node API contract metadata and actual embedded V8/Deno/Nimbus versions are documented in diagnostics outside the Node API claim. |
 | NLRT5 | `nlrt5-equal-lane-evidence-docs.md` | Public docs no longer treat Node22 as evidence-priority language; generated evidence remains the support source of truth; stale prose checks reject hand-written pass-rate or support overclaims; internal Node22-shaped filenames are either justified in proof or renamed with tests; product default language remains explicit. |
 | NLRT6 | `nlrt6-fixture-provenance-sync.md` | Every vendored Node fixture corpus records upstream tag, commit, sync date, and selection command; refresh tooling fails on missing provenance; supported LTS lanes fail on unclassified generated results in published support slices; proof includes one dry-run and one checked generated-output comparison. |
 | NLRT7 | `nlrt7-harness-timeouts-and-hangs.md` | Node compat harness has per-fixture wall-clock timeout coverage; stalled event-loop, VM, worker, MessagePort, and subprocess diagnostics produce artifacts; ignored watchpoints are reported separately from green support; the known worker MessagePort VM hang is classified with an exit criterion before worker threads remain in any production in-process profile. |
-| NLRT8 | `nlrt8-permission-profile-split.md` | Runtime exposes separate local-dev, production in-process, and production service/microVM Node profiles; production in-process profile has no generic loopback, wildcard listen, worker, inspector, run, FFI, or ambient TLS-disable env grants; production admission tests still reject unsafe custom policies; local-dev behavior remains covered by tests. |
+| NLRT8 | `nlrt8-permission-profile-split.md` | Runtime exposes separate local-dev, production in-process, and production service/microVM Node profiles; production in-process profile has no generic loopback, wildcard listen, worker, inspector, run, FFI, or ambient TLS-disable env grants; `nimbus-tenant` production admission tests still reject unsafe custom policies; `nimbus-bridge` execution admission tests fail closed when a fallback route is unavailable; local-dev behavior remains covered by tests. |
 | NLRT9 | `nlrt9-deno-fork-upstream-policy.md` | Operating docs describe the fork workflow: unpin to local canonical fork, prove, commit/tag/push fork, repin Nimbus, rerun verification; every carried patch has upstream/Nimbus-only/temporary disposition; release proof requires tag/SHA/changelog mapping. |
-| NLRT10 | `nlrt10-active-lts-canaries-and-oracles.md` | Active LTS lanes have lane-local package canaries for ESM/CJS loading, process metadata, fs/path, streams, timers, crypto, fetch/http, and Convex `"use node"` packaging; canary reports cannot borrow the product-default lane; oracle comparisons use version-matched Node binaries or recorded Node output. |
+| NLRT10 | `nlrt10-active-lts-canaries-and-oracles.md` | Active LTS lanes have lane-local package canaries for ESM/CJS loading, process metadata, fs/path, streams, timers, crypto, fetch/http, and `nimbus-convex` Convex `"use node"` packaging; canary reports cannot borrow the product-default lane; oracle comparisons use version-matched Node binaries or recorded Node output. |
 | NLRT11 | `nlrt11-closeout.md` | `scripts/verify-node-lts-runtime-trust.sh` exists and passes; all ledger rows are `done`; public docs and generated evidence are updated; stale Node support prose is archived, regenerated, or made subordinate to generated evidence; final verification commands pass; this plan is archived with proof links. |
 
 ## Completion Gate
@@ -176,7 +198,8 @@ must pass these conditions:
    unsupported pass-rate prose.
 9. Production in-process Node profile does not include generic loopback,
    wildcard listen, worker, inspector, run, FFI, or ambient TLS-disable env
-   grants.
+   grants, and the `nimbus-tenant` plus `nimbus-bridge` admission tests prove
+   unsafe policies fail closed.
 10. Harness timeout/hang diagnostics exist for worker, MessagePort, VM, and
     subprocess fixture families.
 11. Active LTS package canaries have lane-local results.
@@ -191,7 +214,9 @@ Expected final verification:
 cargo fmt --all --check
 bash scripts/verify-node-lts-runtime-trust.sh
 cargo test -p nimbus-runtime process_release_shape -- --nocapture
-cargo test -p nimbus-server production_untrusted_runtime_admission -- --nocapture
+cargo test -p nimbus-tenant production_untrusted_runtime_admission -- --nocapture
+cargo test -p nimbus-bridge runtime_execution_admission -- --nocapture
+cargo test -p nimbus-convex runtime_access -- --nocapture
 ```
 
 When NLRT touches generated evidence, also run the documented Node evidence
@@ -211,6 +236,7 @@ refresh path for the affected lanes before closeout.
 | Exact Node patch metadata is mistaken for actual embedded native component parity. | Expose Node API contract metadata separately from actual V8/Deno/Nimbus diagnostic metadata. |
 | Node26 reaches LTS before the registry exists. | Treat Node26 as preview-current now and make promotion a registry data change plus evidence gate, not an enum/code archaeology task. |
 | Production admission remains correct but constructors stay confusing. | Split constructors/profiles so the first selected type communicates local-dev versus production intent. |
+| Extracted crates let one owner pass tests while another consumer drifts. | Completion criteria and focused verification cover `nimbus-runtime`, `nimbus-tenant`, `nimbus-bridge`, and `nimbus-convex` explicitly. |
 | Deno fork carries grow silently. | Verifier requires tag/SHA and patch disposition; release proof must cite the fork changelog. |
 
 ## Readiness Audit
@@ -229,6 +255,20 @@ Findings:
   `docs/plans/node-compat-cron-greening-plan.md`; the resume protocol and risk
   register now make that coordination explicit.
 
+Re-audited on 2026-05-28 after the maintainability/refactor extraction.
+
+Findings:
+
+- The plan still needs to run; the refactor does not change the Node LTS, Deno
+  fork, permission, or evidence objectives.
+- The plan did need updates so an executing agent does not implement against an
+  old `nimbus-server`-centric ownership model. Runtime metadata belongs in
+  `nimbus-runtime`; tenant policy in `nimbus-tenant`; runtime invocation
+  admission in `nimbus-bridge`; Convex lane selection and `"use node"` packaging
+  in `nimbus-convex`.
+- Acceptance criteria and final verification now include the extracted owners,
+  so completion cannot be claimed by updating only one crate.
+
 ## References
 
 - `docs/plans/research/node-lts-runtime-and-deno-fork-strategy.md`
@@ -238,3 +278,8 @@ Findings:
 - `docs/architecture/runtime/permission-model.md`
 - `docs/architecture/runtime/node-compat-supplementary-failures.md`
 - `docs/architecture/runtime/node-compat-surface-matrix.md`
+- `crates/nimbus-runtime/src/`
+- `crates/nimbus-tenant/src/runtime_admission.rs`
+- `crates/nimbus-tenant/src/operator_policy.rs`
+- `crates/nimbus-bridge/src/admission.rs`
+- `crates/nimbus-convex/src/registry/resolution/runtime_access.rs`

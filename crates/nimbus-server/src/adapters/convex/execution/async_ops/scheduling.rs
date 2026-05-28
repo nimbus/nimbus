@@ -50,7 +50,7 @@ pub(in crate::adapters::convex) async fn execute_schedule_command_async(
                         .await?
                 }
             };
-            crate::system_tenant::sync_scheduler_state_for_tenant_async(service, tenant_id).await?;
+            nimbus_system::sync_scheduler_state_for_tenant_async(service, tenant_id).await?;
             Ok(Value::String(job_id.to_string()))
         }
         ConvexScheduledCommand::RunAt {
@@ -92,7 +92,7 @@ pub(in crate::adapters::convex) async fn execute_schedule_command_async(
                         .await?
                 }
             };
-            crate::system_tenant::sync_scheduler_state_for_tenant_async(service, tenant_id).await?;
+            nimbus_system::sync_scheduler_state_for_tenant_async(service, tenant_id).await?;
             Ok(Value::String(job_id.to_string()))
         }
         ConvexScheduledCommand::Cancel { job_id } => {
@@ -118,7 +118,7 @@ pub(in crate::adapters::convex) async fn execute_schedule_command_async(
                         .await?
                 }
             }
-            crate::system_tenant::delete_scheduled_job_state_async(
+            nimbus_system::delete_scheduled_job_state_async(
                 service,
                 tenant_id,
                 &job_id_for_projection,

@@ -35,7 +35,7 @@ pub(crate) async fn schedule_after(
     let job_id = service
         .schedule_mutation_async(tenant_id.clone(), request)
         .await?;
-    crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, &tenant_id).await?;
+    nimbus_system::sync_scheduler_state_for_tenant_async(&service, &tenant_id).await?;
     Ok((
         StatusCode::CREATED,
         Json(ScheduleResponse {
@@ -80,7 +80,7 @@ pub(crate) async fn schedule_at(
     let job_id = service
         .schedule_mutation_async(tenant_id.clone(), request)
         .await?;
-    crate::system_tenant::sync_scheduler_state_for_tenant_async(&service, &tenant_id).await?;
+    nimbus_system::sync_scheduler_state_for_tenant_async(&service, &tenant_id).await?;
     Ok((
         StatusCode::CREATED,
         Json(ScheduleResponse {
@@ -109,6 +109,6 @@ pub(crate) async fn cancel_scheduled_job(
     service
         .cancel_scheduled_job_async(tenant_id.clone(), job_id.clone())
         .await?;
-    crate::system_tenant::delete_scheduled_job_state_async(&service, &tenant_id, &job_id).await?;
+    nimbus_system::delete_scheduled_job_state_async(&service, &tenant_id, &job_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

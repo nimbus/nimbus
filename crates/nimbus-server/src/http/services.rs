@@ -102,7 +102,7 @@ impl ServiceLifecycleResponse {
 
 fn sandbox_service_manager(
     state: &AppState,
-) -> Result<Arc<crate::service_manager::SandboxServiceManager>, AppError> {
+) -> Result<Arc<nimbus_services::SandboxServiceManager>, AppError> {
     state.sandbox_service_manager().ok_or_else(|| {
         AppError::not_found(
             "service lifecycle endpoints require a server-owned sandbox service manager",

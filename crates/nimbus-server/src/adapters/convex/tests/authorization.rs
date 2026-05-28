@@ -13,8 +13,8 @@ use super::super::execution::execute_query_result_cancellable_with_auth;
 use super::super::host_bridge::{ConvexHostBridge, ConvexRuntimeResponseEnvelope};
 use super::fixture::host_bridge_fixture;
 use super::*;
-use crate::application_auth::normalize_principal_context;
-use crate::service_registry::SandboxCatalogRuntimeServiceRegistry;
+use nimbus_auth::normalize_principal_context;
+use nimbus_services::SandboxCatalogRuntimeServiceRegistry;
 
 fn messages_table() -> TableName {
     TableName::new("messages").expect("table name should be valid")
@@ -165,18 +165,18 @@ fn mutation_bridge(
     tenant_id: TenantId,
     principal: nimbus_core::PrincipalContext,
 ) -> ConvexHostBridge {
-    let isolation = crate::tenant::TenantIsolationContext::application(
+    let isolation = nimbus_tenant::TenantIsolationContext::application(
         tenant_id,
         principal.clone(),
         "convex_authorization_test",
     );
-    let decision = crate::tenant::admit_runtime_invocation_decision(
+    let decision = nimbus_tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_authorization_test",
         None,
         &registry.runtime_policy(),
-        crate::tenant::RuntimeIsolationTier::InProcessUntrusted,
-        crate::tenant::TenantIsolationMode::LocalDevelopment,
+        nimbus_tenant::RuntimeIsolationTier::InProcessUntrusted,
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
     )
     .expect("authorization test tenant isolation decision should build");
@@ -425,18 +425,18 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
     )
     .expect("direct documents should encode as Convex JSON");
     let registry = Arc::new(ConvexRegistry::empty());
-    let isolation = crate::tenant::TenantIsolationContext::application(
+    let isolation = nimbus_tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         normalize_principal_context(Some(&auth)),
         "convex_authorization_test",
     );
-    let decision = crate::tenant::admit_runtime_invocation_decision(
+    let decision = nimbus_tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_authorization_test",
         None,
         &registry.runtime_policy(),
-        crate::tenant::RuntimeIsolationTier::InProcessUntrusted,
-        crate::tenant::TenantIsolationMode::LocalDevelopment,
+        nimbus_tenant::RuntimeIsolationTier::InProcessUntrusted,
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
     )
     .expect("authorization query tenant isolation decision should build");

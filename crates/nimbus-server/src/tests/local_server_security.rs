@@ -5,7 +5,8 @@ use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 use super::*;
 use crate::local_server::{
-    LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
+    LOCAL_SESSION_COOKIE_NAME, LocalServerPaths, LocalServerSecurityState,
+    load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
 
@@ -144,6 +145,9 @@ async fn native_api_and_debug_routes_require_local_admin_auth() {
 async fn deploy_admin_requires_local_admin_header_even_with_deploy_bearer() {
     let temp = tempdir().expect("tempdir should build");
     let (local_server_security, token) = local_server_security(temp.path());
+    let session = local_server_security
+        .create_session_for_local_admin_token(&token.token)
+        .expect("local session cookie should issue");
     let fixture = ServiceFixture::new(|path| Service::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.service())
@@ -171,6 +175,20 @@ async fn deploy_admin_requires_local_admin_header_even_with_deploy_bearer() {
         .await
         .expect("deploy request should send");
     assert_eq!(missing_local_admin.status(), StatusCode::UNAUTHORIZED);
+
+    let session_cookie_denied = server
+        .client()
+        .post(server.http_url("/api/admin/deploy"))
+        .bearer_auth(DEPLOY_TOKEN)
+        .header(
+            header::COOKIE,
+            format!("{LOCAL_SESSION_COOKIE_NAME}={}", session.value),
+        )
+        .json(&request)
+        .send()
+        .await
+        .expect("session-cookie deploy request should send");
+    assert_eq!(session_cookie_denied.status(), StatusCode::UNAUTHORIZED);
 
     let authorized = server
         .client()

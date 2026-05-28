@@ -2,21 +2,24 @@
 status: research
 owners: sandbox-tier-roadmap
 related:
+  - docs/plans/nimbus-sandbox-plan.md
   - docs/plans/research/libkrun-session-sandbox.md
   - docs/plans/research/gpu-sandbox-backends.md
-  - docs/plans/computer-use-sandbox-plan.md
-  - docs/plans/gpu-accelerated-sandbox-plan.md
-  - docs/plans/firecracker-snapshot-invocation-backend-plan.md
+  - docs/plans/archive/computer-use-sandbox-plan.md
+  - docs/plans/archive/gpu-accelerated-sandbox-plan.md
+  - docs/plans/archive/nimbus-libkrun-snapshot-port-plan.md
+  - docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md
   - docs/plans/archive/nimbus-libkrun-runtime-stack-plan.md
 ---
 
 # nimbus-libkrun fork inventory + muvm consumption map
 
-This research doc establishes the **load-bearing surface** that the three-tier
-sandbox roadmap (Tier 1 Firecracker, Tier 2 computer use, Tier 3 GPU AI)
-assumes already exists in our fork plus what we need to lift from
-`AsahiLinux/muvm`. It is the prerequisite for the `CUS0` and `GAW0` phases
-of the two new active plans.
+This research doc establishes the **load-bearing surface** that the
+unified-lift sandbox roadmap (single `nimbus-libkrun` backend with
+`lambda` / `desktop` / `gpu` profiles — D1–D12 in
+`docs/plans/research/vmm-landscape-2026.md`) assumes already exists in
+our fork plus what we need to lift from `AsahiLinux/muvm`. It is the
+prerequisite for Band B / D / G in `docs/plans/nimbus-sandbox-plan.md`.
 
 The doc is observational, not prescriptive — it records what is in the
 fork today and where the muvm assets live, so subsequent execution phases
@@ -39,16 +42,16 @@ can cite specific commits and paths instead of restating assumptions.
 Ordered oldest → newest. Subsystem column names the largest changed
 directory in each commit's diffstat.
 
-| # | Commit  | Subsystem                | Category     | Tier relevance   | Notes |
-|---|---------|--------------------------|--------------|------------------|-------|
-| 1 | 15bcf49 | `src/devices/src/virtio/vsock` + `src/libkrun` + `include/libkrun.h` | **functional** | Tier 1 (and any TSI-mode lane) | The only functional libkrun change in the fork. Adds public C entrypoint `krun_set_port_map_with_bind_address`. |
-| 2 | 4eb3fc5 | `src/devices/src/virtio/vsock/tsi_stream.rs` (tests) | functional-test | Tier 1 | Covers #1's listen mapping. |
+| # | Commit  | Subsystem                | Category     | Profile relevance | Notes |
+|---|---------|--------------------------|--------------|-------------------|-------|
+| 1 | 15bcf49 | `src/devices/src/virtio/vsock` + `src/libkrun` + `include/libkrun.h` | **functional** | `lambda` (and any TSI-mode lane) | The only functional libkrun change in the fork. Adds public C entrypoint `krun_set_port_map_with_bind_address`. |
+| 2 | 4eb3fc5 | `src/devices/src/virtio/vsock/tsi_stream.rs` (tests) | functional-test | `lambda` | Covers #1's listen mapping. |
 | 3 | 917674c | release tooling           | scaffolding  | All (release lane) | Nimbus-side build/release helpers. |
 | 4 | c261a65 | pkgconfig layout          | scaffolding  | All (packaging)    | Relocatable pkgconfig for Homebrew/apt/copr install paths. |
 | 5 | c37b534 | CI workflow               | scaffolding  | All (release lane) | Installs `libcap-ng` in release CI. |
 | 6 | 922ca06 | CI workflow               | scaffolding  | All (release lane) | Installs `clang` in release CI. |
-| 7 | 0fbf4d2 | TSI test imports          | hygiene      | Tier 1 | Cleanup tied to #1. |
-| 8 | 9d66ad1 | IPv6 test helper imports  | hygiene      | Tier 1 | Cleanup tied to #1. |
+| 7 | 0fbf4d2 | TSI test imports          | hygiene      | `lambda` | Cleanup tied to #1. |
+| 8 | 9d66ad1 | IPv6 test helper imports  | hygiene      | `lambda` | Cleanup tied to #1. |
 | 9 | 3bdc5ec | release contract docs     | scaffolding  | All (release lane) | Nimbus release contract update. |
 |10 | a8daa86 | build mechanics           | scaffolding  | All (build lane)   | Follows libkrun v1.18 init build path. |
 
@@ -84,29 +87,31 @@ Documented error: `-ENOTSUP` when **passt networking is used**.
    the host. This is the load-bearing fail-closed behavior that the
    landed Linux krun service baseline relies on.
 
-### Tier mapping
+### Profile mapping
 
-- **Tier 1 (Firecracker Lambda):** does not use TSI at all. Firecracker
-  uses its own tap-device networking; this hook is **not relevant** to
-  Tier 1.
-- **Tier 2 (computer use, libkrun_session) and Tier 3 (GPU AI,
-  libkrun_session):** **probably not relevant** in their default shape.
-  Both tiers want guest-initiated outbound (browser fetches, model
-  weight downloads, telemetry), which means **passt networking**, and
-  this hook is documented `-ENOTSUP` under passt. If a Tier 2/3 session
-  needs to expose a guest port to the host (e.g., a debug VNC), it will
-  need to either (a) use the TSI mode and lose passt-style outbound, or
-  (b) add a passt-side equivalent of this hook, which would be a new
-  upstream contribution.
+- **`lambda` profile (the former "Tier 1 Firecracker" lane, now also
+  on `libkrun_session`):** TSI-mode is one of the options under
+  consideration for outbound; the bind-address hook applies if TSI is
+  used. Decision per Band B in
+  [`docs/plans/nimbus-sandbox-plan.md`](../nimbus-sandbox-plan.md).
+- **`desktop` and `gpu` profiles (both on `libkrun_session`):**
+  **probably not relevant** in their default shape. Both profiles
+  want guest-initiated outbound (browser fetches, model weight
+  downloads, telemetry), which means **passt networking**, and this
+  hook is documented `-ENOTSUP` under passt. If a desktop/gpu
+  session needs to expose a guest port to the host (e.g., a debug
+  VNC), it will need to either (a) use the TSI mode and lose
+  passt-style outbound, or (b) add a passt-side equivalent of this
+  hook, which would be a new upstream contribution.
 - **Existing krun service baseline:** this is the production user of
   the hook. Continues to apply.
 
-### Open question for the plans
+### Open question for the plan
 
-Whether Tier 2 / Tier 3 need a **passt-mode equivalent** of the TSI
-bind-address hook. If yes, this is a second functional libkrun patch
-(or an upstream-first contribution to libkrun's passt path). Tracked
-in §7 below.
+Whether the desktop or gpu profile needs a **passt-mode equivalent**
+of the TSI bind-address hook. If yes, this is a second functional
+libkrun patch (or an upstream-first contribution to libkrun's passt
+path). Tracked in §7 below.
 
 ## 4. Upstreaming opportunities
 
@@ -169,7 +174,7 @@ crates/muvm/
 `input-linux-sys`, `nix`, `neli`, `udev`, `tokio`, `serde`,
 `procfs`, `rustix`. No GPL contamination.
 
-## 6. Per-component disposition for `nimbus-init` + libkrun_session backend
+## 6. Per-component disposition for `nimbus-guest` + libkrun_session backend
 
 Dispositions:
 
@@ -179,34 +184,34 @@ Dispositions:
   against `Sandbox` trait + `nimbus-engine` integration.
 - **Skip** — not relevant to Nimbus scope.
 
-| Component                              | Disposition | Tier  | Reasoning |
-|----------------------------------------|-------------|-------|-----------|
-| `crates/krun-sys`                      | Reference   | All   | We maintain `nimbus-libkrun`; build our own bindings against our `include/libkrun.h` (which now has the bind-address hook). |
-| `crates/muvm/src/bin/muvm.rs`          | Reference   | All   | Launcher is Nimbus-domain (engine-owned, tenant-scoped, admission-gated). |
-| `cli_options.rs`                       | Skip        | —     | Nimbus uses clap; CLI lives in `nimbus-bin`. |
-| `config.rs`                            | Reference   | All   | Read for `KrunBaseConfig` field layout; our spec is `LibkrunSessionSandboxSpec`. |
-| `cpu.rs`                               | Lift+mod    | All   | vCPU sizing logic is portable across host OSes. |
-| `env.rs`                               | Reference   | All   | Nimbus tenant env policy differs (no host-env passthrough by default). |
-| `launch.rs` (host)                     | Reference   | All   | Canonical example of `krun_set_*` call order — read it carefully, write our own. |
-| `monitor.rs`                           | Reference   | All   | Nimbus has its own service supervisor (`nimbus-engine`). |
-| `net.rs` (host)                        | Lift+mod    | T2/T3 | passt invocation patterns reusable; bind to Nimbus sandbox-egress policy. |
-| `tty.rs`                               | Skip        | T2    | T2 uses screencast + virtio-input, not TTY proxy. |
-| `hidpipe_common.rs`                    | Lift        | T2    | Shared HID type definitions — pure protocol. |
-| `hidpipe_server.rs`                    | Lift+mod    | T2    | udev → virtio-input forwarding; clean mechanism. Rework for Nimbus-driven (not udev-driven) injection from operator commands. |
-| `types.rs`                             | Reference   | All   | Look at wire format inspiration; we'll define our own. |
-| `utils/env.rs,fs.rs,launch.rs,stdio.rs,tty.rs` | Lift | All | Generic process/fs helpers. |
-| **guest** `muvm-guest.rs` (entry)      | Lift+mod    | T2/T3 | PID-1 entry; basis for `nimbus-init`. Strip Asahi-Linux defaults; add Nimbus control protocol. |
-| `guest/mod.rs`                         | Lift+mod    | T2/T3 | Guest dispatcher pattern. |
-| `guest/mount.rs`                       | Lift+mod    | T2/T3 | virtiofs mount logic — clean mechanism. |
-| `guest/net.rs` (guest)                 | Lift+mod    | T2/T3 | Guest network bring-up. |
-| `guest/server.rs`, `server_worker.rs`, `socket.rs` | Reference | T2/T3 | vsock control channel; Nimbus has its own wire protocol (`nimbus-engine` <→ guest). |
-| `guest/user.rs`                        | Lift        | T2/T3 | uid/gid mapping is generic. |
-| `guest/hidpipe.rs`                     | Lift        | T2    | virtio-input consumer in guest — pairs with host `hidpipe_server.rs`. |
-| `guest/box64.rs`, `fex.rs`             | **Reference, follow-on** | T2 post-v0 | x86-on-aarch64 binary translation. v0 Tier 2 covers the common case where host arch and workload arch match. Becomes load-bearing when (a) Nimbus serves Tier 2 sessions from **aarch64 hosts** (Apple Silicon dev path; Graviton/Ampere cloud) and (b) the agent must drive **x86-only Linux apps** (legacy proprietary apps, MATLAB/CAD/Adobe, Wine/Proton for Windows apps). Both Box64 and FEX are MIT; reusable. See §6.1 below. |
-| `guest/x11.rs`                         | Skip (wrong topology) | T2 | muvm forwards guest X11 traffic **out to a host X11 server**. Nimbus Tier 2 is headless-capture: X11 apps connect to **in-guest XWayland** (built into wlroots) and render to the headless Wayland session we screencast. AI-agent X11-app driving is solved by the wlroots path, **not by lifting muvm code**. |
-| `guest/bridge/pipewire.rs`             | **Reference, follow-on (strategic)** | T2 post-v0 | PipeWire on modern Linux is the **unified media server** — audio AND camera/V4L2 integration. The guest PipeWire wiring is the foundation for four of the six Tier 2 media capabilities (audio capture, audio injection, webcam capture, webcam injection — see §6.2). Topology differs from muvm: Nimbus captures/injects media as **streams over vsock** (parallel to screencast and HID), not as host-PipeWire forwarding — so we lift the guest-side **virtual source/sink wiring**, not the host bridge endpoint. v0 reserves spec-type fields and vsock channel IDs for these streams but does not implement them. |
+| Component                              | Disposition | Profile  | Reasoning |
+|----------------------------------------|-------------|----------|-----------|
+| `crates/krun-sys`                      | Reference   | All      | We maintain `nimbus-libkrun`; build our own bindings against our `include/libkrun.h` (which now has the bind-address hook). |
+| `crates/muvm/src/bin/muvm.rs`          | Reference   | All      | Launcher is Nimbus-domain (engine-owned, tenant-scoped, admission-gated). |
+| `cli_options.rs`                       | Skip        | —        | Nimbus uses clap; CLI lives in `nimbus-bin`. |
+| `config.rs`                            | Reference   | All      | Read for `KrunBaseConfig` field layout; our spec is `LibkrunSessionSandboxSpec`. |
+| `cpu.rs`                               | Lift+mod    | All      | vCPU sizing logic is portable across host OSes. |
+| `env.rs`                               | Reference   | All      | Nimbus tenant env policy differs (no host-env passthrough by default). |
+| `launch.rs` (host)                     | Reference   | All      | Canonical example of `krun_set_*` call order — read it carefully, write our own. |
+| `monitor.rs`                           | Reference   | All      | Nimbus has its own service supervisor (`nimbus-engine`). |
+| `net.rs` (host)                        | Lift+mod    | desktop/gpu | passt invocation patterns reusable; bind to Nimbus sandbox-egress policy. |
+| `tty.rs`                               | Skip        | desktop  | The desktop profile uses screencast + virtio-input, not TTY proxy. |
+| `hidpipe_common.rs`                    | Lift        | desktop  | Shared HID type definitions — pure protocol. |
+| `hidpipe_server.rs`                    | Lift+mod    | desktop  | udev → virtio-input forwarding; clean mechanism. Rework for Nimbus-driven (not udev-driven) injection from operator commands. |
+| `types.rs`                             | Reference   | All      | Look at wire format inspiration; we'll define our own. |
+| `utils/env.rs,fs.rs,launch.rs,stdio.rs,tty.rs` | Lift | All  | Generic process/fs helpers. |
+| **guest** `muvm-guest.rs` (entry)      | Lift+mod    | desktop/gpu | PID-1 entry; basis for `nimbus-guest`. Strip Asahi-Linux defaults; add Nimbus control protocol. |
+| `guest/mod.rs`                         | Lift+mod    | desktop/gpu | Guest dispatcher pattern. |
+| `guest/mount.rs`                       | Lift+mod    | desktop/gpu | virtiofs mount logic — clean mechanism. |
+| `guest/net.rs` (guest)                 | Lift+mod    | desktop/gpu | Guest network bring-up. |
+| `guest/server.rs`, `server_worker.rs`, `socket.rs` | Reference | desktop/gpu | vsock control channel; Nimbus has its own wire protocol (`nimbus-engine` <→ guest). |
+| `guest/user.rs`                        | Lift        | desktop/gpu | uid/gid mapping is generic. |
+| `guest/hidpipe.rs`                     | Lift        | desktop  | virtio-input consumer in guest — pairs with host `hidpipe_server.rs`. |
+| `guest/box64.rs`, `fex.rs`             | **Reference, follow-on** | desktop post-v0 | x86-on-aarch64 binary translation. v0 desktop profile covers the common case where host arch and workload arch match. Becomes load-bearing when (a) Nimbus serves desktop sessions from **aarch64 hosts** (Apple Silicon dev path; Graviton/Ampere cloud) and (b) the agent must drive **x86-only Linux apps** (legacy proprietary apps, MATLAB/CAD/Adobe, Wine/Proton for Windows apps). Both Box64 and FEX are MIT; reusable. See §6.1 below. |
+| `guest/x11.rs`                         | Skip (wrong topology) | desktop | muvm forwards guest X11 traffic **out to a host X11 server**. The Nimbus desktop profile is headless-capture: X11 apps connect to **in-guest XWayland** (built into wlroots) and render to the headless Wayland session we screencast. AI-agent X11-app driving is solved by the wlroots path, **not by lifting muvm code**. |
+| `guest/bridge/pipewire.rs`             | **Reference, follow-on (strategic)** | desktop post-v0 | PipeWire on modern Linux is the **unified media server** — audio AND camera/V4L2 integration. The guest PipeWire wiring is the foundation for four of the six desktop-profile media capabilities (audio capture, audio injection, webcam capture, webcam injection — see §6.2). Topology differs from muvm: Nimbus captures/injects media as **streams over vsock** (parallel to screencast and HID), not as host-PipeWire forwarding — so we lift the guest-side **virtual source/sink wiring**, not the host bridge endpoint. v0 reserves spec-type fields and vsock channel IDs for these streams but does not implement them. |
 | `guest/bridge/x11.rs`                  | Skip (wrong topology) | — | Same reasoning as `guest/x11.rs`: forwards to host X11 we don't have; in-guest XWayland is the answer. |
-| `guest/bridge/common.rs`, `mod.rs`     | **Reference, follow-on** | T2 post-v0 | Bridge dispatcher framework. Carries with the PipeWire follow-on. X11 bridge dispatch can be omitted at lift time. |
+| `guest/bridge/common.rs`, `mod.rs`     | **Reference, follow-on** | desktop post-v0 | Bridge dispatcher framework. Carries with the PipeWire follow-on. X11 bridge dispatch can be omitted at lift time. |
 
 **Lift estimate for v0:** ~10 files lifted wholesale + ~6 lifted with
 modifications. Of the remaining surface, **X11 host-bridge code stays
@@ -216,10 +221,10 @@ follow-on lift candidates** when their owning capability phases land
 (see §6.1). Roughly half of `muvm-guest` is in v0 scope; the other
 half is staged.
 
-**Attribution mechanism:** add `LICENSE-MIT-muvm` to the `nimbus-init`
+**Attribution mechanism:** add `LICENSE-MIT-muvm` to the `nimbus-guest`
 crate root and a per-file header on every lifted file naming
 `AsahiLinux/muvm` and the commit SHA at lift time. Bookkept in a
-single `THIRD_PARTY.md` for nimbus-init.
+single `THIRD_PARTY.md` for nimbus-guest.
 
 ## 6.1 AI agent computer use capability map
 
@@ -243,7 +248,7 @@ explicit. Reading order: §6 says "what disposition"; §6.1 says
 | **Inject audio into guest as virtual mic** (agent speaks into apps, voice-first workflows) | Guest PipeWire virtual **source** ← vsock audio stream | **follow-on** | (above) |
 | **Capture virtual webcam output from guest** (app inside guest produces video — meeting client camera, video editor preview, screen-cap app) | Guest V4L2 + PipeWire camera integration → vsock video stream | **follow-on** | (above; PipeWire handles V4L2) |
 | **Inject virtual webcam into guest** (agent provides synthetic/recorded video as a camera for Zoom/Meet/Teams) | Guest `v4l2loopback`-class virtual camera ← vsock video stream | **follow-on** | (above) |
-| Use GPU-accelerated apps inside the session     | Tier 3 GPU mediation policy (cross-tier)         | covered by GAW   | (none from muvm directly; see §7)         |
+| Use GPU-accelerated apps inside the session     | `gpu`-profile mediation policy (cross-profile)   | covered by Band G | (none from muvm directly; see §7)         |
 | Open multiple windows / desktop multitasking    | wlroots compositor manages it                    | yes              | none                                      |
 | Copy/paste between sandbox and outside          | wl_data_device proxy over vsock                  | **follow-on**    | none (Nimbus-original wire format)        |
 | Read files inside sandbox                       | virtiofs tenant share                            | yes              | `guest/mount.rs` (lift+mod)               |
@@ -386,52 +391,61 @@ reason to deviate.
 
 ## 8. Likely additional libkrun patches (open questions)
 
-These are **anticipated** Nimbus-permanent fork patches that the new
-Tier 2/3 plans imply. Listed as research questions, not commitments.
+These are **anticipated** Nimbus-permanent fork patches that the
+desktop and gpu profiles imply. Listed as research questions, not
+commitments.
 
 1. **passt-mode bind-address hook.** Equivalent of 15bcf49 for the
-   passt path, so Tier 2/3 sessions can expose a guest port to a
+   passt path, so desktop/gpu sessions can expose a guest port to a
    specific host bind address while keeping outbound through passt.
-   Without this, Tier 2/3 cannot match the Tier 1 fail-closed
-   semantics. Owner: CUS phase that wires session port exposure.
+   Without this, the desktop/gpu profiles cannot match the `lambda`
+   profile's fail-closed semantics. Owner: Band D phase that wires
+   session port exposure.
 2. **Per-tenant ioctl filter at the virtio-gpu native-context boundary.**
    Native-context mode forwards driver ioctls (amdgpu/freedreno/asahi)
    straight to the host KMS device. Trusted tenants only. Need a
    per-tenant allowlist enforced at the host-side virtio-gpu device
    model. Upstream native-context support lives in
    `rutabaga_gfx/cross_domain`; Nimbus likely needs a thin filter
-   shim. Owner: GAW phase that admits native-context tenants.
+   shim. Owner: Band G phase that admits native-context tenants.
 3. **virtio-gpu memfd path resilience.** Nimbus already has the
    cross_domain audio-glitches fix (`c4a0168`) and CMD_WRITE handling
-   (`8fbeb48`) in its upstream pulls, but Tier 3 stress (large model
-   weight streaming through shared memory) may surface more. Owner:
-   GAW stress phase.
+   (`8fbeb48`) in its upstream pulls, but `gpu`-profile stress (large
+   model weight streaming through shared memory) may surface more.
+   Owner: Band G stress phase.
 4. **vsock multi-descriptor TX chains** (`d1ed94c`, already in our
-   upstream pulls). Important for the high-volume control channel
-   Tier 2 (per-frame screencast frames) needs. **No new patch
-   required**; cite this commit in CUS frame-capture phase.
+   upstream pulls). Important for the high-volume control channel the
+   desktop profile (per-frame screencast frames) needs. **No new patch
+   required**; cite this commit in the Band D frame-capture phase.
 
 ## 9. Wire-up to active plans
 
-- `docs/plans/computer-use-sandbox-plan.md` — CUS0 (libkrun fork patch
-  inventory) is satisfied by §2-3 of this doc plus the muvm map in §5-6.
-  CUS phases that wire screencast and input injection should cite this
-  doc as the reference, not muvm directly.
-- `docs/plans/gpu-accelerated-sandbox-plan.md` — GAW0 (libkrun GPU
-  surface inventory) is satisfied by §3 and §7 of this doc. GAW phases
-  that wire Venus default and native-context opt-in should cite §7's
-  canonical call shape and §8's anticipated ioctl-filter patch.
-- `docs/plans/firecracker-snapshot-invocation-backend-plan.md` — out of
-  scope for libkrun fork (Firecracker is a separate VMM). The §2 patch
-  list confirms there is no Firecracker code path shared with libkrun
-  in our fork.
+- `docs/plans/nimbus-sandbox-plan.md` Band D (desktop profile) — the
+  fork-patch inventory is satisfied by §2-3 of this doc plus the muvm
+  map in §5-6. Band D phases that wire screencast and input injection
+  should cite this doc as the reference, not muvm directly.
+- `docs/plans/nimbus-sandbox-plan.md` Band G (GPU profile) — the
+  libkrun GPU surface inventory is satisfied by §3 and §7 of this
+  doc. Band G phases that wire Venus default and native-context
+  opt-in should cite §7's canonical call shape and §8's anticipated
+  ioctl-filter patch.
+- `docs/plans/nimbus-sandbox-plan.md` Band S (Linux-KVM snapshot/fork)
+  — the unified-lift band that ports Firecracker snapshot/restore
+  patterns + zeroboot MAP_PRIVATE fork primitive into this fork.
+  Replaces the archived
+  `docs/plans/archive/nimbus-libkrun-snapshot-port-plan.md` and the
+  archived
+  `docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md`,
+  which are both out of scope here (Firecracker is no longer a Nimbus
+  VMM family). The §2 patch list confirms there is no Firecracker
+  code path shared with libkrun in our fork today.
 
 ## 10. Risk register
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
 | muvm upstream drifts faster than we can rebase lifts | medium | low | Pin every lifted file to a recorded muvm commit SHA; rebase only when a feature gap demands it. |
-| passt-mode bind-address gap forces a new fork patch | medium | medium | Treat as anticipated; add as a GAW0/CUS0 follow-up patch if a Tier 2/3 session needs guest-port host exposure. |
+| passt-mode bind-address gap forces a new fork patch | medium | medium | Treat as anticipated; add as a Band D / Band G follow-up patch if a desktop/gpu session needs guest-port host exposure. |
 | Native-context ioctl filter has no upstream contract | high | medium | Build as a Nimbus-permanent fork patch; revisit upstreaming after design stabilizes. |
 | CUDA/ROCm-on-libkrun research overturned later | medium | low | Memory `project_sandbox_three_tier_roadmap` already records "CUDA-only and ROCm-only need Linux fleet". Native-context for AMD covers ROCm aspirations later. |
 | muvm's `hidpipe_*` is udev-driven, but Nimbus wants operator-driven injection | high | low | Anticipated as "Lift+mod" in §6 — operator commands replace udev events. |
@@ -444,7 +458,7 @@ Tier 2/3 plans imply. Listed as research questions, not commitments.
 
 ## 11. Follow-ups
 
-- When CUS0 or GAW0 begins implementation, clone muvm to
+- When Band B / D / G phases begin implementation, clone muvm to
   `~/src/github.com/AsahiLinux/muvm` (mirror layout convention with
   `~/src/github.com/containers/`) and pin every lift to a recorded
   commit SHA.
@@ -452,10 +466,10 @@ Tier 2/3 plans imply. Listed as research questions, not commitments.
   when the runtime-stack-plan reactivates; the two forks are tightly
   paired in our release lane.
 - Reconfirm the GPU-mode flag set against upstream libkrun headers
-  when a Tier 3 phase begins (in case `VIRGLRENDERER_*` constants
+  when a Band G phase begins (in case `VIRGLRENDERER_*` constants
   drift).
-- Promote four new Tier 2 follow-on phases when the v0 computer-use
-  loop closes:
+- Promote four new desktop-profile follow-on phases when the v0
+  computer-use loop closes:
   - **CUS-Aud:** guest PipeWire virtual sink/source + vsock audio
     stream (channels `MEDIA_AUDIO_OUT`, `MEDIA_AUDIO_IN`) + operator
     surface for Zoom/Meet/Teams scenarios and voice-first workflows.

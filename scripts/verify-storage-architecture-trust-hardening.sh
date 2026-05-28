@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for
-# docs/plans/storage-architecture-trust-hardening-plan.md.
+# docs/plans/archive/storage-architecture-trust-hardening-plan.md.
 #
 # This gate is intentionally behavior-biased: proof files are necessary, but
 # each completed phase must also leave typed code, tests, or docs that can be
@@ -11,7 +11,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN="docs/plans/storage-architecture-trust-hardening-plan.md"
+PLAN="docs/plans/archive/storage-architecture-trust-hardening-plan.md"
 PROOF_DIR="docs/plans/proof/storage-architecture-trust-hardening"
 DEBT_DOC="docs/technical-debt.md"
 

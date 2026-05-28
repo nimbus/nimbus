@@ -14,12 +14,8 @@ mod local_server;
 mod machine_lifecycle;
 mod owned_tasks;
 mod protocol;
-mod provider_family;
 mod router;
-mod runtime_host;
-mod sandbox;
 mod service_manager;
-mod service_registry;
 mod state;
 mod system;
 mod system_tenant;
@@ -59,34 +55,36 @@ pub use machine_lifecycle::{
     MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
     MachineLifecycleSnapshot, MachineUpdateRequest,
 };
-pub use router::{RouterOptions, build_router};
-pub use sandbox::{
-    EmptySandboxCatalog, EmptySandboxServiceCatalog, SandboxCatalog, SandboxServiceCatalog,
-    SandboxServiceLaunch,
+pub use nimbus_artifacts::{
+    ArtifactAdmission, ArtifactAttestationEvidence, ArtifactProvenanceRequirement,
+    ArtifactSignatureEvidence, ArtifactSignatureRequirement, ArtifactVerificationEvidence,
+    ArtifactVerificationPolicy, ArtifactVerificationRequest, ArtifactVerificationSubject,
+    ArtifactVerificationSubjectKind, ArtifactVerifierBackend, ArtifactVerifierBackendIdentity,
+    ArtifactVerifierError, ArtifactVerifierErrorKind, ArtifactVerifierResult,
+    CompositeArtifactVerifierBackend,
 };
-pub use service_manager::SandboxServiceManager;
-pub use system_tenant::SystemTenantStatusEvidenceWriter;
+pub use nimbus_services::{
+    EmptySandboxCatalog, EmptySandboxServiceCatalog, SandboxCatalog, SandboxServiceCatalog,
+    SandboxServiceLaunch, SandboxServiceManager,
+};
+pub use nimbus_system::SystemTenantStatusEvidenceWriter;
+pub use router::{RouterOptions, build_router};
 pub use tenant::{
-    ArtifactAdmission, ArtifactAttestationEvidence, ArtifactImageVerificationProvider,
-    ArtifactProvenanceRequirement, ArtifactSignatureEvidence, ArtifactSignatureRequirement,
-    ArtifactVerificationEvidence, ArtifactVerificationPolicy, ArtifactVerificationRequest,
-    ArtifactVerificationSubject, ArtifactVerificationSubjectKind, ArtifactVerifierBackend,
-    ArtifactVerifierBackendIdentity, ArtifactVerifierError, ArtifactVerifierErrorKind,
-    ArtifactVerifierResult, CompositeArtifactVerifierBackend, OPERATOR_POLICY_SCHEMA_VERSION,
-    OperatorAuditPolicy, OperatorDeniedEgressEvent, OperatorExternalPolicyBackend,
-    OperatorExternalPolicyBackendError, OperatorExternalPolicyBackendErrorKind,
-    OperatorExternalPolicyBackendIdentity, OperatorExternalPolicyBackendResult,
-    OperatorExternalPolicyDecision, OperatorExternalPolicyEngine, OperatorExternalPolicyEvidence,
-    OperatorExternalPolicyOutcome, OperatorExternalPolicyRequest, OperatorImagePolicy,
-    OperatorImageProvenancePolicy, OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy,
-    OperatorNetworkPolicy, OperatorPolicyAcceptedRisk, OperatorPolicyAdvisory,
-    OperatorPolicyAdvisoryKind, OperatorPolicyAdvisorySeverity, OperatorPolicyDecisionEvaluation,
-    OperatorPolicyDefaults, OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDocument,
-    OperatorPolicyDraft, OperatorPolicyDraftApproval, OperatorPolicyDraftKind,
-    OperatorPolicyDraftStatus, OperatorPolicyEvaluation, OperatorPolicyImageSummary,
-    OperatorPolicyLifecycle, OperatorPolicyMetadata, OperatorPolicyProofReport,
-    OperatorPolicyQuotaSummary, OperatorPolicyReloadOutcome, OperatorPolicyReloadState,
-    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorRuntimeProfile,
+    ArtifactImageVerificationProvider, OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy,
+    OperatorDeniedEgressEvent, OperatorExternalPolicyBackend, OperatorExternalPolicyBackendError,
+    OperatorExternalPolicyBackendErrorKind, OperatorExternalPolicyBackendIdentity,
+    OperatorExternalPolicyBackendResult, OperatorExternalPolicyDecision,
+    OperatorExternalPolicyEngine, OperatorExternalPolicyEvidence, OperatorExternalPolicyOutcome,
+    OperatorExternalPolicyRequest, OperatorImagePolicy, OperatorImageProvenancePolicy,
+    OperatorImageSignaturePolicy, OperatorNetworkEndpointPolicy, OperatorNetworkPolicy,
+    OperatorPolicyAcceptedRisk, OperatorPolicyAdvisory, OperatorPolicyAdvisoryKind,
+    OperatorPolicyAdvisorySeverity, OperatorPolicyDecisionEvaluation, OperatorPolicyDefaults,
+    OperatorPolicyDiff, OperatorPolicyDiffSummary, OperatorPolicyDocument, OperatorPolicyDraft,
+    OperatorPolicyDraftApproval, OperatorPolicyDraftKind, OperatorPolicyDraftStatus,
+    OperatorPolicyEvaluation, OperatorPolicyImageSummary, OperatorPolicyLifecycle,
+    OperatorPolicyMetadata, OperatorPolicyProofReport, OperatorPolicyQuotaSummary,
+    OperatorPolicyReloadOutcome, OperatorPolicyReloadState, OperatorPolicyWorkload,
+    OperatorQuotaPolicy, OperatorRuntimePolicy, OperatorRuntimeProfile,
     OperatorSandboxEgressPolicy, OperatorSandboxEgressRulePolicy, OperatorSandboxPolicy,
     OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
     RuntimeIsolationTier, SLSA_PROVENANCE_V1_PREDICATE_TYPE, TENANT_ISOLATION_EVENT_SCHEMA_VERSION,

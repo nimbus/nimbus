@@ -35,7 +35,7 @@ impl RunTrace {
         status: &str,
         error: Option<&str>,
     ) {
-        let record = crate::system_tenant::RunRecord {
+        let record = nimbus_system::RunRecord {
             tenant_id,
             function_path: &self.function_path,
             kind: self.kind,
@@ -44,7 +44,7 @@ impl RunTrace {
             status,
             error,
         };
-        if let Err(record_error) = crate::system_tenant::record_run_async(service, record).await {
+        if let Err(record_error) = nimbus_system::record_run_async(service, record).await {
             warn!(
                 function_path = %self.function_path,
                 kind = self.kind,

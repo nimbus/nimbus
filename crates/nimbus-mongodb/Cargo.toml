@@ -1,0 +1,32 @@
+[package]
+name = "nimbus-mongodb"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true
+bson.workspace = true
+crc32c.workspace = true
+hmac.workspace = true
+nimbus-core = { path = "../nimbus-core" }
+nimbus-engine = { path = "../nimbus-engine" }
+nimbus-tenant = { path = "../nimbus-tenant" }
+pbkdf2.workspace = true
+ring.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
+nimbus-testing = { path = "../nimbus-testing" }

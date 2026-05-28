@@ -6,11 +6,11 @@ use tokio::io::{BufReader, BufWriter};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
 
-use super::AuthConfig;
-use super::commands;
-use super::connection::{ConnectionState, next_request_id};
-use super::error::MongoError;
-use super::wire::{self, WireError};
+use nimbus_mongodb::AuthConfig;
+use nimbus_mongodb::commands;
+use nimbus_mongodb::connection::{ConnectionState, next_request_id};
+use nimbus_mongodb::error::MongoError;
+use nimbus_mongodb::wire::{self, WireError};
 
 pub async fn run_listener(listener: TcpListener, service: Arc<Service>) {
     run_listener_with_auth(listener, service, Arc::new(AuthConfig::default())).await;

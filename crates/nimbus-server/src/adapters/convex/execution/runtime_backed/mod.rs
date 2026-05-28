@@ -1,7 +1,5 @@
 use super::*;
-use crate::adapters::convex::subscriptions::types::{
-    ConvexRuntimeSubscriptionSetup, ConvexSubscriptionTransform,
-};
+use nimbus_convex::subscriptions::{ConvexRuntimeSubscriptionSetup, ConvexSubscriptionTransform};
 
 mod invoke;
 mod subscriptions;

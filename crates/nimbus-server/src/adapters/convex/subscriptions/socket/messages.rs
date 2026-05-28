@@ -1,5 +1,5 @@
 use super::*;
-use crate::application_auth::normalize_principal_context;
+use nimbus_auth::normalize_principal_context;
 
 pub(super) async fn handle_socket_message(
     message: Message,

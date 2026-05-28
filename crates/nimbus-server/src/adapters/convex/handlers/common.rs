@@ -1,9 +1,8 @@
 use super::*;
-use crate::application_auth::{
-    normalize_principal_context, verify_optional_application_auth_from_headers_in_deployment,
-};
+use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
 use crate::local_server::authorize_standard_server_access;
-use crate::tenant::TenantIsolationContext;
+use nimbus_auth::normalize_principal_context;
+use nimbus_tenant::TenantIsolationContext;
 
 pub(super) async fn registry_and_auth_for_path(
     state: &Arc<AppState>,
@@ -37,7 +36,7 @@ pub(super) async fn registry_and_auth(
     ),
     AppError,
 > {
-    if crate::system_tenant::is_system_tenant_id(tenant_id) {
+    if nimbus_system::is_system_tenant_id(tenant_id) {
         let registry = state
             .system_convex_registry()
             .ok_or_else(|| AppError::not_found(expectation))?;
@@ -55,7 +54,7 @@ pub(super) async fn registry_and_auth(
                         origin: crate::local_server::origin_from_headers(headers),
                         reason: error.to_string(),
                     });
-                    return Err(error);
+                    return Err(error.into());
                 }
             };
         state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {

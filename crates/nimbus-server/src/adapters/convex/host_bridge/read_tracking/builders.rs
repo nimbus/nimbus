@@ -55,14 +55,3 @@ impl ConvexHostBridge {
             })
     }
 }
-
-impl ConvexRuntimeQueryBuilderState {
-    pub(in crate::adapters::convex) fn into_query(self, limit: Option<usize>) -> Query {
-        Query {
-            table: self.table,
-            filters: self.filters,
-            order: self.order,
-            limit,
-        }
-    }
-}

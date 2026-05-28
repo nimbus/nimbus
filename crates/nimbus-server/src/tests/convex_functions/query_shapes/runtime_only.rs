@@ -1,4 +1,5 @@
 use super::super::super::*;
+use nimbus_core::ResolvedDocumentId;
 
 #[tokio::test]
 async fn convex_runtime_only_query_can_run_runtime_only_query() {
@@ -340,7 +341,7 @@ export {};
     let second_id = service
         .insert_document(
             &tenant_id,
-            table,
+            table.clone(),
             json!({ "body": "second" })
                 .as_object()
                 .expect("document should be an object")
@@ -359,7 +360,9 @@ export {};
     let warmed_id = warm_body[0]["_id"]
         .as_str()
         .expect("warm query should return a document id");
-    let uncached_id = if warmed_id == first_id.to_string() {
+    let first_convex_id = ResolvedDocumentId::encode_table_scoped(&table, &first_id)
+        .expect("first fixture id should encode as a Convex table-scoped id");
+    let uncached_id = if warmed_id == first_convex_id.as_str() {
         second_id
     } else {
         first_id
@@ -370,11 +373,14 @@ export {};
         .expect("materialized surface stats should load");
     assert_eq!(before_get.get_hit_count, 0);
 
+    let uncached_convex_id = ResolvedDocumentId::encode_table_scoped(&table, &uncached_id)
+        .expect("fixture id should encode as a Convex table-scoped id");
+
     let response = api
         .convex_named_query(
             "demo",
             "messages:getOne",
-            json!({ "id": uncached_id.to_string() }),
+            json!({ "id": uncached_convex_id.to_string() }),
         )
         .await;
     assert_eq!(response.status(), StatusCode::OK);

@@ -2,17 +2,20 @@
 status: research
 owners: sandbox-tier-roadmap
 related:
-  - docs/plans/computer-use-sandbox-plan.md
+  - docs/plans/nimbus-sandbox-plan.md
+  - docs/plans/archive/computer-use-sandbox-plan.md
   - docs/plans/research/libkrun-session-sandbox.md
   - docs/plans/research/nimbus-libkrun-fork-inventory.md
   - docs/plans/research/gpu-sandbox-backends.md
   - docs/plans/agent-browser-service-plan.md
 ---
 
-# Tier 2 computer-use capabilities audit
+# Desktop-profile computer-use capabilities audit
 
-This doc audits the Tier 2 computer-use plan against what real AI
-agent platforms exercise, identifies missing capabilities, and
+This doc audits the desktop-profile computer-use plan
+(`docs/plans/nimbus-sandbox-plan.md` Band D, superseding the archived
+`docs/plans/archive/computer-use-sandbox-plan.md`) against what real
+AI agent platforms exercise, identifies missing capabilities, and
 records which gaps must be reserved in v0 architecture versus
 deferred to named follow-on phases.
 
@@ -89,11 +92,11 @@ the six media flows already in
 
 | Stream                             | Mechanism                                          | v0?         |
 |------------------------------------|----------------------------------------------------|-------------|
-| **Action log / trajectory**: structured `(timestamp, action, params, result)` events for every input + frame + system event | nimbus-init structured logger → vsock | **yes baseline (CUS-Trace v0)**; richer schema follow-on |
+| **Action log / trajectory**: structured `(timestamp, action, params, result)` events for every input + frame + system event | nimbus-guest structured logger → vsock | **yes baseline (CUS-Trace v0)**; richer schema follow-on |
 | **Accessibility tree** for any app (AT-SPI for GTK/Qt; AX for browsers via CDP) | guest AT-SPI bridge → vsock; per-app CDP for browsers | follow-on (CUS-Acc) |
 | Browser DOM access (Chrome DevTools Protocol direct)                  | CDP server in browser → passt port map        | follow-on (covered by `agent-browser-service-plan.md`) |
 | Window / dialog / notification events | wlroots + libnotify bridge → vsock control      | follow-on (CUS-Evt) |
-| Console/PTY logs                   | nimbus-init log multiplexer → vsock                | yes (baseline; structured schema is CUS-Trace) |
+| Console/PTY logs                   | nimbus-guest log multiplexer → vsock                | yes (baseline; structured schema is CUS-Trace) |
 | Network traffic inspection / pcap  | passt egress mirror → host pcap                    | follow-on (CUS-Net-Obs) |
 | Performance counters (CPU/GPU/mem) | libkrun + host metrics → vsock                     | yes (Nimbus-engine reuses existing path) |
 
@@ -112,7 +115,7 @@ graph", Anthropic Computer Use's screenshot+action history) or
 fakes it with screencast post-hoc OCR (low-fidelity).
 
 **v0 baseline (CUS-Trace v0):** every HID event, every emitted frame
-(with PTS matching §6.2 of inventory doc), every nimbus-init
+(with PTS matching §6.2 of inventory doc), every nimbus-guest
 control-channel event gets a structured JSON line in a tenant-
 accessible trajectory log. Schema is small (10 event types) and
 versioned.
@@ -132,7 +135,7 @@ labels.
 | Virtual mic input                  | vsock → guest PipeWire virtual source              | follow-on (CUS-Aud) |
 | Virtual webcam input               | vsock → guest v4l2loopback-class device            | follow-on (CUS-Cam) |
 | Drag-and-drop from host to guest   | wl_data_device drag protocol over vsock            | follow-on (CUS-DnD) |
-| URL / intent injection             | `xdg-open` invoked via nimbus-init control channel | yes (small CUS2 extension) |
+| URL / intent injection             | `xdg-open` invoked via nimbus-guest control channel | yes (small CUS2 extension) |
 | Bootstrap state                    | virtiofs preloaded with browser profile, cookies, credentials | yes (covered by spec; see §4) |
 
 ## 4. State and lifecycle gaps
@@ -163,8 +166,9 @@ mount backed by tenant-scoped storage.
 
 ### 4.2 Snapshot, branch, resume
 
-libkrun supports snapshot/restore (the Tier 1 Firecracker plan
-relies on it for cold-start). For Tier 2:
+libkrun gains snapshot/restore via Band S in
+`docs/plans/nimbus-sandbox-plan.md` (the `lambda` profile relies on
+it for cold-start). For the desktop profile (Band D):
 
 - **Snapshot:** freeze the session at a decision point
 - **Branch:** spawn N copies from the same snapshot (agents
@@ -222,7 +226,7 @@ drifts.
 | Touch / multi-touch / pen / stylus | **Defer** — no AI agent use case yet                |
 | Drag-and-drop                      | **Follow-on (CUS-DnD)**                            |
 | Clipboard write                    | **Follow-on (CUS-Clip)**                           |
-| URL / intent injection             | yes; nimbus-init exposes `xdg-open` over vsock      |
+| URL / intent injection             | yes; nimbus-guest exposes `xdg-open` over vsock      |
 
 ## 8. Security gaps
 
@@ -230,7 +234,7 @@ drifts.
 |------------------------------------|----------------------------------------------------|
 | Egress policy                      | yes; `SandboxEgressPolicy`                          |
 | Filesystem isolation               | yes; virtiofs per-tenant root                       |
-| GPU mediation                      | Tier 3; cross-plan                                  |
+| GPU mediation                      | `gpu` profile (Band G); cross-band                  |
 | Tenant isolation                   | yes; existing `TenantIsolationContext`              |
 | **Screen-content redaction**       | **Reserve in v0** — `RedactionPolicy` field on spec; default `None`. Pipeline: regex over OCR output, rect masking by app id, secret-token deny-list. Implementation **follow-on (CUS-Red)**. |
 | **Action-log redaction**           | Same `RedactionPolicy` applies to trajectory log entries that contain typed input (esp. password fields); v0 baseline must support a `redact_typed_input_in_password_focus: bool` flag. |
@@ -258,7 +262,7 @@ in the plan stub.
 | Existing phase | v0 addition required | Why |
 |---|---|---|
 | CUS1 (types) | `state: StatePolicy` (Ephemeral / Persistent), `time: TimePolicy`, `locale: LocalePolicy`, `display.dpi`, `audio: Option<AudioStreamPolicy>` (reserved), `camera: Option<CameraStreamPolicy>` (reserved), `recording: Option<RecordingPolicy>`, `trajectory: TrajectoryPolicy`, `redaction: RedactionPolicy`, `events: EventStreamPolicy` | Don't break the wire format when follow-ons land |
-| CUS2 (nimbus-init) | `xdg-open` URL/intent injection over vsock; structured trajectory log emitter; password-focus redaction flag handling | Inbound URL surface; baseline action log |
+| CUS2 (nimbus-guest) | `xdg-open` URL/intent injection over vsock; structured trajectory log emitter; password-focus redaction flag handling | Inbound URL surface; baseline action log |
 | CUS3 (compositor + screencast) | Per-window and per-region capture; DPI/scaling; PTS on every frame; single-frame screenshot API | Agent perception efficiency + recording sync |
 | CUS4 (virtio-input) | IME enablement option in guest config; input event echoed into trajectory log | CJK input; audit baseline |
 | CUS5 (passt + egress) | Reserve channel IDs `MEDIA_AUDIO_OUT/_IN/_CAM_OUT/_CAM_IN`, `TRACE`, `EVENTS`, `CLIP`, `DND` | Don't force protocol rewrite |
@@ -288,9 +292,11 @@ These are above and beyond the four already named in
 
 ## 12. Concrete plan stub edits
 
-The existing `docs/plans/computer-use-sandbox-plan.md` phases CUS1
-through CUS8 each gain a v0 addition per §10 above. The plan's
-"Future phases" section gains the new follow-on phases from §11.
+The unified `docs/plans/nimbus-sandbox-plan.md` Band D phases (which
+supersede the archived CUS1–CUS8 phases in
+`docs/plans/archive/computer-use-sandbox-plan.md`) each gain a v0
+addition per §10 above. The plan's "Future phases" section gains the
+new follow-on phases from §11.
 
 Wording for the new follow-on phases is left to the plan author at
 the time CUS-* opens; this doc records scope and dependency only.

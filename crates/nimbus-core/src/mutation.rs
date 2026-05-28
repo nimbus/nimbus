@@ -143,7 +143,7 @@ pub struct IndexLifecycleEvent {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TenantEventKind {
     DocumentWrite { writes: Vec<WriteOp> },
-    SchemaChange { change: SchemaChangeEvent },
+    SchemaChange { change: Box<SchemaChangeEvent> },
     TableLifecycle { lifecycle: TableLifecycleEvent },
     IndexLifecycle { index: IndexLifecycleEvent },
     ScheduledExecution { execution_id: String },
@@ -230,7 +230,9 @@ impl TenantEventRecord {
         Self::from_events(
             sequence,
             timestamp,
-            vec![TenantEventKind::SchemaChange { change }],
+            vec![TenantEventKind::SchemaChange {
+                change: Box::new(change),
+            }],
         )
     }
 

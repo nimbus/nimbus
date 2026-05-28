@@ -141,9 +141,10 @@ cancellation.
 NDB3 implements the correct flow:
 
 ```text
-1. let stream = manager.receive_job_removed().await?;
-2. let job_path = manager.start_transient_unit(name, mode, props, aux).await?;
-3. while let Some(sig) = stream.next().await {
+1. manager.subscribe().await?;
+2. let mut stream = manager.receive_job_removed().await?;
+3. let job_path = manager.start_transient_unit(name, mode, props, aux).await?;
+4. while let Some(sig) = stream.next().await {
        let (id, removed_path, unit, result) = sig.args()?;
        if removed_path == &job_path {
            return classify(result);
@@ -151,10 +152,11 @@ NDB3 implements the correct flow:
    }
 ```
 
-Order matters: the stream is established *before* the method call
-to eliminate the race where JobRemoved fires before our subscription
-exists. zbus's stream is buffered, so signals arriving between
-subscription and the first `next()` are not lost.
+Order matters: systemd's `Manager.Subscribe` is called and the stream is
+established *before* the method call to eliminate the race where
+JobRemoved fires before our subscription exists. zbus's stream is
+buffered, so signals arriving between stream creation and the first
+`next()` are not lost.
 
 `result` enum: `"done"` → success; `"failed"`/`"canceled"`/
 `"timeout"`/`"dependency"` → error; `"skipped"` → unit was already
@@ -184,10 +186,15 @@ systemd instance; no privilege required, no polkit interaction.
 |---|---|
 | `Disconnected`, `IOError`, `InputOutput` | `Transport` |
 | `AuthFailed`, `AccessDenied` | `Permission` |
-| `UnknownObject`, `UnknownInterface`, `UnknownMethod`, `NoSuchUnit` | `NotFound` |
+| `UnknownObject`, `UnknownInterface`, `UnknownMethod` | `NotFound` or capability degradation depending on probe context |
 | `InvalidArgs`, `Failed` | `Invariant` |
 | `NoMemory`, `LimitsExceeded` | `ResourceExhausted` |
 | (any other) | `Internal` |
+
+Systemd-specific names such as
+`org.freedesktop.systemd1.NoSuchUnit` arrive through
+`zbus::Error::MethodError`, not as `zbus::fdo::Error` enum variants.
+NDB4 must match those method-error names explicitly.
 
 Capability-degradation per NDB2:
 

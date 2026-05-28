@@ -11,15 +11,17 @@ use tracing::warn;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::convex::ConvexRegistry;
 use crate::adapters::firebase::FirebaseConfig;
-use crate::application_auth::ApplicationAuthVerifier;
 use crate::error_envelope::StructuredHttpError;
 use crate::license::LicenseState;
-use crate::local_server::{LocalServerAuditEvent, LocalServerSecurityState};
+use crate::local_server::{
+    LocalServerAuditEvent, LocalServerPolicyError, LocalServerSecurityState,
+};
 use crate::machine_lifecycle::MachineLifecycleManager;
-use crate::service_manager::SandboxServiceManager;
-use crate::service_registry::RuntimeServiceRegistry;
 use crate::system::VersionCheck;
 use crate::tenant::TenantIsolationMode;
+use nimbus_auth::ApplicationAuthVerifier;
+use nimbus_services::RuntimeServiceRegistry;
+use nimbus_services::SandboxServiceManager;
 
 pub(crate) struct AppStateConfig {
     pub(crate) service: Arc<Service>,
@@ -149,6 +151,7 @@ impl AppState {
                 deployment_generation,
                 self.runtime_service_registry(),
                 self.tenant_isolation_mode,
+                Arc::new(crate::adapters::cloud_functions::ServerCloudFunctionsRuntimeInvoker),
             ),
         ))?;
         Ok(())
@@ -235,6 +238,16 @@ pub(crate) enum AppError {
 impl From<Error> for AppError {
     fn from(value: Error) -> Self {
         Self::Core(value)
+    }
+}
+
+impl From<LocalServerPolicyError> for AppError {
+    fn from(value: LocalServerPolicyError) -> Self {
+        if value.is_forbidden() {
+            Self::Forbidden(value.into_message())
+        } else {
+            Self::Unauthorized(value.into_message())
+        }
     }
 }
 
@@ -330,8 +343,8 @@ mod tests {
             firebase_config: None,
             license_state: LicenseState::community(),
             runtime_service_registry: Arc::new(
-                crate::service_registry::SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
-                    crate::sandbox::EmptySandboxCatalog,
+                nimbus_services::SandboxCatalogRuntimeServiceRegistry::new(Arc::new(
+                    nimbus_services::EmptySandboxCatalog,
                 )),
             ),
             sandbox_service_manager: None,

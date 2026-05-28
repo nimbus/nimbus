@@ -21,8 +21,8 @@ use nimbus_sandbox::{
 use serde_json::json;
 
 use super::*;
-use crate::service_registry::{RuntimeServiceBindingFuture, RuntimeServiceRegistry};
 use crate::{SandboxCatalog, SandboxServiceCatalog, SandboxServiceLaunch, SandboxServiceManager};
+use nimbus_services::{RuntimeServiceBindingFuture, RuntimeServiceRegistry};
 
 struct StubSandboxCatalog {
     sandboxes: BTreeMap<String, SandboxHandle>,

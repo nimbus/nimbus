@@ -15,21 +15,20 @@ use crate::adapters::cloud_functions;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::adapters::convex::{self, ConvexRegistry};
 use crate::adapters::firebase::{self, FirebaseConfig};
-use crate::application_auth::ApplicationAuthVerifier;
 use crate::license::LicenseState;
 use crate::local_server::{
     LocalServerAccessPolicy, LocalServerSecurityState, origin_allowlist_middleware,
     route_family_gate_middleware, server_access_extract_middleware,
 };
 use crate::machine_lifecycle::MachineLifecycleManager;
-use crate::sandbox::{EmptySandboxCatalog, SandboxCatalog};
-use crate::service_manager::SandboxServiceManager;
-use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
 use crate::state::{AppState, AppStateConfig};
 use crate::system::VersionCheck;
 use crate::system::version_check::VersionCheckConfig;
 use crate::tenant::TenantIsolationMode;
 use crate::{http, ws};
+use nimbus_auth::ApplicationAuthVerifier;
+use nimbus_services::{EmptySandboxCatalog, SandboxCatalog, SandboxServiceManager};
+use nimbus_services::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
 
 const DEMOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../demos");
 
@@ -61,7 +60,10 @@ impl RuntimeServiceSource {
                 Arc::new(SandboxCatalogRuntimeServiceRegistry::new(sandbox_catalog))
             }
             Self::SandboxServiceManager(sandbox_service_manager) => {
-                sandbox_service_manager.attach_system_state_service(system_state_service);
+                crate::service_manager::attach_system_state_service(
+                    &sandbox_service_manager,
+                    system_state_service,
+                );
                 sandbox_service_manager
             }
             #[cfg(test)]
@@ -351,21 +353,18 @@ impl RouterBuildConfig {
     }
 
     pub(crate) async fn prepare_system_tenant(&self) -> nimbus_core::Result<()> {
-        crate::system_tenant::prepare_system_tenant_async(&self.service, self.listen_addr).await?;
+        nimbus_system::prepare_system_tenant_async(&self.service, self.listen_addr).await?;
         if let Some(registry) = self.convex_registry.as_ref() {
-            crate::system_tenant::record_convex_deployment_state_async(
-                &self.service,
-                &registry.deploy_summary(),
-                "startup",
-            )
-            .await?;
+            let summary = registry.deploy_summary();
+            let input = convex::convex_system_deployment_record_input(&summary, "startup");
+            nimbus_system::record_deployment_state_async(&self.service, &input).await?;
         }
         let Some(listen_addr) = self.listen_addr else {
             return Ok(());
         };
         let version = env!("CARGO_PKG_VERSION");
         if self.convex_registry.is_some() || self.system_convex_registry.is_some() {
-            crate::system_tenant::record_listener_state_async(
+            nimbus_system::record_listener_state_async(
                 &self.service,
                 "convex",
                 "websocket",
@@ -377,7 +376,7 @@ impl RouterBuildConfig {
             .await?;
         }
         if self.firebase_config.is_some() {
-            crate::system_tenant::record_listener_state_async(
+            nimbus_system::record_listener_state_async(
                 &self.service,
                 "firebase",
                 "http+websocket",
@@ -389,7 +388,7 @@ impl RouterBuildConfig {
             .await?;
         }
         if self.cloud_functions_registry.is_some() {
-            crate::system_tenant::record_listener_state_async(
+            nimbus_system::record_listener_state_async(
                 &self.service,
                 "cloud-functions",
                 "http",
@@ -415,7 +414,7 @@ impl RouterBuildConfig {
 
     pub(crate) fn build(self) -> Router {
         let service = self.service.clone();
-        crate::system_tenant::install_table_projection_observer(&service);
+        nimbus_system::install_table_projection_observer(&service);
         let sandbox_service_manager = self.runtime_service_source.sandbox_service_manager();
         let version_check = build_version_check();
         let state = Arc::new(AppState::from_config(AppStateConfig {

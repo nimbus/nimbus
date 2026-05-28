@@ -5,7 +5,7 @@ use super::queries::execute_query_result_cancellable_with_auth;
 use super::scheduling::execute_schedule_command;
 use super::scheduling::execute_schedule_command_cancellable;
 use super::*;
-use crate::application_auth::normalize_principal_context;
+use nimbus_auth::normalize_principal_context;
 
 #[cfg(test)]
 pub(in crate::adapters::convex) fn dispatch_mutation(

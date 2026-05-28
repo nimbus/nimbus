@@ -9,12 +9,12 @@ use crate::adapters::convex::host_bridge::{
     ConvexRuntimeResponseEnvelope,
 };
 use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet};
-use crate::application_auth::normalize_principal_context;
 use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
 };
-use crate::service_registry::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
-use crate::tenant::{
+use nimbus_auth::normalize_principal_context;
+use nimbus_services::{RuntimeServiceRegistry, SandboxCatalogRuntimeServiceRegistry};
+use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
     admit_runtime_invocation_decision,
 };
@@ -129,7 +129,7 @@ async fn invoke_named_convex_function_with_trace_async(
             normalize_principal_context(request.auth.as_ref()),
             "convex_test_runtime",
         ),
-        crate::tenant::TenantIsolationMode::LocalDevelopment,
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment,
     );
     invoke_named_convex_function_with_trace_async_cancellable(
         &context,

@@ -10,7 +10,7 @@ contract, docs, tests, and reusable gate were updated together.
 
 ## Cleanup
 
-- `docs/plans/storage-architecture-trust-hardening-plan.md` is marked `done`
+- `docs/plans/archive/storage-architecture-trust-hardening-plan.md` is marked `done`
   through SATH11.
 - `docs/technical-debt.md` marks the SATH-owned debt rows done:
   `A-011`, `A-012`, `A-013`, `A-014`, `A-015`, `A-016`, `A-017`, `T-007`,

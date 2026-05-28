@@ -13,7 +13,7 @@ use super::{
     DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, ProcessArtifactVerifierCommandRunner,
     SLSA_PROVENANCE_V1_PREDICATE_TYPE, redact_artifact_verifier_output,
 };
-use crate::tenant::{has_sha256_digest, parse_oci_image_reference};
+use nimbus_artifacts::{has_sha256_digest, parse_oci_image_reference};
 
 pub struct SlsaVerifierBackend {
     program: String,
@@ -371,7 +371,7 @@ mod tests {
 
     use super::super::ArtifactVerifierCommandOutput;
     use super::*;
-    use crate::tenant::{ArtifactVerificationPolicy, ArtifactVerifierErrorKind};
+    use nimbus_artifacts::{ArtifactVerificationPolicy, ArtifactVerifierErrorKind};
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const OTHER_DIGEST: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

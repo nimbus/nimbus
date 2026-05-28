@@ -6,24 +6,30 @@ DynamoDB operation dispatch (data plane, control plane, streams), an
 AWS-SDK-shaped JavaScript helper package, and parity-test coverage against
 ExtendDB plus DynamoDB Local.
 
-This plan follows the architecture established by the completed Firebase and
-MongoDB adapters: adapters own protocol translation; Nimbus core owns data
-primitives. Where DynamoDB needs shared behavior that overlaps with Convex,
-Firebase, or MongoDB, promote that behavior into a protocol-neutral Nimbus
-primitive before adding adapter-local copies.
+This plan follows the architecture established by the extracted adapter crates:
+each concrete provider adapter lives in a `nimbus-<provider>` crate, adapters
+own protocol translation, `nimbus-server` owns transport composition, and
+Nimbus core owns data primitives. DynamoDB therefore targets
+`crates/nimbus-dynamodb`, not a `*-adapter` suffixed crate and not another
+server-local module. Where DynamoDB needs shared behavior that overlaps with
+Convex, Firebase, or MongoDB, promote that behavior into a protocol-neutral
+Nimbus primitive before adding adapter-local copies.
 
 ## Context
 
 Nimbus already ships four compatibility adapters:
 
-- **Convex** — deep function runtime, WebSocket subscriptions, V8 host bridge.
-- **Firebase** — Firestore data API, gRPC/REST/WebSocket, reactive Listen
-  streams.
-- **Cloud Functions** — document triggers, HTTP/callable handlers, Firebase v2
-  and standalone Functions Framework authoring surfaces.
-- **MongoDB** — binary OP_MSG wire protocol, BSON codec, CRUD/cursor/index/
-  collection/aggregation/transaction/change-stream commands, SCRAM-SHA-256
-  auth, `@nimbus/mongodb` driver package, and unified-test-format spec runner.
+- **Convex (`nimbus-convex`)** — deep function runtime, WebSocket
+  subscriptions, V8 host bridge.
+- **Firebase (`nimbus-firebase`)** — Firestore data API, gRPC/REST/WebSocket,
+  reactive Listen streams.
+- **Cloud Functions (`nimbus-cloud-functions`)** — document triggers,
+  HTTP/callable handlers, Firebase v2 and standalone Functions Framework
+  authoring surfaces.
+- **MongoDB (`nimbus-mongodb`)** — binary OP_MSG wire protocol, BSON codec,
+  CRUD/cursor/index/collection/aggregation/transaction/change-stream commands,
+  SCRAM-SHA-256 auth, `@nimbus/mongodb` driver package, and
+  unified-test-format spec runner.
 
 DynamoDB is closest in shape to the MongoDB adapter: a separate listener
 exposing a wire protocol on its own port, an item-oriented data model, and a
@@ -56,7 +62,7 @@ one DR story, one auth model, N protocols.
 | `aws-sdk-js-v3` (DynamoDB client) | `https://github.com/aws/aws-sdk-js-v3` | clone on demand under `~/src/github.com/aws/aws-sdk-js-v3` | Canonical JS client; primary SDK target for `@nimbus/dynamodb` |
 | `boto3` / `botocore` | `https://github.com/boto/boto3` | clone on demand | Python SDK; secondary parity target |
 | moto (DynamoDB) | `https://github.com/getmoto/moto` (Apache-2.0) | clone on demand under `~/src/github.com/getmoto/moto` | Python in-memory DynamoDB mock; behavioral reference for edge cases |
-| `aws-sigv4` (Rust crate) | crates.io | — | Canonical SigV4 signing/verification primitives |
+| `aws-sigv4` (Rust crate) | crates.io | — | Reference only. Not a planned dependency because the focused ExtendDB server-side SigV4 module is vendored instead. |
 
 ExtendDB is already cloned at `/Users/jack/src/github.com/ExtendDB/extenddb`
 (top-level wrapper directory `/Users/jack/src/github.com/ExtendDB/` contains
@@ -70,7 +76,7 @@ local paths inside the clone:
 - `docs/dynamodb-limits.md` — sizes, counts, and rate limits.
 - `docs/adr/` and `docs/rfcs/` — architecture decisions and design notes.
 - `crates/server/` — HTTP listener, X-Amz-Target dispatch, request envelope
-  handling — closest structural twin to what `crates/nimbus-server/src/adapters/dynamodb/`
+  handling — closest structural twin to what `crates/nimbus-dynamodb/src/`
   must implement.
 - `crates/auth/` — SigV4 verification scaffold; reusable canonical-request
   construction shape.
@@ -80,7 +86,7 @@ local paths inside the clone:
   `test_conditional_writes.py`, `test_transaction_operations.py`,
   `test_streams.py`, `test_ttl.py`, `test_multipart_gsi.py`,
   `test_auth_integration.py`, etc.). Scenarios here are excellent
-  parity-test seeds for `crates/nimbus-server/tests/dynamodb_spec/`.
+  parity-test seeds for `crates/nimbus-dynamodb/tests/dynamodb_spec/`.
 
 #### License posture
 
@@ -124,9 +130,9 @@ hardening phases when their source is needed in-flight.
   must update the roadmap item status, the phase status ledger, and the
   execution log before stopping.
 
-Promote this plan from `pending` to `in_progress` only after the
-`mongodb-adapter-hardening-plan` completion gates remain green and the
-release-readiness plan does not require freezing the adapter surface.
+Promote this plan from `pending` to `in_progress` only after the current
+server crate extraction completion gates remain green and the release-readiness
+plan does not require freezing the adapter surface.
 
 ## Plan Ownership And Canonical Inputs
 
@@ -150,8 +156,9 @@ Implementation work must keep these source inputs open:
   AttributeValue encoding, expression-language grammar, SigV4 spec, DynamoDB
   Streams record format, ExtendDB `docs/differences-from-dynamodb.md`.
 - Nimbus seam sources: core types/mutations/query, engine execution units and
-  subscriptions, server router/state/security, and the existing adapter
-  patterns in `crates/nimbus-server/src/adapters/{convex,firebase,cloud_functions,mongodb}/`.
+  subscriptions, server router/state/security, the extracted adapter crates
+  (`crates/nimbus-{convex,firebase,cloud-functions,mongodb}/`), and the thin
+  server composition shims under `crates/nimbus-server/src/adapters/`.
 - Test evidence: AWS SDK acceptance tests, DynamoDB Local Java binary,
   ExtendDB integration tests, moto DynamoDB tests.
 
@@ -180,8 +187,9 @@ Implementation work must keep these source inputs open:
   DynamoDB needs an axum HTTP listener on a separate port — even simpler than
   the MongoDB raw-TCP listener.
 - There is no AWS SigV4 verification in the codebase. SigV4 is a standalone
-  canonical-request-plus-derived-key signing scheme; the `aws-sigv4` Rust
-  crate supplies the primitives.
+  canonical-request-plus-derived-key signing scheme; this plan vendors the
+  focused ExtendDB SigV4 verification module into `nimbus-dynamodb` instead of
+  adding a separate `aws-sigv4` dependency.
 - DynamoDB's composite primary key (partition key + optional sort key) is
   richer than Nimbus's single `DocumentId` string. A canonical reversible
   encoding (e.g., `pk\x00sk` with size validation) is required.
@@ -224,6 +232,12 @@ The reuse decisions, by crate:
 Add to the Nimbus workspace `Cargo.toml`:
 
 ```toml
+[workspace]
+members = [
+    "crates/nimbus-dynamodb",
+    # ...
+]
+
 [workspace.dependencies]
 extenddb-core = { git = "https://github.com/ExtendDB/extenddb", rev = "<pin-at-D0.0>" }
 bigdecimal = { version = "0.4", features = ["serde"] }   # new transitive dep
@@ -234,13 +248,30 @@ at the repo URL with a `rev` pin fetches the entire ExtendDB workspace and
 selects `extenddb-core` from it. Set the pin to the ExtendDB HEAD commit at
 the moment D0.0 runs and record the sha in the execution log.
 
-In `crates/nimbus-server/Cargo.toml`:
+In `crates/nimbus-dynamodb/Cargo.toml`:
 
 ```toml
+[package]
+name = "nimbus-dynamodb"
+
 [dependencies]
 extenddb-core = { workspace = true }
 bigdecimal = { workspace = true }
+nimbus-core = { path = "../nimbus-core" }
+nimbus-engine = { path = "../nimbus-engine" }
+nimbus-tenant = { path = "../nimbus-tenant" }
 ```
+
+In `crates/nimbus-server/Cargo.toml`, depend only on the concrete adapter
+crate:
+
+```toml
+[dependencies]
+nimbus-dynamodb = { path = "../nimbus-dynamodb" }
+```
+
+Do not add `extenddb-core` or DynamoDB protocol dependencies to
+`nimbus-server`; those remain owned by `nimbus-dynamodb`.
 
 Pin upgrade cadence: bump on a quarterly schedule or when a needed fix lands
 upstream. Carry local patches as a vendored fork (Option C below) only if a
@@ -249,7 +280,7 @@ needed change is rejected upstream.
 #### Vendoring SigV4 (D0.8)
 
 Copy `crates/auth/src/sigv4/{canonical.rs,parse.rs,signing_key.rs,verify.rs}`
-into `crates/nimbus-server/src/adapters/dynamodb/auth/sigv4/` verbatim. Keep
+into `crates/nimbus-dynamodb/src/auth/sigv4/` verbatim. Keep
 the Apache-2.0 header at the top of every copied file. Add a one-line
 "Modified from ExtendDB by Nimbus contributors, YYYY-MM-DD" banner if any
 file is modified. Update repo-root `NOTICE` with one entry covering all
@@ -258,72 +289,91 @@ vendored files.
 #### Fallback (vendor-everything path)
 
 If upstream stability or pin churn becomes a problem, switch to a local
-vendored copy of `extenddb-core` at `crates/dynamodb-types/` (renamed from
-`extenddb-core`). Same compliance steps: Apache-2.0 headers preserved,
-modification banner added, NOTICE updated. Do this only if Option A
+vendored copy of `extenddb-core` inside `crates/nimbus-dynamodb/src/extenddb_core/`.
+Same compliance steps: Apache-2.0 headers preserved, modification banner added,
+NOTICE updated. Keep the vendored copy inside the concrete adapter crate unless
+a later multi-adapter need justifies a separate crate. Do this only if Option A
 demonstrates real maintenance pain — the git rev pin path is cleaner.
 
 ### Module Structure
 
-The DynamoDB adapter lives at `crates/nimbus-server/src/adapters/dynamodb/`
-with the following initial file layout (created during D0.1). Modules
-labeled "[uses extenddb-core]" delegate parsing/validation/evaluation to the
-upstream crate and own only the Nimbus-side bridging (storage I/O, tenant
-resolution, error mapping back to the adapter envelope).
+The DynamoDB adapter lives in the concrete `crates/nimbus-dynamodb` crate with
+the following initial file layout (created during D0.1). Modules labeled
+"[uses extenddb-core]" delegate parsing/validation/evaluation to the upstream
+crate and own only the Nimbus-side bridging (storage I/O, tenant resolution,
+error mapping back to the adapter envelope). The crate must not depend on
+`nimbus-server`, must not accept `AppState`, and must expose narrow router or
+operation entrypoints over explicit capabilities such as `Arc<Service>`.
 
 ```
-dynamodb/
-├── mod.rs                # adapter registration, DynamoDbConfig, public API
-├── listener.rs           # axum HTTP listener on the DynamoDB port; X-Amz-Target router
-├── wire.rs               # JSON request/response envelope, X-Amz-Target parsing, error envelope [uses extenddb-core error taxonomy]
-├── attribute_value.rs    # extenddb_core::types::AttributeValue ↔ Nimbus value bridge (S/N/B/M/L/SS/NS/BS/BOOL/NULL roundtrip via typed-scalar metadata)
-├── key.rs                # partition+sort composite-key encoding, DocumentId mapping
-├── error.rs              # DynamoDbError → Nimbus error taxonomy mapping (both directions)
-├── auth/
-│   ├── mod.rs            # AuthProvider entry, access-key → tenant resolution
-│   └── sigv4/            # vendored from extenddb-auth/sigv4/ — see Upstream Crate Reuse
-│       ├── canonical.rs
-│       ├── parse.rs
-│       ├── signing_key.rs
-│       └── verify.rs
-├── expression.rs         # thin shim: extenddb_core::expression::{parser,evaluator,update_evaluator,key_condition,projection,resolver} wired to Nimbus document values
-├── commands/
-│   ├── mod.rs            # X-Amz-Target → handler dispatch table
-│   ├── control_plane.rs  # CreateTable, DescribeTable, ListTables, UpdateTable, DeleteTable, DescribeEndpoints, DescribeLimits
-│   ├── item.rs           # PutItem, GetItem, UpdateItem, DeleteItem [uses extenddb-core input/output types + validation]
-│   ├── query_scan.rs     # Query, Scan (with pagination, parallel-scan segments) [uses extenddb-core]
-│   ├── batch.rs          # BatchGetItem, BatchWriteItem [uses extenddb-core]
-│   ├── transact.rs       # TransactGetItems, TransactWriteItems [uses extenddb-core]
-│   ├── index.rs          # GSI/LSI definition + index-targeted dispatch helpers
-│   ├── streams.rs        # DescribeStream, GetShardIterator, GetRecords, ListStreams [uses extenddb-core stream types]
-│   ├── ttl.rs            # UpdateTimeToLive, DescribeTimeToLive
-│   └── tagging.rs        # TagResource, UntagResource, ListTagsOfResource
-├── streams/
-│   ├── mod.rs            # stream registry, shard model
-│   ├── shard.rs          # shard iterator format, sequence numbers, record mapping
-│   └── record.rs         # StreamRecord (KEYS_ONLY/NEW_IMAGE/OLD_IMAGE/NEW_AND_OLD_IMAGES)
-└── tenant.rs             # access-key → tenant resolution, table-name → Nimbus-table mapping
+crates/nimbus-dynamodb/
+├── Cargo.toml            # package name: nimbus-dynamodb
+├── src/
+│   ├── lib.rs            # DynamoDbConfig, public API, router factory exports
+│   ├── router.rs         # axum Router factory; no socket bind or spawn lifecycle
+│   ├── wire.rs           # JSON request/response envelope, X-Amz-Target parsing, error envelope [uses extenddb-core error taxonomy]
+│   ├── attribute_value.rs # extenddb_core::types::AttributeValue ↔ Nimbus value bridge (S/N/B/M/L/SS/NS/BS/BOOL/NULL roundtrip via typed-scalar metadata)
+│   ├── key.rs            # partition+sort composite-key encoding, DocumentId mapping
+│   ├── error.rs          # DynamoDbError → Nimbus error taxonomy mapping (both directions)
+│   ├── auth/
+│   │   ├── mod.rs        # AuthProvider entry, access-key → tenant resolution
+│   │   └── sigv4/        # vendored from extenddb-auth/sigv4/ — see Upstream Crate Reuse
+│   │       ├── canonical.rs
+│   │       ├── parse.rs
+│   │       ├── signing_key.rs
+│   │       └── verify.rs
+│   ├── expression.rs     # thin shim: extenddb_core::expression::{parser,evaluator,update_evaluator,key_condition,projection,resolver} wired to Nimbus document values
+│   ├── commands/
+│   │   ├── mod.rs        # X-Amz-Target → handler dispatch table
+│   │   ├── control_plane.rs # CreateTable, DescribeTable, ListTables, UpdateTable, DeleteTable, DescribeEndpoints, DescribeLimits
+│   │   ├── item.rs       # PutItem, GetItem, UpdateItem, DeleteItem [uses extenddb-core input/output types + validation]
+│   │   ├── query_scan.rs # Query, Scan (with pagination, parallel-scan segments) [uses extenddb-core]
+│   │   ├── batch.rs      # BatchGetItem, BatchWriteItem [uses extenddb-core]
+│   │   ├── transact.rs   # TransactGetItems, TransactWriteItems [uses extenddb-core]
+│   │   ├── index.rs      # GSI/LSI definition + index-targeted dispatch helpers
+│   │   ├── streams.rs    # DescribeStream, GetShardIterator, GetRecords, ListStreams [uses extenddb-core stream types]
+│   │   ├── ttl.rs        # UpdateTimeToLive, DescribeTimeToLive
+│   │   └── tagging.rs    # TagResource, UntagResource, ListTagsOfResource
+│   ├── streams/
+│   │   ├── mod.rs        # stream registry, shard model
+│   │   ├── shard.rs      # shard iterator format, sequence numbers, record mapping
+│   │   └── record.rs     # StreamRecord (KEYS_ONLY/NEW_IMAGE/OLD_IMAGE/NEW_AND_OLD_IMAGES)
+│   └── tenant.rs         # access-key → tenant resolution, table-name → Nimbus-table mapping
+└── tests/
+    └── dynamodb_spec/    # parity runner and SDK-shaped scenarios
 ```
 
-Files may be split further per the modularity thresholds in `CLAUDE.md`
+Files may be split further per the modularity thresholds in `AGENTS.md`
 (1500-line soft limit, 2000-line hard limit). New sub-modules should follow
 concept-owned naming. The `expression.rs` shim is expected to stay small
 (under 500 LOC) because all the heavy work is in `extenddb-core::expression`.
+
+`crates/nimbus-server/src/adapters/dynamodb/` may exist only as a thin
+composition shim if useful. It can re-export `DynamoDbConfig`, call
+`nimbus_dynamodb::build_router(...)`, and own bind/spawn/shutdown plumbing. It
+must not contain DynamoDB protocol parsing, AttributeValue conversion,
+expression evaluation, SigV4 verification, operation dispatch, or parity-test
+logic.
 
 ### Boot Sequence Integration
 
 The DynamoDB HTTP listener integrates into the server startup in
 `crates/nimbus-server/src/lib.rs`:
 
-1. Add `dynamodb_config: Option<DynamoDbConfig>` to `ServeOptions` and a
-   `.with_dynamodb(config)` fluent builder method.
+1. Add `dynamodb_config: Option<nimbus_dynamodb::DynamoDbConfig>` to
+   `ServeOptions` and a `.with_dynamodb(config)` fluent builder method.
 2. In `serve_with_options`, if `dynamodb_config` is `Some`, bind a separate
    `tokio::net::TcpListener` on the configured port (default 8000, matching
-   DynamoDB Local) and spawn an axum HTTP server with the DynamoDB router as
-   a sibling `tokio::spawn` task sharing the same `Arc<Service>` instance.
+   DynamoDB Local) and spawn an axum HTTP server with the
+   `nimbus-dynamodb` router as a sibling `tokio::spawn` task sharing the same
+   `Arc<Service>` instance.
 3. In `crates/nimbus-bin/src/start/boot.rs`, add a `--dynamodb-port` CLI flag
    (default: disabled) that creates a `DynamoDbConfig` and passes it to
    `ServeOptions::with_dynamodb`.
+4. Add a `dynamodb` optional feature to `crates/nimbus-adapters` only after
+   the concrete `nimbus-dynamodb` crate compiles and has focused tests. The
+   facade remains default-empty, and `nimbus-server` must continue to depend
+   directly on `nimbus-dynamodb`, not on `nimbus-adapters`.
 
 ### Dependency Management
 
@@ -353,12 +403,24 @@ Community License 1.0.
 ### Spec And Parity Test Vendoring
 
 DynamoDB does not publish a public canonical conformance suite. The plan uses
-three reference behaviors as ground truth:
+five evidence sources, with explicit authority levels:
 
 1. **AWS DynamoDB Local** (Java JAR). Distributed by AWS; run as a Docker
    image (`amazon/dynamodb-local`) or a downloaded JAR. Behavior is treated
    as authoritative for ambiguous semantics.
-2. **ExtendDB** (Apache-2.0). Run as a Rust binary built from
+2. **Official AWS client SDKs and AWS CLI.** Run real clients against the
+   Nimbus endpoint, not only hand-built JSON requests:
+   `@aws-sdk/client-dynamodb` + `@aws-sdk/lib-dynamodb` where applicable,
+   `aws-sdk-dynamodb` for Rust, `boto3`/`botocore` for Python, and the AWS
+   CLI. These prove endpoint override, request serialization, paginator
+   behavior, retry/error classification, and SigV4 signing compatibility from
+   the same client stacks enterprises use in AWS.
+3. **botocore DynamoDB service model.** Use the botocore model, waiters, and
+   paginator definitions as a generated-shape oracle for operation names,
+   request/response fields, errors, idempotency tokens, pagination tokens, and
+   modeled exceptions. This is not a behavior oracle by itself; it prevents
+   Nimbus from drifting from the SDK-visible contract.
+4. **ExtendDB** (Apache-2.0). Run as a Rust binary built from
    `/Users/jack/src/github.com/ExtendDB/extenddb` (`cargo build --release` →
    `./target/release/extenddb init` then `./target/release/extenddb serve`).
    Behavior is the AWS-blessed open reference; documented divergences from
@@ -366,10 +428,12 @@ three reference behaviors as ground truth:
    `/Users/jack/src/github.com/ExtendDB/extenddb/docs/differences-from-dynamodb.md`
    — Nimbus picks `match`, `accept-extenddb-divergence`, or `diverge` for
    each, recorded explicitly.
-3. **AWS SDK acceptance tests** (per-language SDK source).
+5. **moto DynamoDB tests.** Use the moto DynamoDB corpus as an edge-case
+   scenario source for common application expectations. Moto is not treated as
+   authoritative when it conflicts with DynamoDB Local or official SDK models.
 
 The parity test runner lives at
-`crates/nimbus-server/tests/dynamodb_spec/` with a `mod.rs` that constructs a
+`crates/nimbus-dynamodb/tests/dynamodb_spec/` with a `mod.rs` that constructs a
 shared scenario list, executes each scenario against Nimbus, then against
 DynamoDB Local (and optionally ExtendDB) using the same wire client, and
 diffs the responses. Use the same scenario model the MongoDB adapter's
@@ -380,6 +444,108 @@ ready-made behavior set covering one operation family — item ops, query/scan,
 batch, transact, conditional writes, streams, TTL, GSI, etc.). Translate the
 scenarios into the Nimbus scenario model; do not copy ExtendDB Python code
 into the Nimbus tree.
+
+In addition to translated scenarios, add a canary runner that can execute
+external suites by path, modeled after ExtendDB's `external-suites.toml`
+approach. The runner records the suite name, upstream path, commit SHA,
+command, environment, client SDK, target endpoint, pass/fail count, skipped
+tests, and artifacts. External canaries are allowed to be slower than PR lanes;
+they should run in nightly/manual lanes, with a small critical subset promoted
+to PR once stable.
+
+Every scenario records its provenance: DynamoDB Local probe, AWS SDK/CLI source
+test, botocore model shape, ExtendDB test path, moto test path, or Nimbus-only
+regression. Enterprise compatibility evidence is not accepted if it only proves
+the Rust handler accepts a manually assembled JSON body. At least one official
+SDK client must exercise each supported operation family before the tier can be
+called complete.
+
+### External Test Reuse And Canary Policy
+
+Nimbus needs its own tests and it should also reuse external compatibility
+knowledge. Large known-good suites are valuable and should be treated like the
+Node LTS compatibility suites: pinned, repeatable external canary corpora that
+run against Nimbus by endpoint override. The default is not "copy only small
+fixtures." The default is:
+
+1. Run large external suites by reference from their own checkout or package
+   installation.
+2. Translate important scenarios into Nimbus-native tests when they become
+   product invariants or need deterministic PR coverage.
+3. Vendor fixtures or whole suites only when copying is legally clean,
+   maintainable, and better than a path-referenced canary lane.
+
+Use four explicit categories:
+
+- `source-reference`: upstream source, SDK tests, or docs were read and cited,
+  but no code or fixture was copied.
+- `external-canary-suite`: a large upstream or customer-like suite is run from
+  its own checkout/package path against Nimbus using endpoint override. The
+  suite is not copied into the Nimbus tree, but its commit/version, command,
+  environment, pass/fail count, and exclusions are recorded.
+- `translated-scenario`: an upstream behavior case was rewritten into the
+  Nimbus scenario model, with provenance recorded as the upstream repo path,
+  test name, commit SHA, and any semantic changes.
+- `vendored-fixture`: a small upstream fixture, golden request/response, SigV4
+  vector, or focused test helper was copied into the Nimbus tree.
+
+External canary suites are required for enterprise DynamoDB compatibility.
+Initial required canaries:
+
+- ExtendDB Python/boto3 suites from `/Users/jack/src/github.com/ExtendDB/extenddb/tests/`
+  and `/Users/jack/src/github.com/ExtendDB/extenddb/tests/python/`, pinned by
+  ExtendDB commit SHA.
+- ExtendDB Rust SDK suite from
+  `/Users/jack/src/github.com/ExtendDB/extenddb/tests/rust/`, pinned by
+  ExtendDB commit SHA and the AWS SDK Rust checkout/revision it uses.
+- Official AWS CLI command suite for supported T0-T7 operation families.
+- Official AWS SDK suites or Nimbus-authored canary projects using
+  JavaScript v3, Rust, Python/boto3, and, when practical, Java v2.
+
+ExtendDB does not need a separate client SDK for Nimbus to reuse. Its README
+states that unmodified AWS SDKs, CLI, and tools should work by changing the
+endpoint, and its tests are built around that model. Nimbus should therefore
+use ExtendDB as both a behavior corpus and an example of endpoint-overridden
+official SDK verification.
+
+Before a suite is accepted as a canary, perform a quality audit and record:
+
+- License and whether code is copied, referenced, or translated.
+- Upstream commit SHA or package version.
+- Whether the suite can run against real DynamoDB, DynamoDB Local, ExtendDB,
+  and Nimbus by endpoint/config only.
+- Which official client it uses, such as AWS CLI, boto3/botocore,
+  `@aws-sdk/client-dynamodb`, `aws-sdk-dynamodb`, or AWS SDK for Java v2.
+- Coverage by operation family, modeled errors, pagination, SigV4, retry
+  behavior, streams, TTL, tags, transactions, and secondary indexes.
+- Skip/xfail policy. Required canaries must not hide supported-operation
+  failures behind broad skips or expected failures.
+- Cleanup/isolation behavior, credential handling, determinism, runtime cost,
+  and whether tests can run in PR, nightly, or manual lanes.
+
+Vendoring is allowed when all of these are true:
+
+- The upstream license is compatible with the Nimbus repository license
+  posture, such as Apache-2.0, MIT, or BSD-style terms.
+- The copied artifact is stable enough to audit and maintain. A large suite may
+  be vendored only with an explicit owner, update cadence, license/NOTICE
+  proof, and reason the external-canary path is insufficient.
+- Original license headers are preserved, modifications are marked, and
+  repo-root `NOTICE` coverage is updated when required.
+- The test does not require upstream-private services, credentials, or brittle
+  timing assumptions.
+- The execution log records the upstream commit SHA and why translation was
+  insufficient.
+
+Never copy GPL/AGPL or unknown-license tests into Nimbus. For those, use
+`source-reference` or `external-canary-suite` only if execution is legally and
+operationally acceptable, or use `translated-scenario` without copying code.
+
+Nimbus-owned tests are still required for Nimbus-specific guarantees:
+tenant isolation, access-key binding, engine/storage atomicity, cancellation
+boundaries, crate dependency boundaries, `_nimbus` ownership, performance
+baselines, and soak/failure-injection behavior. External suites can prove
+compatibility; they cannot prove Nimbus production safety by themselves.
 
 ## Control Plan Rules
 
@@ -422,6 +588,105 @@ Every completed item must leave durable evidence:
   command plus root `npm run typecheck` when exported API surfaces change.
 - Parity-test divergences from DynamoDB Local or ExtendDB must be either
   fixed or explicitly classified in the divergence log.
+- Crate-boundary evidence must be recorded whenever D0 changes wiring:
+  `cargo tree -p nimbus-dynamodb --edges normal`, `cargo tree -p nimbus-server --edges normal`,
+  and a stale-reference audit showing no old `*-adapter` package,
+  path, or import names.
+
+## Production Readiness Success Criteria
+
+The DynamoDB adapter is not production-ready because it compiles or because a
+single AWS CLI workflow passes. A tier can be marked `done` only when the
+relevant criteria below have durable proof in the execution log and committed
+evidence artifacts.
+
+### Feature Parity Gate
+
+For every supported operation in tiers T0-T7:
+
+- The operation appears in a generated coverage table with status
+  `implemented`, `classified-divergence`, or `unsupported-deferred`.
+- `implemented` operations have request-shape validation, success response
+  tests, modeled error tests, limit tests, and malformed-input tests.
+- Every modeled exception the adapter claims to support has a test that
+  asserts the HTTP status, DynamoDB `__type`, message shape, and SDK-visible
+  error classification.
+- Pagination operations prove token roundtrip, exhausted pagination, invalid
+  token rejection, and SDK paginator compatibility.
+- Batch and transaction operations prove partial failure envelopes,
+  cancellation reasons, idempotency/client-token behavior where applicable,
+  and atomicity boundaries.
+- Every intentional divergence from DynamoDB Local or the botocore model is
+  recorded in `docs/adapters/dynamodb/divergences.md` with rationale and a
+  regression test asserting the chosen behavior.
+
+Success metric: 100% of T0-T7 supported operations have a coverage-table row,
+100% of `implemented` rows have focused tests, and 0 unclassified differences
+remain in the parity report.
+
+### Official SDK Compatibility Gate
+
+For every supported operation family, at least one scenario must pass through
+each official client family that enterprises commonly use:
+
+- AWS CLI.
+- JavaScript v3 (`@aws-sdk/client-dynamodb`, plus `@aws-sdk/lib-dynamodb`
+  where document-client behavior matters).
+- Rust (`aws-sdk-dynamodb`).
+- Python (`boto3`/`botocore`).
+
+Success metric: the SDK matrix records exact package versions, auth mode,
+endpoint URL, operation families, pass/fail counts, and modeled divergences.
+No tier may be marked `done` if an official SDK client fails a supported
+operation due to Nimbus request parsing, response shape, SigV4 signing,
+pagination, retry classification, or modeled exception drift.
+
+### Reliability Gate
+
+Each implemented tier must include failure-mode and concurrency coverage:
+
+- Malformed JSON, missing headers, unknown operations, unsupported parameters,
+  oversized payloads, empty sets, invalid keys, and invalid pagination tokens
+  fail closed with DynamoDB-shaped errors.
+- Dropped client connections, request cancellation before commit, cancellation
+  after durable commit, engine errors, storage errors, and timeout paths do not
+  panic, leak tasks, or return partial success envelopes.
+- Concurrent writes, conditional writes, batch writes, transactions, stream
+  reads, and TTL sweeps have race tests or deterministic stress tests proving
+  stable behavior.
+- Tenant isolation is proven with at least two tenants/access keys: cross-tenant
+  reads, writes, streams, tags, TTL settings, and table listings are denied or
+  invisible as appropriate.
+- A soak test runs mixed SDK traffic for a fixed duration and records request
+  count, error count by class, task count before/after, memory high-water mark,
+  and panic count.
+
+Success metric: focused failure/concurrency tests pass, the soak test records
+0 panics, 0 task leaks, 0 unclassified 5xx responses, and 0 tenant-isolation
+violations.
+
+### Performance Gate
+
+Performance proof is required before declaring enterprise readiness:
+
+- Add a deterministic benchmark profile for embedded local storage covering
+  PutItem, GetItem, UpdateItem, Query, Scan, BatchGetItem, BatchWriteItem,
+  TransactWriteItems, and Streams GetRecords.
+- Record throughput plus p50/p95/p99 latency for each operation family, item
+  size class, and concurrency level.
+- Commit an initial benchmark baseline once the operation family is complete.
+  Future changes must stay within the configured non-regression threshold or
+  update the baseline with a written justification.
+- Include at least one mixed workload benchmark that combines reads, writes,
+  conditional writes, queries, streams, and TTL/tag metadata access.
+- Include memory-allocation or resident-set tracking for large scans, paginated
+  reads, batch operations, and stream reads.
+
+Success metric: every T0-T7 operation family has a benchmark baseline and a
+non-regression gate. The plan may set the first numeric SLO after the initial
+baseline is measured, but it must record p50/p95/p99 latency, throughput,
+dataset size, item size, concurrency, storage backend, host hardware, and
+commit SHA.
 
 ## Compatibility Tiers
 
@@ -440,10 +705,32 @@ Every completed item must leave durable evidence:
 
 ## Architecture Boundary Contract
 
+### Crate Boundary
+
+- `nimbus-dynamodb` owns DynamoDB wire semantics, AttributeValue conversion,
+  expression bridging, operation dispatch, SigV4 verification, stream shaping,
+  parity-test scaffolding, and the axum router factory.
+- `nimbus-server` owns listener bind/spawn/shutdown, CLI/ServeOptions
+  composition, global task supervision, and any route mounting needed to expose
+  the `nimbus-dynamodb` router.
+- `nimbus-adapters` is an optional default-empty facade. It may add a
+  `dynamodb` feature that re-exports `nimbus-dynamodb` after the concrete
+  crate compiles and has focused tests. `nimbus-server` must not depend on the
+  facade.
+- `nimbus-dynamodb` must not depend on `nimbus-server`, must not import
+  server-private modules, must not accept `AppState`, and must not write
+  `_nimbus` or other system-owned state directly.
+- Tenant authority flows through explicit tenant bindings and narrow Nimbus
+  engine/service capabilities. DynamoDB table names, access keys, request
+  headers, or SigV4 credentials must not directly select lower-layer storage
+  without adapter admission.
+
 ### Nimbus Core Owns
 
-- Document identity and key generation, including the composite-key encoding
-  that lives in shared core infrastructure rather than the adapter.
+- Document identity validation and key-generation primitives. DynamoDB's
+  partition/sort-key codec stays in `nimbus-dynamodb` unless a later
+  cross-adapter need justifies promoting a protocol-neutral composite-key
+  primitive.
 - Atomic write batch semantics: insert, update, delete, conditional update.
 - Query representation and execution: filters, ordering, cursors,
   projections, limits, offsets.
@@ -455,7 +742,8 @@ Every completed item must leave durable evidence:
 
 ### Adapter Owns
 
-- HTTP listener and connection management on the DynamoDB port.
+- DynamoDB router construction and request handling for the DynamoDB port.
+  Socket bind, task lifecycle, and shutdown stay in `nimbus-server`.
 - DynamoDB JSON wire protocol envelope: `X-Amz-Target` dispatch, request body
   parsing, response body shaping, error envelope (`__type` + message).
 - AttributeValue serialization (S/N/B/M/L/SS/NS/BS/BOOL/NULL) including
@@ -496,7 +784,7 @@ MongoDB adapter logic, compare the paths:
   encoding, expression-language semantics, SigV4 canonical-request
   construction, or stream shard format, keep it in the DynamoDB adapter.
 
-## Required Core Primitive Work
+## Required Foundation Work
 
 ### D0.1: HTTP Listener For DynamoDB Port
 
@@ -676,22 +964,27 @@ must:
 | D6 | TTL, tagging, control-plane completion | 3-5 |
 | D7 | SigV4 strict mode | 3-5 |
 | D8 | `@nimbus/dynamodb` SDK package + parity test integration | 6-9 |
+| D9 | Enterprise readiness, reliability, and performance closeout | 4-7 |
 | Buffer | Upstream SDK alignment, edge-case divergences | 4-6 |
-| **Total** | | **48-71** |
+| **Total** | | **52-78** |
 
 ## Implementation Phases
 
 ### D0: Wire Envelope, AttributeValue Bridge, Control Plane
 
-Location: `crates/nimbus-server/src/adapters/dynamodb/`.
+Location: `crates/nimbus-dynamodb/src/`, with only a thin server composition
+shim under `crates/nimbus-server/src/adapters/dynamodb/` if needed.
 
 Context window budget: 6-8 focused windows.
 
-- Add `dynamodb` adapter module beside `convex`, `firebase`, `cloud_functions`,
-  `mongodb`.
-- Add `DynamoDbConfig` and optional HTTP listener to server configuration.
-- Implement axum router on a separate port that POSTs all requests through
-  the X-Amz-Target dispatch.
+- Add the `nimbus-dynamodb` workspace crate and package, following the
+  concrete provider naming pattern used by `nimbus-mongodb`,
+  `nimbus-firebase`, `nimbus-cloud-functions`, and `nimbus-convex`.
+- Add `DynamoDbConfig` in `nimbus-dynamodb` and optional HTTP listener
+  composition to server configuration.
+- Implement an axum router factory in `nimbus-dynamodb` that POSTs all
+  requests through the X-Amz-Target dispatch. The server binds the socket and
+  supervises the task.
 - Implement the AttributeValue ↔ Nimbus value bridge using the typed-scalar
   metadata infrastructure for type-preserving roundtrips (N, B, SS, NS, BS).
 - Implement composite-key encoding with reversible canonical form.
@@ -710,12 +1003,14 @@ succeeds. The `aws-sdk-rust` DynamoDB client can issue the same operations.
 
 ### D1: Single-Item Operations And Expression Language
 
-Location: `crates/nimbus-server/src/adapters/dynamodb/`.
+Location: `crates/nimbus-dynamodb/src/`.
 
 Context window budget: 8-12 focused windows.
 
-- Implement the expression mini-language parser and evaluator with shared
-  tokenizer, recursive-descent parser, and AST.
+- Wire the `extenddb-core` expression parser/evaluator into the
+  `nimbus-dynamodb` bridge. Do not reimplement the expression grammar unless
+  the direct upstream dependency proves unmaintainable and the fallback path is
+  explicitly recorded.
 - Implement ConditionExpression evaluation against an item document.
 - Implement UpdateExpression with SET (with `if_not_exists`, `list_append`,
   arithmetic), REMOVE, ADD (numeric add, set add), DELETE (set subtract).
@@ -740,7 +1035,7 @@ covered operations.
 
 ### D2: Query And Scan
 
-Location: `crates/nimbus-server/src/adapters/dynamodb/`.
+Location: `crates/nimbus-dynamodb/src/`.
 
 Context window budget: 5-7 focused windows.
 
@@ -765,7 +1060,7 @@ AWS-SDK-generated request shapes is clean.
 
 ### D3: Batch And Transactional Operations
 
-Location: `crates/nimbus-server/src/adapters/dynamodb/`.
+Location: `crates/nimbus-dynamodb/src/`.
 
 Context window budget: 4-6 focused windows.
 
@@ -789,7 +1084,7 @@ all execute end-to-end. Parity diff is clean for covered shapes.
 
 ### D4: Secondary Indexes (GSI, LSI)
 
-Location: `crates/nimbus-server/src/adapters/dynamodb/`.
+Location: `crates/nimbus-dynamodb/src/`.
 
 Context window budget: 5-7 focused windows.
 
@@ -817,7 +1112,7 @@ ConsistentRead-on-GSI question.
 
 ### D5: DynamoDB Streams
 
-Location: `crates/nimbus-server/src/adapters/dynamodb/`.
+Location: `crates/nimbus-dynamodb/src/`.
 
 Context window budget: 4-6 focused windows.
 
@@ -843,7 +1138,7 @@ divergence.
 
 ### D6: TTL, Tagging, Control-Plane Completion
 
-Location: `crates/nimbus-server/src/adapters/dynamodb/`.
+Location: `crates/nimbus-dynamodb/src/`.
 
 Context window budget: 3-5 focused windows.
 
@@ -864,7 +1159,7 @@ tagging workflow execute end-to-end.
 
 ### D7: SigV4 Strict Mode
 
-Location: `crates/nimbus-server/src/adapters/dynamodb/`.
+Location: `crates/nimbus-dynamodb/src/`.
 
 Context window budget: 3-5 focused windows.
 
@@ -886,7 +1181,7 @@ default credential chain works against Nimbus.
 
 ### D8: JavaScript SDK Package And Parity Test Integration
 
-Location: `packages/dynamodb/` and `crates/nimbus-server/tests/dynamodb_spec/`.
+Location: `packages/dynamodb/` and `crates/nimbus-dynamodb/tests/dynamodb_spec/`.
 
 Context window budget: 6-9 focused windows.
 
@@ -899,7 +1194,7 @@ Context window budget: 6-9 focused windows.
   table lifecycle, item CRUD, query, scan, batch, transact, and stream
   iteration.
 - Build the parity-test runner at
-  `crates/nimbus-server/tests/dynamodb_spec/` analogous to
+  `crates/nimbus-dynamodb/tests/dynamodb_spec/` analogous to
   `mongodb_spec/`. Each scenario executes the same operation sequence
   against:
   1. A local Nimbus DynamoDB listener.
@@ -921,8 +1216,37 @@ Context window budget: 6-9 focused windows.
 
 Exit gate: `@nimbus/dynamodb` selftest passes; parity-test runner emits a
 classification report covering at least 80% of AWS-SDK-generated request
-shapes for tiers T0-T6; verification harness includes the five DynamoDB
-cases in PR and nightly lanes.
+shapes for tiers T0-T6; official JS, Rust, Python, and AWS CLI client smoke
+suites pass against Nimbus for every supported operation family; verification
+harness includes the five DynamoDB cases in PR and nightly lanes.
+
+### D9: Enterprise Readiness, Reliability, And Performance Closeout
+
+Location: `crates/nimbus-dynamodb/`, `docs/adapters/dynamodb/`, and the
+verification/benchmark harnesses.
+
+Context window budget: 4-7 focused windows.
+
+- Generate and commit a feature-parity coverage table for T0-T7 operation
+  families using the DynamoDB API reference, botocore service model, and the
+  implemented Nimbus operation registry.
+- Generate and commit an official SDK compatibility matrix for AWS CLI,
+  JavaScript v3, Rust, and Python clients with exact versions and pass/fail
+  counts.
+- Add failure-injection, concurrency, tenant-isolation, and cancellation tests
+  for the supported tiers.
+- Add deterministic benchmark coverage for the operation families listed in
+  the Performance Gate and commit the first baseline.
+- Add a mixed-workload soak test and record request count, error classes, task
+  count before/after, memory high-water mark, and panic count.
+- Produce `docs/adapters/dynamodb/enterprise-readiness.md` summarizing feature
+  coverage, known divergences, SDK versions tested, reliability proof,
+  benchmark baselines, deferred features, and operational limits.
+
+Exit gate: the enterprise-readiness doc exists, every supported operation has
+coverage and SDK evidence, soak and failure-injection tests pass with no
+unclassified failures, benchmark baselines are committed, and all divergences
+are documented with tests.
 
 ## Testing Strategy
 
@@ -995,7 +1319,25 @@ Each scenario classification:
 | `skip-topology` | Test requires multi-region or accelerator endpoint |
 | `fail-known` | Known behavioral gap with tracking note |
 
-### Layer 8: Verification Harness
+### Layer 8: Official SDK Compatibility Matrix
+
+For every supported tier, run the same scenario intent through real client
+libraries, not only Nimbus's internal test request builder:
+
+- AWS CLI commands for table lifecycle, item CRUD, query/scan, batch,
+  transaction, streams, TTL, and tagging where the CLI exposes the operation.
+- JavaScript v3: `@aws-sdk/client-dynamodb`, `@aws-sdk/lib-dynamodb`, and the
+  `@nimbus/dynamodb` helper package.
+- Rust: `aws-sdk-dynamodb` with endpoint override and SigV4 signing.
+- Python: `boto3`/`botocore` client calls, paginators, waiters, modeled
+  exceptions, and retry classification.
+
+The matrix records exact SDK package versions, request families covered,
+auth mode, endpoint URL, pass/fail count, and any classified divergence. A
+scenario is not enterprise-complete when it only passes a Nimbus-local unit
+test but fails through an official SDK client.
+
+### Layer 9: Verification Harness
 
 DynamoDB cases run in the existing verification harness with deterministic
 seed-based scenarios. Both PR and nightly lanes include the five
@@ -1005,11 +1347,13 @@ above-listed cases.
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Listener | Separate axum HTTP app on its own port | DynamoDB uses HTTP/JSON; isolating the listener avoids X-Amz-Target route collisions with existing Convex/Firebase HTTP surfaces |
+| Crate name | `nimbus-dynamodb` | Matches the extracted concrete adapter naming pattern (`nimbus-mongodb`, `nimbus-firebase`, `nimbus-convex`, `nimbus-cloud-functions`) and avoids the redundant `*-adapter` suffix |
+| Adapter facade | Optional `nimbus-adapters` feature | Keeps an ergonomic aggregate re-export without making server depend on a facade or hiding concrete provider ownership |
+| Listener | `nimbus-dynamodb` router plus `nimbus-server` listener lifecycle | DynamoDB uses HTTP/JSON; isolating the router avoids X-Amz-Target route collisions while keeping socket bind/spawn/shutdown in the server composition layer |
 | Default port | 8000 | Matches DynamoDB Local convention; AWS SDK `--endpoint-url http://localhost:8000` works out of the box |
 | AttributeValue codec | Typed-scalar metadata (reused from F3.4b1 and MongoDB adapter) | N/B/SS/NS/BS need roundtrip fidelity through JSON storage; MongoDB adapter already proved this for Decimal128 and Binary |
 | Composite key encoding | `<pk-base64url>.<sk-base64url>` | Reversible, fits Nimbus DocumentId rules (no `/`, no NUL, ≤1500B), unambiguous separator |
-| Expression parser | Hand-rolled recursive descent | The grammar is small and stable; avoids a parser-generator dependency; SDK-generated expressions follow a narrow style that simplifies coverage |
+| Expression parser | `extenddb-core` expression parser/evaluator through a Nimbus shim | Reuses the AWS-maintained open reference for the highest-risk protocol grammar and keeps Nimbus code focused on capability checks and storage bridging |
 | Table-to-tenant mapping | Per-access-key tenant binding | DynamoDB has flat account namespace; Nimbus needs tenant scoping; binding is configured at adapter setup |
 | Stream shard model | Single-shard per stream | Nimbus subscription model is non-sharded; document divergence from DynamoDB's hierarchical shard tree; sufficient for non-throughput-bound workloads |
 | SigV4 auth | Two-mode: SigV4Strict and SigV4Lookup | Allows D0-D6 verification under lookup-only mode while D7 brings strict verification online; mirrors ExtendDB's pragmatic approach |
@@ -1056,17 +1400,18 @@ oversized keys with `ValidationException`.
 
 **R3: Expression language complexity (High, D1).** The expression grammar
 covers comparison, logical, function, and update-action surfaces, plus
-ExpressionAttributeNames/Values substitution. Mitigation: focus on
-SDK-generated expression shapes first (they follow a narrow style); use
-parity tests against DynamoDB Local and ExtendDB as the correctness oracle;
-return explicit errors for unsupported syntax.
+ExpressionAttributeNames/Values substitution. Mitigation: reuse
+`extenddb-core`'s expression parser/evaluator through a thin Nimbus shim; add
+focused adapter tests around Nimbus document bridging; use parity tests against
+DynamoDB Local and ExtendDB as the correctness oracle.
 
 **R4: SigV4 verification correctness (High, D7).** SigV4 requires precise
 canonical-request construction, ordered header signing, and key-derivation
 chain matching the SDK exactly. Any drift causes signature mismatch.
-Mitigation: use the `aws-sigv4` crate's verification primitives directly;
-test against multiple SDKs (Rust, JS v3, Python boto3); ship lookup-only
-mode for D0-D6 so verification can land progressively.
+Mitigation: vendor ExtendDB's focused SigV4 verification module into
+`nimbus-dynamodb`, keep it isolated from server composition, test against
+multiple SDKs (Rust, JS v3, Python boto3), and ship lookup-only mode for D0-D6
+so verification can land progressively.
 
 **R5: Pagination state semantics (High, D2).** `LastEvaluatedKey` must be
 stable across requests and survive parallel reads. Mitigation: encode the
@@ -1121,7 +1466,7 @@ header in the tree and confirms `NOTICE` coverage.
 
 | Phase | Status | Context budget | Start condition | Done when |
 |-------|--------|----------------|-----------------|-----------|
-| D0: Wire envelope, AttributeValue bridge, control plane | `pending` | 6-8 context windows | Plan promoted to `in_progress` and Mongo hardening green | AWS CLI control plane (create/describe/list/update/delete) succeeds end-to-end |
+| D0: Wire envelope, AttributeValue bridge, control plane | `pending` | 6-8 context windows | Plan promoted to `in_progress` and server extraction completion gates green | `nimbus-dynamodb` compiles as a concrete crate; server listener composition works; AWS CLI control plane (create/describe/list/update/delete) succeeds end-to-end |
 | D1: Single-item ops + expression language | `pending` | 8-12 context windows | D0 is `done` | PutItem/GetItem/UpdateItem/DeleteItem with all expression kinds succeed; parity diff clean for covered shapes |
 | D2: Query and Scan | `pending` | 5-7 context windows | D1 is `done` | Query/Scan with pagination succeed end-to-end; parity diff clean |
 | D3: Batch and transactional ops | `pending` | 4-6 context windows | D1 is `done` | BatchGet/BatchWrite/TransactGet/TransactWrite succeed; failure paths return correct exceptions |
@@ -1129,7 +1474,8 @@ header in the tree and confirms `NOTICE` coverage.
 | D5: Streams | `pending` | 4-6 context windows | D1 is `done` | DescribeStream/GetShardIterator/GetRecords work; insert/update/delete events appear with correct StreamViewType |
 | D6: TTL, tagging, control-plane completion | `pending` | 3-5 context windows | D1 is `done` | TTL enable/describe/expire and tag CRUD work end-to-end |
 | D7: SigV4 strict mode | `pending` | 3-5 context windows | D0 is `done` | SigV4Strict mode verifies SDK requests and rejects malformed signatures |
-| D8: SDK + parity tests + verification harness | `pending` | 6-9 context windows | D1-D6 are `done` | `@nimbus/dynamodb` selftest passes; parity classification report covers ≥80% of SDK shapes for T0-T6; harness includes the five DynamoDB cases |
+| D8: SDK + parity tests + verification harness | `pending` | 6-9 context windows | D1-D6 are `done` | `@nimbus/dynamodb` selftest passes; parity classification report covers ≥80% of SDK shapes for T0-T6; official SDK smoke suites pass for supported operation families; harness includes the five DynamoDB cases |
+| D9: Enterprise readiness, reliability, and performance closeout | `pending` | 4-7 context windows | D0-D8 are `done` | Feature coverage table, SDK matrix, reliability proof, tenant-isolation proof, soak report, benchmark baseline, and enterprise-readiness doc are committed |
 
 ## Roadmap Items
 
@@ -1141,8 +1487,8 @@ checkpoint update loaded at once, split it before starting.
 
 | Item | Status | Hard deps | Completion gate | Verification evidence |
 |------|--------|-----------|-----------------|-----------------------|
-| D0.0 Wire `extenddb-core` dependency and vendor SigV4 | `pending` | none | `extenddb-core` added as git rev pin in workspace `Cargo.toml` and pulled into `crates/nimbus-server/Cargo.toml`. SigV4 files from `crates/auth/src/sigv4/` vendored verbatim into `crates/nimbus-server/src/adapters/dynamodb/auth/sigv4/` with Apache-2.0 headers preserved. Repo-root `NOTICE` file created (or updated) with one ExtendDB entry. `make deny` passes; `cargo check -p nimbus-server` passes; the pinned ExtendDB sha recorded in execution log. | `cargo tree -p nimbus-server | grep extenddb-core` shows pinned rev; `cargo check -p nimbus-server` clean; `make deny` clean. |
-| D0.1 HTTP listener scaffold and X-Amz-Target dispatch | `pending` | D0.0 | Separate axum app on port 8000 accepts POST `/`, dispatches by `X-Amz-Target` header, rejects unknown/missing target with DynamoDB error envelope. ServeOptions integration parallel to MongoDB. | Focused tests for dispatch matrix, missing target, malformed body. |
+| D0.0 Scaffold `nimbus-dynamodb`, wire `extenddb-core`, and vendor SigV4 | `pending` | none | `crates/nimbus-dynamodb` added as a workspace member with package name `nimbus-dynamodb`. `extenddb-core` added as git rev pin in workspace `Cargo.toml` and pulled into `crates/nimbus-dynamodb/Cargo.toml`. `crates/nimbus-server/Cargo.toml` depends only on `nimbus-dynamodb`, not on `extenddb-core`. SigV4 files from `crates/auth/src/sigv4/` vendored verbatim into `crates/nimbus-dynamodb/src/auth/sigv4/` with Apache-2.0 headers preserved. Repo-root `NOTICE` file created (or updated) with one ExtendDB entry. The pinned ExtendDB sha recorded in execution log. | `cargo check -p nimbus-dynamodb` clean; `cargo check -p nimbus-server` clean; `cargo tree -p nimbus-dynamodb --edges normal` includes pinned `extenddb-core`; `cargo tree -p nimbus-server --edges normal` shows `nimbus-dynamodb` and not `extenddb-core`; `make deny` clean. |
+| D0.1 HTTP router scaffold, server listener composition, and X-Amz-Target dispatch | `pending` | D0.0 | `nimbus-dynamodb` exposes an axum router factory that accepts explicit capabilities and POST `/` dispatch by `X-Amz-Target`. `nimbus-server` owns port 8000 bind/spawn/shutdown through `ServeOptions`. Unknown/missing target returns DynamoDB error envelope. | Focused `nimbus-dynamodb` tests for dispatch matrix, missing target, malformed body; focused `nimbus-server` test for optional listener wiring. |
 | D0.2 AttributeValue bridge | `pending` | D0.1 | `extenddb_core::types::AttributeValue` ↔ Nimbus value roundtrip for S/N/B/M/L/SS/NS/BS/BOOL/NULL using typed-scalar metadata. Empty sets and empty top-level docs rejected (delegated to `extenddb_core::validation`). | Roundtrip tests for every variant; number precision tests; binary base64 tests. |
 | D0.3 Composite primary-key encoding | `pending` | D0.2 | Reversible `(pk, sk)` ↔ DocumentId encoding via base64url segments. Oversize keys rejected with ValidationException. `_pk`/`_sk` body fields preserved. | Property tests across the Unicode plane; size-limit rejection tests. |
 | D0.4 Error envelope and code mapping | `pending` | D0.1 | Errors return HTTP 4xx/5xx with `{ "__type": "...", "message": "..." }` envelope. Shared error taxonomy maps to DynamoDB codes. | Tests for every mapped error class. |
@@ -1150,6 +1496,7 @@ checkpoint update loaded at once, split it before starting.
 | D0.6 Control plane: Create/Describe/Delete/List/UpdateTable | `pending` | D0.3, D0.5 | CreateTable accepts KeySchema and AttributeDefinitions; DescribeTable returns the TableDescription; DeleteTable removes; ListTables paginates; UpdateTable handles StreamSpecification and table-class fields (GSI deferred to D4). | AWS CLI control-plane workflow succeeds end-to-end. |
 | D0.7 DescribeEndpoints and DescribeLimits | `pending` | D0.6 | DescribeEndpoints returns the Nimbus listener URL; DescribeLimits returns stubbed account/table limits. | Focused tests for both shapes. |
 | D0.8 SigV4 lookup-only auth | `pending` | D0.5 | Authorization header parsed via vendored `auth/sigv4/parse.rs`; access key extracted; signature is not verified yet (deferred to D7). Tenant principal threaded through dispatch. | Tests for valid/missing auth header, access-key extraction. |
+| D0.9 Optional `nimbus-adapters` facade export | `pending` | D0.1 | `crates/nimbus-adapters` adds a default-off `dynamodb` feature that depends on and re-exports `nimbus-dynamodb`. `nimbus-server` continues to depend directly on `nimbus-dynamodb`. | `cargo check -p nimbus-adapters --features dynamodb`; `cargo tree -p nimbus-adapters --edges normal` has no default adapter deps; `cargo tree -p nimbus-server --edges normal` has no `nimbus-adapters`. |
 
 ### D1 Work Queue: Single-Item Operations And Expression Language
 
@@ -1226,8 +1573,21 @@ checkpoint update loaded at once, split it before starting.
 | D8.3 Parity-test runner foundation | `pending` | D1 done | Runner spins up Nimbus + DynamoDB Local (Docker) and runs the same scenario list against both, diffing responses. | Runner executes the seeded scenario set with classification report. |
 | D8.4 Parity-test corpus T0-T3 | `pending` | D8.3, D3 done | Scenarios for control plane, single-item ops, query/scan, batch/transact. Classification report ≥80% pass on covered shapes. | Classification report committed. |
 | D8.5 Parity-test corpus T4-T6 | `pending` | D8.3, D6 done | Scenarios for GSI/LSI, streams, TTL, tagging. | Classification report committed. |
-| D8.6 ExtendDB parity comparison | `pending` | D8.3 | Optional ExtendDB run alongside DynamoDB Local; divergences classified as `accept-extenddb-divergence` where Nimbus matches ExtendDB but not real DynamoDB. | Classification report includes ExtendDB column. |
+| D8.6 ExtendDB parity comparison | `pending` | D8.3 | ExtendDB run alongside DynamoDB Local when the local checkout builds. Divergences classified as `accept-extenddb-divergence` where Nimbus matches ExtendDB but not real DynamoDB. If ExtendDB cannot build, the failure and next action are recorded instead of silently skipping the column. | Classification report includes ExtendDB column or a recorded build/run failure with command output. |
 | D8.7 Verification harness integration | `pending` | D8.3 | Five DynamoDB harness cases added to PR and nightly lanes (handshake/control-plane, item-CRUD, query-scan, transact, streams). | `cargo test -p nimbus-server verification_harness_pr` includes all five. |
+| D8.8 External canary suite runner | `pending` | D8.3 | Add a path-referenced canary registry for large external suites. Initial entries cover ExtendDB Python/boto3 suites, ExtendDB Rust SDK suite, AWS CLI suite, and official SDK canary projects. Suites are pinned by path + commit/version and run against Nimbus by endpoint override. | Canary report records suite name, command, environment, SDK, upstream SHA/version, pass/fail/skip counts, artifacts, and lane (`pr`, `nightly`, or `manual`). |
+
+### D9 Work Queue: Enterprise Readiness, Reliability, And Performance
+
+| Item | Status | Hard deps | Completion gate | Verification evidence |
+|------|--------|-----------|-----------------|-----------------------|
+| D9.1 Feature-parity coverage table | `pending` | D8.4, D8.5 | `docs/adapters/dynamodb/feature-coverage.md` lists every T0-T7 operation, modeled request/response fields, modeled exceptions, pagination shape, idempotency fields, and status (`implemented`, `classified-divergence`, `unsupported-deferred`). | Generated coverage table committed; 100% of supported operations have a row; 0 unclassified fields/exceptions for implemented operations. |
+| D9.2 External suite quality audit and official SDK matrix | `pending` | D8.2, D8.4, D8.5, D8.8, D7.2 | Audit every accepted external suite for license, endpoint-overridden target support, real-DynamoDB/DynamoDB-Local/ExtendDB/Nimbus targetability, SDK used, operation coverage, skip policy, cleanup, determinism, runtime cost, and credential safety. AWS CLI, JS v3, Rust, Python, and practical Java clients each run supported operation-family scenarios against Nimbus with endpoint override and SigV4 mode recorded. | `docs/adapters/dynamodb/sdk-compatibility.md` records suite-quality audit, exact versions/SHAs, pass/fail/skip counts, auth mode, endpoint URL, and divergences; no supported operation fails through an official SDK due to Nimbus protocol drift. |
+| D9.3 Failure injection and cancellation proof | `pending` | D8.4 | Malformed input, oversized payloads, invalid keys/tokens, dropped connections, pre-commit cancellation, post-commit cancellation, engine errors, storage errors, and timeout paths fail closed without panics or partial-success envelopes. | Focused failure-injection tests pass; report records 0 panics and 0 unclassified 5xx responses. |
+| D9.4 Tenant isolation and auth isolation proof | `pending` | D7.3, D8.4, D8.5 | Two or more tenants/access keys cannot cross-read, cross-write, list, stream, tag, TTL-configure, or infer each other's tables. Wrong access key, wrong signature, and wrong tenant binding fail closed. | Tenant-isolation conformance tests pass; report records 0 cross-tenant visibility or mutation violations. |
+| D9.5 Mixed-workload soak test | `pending` | D9.2, D9.3, D9.4 | Mixed SDK traffic runs for a fixed duration across reads, writes, conditional writes, queries, streams, TTL/tag metadata, and auth failures. | Soak report records duration, request count, error count by class, task count before/after, memory high-water mark, and 0 panics/task leaks/unclassified failures. |
+| D9.6 Performance benchmark baseline | `pending` | D8.4, D8.5 | Benchmarks cover PutItem, GetItem, UpdateItem, Query, Scan, BatchGetItem, BatchWriteItem, TransactWriteItems, and Streams GetRecords across documented item sizes and concurrency levels. | Benchmark report records p50/p95/p99 latency, throughput, dataset size, item size, concurrency, storage backend, host hardware, commit SHA, and initial non-regression thresholds. |
+| D9.7 Enterprise-readiness closeout document | `pending` | D9.1-D9.6 | `docs/adapters/dynamodb/enterprise-readiness.md` summarizes feature coverage, SDK matrix, reliability proof, tenant isolation proof, benchmark baseline, known divergences, deferred features, and operational limits. | Document committed; execution log links every proof artifact; final stale-reference/dependency-graph checks pass. |
 
 ## Source Evidence Map
 
@@ -1238,21 +1598,26 @@ checkpoint update loaded at once, split it before starting.
 | AWS SigV4 spec | AWS docs | Canonical request, derived-key chain, signing algorithm |
 | AWS DynamoDB Local | `amazon/dynamodb-local` Docker image | Behavioral ground truth |
 | ExtendDB | `https://github.com/ExtendDB/extenddb` cloned at `/Users/jack/src/github.com/ExtendDB/extenddb` | AWS-blessed open reference adapter, divergence documentation (`docs/differences-from-dynamodb.md`), parity-test corpus (`tests/test_*.py`), structural twin (`crates/{server,auth,core,engine,storage,storage-postgres}`) |
+| ExtendDB test strategy | `/Users/jack/src/github.com/ExtendDB/extenddb/tests/README.md`, `/Users/jack/src/github.com/ExtendDB/extenddb/tests/python/README.md`, `/Users/jack/src/github.com/ExtendDB/extenddb/docs/design/09-testing.md`, `/Users/jack/src/github.com/ExtendDB/extenddb/external-suites.sample.toml` | Dual-target testing against ExtendDB or real DynamoDB, boto3 primary suite, Rust SDK integration suite, external-suite-by-path pattern, and quality criteria for reference suites |
 | `aws-sdk-rust` | `https://github.com/awslabs/aws-sdk-rust` | Canonical Rust client; SigV4 reference |
 | `aws-sdk-js-v3` | `https://github.com/aws/aws-sdk-js-v3` | Canonical JS client; `@nimbus/dynamodb` SDK target |
 | `boto3`/`botocore` | `https://github.com/boto/boto3` | Secondary parity target |
 | `moto` (DynamoDB) | `https://github.com/getmoto/moto` | In-memory DynamoDB mock; edge-case reference |
-| `aws-sigv4` crate | crates.io | SigV4 verification primitives |
-| MongoDB adapter (completed) | `crates/nimbus-server/src/adapters/mongodb/` | Structural twin: listener + bridge + dispatch + auth |
+| ExtendDB SigV4 module | `/Users/jack/src/github.com/ExtendDB/extenddb/crates/auth/src/sigv4/` | Vendored server-side SigV4 verification primitive |
+| MongoDB adapter (completed) | `crates/nimbus-mongodb/` plus server listener shim | Structural twin: concrete adapter crate + server-owned listener composition |
 | MongoDB adapter plan (archived) | `docs/plans/archive/mongodb-adapter-plan.md` | Template for this plan's shape |
 | MongoDB hardening plan (archived) | `docs/plans/archive/mongodb-adapter-hardening-plan.md` | Audit-finding pattern to anticipate for hardening-plan follow-on |
-| Firebase adapter (completed) | `crates/nimbus-server/src/adapters/firebase/` | Typed-scalar metadata precedent |
+| Firebase adapter (completed) | `crates/nimbus-firebase/` | Typed-scalar metadata precedent |
+| Server extraction completion plan | `docs/plans/server-crate-extraction-completion-plan.md` | Current crate naming and facade rules for concrete adapter crates |
 | Runtime-capability adapter boundary baseline | `docs/plans/archive/runtime-capability-adapter-boundary-plan.md` | Adapter/runtime ownership baseline |
 
 ## Execution Log
 
 | Date | Item | Status | Description | Verification |
 |------|------|--------|-------------|--------------|
-| 2026-05-26 | — | `pending` | Plan created. Awaiting promotion to `in_progress` after Mongo hardening green and release-readiness plan permits adapter-surface expansion. | — |
+| 2026-05-26 | — | `pending` | Plan created. Awaiting promotion to `in_progress` after the active architecture gates and release-readiness plan permit adapter-surface expansion. | — |
 | 2026-05-26 | — | `pending` | ExtendDB cloned locally at `/Users/jack/src/github.com/ExtendDB/extenddb` (Apache-2.0, Rust workspace with `crates/{auth,bin,core,engine,server,storage,storage-postgres}`, Python parity corpus under `tests/`, divergence catalogue at `docs/differences-from-dynamodb.md`). Plan references updated to point at the local checkout. | `ls /Users/jack/src/github.com/ExtendDB/extenddb` |
 | 2026-05-26 | — | `pending` | Surveyed ExtendDB crate-by-crate for reuse: `extenddb-core` (12,587 LOC, zero workspace deps, pure sync) selected as direct git-rev dependency to inherit AttributeValue, expression language, type model, validation, and error taxonomy. `extenddb-auth/sigv4/` (4 files, ~760 LOC) selected for verbatim vendoring under `auth/sigv4/`. `extenddb-storage` traits + `extenddb-engine` handlers + `extenddb-server` + `extenddb-storage-postgres` rejected (too coupled to ExtendDB's StorageEngine trait and PostgreSQL backend; adapter cost exceeds reimplementation cost). Plan updated with "Upstream Crate Reuse" section, dependency-wiring D0.0 added to the work queue, dependency-management list aligned, module structure annotated `[uses extenddb-core]` where appropriate, D1.1–D1.4 expression items converted from "build parser/evaluator" to "wire upstream parser/evaluator into Nimbus shim". | `find /Users/jack/src/github.com/ExtendDB/extenddb/crates -name '*.rs' \| xargs wc -l` = 49,397 total; per-crate breakdown recorded in plan. |
+| 2026-05-28 | — | `pending` | Updated the plan after the adapter crate extraction and naming change. DynamoDB now targets the concrete `crates/nimbus-dynamodb` crate, keeps DynamoDB protocol dependencies out of `nimbus-server`, permits `nimbus-adapters` only as a default-empty optional facade, moves parity/spec tests under the concrete adapter crate, and adds crate-boundary verification gates. | Stale package/path audit recorded no old adapter-suffix crate names and no old server-local parity-test path. |
+| 2026-05-28 | — | `pending` | Added enterprise compatibility and production-readiness gates: official SDK matrix, botocore model coverage, feature-parity coverage table, failure injection, tenant isolation proof, soak testing, performance baselines, and an external test reuse policy distinguishing source references, translated scenarios, and vendored fixtures. | `git diff --check -- docs/plans/dynamodb-adapter-plan.md`; stale old-path audit remained clean. |
+| 2026-05-28 | — | `pending` | Re-reviewed the freshly updated ExtendDB checkout (`5f5e511`) and changed the plan from "small vendored fixtures only" to a Node-LTS-style external canary policy. ExtendDB has dual-target Python/boto3 tests, a Rust SDK integration test crate, external suite registry precedent, real-DynamoDB validation mode, and explicit supported-operation/difference docs. Large suites should run by pinned path/version against Nimbus, with selected scenarios translated into PR-stable Nimbus tests. | `git pull --ff-only` in ExtendDB; `find tests -type f`; `rg -n "def test_" tests \| wc -l` = 729; `rg -n "#\\[(tokio::test\|test)\\]" tests/rust/src \| wc -l` = 348; inspected `tests/README.md`, `tests/python/README.md`, `tests/rust/Cargo.toml`, `tests/rust/src/test_base.rs`, `docs/design/09-testing.md`, `external-suites.sample.toml`. |

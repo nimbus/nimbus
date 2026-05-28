@@ -5,10 +5,10 @@ use axum::body::{Body, Bytes};
 use axum::extract::OriginalUri;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::Response;
-use nimbus_core::{Error, Result, StorageErrorKind, TenantId};
+use nimbus_cloud_functions::build_callable_request_args;
+use nimbus_core::{Error, StorageErrorKind, TenantId};
 use nimbus_runtime::InvocationAuth;
-use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use super::*;
 use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
@@ -19,7 +19,6 @@ const CALLABLE_ALLOWED_HEADERS: &str =
     "Content-Type, Authorization, Firebase-Instance-ID-Token, X-Firebase-AppCheck";
 const CALLABLE_ALLOWED_METHODS: &str = "POST, OPTIONS";
 const APP_CHECK_HEADER_NAME: &str = "x-firebase-appcheck";
-const INSTANCE_ID_TOKEN_HEADER_NAME: &str = "firebase-instance-id-token";
 
 pub(super) struct CallableHttpRequest<'a> {
     pub(super) method: &'a Method,
@@ -68,10 +67,10 @@ pub(super) async fn handle_callable_target(
 
     let args = match build_callable_request_args(
         request.headers,
-        request.original_uri,
+        request.original_uri.0.query(),
         request.request_path,
         request.query,
-        request.body,
+        &request.body,
         auth.as_ref(),
     ) {
         Ok(args) => args,
@@ -82,15 +81,17 @@ pub(super) async fn handle_callable_target(
             ));
         }
     };
-    match execute_http_target(
-        state,
+    match execute_http_target(ServerCloudFunctionsHttpInvocation {
+        service: state.service.clone(),
+        runtime_service_registry: state.runtime_service_registry(),
+        tenant_isolation_mode: state.tenant_isolation_mode,
         registry,
-        deployment.generation,
+        deployment_generation: deployment.generation,
         tenant_id,
         function_name,
         args,
         auth,
-    ) {
+    }) {
         Ok(mut response) => {
             apply_callable_cors_headers(request.headers, &mut response);
             Ok(response)
@@ -104,102 +105,6 @@ async fn resolve_callable_auth(
     headers: &HeaderMap,
 ) -> std::result::Result<Option<InvocationAuth>, AppError> {
     verify_optional_application_auth_from_headers_in_deployment(deployment, headers).await
-}
-
-pub(super) fn build_callable_request_args(
-    headers: &HeaderMap,
-    original_uri: &OriginalUri,
-    request_path: &str,
-    query: HashMap<String, String>,
-    body: Bytes,
-    auth: Option<&InvocationAuth>,
-) -> Result<Value> {
-    let normalized_headers = normalized_headers(headers);
-    let raw_body = if body.is_empty() {
-        return Err(Error::InvalidInput(
-            "cloud functions callable handlers require a JSON request body".to_string(),
-        ));
-    } else {
-        std::str::from_utf8(&body)
-            .map_err(|error| {
-                Error::InvalidInput(format!(
-                    "cloud functions callable handlers only cover UTF-8 request bodies in the first slice: {error}"
-                ))
-            })?
-            .to_string()
-    };
-    if !header_value_contains(headers, header::CONTENT_TYPE, "json") {
-        return Err(Error::InvalidInput(
-            "cloud functions callable handlers require content-type application/json".to_string(),
-        ));
-    }
-    let body: Value = serde_json::from_str(&raw_body).map_err(|error| {
-        Error::InvalidInput(format!(
-            "cloud functions callable handler could not parse JSON request body: {error}"
-        ))
-    })?;
-    let data = body
-        .as_object()
-        .and_then(|body| body.get("data"))
-        .cloned()
-        .ok_or_else(|| {
-            Error::InvalidInput(
-                "cloud functions callable handlers require a top-level JSON `data` field"
-                    .to_string(),
-            )
-        })?;
-
-    Ok(serde_json::json!({
-        "method": "POST",
-        "path": request_path,
-        "original_url": request_url(headers, original_uri, request_path),
-        "query": query,
-        "headers": normalized_headers,
-        "body": body,
-        "raw_body": raw_body,
-        "callable": {
-            "data": data,
-            "auth": callable_auth_payload(auth)?,
-            "instance_id_token": header_string(headers, INSTANCE_ID_TOKEN_HEADER_NAME),
-            "accepts_streaming": false,
-        },
-    }))
-}
-
-fn callable_auth_payload(auth: Option<&InvocationAuth>) -> Result<Option<Value>> {
-    let Some(auth) = auth else {
-        return Ok(None);
-    };
-    let uid = auth
-        .verified_identity
-        .as_ref()
-        .map(|identity| identity.subject.clone())
-        .or_else(|| {
-            auth.identity
-                .as_ref()
-                .map(|identity| identity.subject.clone())
-        });
-    let token = if let Some(verified_identity) = auth.verified_identity.as_ref() {
-        serialize_object(verified_identity)?
-    } else if let Some(identity) = auth.identity.as_ref() {
-        serialize_object(identity)?
-    } else {
-        Map::new()
-    };
-    Ok(Some(serde_json::json!({
-        "uid": uid,
-        "token": token,
-    })))
-}
-
-fn serialize_object<T>(value: &T) -> Result<Map<String, Value>>
-where
-    T: Serialize,
-{
-    match serde_json::to_value(value).map_err(|error| Error::Serialization(error.to_string()))? {
-        Value::Object(map) => Ok(map),
-        _ => Ok(Map::new()),
-    }
 }
 
 pub(super) fn build_callable_preflight_response(

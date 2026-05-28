@@ -1,65 +1,98 @@
 # Research: libkrun Session Sandbox Backend
 
-Design rationale for a unified libkrun-backed sandbox backend that covers
-two of Nimbus's three sandbox tiers (computer use and GPU-accelerated AI
-workloads) under a single `libkrun_session` backend, with a shared
-lifecycle, a single in-guest agent, and per-tier spec options.
+Design rationale for the unified `nimbus-libkrun` sandbox backend
+shared by the desktop (computer-use) and GPU profiles, with a single
+in-guest agent, one lifecycle, and per-profile spec options. The
+earlier "three tiers, two VMMs" framing was collapsed on 2026-05-27
+(see decisions D1–D12 in
+[`docs/plans/research/vmm-landscape-2026.md`](./vmm-landscape-2026.md)).
 
-This is a research document, not an execution plan. The active execution
-plans that consume this design are:
+This is a research document, not an execution plan. The single active
+execution plan that consumes this design is:
 
-- [`docs/plans/computer-use-sandbox-plan.md`](../computer-use-sandbox-plan.md) (CUS, Tier 2)
-- [`docs/plans/gpu-accelerated-sandbox-plan.md`](../gpu-accelerated-sandbox-plan.md) (GAW, Tier 3)
+- [`docs/plans/nimbus-sandbox-plan.md`](../nimbus-sandbox-plan.md)
+  — banded as **B** (backend / `libkrun_session`), **S** (Linux-KVM
+  snapshot/fork), **D** (desktop profile), **G** (GPU profile).
 
 The GPU mediation question is owned by a sibling research doc:
 
 - [`docs/plans/research/gpu-sandbox-backends.md`](./gpu-sandbox-backends.md)
 
-The Lambda-class sandbox tier (Tier 1) is owned by an unrelated VMM:
+Snapshot/restore + fork-on-demand for this backend is owned by:
 
-- [`docs/plans/firecracker-snapshot-invocation-backend-plan.md`](../firecracker-snapshot-invocation-backend-plan.md) (FSI)
+- [`docs/plans/nimbus-sandbox-plan.md`](../nimbus-sandbox-plan.md) Band S
+  (S0–S5; replaces the archived
+  [`docs/plans/archive/nimbus-libkrun-snapshot-port-plan.md`](../archive/nimbus-libkrun-snapshot-port-plan.md)
+  and the archived
+  [`docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md`](../archive/firecracker-snapshot-invocation-backend-plan.md)).
 
-## The Three Sandbox Tiers
+## Capability Profiles On The Unified Backend
 
-| Tier | Workload class | Boot model | Lifetime | VMM impl |
+There is one VMM family (`nimbus-libkrun`) and a set of capability
+profiles selected by spec:
+
+| Profile | Workload class | Devices on | Lifetime | Plan |
 | --- | --- | --- | --- | --- |
-| 1 Lambda | Stateless code, untrusted input | Snapshot/restore | Sub-second to seconds | Firecracker (Linux) |
-| 2 Computer use | Desktop session, agent loop | Cold boot + warm in-guest agent | Minutes to hours | libkrun (Linux + macOS) |
-| 3 GPU AI | Model inference/training | Cold boot + warm pool | Minutes to days | libkrun (Linux + macOS for Vulkan) |
+| `lambda` | Stateless code, untrusted input | block, net, vsock, rng | Sub-second to seconds | nimbus-sandbox-plan Band S (S0–S4) |
+| `desktop` | Desktop session, agent loop | + virtio-gpu (Venus), virtio-input, virtio-snd, virtio-fs | Minutes to hours | nimbus-sandbox-plan Band D |
+| `gpu` | Model inference / training | + virtio-gpu native-context (opt-in), virtio-fs | Minutes to days | nimbus-sandbox-plan Band G |
 
-All three share the same `Sandbox` trait and tenant-isolation contract.
-Two VMM implementations live underneath: `firecracker_snapshot` (Tier 1)
-and `libkrun_session` (Tier 2 and Tier 3). This doc covers
-`libkrun_session`.
+All profiles share the same `Sandbox` trait and tenant-isolation
+contract. One VMM implementation lives underneath: `libkrun_session`
+on the `nimbus-libkrun` fork. The earlier `firecracker_snapshot`
+backend was collapsed in via D1 — Firecracker's snapshot patterns are
+ported into nimbus-libkrun (Apache-2.0, lineage-consistent), not run
+alongside it. This doc covers the shared backend shape.
 
-## Why Tier 2 and Tier 3 Share One Backend
+### Per-host topology (D11 + D12)
 
-Both tiers want the same primitives:
+- **Linux hosts (every production class):** profiles run as direct
+  libkrun-on-KVM microVMs. The snapshot/fork mechanism from the
+  snapshot-port plan executes here.
+- **macOS dev hosts:** krunkit (libkrun-on-HVF) boots one long-lived
+  outer machine-os Linux VM
+  (`ghcr.io/nimbus/machine-os:v0.1.30`, pinned 2026-05-14). Per-service
+  workloads run as **standard Linux containers** inside that outer VM
+  (conmon → crun → standard container), not as nested libkrun
+  microVMs. Production fork-semantics parity is enforced via Linux CI
+  rather than nested KVM on Apple Silicon.
+- Venus / GPU paths for the desktop and GPU profiles are reachable
+  from both host types: macOS via libkrun-on-HVF Venus → MoltenVK →
+  Metal (krunkit, ~75–80 % native Metal — libkrun #353/#377); Linux
+  via libkrun-on-KVM Venus → virglrenderer → host GPU driver.
 
-- libkrun as the VMM, on both Linux production hosts and macOS developer
-  hosts.
+## Why All Profiles Share One Backend
+
+Every profile wants the same primitives:
+
+- libkrun as the VMM, on both Linux production hosts and macOS
+  developer hosts (the latter only as the outer machine-os VM — see
+  D11/D12 in the landscape doc).
 - A long-lived in-guest PID-1 agent that accepts multiple exec/session
-  requests over vsock, so the VM stays warm across invocations from the
-  same tenant.
+  requests over vsock, so the VM stays warm across invocations from
+  the same tenant (desktop/gpu profiles) or is forked
+  sub-millisecond from a snapshot template (lambda profile).
 - virtiofs for tenant-scoped read/write share roots.
 - passt for unprivileged user-mode networking with `SandboxEgressPolicy`
   enforcement.
 - vsock for the host↔guest control plane.
-- Per-session lifecycle, not per-invocation.
-- Per-tenant identity, credentials, audit, and image admission contracts
-  shared with Tier 1 and Linux service microVMs.
+- Per-tenant identity, credentials, audit, and image admission
+  contracts shared with the existing Linux service-microVM lane.
 
-They differ only in two optional components:
+Profiles differ only in optional components and lifetime:
 
-- **Display.** Tier 2 attaches a headless host-side compositor and a frame
-  capture pipe; Tier 3 generally does not.
-- **GPU.** Tier 3 attaches a virtio-gpu device backed by Venus (default)
-  or a native-context driver (opt-in, trusted-only — see GPU backends
-  research doc). Tier 2 may attach virtio-gpu purely for display
-  rendering.
+- **Display.** Desktop profile attaches a headless host-side
+  compositor and a frame capture pipe; gpu profile generally does not.
+- **GPU.** GPU profile attaches a virtio-gpu device backed by Venus
+  (default) or a native-context driver (opt-in, trusted-only — see
+  GPU backends research doc). Desktop profile may attach virtio-gpu
+  purely for display rendering.
+- **Lifetime.** Lambda profile is sub-second forked-from-snapshot
+  (P4 target ~3 ms p50); desktop/gpu profiles are minutes-to-days
+  warm sessions.
 
-A single backend with optional components is cleaner than two near-duplicate
-backends. The spec carries the optionality:
+A single backend with optional components is cleaner than three
+near-duplicate backends. The spec carries the optionality:
 
 ```rust
 struct LibkrunSessionSandboxSpec {
@@ -67,37 +100,19 @@ struct LibkrunSessionSandboxSpec {
     image: ImageRef,
     virtiofs: Option<TenantShare>,
     network: PasstPolicy,
-    display: Option<HeadlessCompositorPolicy>,   // Tier 2
-    gpu: Option<GpuMediationPolicy>,             // Tier 3 (and Tier 2 for display)
-    input: Option<VirtioInputInjectionPolicy>,   // Tier 2
+    display: Option<HeadlessCompositorPolicy>,   // desktop profile
+    gpu: Option<GpuMediationPolicy>,             // gpu profile (and desktop for display)
+    input: Option<VirtioInputInjectionPolicy>,   // desktop profile
     lifetime: SessionLifetime,
     // ...shared spec fields
 }
 ```
 
-## Why Tier 1 Does Not Collapse In
-
-Firecracker exists for one property: snapshot/restore in ~10 ms, which is
-materially faster than any cold-boot path. For Lambda-class workloads
-with sub-second SLAs that delta is load-bearing.
-
-libkrun cold boot is ~50–150 ms on a minimal initramfs. Acceptable for
-session sandboxes; not acceptable for Lambda-class invocations under
-heavy load.
-
-Two VMMs is a real maintenance tax, accepted deliberately:
-
-- libkrun owns Tier 2/3, the existing production service-microVM lane, and
-  the macOS machine VMM (via krunkit). Three product lanes, one VMM
-  family.
-- Firecracker owns only Tier 1, but pays for itself with the 10 ms
-  restore.
-
-If Firecracker snapshot proves unnecessary in practice (e.g., libkrun cold
-boot is fast enough for Nimbus's Lambda SLA after FSI6 benchmarks),
-Tier 1 can collapse into `libkrun_session` as a secondary lane. Do not
-rule this out, but do not plan for it either — execute the Firecracker
-plan as written.
+The lambda profile reuses the same backend with `display: None`,
+`input: None`, the device set trimmed by the `lambda` profile selector,
+and lifetime set by a fork-template policy. Snapshot/fork mechanics
+live in
+[`docs/plans/nimbus-sandbox-plan.md`](../nimbus-sandbox-plan.md) Band S.
 
 ## Architecture
 
@@ -109,15 +124,15 @@ flowchart TD
     Vmm["nimbus-libkrun fork\n(Hypervisor.framework on macOS,\nKVM on Linux)"] --> Vm
 
     Vm["Linux microVM"] --> Init
-    Init["nimbus-init (PID 1)\n- mounts pseudo-fs\n- vsock control listener\n- spawns + reaps workloads\n- streams logs/status"] --> Worker
+    Init["nimbus-guest (PID 1)\n- mounts pseudo-fs\n- vsock control listener\n- spawns + reaps workloads\n- streams logs/status"] --> Worker
 
     Worker["Tenant workload\n(browser / desktop /\nmodel server / agent task)"]
 
     Init -. virtiofs .- TenantShare["Tenant share root\n(read/write)"]
     Init -. passt .- Net["host firewall +\negress policy proxy"]
-    Init -. virtio-input .- InputRpc["Optional input injection\n(Tier 2)"]
-    Vmm -. virtio-gpu .- Gpu["Optional GPU mediation\n(Tier 3, see GPU backends doc)"]
-    Vmm -. host compositor .- Display["Optional headless compositor +\nframe capture pipe (Tier 2)"]
+    Init -. virtio-input .- InputRpc["Optional input injection\n(desktop profile)"]
+    Vmm -. virtio-gpu .- Gpu["Optional GPU mediation\n(gpu profile, see GPU backends doc)"]
+    Vmm -. host compositor .- Display["Optional headless compositor +\nframe capture pipe (desktop profile)"]
 ```
 
 ## Components
@@ -135,11 +150,11 @@ bind-address hook on TSI). The fork should:
   `krun-sys` 1.9.1 bindings; upstream what can move upstream, drop what is
   redundant.
 
-The fork is reused by **all three sandbox tiers** plus the macOS machine
-VMM via krunkit. Keeping it current is load-bearing for the whole microVM
-strategy.
+The fork is reused by **every capability profile** (lambda, desktop,
+gpu) plus the macOS machine VMM via krunkit. Keeping it current is
+load-bearing for the whole microVM strategy.
 
-### `nimbus-init` guest PID-1 agent
+### `nimbus-guest` guest PID-1 agent
 
 A static binary that runs as PID 1 inside the guest. Responsibilities:
 
@@ -148,21 +163,21 @@ A static binary that runs as PID 1 inside the guest. Responsibilities:
 - Spawn and reap child workloads.
 - Stream stdout/stderr/exit-status back to the host.
 - Propagate shutdown / SIGTERM cleanly.
-- (Tier 3) Coordinate GPU device initialization before workloads start.
+- (gpu profile) Coordinate GPU device initialization before workloads
+  start.
 
 Design reference:
 [AsahiLinux/muvm](https://github.com/AsahiLinux/muvm)'s `muvm-guest` is
 exactly this shape (MIT-licensed). Lift the design — and where useful, the
 code — with attribution.
 
-Crate placement: new crate `crates/nimbus-init`, builds a `nimbus-init`
+Crate placement: new crate `crates/nimbus-guest`, builds a `nimbus-guest`
 binary linked statically against musl. The crate is consumed by the
 template rootfs builder.
 
-The same `nimbus-init` binary serves Tier 1 (Firecracker) too — the FSI
-plan calls for this exact shape in phase FSI4. Implementing it once under
-this design avoids the Firecracker plan and the libkrun-session plans
-each writing their own.
+The same `nimbus-guest` binary serves the lambda profile (snapshot/fork
+on the same backend per D1). Implementing it once under this design
+avoids each profile's plan writing its own.
 
 ### virtiofs share contract
 
@@ -193,7 +208,7 @@ One vsock CID per VM. A multiplexed message protocol over the control
 socket carries: open session, exec request, signal forward, stdio streams,
 status events, shutdown. Versioned message format from day one.
 
-### virtio-input device + injection RPC (Tier 2 only)
+### virtio-input device + injection RPC (desktop profile only)
 
 The host sends synthetic mouse / keyboard / touch events to the guest via
 a virtio-input device the guest exposes inside its compositor session.
@@ -202,7 +217,7 @@ Wire format and event marshaling can reuse the `input-linux` /
 *forward* direction (real HID forwarded into guest); Nimbus's case is
 similar in shape but the source is the agent runner, not real hardware.
 
-### Optional headless compositor + frame capture (Tier 2 only)
+### Optional headless compositor + frame capture (desktop profile only)
 
 A per-session host-side headless Wayland compositor (e.g.,
 `wlroots-headless` / `cage` / a custom screencap compositor) receives
@@ -216,7 +231,7 @@ guest is a Wayland *client* to the host compositor (muvm's existing
 pattern). Both are viable; the choice affects display-server attack
 surface, GPU rendering location, and snapshot/checkpoint feasibility.
 
-### Optional virtio-gpu (Tier 3, see GPU backends doc)
+### Optional virtio-gpu (gpu profile, see GPU backends doc)
 
 Either Venus (default, multi-tenant safe) or a native-context driver
 (opt-in, trusted tenants only). Selection logic and policy types live in
@@ -231,19 +246,19 @@ muvm runs as the calling user — no root, no privileged helper. It uses
 production service-microVM baseline currently requires root for `/dev/kvm`
 and tracks the unprivileged path as the F5 hardening lane.
 
-Tier 2/3 sessions are long-lived and tenant-bound; the security delta
-from VMs-as-root vs VMs-as-tenant-uid is bigger than for stateless Lambda.
-The libkrun-session backend should adopt the unprivileged model from day
-one and treat root-mode as a temporary diagnostic fallback. F5 then
-becomes a concern only for the existing service-microVM lane, not for the
-new tiers.
+Desktop and gpu profile sessions are long-lived and tenant-bound; the
+security delta from VMs-as-root vs VMs-as-tenant-uid is bigger than
+for stateless lambda-profile invocations. The libkrun-session backend
+should adopt the unprivileged model from day one and treat root-mode
+as a temporary diagnostic fallback. F5 then becomes a concern only
+for the existing service-microVM lane, not for the new profiles.
 
-## Per-Tier Configuration
+## Per-Profile Configuration
 
-A single backend serves both Tier 2 and Tier 3 via spec options. Worked
-examples:
+A single backend serves the desktop and gpu profiles via spec options.
+Worked examples:
 
-**Tier 2 computer-use session:**
+**Desktop profile (computer-use session):**
 
 ```rust
 LibkrunSessionSandboxSpec {
@@ -258,7 +273,7 @@ LibkrunSessionSandboxSpec {
 }
 ```
 
-**Tier 3 GPU AI workload (untrusted by default):**
+**GPU profile (AI workload, untrusted by default):**
 
 ```rust
 LibkrunSessionSandboxSpec {
@@ -273,7 +288,7 @@ LibkrunSessionSandboxSpec {
 }
 ```
 
-**Tier 3 GPU AI workload (trusted tenant, AMD host, opt-in to native-context):**
+**GPU profile (trusted tenant, AMD host, opt-in to native-context):**
 
 ```rust
 LibkrunSessionSandboxSpec {
@@ -288,7 +303,7 @@ LibkrunSessionSandboxSpec {
 
 ## Host-OS Support Matrix
 
-| Host OS | VMM | Tier 2 display | Tier 3 Venus | Tier 3 native-context | Tier 3 CUDA |
+| Host OS | VMM | Desktop display | GPU Venus | GPU native-context | GPU CUDA |
 | --- | --- | --- | --- | --- | --- |
 | Linux x86_64 + AMD | libkrun (KVM) | Yes | Yes | Yes (amdgpu) | No |
 | Linux x86_64 + Intel | libkrun (KVM) | Yes | Yes | Dev only | No |
@@ -312,11 +327,17 @@ and libkrun issues
 [#353](https://github.com/containers/libkrun/issues/353),
 [#377](https://github.com/containers/libkrun/issues/377).
 
-This means macOS Tier-3 is **not** "develop against a remote Linux GPU
-node." Vulkan-compatible ML workloads (llama.cpp, whisper.cpp, ggml-vulkan
-family, Vulkan-backed PyTorch/diffusers) run locally with acceptable
-performance. CUDA-only workloads and ROCm-only workloads still need a
-Linux fleet.
+This means the macOS GPU-profile story is **not** "develop against a
+remote Linux GPU node." Vulkan-compatible ML workloads (llama.cpp,
+whisper.cpp, ggml-vulkan family, Vulkan-backed PyTorch/diffusers) run
+locally with acceptable performance. CUDA-only workloads and ROCm-only
+workloads still need a Linux fleet.
+
+Note that on macOS dev hosts, this GPU acceleration is delivered to
+the **outer machine-os VM** (and to standard containers inside it via
+host device access), not to nested microVMs — see D11/D12. Production
+GPU workloads on Linux hosts run as direct libkrun-on-KVM microVMs
+with the same Venus / native-context surface.
 
 Known stability caveat: libkrun #377 tracks `vn_ring_submit` aborts under
 heavy load. Under active investigation by Red Hat's CI but not closed.
@@ -333,7 +354,7 @@ not gate adoption.
 
 **Direct vendor candidates:**
 
-- `muvm-guest` source as the starting point for `nimbus-init`.
+- `muvm-guest` source as the starting point for `nimbus-guest`.
 - `hidpipe_server.rs` / `hidpipe_common.rs` for virtio-input event
   marshaling.
 - `krun-sys` FFI bindings, to compare against the `nimbus-libkrun` fork's
@@ -347,8 +368,8 @@ not gate adoption.
   `nimbus-sandbox::backends::krun`.
 - `launch.rs` — Nimbus's launch path is service-microVM-shaped, not
   game-launcher-shaped.
-- Wayland passthrough (sommelier integration) — Tier 2 needs the inverse
-  shape, so design fresh.
+- Wayland passthrough (sommelier integration) — the desktop profile needs
+  the inverse shape, so design fresh.
 
 **Not relevant:**
 
@@ -366,8 +387,8 @@ Current state: a checked-out fork at
 `~/src/github.com/nimbus/nimbus-libkrun` with `Cargo.toml`, `Cargo.lock`,
 examples, headers, and `hvf-entitlements.plist`.
 
-Independent investigation needed before the Tier-2/3 plans freeze on a
-libkrun baseline:
+Independent investigation needed before the desktop and gpu plans
+freeze on a libkrun baseline:
 
 - Inventory the current patch delta vs upstream libkrun.
 - Compare against muvm's MIT-licensed `krun-sys` 1.9.1 bindings.
@@ -376,25 +397,26 @@ libkrun baseline:
 - Decide whether to rebase the fork onto current upstream libkrun (1.9.x)
   or to track muvm's pinned baseline.
 
-This is a sub-task of both Tier-2 and Tier-3 plans (CUS0/GAW0 research
-refresh covers it). The Firecracker plan does not block on it. Recorded
-here so the work is not lost.
+This is a sub-task of both the CUS (desktop) and GAW (GPU) plans —
+CUS0/GAW0 research refresh covers it. The snapshot-port plan does not
+block on it. Recorded here so the work is not lost.
 
-## Open Questions Owned by Tier-2 / Tier-3 Plans
+## Open Questions Owned by Desktop / GPU Profile Plans
 
 These are not settled in this research doc; they belong to the plans that
 consume it:
 
-1. Tier-2 display: guest-side compositor + virtio-gpu framebuffer
-   capture, or guest-as-Wayland-client to host compositor (muvm pattern)?
-2. Tier-2 snapshot/checkpoint for idle sessions — feasible with active
-   display? Likely deferred to a follow-on lane.
-3. Tier-3 NVIDIA fleet strategy — separate sandbox fleet, vGPU, or
+1. Desktop display: guest-side compositor + virtio-gpu framebuffer
+   capture, or guest-as-Wayland-client to host compositor (muvm
+   pattern)?
+2. Desktop snapshot/checkpoint for idle sessions — feasible with
+   active display? Likely deferred to a follow-on lane.
+3. GPU NVIDIA fleet strategy — separate sandbox fleet, vGPU, or
    out-of-VM inference path? Default plan: separate NVIDIA fleet.
-4. Tier-3 native-context for untrusted tenants — accept higher ioctl
+4. GPU native-context for untrusted tenants — accept higher ioctl
    attack surface, or hard-deny? Default is hard-deny; trusted opt-in
    only.
-5. Tier-3 ROCm posture — track the draft virglrenderer HSAKMT MR
+5. GPU ROCm posture — track the draft virglrenderer HSAKMT MR
    ([virglrenderer MR 1370](https://gitlab.freedesktop.org/virgl/virglrenderer/-/merge_requests/1370)),
    but do not ship.
 6. Lifetime model: idle timeout, max session, max invocations per warm
@@ -406,7 +428,14 @@ consume it:
 - [libkrun (containers/libkrun)](https://github.com/containers/libkrun) — Apache-2.0
 - [krunkit (containers/krunkit)](https://github.com/containers/krunkit) — Apache-2.0
 - [`docs/plans/research/gpu-sandbox-backends.md`](./gpu-sandbox-backends.md)
-- [`docs/plans/firecracker-snapshot-invocation-backend-plan.md`](../firecracker-snapshot-invocation-backend-plan.md)
+- [`docs/plans/nimbus-sandbox-plan.md`](../nimbus-sandbox-plan.md) (Bands B / S / D / G)
+- [`docs/plans/archive/nimbus-libkrun-snapshot-port-plan.md`](../archive/nimbus-libkrun-snapshot-port-plan.md) (archived 2026-05-27, superseded by Band S)
+- [`docs/plans/archive/computer-use-sandbox-plan.md`](../archive/computer-use-sandbox-plan.md) (archived 2026-05-27, superseded by Band D)
+- [`docs/plans/archive/gpu-accelerated-sandbox-plan.md`](../archive/gpu-accelerated-sandbox-plan.md) (archived 2026-05-27, superseded by Band G)
+- [`docs/plans/archive/firecracker-snapshot-invocation-backend-plan.md`](../archive/firecracker-snapshot-invocation-backend-plan.md) (archived 2026-05-27)
+- [`docs/plans/research/vmm-landscape-2026.md`](./vmm-landscape-2026.md) (decision baseline D1–D12)
+- [`docs/architecture/sandbox/macos-machine-flow.md`](../../architecture/sandbox/macos-machine-flow.md) (macOS outer-VM topology that anchors D11/D12)
+- [`docs/plans/research/macos-host-vs-guest-control-plane-rationale.md`](./macos-host-vs-guest-control-plane-rationale.md) (Option-A hybrid rationale)
 - [`docs/architecture/sandbox/microvm-service-baseline.md`](../../architecture/sandbox/microvm-service-baseline.md)
 - [Red Hat Developer 2025-09: macOS llama.cpp container inference at native speed](https://developers.redhat.com/articles/2025/09/18/reach-native-speed-macos-llamacpp-container-inference)
 - [Collabora 2025-01: state of GFX virtualization with virglrenderer](https://www.collabora.com/news-and-blog/blog/2025/01/15/the-state-of-gfx-virtualization-using-virglrenderer/)

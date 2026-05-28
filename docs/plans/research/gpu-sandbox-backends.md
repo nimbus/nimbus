@@ -1,13 +1,15 @@
 # Research: GPU Mediation Backends for Multi-Tenant MicroVM Sandboxes
 
 Decision rationale for which GPU mediation backend Nimbus defaults to in
-its libkrun-backed Tier-3 sandbox, plus the exception policy for trusted
+its libkrun-backed `gpu` profile, plus the exception policy for trusted
 workloads that need higher performance.
 
 This is a research / decision document, not an execution plan. The active
 execution plan that consumes this decision is:
 
-- [`docs/plans/gpu-accelerated-sandbox-plan.md`](../gpu-accelerated-sandbox-plan.md) (GAW)
+- [`docs/plans/nimbus-sandbox-plan.md`](../nimbus-sandbox-plan.md) Band G
+  (GPU profile; supersedes the archived
+  [`docs/plans/archive/gpu-accelerated-sandbox-plan.md`](../archive/gpu-accelerated-sandbox-plan.md))
 
 The shared libkrun-session backend design is covered by:
 
@@ -15,9 +17,9 @@ The shared libkrun-session backend design is covered by:
 
 ## Purpose
 
-Pick the GPU mediation backend Nimbus exposes by default for Tier-3 (GPU
-accelerated AI workload) sandboxes, and the policy for when other
-backends are allowed.
+Pick the GPU mediation backend Nimbus exposes by default for the `gpu`
+profile (GPU accelerated AI workload) sandboxes, and the policy for
+when other backends are allowed.
 
 The decision is per-host-vendor and per-trust-level. There is no single
 right answer; the policy must enumerate.
@@ -171,7 +173,7 @@ vendor-neutral.
 
 ## The macOS Surprise
 
-Prior assumption: macOS host + libkrun guest meant CPU-only Tier 3.
+Prior assumption: macOS host + libkrun guest meant CPU-only `gpu` profile.
 That was wrong. Venus on macOS via krunkit works today:
 
 - krunkit sets `VIRGLRENDERER_VENUS | VIRGLRENDERER_NO_VIRGL` by default
@@ -187,7 +189,7 @@ That was wrong. Venus on macOS via krunkit works today:
   [libkrun #377](https://github.com/containers/libkrun/issues/377),
   [Red Hat Developer 2025-09](https://developers.redhat.com/articles/2025/09/18/reach-native-speed-macos-llamacpp-container-inference)).
 
-This changes the macOS Tier-3 product story: Vulkan-compatible ML
+This changes the macOS `gpu`-profile product story: Vulkan-compatible ML
 workloads run on the macOS dev machine with acceptable perf. CUDA-only
 and ROCm-only workloads still require a remote Linux fleet.
 
@@ -284,8 +286,8 @@ Admission rejects:
 4. **Venus on macOS has known stability issues under load.**
    [libkrun #377] tracks `vn_ring_submit` aborts in llama.cpp Vulkan;
    under active investigation by Red Hat's CI but not closed. Real-host
-   stability gate is part of the GAW plan before declaring macOS Tier-3
-   ready.
+   stability gate is part of Band G (`docs/plans/nimbus-sandbox-plan.md`)
+   before declaring the macOS `gpu` profile ready.
 
 5. **API remoting ([libkrun PR #508]) is a credible long-term path**
    for near-native macOS performance, but it is workload-specific (one

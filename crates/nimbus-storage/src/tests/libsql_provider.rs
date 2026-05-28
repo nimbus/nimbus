@@ -835,12 +835,12 @@ async fn libsql_tenant_event_journal_replays_mixed_history() {
                 Timestamp(300),
                 vec![
                     TenantEventKind::SchemaChange {
-                        change: SchemaChangeEvent::SetTable {
+                        change: Box::new(SchemaChangeEvent::SetTable {
                             table: table.clone(),
                             table_id: table_id.clone(),
                             previous: None,
                             current: schema.clone(),
-                        },
+                        }),
                     },
                     TenantEventKind::IndexLifecycle {
                         index: nimbus_core::IndexLifecycleEvent {

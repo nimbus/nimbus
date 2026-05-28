@@ -1,0 +1,23 @@
+[package]
+name = "nimbus-adapters"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+repository.workspace = true
+license-file.workspace = true
+
+[features]
+default = []
+cloud-functions = ["dep:nimbus-cloud-functions"]
+convex = ["dep:nimbus-convex"]
+firebase = ["dep:nimbus-firebase"]
+mongodb = ["dep:nimbus-mongodb"]
+
+[dependencies]
+nimbus-cloud-functions = { path = "../nimbus-cloud-functions", optional = true }
+nimbus-convex = { path = "../nimbus-convex", optional = true }
+nimbus-firebase = { path = "../nimbus-firebase", optional = true }
+nimbus-mongodb = { path = "../nimbus-mongodb", optional = true }
+
+[lints]
+workspace = true

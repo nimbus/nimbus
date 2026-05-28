@@ -1,0 +1,20 @@
+[package]
+name = "nimbus-auth"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+futures.workspace = true
+nimbus-core = { path = "../nimbus-core" }
+nimbus-runtime = { path = "../nimbus-runtime" }
+serde.workspace = true
+serde_json.workspace = true

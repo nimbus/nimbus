@@ -10,7 +10,7 @@ use super::{
     DEFAULT_ARTIFACT_VERIFIER_TIMEOUT, ProcessArtifactVerifierCommandRunner,
     redact_artifact_verifier_output,
 };
-use crate::tenant::{has_sha256_digest, parse_oci_image_reference};
+use nimbus_artifacts::{has_sha256_digest, parse_oci_image_reference};
 
 pub struct SbomVerifierBackend {
     program: String,
@@ -137,9 +137,9 @@ mod tests {
 
     use super::super::ArtifactVerifierCommandOutput;
     use super::*;
-    use crate::tenant::{
-        ArtifactImageVerificationProvider, ArtifactVerificationPolicy, ArtifactVerifierErrorKind,
-        TenantImageAdmissionSource, TenantImagePolicyDecision,
+    use nimbus_artifacts::{ArtifactVerificationPolicy, ArtifactVerifierErrorKind};
+    use nimbus_tenant::{
+        ArtifactImageVerificationProvider, TenantImageAdmissionSource, TenantImagePolicyDecision,
     };
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

@@ -11,13 +11,13 @@ use crate::adapters::convex::{
     ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope, ConvexRegistry,
     RuntimeReadSet,
 };
-use crate::application_auth::normalize_principal_context;
 use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_on_worker_with_host_state,
 };
-use crate::execution::runtime_admission::RuntimeExecutionAdmission;
-use crate::service_registry::RuntimeServiceRegistry;
-use crate::tenant::{
+use nimbus_auth::normalize_principal_context;
+use nimbus_bridge::admission::RuntimeExecutionAdmission;
+use nimbus_services::RuntimeServiceRegistry;
+use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
     admit_runtime_invocation_decision,
 };

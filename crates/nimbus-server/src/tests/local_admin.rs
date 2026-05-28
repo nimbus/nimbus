@@ -8,7 +8,7 @@ use tempfile::tempdir;
 use nimbus_testing::wait_for_condition;
 
 use crate::local_server::{
-    LocalServerPaths, LocalServerSecurityState, load_local_admin_token,
+    LocalServerPaths, LocalServerSecurityState, SessionValidationResult, load_local_admin_token,
     load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
@@ -32,7 +32,9 @@ async fn local_admin_rotate_endpoint_rotates_token_and_rejects_previous_bearer()
         paths.clone(),
         current.clone(),
     ));
-    local_server_security.register_session_for_test("session-a");
+    let session = local_server_security
+        .create_session_for_local_admin_token(&current.token)
+        .expect("session should mint for current local admin token");
     let fixture = ServiceFixture::new(|path| nimbus_engine::Service::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.service())
@@ -53,7 +55,10 @@ async fn local_admin_rotate_endpoint_rotates_token_and_rejects_previous_bearer()
     let rotated_record = load_local_admin_token(&paths).expect("rotated token should persist");
     assert_eq!(rotated_record.generation, current.generation + 1);
     assert_eq!(local_server_security.current_token(), rotated_record);
-    assert_eq!(local_server_security.active_session_count(), 0);
+    assert!(matches!(
+        local_server_security.authorize_session_cookie(Some(&session.value)),
+        SessionValidationResult::Revoked
+    ));
 
     let old_token_rejected = server
         .client()

@@ -129,6 +129,35 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
           exit "${status}"
 
+      - name: Third-party attribution gate (G4)
+        id: attribution
+        run: |
+          set +e
+          bash scripts/verify-third-party-attribution.sh 2>&1 | tee /tmp/attribution.out
+          status=$?
+          set -e
+          {
+            echo "## third-party attribution gate (G4)"
+            echo
+            if [ "${status}" -eq 0 ]; then
+              echo "**Status:** :white_check_mark: passed"
+            else
+              echo "**Status:** :x: failed (exit ${status})"
+            fi
+            echo
+            echo "<details><summary>Output</summary>"
+            echo
+            echo '```'
+            cat /tmp/attribution.out
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
+
+      - name: Third-party attribution gate unit tests
+        run: bash scripts/verify-third-party-attribution-helper.sh
+
   rust-runtime-tests:
     name: Rust Runtime Tests
     runs-on: ubuntu-24.04

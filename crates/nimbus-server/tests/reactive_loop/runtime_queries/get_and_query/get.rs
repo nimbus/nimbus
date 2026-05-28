@@ -1,5 +1,26 @@
 use super::*;
 
+fn messages_table() -> nimbus_core::TableName {
+    nimbus_core::TableName::new("messages").expect("messages table should be valid")
+}
+
+fn encode_messages_convex_id(document_id: &str) -> String {
+    let raw_id = nimbus_core::DocumentId::from_key(document_id.to_string())
+        .expect("fixture document id should be valid");
+    nimbus_core::ResolvedDocumentId::encode_table_scoped(&messages_table(), &raw_id)
+        .expect("fixture id should encode as a Convex table-scoped id")
+        .to_string()
+}
+
+fn decode_messages_raw_id(convex_id: &str) -> String {
+    let scoped_id = nimbus_core::DocumentId::from_key(convex_id.to_string())
+        .expect("Convex document id should be valid");
+    nimbus_core::ResolvedDocumentId::resolve_table_scoped(&messages_table(), scoped_id)
+        .expect("Convex id should resolve to messages table")
+        .into_document_id()
+        .to_string()
+}
+
 #[tokio::test]
 async fn convex_named_get_subscription_returns_single_document_and_null_on_delete() {
     let registry = convex_registry(json!([
@@ -40,6 +61,7 @@ async fn convex_named_get_subscription_returns_single_document_and_null_on_delet
         .as_str()
         .expect("insert should return document id")
         .to_string();
+    let raw_document_id = decode_messages_raw_id(&document_id);
 
     let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
         .await
@@ -60,7 +82,9 @@ async fn convex_named_get_subscription_returns_single_document_and_null_on_delet
     };
     assert_eq!(current["data"]["body"], json!("Tracked"));
 
-    let delete_response = api.delete_document("demo", "messages", &document_id).await;
+    let delete_response = api
+        .delete_document("demo", "messages", &raw_document_id)
+        .await;
     assert_eq!(delete_response.status(), reqwest::StatusCode::NO_CONTENT);
 
     let pushed = socket.next_json().await;
@@ -128,6 +152,7 @@ export {};
         .and_then(serde_json::Value::as_str)
         .expect("tracked insert should return id")
         .to_string();
+    let tracked_convex_id = encode_messages_convex_id(&tracked_id);
 
     let mut socket = WebSocketFixture::connect_raw(&api.ws_url("/convex/demo/ws"))
         .await
@@ -136,7 +161,7 @@ export {};
         .subscribe_named(
             "convex-runtime-get",
             "messages:byId",
-            json!({ "id": tracked_id }),
+            json!({ "id": tracked_convex_id }),
         )
         .await;
 

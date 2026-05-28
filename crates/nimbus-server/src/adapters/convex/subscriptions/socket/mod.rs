@@ -3,13 +3,13 @@ use super::transforms::{
     clear_pending_transform, remove_subscription_transform, set_pending_transform,
     subscription_plan_for_named_query, update_runtime_transform_read_set,
 };
-use super::types::{
-    ConvexClientMessage, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
-};
 use super::*;
 use crate::execution::subscriptions::subscribe_runtime_base_queries;
 use crate::owned_tasks::OwnedTaskSet;
 use crate::ws::NegotiatedWebSocketProtocol;
+use nimbus_convex::subscriptions::{
+    ConvexClientMessage, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
+};
 use nimbus_engine::{SubscriptionCleanupHandle, SubscriptionRegistration};
 
 mod forwarding;
@@ -73,7 +73,7 @@ pub(super) type SubscriptionStatuses = Arc<RwLock<HashMap<u64, SubscriptionStatu
 pub(super) struct SocketSessionCtx<'a> {
     pub(super) state: &'a Arc<AppState>,
     pub(super) tenant_id: &'a TenantId,
-    pub(super) tenant_context: &'a crate::tenant::TenantIsolationContext,
+    pub(super) tenant_context: &'a nimbus_tenant::TenantIsolationContext,
     pub(super) convex_registry: &'a Arc<ConvexRegistry>,
     pub(super) subscription_tx: &'a mpsc::Sender<SubscriptionUpdate>,
     pub(super) outbound_tx: &'a mpsc::Sender<ServerMessage>,
@@ -95,7 +95,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
     state: Arc<AppState>,
     convex_registry: Arc<ConvexRegistry>,
     tenant_id: TenantId,
-    tenant_context: crate::tenant::TenantIsolationContext,
+    tenant_context: nimbus_tenant::TenantIsolationContext,
     initial_auth: Option<InvocationAuth>,
     protocol: NegotiatedWebSocketProtocol,
 ) {
@@ -186,7 +186,7 @@ pub(super) async fn record_active_subscription_status(
         subscription_id,
         query_key,
     };
-    if let Err(error) = crate::system_tenant::record_subscription_state_async(
+    if let Err(error) = nimbus_system::record_subscription_state_async(
         &ctx.state.service,
         &record.tenant_id,
         record.adapter,
@@ -229,7 +229,7 @@ async fn record_subscription_delivery_status(
     let Some(record) = subscription_status(statuses, subscription_id) else {
         return;
     };
-    let _ = crate::system_tenant::record_subscription_delivery_async(
+    let _ = nimbus_system::record_subscription_delivery_async(
         service,
         &record.tenant_id,
         record.adapter,
@@ -248,7 +248,7 @@ async fn record_subscription_error_status(
     let Some(record) = subscription_status(statuses, subscription_id) else {
         return;
     };
-    let _ = crate::system_tenant::record_subscription_error_async(
+    let _ = nimbus_system::record_subscription_error_async(
         service,
         &record.tenant_id,
         record.adapter,
@@ -271,7 +271,7 @@ async fn delete_subscription_status(
     let Some(record) = record else {
         return;
     };
-    let _ = crate::system_tenant::delete_subscription_state_async(
+    let _ = nimbus_system::delete_subscription_state_async(
         service,
         &record.tenant_id,
         record.adapter,

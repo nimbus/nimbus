@@ -1,7 +1,7 @@
 use super::queries::execute_query_result_async;
 use super::scheduling::execute_schedule_command_async;
 use super::*;
-use crate::application_auth::normalize_principal_context;
+use nimbus_auth::normalize_principal_context;
 
 pub(in crate::adapters::convex) async fn dispatch_mutation_async_with_auth(
     service: &Arc<nimbus_engine::Service>,
