@@ -10,6 +10,7 @@
     "mode",
     "lane",
     "upstream",
+    "fixture_provenance",
     "upstream_tag_override",
     "vendored_fixture_root",
     "local_fixture_root_exists",
@@ -46,6 +47,8 @@
       "required": [
         "repo",
         "tag",
+        "commit",
+        "tag_object",
         "fixture_subtree",
         "source_kind"
       ],
@@ -58,11 +61,52 @@
           "type": "string",
           "minLength": 1
         },
+        "commit": {
+          "type": "string",
+          "minLength": 40
+        },
+        "tag_object": {
+          "type": "string",
+          "minLength": 40
+        },
         "fixture_subtree": {
           "type": "string",
           "minLength": 1
         },
         "source_kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixture_provenance": {
+      "type": "object",
+      "required": [
+        "synced_at",
+        "selection_command",
+        "nimbus_sync_commit",
+        "recorded_at",
+        "recorded_from"
+      ],
+      "properties": {
+        "synced_at": {
+          "type": "string",
+          "minLength": 10
+        },
+        "selection_command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nimbus_sync_commit": {
+          "type": "string",
+          "minLength": 40
+        },
+        "recorded_at": {
+          "type": "string",
+          "minLength": 10
+        },
+        "recorded_from": {
           "type": "string",
           "minLength": 1
         }
@@ -91,7 +135,8 @@
       "required": [
         "fetch",
         "sparse_checkout",
-        "local_fixture_root"
+        "local_fixture_root",
+        "selection_command"
       ],
       "properties": {
         "fetch": {
@@ -107,6 +152,10 @@
           }
         },
         "local_fixture_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selection_command": {
           "type": "string",
           "minLength": 1
         }

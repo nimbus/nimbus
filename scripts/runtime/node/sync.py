@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from fixture_provenance import registry_lanes_by_name, validate_lane_manifest
 from schema import default_schema_path, validate_payload_against_schema
 
 
@@ -156,6 +157,10 @@ def sync_apply(local_root: Path, upstream_root: Path, force: bool) -> None:
 
 def command_plan(lane: dict[str, Any]) -> dict[str, Any]:
     upstream = lane["upstream"]
+    selection_command = (
+        "python3 scripts/runtime/node/sync.py "
+        f"--lane {lane['lane']} --upstream-tag {upstream['tag']} --apply"
+    )
     return {
         "fetch": [
             "git",
@@ -177,12 +182,29 @@ def command_plan(lane: dict[str, Any]) -> dict[str, Any]:
             upstream["fixture_subtree"],
         ],
         "local_fixture_root": lane["vendored_fixture_root"],
+        "selection_command": selection_command,
     }
+
+
+def validate_lane_provenance(lane: dict[str, Any]) -> None:
+    registry_lane = registry_lanes_by_name().get(lane.get("lane"))
+    path = manifest_root() / "lanes" / f"{lane.get('lane', '<unknown>')}.json"
+    errors = validate_lane_manifest(path, lane, registry_lane)
+    if errors:
+        joined = "\n".join(f"- {error}" for error in errors)
+        raise ValueError(f"invalid fixture provenance for {lane.get('lane')}:\n{joined}")
 
 
 def lane_with_overrides(args: argparse.Namespace) -> dict[str, Any]:
     lane = load_lane(args.lane)
+    validate_lane_provenance(lane)
     if args.upstream_tag:
+        if args.upstream_tag != lane["upstream"]["tag"]:
+            raise ValueError(
+                "upstream tag overrides must be recorded in lane metadata first: "
+                "update upstream.tag, upstream.commit, upstream.tag_object, and "
+                "fixture_provenance before running sync"
+            )
         lane["upstream"] = dict(lane["upstream"])
         lane["upstream"]["tag"] = args.upstream_tag
     return lane
@@ -199,6 +221,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "mode": mode,
         "lane": lane["lane"],
         "upstream": lane["upstream"],
+        "fixture_provenance": lane["fixture_provenance"],
         "upstream_tag_override": args.upstream_tag,
         "vendored_fixture_root": lane["vendored_fixture_root"],
         "local_fixture_root_exists": local_root.is_dir(),
@@ -230,7 +253,11 @@ def build_markdown(report: dict[str, Any]) -> str:
         "",
         f"- lane: `{report['lane']}`",
         f"- upstream: `{report['upstream']['repo']}@{report['upstream']['tag']}`",
+        f"- upstream commit: `{report['upstream']['commit']}`",
+        f"- upstream tag object: `{report['upstream']['tag_object']}`",
         f"- subtree: `{report['upstream']['fixture_subtree']}`",
+        f"- synced at: `{report['fixture_provenance']['synced_at']}`",
+        f"- selection command: `{report['fixture_provenance']['selection_command']}`",
         f"- local fixture root: `{report['vendored_fixture_root']}`",
         f"- mode: `{report['mode']}`",
         f"- local test files: {report['local_test_file_count']}",
@@ -304,7 +331,11 @@ def main() -> int:
     args = build_parser().parse_args()
     if not args.dry_run and not args.compare_upstream and not args.apply:
         args.dry_run = True
-    report = build_report(args)
+    try:
+        report = build_report(args)
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"error: {error}")
+        return 1
     errors = validate_report(report)
     if errors:
         for error in errors:

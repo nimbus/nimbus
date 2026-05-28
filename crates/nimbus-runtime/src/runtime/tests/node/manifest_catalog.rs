@@ -44,8 +44,19 @@ pub(super) enum NodeCompatPublicContractRole {
 pub(super) struct NodeCompatUpstreamMetadata {
     pub(super) repo: String,
     pub(super) tag: String,
+    pub(super) commit: String,
+    pub(super) tag_object: String,
     pub(super) fixture_subtree: String,
     pub(super) source_kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct NodeCompatFixtureProvenance {
+    pub(super) synced_at: String,
+    pub(super) selection_command: String,
+    pub(super) nimbus_sync_commit: String,
+    pub(super) recorded_at: String,
+    pub(super) recorded_from: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +69,7 @@ pub(super) struct NodeCompatLaneMetadata {
     pub(super) runtime_execution_target: String,
     pub(super) runtime_limits_preset: String,
     pub(super) upstream: NodeCompatUpstreamMetadata,
+    pub(super) fixture_provenance: NodeCompatFixtureProvenance,
     pub(super) vendored_fixture_root: String,
     pub(super) manifest_docs: Vec<String>,
     pub(super) failure_docs: Vec<String>,
