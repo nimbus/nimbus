@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "process-and-timing-supplementary",
   "batch_constant": "PROCESS_AND_TIMING_SUPPLEMENTARY_BATCH",
-  "execution_class": "expected_failure",
+  "execution_class": "sequential",
   "presets": ["Application"],
   "capabilities": ["bundle-root-fs"],
   "lane_batches": [

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
-use crate::RuntimeLimits;
 use crate::test_support::acquire_runtime_suite_lock;
+use crate::{RuntimeCompatibilityTarget, RuntimeLimits};
 
 mod supplementary_batches;
 
@@ -556,6 +556,7 @@ fn execute_upstream_node_compat_test_with_extra_files(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(runtime_limits_for_node_compat_fixture(
             test_relative_path,
+            lane,
         ))),
     );
     let request = InvocationRequest {
@@ -628,8 +629,15 @@ fn node_compat_fixture_requires_runtime_self_exec(test_relative_path: &str) -> b
         )
 }
 
-fn runtime_limits_for_node_compat_fixture(test_relative_path: &str) -> RuntimeLimits {
-    let mut limits = RuntimeLimits::application_node22();
+fn runtime_limits_for_node_compat_fixture(
+    test_relative_path: &str,
+    lane: Option<NodeCompatLane>,
+) -> RuntimeLimits {
+    let mut limits = match lane.unwrap_or(NodeCompatLane::Node22) {
+        NodeCompatLane::Node20 => RuntimeLimits::application_node20(),
+        NodeCompatLane::Node22 => RuntimeLimits::application_node22(),
+        NodeCompatLane::Node24 => RuntimeLimits::application_node24(),
+    };
     if node_compat_fixture_requires_runtime_self_exec(test_relative_path) {
         // These compat fixtures respawn the copied harness binary via
         // process.execPath to prove Node CLI/reporter/WASI behavior. Keep the
@@ -653,15 +661,34 @@ fn runtime_limits_for_node_compat_fixture(test_relative_path: &str) -> RuntimeLi
 
 #[test]
 fn node_compat_runtime_limits_only_grant_self_exec_to_known_respawn_fixtures() {
-    let runner_limits =
-        runtime_limits_for_node_compat_fixture("test/parallel/test-runner-reporters.js");
+    let runner_limits = runtime_limits_for_node_compat_fixture(
+        "test/parallel/test-runner-reporters.js",
+        Some(NodeCompatLane::Node22),
+    );
+    assert_eq!(
+        runner_limits.compatibility_target,
+        RuntimeCompatibilityTarget::Node22
+    );
     assert_eq!(runner_limits.grants.run, vec!["$runtime_self_exec"]);
 
-    let wasi_limits = runtime_limits_for_node_compat_fixture("test/wasi/test-wasi-stdio.js");
+    let wasi_limits = runtime_limits_for_node_compat_fixture(
+        "test/wasi/test-wasi-stdio.js",
+        Some(NodeCompatLane::Node24),
+    );
+    assert_eq!(
+        wasi_limits.compatibility_target,
+        RuntimeCompatibilityTarget::Node24
+    );
     assert_eq!(wasi_limits.grants.run, vec!["$runtime_self_exec"]);
 
-    let ordinary_limits =
-        runtime_limits_for_node_compat_fixture("test/parallel/test-runner-assert.js");
+    let ordinary_limits = runtime_limits_for_node_compat_fixture(
+        "test/parallel/test-runner-assert.js",
+        Some(NodeCompatLane::Node20),
+    );
+    assert_eq!(
+        ordinary_limits.compatibility_target,
+        RuntimeCompatibilityTarget::Node20
+    );
     assert_eq!(
         ordinary_limits.grants.run,
         vec!["$runtime_self_exec"],
@@ -669,7 +696,11 @@ fn node_compat_runtime_limits_only_grant_self_exec_to_known_respawn_fixtures() {
     );
 
     let non_respawn_limits =
-        runtime_limits_for_node_compat_fixture("test/parallel/test-repl-mode.js");
+        runtime_limits_for_node_compat_fixture("test/parallel/test-repl-mode.js", None);
+    assert_eq!(
+        non_respawn_limits.compatibility_target,
+        RuntimeCompatibilityTarget::Node22
+    );
     assert!(non_respawn_limits.grants.run.is_empty());
 }
 

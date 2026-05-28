@@ -110,8 +110,10 @@ pub struct RuntimeNodeLtsLane {
     pub runtime_compatibility_target: Option<RuntimeCompatibilityTarget>,
     pub support_phase: RuntimeNodeSupportPhase,
     pub codename: Option<String>,
+    pub release_name: String,
     pub upstream_version: String,
     pub upstream_tag: String,
+    pub node_module_version: String,
     pub fixture_corpus_path: Option<String>,
     pub fixture_corpus_upstream_tag: Option<String>,
     pub lts_start: String,
@@ -162,6 +164,28 @@ impl RuntimeNodeLtsRegistry {
             }
             if lane.product_default {
                 default_lanes.push(lane.lane_name.as_str());
+            }
+            if lane.release_name != "node" {
+                return Err(format!(
+                    "Node LTS lane {} has unsupported release name {}",
+                    lane.lane_name, lane.release_name
+                ));
+            }
+            if lane.node_module_version.trim().is_empty() {
+                return Err(format!(
+                    "Node LTS lane {} must declare a node_module_version",
+                    lane.lane_name
+                ));
+            }
+            if !lane
+                .node_module_version
+                .chars()
+                .all(|value| value.is_ascii_digit())
+            {
+                return Err(format!(
+                    "Node LTS lane {} node_module_version must be numeric",
+                    lane.lane_name
+                ));
             }
             if let Some(target) = lane.runtime_compatibility_target
                 && target.node_lts_lane_name() != Some(lane.lane_name.as_str())
@@ -268,9 +292,19 @@ impl RuntimeCompatibilityTarget {
             .map(|lane| lane.upstream_version.as_str())
     }
 
+    pub fn node_release_name(self) -> Option<&'static str> {
+        self.node_lts_metadata()
+            .map(|lane| lane.release_name.as_str())
+    }
+
     pub fn node_release_lts_codename(self) -> Option<&'static str> {
         self.node_lts_metadata()
             .and_then(|lane| lane.codename.as_deref())
+    }
+
+    pub fn node_module_version(self) -> Option<&'static str> {
+        self.node_lts_metadata()
+            .map(|lane| lane.node_module_version.as_str())
     }
 }
 

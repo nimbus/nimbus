@@ -40,6 +40,12 @@ EXPECTED_PHASES = {
     "node24": "active_lts",
     "node26": "preview_current",
 }
+EXPECTED_MODULE_VERSIONS = {
+    "node20": "115",
+    "node22": "127",
+    "node24": "137",
+    "node26": "147",
+}
 SUPPORTED_LTS_POLICY = "supported_lts_lane_local_evidence"
 
 
@@ -105,6 +111,11 @@ def validate_registry() -> list[str]:
     if missing_consumers:
         errors.append(f"missing consumer crates: {', '.join(missing_consumers)}")
 
+    source_urls = registry.get("source_urls", [])
+    if isinstance(source_urls, list):
+        if not any("abi_version_registry.json" in str(url) for url in source_urls):
+            errors.append("registry source_urls must include Node's ABI version registry")
+
     for lane_name, expected_phase in EXPECTED_PHASES.items():
         lane = lanes_by_name.get(lane_name)
         if not isinstance(lane, dict):
@@ -115,6 +126,12 @@ def validate_registry() -> list[str]:
             )
         if lane.get("lane_name") != f"node{lane.get('major')}":
             errors.append(f"{lane_name} major should match lane_name")
+        if lane.get("release_name") != "node":
+            errors.append(f"{lane_name} release_name should be node")
+        if lane.get("node_module_version") != EXPECTED_MODULE_VERSIONS[lane_name]:
+            errors.append(
+                f"{lane_name} node_module_version should be {EXPECTED_MODULE_VERSIONS[lane_name]}, got {lane.get('node_module_version')}"
+            )
 
         fixture_path = lane.get("fixture_corpus_path")
         fixture_tag = lane.get("fixture_corpus_upstream_tag")
