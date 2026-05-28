@@ -34,6 +34,28 @@ impl JobOutcome {
     }
 }
 
+/// Ensure the connection is subscribed to systemd signals.
+///
+/// `Manager.Subscribe` is per-connection and **errors** with
+/// `org.freedesktop.systemd1.AlreadySubscribed` if the same connection
+/// subscribes twice — which happens when a single client runs a start then a
+/// stop. Being already subscribed is exactly the state we need for signal
+/// delivery, so that error is tolerated; any other error propagates.
+async fn ensure_subscribed(manager: &ManagerProxy<'_>) -> Result<()> {
+    match manager.subscribe().await {
+        Ok(()) => Ok(()),
+        Err(err) if is_already_subscribed(&err) => Ok(()),
+        Err(err) => Err(map_zbus(err)),
+    }
+}
+
+fn is_already_subscribed(err: &zbus::Error) -> bool {
+    matches!(
+        err,
+        zbus::Error::MethodError(name, _, _) if name.as_str().ends_with(".AlreadySubscribed")
+    )
+}
+
 /// `StartTransientUnit` correlated with its `JobRemoved` completion signal.
 pub(crate) async fn start_transient_unit_and_wait(
     manager: &ManagerProxy<'_>,
@@ -41,7 +63,7 @@ pub(crate) async fn start_transient_unit_and_wait(
     mode: String,
     properties: Vec<(String, OwnedValue)>,
 ) -> Result<(OwnedObjectPath, JobOutcome)> {
-    manager.subscribe().await.map_err(map_zbus)?;
+    ensure_subscribed(manager).await?;
     let mut job_removed = manager.receive_job_removed().await.map_err(map_zbus)?;
     let job_path = manager
         .start_transient_unit(name, mode, properties, Vec::new())
@@ -57,7 +79,7 @@ pub(crate) async fn stop_unit_and_wait(
     name: String,
     mode: String,
 ) -> Result<(OwnedObjectPath, JobOutcome)> {
-    manager.subscribe().await.map_err(map_zbus)?;
+    ensure_subscribed(manager).await?;
     let mut job_removed = manager.receive_job_removed().await.map_err(map_zbus)?;
     let job_path = manager.stop_unit(name, mode).await.map_err(map_zbus)?;
     let outcome = wait_for_job(&mut job_removed, &job_path, "stop").await?;
