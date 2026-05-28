@@ -1,0 +1,94 @@
+//! Signal-correlated systemd job completion.
+//!
+//! The naive flow — call `StartTransientUnit`, log the returned job path,
+//! return success — masks asynchronous unit failures: the Manager returns the
+//! job object path long before the unit actually starts, so a missing
+//! `ExecStart` binary would look like success. Instead we call
+//! `Manager.Subscribe`, establish the `JobRemoved` stream **before** issuing
+//! the method call (closing the race where the job finishes before we are
+//! listening), and complete only when the `JobRemoved` signal whose `job`
+//! object path matches ours arrives — classifying its `result`.
+
+use futures::StreamExt;
+use nimbus_core::{Error, Result};
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+use zbus_systemd::systemd1::ManagerProxy;
+
+use super::map_zbus;
+
+/// Classified outcome of a systemd job, from the `JobRemoved` `result` string.
+pub(crate) enum JobOutcome {
+    /// `"done"` — the job completed and the unit reached its target state.
+    Done,
+    /// `"skipped"` — the unit was already in the requested state.
+    Skipped,
+    /// `"failed"`/`"canceled"`/`"timeout"`/`"dependency"`, or any unrecognized
+    /// result string. Carries the raw result for diagnostics.
+    Failed(String),
+}
+
+impl JobOutcome {
+    /// True when the job reached its target state (`done` or `skipped`).
+    pub(crate) fn succeeded(&self) -> bool {
+        matches!(self, JobOutcome::Done | JobOutcome::Skipped)
+    }
+}
+
+/// `StartTransientUnit` correlated with its `JobRemoved` completion signal.
+pub(crate) async fn start_transient_unit_and_wait(
+    manager: &ManagerProxy<'_>,
+    name: String,
+    mode: String,
+    properties: Vec<(String, OwnedValue)>,
+) -> Result<(OwnedObjectPath, JobOutcome)> {
+    manager.subscribe().await.map_err(map_zbus)?;
+    let mut job_removed = manager.receive_job_removed().await.map_err(map_zbus)?;
+    let job_path = manager
+        .start_transient_unit(name, mode, properties, Vec::new())
+        .await
+        .map_err(map_zbus)?;
+    let outcome = wait_for_job(&mut job_removed, &job_path, "start").await?;
+    Ok((job_path, outcome))
+}
+
+/// `StopUnit` correlated with its `JobRemoved` completion signal.
+pub(crate) async fn stop_unit_and_wait(
+    manager: &ManagerProxy<'_>,
+    name: String,
+    mode: String,
+) -> Result<(OwnedObjectPath, JobOutcome)> {
+    manager.subscribe().await.map_err(map_zbus)?;
+    let mut job_removed = manager.receive_job_removed().await.map_err(map_zbus)?;
+    let job_path = manager.stop_unit(name, mode).await.map_err(map_zbus)?;
+    let outcome = wait_for_job(&mut job_removed, &job_path, "stop").await?;
+    Ok((job_path, outcome))
+}
+
+/// Drain `JobRemoved` signals until the one for `job_path` arrives.
+async fn wait_for_job(
+    job_removed: &mut zbus_systemd::systemd1::JobRemovedStream,
+    job_path: &OwnedObjectPath,
+    phase: &str,
+) -> Result<JobOutcome> {
+    while let Some(signal) = job_removed.next().await {
+        let args = signal.args().map_err(map_zbus)?;
+        if args.job() == job_path {
+            return Ok(classify_result(args.result()));
+        }
+    }
+    Err(Error::Internal(format!(
+        "systemd JobRemoved stream ended before the {phase} job {} completed",
+        job_path.as_str()
+    )))
+}
+
+fn classify_result(result: &str) -> JobOutcome {
+    match result {
+        "done" => JobOutcome::Done,
+        "skipped" => JobOutcome::Skipped,
+        // `failed`/`canceled`/`timeout`/`dependency` and any unrecognized
+        // result (`once`/`merged`/`assert`/`unsupported`/`collected`, …) are
+        // errors — an unknown result is never silently treated as success.
+        other => JobOutcome::Failed(other.to_string()),
+    }
+}

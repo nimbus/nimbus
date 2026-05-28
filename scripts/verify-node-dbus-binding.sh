@@ -234,10 +234,10 @@ if [ -n "${impl_files}" ]; then
     # precede the method call. Match method-call syntax to avoid passing on
     # trait declarations alone.
     if grep -qE '\.subscribe\(' "${f}" && \
-       grep -qE 'receive_job_removed|JobRemoved|MatchRule' "${f}" && \
+       grep -qE '\.receive_job_removed\(|MatchRule::new' "${f}" && \
        grep -qE '\.(start_transient_unit|stop_unit)\(' "${f}"; then
       subscribe_line=$(grep -nE '\.subscribe\(' "${f}" | head -n 1 | cut -d: -f1)
-      stream_line=$(grep -nE 'receive_job_removed|JobRemoved|MatchRule' "${f}" | head -n 1 | cut -d: -f1)
+      stream_line=$(grep -nE '\.receive_job_removed\(|MatchRule::new' "${f}" | head -n 1 | cut -d: -f1)
       call_line=$(grep -nE '\.(start_transient_unit|stop_unit)\(' "${f}" | head -n 1 | cut -d: -f1)
       if [ -n "${subscribe_line}" ] && [ -n "${stream_line}" ] && [ -n "${call_line}" ] && \
          [ "${subscribe_line}" -lt "${stream_line}" ] && [ "${stream_line}" -lt "${call_line}" ]; then

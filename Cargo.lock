@@ -6126,6 +6126,7 @@ dependencies = [
 name = "nimbus-node"
 version = "0.1.33"
 dependencies = [
+ "futures",
  "nimbus-core",
  "nimbus-runtime",
  "nimbus-sandbox",

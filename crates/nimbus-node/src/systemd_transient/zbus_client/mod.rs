@@ -15,7 +15,7 @@
 
 use nimbus_core::{Error, Result};
 use zbus::Connection;
-use zbus_systemd::systemd1::ManagerProxy;
+use zbus_systemd::systemd1::{ManagerProxy, ServiceProxy, UnitProxy};
 
 use super::{
     SystemdDbusClient, SystemdInspectUnitRequest, SystemdStartTransientUnitRequest,
@@ -23,6 +23,11 @@ use super::{
     SystemdTransientCapabilities, SystemdUnitStatus,
 };
 use crate::HostLifecycleFuture;
+
+mod properties;
+mod signals;
+
+use signals::JobOutcome;
 
 /// Which systemd D-Bus instance the client speaks to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +170,40 @@ fn classify_probe_error(err: &zbus::Error) -> SystemdTransientCapabilities {
     }
 }
 
+/// Temporary zbus → `nimbus_core::Error` mapping for NDB3. NDB4 replaces this
+/// with the full taxonomy in `error.rs` (adding `Transport`/`NotFound`
+/// variants); call sites route through this single function so that swap is
+/// localized.
+pub(super) fn map_zbus(err: zbus::Error) -> Error {
+    match &err {
+        zbus::Error::MethodError(name, _, _) => {
+            let dbus_name = name.as_str();
+            if dbus_name.ends_with(".AccessDenied") || dbus_name.ends_with(".AuthFailed") {
+                Error::PermissionDenied(format!("systemd D-Bus: {err}"))
+            } else if dbus_name.ends_with(".NoSuchUnit") || dbus_name.ends_with(".UnknownObject") {
+                Error::InvalidInput(format!("systemd D-Bus: {err}"))
+            } else {
+                Error::Internal(format!("systemd D-Bus method error: {err}"))
+            }
+        }
+        _ => Error::Internal(format!("systemd D-Bus error: {err}")),
+    }
+}
+
+fn is_no_such_unit(err: &zbus::Error) -> bool {
+    matches!(err, zbus::Error::MethodError(name, _, _) if name.as_str().ends_with(".NoSuchUnit"))
+}
+
+fn job_failed_error(operation: &str, unit: &str, outcome: &JobOutcome) -> Error {
+    let result = match outcome {
+        JobOutcome::Failed(result) => result.as_str(),
+        _ => "unknown",
+    };
+    Error::Internal(format!(
+        "systemd {operation} for unit {unit} did not complete: job result `{result}`"
+    ))
+}
+
 impl SystemdDbusClient for ZbusSystemdClient {
     fn capabilities(&self) -> SystemdTransientCapabilities {
         self.capabilities.clone()
@@ -172,34 +211,95 @@ impl SystemdDbusClient for ZbusSystemdClient {
 
     fn start_transient_unit<'a>(
         &'a self,
-        _request: SystemdStartTransientUnitRequest,
+        request: SystemdStartTransientUnitRequest,
     ) -> HostLifecycleFuture<'a, SystemdStartTransientUnitResponse> {
         Box::pin(async move {
-            Err(Error::Internal(
-                "ZbusSystemdClient::start_transient_unit lands in NDB3".to_string(),
-            ))
+            let name = request.unit_name().as_str().to_string();
+            let mode = request.mode().as_dbus_str().to_string();
+            let properties = properties::encode_start_properties(request.properties())?;
+            let (job_path, outcome) =
+                signals::start_transient_unit_and_wait(&self.manager, name, mode, properties)
+                    .await?;
+            if !outcome.succeeded() {
+                return Err(job_failed_error(
+                    "StartTransientUnit",
+                    request.unit_name().as_str(),
+                    &outcome,
+                ));
+            }
+            SystemdStartTransientUnitResponse::new(
+                request.unit_name().clone(),
+                job_path.as_str().to_string(),
+            )
         })
     }
 
     fn stop_unit<'a>(
         &'a self,
-        _request: SystemdStopUnitRequest,
+        request: SystemdStopUnitRequest,
     ) -> HostLifecycleFuture<'a, SystemdStopUnitResponse> {
         Box::pin(async move {
-            Err(Error::Internal(
-                "ZbusSystemdClient::stop_unit lands in NDB3".to_string(),
-            ))
+            let name = request.unit_name().as_str().to_string();
+            let mode = request.mode().as_dbus_str().to_string();
+            let (job_path, outcome) =
+                signals::stop_unit_and_wait(&self.manager, name, mode).await?;
+            if !outcome.succeeded() {
+                return Err(job_failed_error(
+                    "StopUnit",
+                    request.unit_name().as_str(),
+                    &outcome,
+                ));
+            }
+            // After a successful stop the transient unit is inactive/dead (and
+            // typically garbage-collected). Report that terminal status.
+            let status = SystemdUnitStatus::new(
+                request.workload_id().clone(),
+                request.unit_name().clone(),
+                "inactive",
+                "dead",
+            )?
+            .with_job_path(job_path.as_str().to_string())?;
+            SystemdStopUnitResponse::new(job_path.as_str().to_string(), status)
         })
     }
 
     fn inspect_unit<'a>(
         &'a self,
-        _request: SystemdInspectUnitRequest,
+        request: SystemdInspectUnitRequest,
     ) -> HostLifecycleFuture<'a, SystemdUnitStatus> {
         Box::pin(async move {
-            Err(Error::Internal(
-                "ZbusSystemdClient::inspect_unit lands in NDB3".to_string(),
-            ))
+            let unit_name = request.unit_name().clone();
+            let workload_id = request.workload_id().clone();
+            let unit_path = match self.manager.get_unit(unit_name.as_str().to_string()).await {
+                Ok(path) => path,
+                // An unloaded unit (never started, or already GC'd after stop)
+                // is reported as inactive/dead rather than an error.
+                Err(err) if is_no_such_unit(&err) => {
+                    return SystemdUnitStatus::new(workload_id, unit_name, "inactive", "dead");
+                }
+                Err(err) => return Err(map_zbus(err)),
+            };
+            let unit = UnitProxy::builder(&self.connection)
+                .path(unit_path.clone())
+                .map_err(map_zbus)?
+                .build()
+                .await
+                .map_err(map_zbus)?;
+            let active_state = unit.active_state().await.map_err(map_zbus)?;
+            let sub_state = unit.sub_state().await.map_err(map_zbus)?;
+            let service = ServiceProxy::builder(&self.connection)
+                .path(unit_path)
+                .map_err(map_zbus)?
+                .build()
+                .await
+                .map_err(map_zbus)?;
+            let main_pid = service.main_pid().await.map_err(map_zbus)?;
+            let mut status =
+                SystemdUnitStatus::new(workload_id, unit_name, active_state, sub_state)?;
+            if main_pid != 0 {
+                status = status.with_main_pid(main_pid);
+            }
+            Ok(status)
         })
     }
 }
