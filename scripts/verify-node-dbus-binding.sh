@@ -323,8 +323,15 @@ if [ -f "${CI_WF}" ]; then
     if grep -qE 'systemd-dbus-integration-tests' "${CI_WF}"; then
       has_test_invocation=1
     fi
-    # Job must be in rust-gate-summary.needs:
-    if awk '/^  rust-gate-summary:$/,/^  [a-z][a-z-]*:[[:space:]]*$/' "${CI_WF}" | grep -qE 'node-dbus-integration'; then
+    # Job must be in rust-gate-summary.needs:. Extract the block *body* (lines
+    # after the `rust-gate-summary:` header up to the next top-level job key);
+    # a `/start/,/end/` range would collapse because the header itself matches
+    # the job-key end pattern.
+    if awk '
+      /^  rust-gate-summary:[[:space:]]*$/ { found = 1; next }
+      found && /^  [a-z][a-z0-9-]*:[[:space:]]*$/ { found = 0 }
+      found
+    ' "${CI_WF}" | grep -qE 'node-dbus-integration'; then
       has_gate_summary=1
     fi
     if [ "${has_runner}" = "1" ] && [ "${has_bootstrap}" = "1" ] && [ "${has_test_invocation}" = "1" ] && [ "${has_gate_summary}" = "1" ]; then
