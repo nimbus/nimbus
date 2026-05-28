@@ -1,258 +1,70 @@
 # Deno vs Nimbus: Node.js Compatibility Comparison
 
-Status: snapshot (2026-05-10, updated 2026-05-11)
+Status: qualitative architecture note
 
-High-level comparison of Node.js built-in module compatibility between stock
-Deno and Nimbus. Nimbus builds on Deno's `ext/node` stack, so the baseline
-implementation is shared. This document captures where the two diverge:
-where Nimbus has verified or improved beyond Deno, and where Nimbus has
-intentional restrictions. The Node compatibility plan (the completed Node compatibility roadmap) is now complete.
+Nimbus builds on Deno's `ext/node` stack, so the baseline implementation is
+shared. This document explains the architectural difference between stock Deno
+and Nimbus; it is not the support matrix and it must not carry hand-maintained
+pass rates.
 
-## Executive Summary
+## Source Of Truth
 
-|                                           | Deno           | Nimbus         |
-| ----------------------------------------- | -------------- | -------------- |
-| Modules with any implementation           | 44/44 100%     | 44/44 100%     |
-| Modules functionally usable               | 38/44  86%     | 43/44  98%     |
-| Modules verified with upstream Node tests | unknown        | 44/44 100%     |
-| Modules improved beyond Deno baseline     | --             | 18/44  41%     |
-| Official Node test files green (Node22 default) | not published  | 876            |
-| Supported Node lanes                      | not published  | Node20, Node22 default, Node24 |
-| Package canaries verified                 | not published  | 10 (5 networking + 5 tooling) |
-| Oracle comparison system                  | not published  | Nightly CI with version-matched Node |
-| Nightly CI dashboard                      | not published  | `.github/workflows/node-compat-nightly.yml` |
+Use generated evidence for current Nimbus support claims:
 
-Nimbus's primary advantage is **verification depth**, not implementation
-breadth. Both runtimes share the same `ext/node` codebase. But Nimbus has
-run 876 lane-local official upstream Node.js test files in the Node22 default
-lane, supports Node20 and Node24 as first-class lanes, verified 10 package
-canaries across Application and Tooling presets, and fixed issues that
-stock Deno has not.
+- `docs/runtimes/nodejs/evidence/latest.md`
+- `docs/runtimes/nodejs/evidence/node22.md`
+- `docs/runtimes/nodejs/evidence/node24.md`
+- `docs/architecture/runtime/node-compat-evidence/latest/status-summary.md`
+- `docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md`
 
-## Status Legend
+Use the lane registry for release and support posture:
 
-- **Full** — Module is fully functional and verified with upstream Node tests
-- **Full\*** — Deno self-reports "fully supported" but has documented stubs/caveats
-- **Partial** — Implementation exists with known gaps
-- **Partial+** — Nimbus has verified and/or improved beyond Deno's partial baseline
-- **Stub** — Module exports exist but are non-functional
-- **Restricted** — Supported but intentionally scoped by runtime preset
-- **Inherited** — Uses Deno's implementation, not yet separately verified by Nimbus
-- **N/A** — Intentionally excluded from scope
+- `docs/architecture/runtime/node-lts-compat/node-lts-lanes.json`
+- `docs/architecture/runtime/node-lts-compat/node-lts-lanes.md`
 
-## Per-Module Comparison
+Product default is a routing default, not an evidence priority. Node22 and
+Node24 are the current supported LTS lanes. Node20 remains selectable only as
+legacy-grace regression coverage after its 2026-04-30 EOL.
 
-### P0: Core Semantics (the core-semantics family — done)
+## Comparison Summary
 
-| Module | Symbols | Deno | Nimbus | Evidence | Difference |
-| ------ | ------: | ---- | ------ | -------- | ---------- |
-| `assert` | 27 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
-| `buffer` | 77 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
-| `console` | 23 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
-| `events` | 50 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
-| `path` | 12 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
-| `punycode` | 4 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
-| `querystring` | 6 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
-| `string_decoder` | 3 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
-| `url` | 30 | Full | Full | 120 Node22 tests green | Nimbus verified with upstream tests |
+Nimbus's advantage over stock Deno is verification and product boundary, not a
+claim that Nimbus has a separate Node implementation:
 
-### P0: Process and Timing (the process and timing family — done)
+- Nimbus uses lane-owned upstream Node fixture corpora and checked-in
+  classification catalogs.
+- Nimbus publishes generated support evidence instead of hand-maintained
+  per-module pass rates.
+- Nimbus separates JavaScript compatibility target from runtime permissions.
+  Node target selection does not grant filesystem, network, subprocess,
+  worker, inspector, FFI, secret, service, or environment authority.
+- Nimbus keeps host-heavy behavior bounded by explicit runtime grants and
+  manifest evidence.
+- Nimbus records expected failures, known gaps, skips, and watchpoints as
+  non-support claims rather than hiding them inside aggregate totals.
 
-| Module | Symbols | Deno | Nimbus | Evidence | Difference |
-| ------ | ------: | ---- | ------ | -------- | ---------- |
-| `process` | 1 | Partial | Partial+ | 48 Node22 tests green | Nimbus verified; env allowlist-scoped in Application preset |
-| `timers` | 21 | Full | Full | 48 Node22 tests green | Nimbus verified with upstream tests |
-| `util` | 99 | Partial | Partial+ | 48 Node22 tests green | Nimbus verified; MIMEType/MIMEParams work |
-| `diagnostics_channel` | 62 | Full | Full | 48 Node22 tests green | Nimbus verified with upstream tests |
-| `perf_hooks` | 43 | Partial | Partial+ | Custom impl + verified | Nimbus replaces Deno's stubs with working perf_hooks (histogram, monitorEventLoopDelay) |
+## Deno-Derived Baseline
 
-### P0: Streams and Local I/O (the streams and local I/O family — done)
+The shared Deno substrate remains a strength: Node built-in loading,
+CommonJS/ESM interop, many standard built-ins, and a large amount of Node
+process behavior come from Deno's maintained implementation. Nimbus should
+prefer upstreaming general Node semantic fixes into the Deno-family fork when
+the behavior is not Nimbus-specific host integration.
 
-| Module | Symbols | Deno | Nimbus | Evidence | Difference |
-| ------ | ------: | ---- | ------ | -------- | ---------- |
-| `stream` | 77 | Full | Full | 317 Node22 tests green | Nimbus verified with upstream tests |
-| `fs` | 159 | Full\* | Full (scoped) | 317 Node22 tests green | Nimbus verified; path-scoped to approved roots in Application preset |
-| `fs/promises` | 1 | Full\* | Full (scoped) | 317 Node22 tests green | Nimbus verified; same path scoping; custom error mapping |
-| `readline` | 37 | Full | Full | 317 Node22 tests green | Nimbus verified with upstream tests |
-| `tty` | 12 | Full | Full | 317 Node22 tests green | Nimbus verified with upstream tests |
-| `os` | 20 | Full | Full | 317 Node22 tests green | Nimbus verified with upstream tests |
+## Nimbus-Owned Boundaries
 
-### P0/P1: Networking (the networking family — done)
+Nimbus-owned behavior is primarily around product trust:
 
-| Module | Symbols | Deno | Nimbus | Evidence | Difference |
-| ------ | ------: | ---- | ------ | -------- | ---------- |
-| `dns` | 27 | Partial | Partial+ | 270 Node22 tests green | Nimbus verified with upstream tests |
-| `net` | 61 | Partial | Partial+ | 270 Node22 tests green | Nimbus verified with upstream tests |
-| `dgram` | 1 | Partial | Partial+ | 270 Node22 tests green, 5 dgram waves | Nimbus verified; broader multicast/send coverage |
-| `tls` | 51 | Partial | Partial+ | 270 Node22 tests green, TLS waves | Nimbus adds createSecurePair support (Deno: not supported) |
-| `http` | 103 | Partial | Partial+ | 270 Node22 tests green | Nimbus verified; Agent/keepalive/lifecycle verified |
-| `https` | 11 | Partial | Partial+ | 270 Node22 tests green, TLS cert waves | Nimbus verified with upstream tests |
-| `http2` | 105 | Partial | Partial+ | 270 Node22 tests green, compat waves | Nimbus verified; header/status/compat request/response waves |
+- compatibility target admission and lane metadata
+- runtime permission profiles and grant enforcement
+- Convex-compatible `"use node"` routing
+- path, environment, network, subprocess, and worker boundaries
+- generated fixture, canary, oracle, and dashboard evidence
+- explicit classification of unsupported or host-heavy behavior
 
-### P0/P1: Crypto and Compression (crypto-compression coverage — done)
+## Claim Boundary
 
-| Module | Symbols | Deno | Nimbus | Evidence | Difference |
-| ------ | ------: | ---- | ------ | -------- | ---------- |
-| `crypto` | 110 | Full\* | Full (verified) | Hash, HMAC, random, KDF, cipher, DH/ECDH, auth/wrap waves | Deno claims "full" but has many stubs; Nimbus has upstream test evidence |
-| `zlib` | 50 | Partial | Partial+ | 4 verified slices: foundation, stream-lifecycle, decompression, Brotli | Nimbus verified Brotli, dictionary, GC paths Deno lists as unsupported |
-
-### P0/P1: Loader and Async Context (the loader and async-context phase — done)
-
-| Module | Symbols | Deno | Nimbus | Evidence | Difference |
-| ------ | ------: | ---- | ------ | -------- | ---------- |
-| `module` | 19 | Full\* | Full (verified) | Loader-context manifest, CommonJS/ESM bridge | Nimbus verified createRequire, builtinModules, Module.wrapper, CommonJS loading |
-| `async_hooks` | 24 | Partial | Partial+ | ALS, execution-context, promise-hook waves | Deno lists AsyncResource/executionAsyncId as stubs; Nimbus has working verified impl |
-
-### P1/P2: VM, Runtime Internals, Workers (the deep runtime family — done)
-
-| Module | Symbols | Deno | Nimbus | Evidence | Difference |
-| ------ | ------: | ---- | ------ | -------- | ---------- |
-| `child_process` | 20 | Full | Restricted | spawnSync for staged binaries only | Nimbus scopes to Tooling preset; Application preset: not supported |
-| `vm` | 21 | Partial | Partial+ | 6-file basics wave green | Nimbus fixes filename/stack fidelity and weak-handle teardown abort |
-| `v8` | 56 | Partial | Partial+ | 5-file helper wave green | Deno: most APIs throw; Nimbus: cachedDataVersionTag, serdes, stats, setFlagsFromString work |
-| `worker_threads` | 40 | Partial | Partial+ | 15-file verified contract across 3 lanes | Nimbus: Worker, MessageChannel, MessagePort, ref/unref, bootstrap/process verified |
-| `inspector` | 18 | Partial | Partial+ | 5-file front-edge contract green | Deno: stubs; Nimbus: module, open, enabled, NodeTracing path work |
-
-### P2/P3: Long-Tail and Host-Heavy (the long-tail runtime family — done)
-
-| Module | Symbols | Deno | Nimbus | Evidence | Difference |
-| ------ | ------: | ---- | ------ | -------- | ---------- |
-| `domain` | 9 | Stub | Partial+ | 16-file foundation green, cross-lane (Node22/Node20/Node24) | Deno: stubs; Nimbus: add/remove, timer propagation, nested binding, promise rejection bridge verified |
-| `trace_events` | 1 | Stub | Partial+ | 10-file foundation green, Node22 default | Deno: stubs; Nimbus: API, binding, bootstrap, category, console, dynamic enable, environment, metadata, process-exit verified |
-| `constants` | 1 | -- | Partial+ | 5-file tranche green across all 3 lanes | Public constants export, internalBinding('constants'), fs.constants, os signals verified cross-lane |
-| `sys` | 1 | -- | Partial+ | Cross-lane `test-sys.js` green (all 3 lanes) | Alias contract verified cross-lane |
-| `cluster` | 23 | Stub | Partial+ | 9-file Node22 worker foundation + lifecycle/teardown green | Deno: stubs; Nimbus: worker construct/init/exit/disconnect/kill verified |
-| `repl` | 8 | Stub | Partial+ | 4-file Node22 `repl.start()` foundation green | Deno: stubs; Nimbus: definecommand, mode, recoverable, reset-event verified |
-| `test` | 74 | Full | Partial+ | 20-file Node22 runner wave green | Runner aliases, assertions, context, plan, file syntax, reporters, CLI options, randomize, rerun-failures verified |
-| `sqlite` | 27 | Full | Partial+ | 4-file Node22 foundation green | Config, statement-sync, template-tag, named-parameters verified |
-| `wasi` | 4 | Stub | Partial+ | ~17-file Node22 across 5 waves green | Deno: stubs; Nimbus: validation, executable, argv, filesystem, preopen verified |
-| `sea` | 1 | Stub | Partial+ | 1-file truthful non-SEA contract green | `isSea()` returns false, `getAssetKeys()` throws correct `ERR_NOT_IN_SINGLE_EXECUTABLE_APPLICATION` |
-
-## Aggregate Comparison
-
-### Module-Level Functional Coverage
-
-"Functional" means the module is usable beyond pure stubs.
-
-| Runtime | Full | Partial | Stub/None | Functional % |
-| ------- | ---: | ------: | --------: | -----------: |
-| Deno (self-reported) | 22 | 16 | 6 | 86% |
-| Nimbus (verified) | 24 | 19 | 1 | 98% |
-
-The Node compatibility plan (the completed Node compatibility roadmap, now complete) verified all 44 modules with
-upstream Node tests. 18 modules are improved beyond Deno's baseline.
-Only `sea` remains intentionally scoped (truthful non-SEA contract
-rather than full SEA support, which is host-binary-specific).
-
-### Verification Depth
-
-| Metric | Deno | Nimbus |
-| ------ | ---- | ------ |
-| Official upstream Node test files run | not published | 876 (Node22 default path-owned green) |
-| LTS lanes tested | 1 (own runner) | 3 (Node22, Node20, Node24) |
-| Package canaries verified | not published | 10 (express, fastify, socket.io, undici, axios, jest, tsx, ts-node, prisma, next) |
-| Per-module failure inventories | not published | all families checked in |
-| Per-module test manifests | not published | all families checked in |
-| Oracle comparison system | not published | Nightly CI with version-matched Node20/Node22/Node24 |
-| Dashboard aggregation | not published | `make node-compat-dashboard` → JSON + Markdown |
-| Nightly CI workflow | not published | `.github/workflows/node-compat-nightly.yml` (scheduled + manual dispatch) |
-
-### Where Nimbus Exceeds Deno
-
-These are modules where Nimbus has made concrete improvements or fixes that
-stock Deno has not shipped:
-
-| Module | Deno Gap | Nimbus Fix |
-| ------ | -------- | ---------- |
-| `cluster` | Stub (non-functional) | 9-file worker foundation + lifecycle: construct, init, isdead, isconnected, events, exit, disconnect, forced-exit, kill with Node-shaped handshakes |
-| `domain` | Stub (non-functional) | 16-file working foundation: add/remove, timer propagation, nested binding, promise rejection bridge |
-| `trace_events` | Stub (non-functional) | 10-file working foundation: API, binding, bootstrap, category, console, dynamic enable, environment, metadata, process-exit |
-| `wasi` | Stub (non-functional) | 17-file across 5 waves: validation, executable, argv, filesystem, preopen/file-IO |
-| `repl` | Stub (non-functional) | 4-file `repl.start()` foundation: definecommand, mode, recoverable, reset-event |
-| `sea` | Stub (non-functional) | Truthful non-SEA contract: `isSea()` returns false, `getAssetKeys()` throws correct Node-shaped error |
-| `perf_hooks` | Stubs (monitorEventLoopDelay, timerify) | Custom working implementation with histogram and event loop delay support |
-| `tls` | createSecurePair not supported | createSecurePair with ERR_TLS_INVALID_CONTEXT validation |
-| `async_hooks` | AsyncResource, executionAsyncId are stubs | Working AsyncLocalStorage, execution-context, promise-hook waves verified |
-| `v8` | Most APIs throw errors | cachedDataVersionTag, serdes, stats, setFlagsFromString working |
-| `vm` | measureMemory stub, limited Script support | Filename/stack fidelity fixes, weak-handle teardown abort fix |
-| `inspector` | All non-console APIs are stubs | Module, open, enabled, NodeTracing path working |
-| `worker_threads` | parentPort.emit, moveMessagePortToContext not supported | Worker, MessageChannel, MessagePort, ref/unref, bootstrap/process verified |
-| `zlib` | BrotliCompress/Decompress, ZlibBase not supported | Brotli, dictionary, GC tracking, flush/drain verified |
-| `dgram` | Multicast membership methods are stubs | Broader send/callback, multicast, fd, error wave verified |
-| `constants` | Not listed in Deno compat table | Public constants export, internalBinding('constants'), fs.constants, os signals verified |
-| `test` | Deno claims full but Nimbus independently verified | 20-file runner wave: aliases, assertions, context, plan, file syntax, reporters, CLI options, randomize, rerun-failures |
-| `sqlite` | Deno claims full but Nimbus independently verified | 4-file foundation: config, statement-sync, template-tag, named-parameters |
-
-### Where Deno Has Advantages
-
-| Area | Deno Advantage | Nimbus Status |
-| ---- | -------------- | ------------- |
-| `child_process` in Application preset | Full access, no restrictions | Intentionally restricted to Tooling preset with staged binaries only |
-| `fs` path freedom | No root restrictions | Intentionally scoped to approved bundle/app/tmp/cache roots |
-| `process.env` access | Full host env access | Intentionally allowlist-only (Application preset: 1 var, Tooling preset: ~30 vars) |
-| `net` remote hosts | Any host allowed | Intentionally restricted to localhost/loopback in Application preset |
-| N-API / native addons | Supported via `deno_napi` | Not yet wired up (planned via `deno_napi`) |
-| `npm:` specifier support | Native npm specifier resolution | Not supported; uses staged `node_modules` |
-
-Note: Nimbus's "disadvantages" in `child_process`, `fs`, `process.env`, and
-`net` are **intentional security restrictions** for the Application preset, not missing implementations. The Tooling preset has broader access.
-
-### Node compatibility Plan Deliverables (Complete)
-
-The Node compatibility plan (the completed Node compatibility roadmap) is now complete. All 11 roadmap items are `done`.
-
-**the truth and control-plane phase** (truth and control plane): Generated compatibility matrix,
-versioned public contract with Node22 default plus Node20 and Node24 supported lanes.
-
-**the foundation built-ins phase** (foundation built-ins): Core semantics, process/timing,
-streams/I/O, networking, crypto/compression, and loader/async context
-families verified with upstream Node tests, failure inventories, and
-package canaries.
-
-**the deep runtime and long-tail phase** (deep runtime and long-tail): Loader, VM, workers, inspector,
-cluster, repl, test, sqlite, wasi, sea, domain, trace_events, sys, and
-constants verified with truthful support states across three LTS lanes.
-
-**the validation and closeout phase** (validation and closeout): Delivered the full evidence layer:
-- Machine-readable manifest catalogs for all 5 carried families
-- `scripts/runtime/node/report.sh` with `--capture-live` measured artifact capture
-- 10 package canaries verified (5 Application networking + 5 Tooling)
-- Oracle comparison system (`make node-compat-oracle`) with drift classes
-  and version-matched Node20/Node22/Node24 sweeps
-- Dashboard aggregation (`make node-compat-dashboard`) → JSON + Markdown
-- Nightly CI workflow (`.github/workflows/node-compat-nightly.yml`)
-  with representative Node test checks, canary lanes, oracle samples, and
-  artifact upload
-
-Public support claim: **"Node20, Node22, and Node24 compatibility targets with
-Node22 as the default and documented preset-scoped exclusions"** —
-evidence-backed rather than aspirational.
-
-## Methodology Notes
-
-- **Deno status** comes from the official Deno Node.js compatibility
-  reference at `https://docs.deno.com/runtime/reference/node_apis/`
-  (last updated 2025-08-20). Deno self-reports module-level status but
-  does not publish upstream Node test pass rates or per-module failure
-  inventories.
-- **Nimbus status** is derived from the checked-in manifests and failure
-  inventories under `docs/architecture/runtime/node-lts-compat/`, the
-  verified surface matrix at `node-compat-surface-matrix.md`, and the
-  archived Node compatibility baseline at `docs/plans/archive/node-lts-compatibility-plan.md`.
-- **Symbol counts** come from the generated `node-lts-compat-matrix.csv`
-  baseline (Node 22 column).
-- **"Full\*"** marks modules where Deno claims "fully supported" but has
-  documented stubs or caveats in the same compatibility table. For
-  example, `node:crypto` is listed as "fully supported" but has 10+
-  documented stub/non-functional APIs.
-- Nimbus inherits Deno's entire `ext/node` implementation stack. Modules
-  marked **Inherited** use Deno's code without separate Nimbus
-  verification. They are expected to have the same behavior as stock
-  Deno.
-- The **876** upstream test count represents lane-local official
-  `nodejs/node v22.15.0` test files (not Deno's own test suite) that are
-  path-owned by non-ignored Nimbus compatibility tests across the Node22
-  default lane after excluding explicit expected-failure/gap/skip
-  classifications. Earlier
-  family prose counts summed higher, but the generated status dashboard now
-  prefers reconstructable path evidence over prose counts when the two disagree.
+This document is intentionally prose-only. Any numeric support claim, lane role,
+or current pass/failure total belongs in generated evidence or the lane
+registry. If this document disagrees with generated evidence, the generated
+evidence wins and this document should be corrected.

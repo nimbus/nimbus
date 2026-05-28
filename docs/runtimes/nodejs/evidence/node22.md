@@ -4,7 +4,10 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 ## Summary
 
-- role: `default`
+- role: `Product default; Maintenance LTS`
+- support phase: `Maintenance LTS`
+- product default: `yes`
+- evidence policy: `lane-local LTS evidence`
 - upstream fixture line: `v22.15.0`
 - runtime execution target: `Node22`
 - vendored official fixtures: `1283`
@@ -43,5 +46,5 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 ## Claim Boundary
 
 This lane is supported only for the measured surfaces represented by its
-passed fixtures, canaries, and explicit classifications. Known gaps and
-expected failures are intentionally not support claims.
+passed fixtures, canaries, and explicit classifications.
+Known gaps and expected failures are intentionally not support claims.

@@ -4,7 +4,10 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 ## Summary
 
-- role: `supported`
+- role: `Supported; Active LTS`
+- support phase: `Active LTS`
+- product default: `no`
+- evidence policy: `lane-local LTS evidence`
 - upstream fixture line: `v24.15.0`
 - runtime execution target: `Node24`
 - vendored official fixtures: `1495`
@@ -34,5 +37,5 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 ## Claim Boundary
 
 This lane is supported only for the measured surfaces represented by its
-passed fixtures, canaries, and explicit classifications. Known gaps and
-expected failures are intentionally not support claims.
+passed fixtures, canaries, and explicit classifications.
+Known gaps and expected failures are intentionally not support claims.

@@ -44,6 +44,9 @@ The broad Node LTS source baseline remains generated separately:
 
 - Node lane support phase, product default, upstream release line, and evidence
   policy are defined by the checked-in Node LTS lane registry.
+- Product default is a routing default, not an evidence priority. Node22 and
+  Node24 are the current supported LTS lanes; Node20 remains only
+  legacy-grace regression coverage after EOL.
 - Nimbus does not claim full Node built-in compatibility for any target.
 - A surface is supported only when a passed fixture, canary, oracle check, or
   explicit classification supports that claim.

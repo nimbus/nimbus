@@ -13,9 +13,9 @@ hand-maintained pass-rate numbers.
 
 Current product roles:
 
-- Node20: supported selectable target
-- Node22: default selectable target
-- Node24: supported selectable target
+- Node20: legacy-grace selectable target after its 2026-04-30 EOL
+- Node22: product default and Maintenance LTS target
+- Node24: supported Active LTS target
 
 ## Status Vocabulary
 
@@ -32,8 +32,11 @@ pass claim.
 
 ## Current Public Contract
 
-- Node22 is the default compatibility target.
-- Node20 and Node24 are supported selectable targets.
+- Node22 is the product-default compatibility target.
+- Node22 and Node24 are supported LTS targets with lane-local evidence.
+- Node20 remains selectable as legacy-grace regression coverage, but it is not
+  active enterprise LTS support.
+- Product default is a routing default, not an evidence priority.
 - Node target selection does not grant ambient host access. Runtime permission
   mode and explicit grants remain separate from Node compatibility target.
 - Convex-compatible `"use node"` action modules can select Node20, Node22, or

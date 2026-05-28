@@ -1,8 +1,9 @@
 # Node.js Runtime
 
 Nimbus supports a Node.js-compatible runtime for code that intentionally opts
-into Node APIs. Node22 is the default target today. Node20, Node22, and Node24
-are selectable, evidence-backed lanes.
+into Node APIs. Node22 is the product default today, Node24 is an active LTS
+peer, and Node20 remains selectable only as legacy-grace regression coverage
+after its 2026-04-30 EOL.
 
 This is a measured compatibility surface, not a blanket claim that every Node
 built-in or CLI behavior is available.
@@ -10,10 +11,7 @@ built-in or CLI behavior is available.
 Node compatibility is orthogonal to permission posture. Selecting Node20,
 Node22, or Node24 chooses the JavaScript compatibility target; filesystem,
 network, environment, subprocess, secret, identity, service, FFI, worker, and
-tool access still come from the active runtime mode and explicit grants. The
-default product lane is `Standard` mode with an internal `Application` preset,
-which grants only the bounded runtime roots and Node-compatible local loopback
-surface documented by the evidence below.
+tool access still come from the active runtime mode and explicit grants.
 
 ## Quick Example
 
@@ -45,11 +43,13 @@ import nodeFs from "node:fs";
 
 | Node target | Product role | Upstream fixture line | Current evidence |
 | --- | --- | --- | --- |
-| Node20 | Supported selectable target | `v20.20.2` | [Compatibility](compatibility.md) |
-| Node22 | Default selectable target | `v22.15.0` | [Compatibility](compatibility.md) |
-| Node24 | Supported selectable target | `v24.15.0` | [Compatibility](compatibility.md) |
+| Node20 | Legacy-grace selectable target; EOL | `v20.20.2` | [Compatibility](compatibility.md) |
+| Node22 | Product default; Maintenance LTS | `v22.15.0` | [Compatibility](compatibility.md) |
+| Node24 | Supported peer; Active LTS | `v24.15.0` | [Compatibility](compatibility.md) |
 
-Node22 remains the default until a deliberate Node24-default migration.
+Product default is a routing default, not an evidence priority. Current lane
+support phase, release metadata, and evidence policy come from
+`docs/architecture/runtime/node-lts-compat/node-lts-lanes.json`.
 
 ## Configure The Node Target
 

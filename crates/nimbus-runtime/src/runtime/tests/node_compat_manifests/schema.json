@@ -184,11 +184,11 @@
         },
         "lane_role": {
           "type": "string",
-          "enum": ["default", "supported"]
+          "enum": ["default", "supported", "legacy"]
         },
         "public_contract_role": {
           "type": "string",
-          "enum": ["default_contract", "supported_contract"]
+          "enum": ["default_contract", "supported_contract", "legacy_contract"]
         },
         "runtime_execution_target": {
           "type": "string",

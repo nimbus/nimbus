@@ -14,9 +14,9 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 | Target | Role | Upstream | Vendored official fixtures | Passed | Expected failure / known gap | Skipped / excluded | Unclassified | Official fixture pass rate | Classified coverage |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Node20 | Supported | `v20.20.2` | 1308 | 904 | 399 | 5 | 0 | 69.1% | 100.0% |
-| Node22 | Default | `v22.15.0` | 1283 | 876 | 403 | 4 | 0 | 68.3% | 100.0% |
-| Node24 | Supported | `v24.15.0` | 1495 | 925 | 567 | 3 | 0 | 61.9% | 100.0% |
+| Node20 | Legacy grace; EOL | `v20.20.2` | 1308 | 904 | 399 | 5 | 0 | 69.1% | 100.0% |
+| Node22 | Product default; Maintenance LTS | `v22.15.0` | 1283 | 876 | 403 | 4 | 0 | 68.3% | 100.0% |
+| Node24 | Supported; Active LTS | `v24.15.0` | 1495 | 925 | 567 | 3 | 0 | 61.9% | 100.0% |
 
 ## Package/Framework Canaries
 
@@ -45,4 +45,5 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 - `Passed` fixtures and canaries may support public claims.
 - Expected failures, known gaps, skips, and unclassified fixtures are not pass claims.
-- Node22 remains the default target until an explicit Node24-default migration.
+- Product default is a routing default, not an evidence priority.
+- Node22 and Node24 are the current supported LTS lanes; Node20 is legacy-grace regression coverage after its 2026-04-30 EOL.

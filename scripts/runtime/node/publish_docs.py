@@ -21,6 +21,17 @@ def default_output_root() -> Path:
     return repo_root() / "docs" / "runtimes" / "nodejs" / "evidence"
 
 
+def lane_registry_path() -> Path:
+    return (
+        repo_root()
+        / "docs"
+        / "architecture"
+        / "runtime"
+        / "node-lts-compat"
+        / "node-lts-lanes.json"
+    )
+
+
 def load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as file:
         return json.load(file)
@@ -48,10 +59,55 @@ def role_label(role: str) -> str:
     labels = {
         "default": "Default",
         "supported": "Supported",
+        "legacy": "Legacy",
         "preview": "Preview",
         "validation": "Validation",
     }
     return labels.get(role, role.replace("_", " ").title())
+
+
+def support_phase_label(phase: str) -> str:
+    labels = {
+        "eol_legacy": "EOL legacy",
+        "maintenance_lts": "Maintenance LTS",
+        "active_lts": "Active LTS",
+        "preview_current": "Current preview",
+    }
+    return labels.get(phase, phase.replace("_", " ").title())
+
+
+def evidence_policy_label(policy: str) -> str:
+    labels = {
+        "legacy_grace_regression_only": "legacy-grace regression only",
+        "supported_lts_lane_local_evidence": "lane-local LTS evidence",
+        "preview_no_enterprise_support_until_lts_and_evidence": "preview; no enterprise support until LTS evidence exists",
+    }
+    return labels.get(policy, policy.replace("_", " "))
+
+
+def lane_registry_by_name() -> dict[str, dict[str, Any]]:
+    registry = load_json(lane_registry_path())
+    return {
+        lane["lane_name"]: lane
+        for lane in registry.get("lanes", [])
+        if isinstance(lane, dict) and isinstance(lane.get("lane_name"), str)
+    }
+
+
+def registry_lane(lane: dict[str, Any], registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    return registry.get(str(lane.get("lane")), {})
+
+
+def public_lane_role_label(lane: dict[str, Any], registry: dict[str, dict[str, Any]]) -> str:
+    metadata = registry_lane(lane, registry)
+    support_phase = metadata.get("support_phase")
+    if metadata.get("product_default") is True:
+        return f"Product default; {support_phase_label(str(support_phase))}"
+    if support_phase == "eol_legacy":
+        return "Legacy grace; EOL"
+    if support_phase in {"maintenance_lts", "active_lts"}:
+        return f"Supported; {support_phase_label(str(support_phase))}"
+    return role_label(str(lane.get("lane_role", "")))
 
 
 def status_label(status: str) -> str:
@@ -91,12 +147,12 @@ def write(path: Path, lines: list[str]) -> None:
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def lane_row(lane: dict[str, Any]) -> str:
+def lane_row(lane: dict[str, Any], registry: dict[str, dict[str, Any]]) -> str:
     vendored = int(lane.get("vendored_test_file_count", 0))
     documented = int(lane.get("documented_manifested_green_count", 0))
     classified_total = int(lane.get("documented_or_classified_count", 0))
     return (
-        f"| {lane_title(lane['lane'])} | {role_label(lane.get('lane_role', ''))} | "
+        f"| {lane_title(lane['lane'])} | {public_lane_role_label(lane, registry)} | "
         f"`{lane.get('upstream', {}).get('tag', 'unknown')}` | {vendored} | "
         f"{documented} | {lane.get('known_red_or_gap_count', 0)} | "
         f"{lane.get('skipped_or_excluded_count', 0)} | "
@@ -111,6 +167,7 @@ def latest_lines(
     dashboard: dict[str, Any],
     trends: dict[str, Any] | None,
 ) -> list[str]:
+    registry = lane_registry_by_name()
     lines = [
         "# Node.js Runtime Evidence",
         "",
@@ -134,7 +191,7 @@ def latest_lines(
             "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
-    lines.extend(lane_row(lane) for lane in lane_summaries(status))
+    lines.extend(lane_row(lane, registry) for lane in lane_summaries(status))
     lines.extend(
         [
             "",
@@ -177,17 +234,26 @@ def latest_lines(
             "",
             "- `Passed` fixtures and canaries may support public claims.",
             "- Expected failures, known gaps, skips, and unclassified fixtures are not pass claims.",
-            "- Node22 remains the default target until an explicit Node24-default migration.",
+            "- Product default is a routing default, not an evidence priority.",
+            "- Node22 and Node24 are the current supported LTS lanes; Node20 is legacy-grace regression coverage after its 2026-04-30 EOL.",
         ]
     )
     return lines
 
 
-def per_lane_lines(lane: dict[str, Any], dashboard: dict[str, Any]) -> list[str]:
+def per_lane_lines(
+    lane: dict[str, Any],
+    dashboard: dict[str, Any],
+    registry: dict[str, dict[str, Any]],
+) -> list[str]:
     vendored = int(lane.get("vendored_test_file_count", 0))
     documented = int(lane.get("documented_manifested_green_count", 0))
     classified_total = int(lane.get("documented_or_classified_count", 0))
     lane_id = lane["lane"]
+    registry_metadata = registry.get(lane_id, {})
+    support_phase = str(registry_metadata.get("support_phase", "unknown"))
+    evidence_policy = str(registry_metadata.get("evidence_policy", "unknown"))
+    product_default = registry_metadata.get("product_default") is True
     lines = [
         f"# {lane_title(lane_id)} Runtime Evidence",
         "",
@@ -195,7 +261,10 @@ def per_lane_lines(lane: dict[str, Any], dashboard: dict[str, Any]) -> list[str]
         "",
         "## Summary",
         "",
-        f"- role: `{lane.get('lane_role', 'unknown')}`",
+        f"- role: `{public_lane_role_label(lane, registry)}`",
+        f"- support phase: `{support_phase_label(support_phase)}`",
+        f"- product default: `{'yes' if product_default else 'no'}`",
+        f"- evidence policy: `{evidence_policy_label(evidence_policy)}`",
         f"- upstream fixture line: `{lane.get('upstream', {}).get('tag', 'unknown')}`",
         f"- runtime execution target: `{lane.get('runtime_execution_target', 'unknown')}`",
         f"- vendored official fixtures: `{vendored}`",
@@ -237,14 +306,25 @@ def per_lane_lines(lane: dict[str, Any], dashboard: dict[str, Any]) -> list[str]
             )
     else:
         lines.append("| none in current snapshot | n/a | n/a | n/a |")
+    lines.extend(["", "## Claim Boundary", ""])
+    if support_phase == "eol_legacy":
+        lines.extend(
+            [
+                "This lane remains selectable as legacy-grace regression coverage, but it",
+                "is not an active enterprise LTS support target after Node20 EOL on",
+                "2026-04-30.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "This lane is supported only for the measured surfaces represented by its",
+                "passed fixtures, canaries, and explicit classifications.",
+            ]
+        )
     lines.extend(
         [
-            "",
-            "## Claim Boundary",
-            "",
-            "This lane is supported only for the measured surfaces represented by its",
-            "passed fixtures, canaries, and explicit classifications. Known gaps and",
-            "expected failures are intentionally not support claims.",
+            "Known gaps and expected failures are intentionally not support claims.",
         ]
     )
     return lines
@@ -255,10 +335,11 @@ def rendered_docs(evidence_root: Path) -> dict[Path, list[str]]:
     dashboard = load_json(evidence_root / "dashboard-summary.json")
     trend_path = evidence_root / "trend-summary.json"
     trends = load_json(trend_path) if trend_path.exists() else None
+    registry = lane_registry_by_name()
 
     rendered = {Path("latest.md"): latest_lines(status, dashboard, trends)}
     for lane in lane_summaries(status):
-        rendered[Path(f"{lane['lane']}.md")] = per_lane_lines(lane, dashboard)
+        rendered[Path(f"{lane['lane']}.md")] = per_lane_lines(lane, dashboard, registry)
     return rendered
 
 

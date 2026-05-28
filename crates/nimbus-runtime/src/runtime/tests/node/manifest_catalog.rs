@@ -29,6 +29,7 @@ pub(super) struct NodeCompatFamilyLaneBatch {
 pub(super) enum NodeCompatLaneRole {
     Default,
     Supported,
+    Legacy,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -36,6 +37,7 @@ pub(super) enum NodeCompatLaneRole {
 pub(super) enum NodeCompatPublicContractRole {
     DefaultContract,
     SupportedContract,
+    LegacyContract,
 }
 
 #[derive(Debug, Deserialize)]

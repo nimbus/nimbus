@@ -37,9 +37,9 @@ the current `in_process_untrusted` gate and its canonical routing fallbacks:
 
 - Engine selection does not grant permission. `V8`, `Bun/JSC`, and future
   `wasmtime` are implementation choices below the tier.
-- Compatibility target does not grant permission. `Node22` means API shape,
-  not filesystem, network, subprocess, secret, identity, native addon, or tool
-  authority.
+- Compatibility target does not grant permission. A Node target means API
+  shape, not filesystem, network, subprocess, secret, identity, native addon,
+  or tool authority.
 - Runtime preset does not grant trust. `Application`, `Tooling`, and
   `Operator` lower to mode plus grants, but the trust tier decides whether
   those grants are acceptable for untrusted in-process code.
@@ -191,6 +191,6 @@ mode names in public or operator-facing contracts.
 Compatibility targets describe JavaScript/runtime API shape. They do not grant
 ambient host access.
 
-For example, `Node22` exposes the measured Node-compatible API surface, but
-filesystem, env, network, subprocess, secret, service, identity, FFI, worker,
-and tool access still depend on the active mode and grants.
+For example, `Node22` and `Node24` expose measured Node-compatible API
+surfaces, but filesystem, env, network, subprocess, secret, service, identity,
+FFI, worker, and tool access still depend on the active mode and grants.

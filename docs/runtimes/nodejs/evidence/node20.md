@@ -4,7 +4,10 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 ## Summary
 
-- role: `supported`
+- role: `Legacy grace; EOL`
+- support phase: `EOL legacy`
+- product default: `no`
+- evidence policy: `legacy-grace regression only`
 - upstream fixture line: `v20.20.2`
 - runtime execution target: `Node20`
 - vendored official fixtures: `1308`
@@ -34,6 +37,7 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 ## Claim Boundary
 
-This lane is supported only for the measured surfaces represented by its
-passed fixtures, canaries, and explicit classifications. Known gaps and
-expected failures are intentionally not support claims.
+This lane remains selectable as legacy-grace regression coverage, but it
+is not an active enterprise LTS support target after Node20 EOL on
+2026-04-30.
+Known gaps and expected failures are intentionally not support claims.

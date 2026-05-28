@@ -35,11 +35,13 @@ Allowed values:
 
 | Value | Meaning |
 | --- | --- |
-| `"20"` | Run eligible Node action modules with the Node20 compatibility target |
-| `"22"` | Run eligible Node action modules with the Node22 compatibility target; current default |
-| `"24"` | Run eligible Node action modules with the Node24 compatibility target |
+| `"20"` | Run eligible Node action modules with the Node20 legacy-grace compatibility target |
+| `"22"` | Run eligible Node action modules with the Node22 Maintenance LTS compatibility target; current product default |
+| `"24"` | Run eligible Node action modules with the Node24 Active LTS compatibility target |
 
-If no value is configured, Nimbus uses Node22.
+If no value is configured, Nimbus uses the product default from the lane
+registry, currently Node22. Product default is a routing default, not an
+evidence priority.
 
 ## Debug Node API Usage
 
