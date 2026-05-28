@@ -2,8 +2,8 @@
   "schema_version": 1,
   "lane": "node20",
   "upstream_fixture_line": "Node20",
-  "lane_role": "supported",
-  "public_contract_role": "supported_contract",
+  "lane_role": "legacy",
+  "public_contract_role": "legacy_contract",
   "runtime_execution_target": "Node20",
   "runtime_limits_preset": "application_node20",
   "upstream": {

@@ -253,6 +253,7 @@ fn lane_role_label(role: NodeCompatLaneRole) -> &'static str {
     match role {
         NodeCompatLaneRole::Default => "default",
         NodeCompatLaneRole::Supported => "supported",
+        NodeCompatLaneRole::Legacy => "legacy",
     }
 }
 
@@ -260,6 +261,7 @@ fn public_contract_role_label(role: NodeCompatPublicContractRole) -> &'static st
     match role {
         NodeCompatPublicContractRole::DefaultContract => "default_contract",
         NodeCompatPublicContractRole::SupportedContract => "supported_contract",
+        NodeCompatPublicContractRole::LegacyContract => "legacy_contract",
     }
 }
 

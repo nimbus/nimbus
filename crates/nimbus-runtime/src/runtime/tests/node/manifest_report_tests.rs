@@ -47,10 +47,10 @@ fn node_compat_manifest_report_schema_is_versioned_and_serializes_deterministica
     assert_eq!(lane_summaries.len(), 3);
     assert_eq!(lane_summaries[0]["lane"], "node20");
     assert_eq!(lane_summaries[0]["upstream_fixture_line"], "Node20");
-    assert_eq!(lane_summaries[0]["lane_role"], "supported");
+    assert_eq!(lane_summaries[0]["lane_role"], "legacy");
     assert_eq!(
         lane_summaries[0]["public_contract_role"],
-        "supported_contract"
+        "legacy_contract"
     );
     assert_eq!(lane_summaries[1]["lane"], "node22");
     assert_eq!(lane_summaries[1]["lane_role"], "default");
@@ -81,7 +81,7 @@ fn node_compat_manifest_report_summarizes_lane_slice_and_preset_counts_from_exec
     assert_eq!(report.preset_summaries[0].total_lane_fixture_entries, 29);
     assert_eq!(report.lane_summaries.len(), 3);
     assert_eq!(report.lane_summaries[0].upstream_fixture_line, "Node20");
-    assert_eq!(report.lane_summaries[0].lane_role, "supported");
+    assert_eq!(report.lane_summaries[0].lane_role, "legacy");
     assert_eq!(
         report.lane_summaries[1].public_contract_role,
         "default_contract"
@@ -136,8 +136,8 @@ fn node_compat_manifest_report_builds_catalog_summary_deterministically() {
             {
                 "lane": "node20",
                 "upstream_fixture_line": "Node20",
-                "lane_role": "supported",
-                "public_contract_role": "supported_contract",
+                "lane_role": "legacy",
+                "public_contract_role": "legacy_contract",
                 "runtime_execution_target": "Node20",
                 "runtime_limits_preset": "application_node20",
                 "total_fixture_entries": 54,
@@ -242,8 +242,8 @@ fn node_compat_manifest_report_aggregates_observed_results_deterministically() {
             {
                 "lane": "node20",
                 "upstream_fixture_line": "Node20",
-                "lane_role": "supported",
-                "public_contract_role": "supported_contract",
+                "lane_role": "legacy",
+                "public_contract_role": "legacy_contract",
                 "runtime_execution_target": "Node20",
                 "runtime_limits_preset": "application_node20",
                 "subset_test": "runtime::tests::node_compat::node20_supported_lane_executes_official_networking_subset",
@@ -443,8 +443,8 @@ fn node_compat_manifest_report_aggregates_observed_catalog_results_deterministic
             {
                 "lane": "node20",
                 "upstream_fixture_line": "Node20",
-                "lane_role": "supported",
-                "public_contract_role": "supported_contract",
+                "lane_role": "legacy",
+                "public_contract_role": "legacy_contract",
                 "runtime_execution_target": "Node20",
                 "runtime_limits_preset": "application_node20",
                 "total_expected_results": 19,
