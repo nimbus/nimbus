@@ -22,14 +22,17 @@ zbus = { workspace = true, optional = true }
 zbus_systemd = { workspace = true, optional = true }
 
 [features]
-# OFF by default until NDB7 flips `systemd-dbus` into `default`. Until then the
-# crate compiles exactly as before and `SystemdTransientUnitBackend` keeps its
-# fail-closed `UnavailableSystemdDbusClient` default.
+# NDB7: `systemd-dbus` is ON by default so the live binding compiles in
+# production builds and `SystemdTransientUnitBackend::linux_systemd_default()`
+# is available without opt-in. On Linux the default backend is the live
+# `ZbusSystemdClient`; other platforms keep the fail-closed
+# `UnavailableSystemdDbusClient` path.
 #
 # `systemd-dbus` pulls the live zbus binding deps. `systemd-dbus-test-bus`
-# layers the in-process peer-to-peer/test-bus shapes used by NDB2 unit tests.
-# `systemd-dbus-integration-tests` is the explicit opt-in that NDB5's
+# layers the in-process test-bus shapes used by the classifier/property unit
+# tests. `systemd-dbus-integration-tests` is the explicit opt-in that NDB5's
 # Linux-gated `systemctl --user` tests require — it never turns on implicitly.
+default = ["systemd-dbus"]
 systemd-dbus = ["dep:zbus", "dep:zbus_systemd", "dep:futures"]
 systemd-dbus-test-bus = ["systemd-dbus"]
 systemd-dbus-integration-tests = ["systemd-dbus"]

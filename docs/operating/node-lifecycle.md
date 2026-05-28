@@ -2,7 +2,10 @@
 
 Nimbus does not self-daemonize. A node is either a foreground process, a
 host-managed service, a machine-os baked service, or a reviewed export
-artifact. Dynamic tenant workloads are a separate local-enforcement path.
+artifact. Dynamic tenant workloads are a separate local-enforcement path that
+manages systemd **transient units** over D-Bus — see
+[`node-dbus-binding.md`](node-dbus-binding.md) for the live binding (bus
+selection, signal-correlated completion, error taxonomy, privilege model).
 
 ## Decision Matrix
 
