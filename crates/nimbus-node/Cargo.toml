@@ -17,6 +17,21 @@ nimbus-core = { path = "../nimbus-core" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
 sha2.workspace = true
+zbus = { workspace = true, optional = true }
+zbus_systemd = { workspace = true, optional = true }
+
+[features]
+# OFF by default until NDB7 flips `systemd-dbus` into `default`. Until then the
+# crate compiles exactly as before and `SystemdTransientUnitBackend` keeps its
+# fail-closed `UnavailableSystemdDbusClient` default.
+#
+# `systemd-dbus` pulls the live zbus binding deps. `systemd-dbus-test-bus`
+# layers the in-process peer-to-peer/test-bus shapes used by NDB2 unit tests.
+# `systemd-dbus-integration-tests` is the explicit opt-in that NDB5's
+# Linux-gated `systemctl --user` tests require — it never turns on implicitly.
+systemd-dbus = ["dep:zbus", "dep:zbus_systemd"]
+systemd-dbus-test-bus = ["systemd-dbus"]
+systemd-dbus-integration-tests = ["systemd-dbus"]
 
 [dev-dependencies]
 nimbus-runtime = { path = "../nimbus-runtime" }
