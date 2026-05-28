@@ -252,6 +252,19 @@ mod tests {
                 Some(expected_phase)
             );
             assert_eq!(metadata.product_default, product_default);
+            assert!(limits.grants.net_connect.is_empty());
+            assert!(limits.grants.net_listen.is_empty());
+            assert!(limits.grants.worker.is_empty());
+            assert!(limits.grants.run.is_empty());
+            assert!(limits.grants.ffi.is_empty());
+            assert!(!limits.grants.sys.contains(&"inspector".to_string()));
+            assert!(
+                !limits
+                    .grants
+                    .env_read
+                    .contains(&"NODE_TLS_REJECT_UNAUTHORIZED".to_string()),
+                "Convex Node lanes should use production in-process grants by default"
+            );
         }
     }
 

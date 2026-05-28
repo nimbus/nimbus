@@ -881,9 +881,9 @@ fn runtime_limits_for_node_compat_fixture(
     lane: Option<NodeCompatLane>,
 ) -> RuntimeLimits {
     let mut limits = match lane.unwrap_or(NodeCompatLane::Node22) {
-        NodeCompatLane::Node20 => RuntimeLimits::application_node20(),
-        NodeCompatLane::Node22 => RuntimeLimits::application_node22(),
-        NodeCompatLane::Node24 => RuntimeLimits::application_node24(),
+        NodeCompatLane::Node20 => RuntimeLimits::application_node20_local_development(),
+        NodeCompatLane::Node22 => RuntimeLimits::application_node22_local_development(),
+        NodeCompatLane::Node24 => RuntimeLimits::application_node24_local_development(),
     };
     if node_compat_fixture_requires_runtime_self_exec(test_relative_path) {
         // These compat fixtures respawn the copied harness binary via

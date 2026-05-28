@@ -206,13 +206,6 @@ impl OperatorRuntimeProfile {
         }
     }
 
-    fn runtime_limits(self) -> RuntimeLimits {
-        match self.runtime_compatibility_target() {
-            None => RuntimeLimits::application_web_standard(),
-            Some(target) => RuntimeLimits::application_node(target),
-        }
-    }
-
     fn runtime_compatibility_target(self) -> Option<RuntimeCompatibilityTarget> {
         match self {
             Self::WebStandard => None,
@@ -240,6 +233,21 @@ impl Default for OperatorRuntimePolicy {
             profile: OperatorRuntimeProfile::WebStandard,
             tier: RuntimeIsolationTier::InProcessUntrusted,
             tenant_isolation_mode: None,
+        }
+    }
+}
+
+impl OperatorRuntimePolicy {
+    fn runtime_limits(&self, mode: TenantIsolationMode) -> RuntimeLimits {
+        match self.profile.runtime_compatibility_target() {
+            None => RuntimeLimits::application_web_standard(),
+            Some(target) if matches!(mode, TenantIsolationMode::LocalDevelopment) => {
+                RuntimeLimits::application_node_local_development(target)
+            }
+            Some(target) if matches!(self.tier, RuntimeIsolationTier::MicroVmService) => {
+                RuntimeLimits::application_node_service_microvm(target)
+            }
+            Some(target) => RuntimeLimits::application_node_production_in_process(target),
         }
     }
 }

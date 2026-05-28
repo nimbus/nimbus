@@ -762,8 +762,24 @@ fn production_untrusted_runtime_admission_allows_bun_jsc_fresh_discard_policy() 
 }
 
 #[test]
-fn production_untrusted_runtime_admission_rejects_generic_node_loopback_grants() {
+fn production_untrusted_runtime_admission_allows_production_node_profile() {
+    let context = test_application_context();
     let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
+
+    assert_eq!(
+        context.admit_runtime_policy(
+            &policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            TenantIsolationMode::Production,
+        ),
+        RuntimePolicyAdmission::AdmitInProcess,
+        "production Node profile should be in-process admissible because it has no broad host grants"
+    );
+}
+
+#[test]
+fn production_untrusted_runtime_admission_rejects_local_development_node_grants() {
+    let policy = RuntimePolicy::new(RuntimeLimits::application_node22_local_development());
 
     let route = production_untrusted_route(&policy);
 
@@ -775,6 +791,31 @@ fn production_untrusted_runtime_admission_rejects_generic_node_loopback_grants()
         route.recommended_tier(),
         RuntimeIsolationTier::MicroVmService,
         "route should name the canonical routing fallback"
+    );
+}
+
+#[test]
+fn production_untrusted_runtime_admission_rejects_node_tls_disable_env_grant() {
+    let policy = RuntimePolicy::new(RuntimeLimits {
+        grants: nimbus_runtime::RuntimeGrants {
+            env_read: vec![
+                "NODE_ENV".to_string(),
+                "NODE_TLS_REJECT_UNAUTHORIZED".to_string(),
+            ],
+            ..nimbus_runtime::RuntimeGrants::application_node_production_in_process()
+        },
+        ..RuntimeLimits::application_node22()
+    });
+
+    let route = production_untrusted_route(&policy);
+
+    assert_eq!(
+        route.recommended_tier(),
+        RuntimeIsolationTier::InProcessTrustedOnly
+    );
+    assert!(
+        route.reason().contains("NODE_TLS_REJECT_UNAUTHORIZED"),
+        "route should explain the ambient TLS-disable env authority: {route:?}"
     );
 }
 
@@ -852,7 +893,7 @@ fn production_untrusted_runtime_admission_routes_trusted_grants_to_trusted_tier(
 #[test]
 fn production_admission_only_validates_in_process_untrusted_tier() {
     let context = test_application_context();
-    let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
+    let policy = RuntimePolicy::new(RuntimeLimits::application_node22_service_microvm());
 
     assert_eq!(
         context.admit_runtime_policy(
@@ -868,7 +909,7 @@ fn production_admission_only_validates_in_process_untrusted_tier() {
 #[test]
 fn local_development_runtime_admission_preserves_node_compatibility_policy() {
     let context = test_application_context();
-    let policy = RuntimePolicy::new(RuntimeLimits::application_node22());
+    let policy = RuntimePolicy::new(RuntimeLimits::application_node22_local_development());
 
     assert_eq!(
         context.admit_runtime_policy(

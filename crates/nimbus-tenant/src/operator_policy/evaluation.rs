@@ -100,7 +100,7 @@ impl OperatorPolicyDocument {
             .tenant_isolation_mode
             .unwrap_or(self.defaults.tenant_isolation_mode);
         let services = workload.services.normalized_services();
-        let mut runtime_limits = workload.runtime.profile.runtime_limits();
+        let mut runtime_limits = workload.runtime.runtime_limits(mode);
         runtime_limits.grants.service = services.clone();
         let runtime_policy = RuntimePolicy::new(runtime_limits);
 

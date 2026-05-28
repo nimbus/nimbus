@@ -131,6 +131,10 @@ fn application_preset_supports_node_lts_targets() {
     assert_eq!(node20_limits.mode, RuntimeMode::Standard);
     assert_eq!(node20_limits.preset, RuntimePreset::Application);
     assert!(node20_limits.grants.run.is_empty());
+    assert!(node20_limits.grants.net_connect.is_empty());
+    assert!(node20_limits.grants.net_listen.is_empty());
+    assert!(node20_limits.grants.worker.is_empty());
+    assert!(!node20_limits.grants.sys.contains(&"inspector".to_string()));
     assert_eq!(
         node20_limits.compatibility_target,
         RuntimeCompatibilityTarget::Node20
@@ -140,6 +144,10 @@ fn application_preset_supports_node_lts_targets() {
     assert_eq!(node_limits.mode, RuntimeMode::Standard);
     assert_eq!(node_limits.preset, RuntimePreset::Application);
     assert!(node_limits.grants.run.is_empty());
+    assert!(node_limits.grants.net_connect.is_empty());
+    assert!(node_limits.grants.net_listen.is_empty());
+    assert!(node_limits.grants.worker.is_empty());
+    assert!(!node_limits.grants.sys.contains(&"inspector".to_string()));
     assert_eq!(
         node_limits.compatibility_target,
         RuntimeCompatibilityTarget::Node22
@@ -149,10 +157,66 @@ fn application_preset_supports_node_lts_targets() {
     assert_eq!(node24_limits.mode, RuntimeMode::Standard);
     assert_eq!(node24_limits.preset, RuntimePreset::Application);
     assert!(node24_limits.grants.run.is_empty());
+    assert!(node24_limits.grants.net_connect.is_empty());
+    assert!(node24_limits.grants.net_listen.is_empty());
+    assert!(node24_limits.grants.worker.is_empty());
+    assert!(!node24_limits.grants.sys.contains(&"inspector".to_string()));
     assert_eq!(
         node24_limits.compatibility_target,
         RuntimeCompatibilityTarget::Node24
     );
+}
+
+#[test]
+fn node_permission_profiles_are_separated_by_deployment_intent() {
+    let production = RuntimeLimits::application_node22().normalized();
+    assert_eq!(
+        production.grants,
+        RuntimeGrants::application_node_production_in_process()
+    );
+    assert!(production.grants.net_connect.is_empty());
+    assert!(production.grants.net_listen.is_empty());
+    assert!(production.grants.worker.is_empty());
+    assert!(production.grants.run.is_empty());
+    assert!(production.grants.ffi.is_empty());
+    assert!(!production.grants.sys.contains(&"inspector".to_string()));
+    assert!(
+        !production
+            .grants
+            .env_read
+            .contains(&"NODE_TLS_REJECT_UNAUTHORIZED".to_string()),
+        "production in-process Node must not inherit ambient TLS-disable env"
+    );
+
+    let local_dev = RuntimeLimits::application_node22_local_development().normalized();
+    assert_eq!(
+        local_dev.grants,
+        RuntimeGrants::application_node_local_development()
+    );
+    assert!(
+        local_dev
+            .grants
+            .net_connect
+            .contains(&"localhost".to_string())
+    );
+    assert!(local_dev.grants.net_listen.contains(&"0.0.0.0".to_string()));
+    assert!(local_dev.grants.worker.contains(&"thread".to_string()));
+    assert!(local_dev.grants.sys.contains(&"inspector".to_string()));
+    assert!(
+        local_dev
+            .grants
+            .env_read
+            .contains(&"NODE_TLS_REJECT_UNAUTHORIZED".to_string()),
+        "local development keeps the compatibility env escape explicit"
+    );
+
+    let service = RuntimeLimits::application_node22_service_microvm().normalized();
+    assert_eq!(
+        service.grants,
+        RuntimeGrants::application_node_service_microvm()
+    );
+    assert!(service.grants.net_listen.contains(&"[::]".to_string()));
+    assert!(service.grants.worker.contains(&"thread".to_string()));
 }
 
 #[test]

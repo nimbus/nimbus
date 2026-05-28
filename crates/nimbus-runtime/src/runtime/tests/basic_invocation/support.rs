@@ -292,7 +292,9 @@ pub(super) async fn run_application_networking_canary_bundle(
     stage_networking_canary_bundle(app, bundle_fixture_name);
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        Arc::new(RuntimePolicy::new(
+            RuntimeLimits::application_node22_local_development(),
+        )),
     );
     runtime
         .invoke_bundle(

@@ -48,11 +48,10 @@ impl RuntimeGrants {
         Self::default()
     }
 
-    pub fn application_web_standard() -> Self {
+    fn application_base() -> Self {
         Self {
             read: vec!["$generated_root".to_string()],
             write: vec!["$generated_root".to_string()],
-            env_read: vec!["NODE_TLS_REJECT_UNAUTHORIZED".to_string()],
             sys: vec![
                 "hostname".to_string(),
                 "gid".to_string(),
@@ -63,7 +62,23 @@ impl RuntimeGrants {
         }
     }
 
+    pub fn application_web_standard() -> Self {
+        let mut grants = Self::application_base();
+        grants
+            .env_read
+            .push("NODE_TLS_REJECT_UNAUTHORIZED".to_string());
+        grants
+    }
+
     pub fn application_node() -> Self {
+        Self::application_node_production_in_process()
+    }
+
+    pub fn application_node_production_in_process() -> Self {
+        Self::application_base()
+    }
+
+    pub fn application_node_local_development() -> Self {
         let mut grants = Self::application_web_standard();
         grants.net_connect = vec!["127.0.0.1".to_string(), "localhost".to_string()];
         grants.net_listen = vec![
@@ -76,6 +91,10 @@ impl RuntimeGrants {
         grants.sys.push("inspector".to_string());
         grants.worker = vec!["thread".to_string()];
         grants
+    }
+
+    pub fn application_node_service_microvm() -> Self {
+        Self::application_node_local_development()
     }
 
     pub fn tooling() -> Self {

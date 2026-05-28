@@ -94,7 +94,7 @@ export {};
 }
 
 #[tokio::test]
-async fn application_node22_allows_tls_reject_unauthorized_env_lookup() {
+async fn application_node22_production_hides_tls_reject_unauthorized_env_lookup() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let _tls_env = ScopedProcessEnvVar::set("NODE_TLS_REJECT_UNAUTHORIZED", "0");
     let (_tempdir, bundle_path) = write_app_style_bundle(
@@ -112,6 +112,47 @@ export {};
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(result["tlsRejectUnauthorized"], serde_json::json!(null));
+}
+
+#[tokio::test]
+async fn application_node22_local_development_allows_tls_reject_unauthorized_env_lookup() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let _tls_env = ScopedProcessEnvVar::set("NODE_TLS_REJECT_UNAUTHORIZED", "0");
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  return {
+    tlsRejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null,
+  };
+};
+
+export {};
+"#,
+    );
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(
+            RuntimeLimits::application_node22_local_development(),
+        )),
     );
     let result = runtime
         .invoke_bundle(
@@ -289,11 +330,9 @@ export {};
 "#,
     );
 
-    let mut limits = RuntimeLimits::application_node22();
-    limits.grants.worker.clear();
     let runtime = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
     );
     let result = runtime
         .invoke_bundle(
