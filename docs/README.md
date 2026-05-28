@@ -26,6 +26,8 @@ Each adapter speaks a different client protocol against the same engine.
 - [Node lifecycle](operating/node-lifecycle.md) -- native systemd,
   containerized Quadlet, machine-os, transient tenant units, and export
   boundaries
+- [Deno-family runtime fork workflow](operating/deno-fork-workflow.md) --
+  upstream-first fork bumps, tag/SHA proof, repinning, and patch disposition
 - [Container image](operating/container-image.md) -- GHCR image contract,
   digest pinning, probes, and orchestrator examples
 - [Tenant isolation runbook](operating/tenant-isolation.md) -- rejection,

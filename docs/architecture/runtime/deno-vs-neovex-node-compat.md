@@ -22,6 +22,11 @@ Use the lane registry for release and support posture:
 - `docs/architecture/runtime/node-lts-compat/node-lts-lanes.json`
 - `docs/architecture/runtime/node-lts-compat/node-lts-lanes.md`
 
+Use the Deno-family fork operating contract for runtime-fork bump proof:
+
+- `docs/operating/deno-fork-workflow.md`
+- `docs/architecture/runtime/deno-fork-bump-ledger.md`
+
 Product default is a routing default, not an evidence priority. Node22 and
 Node24 are the current supported LTS lanes. Node20 remains selectable only as
 legacy-grace regression coverage after its 2026-04-30 EOL.
