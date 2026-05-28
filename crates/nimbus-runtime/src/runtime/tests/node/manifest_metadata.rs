@@ -30,6 +30,7 @@ fn node_compat_lane_metadata_schema_is_valid_json_and_documents_required_fields(
         "runtime_execution_target",
         "runtime_limits_preset",
         "upstream",
+        "fixture_provenance",
         "vendored_fixture_root",
         "manifest_docs",
         "failure_docs",
@@ -71,6 +72,8 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             "Node20",
             "application_node20",
             "v20.20.2",
+            "3626fea570e44896ad99aaf3bf6e59def5adede5",
+            "35e07843146797923006aa01c6daabf4f53a4fb9",
         ),
         (
             "node22",
@@ -81,6 +84,8 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             "Node22",
             "application_node22",
             "v22.15.0",
+            "b009466555c360513b8012ce549f716501090ee5",
+            "fba004eabc89c2b92d21e56d8ba24c23a952119f",
         ),
         (
             "node24",
@@ -91,6 +96,8 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             "Node24",
             "application_node24",
             "v24.15.0",
+            "848430679556aed0bd073f2bc263331ad84fa119",
+            "a20a24415694b80361d661d6ecc1ea0e260d9c32",
         ),
     ];
 
@@ -103,6 +110,8 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
         expected_runtime_execution_target,
         expected_runtime_limits_preset,
         expected_tag,
+        expected_commit,
+        expected_tag_object,
     ) in cases
     {
         let metadata: NodeCompatLaneMetadata =
@@ -125,10 +134,34 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
         );
         assert_eq!(metadata.upstream.repo, "nodejs/node");
         assert_eq!(metadata.upstream.tag, expected_tag);
+        assert_eq!(metadata.upstream.commit, expected_commit);
+        assert_eq!(metadata.upstream.tag_object, expected_tag_object);
         assert_eq!(metadata.upstream.fixture_subtree, "test");
         assert_eq!(
             metadata.upstream.source_kind,
             "vendored_official_fixture_corpus"
+        );
+        assert_eq!(
+            metadata.fixture_provenance.selection_command,
+            format!(
+                "python3 scripts/runtime/node/sync.py --lane {expected_lane} --upstream-tag {expected_tag} --apply"
+            )
+        );
+        assert_eq!(
+            metadata.fixture_provenance.nimbus_sync_commit,
+            "17a6bf48e3d69a5c153ffc89300629cc798346a5"
+        );
+        assert_eq!(
+            metadata.fixture_provenance.synced_at,
+            "2026-05-11T19:29:29-05:00"
+        );
+        assert_eq!(metadata.fixture_provenance.recorded_at, "2026-05-28");
+        assert!(
+            metadata
+                .fixture_provenance
+                .recorded_from
+                .contains("git rev-list -n 1"),
+            "fixture provenance should explain how commit identity was recorded",
         );
 
         let vendored_fixture_root = repo_root.join(&metadata.vendored_fixture_root);
@@ -169,8 +202,17 @@ fn node_compat_lane_metadata_accepts_synthetic_future_lane_values() {
         "upstream": {
             "repo": "nodejs/node",
             "tag": "v26.0.0",
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "tag_object": "89abcdef0123456789abcdef0123456789abcdef",
             "fixture_subtree": "test",
             "source_kind": "vendored_official_fixture_corpus"
+        },
+        "fixture_provenance": {
+            "synced_at": "2026-05-28T00:00:00+00:00",
+            "selection_command": "python3 scripts/runtime/node/sync.py --lane node26 --upstream-tag v26.0.0 --apply",
+            "nimbus_sync_commit": "17a6bf48e3d69a5c153ffc89300629cc798346a5",
+            "recorded_at": "2026-05-28",
+            "recorded_from": "synthetic test fixture"
         },
         "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
         "manifest_docs": [
@@ -185,4 +227,8 @@ fn node_compat_lane_metadata_accepts_synthetic_future_lane_values() {
     assert_eq!(metadata.lane, "node26");
     assert_eq!(metadata.upstream_fixture_line, "Node26");
     assert_eq!(metadata.upstream.tag, "v26.0.0");
+    assert_eq!(
+        metadata.fixture_provenance.selection_command,
+        "python3 scripts/runtime/node/sync.py --lane node26 --upstream-tag v26.0.0 --apply"
+    );
 }

@@ -11,7 +11,7 @@
     "upstreamMetadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repo", "tag", "fixture_subtree", "source_kind"],
+      "required": ["repo", "tag", "commit", "tag_object", "fixture_subtree", "source_kind"],
       "properties": {
         "repo": {
           "type": "string",
@@ -21,6 +21,14 @@
           "type": "string",
           "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
         },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tag_object": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
         "fixture_subtree": {
           "type": "string",
           "const": "test"
@@ -28,6 +36,39 @@
         "source_kind": {
           "type": "string",
           "const": "vendored_official_fixture_corpus"
+        }
+      }
+    },
+    "fixtureProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "synced_at",
+        "selection_command",
+        "nimbus_sync_commit",
+        "recorded_at",
+        "recorded_from"
+      ],
+      "properties": {
+        "synced_at": {
+          "type": "string",
+          "minLength": 10
+        },
+        "selection_command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nimbus_sync_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "recorded_at": {
+          "type": "string",
+          "minLength": 10
+        },
+        "recorded_from": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -165,6 +206,7 @@
         "runtime_execution_target",
         "runtime_limits_preset",
         "upstream",
+        "fixture_provenance",
         "vendored_fixture_root",
         "manifest_docs",
         "failure_docs"
@@ -200,6 +242,9 @@
         },
         "upstream": {
           "$ref": "#/$defs/upstreamMetadata"
+        },
+        "fixture_provenance": {
+          "$ref": "#/$defs/fixtureProvenance"
         },
         "vendored_fixture_root": {
           "type": "string"

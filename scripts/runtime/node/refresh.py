@@ -125,7 +125,13 @@ def build_steps(args: argparse.Namespace, metadata: dict[str, Any]) -> list[tupl
     elif args.tag and not metadata["written"]:
         sync_command.extend(["--upstream-tag", args.tag])
 
-    steps: list[tuple[str, list[str]]] = [("sync", sync_command)]
+    steps: list[tuple[str, list[str]]] = [
+        (
+            "fixture_provenance_preflight",
+            ["python3", "scripts/runtime/node/fixture_provenance.py", "validate"],
+        ),
+        ("sync", sync_command),
+    ]
     if args.run_representative_slices:
         for family, slice_id in REPRESENTATIVE_SLICES:
             steps.append(
@@ -157,6 +163,10 @@ def build_steps(args: argparse.Namespace, metadata: dict[str, Any]) -> list[tupl
             ("trends", ["python3", "scripts/runtime/node/trends.py"]),
             ("publish", ["python3", "scripts/runtime/node/publish_evidence.py"]),
             ("publish_docs", ["python3", "scripts/runtime/node/publish_docs.py"]),
+            (
+                "fixture_provenance_postpublish",
+                ["python3", "scripts/runtime/node/fixture_provenance.py", "validate"],
+            ),
             ("claims", ["bash", "scripts/runtime/node/validate-claims.sh"]),
         ]
     )

@@ -9,8 +9,17 @@
   "upstream": {
     "repo": "nodejs/node",
     "tag": "v22.15.0",
+    "commit": "b009466555c360513b8012ce549f716501090ee5",
+    "tag_object": "fba004eabc89c2b92d21e56d8ba24c23a952119f",
     "fixture_subtree": "test",
     "source_kind": "vendored_official_fixture_corpus"
+  },
+  "fixture_provenance": {
+    "synced_at": "2026-05-11T19:29:29-05:00",
+    "selection_command": "python3 scripts/runtime/node/sync.py --lane node22 --upstream-tag v22.15.0 --apply",
+    "nimbus_sync_commit": "17a6bf48e3d69a5c153ffc89300629cc798346a5",
+    "recorded_at": "2026-05-28",
+    "recorded_from": "local nodejs/node checkout via git rev-list -n 1 v22.15.0 and git rev-parse v22.15.0"
   },
   "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
   "manifest_docs": [
