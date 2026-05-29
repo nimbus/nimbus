@@ -43,12 +43,13 @@ pub fn query(
     context: &TenantIsolationContext,
     input: QueryInput,
 ) -> Result<QueryOutput, DynamoDbError> {
-    if input.index_name.is_some() {
-        return Err(DynamoDbError::ValidationException(
-            "Querying a secondary index is not yet supported (planned in D4)".to_owned(),
-        ));
-    }
-    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    // The query's key schema is the base table's, or the named LSI/GSI's.
+    let key_schema = control_plane::load_index_key_schema(
+        service,
+        context,
+        &input.table_name,
+        input.index_name.as_deref(),
+    )?;
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
     let limits = default_limits();
 
@@ -676,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn query_index_name_is_rejected_until_d4() {
+    fn query_unknown_index_is_validation_error() {
         let (service, ctx, _t) = fixture();
         create_events(&service, &ctx);
         let err = query(
@@ -684,14 +685,82 @@ mod tests {
             &ctx,
             serde_json::from_value(json!({
                 "TableName": "Events",
-                "IndexName": "gsi1",
+                "IndexName": "nonexistent",
                 "KeyConditionExpression": "pk = :p",
                 "ExpressionAttributeValues": { ":p": {"S": "p1"} },
             }))
             .unwrap(),
         )
-        .expect_err("GSI query not yet supported");
+        .expect_err("querying a nonexistent index must fail");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    #[test]
+    fn query_local_secondary_index_orders_by_index_sort_key() {
+        let (service, ctx, _t) = fixture();
+        // Table "Tasks": pk (S) + sk (N), with an LSI "by_priority" on (pk, prio N).
+        let input: CreateTableInput = serde_json::from_value(json!({
+            "TableName": "Tasks",
+            "KeySchema": [
+                { "AttributeName": "pk", "KeyType": "HASH" },
+                { "AttributeName": "sk", "KeyType": "RANGE" }
+            ],
+            "AttributeDefinitions": [
+                { "AttributeName": "pk", "AttributeType": "S" },
+                { "AttributeName": "sk", "AttributeType": "N" },
+                { "AttributeName": "prio", "AttributeType": "N" }
+            ],
+            "LocalSecondaryIndexes": [{
+                "IndexName": "by_priority",
+                "KeySchema": [
+                    { "AttributeName": "pk", "KeyType": "HASH" },
+                    { "AttributeName": "prio", "KeyType": "RANGE" }
+                ],
+                "Projection": { "ProjectionType": "ALL" }
+            }]
+        }))
+        .unwrap();
+        control_plane::create_table(&service, &ctx, input).expect("create with LSI");
+        // Items: sk ascending differs from prio ordering.
+        for (sk, prio) in [("1", "30"), ("2", "10"), ("3", "20")] {
+            crate::commands::item::put_item(
+                &service,
+                &ctx,
+                serde_json::from_value(json!({
+                    "TableName": "Tasks",
+                    "Item": { "pk": {"S": "p1"}, "sk": {"N": sk}, "prio": {"N": prio} },
+                }))
+                .unwrap(),
+            )
+            .expect("put");
+        }
+        let out = query(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({
+                "TableName": "Tasks",
+                "IndexName": "by_priority",
+                "KeyConditionExpression": "pk = :p AND prio > :min",
+                "ExpressionAttributeValues": { ":p": {"S": "p1"}, ":min": {"N": "15"} },
+            }))
+            .unwrap(),
+        )
+        .expect("LSI query");
+        // prio > 15 selects {20, 30}, ordered by the LSI sort key (prio).
+        let prios: Vec<String> = out
+            .items
+            .unwrap()
+            .iter()
+            .map(|item| match item.get("prio") {
+                Some(AttributeValue::N(n)) => n.clone(),
+                other => panic!("prio: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            prios,
+            vec!["20", "30"],
+            "ordered by LSI sort key, not table sk"
+        );
     }
 
     /// Put an event with an extra `kind` (S) attribute for filter tests.

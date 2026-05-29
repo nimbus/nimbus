@@ -16,9 +16,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
     AttributeDefinition, BillingMode, BillingModeSummary, CreateTableInput, CreateTableOutput,
-    DeleteTableInput, DeleteTableOutput, DescribeTableInput, DescribeTableOutput, KeySchemaElement,
-    KeyType, ListTablesInput, ListTablesOutput, ProvisionedThroughputDescription, TableDescription,
-    TableStatus, UpdateTableInput, UpdateTableOutput,
+    DeleteTableInput, DeleteTableOutput, DescribeTableInput, DescribeTableOutput, GsiDescription,
+    KeySchemaElement, KeyType, ListTablesInput, ListTablesOutput, LsiDescription,
+    ProvisionedThroughputDescription, TableDescription, TableStatus, UpdateTableInput,
+    UpdateTableOutput,
 };
 use nimbus_core::{Document, DocumentId, StructuredQuery, TableName};
 use nimbus_engine::Service;
@@ -41,6 +42,7 @@ pub fn create_table(
     validate_table_name(&input.table_name)?;
     validate_key_schema(&input.key_schema)?;
     validate_key_attributes_defined(&input.key_schema, &input.attribute_definitions)?;
+    validate_secondary_indexes(&input)?;
 
     crate::tenant::ensure_tenant(service, context)?;
     let id = catalog_id(&input.table_name)?;
@@ -216,6 +218,41 @@ pub fn load_key_schema(
     Ok(load_description(service, context, table_name)?.key_schema)
 }
 
+/// Load the key schema for a Query/Scan target: the base table when
+/// `index_name` is `None`, otherwise the named LSI's or GSI's key schema.
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table is absent; `ValidationException` if
+/// the named index does not exist on the table.
+pub fn load_index_key_schema(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+    index_name: Option<&str>,
+) -> Result<Vec<KeySchemaElement>, DynamoDbError> {
+    let description = load_description(service, context, table_name)?;
+    let Some(name) = index_name else {
+        return Ok(description.key_schema);
+    };
+    if let Some(lsi) = description
+        .local_secondary_indexes
+        .as_ref()
+        .and_then(|indexes| indexes.iter().find(|index| index.index_name == name))
+    {
+        return Ok(lsi.key_schema.clone());
+    }
+    if let Some(gsi) = description
+        .global_secondary_indexes
+        .as_ref()
+        .and_then(|indexes| indexes.iter().find(|index| index.index_name == name))
+    {
+        return Ok(gsi.key_schema.clone());
+    }
+    Err(DynamoDbError::ValidationException(format!(
+        "The table does not have the specified index: {name}"
+    )))
+}
+
 fn load_description(
     service: &Arc<Service>,
     context: &TenantIsolationContext,
@@ -337,6 +374,49 @@ fn validate_key_attributes_defined(
     Ok(())
 }
 
+/// Validate secondary indexes declared at CreateTable. Each index's key schema
+/// must be well-formed with its key attributes defined; an LSI must share the
+/// table's partition key and declare a sort key (DynamoDB's LSI rules).
+fn validate_secondary_indexes(input: &CreateTableInput) -> Result<(), DynamoDbError> {
+    let table_hash = input
+        .key_schema
+        .iter()
+        .find(|element| element.key_type == KeyType::Hash)
+        .map(|element| element.attribute_name.as_str());
+
+    for lsi in input.local_secondary_indexes.iter().flatten() {
+        validate_key_schema(&lsi.key_schema)?;
+        validate_key_attributes_defined(&lsi.key_schema, &input.attribute_definitions)?;
+        let lsi_hash = lsi
+            .key_schema
+            .iter()
+            .find(|element| element.key_type == KeyType::Hash)
+            .map(|element| element.attribute_name.as_str());
+        if lsi_hash != table_hash {
+            return Err(DynamoDbError::ValidationException(format!(
+                "Local Secondary Index '{}' partition key must match the table partition key",
+                lsi.index_name
+            )));
+        }
+        if !lsi
+            .key_schema
+            .iter()
+            .any(|element| element.key_type == KeyType::Range)
+        {
+            return Err(DynamoDbError::ValidationException(format!(
+                "Local Secondary Index '{}' must specify a sort (RANGE) key",
+                lsi.index_name
+            )));
+        }
+    }
+
+    for gsi in input.global_secondary_indexes.iter().flatten() {
+        validate_key_schema(&gsi.key_schema)?;
+        validate_key_attributes_defined(&gsi.key_schema, &input.attribute_definitions)?;
+    }
+    Ok(())
+}
+
 fn build_table_description(input: &CreateTableInput) -> TableDescription {
     let billing_mode = input.billing_mode.unwrap_or(BillingMode::PayPerRequest);
     let (read_capacity_units, write_capacity_units) =
@@ -347,6 +427,43 @@ fn build_table_description(input: &CreateTableInput) -> TableDescription {
             _ => (0, 0),
         };
 
+    let table_arn = format!(
+        "arn:aws:dynamodb:ddblocal:000000000000:table/{}",
+        input.table_name
+    );
+    let index_arn = |index_name: &str| format!("{table_arn}/index/{index_name}");
+
+    // Secondary indexes declared at CreateTable. LSIs are immutable; GSIs become
+    // ACTIVE immediately (see DDB-DIV-004 — no async CREATING phase).
+    let local_secondary_indexes = input.local_secondary_indexes.as_ref().map(|indexes| {
+        indexes
+            .iter()
+            .map(|lsi| LsiDescription {
+                index_name: lsi.index_name.clone(),
+                key_schema: lsi.key_schema.clone(),
+                projection: lsi.projection.clone(),
+                index_size_bytes: 0,
+                item_count: 0,
+                index_arn: index_arn(&lsi.index_name),
+            })
+            .collect()
+    });
+    let global_secondary_indexes = input.global_secondary_indexes.as_ref().map(|indexes| {
+        indexes
+            .iter()
+            .map(|gsi| GsiDescription {
+                index_name: gsi.index_name.clone(),
+                key_schema: gsi.key_schema.clone(),
+                projection: gsi.projection.clone(),
+                index_status: "ACTIVE".to_owned(),
+                provisioned_throughput: None,
+                index_size_bytes: 0,
+                item_count: 0,
+                index_arn: index_arn(&gsi.index_name),
+            })
+            .collect()
+    });
+
     TableDescription {
         table_name: input.table_name.clone(),
         key_schema: input.key_schema.clone(),
@@ -355,10 +472,7 @@ fn build_table_description(input: &CreateTableInput) -> TableDescription {
         creation_date_time: now_epoch_seconds(),
         table_size_bytes: 0,
         item_count: 0,
-        table_arn: format!(
-            "arn:aws:dynamodb:ddblocal:000000000000:table/{}",
-            input.table_name
-        ),
+        table_arn,
         table_id: uuid::Uuid::new_v4().to_string(),
         provisioned_throughput: ProvisionedThroughputDescription {
             read_capacity_units,
@@ -371,8 +485,8 @@ fn build_table_description(input: &CreateTableInput) -> TableDescription {
             billing_mode,
             last_update_to_pay_per_request_date_time: None,
         }),
-        global_secondary_indexes: None,
-        local_secondary_indexes: None,
+        global_secondary_indexes,
+        local_secondary_indexes,
         stream_specification: input.stream_specification.clone(),
         latest_stream_arn: None,
         latest_stream_label: None,
@@ -438,6 +552,85 @@ mod tests {
             "AttributeDefinitions": attrs,
         }))
         .expect("valid CreateTableInput")
+    }
+
+    #[test]
+    fn create_with_lsi_persists_and_describes() {
+        let (service, ctx, _t) = fixture();
+        let input: CreateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "tasks",
+            "KeySchema": [
+                { "AttributeName": "pk", "KeyType": "HASH" },
+                { "AttributeName": "sk", "KeyType": "RANGE" }
+            ],
+            "AttributeDefinitions": [
+                { "AttributeName": "pk", "AttributeType": "S" },
+                { "AttributeName": "sk", "AttributeType": "N" },
+                { "AttributeName": "prio", "AttributeType": "N" }
+            ],
+            "LocalSecondaryIndexes": [{
+                "IndexName": "by_priority",
+                "KeySchema": [
+                    { "AttributeName": "pk", "KeyType": "HASH" },
+                    { "AttributeName": "prio", "KeyType": "RANGE" }
+                ],
+                "Projection": { "ProjectionType": "KEYS_ONLY" }
+            }]
+        }))
+        .unwrap();
+        let created = create_table(&service, &ctx, input).expect("create with LSI");
+        let lsis = created
+            .table_description
+            .local_secondary_indexes
+            .expect("LSIs present");
+        assert_eq!(lsis.len(), 1);
+        assert_eq!(lsis[0].index_name, "by_priority");
+        assert!(lsis[0].index_arn.ends_with("/index/by_priority"));
+
+        // DescribeTable returns the LSI too.
+        let described = describe_table(
+            &service,
+            &ctx,
+            DescribeTableInput {
+                table_name: "tasks".to_owned(),
+            },
+        )
+        .expect("describe");
+        assert_eq!(
+            described
+                .table
+                .local_secondary_indexes
+                .expect("LSIs in describe")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn create_lsi_with_mismatched_partition_key_is_rejected() {
+        let (service, ctx, _t) = fixture();
+        let input: CreateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "tasks",
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [
+                { "AttributeName": "pk", "AttributeType": "S" },
+                { "AttributeName": "other", "AttributeType": "S" },
+                { "AttributeName": "prio", "AttributeType": "N" }
+            ],
+            "LocalSecondaryIndexes": [{
+                "IndexName": "bad",
+                "KeySchema": [
+                    { "AttributeName": "other", "KeyType": "HASH" },
+                    { "AttributeName": "prio", "KeyType": "RANGE" }
+                ],
+                "Projection": { "ProjectionType": "ALL" }
+            }]
+        }))
+        .unwrap();
+        assert!(matches!(
+            create_table(&service, &ctx, input),
+            Err(DynamoDbError::ValidationException(_))
+        ));
     }
 
     #[test]
