@@ -17,6 +17,7 @@ pub mod attribute_value;
 pub mod auth;
 pub mod config;
 pub mod dispatch;
+pub mod key;
 pub mod wire;
 
 pub use attribute_value::{
@@ -24,4 +25,5 @@ pub use attribute_value::{
 };
 pub use config::DynamoDbConfig;
 pub use dispatch::{KNOWN_OPERATIONS, dispatch, is_known_operation};
+pub use key::{decode_key, encode_key, is_reserved_attribute_name, validate_attribute_names};
 pub use wire::{WireResponse, render_error, render_success};
