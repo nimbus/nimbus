@@ -1392,4 +1392,46 @@ mod tests {
             Some(&AttributeValue::S("p2".into()))
         );
     }
+
+    #[test]
+    fn query_gsi_with_consistent_read_is_served_consistently() {
+        // D4.4 decision (DDB-DIV-010): real DynamoDB rejects ConsistentRead=true
+        // on a GSI Query with ValidationException (GSIs are eventually
+        // consistent). Nimbus's single store is strongly consistent, so it
+        // accepts the flag and serves a consistent result — a strict upgrade.
+        let (service, ctx, _t) = fixture();
+        create_with_gsi(
+            &service,
+            &ctx,
+            "Strong",
+            json!([{ "AttributeName": "g", "KeyType": "HASH" }]),
+            json!({ "ProjectionType": "ALL" }),
+            json!([{ "AttributeName": "g", "AttributeType": "S" }]),
+        );
+        put_json(
+            &service,
+            &ctx,
+            "Strong",
+            json!({ "pk": { "S": "a" }, "g": { "S": "grp" }, "v": { "N": "1" } }),
+        );
+        let out = query(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({
+                "TableName": "Strong",
+                "IndexName": "gsi",
+                "KeyConditionExpression": "g = :g",
+                "ExpressionAttributeValues": { ":g": { "S": "grp" } },
+                "ConsistentRead": true,
+            }))
+            .unwrap(),
+        )
+        .expect("ConsistentRead on a GSI is accepted, not a ValidationException");
+        assert_eq!(out.count, 1, "the GSI query returns the item");
+        assert_eq!(
+            out.items.unwrap()[0].get("v"),
+            Some(&AttributeValue::N("1".into())),
+            "and the result reflects the latest write (strongly consistent)"
+        );
+    }
 }

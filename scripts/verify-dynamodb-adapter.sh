@@ -102,7 +102,10 @@ elif grep -Eq 'Plan status:\*\*[[:space:]]*`(in_progress|done)`' "${PLAN}"; then
   promoted=1
 fi
 # Count unfinished roadmap rows (rows like "| D0.0a ... | `pending` | ...").
-unfinished=$(grep -Ec '^\|[[:space:]]*D[0-9][^|]*\|[[:space:]]*`(pending|in_progress|blocked)`' "${PLAN}" 2>/dev/null || printf '0')
+# `grep -c` already prints the count (0 on no match, exiting 1); a `|| printf 0`
+# fallback would double-count to "0\n0", so capture plainly and default empties.
+unfinished=$(grep -Ec '^\|[[:space:]]*D[0-9][^|]*\|[[:space:]]*`(pending|in_progress|blocked)`' "${PLAN}" 2>/dev/null)
+unfinished=${unfinished:-0}
 if [ "${promoted}" = "1" ] && [ "${unfinished}" = "0" ]; then
   pass "Plan is in_progress/archived and 0 unfinished roadmap rows"
 else
