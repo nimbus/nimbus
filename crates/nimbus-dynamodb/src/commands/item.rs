@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
-    Item, KeySchemaElement, KeyType, PutItemInput, PutItemOutput, ReturnValues,
+    GetItemInput, GetItemOutput, Item, KeySchemaElement, KeyType, PutItemInput, PutItemOutput,
+    ReturnValues,
 };
 use nimbus_core::{DocumentId, TableName};
 use nimbus_engine::Service;
@@ -19,7 +20,7 @@ use nimbus_tenant::TenantIsolationContext;
 use crate::attribute_value::{fields_to_item, item_to_fields, validate_item};
 use crate::commands::control_plane;
 use crate::error::map_core_error;
-use crate::expression::{check_condition, default_limits};
+use crate::expression::{check_condition, default_limits, project_item};
 use crate::key::encode_key;
 
 /// PutItem: validate the item, gate on any `ConditionExpression`, replace-or-
@@ -74,6 +75,57 @@ pub fn put_item(
         consumed_capacity: None,
         item_collection_metrics: None,
     })
+}
+
+/// GetItem: read an item by key, applying any `ProjectionExpression` (or legacy
+/// `AttributesToGet`). `ConsistentRead` is accepted and ignored — the single
+/// store is strictly consistent, so every read is already strongly consistent.
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table is absent; `ValidationException`
+/// for a missing key or malformed projection.
+pub fn get_item(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    input: GetItemInput,
+) -> Result<GetItemOutput, DynamoDbError> {
+    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let id = primary_key_id(&input.key, &key_schema)?;
+    let table = TableName::new(&input.table_name).map_err(map_core_error)?;
+
+    let item = match read_item(service, context, &table, id)? {
+        Some(item) => Some(project_get(&input, item)?),
+        None => None,
+    };
+    Ok(GetItemOutput {
+        item,
+        consumed_capacity: None,
+    })
+}
+
+/// Apply a GetItem's `ProjectionExpression` (or legacy top-level
+/// `AttributesToGet`) to the read item; an unprojected read returns it whole.
+fn project_get(input: &GetItemInput, item: Item) -> Result<Item, DynamoDbError> {
+    if let Some(projection) = input
+        .projection_expression
+        .as_deref()
+        .filter(|expression| !expression.is_empty())
+    {
+        return project_item(
+            projection,
+            input.expression_attribute_names.as_ref(),
+            &item,
+            &default_limits(),
+        );
+    }
+    if let Some(names) = &input.attributes_to_get {
+        // Legacy AttributesToGet selects top-level attributes by name.
+        return Ok(names
+            .iter()
+            .filter_map(|name| item.get(name).map(|value| (name.clone(), value.clone())))
+            .collect());
+    }
+    Ok(item)
 }
 
 /// Read a stored item by id, mapping a missing document to `None`.
@@ -320,5 +372,95 @@ mod tests {
         )
         .expect_err("missing table should fail");
         assert!(matches!(err, DynamoDbError::ResourceNotFoundException(_)));
+    }
+
+    // ---- D1.6: GetItem ----
+
+    fn get(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        input: serde_json::Value,
+    ) -> GetItemOutput {
+        get_item(service, context, serde_json::from_value(input).unwrap()).expect("get")
+    }
+
+    #[test]
+    fn get_returns_the_stored_item() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "qty": {"N": "5"} } }),
+        )
+        .expect("put");
+        let out = get(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Key": { "pk": {"S": "o1"} } }),
+        );
+        let item = out.item.expect("item present");
+        assert_eq!(item.get("pk"), Some(&AttributeValue::S("o1".into())));
+        assert_eq!(item.get("qty"), Some(&AttributeValue::N("5".into())));
+    }
+
+    #[test]
+    fn get_missing_item_returns_none() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        let out = get(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Key": { "pk": {"S": "absent"} } }),
+        );
+        assert!(out.item.is_none(), "missing item yields no Item field");
+    }
+
+    #[test]
+    fn get_with_projection_selects_subset() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Item": { "pk": {"S": "o1"}, "a": {"N": "1"}, "b": {"N": "2"}, "c": {"N": "3"} },
+            }),
+        )
+        .expect("put");
+        let out = get(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "ProjectionExpression": "a, c",
+            }),
+        );
+        let item = out.item.expect("item present");
+        assert_eq!(item.len(), 2);
+        assert!(item.contains_key("a") && item.contains_key("c"));
+        assert!(!item.contains_key("b"), "b is projected out");
+    }
+
+    #[test]
+    fn get_with_consistent_read_is_accepted_and_ignored() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
+        )
+        .expect("put");
+        // ConsistentRead=true must not change the result (single store is
+        // already strongly consistent).
+        let out = get(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Key": { "pk": {"S": "o1"} }, "ConsistentRead": true }),
+        );
+        assert!(out.item.is_some());
     }
 }
