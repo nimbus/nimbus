@@ -3,6 +3,7 @@
 //! authenticates the request (access key → tenant) and routes `X-Amz-Target`
 //! operations to these handlers via a `DispatchContext`.
 
+pub mod batch;
 pub mod control_plane;
 pub mod discovery;
 pub mod item;
