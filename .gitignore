@@ -23,6 +23,10 @@ target
 # JavaScript / TypeScript workspace
 node_modules
 **/node_modules
+# Official Node fixtures include nested node_modules trees that are test data,
+# not install output; keep them versioned so CI runs the same corpus as local.
+!crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/**/node_modules/
+!crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/**/node_modules/**
 dist
 **/dist
 .DS_Store
