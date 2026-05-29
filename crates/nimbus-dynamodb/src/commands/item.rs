@@ -11,14 +11,15 @@ use std::sync::Arc;
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
     DeleteItemInput, DeleteItemOutput, GetItemInput, GetItemOutput, Item, KeySchemaElement,
-    KeyType, PutItemInput, PutItemOutput, ReturnValues, UpdateItemInput, UpdateItemOutput,
+    KeyType, PutItemInput, PutItemOutput, ReturnValues, StreamEventName, UpdateItemInput,
+    UpdateItemOutput, extract_key,
 };
 use nimbus_core::{DocumentId, TableName};
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::attribute_value::{fields_to_item, item_to_fields, validate_item};
-use crate::commands::control_plane;
+use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 use crate::expression::{
     apply_update, build_maps, check_condition, default_limits, parse_update_expression,
@@ -68,6 +69,23 @@ pub fn put_item(
     service
         .insert_document_with_id(context.tenant_id(), table, id, fields)
         .map_err(map_core_error)?;
+
+    // Capture a stream event (no-op unless the table has a stream enabled).
+    let event_name = if existing.is_some() {
+        StreamEventName::Modify
+    } else {
+        StreamEventName::Insert
+    };
+    let keys = extract_key(&input.item, &key_schema);
+    stream::capture_event(
+        service,
+        context,
+        &input.table_name,
+        event_name,
+        &keys,
+        existing.as_ref(),
+        Some(&input.item),
+    )?;
 
     let attributes = match input.return_values {
         ReturnValues::AllOld => existing,
@@ -163,6 +181,17 @@ pub fn delete_item(
         service
             .delete_document(context.tenant_id(), table, id)
             .map_err(map_core_error)?;
+        // Capture a REMOVE stream event (no-op unless a stream is enabled).
+        let keys = extract_key(&input.key, &key_schema);
+        stream::capture_event(
+            service,
+            context,
+            &input.table_name,
+            StreamEventName::Remove,
+            &keys,
+            existing.as_ref(),
+            None,
+        )?;
     }
 
     let attributes = match input.return_values {
@@ -235,6 +264,23 @@ pub fn update_item(
     service
         .insert_document_with_id(context.tenant_id(), table, id, fields)
         .map_err(map_core_error)?;
+
+    // Capture a stream event (no-op unless the table has a stream enabled).
+    let event_name = if old_item.is_some() {
+        StreamEventName::Modify
+    } else {
+        StreamEventName::Insert
+    };
+    let keys = extract_key(&new_item, &key_schema);
+    stream::capture_event(
+        service,
+        context,
+        &input.table_name,
+        event_name,
+        &keys,
+        old_item.as_ref(),
+        Some(&new_item),
+    )?;
 
     let attributes = match input.return_values {
         ReturnValues::None => None,

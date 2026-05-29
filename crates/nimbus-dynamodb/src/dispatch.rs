@@ -220,6 +220,9 @@ fn route(
         "GetShardIterator" => run(request, |input| {
             stream::get_shard_iterator(ctx.service, context, input)
         }),
+        "GetRecords" => run(request, |input| {
+            stream::get_records(ctx.service, context, input)
+        }),
         other => wire::render_error(&DynamoDbError::InternalServerError(format!(
             "{other} is not yet implemented"
         ))),
@@ -410,14 +413,14 @@ mod tests {
 
     #[test]
     fn unimplemented_known_operation_returns_placeholder_after_auth() {
-        // GetRecords is recognized but has no handler yet. With valid auth it
+        // ListStreams is recognized but has no handler yet. With valid auth it
         // passes authentication and tenant-ensure, then hits the placeholder.
         let (_temp, service, registry) = fixture();
         let ctx = DispatchContext {
             service: &service,
             access_keys: &registry,
         };
-        let headers = headers_for("GetRecords", Some(&signed_authorization(ACCESS_KEY)));
+        let headers = headers_for("ListStreams", Some(&signed_authorization(ACCESS_KEY)));
         let (status, body) = dispatch(&ctx, &headers, b"{}");
         assert_eq!(status, 500);
         assert!(
