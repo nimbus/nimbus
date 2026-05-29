@@ -212,6 +212,13 @@ jobs:
         run: npm ci
 
       - name: Run Bun/JSC runtime contract gate
+        env:
+          # This gate links nimbus-server test binaries with vendored OpenSSL.
+          # Keep the workspace default on mold, but use lld here because mold
+          # on ubuntu-24.04 has failed this lane with an unresolved OpenSSL
+          # assembly symbol (`bn_sqrx8x_internal`).
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
         run: make verify-bun-jsc-runtime-contract
 
   rust-workspace-tests:

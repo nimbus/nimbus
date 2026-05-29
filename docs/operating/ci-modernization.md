@@ -162,6 +162,15 @@ macOS and Windows branches of the composite no-op this step; they
 remain on the platform default linker. Use `runner.os == 'Linux'`
 to gate the install.
 
+The `Bun/JSC Runtime Contract` job intentionally overrides the Linux
+target `RUSTFLAGS` back to `-C link-arg=-fuse-ld=lld`. That gate links
+`nimbus-server` test binaries with vendored OpenSSL, and the
+ubuntu-24.04 mold lane has failed there with an unresolved OpenSSL
+assembly symbol (`bn_sqrx8x_internal`). Keep mold as the workspace
+default for CI acceleration, but keep this lane on lld unless a future
+runner and mold version are explicitly reproven against the Bun/JSC
+contract.
+
 ### Coverage `-j` constant
 
 `cargo llvm-cov` in `ci.yml` runs with `-j 4` (matching `ubuntu-24.04`
