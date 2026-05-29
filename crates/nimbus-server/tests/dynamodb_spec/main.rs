@@ -1398,6 +1398,96 @@ async fn streams_data_plane_through_official_streams_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn time_to_live_through_official_sdk() {
+    use aws_sdk_dynamodb::types::{TimeToLiveSpecification, TimeToLiveStatus};
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+
+    // Default: TTL is DISABLED with no attribute.
+    let initial = client
+        .describe_time_to_live()
+        .table_name("Orders")
+        .send()
+        .await
+        .expect("describe ttl")
+        .time_to_live_description()
+        .cloned()
+        .expect("ttl description");
+    assert_eq!(
+        initial.time_to_live_status(),
+        Some(&TimeToLiveStatus::Disabled)
+    );
+    assert!(initial.attribute_name().is_none());
+
+    // Enable TTL on `expiresAt`; the response echoes the spec.
+    let enabled = client
+        .update_time_to_live()
+        .table_name("Orders")
+        .time_to_live_specification(
+            TimeToLiveSpecification::builder()
+                .enabled(true)
+                .attribute_name("expiresAt")
+                .build()
+                .expect("ttl spec"),
+        )
+        .send()
+        .await
+        .expect("enable ttl")
+        .time_to_live_specification()
+        .cloned()
+        .expect("echoed spec");
+    assert!(enabled.enabled());
+    assert_eq!(enabled.attribute_name(), "expiresAt");
+
+    // DescribeTimeToLive now reports ENABLED + the attribute.
+    let after = client
+        .describe_time_to_live()
+        .table_name("Orders")
+        .send()
+        .await
+        .expect("describe ttl")
+        .time_to_live_description()
+        .cloned()
+        .expect("ttl description");
+    assert_eq!(
+        after.time_to_live_status(),
+        Some(&TimeToLiveStatus::Enabled)
+    );
+    assert_eq!(after.attribute_name(), Some("expiresAt"));
+
+    // Disabling removes the reported attribute.
+    client
+        .update_time_to_live()
+        .table_name("Orders")
+        .time_to_live_specification(
+            TimeToLiveSpecification::builder()
+                .enabled(false)
+                .attribute_name("expiresAt")
+                .build()
+                .expect("ttl spec"),
+        )
+        .send()
+        .await
+        .expect("disable ttl");
+    let disabled = client
+        .describe_time_to_live()
+        .table_name("Orders")
+        .send()
+        .await
+        .expect("describe ttl")
+        .time_to_live_description()
+        .cloned()
+        .expect("ttl description");
+    assert_eq!(
+        disabled.time_to_live_status(),
+        Some(&TimeToLiveStatus::Disabled)
+    );
+    assert!(disabled.attribute_name().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.

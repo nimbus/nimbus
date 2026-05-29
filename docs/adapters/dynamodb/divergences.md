@@ -157,3 +157,45 @@ physical reclamation safe.
 
 **Status:** accepted (D5.5); time-driven background compaction of never-polled
 streams is a follow-up.
+
+## DDB-DIV-008 — TTL attribute-name charset is unrestricted (`nimbus-divergence`)
+
+**Real DynamoDB:** the TTL attribute name accepts any UTF-8 string (1–255
+characters). ExtendDB restricts the charset as part of its SQL-injection defense.
+
+**Nimbus:** accepts any UTF-8 TTL attribute name within the 1–255 character
+bound — matching DynamoDB, not ExtendDB. Nimbus stores items in a document
+engine with no SQL surface, so there is no injection vector to defend against by
+narrowing the charset.
+
+**Rationale:** matching the broader DynamoDB contract maximizes drop-in
+compatibility for teams migrating real TTL configurations, and the ExtendDB
+restriction's sole motivation (SQL safety) does not apply to Nimbus.
+
+**Regression test:** `crates/nimbus-dynamodb/src/commands/ttl.rs` →
+`tests::update_accepts_any_utf8_attribute_name`.
+
+**Status:** accepted (D6.1).
+
+## DDB-DIV-009 — No TTL modification cooldown (`nimbus-divergence`)
+
+**Real DynamoDB:** TTL enable/disable is rate-limited — a table's TTL cannot be
+re-toggled more than a small number of times within a fixed interval (~1 hour),
+and the table transitions through an asynchronous ENABLING/DISABLING state. A
+too-fast change is rejected with a `ValidationException`.
+
+**Nimbus:** every `UpdateTimeToLive` takes effect immediately (no async
+ENABLING/DISABLING state — consistent with DDB-DIV-004's ACTIVE-immediately
+control plane) and there is no cooldown. Re-enabling, disabling, and changing
+the attribute name in rapid succession all succeed.
+
+**Rationale:** the DynamoDB cooldown exists to bound the cost of a
+fleet-wide background reconfiguration that Nimbus does not perform — TTL state
+here is a single catalog-doc write. Removing the cooldown makes the adapter
+predictable for tests and migrations without weakening any correctness or
+isolation guarantee.
+
+**Regression test:** `crates/nimbus-dynamodb/src/commands/ttl.rs` →
+`tests::update_is_idempotent_with_no_cooldown`.
+
+**Status:** accepted (D6.1).
