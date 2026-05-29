@@ -110,7 +110,6 @@ const {
 const denoProcessModule = core.loadExtScript("ext:deno_process/40_process.js");
 
 Object.defineProperties(globalThis, windowOrWorkerGlobalScope);
-globalThis.__nimbusPerfHooksBuiltin = nimbusPerfHooksBuiltin;
 const nimbusInternalFsBinding = getNodeInternalBinding("fs");
 const {
   ArrayIsArray,
@@ -937,6 +936,184 @@ function seedNodeProcessBuiltinModuleLoader(nodeProcess) {
   }
   Object.defineProperty(nodeProcess, "getBuiltinModule", {
     value: getBuiltinModule,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+const nimbusProcessFinalizationInstalled = Symbol("nimbus.processFinalizationInstalled");
+
+function validateProcessFinalizationRegistration(ref, callback) {
+  if ((typeof ref !== "object" && typeof ref !== "function") || ref === null) {
+    throw new TypeError('The "ref" argument must be of type object');
+  }
+  if (typeof callback !== "function") {
+    throw new TypeError('The "callback" argument must be of type function');
+  }
+}
+
+function seedNodeProcessFinalization(nodeProcess) {
+  if (
+    !nodeProcess ||
+    typeof nodeProcess !== "object" ||
+    typeof nodeProcess.on !== "function" ||
+    nodeProcess[nimbusProcessFinalizationInstalled] === true
+  ) {
+    return;
+  }
+
+  const exitRegistrations = [];
+  const beforeExitRegistrations = [];
+
+  function registerIn(registrations, ref, callback) {
+    validateProcessFinalizationRegistration(ref, callback);
+    registrations.push({
+      callback,
+      ref: new WeakRef(ref),
+    });
+  }
+
+  function runRegistrations(registrations, eventName) {
+    for (const registration of [...registrations]) {
+      const ref = registration.ref.deref();
+      if (ref !== undefined) {
+        registration.callback(ref, eventName);
+      }
+    }
+  }
+
+  const finalization = {
+    register(ref, callback) {
+      registerIn(exitRegistrations, ref, callback);
+    },
+    registerBeforeExit(ref, callback) {
+      registerIn(beforeExitRegistrations, ref, callback);
+    },
+    unregister(ref) {
+      for (const registrations of [exitRegistrations, beforeExitRegistrations]) {
+        for (let index = registrations.length - 1; index >= 0; index -= 1) {
+          const registeredRef = registrations[index].ref.deref();
+          if (registeredRef === undefined || registeredRef === ref) {
+            registrations.splice(index, 1);
+          }
+        }
+      }
+    },
+  };
+
+  Object.defineProperty(nodeProcess, "finalization", {
+    value: finalization,
+    configurable: true,
+    enumerable: true,
+    writable: false,
+  });
+  nodeProcess.on("beforeExit", () => {
+    runRegistrations(beforeExitRegistrations, "beforeExit");
+  });
+  nodeProcess.on("exit", () => {
+    runRegistrations(exitRegistrations, "exit");
+  });
+  Object.defineProperty(nodeProcess, nimbusProcessFinalizationInstalled, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+}
+
+const nimbusProcessDlopenPatched = Symbol("nimbus.processDlopenPatched");
+const nimbusNativeExtensionPatched = Symbol("nimbus.nativeExtensionPatched");
+
+function isDlopenTypeError(error) {
+  return error?.name === "TypeError" &&
+    typeof error?.message === "string" &&
+    error.message.startsWith("dlopen(");
+}
+
+function createNodeDlopenError(error) {
+  const mapped = new Error(error.message);
+  mapped.code = "ERR_DLOPEN_FAILED";
+  if (typeof error.stack === "string") {
+    mapped.stack = error.stack.replace(/^TypeError:/, "Error:");
+  }
+  return mapped;
+}
+
+function installNimbusProcessDlopenErrorMapping(nodeProcess) {
+  if (
+    !nodeProcess ||
+    typeof nodeProcess !== "object" ||
+    typeof nodeProcess.dlopen !== "function" ||
+    nodeProcess[nimbusProcessDlopenPatched] === true
+  ) {
+    return;
+  }
+
+  const originalDlopen = nodeProcess.dlopen;
+  function nimbusDlopen(...args) {
+    try {
+      return Reflect.apply(originalDlopen, this, args);
+    } catch (error) {
+      if (isDlopenTypeError(error)) {
+        throw createNodeDlopenError(error);
+      }
+      throw error;
+    }
+  }
+  Object.defineProperty(nimbusDlopen, nimbusProcessDlopenPatched, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(nodeProcess, nimbusProcessDlopenPatched, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(nodeProcess, "dlopen", {
+    value: nimbusDlopen,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+function installNimbusNativeExtensionErrorMapping(nodeProcess) {
+  const moduleBuiltin = typeof nodeProcess?.getBuiltinModule === "function"
+    ? nodeProcess.getBuiltinModule("module")
+    : undefined;
+  const extensions = moduleBuiltin?._extensions;
+  if (
+    !extensions ||
+    typeof extensions !== "object" ||
+    typeof extensions[".node"] !== "function" ||
+    extensions[".node"][nimbusNativeExtensionPatched] === true
+  ) {
+    return;
+  }
+
+  const originalNativeExtension = extensions[".node"];
+  function nimbusNativeExtension(...args) {
+    try {
+      return Reflect.apply(originalNativeExtension, this, args);
+    } catch (error) {
+      if (isDlopenTypeError(error)) {
+        throw createNodeDlopenError(error);
+      }
+      throw error;
+    }
+  }
+  Object.defineProperty(nimbusNativeExtension, nimbusNativeExtensionPatched, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(extensions, ".node", {
+    value: nimbusNativeExtension,
     configurable: true,
     enumerable: true,
     writable: true,
@@ -3252,6 +3429,18 @@ Object.defineProperty(deno, "test", {
   enumerable: true,
   writable: false,
 });
+Object.defineProperty(globalThis, "Deno", {
+  value: deno,
+  configurable: true,
+  enumerable: false,
+  writable: false,
+});
+Object.defineProperty(globalThis, "__nimbusRetainDenoForNodeLazyScripts", {
+  value: true,
+  configurable: true,
+  enumerable: false,
+  writable: false,
+});
 Object.defineProperty(globalThis, "__nimbusFlushEmbeddedTests", {
   value: flushEmbeddedDenoTests,
   configurable: true,
@@ -3266,6 +3455,12 @@ Object.defineProperty(globalThis, "__nimbusProcessTicksAndRejections", {
 });
 Object.defineProperty(globalThis, "__nimbusEventLoopHasMoreWork", {
   value: core.eventLoopHasMoreWork,
+  configurable: true,
+  enumerable: false,
+  writable: false,
+});
+Object.defineProperty(globalThis, "__nimbusPerfHooksBuiltin", {
+  value: nimbusPerfHooksBuiltin,
   configurable: true,
   enumerable: false,
   writable: false,
@@ -3323,11 +3518,17 @@ seedNodeProcessStdio(internals.nodeGlobals?.process);
 seedNodeProcessExecPath(internals.nodeGlobals?.process);
 seedNodeProcessFeatures(internals.nodeGlobals?.process);
 seedNodeProcessBuiltinModuleLoader(internals.nodeGlobals?.process);
+seedNodeProcessFinalization(internals.nodeGlobals?.process);
+installNimbusProcessDlopenErrorMapping(internals.nodeGlobals?.process);
+installNimbusNativeExtensionErrorMapping(internals.nodeGlobals?.process);
 seedNodeProcessPlatformMetadata(globalThis.process);
 seedNodeProcessStdio(globalThis.process);
 seedNodeProcessExecPath(globalThis.process);
 seedNodeProcessFeatures(globalThis.process);
 seedNodeProcessBuiltinModuleLoader(globalThis.process);
+seedNodeProcessFinalization(globalThis.process);
+installNimbusProcessDlopenErrorMapping(globalThis.process);
+installNimbusNativeExtensionErrorMapping(globalThis.process);
 const workerBootstrapState =
   typeof core.ops.op_nimbus_worker_bootstrap_state === "function"
     ? core.ops.op_nimbus_worker_bootstrap_state()

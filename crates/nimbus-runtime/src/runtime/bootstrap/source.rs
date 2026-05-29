@@ -873,7 +873,10 @@ Object.freeze(__nimbusInstallRuntimeContractGlobals);
 const POST_BOOTSTRAP_SOURCE: &str = r#"
 const __nimbusRuntimeContract =
   __nimbusCoreOps.op_nimbus_runtime_contract();
-delete globalThis.Deno;
+if (globalThis.__nimbusRetainDenoForNodeLazyScripts !== true) {
+  delete globalThis.Deno;
+}
+delete globalThis.__nimbusRetainDenoForNodeLazyScripts;
 delete globalThis.__bootstrap;
 delete globalThis.bootstrap;
 __nimbusInstallRuntimeContractGlobals(__nimbusRuntimeContract);

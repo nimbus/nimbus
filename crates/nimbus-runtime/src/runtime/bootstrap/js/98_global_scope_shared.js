@@ -1,13 +1,13 @@
 import { core } from "ext:core/mod.js";
-import * as webSocket from "ext:deno_websocket/01_websocket.js";
+
+core.loadExtScript("ext:deno_telemetry/telemetry.ts");
+core.loadExtScript("ext:deno_telemetry/util.ts");
 
 const abortSignal = core.loadExtScript("ext:deno_web/03_abort_signal.js");
 const console = core.loadExtScript("ext:deno_web/01_console.js");
 const crypto = core.loadExtScript("ext:deno_crypto/00_crypto.js");
 const encoding = core.loadExtScript("ext:deno_web/08_text_encoding.js");
 const event = core.loadExtScript("ext:deno_web/02_event.js");
-core.loadExtScript("ext:deno_telemetry/telemetry.ts");
-core.loadExtScript("ext:deno_telemetry/util.ts");
 const eventSource = core.loadExtScript("ext:deno_fetch/27_eventsource.js");
 const fetch = core.loadExtScript("ext:deno_fetch/26_fetch.js");
 const file = core.loadExtScript("ext:deno_web/09_file.js");
@@ -19,9 +19,11 @@ const request = core.loadExtScript("ext:deno_fetch/23_request.js");
 const response = core.loadExtScript("ext:deno_fetch/23_response.js");
 const url = core.loadExtScript("ext:deno_web/00_url.js");
 const urlPattern = core.loadExtScript("ext:deno_web/01_urlpattern.js");
-const { DOMException, QuotaExceededError } = core.loadExtScript(
-  "ext:deno_web/01_dom_exception.js",
-);
+const loadWebSocket = core.createLazyLoader("ext:deno_websocket/01_websocket.js");
+const {
+  DOMException,
+  QuotaExceededError,
+} = core.loadExtScript("ext:deno_web/01_dom_exception.js");
 
 // Match the Deno runtime module name that Node polyfills import. Keep this
 // intentionally smaller than the full Deno runtime global contract, but wide
@@ -56,7 +58,10 @@ const windowOrWorkerGlobalScope = {
   URL: core.propNonEnumerable(url.URL),
   URLPattern: core.propNonEnumerable(urlPattern.URLPattern),
   URLSearchParams: core.propNonEnumerable(url.URLSearchParams),
-  WebSocket: core.propNonEnumerable(webSocket.WebSocket),
+  WebSocket: core.propNonEnumerableLazyLoaded(
+    (webSocket) => webSocket.WebSocket,
+    loadWebSocket,
+  ),
   console: core.propNonEnumerable(
     new console.Console((msg, level) => core.print(msg, level > 1)),
   ),

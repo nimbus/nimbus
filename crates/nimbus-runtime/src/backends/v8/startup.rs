@@ -7,7 +7,11 @@ use crate::runtime::bootstrap::{
     extension_transpiler_for_target, install_bootstrap, snapshot_extensions,
 };
 
-use super::embedder::{JsRuntimeForSnapshot, RuntimeOptions};
+use super::embedder::{
+    Extension, JsRuntimeForSnapshot, ModuleCodeString, ModuleName, RuntimeOptions,
+};
+
+type ResidualLazySources = &'static [(&'static str, &'static str)];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum V8RuntimeConstructionMode {
@@ -31,21 +35,38 @@ impl V8RuntimeConstructionMode {
 
 pub(crate) struct V8StartupSnapshot {
     bytes: &'static [u8],
+    residual_lazy_js_sources: ResidualLazySources,
+    residual_lazy_esm_sources: ResidualLazySources,
 }
 
 impl V8StartupSnapshot {
-    fn new(bytes: Box<[u8]>) -> Self {
+    fn new(
+        bytes: Box<[u8]>,
+        residual_lazy_js_sources: ResidualLazySources,
+        residual_lazy_esm_sources: ResidualLazySources,
+    ) -> Self {
         // deno_core currently accepts startup snapshots as &'static [u8]. The
         // worker pool keeps a single bootstrap snapshot for its own lifetime,
-        // so leaking one buffer per worker matches the pool's lifetime and
-        // avoids unsound lifetime extension tricks.
+        // so leaking one buffer per compatibility target matches the pool's
+        // lifetime and avoids unsound lifetime extension tricks. Residual lazy
+        // extension sources follow the same process-lifetime contract.
         Self {
             bytes: Box::leak(bytes),
+            residual_lazy_js_sources,
+            residual_lazy_esm_sources,
         }
     }
 
     pub(crate) fn as_startup_snapshot(&self) -> &'static [u8] {
         self.bytes
+    }
+
+    pub(crate) fn residual_lazy_js_sources(&self) -> ResidualLazySources {
+        self.residual_lazy_js_sources
+    }
+
+    pub(crate) fn residual_lazy_esm_sources(&self) -> ResidualLazySources {
+        self.residual_lazy_esm_sources
     }
 }
 
@@ -62,8 +83,11 @@ pub(crate) fn create_v8_startup_snapshot(
     // particular, post-bootstrap cleanup like `delete globalThis.Deno` must
     // stay in the separate finalize step for ordinary runtimes until the fork
     // offers an explicit snapshot-safe replacement.
+    let extensions = snapshot_extensions(compatibility_target);
+    let (residual_lazy_js_sources, residual_lazy_esm_sources) =
+        collect_residual_lazy_sources(compatibility_target, &extensions)?;
     let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
-        extensions: snapshot_extensions(compatibility_target),
+        extensions,
         extension_transpiler: extension_transpiler_for_target(compatibility_target),
         ..Default::default()
     });
@@ -81,7 +105,95 @@ pub(crate) fn create_v8_startup_snapshot(
         assert_eq!(scope.add_context(context), deno_node::VM_CONTEXT_INDEX);
     }
     install_bootstrap(&mut runtime)?;
-    Ok(V8StartupSnapshot::new(runtime.snapshot()))
+    Ok(V8StartupSnapshot::new(
+        runtime.snapshot(),
+        residual_lazy_js_sources,
+        residual_lazy_esm_sources,
+    ))
+}
+
+fn collect_residual_lazy_sources(
+    compatibility_target: RuntimeCompatibilityTarget,
+    extensions: &[Extension],
+) -> Result<(ResidualLazySources, ResidualLazySources)> {
+    let mut residual_lazy_js_sources = Vec::new();
+    let mut residual_lazy_esm_sources = Vec::new();
+
+    for extension in extensions {
+        for file in &*extension.lazy_loaded_js_files {
+            if !file.is_runtime_loadable() {
+                residual_lazy_js_sources.push(transpile_residual_lazy_source(
+                    compatibility_target,
+                    file.specifier,
+                    file.load()?,
+                )?);
+            }
+        }
+        for file in &*extension.lazy_loaded_esm_files {
+            if !file.is_runtime_loadable() {
+                residual_lazy_esm_sources.push(transpile_residual_lazy_source(
+                    compatibility_target,
+                    file.specifier,
+                    file.load()?,
+                )?);
+            }
+        }
+    }
+
+    Ok((
+        leak_residual_lazy_sources(residual_lazy_js_sources)?,
+        leak_residual_lazy_sources(residual_lazy_esm_sources)?,
+    ))
+}
+
+fn transpile_residual_lazy_source(
+    compatibility_target: RuntimeCompatibilityTarget,
+    specifier: &'static str,
+    source: ModuleCodeString,
+) -> Result<(&'static str, String)> {
+    let source = if let Some(transpiler) = extension_transpiler_for_target(compatibility_target) {
+        let (source, _) =
+            transpiler(ModuleName::from_static(specifier), source).map_err(|error| {
+                crate::error::NimbusRuntimeError::JavaScript(format!(
+                    "failed to transpile residual extension source {specifier}: {error}"
+                ))
+            })?;
+        source
+    } else {
+        source
+    };
+    Ok((specifier, source.to_string()))
+}
+
+fn leak_residual_lazy_sources(
+    mut sources: Vec<(&'static str, String)>,
+) -> Result<ResidualLazySources> {
+    sources.sort_by_key(|(specifier, _)| *specifier);
+    let mut deduped = Vec::<(&'static str, String)>::new();
+    for (specifier, source) in sources {
+        if let Some((last_specifier, last_source)) = deduped.last()
+            && *last_specifier == specifier
+        {
+            if last_source != &source {
+                return Err(crate::error::NimbusRuntimeError::JavaScript(format!(
+                    "conflicting residual extension source for {specifier}"
+                )));
+            }
+            continue;
+        }
+        deduped.push((specifier, source));
+    }
+
+    let sources = deduped
+        .into_iter()
+        .map(|(specifier, source)| {
+            (
+                specifier,
+                Box::leak(source.into_boxed_str()) as &'static str,
+            )
+        })
+        .collect::<Vec<_>>();
+    Ok(Box::leak(sources.into_boxed_slice()))
 }
 
 #[cfg(test)]
