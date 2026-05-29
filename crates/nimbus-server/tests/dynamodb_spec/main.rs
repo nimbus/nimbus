@@ -779,6 +779,53 @@ async fn batch_write_item_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transact_get_items_through_official_sdk() {
+    use aws_sdk_dynamodb::types::{Get, TransactGetItem};
+    use std::collections::HashMap;
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+    client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("a".into()))
+        .item("v", AttributeValue::N("1".into()))
+        .send()
+        .await
+        .expect("put");
+
+    let get = |pk: &str| -> TransactGetItem {
+        TransactGetItem::builder()
+            .get(
+                Get::builder()
+                    .table_name("Orders")
+                    .key("pk", AttributeValue::S(pk.into()))
+                    .build()
+                    .expect("get"),
+            )
+            .build()
+    };
+    let out = client
+        .transact_get_items()
+        .transact_items(get("a"))
+        .transact_items(get("missing"))
+        .send()
+        .await
+        .expect("transact_get_items");
+    let responses = out.responses();
+    assert_eq!(responses.len(), 2, "one response per request, in order");
+    assert_eq!(
+        responses[0].item().and_then(|i| i.get("v")),
+        Some(&AttributeValue::N("1".into()))
+    );
+    assert!(
+        responses[1].item().is_none_or(HashMap::is_empty),
+        "missing item absent"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
