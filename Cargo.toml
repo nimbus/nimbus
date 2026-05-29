@@ -46,6 +46,11 @@ all = "deny"
 aes-gcm-siv = "0.11"
 aws-config = { version = "1.8.16", features = ["behavior-version-latest"] }
 aws-sdk-kms = { version = "1.105.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+# Official AWS Rust SDK for DynamoDB — dev-only, used by the dynamodb_spec
+# parity runner to prove every operation through an official SDK client against
+# an endpoint override. Same HTTP/runtime feature flags as aws-sdk-kms so it
+# reuses the already-vetted aws-smithy/hyper/aws-lc stack (no new dup versions).
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 arc-swap = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
