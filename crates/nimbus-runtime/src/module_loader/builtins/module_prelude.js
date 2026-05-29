@@ -1,6 +1,10 @@
 
 import internalFsPromisesDefault from "ext:deno_node/internal/fs/promises.ts";
 import { FileHandle as InternalFsPromisesFileHandle } from "ext:deno_node/internal/fs/handle.ts";
+import {
+  ReadStream as InternalFsReadStream,
+  WriteStream as InternalFsWriteStream,
+} from "ext:deno_node/internal/fs/streams.mjs";
 import { getBinding as getNodeInternalBinding } from "ext:deno_node/internal_binding/mod.ts";
 
 const DEPRECATED_REQUIRE_WARNINGS = Object.freeze({

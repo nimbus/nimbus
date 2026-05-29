@@ -93,16 +93,11 @@ pub fn rotate_local_admin_token_offline(
 ) -> io::Result<LocalAdminTokenRecord> {
     paths.ensure_auth_parent_dir()?;
     with_token_file_lock(paths, || {
-        let current = read_local_admin_token_file(&paths.auth_token_path)?.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "local admin token file {} does not exist; run `nimbus start` once to create it",
-                    paths.auth_token_path.display()
-                ),
-            )
-        })?;
-        let mut rotated = generate_local_admin_token(current.generation.saturating_add(1))?;
+        let generation = match read_local_admin_token_file(&paths.auth_token_path)? {
+            Some(current) => current.generation.saturating_add(1),
+            None => 1,
+        };
+        let mut rotated = generate_local_admin_token(generation)?;
         rotated.rotated_at = Some(now_rfc3339()?);
         write_local_admin_token_file(&paths.auth_token_path, &rotated)?;
         Ok(rotated)
@@ -361,6 +356,29 @@ mod tests {
 
         assert_eq!(rotated.generation, first.generation + 1);
         assert_ne!(rotated.token, first.token);
+        assert_eq!(
+            load_local_admin_token(&paths).expect("rotated token should load"),
+            rotated
+        );
+    }
+
+    #[test]
+    fn offline_rotation_initializes_missing_token_as_explicit_rotation() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_paths(temp.path());
+
+        let rotated =
+            rotate_local_admin_token_offline(&paths).expect("offline rotation should succeed");
+
+        assert_eq!(rotated.generation, 1);
+        assert!(
+            rotated.rotated_at.is_some(),
+            "explicit offline rotation must populate rotated_at even without a prior first boot"
+        );
+        assert!(
+            rotated.rotation_is_fresh(OffsetDateTime::now_utc(), time::Duration::days(30)),
+            "freshly initialized rotation must pass the public bind freshness gate"
+        );
         assert_eq!(
             load_local_admin_token(&paths).expect("rotated token should load"),
             rotated

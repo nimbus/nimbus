@@ -24,12 +24,13 @@ extension!(
         "ext:runtime/01_errors.js" = "src/runtime/bootstrap/js/01_errors.js",
         "ext:runtime/98_global_scope_shared.js" =
             "src/runtime/bootstrap/js/98_global_scope_shared.js",
-        "ext:nimbus_node22/perf_hooks_impl.js" = "src/runtime/bootstrap/js/perf_hooks.js",
         "ext:nimbus_node22/internal_bootstrap.js" =
             "src/runtime/bootstrap/js/node22_internal_bootstrap.js",
         "ext:nimbus_node22/runtime_bootstrap.js" =
             "src/runtime/bootstrap/js/node22_runtime_bootstrap.js"
     ],
+    lazy_loaded_esm =
+        ["ext:nimbus_node22/perf_hooks_impl.js" = "src/runtime/bootstrap/js/perf_hooks.js"],
 );
 
 pub(crate) fn node22_runtime_bootstrap_extension() -> Extension {

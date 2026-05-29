@@ -11,6 +11,16 @@ import { core } from "ext:core/mod.js";
 import { EldHistogram } from "ext:core/ops";
 
 const {
+  performance,
+  PerformanceEntry,
+  PerformanceMark,
+  PerformanceMeasure,
+  PerformanceObserver: WebPerformanceObserver,
+  PerformanceObserverEntryList,
+  PerformanceResourceTiming,
+} = core.loadExtScript("ext:deno_web/15_performance.js");
+
+const {
   ERR_ILLEGAL_CONSTRUCTOR,
   ERR_INVALID_ARG_TYPE,
   ERR_INVALID_ARG_VALUE,
@@ -26,17 +36,8 @@ const {
   customInspectSymbol,
   kEmptyObject,
 } = core.loadExtScript("ext:deno_node/internal/util.mjs");
-const { inspect } = core.loadExtScript("ext:deno_node/internal/util/inspect.mjs");
-
-const {
-  performance,
-  PerformanceEntry,
-  PerformanceMark,
-  PerformanceMeasure,
-  PerformanceObserver: WebPerformanceObserver,
-  PerformanceObserverEntryList,
-  PerformanceResourceTiming,
-} = core.loadExtScript("ext:deno_web/15_performance.js");
+const { inspect } =
+  core.loadExtScript("ext:deno_node/internal/util/inspect.mjs");
 
 const constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_NODE: 0,

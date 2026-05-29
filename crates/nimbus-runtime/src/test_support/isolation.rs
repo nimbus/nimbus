@@ -1,7 +1,9 @@
 use std::fs::OpenOptions;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::IsolatedRuntimeTestCase;
 
@@ -55,15 +57,25 @@ fn acquire_runtime_suite_subprocess_lock() -> RuntimeSuiteSubprocessLockGuard {
 pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeTestCase) {
     let _guard = acquire_runtime_suite_lock();
     let _subprocess_guard = acquire_runtime_suite_subprocess_lock();
+    let tmp_dir = create_runtime_subprocess_tmp_dir(case);
     let output = std::process::Command::new(
         std::env::current_exe().expect("current test binary path should resolve"),
     )
+    .current_dir(env!("CARGO_MANIFEST_DIR"))
+    .env("RUST_TEST_THREADS", "1")
+    .env("TERM", "xterm-256color")
+    .env("TMPDIR", &tmp_dir)
+    .env("TEMP", &tmp_dir)
+    .env("TMP", &tmp_dir)
+    .env_remove("NODE_OPTIONS")
+    .env_remove("NODE_TLS_REJECT_UNAUTHORIZED")
     .arg("--ignored")
     .arg("--exact")
     .arg(case.subprocess_test_name())
     .arg("--nocapture")
     .output()
     .expect("isolated runtime test subprocess should launch");
+    let _ = std::fs::remove_dir_all(&tmp_dir);
     assert!(
         output.status.success(),
         "{} (exit status: {})\nstdout:\n{}\nstderr:\n{}",
@@ -72,6 +84,34 @@ pub(crate) fn run_v8_sensitive_runtime_test_in_subprocess(case: IsolatedRuntimeT
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+}
+
+fn create_runtime_subprocess_tmp_dir(case: IsolatedRuntimeTestCase) -> PathBuf {
+    let mut dir = std::env::temp_dir();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after Unix epoch")
+        .as_nanos();
+    dir.push(format!(
+        "nimbus-runtime-subprocess-{}-{}-{timestamp}",
+        std::process::id(),
+        sanitize_tmp_component(case.metadata().id())
+    ));
+    std::fs::create_dir_all(&dir).expect("runtime subprocess tmp dir should be created");
+    dir
+}
+
+fn sanitize_tmp_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 pub(crate) struct SnapshotResetTestLockGuard {
