@@ -28,7 +28,7 @@ use extenddb_core::expression::{
     tokenize_for, validate_no_reserved_words,
 };
 use extenddb_core::limits::LimitsConfig;
-use extenddb_core::types::{AttributeValue, Item};
+use extenddb_core::types::{AttributeValue, Item, KeySchemaElement};
 
 // Re-export the upstream evaluators so handlers import everything expression
 // from one place. These take the parsed AST + an `Item` + the `ExpressionMaps`.
@@ -186,6 +186,120 @@ pub fn apply_update_to_item(
     let actions = parse_update_expression(update, limits)?;
     let maps = build_maps(names, values);
     apply_update(&actions, item, &maps)
+}
+
+/// Reject an `UpdateExpression` that targets a key attribute (DynamoDB forbids
+/// mutating the partition/sort key).
+///
+/// # Errors
+/// `ValidationException` naming the key attribute when an action's top-level
+/// path resolves to a key attribute.
+pub fn reject_key_updates(
+    actions: &[UpdateAction],
+    key_schema: &[KeySchemaElement],
+    maps: &ExpressionMaps,
+) -> Result<(), DynamoDbError> {
+    for action in actions {
+        if let Some(PathElement::Attribute(name)) = action_path(action).first() {
+            let resolved = match name.strip_prefix('#') {
+                Some(reference) => maps.resolve_name(reference)?,
+                None => name.as_str(),
+            };
+            if let Some(element) = key_schema
+                .iter()
+                .find(|element| element.attribute_name == resolved)
+            {
+                return Err(DynamoDbError::ValidationException(format!(
+                    "One or more parameter values were invalid: Cannot update attribute {}. \
+                     This attribute is part of the key",
+                    element.attribute_name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The attributes an update touched, for `ReturnValues=UPDATED_OLD`/`UPDATED_NEW`:
+/// the top-level attribute of each action path (resolving `#name`), with nested
+/// paths leaf-wrapped (`a.b.c` → `{a:{b:{c: value}}}`), read from `item`.
+#[must_use]
+pub fn updated_attributes(item: &Item, actions: &[UpdateAction], maps: &ExpressionMaps) -> Item {
+    let mut result = Item::new();
+    for action in actions {
+        let path = action_path(action);
+        let Some(PathElement::Attribute(name)) = path.first() else {
+            continue;
+        };
+        let top = resolve_attr_name(name, maps);
+        if path.len() == 1 {
+            if let Some(value) = item.get(&top) {
+                result.insert(top, value.clone());
+            }
+            continue;
+        }
+        let Some(top_value) = item.get(&top) else {
+            continue;
+        };
+        if let Some(leaf) = resolve_path_value(top_value, &path[1..], maps) {
+            result.insert(top, wrap_leaf_in_path(&path[1..], &leaf, maps));
+        }
+    }
+    result
+}
+
+fn action_path(action: &UpdateAction) -> &[PathElement] {
+    match action {
+        UpdateAction::Set { path, .. }
+        | UpdateAction::Remove { path }
+        | UpdateAction::Add { path, .. }
+        | UpdateAction::Delete { path, .. } => path,
+    }
+}
+
+fn resolve_attr_name(name: &str, maps: &ExpressionMaps) -> String {
+    name.strip_prefix('#')
+        .and_then(|reference| maps.names.get(reference).map(String::as_str))
+        .unwrap_or(name)
+        .to_owned()
+}
+
+fn resolve_path_value(
+    value: &AttributeValue,
+    path: &[PathElement],
+    maps: &ExpressionMaps,
+) -> Option<AttributeValue> {
+    if path.is_empty() {
+        return Some(value.clone());
+    }
+    match (&path[0], value) {
+        (PathElement::Attribute(name), AttributeValue::M(map)) => map
+            .get(&resolve_attr_name(name, maps))
+            .and_then(|inner| resolve_path_value(inner, &path[1..], maps)),
+        (PathElement::Index(index), AttributeValue::L(list)) => list
+            .get(*index)
+            .and_then(|inner| resolve_path_value(inner, &path[1..], maps)),
+        _ => None,
+    }
+}
+
+fn wrap_leaf_in_path(
+    path: &[PathElement],
+    leaf: &AttributeValue,
+    maps: &ExpressionMaps,
+) -> AttributeValue {
+    if path.is_empty() {
+        return leaf.clone();
+    }
+    let inner = wrap_leaf_in_path(&path[1..], leaf, maps);
+    match &path[0] {
+        PathElement::Attribute(name) => {
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(resolve_attr_name(name, maps), inner);
+            AttributeValue::M(map)
+        }
+        PathElement::Index(_) => AttributeValue::L(vec![inner]),
+    }
 }
 
 /// Parse and apply a `ProjectionExpression` to `item`, returning the projected

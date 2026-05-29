@@ -194,6 +194,9 @@ fn route(
         "DeleteItem" => run(request, |input| {
             item::delete_item(ctx.service, context, input)
         }),
+        "UpdateItem" => run(request, |input| {
+            item::update_item(ctx.service, context, input)
+        }),
         other => wire::render_error(&DynamoDbError::InternalServerError(format!(
             "{other} is not yet implemented"
         ))),
