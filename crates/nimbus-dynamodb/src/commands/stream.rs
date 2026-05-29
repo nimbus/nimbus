@@ -18,6 +18,7 @@ use extenddb_core::types::{
     GetShardIteratorInput, GetShardIteratorOutput, Item, ListStreamsInput, ListStreamsOutput,
     SequenceNumberRange, Shard, ShardIteratorType, StreamDescription, StreamEventName,
     StreamRecord, StreamRecordData, StreamStatus, StreamSummary, StreamViewType, TableDescription,
+    UserIdentity,
 };
 use nimbus_core::{DocumentId, StructuredQuery, TableName};
 use nimbus_engine::Service;
@@ -41,6 +42,18 @@ struct StoredEvent {
     old_image: Option<Map<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     new_image: Option<Map<String, Value>>,
+    /// Set for service-originated changes (TTL deletions carry the DynamoDB
+    /// service principal — D6.2). Absent for ordinary client writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user_identity: Option<UserIdentity>,
+}
+
+/// The `userIdentity` DynamoDB attaches to a TTL-originated REMOVE record.
+pub(crate) fn ttl_user_identity() -> UserIdentity {
+    UserIdentity {
+        identity_type: "Service".to_owned(),
+        principal_id: "dynamodb.amazonaws.com".to_owned(),
+    }
 }
 
 /// Reserved prefix for a table's per-stream event store (one doc per event,
@@ -179,6 +192,18 @@ fn event_name_from_str(value: &str) -> StreamEventName {
     }
 }
 
+/// A change to capture on a table's stream. Bundles the per-event inputs so the
+/// capture entrypoint stays a small, readable call.
+pub(crate) struct ChangeEvent<'a> {
+    pub event_name: StreamEventName,
+    pub keys: &'a Item,
+    pub old_image: Option<&'a Item>,
+    pub new_image: Option<&'a Item>,
+    /// Set for service-originated changes (TTL deletions); `None` for ordinary
+    /// client writes.
+    pub user_identity: Option<UserIdentity>,
+}
+
 /// Capture a change event for `table_name` if it has a stream enabled
 /// (otherwise a no-op). Called by the write handlers after a successful
 /// mutation. Sequence numbers are assigned from the persistent high-water
@@ -193,10 +218,7 @@ pub(crate) fn capture_event(
     service: &Arc<Service>,
     context: &TenantIsolationContext,
     table_name: &str,
-    event_name: StreamEventName,
-    keys: &Item,
-    old_image: Option<&Item>,
-    new_image: Option<&Item>,
+    change: ChangeEvent<'_>,
 ) -> Result<(), DynamoDbError> {
     let description = control_plane::load_table_description(service, context, table_name)?;
     if !description
@@ -210,10 +232,11 @@ pub(crate) fn capture_event(
     let event = StoredEvent {
         seq,
         created: epoch_seconds(),
-        event_name: event_name_str(event_name).to_owned(),
-        keys: item_to_fields(keys)?,
-        old_image: old_image.map(item_to_fields).transpose()?,
-        new_image: new_image.map(item_to_fields).transpose()?,
+        event_name: event_name_str(change.event_name).to_owned(),
+        keys: item_to_fields(change.keys)?,
+        old_image: change.old_image.map(item_to_fields).transpose()?,
+        new_image: change.new_image.map(item_to_fields).transpose()?,
+        user_identity: change.user_identity,
     };
     let fields = match serde_json::to_value(&event) {
         Ok(Value::Object(map)) => map,
@@ -458,7 +481,7 @@ fn shape_record(
             size_bytes: 0,
             stream_view_type: view_type,
         },
-        user_identity: None,
+        user_identity: event.user_identity.clone(),
     })
 }
 
@@ -1123,6 +1146,7 @@ mod tests {
                     .unwrap()
                     .clone(),
             ),
+            user_identity: None,
         };
         let Value::Object(fields) = serde_json::to_value(&event).unwrap() else {
             panic!("event serializes to an object");

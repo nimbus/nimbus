@@ -216,6 +216,19 @@ pub async fn serve(
         .map_err(|error| std::io::Error::other(error.to_string()))?;
         let dynamodb_service = Arc::clone(&service);
         let dynamodb_access_keys = dynamodb_config.access_keys;
+        // Spawn the background TTL sweeper before the access-key registry is
+        // moved into the listener task (it shares the same registry + service).
+        if let Some(interval) = dynamodb_config.ttl_sweep_interval {
+            let sweeper_service = Arc::clone(&service);
+            let sweeper_keys = Arc::new(dynamodb_access_keys.clone());
+            adapter_handles.push(tokio::spawn(
+                adapters::dynamodb::ttl_sweeper::run_ttl_sweeper(
+                    sweeper_service,
+                    sweeper_keys,
+                    interval,
+                ),
+            ));
+        }
         adapter_handles.push(tokio::spawn(async move {
             adapters::dynamodb::listener::run_listener(
                 dynamodb_listener,
