@@ -372,7 +372,7 @@ node-compat-oracle:
 node-compat-canaries-bootstrap:
 	bash scripts/runtime/node/canaries-bootstrap.sh $(if $(PRESET),--preset "$(PRESET)",)
 
-node-compat-canaries:
+node-compat-canaries: $(UI_DIST_INDEX)
 	@test -n "$(PRESET)" || (echo "set PRESET=application|tooling" && exit 1)
 	bash scripts/runtime/node/canaries-run.sh --preset "$(PRESET)" $(if $(LANE),--lane "$(LANE)",) $(if $(OUTPUT_ROOT),--output-root "$(OUTPUT_ROOT)",)
 
