@@ -254,6 +254,56 @@ pub fn update_item(
     })
 }
 
+/// Store `item` under its primary key (full replace, no condition/ReturnValues).
+/// Shared by BatchWriteItem (D3.2) and TransactWriteItems (D3.4).
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table is absent; `ValidationException`
+/// for an invalid item or missing key.
+pub(crate) fn store_item(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+    item: &Item,
+) -> Result<(), DynamoDbError> {
+    validate_item(item)?;
+    let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+    let id = primary_key_id(item, &key_schema)?;
+    let table = TableName::new(table_name).map_err(map_core_error)?;
+    if read_item(service, context, &table, id.clone())?.is_some() {
+        service
+            .delete_document(context.tenant_id(), table.clone(), id.clone())
+            .map_err(map_core_error)?;
+    }
+    service
+        .insert_document_with_id(context.tenant_id(), table, id, item_to_fields(item)?)
+        .map_err(map_core_error)?;
+    Ok(())
+}
+
+/// Delete the item at `key` (no condition). A no-op if the key is absent.
+/// Shared by BatchWriteItem (D3.2) and TransactWriteItems (D3.4).
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table is absent; `ValidationException`
+/// for a missing key.
+pub(crate) fn remove_item(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+    key: &Item,
+) -> Result<(), DynamoDbError> {
+    let key_schema = control_plane::load_key_schema(service, context, table_name)?;
+    let id = primary_key_id(key, &key_schema)?;
+    let table = TableName::new(table_name).map_err(map_core_error)?;
+    if read_item(service, context, &table, id.clone())?.is_some() {
+        service
+            .delete_document(context.tenant_id(), table, id)
+            .map_err(map_core_error)?;
+    }
+    Ok(())
+}
+
 /// Read a stored item by id, mapping a missing document to `None`.
 pub(crate) fn read_item(
     service: &Arc<Service>,

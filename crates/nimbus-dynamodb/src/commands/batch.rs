@@ -8,18 +8,22 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
-use extenddb_core::types::{BatchGetItemInput, BatchGetItemOutput, Item};
+use extenddb_core::types::{
+    BatchGetItemInput, BatchGetItemOutput, BatchWriteItemInput, BatchWriteItemOutput, Item,
+};
 use nimbus_core::TableName;
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 
 use crate::commands::control_plane;
-use crate::commands::item::{primary_key_id, read_item};
+use crate::commands::item::{primary_key_id, read_item, remove_item, store_item};
 use crate::error::map_core_error;
 use crate::expression::{default_limits, project_item};
 
 /// The DynamoDB per-call key limit for BatchGetItem.
 const MAX_BATCH_GET_KEYS: usize = 100;
+/// The DynamoDB per-call write limit for BatchWriteItem.
+const MAX_BATCH_WRITE_OPS: usize = 25;
 
 /// BatchGetItem: read up to 100 keys across tables, returning a per-table
 /// `Responses` map. Missing items are simply absent. `UnprocessedKeys` is
@@ -81,6 +85,55 @@ pub fn batch_get_item(
         responses,
         unprocessed_keys: HashMap::new(),
         consumed_capacity: None,
+    })
+}
+
+/// BatchWriteItem: apply up to 25 Put/Delete requests across tables. Each
+/// `WriteRequest` must carry exactly one of `PutRequest`/`DeleteRequest`.
+/// `UnprocessedItems` is always empty (the store applies every op; there is no
+/// throttling). Note: unlike TransactWriteItems this is **not** atomic — a
+/// later validation error leaves earlier writes applied (DynamoDB semantics).
+///
+/// # Errors
+/// `ValidationException` for an empty request, more than 25 ops, or a
+/// `WriteRequest` without exactly one of Put/Delete; `ResourceNotFoundException`
+/// if a referenced table is absent.
+pub fn batch_write_item(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    input: BatchWriteItemInput,
+) -> Result<BatchWriteItemOutput, DynamoDbError> {
+    let total_ops: usize = input.request_items.values().map(std::vec::Vec::len).sum();
+    if total_ops == 0 {
+        return Err(DynamoDbError::ValidationException(
+            "BatchWriteItem requires at least one request in RequestItems".to_owned(),
+        ));
+    }
+    if total_ops > MAX_BATCH_WRITE_OPS {
+        return Err(DynamoDbError::ValidationException(
+            "Too many items requested for the BatchWriteItem call".to_owned(),
+        ));
+    }
+
+    for (table_name, requests) in &input.request_items {
+        for request in requests {
+            match (&request.put_request, &request.delete_request) {
+                (Some(put), None) => store_item(service, context, table_name, &put.item)?,
+                (None, Some(delete)) => remove_item(service, context, table_name, &delete.key)?,
+                _ => {
+                    return Err(DynamoDbError::ValidationException(
+                        "Each WriteRequest must contain exactly one of PutRequest or DeleteRequest"
+                            .to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(BatchWriteItemOutput {
+        unprocessed_items: HashMap::new(),
+        consumed_capacity: None,
+        item_collection_metrics: None,
     })
 }
 
@@ -208,6 +261,91 @@ mod tests {
             json!({ "RequestItems": { "Orders": { "Keys": keys } } }),
         )
         .expect_err("over-100 rejected");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    // ---- D3.2: BatchWriteItem ----
+
+    fn read(service: &Arc<Service>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
+        let key: Item = [("pk".to_string(), AttributeValue::S(pk.into()))]
+            .into_iter()
+            .collect();
+        let schema = control_plane::load_key_schema(service, context, "Orders").unwrap();
+        let id = primary_key_id(&key, &schema).unwrap();
+        read_item(service, context, &TableName::new("Orders").unwrap(), id).unwrap()
+    }
+
+    fn batch_write(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        input: serde_json::Value,
+    ) -> Result<extenddb_core::types::BatchWriteItemOutput, DynamoDbError> {
+        batch_write_item(service, context, serde_json::from_value(input).unwrap())
+    }
+
+    #[test]
+    fn batch_write_puts_and_deletes() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(&service, &ctx, "old", "1"); // will be deleted
+        let out = batch_write(
+            &service,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "a"}, "v": {"N": "1"} } } },
+                        { "PutRequest": { "Item": { "pk": {"S": "b"}, "v": {"N": "2"} } } },
+                        { "DeleteRequest": { "Key": { "pk": {"S": "old"} } } }
+                    ]
+                }
+            }),
+        )
+        .expect("batch write");
+        assert!(out.unprocessed_items.is_empty());
+        assert!(read(&service, &ctx, "a").is_some());
+        assert!(read(&service, &ctx, "b").is_some());
+        assert!(read(&service, &ctx, "old").is_none(), "deleted");
+    }
+
+    #[test]
+    fn batch_write_request_with_both_put_and_delete_is_rejected() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        let err = batch_write(
+            &service,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [ {
+                        "PutRequest": { "Item": { "pk": {"S": "a"} } },
+                        "DeleteRequest": { "Key": { "pk": {"S": "a"} } }
+                    } ]
+                }
+            }),
+        )
+        .expect_err("both put and delete rejected");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    #[test]
+    fn batch_write_over_25_ops_is_validation_error() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        let ops: Vec<serde_json::Value> = (0..26)
+            .map(|i| json!({ "PutRequest": { "Item": { "pk": {"S": format!("k{i}")} } } }))
+            .collect();
+        let err = batch_write(&service, &ctx, json!({ "RequestItems": { "Orders": ops } }))
+            .expect_err("over-25 rejected");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    #[test]
+    fn batch_write_empty_request_is_validation_error() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        let err =
+            batch_write(&service, &ctx, json!({ "RequestItems": {} })).expect_err("empty rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 }
