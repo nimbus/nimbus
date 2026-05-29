@@ -25,5 +25,7 @@ pub use attribute_value::{
 };
 pub use config::DynamoDbConfig;
 pub use dispatch::{KNOWN_OPERATIONS, dispatch, is_known_operation};
-pub use key::{decode_key, encode_key, is_reserved_attribute_name, validate_attribute_names};
+pub use key::{
+    decode_key, encode_key, is_reserved_attribute_name, sortable_key, validate_attribute_names,
+};
 pub use wire::{WireResponse, render_error, render_success};

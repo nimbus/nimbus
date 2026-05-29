@@ -6063,6 +6063,7 @@ name = "nimbus-dynamodb"
 version = "0.1.33"
 dependencies = [
  "base64 0.22.1",
+ "bigdecimal",
  "extenddb-core",
  "hex",
  "hmac 0.12.1",

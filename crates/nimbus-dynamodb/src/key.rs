@@ -21,8 +21,12 @@
 //! Nimbus's hard 1,500-byte `DocumentId` cap, so the combined raw key is bounded
 //! to ~1,100 B and oversize keys are rejected with `ValidationException`.
 
+use std::str::FromStr;
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use bigdecimal::BigDecimal;
+use bigdecimal::num_bigint::Sign;
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{AttributeValue, Item};
 
@@ -99,6 +103,96 @@ fn decode_segment(segment: &str) -> Result<AttributeValue, DynamoDbError> {
 
 fn invalid_key(reason: &str) -> DynamoDbError {
     DynamoDbError::ValidationException(format!("The provided key is invalid: {reason}"))
+}
+
+/// Project a key/index attribute into an **order-preserving** sortable string for
+/// the `_pk`/`_sk` (and per-index) fields, so range conditions compare with
+/// DynamoDB's type semantics even though Nimbus's index/compare path is `f64`
+/// (lossy for big `N`) and cannot index binary:
+///
+/// - `S` → the raw UTF-8 string (byte-wise == DynamoDB string ordering).
+/// - `B` → fixed-case lowercase hex (order-preserving for unsigned byte-wise).
+/// - `N` → a full-precision lexicographically-sortable decimal encoding (below);
+///   lexicographic order equals numeric order at the full 38 significant digits,
+///   and numerically-equal numbers map to identical strings.
+///
+/// # Errors
+/// `ValidationException` if the attribute is not `S`/`N`/`B`, or for an `N` whose
+/// magnitude/precision is outside DynamoDB's supported range.
+pub fn sortable_key(value: &AttributeValue) -> Result<String, DynamoDbError> {
+    match value {
+        AttributeValue::S(s) => Ok(s.clone()),
+        AttributeValue::B(b) => Ok(hex_lower(b)),
+        AttributeValue::N(n) => sortable_number(n),
+        _ => Err(DynamoDbError::ValidationException(
+            "Key and index attributes must be of type String (S), Number (N), or Binary (B)"
+                .to_owned(),
+        )),
+    }
+}
+
+/// Lexicographically-sortable encoding of a DynamoDB `N` decimal.
+///
+/// Form: a 1-char class tag (`1` negative < `5` zero < `7` positive), then a
+/// 3-digit biased adjusted-exponent, then the 38-digit zero-padded significant
+/// mantissa. For negatives the exponent is inverted (`999 - biased`) and the
+/// mantissa 9's-complemented, so larger-magnitude negatives sort first. Fixed
+/// mantissa width removes the variable-length prefix hazard. Numerically-equal
+/// inputs normalize to the same `(sign, mantissa, exponent)` and thus the same
+/// string.
+fn sortable_number(repr: &str) -> Result<String, DynamoDbError> {
+    const EXP_BIAS: i64 = 200; // adjusted exponent in [-130, 125] -> biased [70, 325]
+    const MANTISSA_WIDTH: usize = 38; // DynamoDB allows up to 38 significant digits
+
+    let decimal = BigDecimal::from_str(repr).map_err(|_| invalid_number(repr))?;
+    let (bigint, scale) = decimal.normalized().as_bigint_and_exponent();
+    if bigint.sign() == Sign::NoSign {
+        return Ok("5".to_owned()); // zero sorts between negatives and positives
+    }
+
+    let digits = bigint.magnitude().to_string(); // significant digits, no sign/leading/trailing zeros
+    if digits.len() > MANTISSA_WIDTH {
+        return Err(number_out_of_range(repr));
+    }
+    // Adjusted exponent: power of ten of the most-significant digit.
+    let exponent = (digits.len() as i64 - 1) - scale;
+    let biased = exponent + EXP_BIAS;
+    if !(0..=999).contains(&biased) {
+        return Err(number_out_of_range(repr));
+    }
+    let mantissa = format!("{digits:0<MANTISSA_WIDTH$}"); // right-pad with '0' to fixed width
+
+    Ok(if bigint.sign() == Sign::Minus {
+        let inverted_exponent = 999 - biased;
+        let inverted_mantissa: String = mantissa
+            .bytes()
+            .map(|b| (b'9' + b'0' - b) as char)
+            .collect();
+        format!("1{inverted_exponent:03}{inverted_mantissa}")
+    } else {
+        format!("7{biased:03}{mantissa}")
+    })
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from_digit(u32::from(byte >> 4), 16).expect("nibble < 16"));
+        out.push(char::from_digit(u32::from(byte & 0x0f), 16).expect("nibble < 16"));
+    }
+    out
+}
+
+fn invalid_number(repr: &str) -> DynamoDbError {
+    DynamoDbError::ValidationException(format!(
+        "The parameter cannot be converted to a numeric value: {repr}"
+    ))
+}
+
+fn number_out_of_range(repr: &str) -> DynamoDbError {
+    DynamoDbError::ValidationException(format!(
+        "Number magnitude or precision is outside the supported range: {repr}"
+    ))
 }
 
 /// Attribute names Nimbus reserves internally; incoming items may not use them.
@@ -202,5 +296,152 @@ mod tests {
         let mut ok: Item = BTreeMap::new();
         ok.insert("userId".to_string(), AttributeValue::S("x".into()));
         assert!(validate_attribute_names(&ok).is_ok());
+    }
+
+    // -------- sortable key projection (DDB-DIV-002) --------
+
+    /// The trust-critical invariant: sorting numbers by their sortable-key string
+    /// (lexicographically) yields the exact same order as sorting them
+    /// numerically. A failure here silently corrupts DynamoDB range queries.
+    #[test]
+    fn sortable_number_order_matches_numeric_order() {
+        let mut samples: Vec<String> = vec![
+            "-99999999999999999999999999999999999999".into(),
+            "-1e20".into(),
+            "-1000000".into(),
+            "-1000".into(),
+            "-100".into(),
+            "-99".into(),
+            "-10".into(),
+            "-9.9".into(),
+            "-1.23".into(),
+            "-1.2".into(),
+            "-1".into(),
+            "-0.5".into(),
+            "-0.05".into(),
+            "-0.001".into(),
+            "-1e-20".into(),
+            "0".into(),
+            "1e-20".into(),
+            "0.001".into(),
+            "0.05".into(),
+            "0.5".into(),
+            "1".into(),
+            "1.2".into(),
+            "1.23".into(),
+            "9".into(),
+            "9.9".into(),
+            "10".into(),
+            "99".into(),
+            "100".into(),
+            "1000".into(),
+            "1000000".into(),
+            "1e20".into(),
+            "3.141592653589793238462643383279502884".into(),
+            "99999999999999999999999999999999999999".into(),
+        ];
+        // Deterministic sweep over integers and a fractional family broadens coverage.
+        for i in -120i64..=120 {
+            samples.push(i.to_string());
+            samples.push(format!("{i}.5"));
+            samples.push(format!("0.{:03}", i.unsigned_abs() % 1000));
+        }
+
+        let mut pairs: Vec<(String, BigDecimal)> = samples
+            .iter()
+            .map(|s| {
+                (
+                    sortable_number(s).expect("encodes"),
+                    BigDecimal::from_str(s).expect("parses"),
+                )
+            })
+            .collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0)); // lexicographic by sortable key
+
+        for window in pairs.windows(2) {
+            assert!(
+                window[0].1 <= window[1].1,
+                "lexicographic key order must equal numeric order, but {} sorted before {}",
+                window[0].1,
+                window[1].1,
+            );
+        }
+    }
+
+    #[test]
+    fn sortable_number_equal_for_numerically_equal_inputs() {
+        // Trailing zeros, exponent form, and integer/decimal forms of the same
+        // value must map to one key (equality/dedup correctness).
+        for group in [
+            vec!["1", "1.0", "1.00", "1e0", "10e-1"],
+            vec!["0", "0.0", "0.000", "0e9"],
+            vec!["-2.5", "-2.50", "-25e-1"],
+            vec!["120", "1.2e2", "120.000"],
+        ] {
+            let keys: Vec<String> = group.iter().map(|s| sortable_number(s).unwrap()).collect();
+            assert!(
+                keys.windows(2).all(|w| w[0] == w[1]),
+                "numerically-equal inputs {group:?} must share one sortable key, got {keys:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sortable_string_is_raw_and_byte_wise() {
+        assert_eq!(
+            sortable_key(&AttributeValue::S("abc".into())).unwrap(),
+            "abc"
+        );
+        let mut keys = ["banana", "apple", "cherry"]
+            .map(|s| sortable_key(&AttributeValue::S(s.into())).unwrap());
+        keys.sort();
+        assert_eq!(keys, ["apple", "banana", "cherry"]);
+    }
+
+    #[test]
+    fn sortable_binary_is_order_preserving_lowercase_hex() {
+        assert_eq!(
+            sortable_key(&AttributeValue::B(vec![0x00, 0x0a, 0xff])).unwrap(),
+            "000aff"
+        );
+        // Byte-wise order is preserved by the hex projection.
+        let mut keyed: Vec<(String, Vec<u8>)> = [
+            vec![0xff],
+            vec![0x00],
+            vec![0x10],
+            vec![0x0f],
+            vec![0x00, 0x01],
+        ]
+        .into_iter()
+        .map(|b| (sortable_key(&AttributeValue::B(b.clone())).unwrap(), b))
+        .collect();
+        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+        let ordered: Vec<Vec<u8>> = keyed.into_iter().map(|(_, b)| b).collect();
+        assert_eq!(
+            ordered,
+            vec![
+                vec![0x00],
+                vec![0x00, 0x01],
+                vec![0x0f],
+                vec![0x10],
+                vec![0xff]
+            ]
+        );
+    }
+
+    #[test]
+    fn sortable_key_rejects_non_scalar() {
+        assert!(matches!(
+            sortable_key(&AttributeValue::Bool(true)),
+            Err(DynamoDbError::ValidationException(_))
+        ));
+    }
+
+    #[test]
+    fn sortable_number_negatives_sort_before_zero_before_positives() {
+        let neg = sortable_number("-1").unwrap();
+        let zero = sortable_number("0").unwrap();
+        let pos = sortable_number("1").unwrap();
+        assert!(neg < zero && zero < pos, "neg={neg} zero={zero} pos={pos}");
     }
 }
