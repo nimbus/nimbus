@@ -446,6 +446,116 @@ async fn update_item_through_official_sdk() {
     );
 }
 
+/// Create a composite-key table "Events" (pk String HASH, sk Number RANGE).
+async fn create_events(client: &Client) {
+    client
+        .create_table()
+        .table_name("Events")
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name("pk")
+                .key_type(KeyType::Hash)
+                .build()
+                .expect("hash key"),
+        )
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name("sk")
+                .key_type(KeyType::Range)
+                .build()
+                .expect("range key"),
+        )
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("pk")
+                .attribute_type(ScalarAttributeType::S)
+                .build()
+                .expect("pk def"),
+        )
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("sk")
+                .attribute_type(ScalarAttributeType::N)
+                .build()
+                .expect("sk def"),
+        )
+        .billing_mode(BillingMode::PayPerRequest)
+        .send()
+        .await
+        .expect("create Events");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_through_official_sdk() {
+    // Query end-to-end: a sort-key range with type-correct numeric ordering and
+    // Limit/ExclusiveStartKey pagination, all through the official SDK.
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_events(&client).await;
+    for sk in ["2", "10", "100"] {
+        client
+            .put_item()
+            .table_name("Events")
+            .item("pk", AttributeValue::S("p1".into()))
+            .item("sk", AttributeValue::N(sk.into()))
+            .send()
+            .await
+            .expect("put");
+    }
+    // A different partition that must not appear.
+    client
+        .put_item()
+        .table_name("Events")
+        .item("pk", AttributeValue::S("other".into()))
+        .item("sk", AttributeValue::N("5".into()))
+        .send()
+        .await
+        .expect("put other");
+
+    let sks = |out: &aws_sdk_dynamodb::operation::query::QueryOutput| -> Vec<String> {
+        out.items()
+            .iter()
+            .map(|item| item.get("sk").unwrap().as_n().unwrap().clone())
+            .collect()
+    };
+
+    // sk > 9 selects 10 and 100 (numeric, not lexicographic), in order.
+    let ranged = client
+        .query()
+        .table_name("Events")
+        .key_condition_expression("pk = :p AND sk > :min")
+        .expression_attribute_values(":p", AttributeValue::S("p1".into()))
+        .expression_attribute_values(":min", AttributeValue::N("9".into()))
+        .send()
+        .await
+        .expect("query range");
+    assert_eq!(sks(&ranged), vec!["10", "100"]);
+
+    // Paginate the full partition with Limit=2.
+    let page1 = client
+        .query()
+        .table_name("Events")
+        .key_condition_expression("pk = :p")
+        .expression_attribute_values(":p", AttributeValue::S("p1".into()))
+        .limit(2)
+        .send()
+        .await
+        .expect("page1");
+    assert_eq!(sks(&page1), vec!["2", "10"]);
+    let cursor = page1.last_evaluated_key().expect("page truncated").clone();
+    let page2 = client
+        .query()
+        .table_name("Events")
+        .key_condition_expression("pk = :p")
+        .expression_attribute_values(":p", AttributeValue::S("p1".into()))
+        .set_exclusive_start_key(Some(cursor))
+        .send()
+        .await
+        .expect("page2");
+    assert_eq!(sks(&page2), vec!["100"]);
+    assert!(page2.last_evaluated_key().is_none(), "last page");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented

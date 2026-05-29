@@ -6,3 +6,4 @@
 pub mod control_plane;
 pub mod discovery;
 pub mod item;
+pub mod query;
