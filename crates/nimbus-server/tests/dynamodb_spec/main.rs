@@ -39,6 +39,9 @@ struct Fixture {
     addr: SocketAddr,
     _temp: tempfile::TempDir,
     listener: tokio::task::JoinHandle<()>,
+    /// Retained engine handle so tests can configure persisted state (e.g. the
+    /// D7.3 access-key store) on the same `Service` the listener serves.
+    service: Arc<Service>,
 }
 
 impl Drop for Fixture {
@@ -102,11 +105,12 @@ async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(run_listener(listener, service, registry));
+    let handle = tokio::spawn(run_listener(listener, Arc::clone(&service), registry));
     Fixture {
         addr,
         _temp: temp,
         listener: handle,
+        service,
     }
 }
 
@@ -129,11 +133,30 @@ async fn fixture_strict(secret: &str) -> Fixture {
         .with_mode(AuthMode::Strict);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(run_listener(listener, service, registry));
+    let handle = tokio::spawn(run_listener(listener, Arc::clone(&service), registry));
     Fixture {
         addr,
         _temp: temp,
         listener: handle,
+        service,
+    }
+}
+
+/// Boot a strict-mode adapter with an **empty** static registry, so access keys
+/// must come from the persisted store (D7.3). Returns the fixture; configure
+/// keys via `fx.service` before signing requests.
+async fn fixture_strict_store_only() -> Fixture {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let registry = AccessKeyRegistry::new().with_mode(AuthMode::Strict);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let handle = tokio::spawn(run_listener(listener, Arc::clone(&service), registry));
+    Fixture {
+        addr,
+        _temp: temp,
+        listener: handle,
+        service,
     }
 }
 
@@ -1752,4 +1775,41 @@ async fn strict_mode_still_isolates_tenants() {
     create_orders(&client).await;
     let listed = client.list_tables().send().await.expect("list");
     assert!(listed.table_names().contains(&"Orders".to_string()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn persisted_signed_key_authenticates_and_rotates_in_strict_mode() {
+    // D7.3: a key configured only in the persisted store (empty static registry)
+    // authenticates under strict SigV4, and rotating its secret immediately
+    // invalidates signatures made with the old secret — no restart.
+    let fx = fixture_strict_store_only().await;
+    nimbus_dynamodb::put_access_key(
+        &fx.service,
+        ACCESS_KEY,
+        &TenantId::new(TENANT).expect("tenant"),
+        Some(CLIENT_SECRET.to_owned()),
+        Some("us-east-1".to_owned()),
+    )
+    .expect("configure persisted key");
+
+    // The client signs with CLIENT_SECRET, matching the stored secret → verifies.
+    let created = create_orders(&fx.client(ACCESS_KEY)).await;
+    assert_eq!(
+        created.table_description().and_then(|t| t.table_name()),
+        Some("Orders")
+    );
+
+    // Rotate the stored secret; the client still signs with the old one → reject.
+    nimbus_dynamodb::rotate_secret(&fx.service, ACCESS_KEY, "rotated-secret").expect("rotate");
+    let err = fx
+        .client(ACCESS_KEY)
+        .list_tables()
+        .send()
+        .await
+        .expect_err("a signature made with the rotated-away secret must be rejected");
+    assert_eq!(
+        err.into_service_error().code(),
+        Some("InvalidSignatureException"),
+        "after rotation the old secret no longer verifies"
+    );
 }

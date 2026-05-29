@@ -21,6 +21,7 @@ pub mod dispatch;
 pub mod error;
 pub mod expression;
 pub mod key;
+pub mod key_management;
 pub mod tenant;
 pub mod wire;
 
@@ -36,5 +37,8 @@ pub use config::DynamoDbConfig;
 pub use dispatch::{DispatchContext, KNOWN_OPERATIONS, dispatch, is_known_operation};
 pub use key::{
     decode_key, encode_key, is_reserved_attribute_name, sortable_key, validate_attribute_names,
+};
+pub use key_management::{
+    StoredAccessKey, delete_access_key, list_access_keys, put_access_key, rotate_secret,
 };
 pub use wire::{WireResponse, render_error, render_success};
