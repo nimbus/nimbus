@@ -226,6 +226,17 @@
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
+      "id": "node22_networking_dgram_internal_gap_fixture",
+      "test_name": "node22_networking_dgram_internal_gap_fixture",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Deno UDP internal gap: official dgram fd/handle, blocklist, send-queue, and socket-buffer fixtures require Node UDPWrap internals not exposed by the embedded Deno lane",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 715,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
       "id": "node22_networking_dgram_local_patch_regression_batch_fixture",
       "test_name": "node22_networking_dgram_local_patch_regression_batch_fixture",
       "lane": "node22",
@@ -233,7 +244,62 @@
       "classification": "local_patch_regression",
       "reason": "diagnostic batch for local Deno UDP owner patches",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
-      "source_line": 715,
+      "source_line": 726,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node22_networking_crypto_gated_helper_gap_fixture",
+      "test_name": "node22_networking_crypto_gated_helper_gap_fixture",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Deno TLS/http2 helper gap: official HTTPS certificate verification and http2 packed-settings buffer internals diverge from Node in the embedded lane",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 747,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node22_networking_http2_compat_request_response_gap_fixture",
+      "test_name": "node22_networking_http2_compat_request_response_gap_fixture",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Deno http2 compat gap: Http2ServerRequest.trailers currently reports an empty object where Node expects null before trailers arrive",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 776,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node22_networking_https_agent_session_gap_fixture",
+      "test_name": "node22_networking_https_agent_session_gap_fixture",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Deno HTTPS agent/session gap: SNI propagation and globalAgent socket bookkeeping do not yet match Node's agent internals",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 813,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node22_networking_https_tls_session_batch_fixture_subprocess",
+      "test_name": "node22_networking_https_tls_session_batch_fixture_subprocess",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "runs in a subprocess to isolate TLS session reuse from parallel runtime fixture pressure",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 863,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node22_networking_https_tls_session_gap_fixture",
+      "test_name": "node22_networking_https_tls_session_gap_fixture",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Deno TLS session gap: Node's enableTicketKeyCallback renewal hook is not exposed by the embedded TLS context",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 873,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {
@@ -244,7 +310,106 @@
       "classification": "watchpoint",
       "reason": "Pinned Node20 legacy-lane divergence: official v20.20.2 test-async-local-storage-exit-does-not-leak.js still expects the old JavaScript AsyncLocalStorage _propagate hook, while the current runtime matches the newer Node22/Node24 implementation shape",
       "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
-      "source_line": 853,
+      "source_line": 919,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node22_loader_context_async_hooks_resource_gap_batch_fixture",
+      "test_name": "node22_loader_context_async_hooks_resource_gap_batch_fixture",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks AsyncResource gap: Deno internal/async_hooks.ts currently lacks Node-compatible AsyncResource validation, triggerAsyncId(), and selected init hook emissions",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 956,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node20_loader_context_async_hooks_resource_gap_batch_fixture",
+      "test_name": "node20_loader_context_async_hooks_resource_gap_batch_fixture",
+      "lane": "node20",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks AsyncResource gap: Deno internal/async_hooks.ts currently lacks Node-compatible AsyncResource validation, triggerAsyncId(), and selected init hook emissions",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 966,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node24_loader_context_async_hooks_resource_gap_batch_fixture",
+      "test_name": "node24_loader_context_async_hooks_resource_gap_batch_fixture",
+      "lane": "node24",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks AsyncResource gap: Deno internal/async_hooks.ts currently lacks Node-compatible AsyncResource validation, triggerAsyncId(), and selected init hook emissions",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 976,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node22_loader_context_async_hooks_promise_batch_fixture",
+      "test_name": "node22_loader_context_async_hooks_promise_batch_fixture",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks promise gap: Deno internal/async_hooks.ts does not currently enable V8 promise hooks, so promise/await init events are not emitted",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 986,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node20_loader_context_async_hooks_promise_batch_fixture",
+      "test_name": "node20_loader_context_async_hooks_promise_batch_fixture",
+      "lane": "node20",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks promise gap: Deno internal/async_hooks.ts does not currently enable V8 promise hooks, so promise/await init events are not emitted",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 996,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node24_loader_context_async_hooks_promise_batch_fixture",
+      "test_name": "node24_loader_context_async_hooks_promise_batch_fixture",
+      "lane": "node24",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks promise gap: Deno internal/async_hooks.ts does not currently enable V8 promise hooks, so promise/await init events are not emitted",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 1006,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node22_loader_context_async_hooks_promise_core_batch_fixture",
+      "test_name": "node22_loader_context_async_hooks_promise_core_batch_fixture",
+      "lane": "node22",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks promise gap: Deno internal/async_hooks.ts does not currently enable V8 promise hooks, so promise/await init events are not emitted",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 1016,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node20_loader_context_async_hooks_promise_core_batch_fixture",
+      "test_name": "node20_loader_context_async_hooks_promise_core_batch_fixture",
+      "lane": "node20",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks promise gap: Deno internal/async_hooks.ts does not currently enable V8 promise hooks, so promise/await init events are not emitted",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 1026,
+      "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
+    },
+    {
+      "id": "node24_loader_context_async_hooks_promise_core_batch_fixture",
+      "test_name": "node24_loader_context_async_hooks_promise_core_batch_fixture",
+      "lane": "node24",
+      "expectation": "expected_failure",
+      "classification": "watchpoint",
+      "reason": "Pinned Node async_hooks promise gap: Deno internal/async_hooks.ts does not currently enable V8 promise hooks, so promise/await init events are not emitted",
+      "source_path": "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_core.rs",
+      "source_line": 1036,
       "unexpected_pass_action": "remove_ignore_and_promote_or_reclassify_expectation"
     },
     {

@@ -254,9 +254,19 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
         Some(&json!("wait-for-apply"))
     );
 
-    let stats = service
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should read after apply");
+    let stats = wait_for_mutation_journal_stats(
+        &service,
+        &tenant_id,
+        "journal worker should go idle after the awaited query observes applied visibility",
+        |stats| {
+            stats.applied_head == stats.durable_head
+                && stats.apply_lag == 0
+                && stats.queue_depth == 0
+                && stats.pending_response_count == 0
+                && !stats.worker_running
+        },
+    )
+    .await;
     assert!(stats.durable_head.0 >= 1);
     assert_eq!(stats.applied_head, stats.durable_head);
     assert_eq!(stats.apply_lag, 0);
