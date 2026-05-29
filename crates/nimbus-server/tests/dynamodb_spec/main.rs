@@ -923,6 +923,86 @@ async fn transact_write_items_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_secondary_index_query_through_official_sdk() {
+    use aws_sdk_dynamodb::types::{LocalSecondaryIndex, Projection, ProjectionType};
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    let ks = |name: &str, kt: KeyType| {
+        KeySchemaElement::builder()
+            .attribute_name(name)
+            .key_type(kt)
+            .build()
+            .expect("key schema element")
+    };
+    let attr = |name: &str, t: ScalarAttributeType| {
+        AttributeDefinition::builder()
+            .attribute_name(name)
+            .attribute_type(t)
+            .build()
+            .expect("attribute definition")
+    };
+    client
+        .create_table()
+        .table_name("Tasks")
+        .key_schema(ks("pk", KeyType::Hash))
+        .key_schema(ks("sk", KeyType::Range))
+        .attribute_definitions(attr("pk", ScalarAttributeType::S))
+        .attribute_definitions(attr("sk", ScalarAttributeType::N))
+        .attribute_definitions(attr("prio", ScalarAttributeType::N))
+        .local_secondary_indexes(
+            LocalSecondaryIndex::builder()
+                .index_name("by_priority")
+                .key_schema(ks("pk", KeyType::Hash))
+                .key_schema(ks("prio", KeyType::Range))
+                .projection(
+                    Projection::builder()
+                        .projection_type(ProjectionType::All)
+                        .build(),
+                )
+                .build()
+                .expect("lsi"),
+        )
+        .billing_mode(BillingMode::PayPerRequest)
+        .send()
+        .await
+        .expect("create Tasks with LSI");
+
+    for (sk, prio) in [("1", "30"), ("2", "10"), ("3", "20")] {
+        client
+            .put_item()
+            .table_name("Tasks")
+            .item("pk", AttributeValue::S("p1".into()))
+            .item("sk", AttributeValue::N(sk.into()))
+            .item("prio", AttributeValue::N(prio.into()))
+            .send()
+            .await
+            .expect("put");
+    }
+
+    let out = client
+        .query()
+        .table_name("Tasks")
+        .index_name("by_priority")
+        .key_condition_expression("pk = :p AND prio > :min")
+        .expression_attribute_values(":p", AttributeValue::S("p1".into()))
+        .expression_attribute_values(":min", AttributeValue::N("15".into()))
+        .send()
+        .await
+        .expect("LSI query");
+    let prios: Vec<String> = out
+        .items()
+        .iter()
+        .map(|item| item.get("prio").unwrap().as_n().unwrap().clone())
+        .collect();
+    assert_eq!(
+        prios,
+        vec!["20", "30"],
+        "ordered by the LSI sort key (prio)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
