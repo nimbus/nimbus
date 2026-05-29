@@ -715,6 +715,70 @@ async fn batch_get_item_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_write_item_through_official_sdk() {
+    use aws_sdk_dynamodb::types::{DeleteRequest, PutRequest, WriteRequest};
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+    client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("old".into()))
+        .send()
+        .await
+        .expect("seed");
+
+    let writes = vec![
+        WriteRequest::builder()
+            .put_request(
+                PutRequest::builder()
+                    .item("pk", AttributeValue::S("a".into()))
+                    .build()
+                    .expect("put a"),
+            )
+            .build(),
+        WriteRequest::builder()
+            .delete_request(
+                DeleteRequest::builder()
+                    .key("pk", AttributeValue::S("old".into()))
+                    .build()
+                    .expect("delete old"),
+            )
+            .build(),
+    ];
+    let out = client
+        .batch_write_item()
+        .request_items("Orders", writes)
+        .send()
+        .await
+        .expect("batch_write_item");
+    assert!(
+        out.unprocessed_items()
+            .is_none_or(std::collections::HashMap::is_empty),
+        "store applies every op"
+    );
+
+    // The put landed and the delete removed `old`.
+    let got = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("a".into()))
+        .send()
+        .await
+        .expect("get a");
+    assert!(got.item().is_some());
+    let gone = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("old".into()))
+        .send()
+        .await
+        .expect("get old");
+    assert!(gone.item().is_none(), "old was deleted");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
