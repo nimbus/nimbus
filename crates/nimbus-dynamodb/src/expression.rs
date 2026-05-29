@@ -167,6 +167,27 @@ pub fn check_condition(
     }
 }
 
+/// Parse and apply an `UpdateExpression` to `item` in place — the mutation
+/// UpdateItem (D1.8) performs after the condition gate passes. Actions run in
+/// DynamoDB order (SET, REMOVE, ADD, DELETE); `if_not_exists`, `list_append`,
+/// arithmetic, ADD on numbers/sets, and DELETE on sets are all handled by the
+/// upstream evaluator over the bridged `Item`.
+///
+/// # Errors
+/// `ValidationException` for a malformed/empty expression or an action that
+/// refers to a missing attribute where one is required.
+pub fn apply_update_to_item(
+    update: &str,
+    names: Option<&HashMap<String, String>>,
+    values: Option<&HashMap<String, AttributeValue>>,
+    item: &mut Item,
+    limits: &LimitsConfig,
+) -> Result<(), DynamoDbError> {
+    let actions = parse_update_expression(update, limits)?;
+    let maps = build_maps(names, values);
+    apply_update(&actions, item, &maps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,5 +461,137 @@ mod tests {
             Some(&names),
             &[(":v", AttributeValue::S("alice".into()))]
         ));
+    }
+
+    // ---- D1.3: UpdateExpression integration coverage ----
+
+    /// Apply an UpdateExpression to a fresh `rich_item` and return the result.
+    fn apply(update: &str, vals: &[(&str, AttributeValue)]) -> Item {
+        let limits = default_limits();
+        let vmap = values(vals);
+        let mut item = rich_item();
+        apply_update_to_item(update, None, Some(&vmap), &mut item, &limits)
+            .expect("apply update should succeed");
+        item
+    }
+
+    fn n(v: &str) -> AttributeValue {
+        AttributeValue::N(v.into())
+    }
+
+    #[test]
+    fn update_expression_set_assign_and_arithmetic() {
+        // Plain assignment of a new attribute.
+        let r = apply("SET label = :v", &[(":v", AttributeValue::S("hi".into()))]);
+        assert_eq!(r.get("label"), Some(&AttributeValue::S("hi".into())));
+        // Arithmetic on an existing number: 30 + 5 and 30 - 5.
+        assert_eq!(
+            apply("SET score = score + :i", &[(":i", n("5"))]).get("score"),
+            Some(&n("35"))
+        );
+        assert_eq!(
+            apply("SET score = score - :i", &[(":i", n("5"))]).get("score"),
+            Some(&n("25"))
+        );
+    }
+
+    #[test]
+    fn update_expression_set_if_not_exists() {
+        // Existing attribute is preserved.
+        let r = apply("SET score = if_not_exists(score, :v)", &[(":v", n("99"))]);
+        assert_eq!(
+            r.get("score"),
+            Some(&n("30")),
+            "if_not_exists keeps existing"
+        );
+        // Absent attribute takes the default.
+        let r = apply(
+            "SET label = if_not_exists(label, :v)",
+            &[(":v", AttributeValue::S("default".into()))],
+        );
+        assert_eq!(r.get("label"), Some(&AttributeValue::S("default".into())));
+    }
+
+    #[test]
+    fn update_expression_set_list_append() {
+        let r = apply(
+            "SET nums = list_append(nums, :more)",
+            &[(":more", AttributeValue::L(vec![n("4"), n("5")]))],
+        );
+        assert_eq!(
+            r.get("nums"),
+            Some(&AttributeValue::L(vec![
+                n("1"),
+                n("2"),
+                n("3"),
+                n("4"),
+                n("5")
+            ]))
+        );
+    }
+
+    #[test]
+    fn update_expression_remove() {
+        let r = apply("REMOVE alpha", &[]);
+        assert!(!r.contains_key("alpha"), "REMOVE drops the attribute");
+        assert!(r.contains_key("score"), "other attributes untouched");
+    }
+
+    #[test]
+    fn update_expression_add_numeric_and_set() {
+        // ADD on an existing number increments it.
+        assert_eq!(
+            apply("ADD score :i", &[(":i", n("5"))]).get("score"),
+            Some(&n("35"))
+        );
+        // ADD on an absent number treats the base as 0.
+        assert_eq!(
+            apply("ADD qty :i", &[(":i", n("7"))]).get("qty"),
+            Some(&n("7"))
+        );
+        // ADD on a set unions members.
+        let r = apply(
+            "ADD tags :more",
+            &[(
+                ":more",
+                AttributeValue::SS(["z"].iter().map(|s| (*s).to_string()).collect()),
+            )],
+        );
+        assert_eq!(
+            r.get("tags"),
+            Some(&AttributeValue::SS(
+                ["x", "y", "z"].iter().map(|s| (*s).to_string()).collect()
+            ))
+        );
+    }
+
+    #[test]
+    fn update_expression_delete_from_set() {
+        let r = apply(
+            "DELETE tags :rm",
+            &[(
+                ":rm",
+                AttributeValue::SS(["x"].iter().map(|s| (*s).to_string()).collect()),
+            )],
+        );
+        assert_eq!(
+            r.get("tags"),
+            Some(&AttributeValue::SS(
+                ["y"].iter().map(|s| (*s).to_string()).collect()
+            ))
+        );
+    }
+
+    #[test]
+    fn update_expression_multi_action_clause() {
+        // One clause exercising SET + REMOVE + ADD together (DynamoDB applies in
+        // SET, REMOVE, ADD, DELETE order).
+        let r = apply(
+            "SET label = :l REMOVE alpha ADD score :i",
+            &[(":l", AttributeValue::S("multi".into())), (":i", n("10"))],
+        );
+        assert_eq!(r.get("label"), Some(&AttributeValue::S("multi".into())));
+        assert!(!r.contains_key("alpha"));
+        assert_eq!(r.get("score"), Some(&n("40")));
     }
 }
