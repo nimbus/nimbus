@@ -86,6 +86,10 @@ pub fn delete_table(
     input: DeleteTableInput,
 ) -> Result<DeleteTableOutput, DynamoDbError> {
     let mut description = load_description(service, context, &input.table_name)?;
+    // Reclaim the table's data items first (bulk delete over the shared
+    // `documents` table — the `deleting` lifecycle, not a physical DROP TABLE),
+    // so a failure here leaves the table describable and the delete retryable.
+    reclaim_table_items(service, context, &input.table_name)?;
     let id = catalog_id(&input.table_name)?;
     service
         .delete_document(context.tenant_id(), catalog_table(), id)
@@ -210,6 +214,39 @@ fn load_description(
         Err(nimbus_core::Error::DocumentNotFound(_)) => Err(resource_not_found(table_name)),
         Err(error) => Err(map_core_error(error)),
     }
+}
+
+/// Reclaim every data item stored under `table_name` (a Nimbus table named after
+/// the DynamoDB table) by deleting each document. This is the shared-`documents`
+/// bulk delete the storage-layout decision mandates instead of a physical DROP
+/// TABLE; the same `TableName` D1's item writes target. A data table that was
+/// never materialized (no writes) reclaims nothing. Returns the count reclaimed.
+fn reclaim_table_items(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<usize, DynamoDbError> {
+    let table = TableName::new(table_name).map_err(map_core_error)?;
+    let documents = match service.query_documents_structured(
+        context.tenant_id(),
+        &table,
+        &StructuredQuery::default(),
+    ) {
+        Ok(documents) => documents,
+        // The data table may never have been materialized (no items written).
+        Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            return Ok(0);
+        }
+        Err(error) => return Err(map_core_error(error)),
+    };
+    let mut reclaimed = 0;
+    for document in documents {
+        service
+            .delete_document(context.tenant_id(), table.clone(), document.id)
+            .map_err(map_core_error)?;
+        reclaimed += 1;
+    }
+    Ok(reclaimed)
 }
 
 fn resource_not_found(table_name: &str) -> DynamoDbError {
@@ -463,6 +500,67 @@ mod tests {
             ),
             Err(DynamoDbError::ResourceNotFoundException(_))
         ));
+    }
+
+    #[test]
+    fn delete_table_reclaims_data_items() {
+        // DeleteTable must reclaim the table's data rows (shared-`documents`
+        // bulk delete), not just drop the catalog entry. Seed items directly via
+        // the engine (the same `TableName` D1's PutItem will write to), delete,
+        // and assert the rows are gone and the table is no longer describable.
+        let (service, ctx, _t) = fixture();
+        create_table(&service, &ctx, input("orders", false)).expect("create");
+        let table = TableName::new("orders").unwrap();
+        for key in ["item-1", "item-2", "item-3"] {
+            let mut fields = serde_json::Map::new();
+            fields.insert("v".to_owned(), Value::String(key.to_owned()));
+            service
+                .insert_document_with_id(
+                    ctx.tenant_id(),
+                    table.clone(),
+                    DocumentId::from_key(key).unwrap(),
+                    fields,
+                )
+                .expect("seed data item");
+        }
+        assert_eq!(count_items(&service, &ctx, "orders"), 3);
+
+        delete_table(
+            &service,
+            &ctx,
+            DeleteTableInput {
+                table_name: "orders".to_owned(),
+            },
+        )
+        .expect("delete");
+
+        assert_eq!(
+            count_items(&service, &ctx, "orders"),
+            0,
+            "DeleteTable must reclaim every data item"
+        );
+        assert!(matches!(
+            describe_table(
+                &service,
+                &ctx,
+                DescribeTableInput {
+                    table_name: "orders".to_owned()
+                }
+            ),
+            Err(DynamoDbError::ResourceNotFoundException(_))
+        ));
+    }
+
+    fn count_items(service: &Arc<Service>, ctx: &TenantIsolationContext, table: &str) -> usize {
+        match service.query_documents_structured(
+            ctx.tenant_id(),
+            &TableName::new(table).unwrap(),
+            &StructuredQuery::default(),
+        ) {
+            Ok(docs) => docs.len(),
+            Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => 0,
+            Err(error) => panic!("query failed: {error:?}"),
+        }
     }
 
     #[test]
