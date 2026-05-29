@@ -14,8 +14,9 @@ use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::expression::{CompareOp, Expr, ExpressionMaps, SortKeyCondition};
+use extenddb_core::limits::LimitsConfig;
 use extenddb_core::types::{
-    AttributeValue, Item, KeySchemaElement, KeyType, QueryInput, QueryOutput,
+    AttributeValue, Item, KeySchemaElement, KeyType, QueryInput, QueryOutput, Select,
 };
 use nimbus_core::{StructuredQuery, TableName};
 use nimbus_engine::Service;
@@ -24,7 +25,10 @@ use nimbus_tenant::TenantIsolationContext;
 use crate::attribute_value::fields_to_item;
 use crate::commands::control_plane;
 use crate::error::map_core_error;
-use crate::expression::{build_maps, default_limits, parse_key_condition_expression};
+use crate::expression::{
+    build_maps, default_limits, evaluate_condition, parse_condition,
+    parse_key_condition_expression, project_item,
+};
 use crate::key::sortable_key;
 
 /// Query a single partition with an optional sort-key range.
@@ -114,9 +118,9 @@ pub fn query(
         )?;
     }
 
-    let scanned_count = matched.len() as i64;
-
-    // Limit + LastEvaluatedKey.
+    // Limit caps the number of items *evaluated* — DynamoDB applies Limit
+    // before the FilterExpression — and LastEvaluatedKey points at the last
+    // evaluated (pre-filter) item when the window was truncated.
     let limit = input
         .limit
         .filter(|limit| *limit > 0)
@@ -128,15 +132,65 @@ pub fn query(
     let last_evaluated_key = truncated
         .then(|| matched.last().map(|item| key_item(item, &key_schema)))
         .flatten();
+    let scanned_count = matched.len() as i64;
+
+    // FilterExpression applies after key selection + Limit; filtered-out items
+    // still count toward ScannedCount.
+    if let Some(filter) = input
+        .filter_expression
+        .as_deref()
+        .filter(|expression| !expression.is_empty())
+    {
+        let filter_expr = parse_condition(filter, &limits)?;
+        let mut kept = Vec::with_capacity(matched.len());
+        for item in matched {
+            if evaluate_condition(&filter_expr, &item, &maps)? {
+                kept.push(item);
+            }
+        }
+        matched = kept;
+    }
 
     let count = matched.len() as i64;
+    let items = select_items(
+        matched,
+        input.select,
+        input.projection_expression.as_deref(),
+        input.expression_attribute_names.as_ref(),
+        &limits,
+    )?;
+
     Ok(QueryOutput {
-        items: Some(matched),
+        items,
         count,
         scanned_count,
         last_evaluated_key,
         consumed_capacity: None,
     })
+}
+
+/// Apply the `Select` mode + `ProjectionExpression` to the surviving items.
+/// `COUNT` omits `Items`; a `ProjectionExpression` (or `SPECIFIC_ATTRIBUTES`)
+/// projects each item; otherwise the full items are returned.
+fn select_items(
+    items: Vec<Item>,
+    select: Option<Select>,
+    projection: Option<&str>,
+    names: Option<&std::collections::HashMap<String, String>>,
+    limits: &LimitsConfig,
+) -> Result<Option<Vec<Item>>, DynamoDbError> {
+    if matches!(select, Some(Select::Count)) {
+        return Ok(None);
+    }
+    let projection = projection.filter(|expression| !expression.is_empty());
+    let projected = match projection {
+        Some(expression) => items
+            .into_iter()
+            .map(|item| project_item(expression, names, &item, limits))
+            .collect::<Result<Vec<_>, _>>()?,
+        None => items,
+    };
+    Ok(Some(projected))
 }
 
 /// Read every item stored in `table` as a decoded `Item`.
@@ -496,6 +550,129 @@ mod tests {
         )
         .expect_err("GSI query not yet supported");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    /// Put an event with an extra `kind` (S) attribute for filter tests.
+    fn put_kind(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        pk: &str,
+        sk: &str,
+        kind: &str,
+    ) {
+        crate::commands::item::put_item(
+            service,
+            context,
+            serde_json::from_value(json!({
+                "TableName": "Events",
+                "Item": { "pk": {"S": pk}, "sk": {"N": sk}, "kind": {"S": kind} },
+            }))
+            .unwrap(),
+        )
+        .expect("put");
+    }
+
+    #[test]
+    fn query_filter_expression_excludes_but_still_scans() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        put_kind(&service, &ctx, "p1", "1", "a");
+        put_kind(&service, &ctx, "p1", "2", "b");
+        put_kind(&service, &ctx, "p1", "3", "a");
+        let out = run(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Events",
+                "KeyConditionExpression": "pk = :p",
+                "FilterExpression": "kind = :k",
+                "ExpressionAttributeValues": { ":p": {"S": "p1"}, ":k": {"S": "a"} },
+            }),
+        );
+        assert_eq!(sks(&out), vec!["1", "3"], "only kind=a survives the filter");
+        assert_eq!(out.count, 2, "Count is post-filter");
+        assert_eq!(
+            out.scanned_count, 3,
+            "ScannedCount counts all key-matched items"
+        );
+    }
+
+    #[test]
+    fn query_select_count_omits_items() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        for sk in ["1", "2", "3"] {
+            put_event(&service, &ctx, "p1", sk);
+        }
+        let out = run(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Events",
+                "KeyConditionExpression": "pk = :p",
+                "ExpressionAttributeValues": { ":p": {"S": "p1"} },
+                "Select": "COUNT",
+            }),
+        );
+        assert!(out.items.is_none(), "COUNT omits Items");
+        assert_eq!(out.count, 3);
+        assert_eq!(out.scanned_count, 3);
+    }
+
+    #[test]
+    fn query_projection_and_filter_compose() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        put_kind(&service, &ctx, "p1", "1", "a");
+        put_kind(&service, &ctx, "p1", "2", "b");
+        let out = run(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Events",
+                "KeyConditionExpression": "pk = :p",
+                "FilterExpression": "kind = :k",
+                "ProjectionExpression": "sk",
+                "ExpressionAttributeValues": { ":p": {"S": "p1"}, ":k": {"S": "b"} },
+            }),
+        );
+        let items = out.items.unwrap();
+        assert_eq!(items.len(), 1, "only kind=b survives");
+        let item = &items[0];
+        assert_eq!(item.len(), 1, "projected to sk only");
+        assert_eq!(item.get("sk"), Some(&AttributeValue::N("2".into())));
+        assert!(!item.contains_key("kind"), "kind projected out");
+    }
+
+    #[test]
+    fn query_limit_caps_scanned_before_filter() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        // sk 1=a, 2=b, 3=a; Limit=2 evaluates the first two, filter kind=a keeps sk 1.
+        put_kind(&service, &ctx, "p1", "1", "a");
+        put_kind(&service, &ctx, "p1", "2", "b");
+        put_kind(&service, &ctx, "p1", "3", "a");
+        let out = run(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Events",
+                "KeyConditionExpression": "pk = :p",
+                "FilterExpression": "kind = :k",
+                "ExpressionAttributeValues": { ":p": {"S": "p1"}, ":k": {"S": "a"} },
+                "Limit": 2,
+            }),
+        );
+        assert_eq!(
+            sks(&out),
+            vec!["1"],
+            "Limit evaluates the first two, then filters"
+        );
+        assert_eq!(out.scanned_count, 2, "Limit caps scanned items pre-filter");
+        assert!(
+            out.last_evaluated_key.is_some(),
+            "more items beyond the Limit window"
+        );
     }
 
     #[test]

@@ -557,6 +557,62 @@ async fn query_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_filter_and_projection_through_official_sdk() {
+    // Query with FilterExpression + ProjectionExpression: Count is post-filter,
+    // ScannedCount counts all key-matched items, and items are projected.
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_events(&client).await;
+    for (sk, kind) in [("1", "a"), ("2", "b"), ("3", "a")] {
+        client
+            .put_item()
+            .table_name("Events")
+            .item("pk", AttributeValue::S("p1".into()))
+            .item("sk", AttributeValue::N(sk.into()))
+            .item("kind", AttributeValue::S(kind.into()))
+            .send()
+            .await
+            .expect("put");
+    }
+    let out = client
+        .query()
+        .table_name("Events")
+        .key_condition_expression("pk = :p")
+        .filter_expression("kind = :k")
+        .projection_expression("sk")
+        .expression_attribute_values(":p", AttributeValue::S("p1".into()))
+        .expression_attribute_values(":k", AttributeValue::S("a".into()))
+        .send()
+        .await
+        .expect("query filter");
+    assert_eq!(out.count(), 2, "post-filter Count");
+    assert_eq!(
+        out.scanned_count(),
+        3,
+        "ScannedCount counts key-matched items"
+    );
+    let items = out.items();
+    assert_eq!(items.len(), 2);
+    for item in items {
+        assert!(item.contains_key("sk"), "projected to sk");
+        assert!(!item.contains_key("kind"), "kind projected out");
+    }
+
+    // Select=COUNT omits Items.
+    let counted = client
+        .query()
+        .table_name("Events")
+        .key_condition_expression("pk = :p")
+        .select(aws_sdk_dynamodb::types::Select::Count)
+        .expression_attribute_values(":p", AttributeValue::S("p1".into()))
+        .send()
+        .await
+        .expect("query count");
+    assert_eq!(counted.count(), 3);
+    assert!(counted.items().is_empty(), "COUNT returns no items");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
