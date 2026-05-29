@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::typed_scalar::{TypedFieldMap, TypedScalarValue};
+use crate::typed_scalar::{StoredValue, TypedFieldMap, TypedScalarValue};
 use crate::types::{DocumentId, TableName, Timestamp};
 
 /// A schemaless document stored in a logical table.
@@ -46,8 +46,18 @@ impl Document {
         self.fields.get(name)
     }
 
-    /// Returns the shared typed scalar metadata for one field if present.
+    /// Returns the shared typed scalar metadata for one field when that field's
+    /// typed value is a scalar. Nested map/list typed trees return `None` here;
+    /// use [`Document::typed_value`] for the full tree.
     pub fn typed_field(&self, name: &str) -> Option<&TypedScalarValue> {
+        match self.typed_fields.get(name) {
+            Some(StoredValue::TypedScalar { value }) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Returns the full typed value tree for one field (scalar, map, or list).
+    pub fn typed_value(&self, name: &str) -> Option<&StoredValue> {
         self.typed_fields.get(name)
     }
 
@@ -61,8 +71,9 @@ impl Document {
 
     /// Sets one typed scalar field and stores its projected JSON value beside
     /// the shared typed metadata.
-    pub fn set_typed_field(&mut self, name: impl Into<String>, value: TypedScalarValue) {
+    pub fn set_typed_field(&mut self, name: impl Into<String>, value: impl Into<StoredValue>) {
         let name = name.into();
+        let value = value.into();
         self.fields.insert(name.clone(), value.projected_json());
         self.typed_fields.insert(name, value);
     }
