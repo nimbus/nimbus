@@ -189,6 +189,15 @@ pub fn update_table(
         description.deletion_protection_enabled = enabled;
     }
     if let Some(stream) = input.stream_specification.clone() {
+        if stream.stream_enabled {
+            let label = description.table_id.clone();
+            description.latest_stream_arn =
+                Some(format!("{}/stream/{label}", description.table_arn));
+            description.latest_stream_label = Some(label);
+        } else {
+            description.latest_stream_arn = None;
+            description.latest_stream_label = None;
+        }
         description.stream_specification = Some(stream);
     }
 
@@ -589,6 +598,18 @@ fn build_table_description(input: &CreateTableInput) -> TableDescription {
         input.table_name
     );
     let index_arn = |index_name: &str| format!("{table_arn}/index/{index_name}");
+    let table_id = uuid::Uuid::new_v4().to_string();
+
+    // When a stream is enabled, the table reports its LatestStreamArn/Label
+    // (the label is the stable stream id; here, the table id).
+    let stream_enabled = input
+        .stream_specification
+        .as_ref()
+        .is_some_and(|spec| spec.stream_enabled);
+    let latest_stream_label = stream_enabled.then(|| table_id.clone());
+    let latest_stream_arn = latest_stream_label
+        .as_ref()
+        .map(|label| format!("{table_arn}/stream/{label}"));
 
     // Secondary indexes declared at CreateTable. LSIs are immutable; GSIs become
     // ACTIVE immediately (see DDB-DIV-004 — no async CREATING phase).
@@ -630,7 +651,7 @@ fn build_table_description(input: &CreateTableInput) -> TableDescription {
         table_size_bytes: 0,
         item_count: 0,
         table_arn,
-        table_id: uuid::Uuid::new_v4().to_string(),
+        table_id,
         provisioned_throughput: ProvisionedThroughputDescription {
             read_capacity_units,
             write_capacity_units,
@@ -645,8 +666,8 @@ fn build_table_description(input: &CreateTableInput) -> TableDescription {
         global_secondary_indexes,
         local_secondary_indexes,
         stream_specification: input.stream_specification.clone(),
-        latest_stream_arn: None,
-        latest_stream_label: None,
+        latest_stream_arn,
+        latest_stream_label,
         deletion_protection_enabled: input.deletion_protection_enabled.unwrap_or(false),
         sse_description: None,
         table_class_summary: None,
@@ -709,6 +730,54 @@ mod tests {
             "AttributeDefinitions": attrs,
         }))
         .expect("valid CreateTableInput")
+    }
+
+    #[test]
+    fn create_with_stream_records_spec_and_arn() {
+        let (service, ctx, _t) = fixture();
+        let input: CreateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "events",
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+            "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "NEW_AND_OLD_IMAGES" }
+        }))
+        .unwrap();
+        let created = create_table(&service, &ctx, input).expect("create with stream");
+        let desc = &created.table_description;
+        let spec = desc.stream_specification.as_ref().expect("stream spec");
+        assert!(spec.stream_enabled);
+        assert_eq!(
+            spec.stream_view_type,
+            Some(extenddb_core::types::StreamViewType::NewAndOldImages)
+        );
+        let arn = desc.latest_stream_arn.as_ref().expect("stream arn");
+        assert!(arn.contains("/stream/"), "stream ARN: {arn}");
+        assert!(desc.latest_stream_label.is_some());
+    }
+
+    #[test]
+    fn update_table_enables_then_disables_stream() {
+        let (service, ctx, _t) = fixture();
+        create_table(&service, &ctx, input("orders", false)).expect("create");
+        // Enable a stream.
+        let enable: UpdateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "orders",
+            "StreamSpecification": { "StreamEnabled": true, "StreamViewType": "KEYS_ONLY" }
+        }))
+        .unwrap();
+        let enabled = update_table(&service, &ctx, enable).expect("enable stream");
+        assert!(enabled.table_description.latest_stream_arn.is_some());
+        // Disable it.
+        let disable: UpdateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "orders",
+            "StreamSpecification": { "StreamEnabled": false }
+        }))
+        .unwrap();
+        let disabled = update_table(&service, &ctx, disable).expect("disable stream");
+        assert!(
+            disabled.table_description.latest_stream_arn.is_none(),
+            "disabling clears the stream ARN"
+        );
     }
 
     #[test]

@@ -1164,6 +1164,57 @@ async fn gsi_query_projection_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stream_specification_through_official_sdk() {
+    use aws_sdk_dynamodb::types::{StreamSpecification, StreamViewType};
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    client
+        .create_table()
+        .table_name("Streamed")
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name("pk")
+                .key_type(KeyType::Hash)
+                .build()
+                .expect("ks"),
+        )
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("pk")
+                .attribute_type(ScalarAttributeType::S)
+                .build()
+                .expect("attr"),
+        )
+        .stream_specification(
+            StreamSpecification::builder()
+                .stream_enabled(true)
+                .stream_view_type(StreamViewType::NewAndOldImages)
+                .build()
+                .expect("stream spec"),
+        )
+        .billing_mode(BillingMode::PayPerRequest)
+        .send()
+        .await
+        .expect("create streamed table");
+
+    let described = client
+        .describe_table()
+        .table_name("Streamed")
+        .send()
+        .await
+        .expect("describe");
+    let table = described.table().unwrap();
+    let spec = table.stream_specification().expect("stream spec");
+    assert!(spec.stream_enabled());
+    assert_eq!(
+        spec.stream_view_type(),
+        Some(&StreamViewType::NewAndOldImages)
+    );
+    assert!(table.latest_stream_arn().is_some(), "stream ARN reported");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
