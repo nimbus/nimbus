@@ -215,8 +215,14 @@ pub async fn serve(
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
         let dynamodb_service = Arc::clone(&service);
+        let dynamodb_access_keys = dynamodb_config.access_keys;
         adapter_handles.push(tokio::spawn(async move {
-            adapters::dynamodb::listener::run_listener(dynamodb_listener, dynamodb_service).await;
+            adapters::dynamodb::listener::run_listener(
+                dynamodb_listener,
+                dynamodb_service,
+                dynamodb_access_keys,
+            )
+            .await;
         }));
     }
 

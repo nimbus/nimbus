@@ -24,6 +24,8 @@ nimbus-tenant = { path = "../nimbus-tenant" }
 base64.workspace = true
 # Exact decimal parsing for the order-preserving Number sort-key projection.
 bigdecimal = "0.4"
+# Trait bounds for the generic dispatch deserialize/serialize helper.
+serde.workspace = true
 serde_json.workspace = true
 # DynamoDB TableId (random v4) for table metadata.
 uuid = { version = "1", features = ["v4"] }

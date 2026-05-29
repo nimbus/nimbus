@@ -1,19 +1,49 @@
 //! X-Amz-Target dispatch entrypoint.
 //!
 //! Transport-agnostic: `nimbus-server` mounts [`dispatch`] on a `POST /` route
-//! for the dedicated DynamoDB port. The flow mirrors real DynamoDB / ExtendDB:
-//! parse the target, reject unknown operations *before* auth, reject malformed
-//! JSON bodies *before* auth, then route to the per-operation handler.
+//! for the dedicated DynamoDB port, passing a [`DispatchContext`] that carries
+//! the shared `Service` and the access-key registry. The flow mirrors real
+//! DynamoDB / ExtendDB:
 //!
-//! Operation handlers land in later roadmap items (control plane D0.6, item ops
-//! D1, Query/Scan D2, …). Until an operation's handler lands it is recognized
-//! (so the unknown-vs-known distinction is correct) but routes to a
-//! `not-yet-implemented` placeholder.
+//! 1. parse the `X-Amz-Target` operation,
+//! 2. reject unknown operations *before* auth,
+//! 3. reject malformed JSON bodies *before* auth,
+//! 4. authenticate (lookup mode): extract the access key from the SigV4
+//!    `Authorization` header and resolve it to a tenant,
+//! 5. ensure the tenant exists (idempotent),
+//! 6. route to the per-operation handler.
+//!
+//! Lookup-mode auth (D0.8) extracts and resolves the access key but does not yet
+//! verify the SigV4 signature; strict verification lands in D7. Operations whose
+//! handlers have not landed yet (item ops D1, Query/Scan D2, …) are recognized
+//! (so the unknown-vs-known distinction stays correct) but route to a
+//! `not-yet-implemented` placeholder *after* authenticating, matching AWS order.
+
+use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use http::HeaderMap;
+use nimbus_engine::Service;
+use nimbus_tenant::TenantIsolationContext;
+use serde_json::Value;
 
+use crate::auth::sigv4::parse::parse_authorization;
+use crate::commands::control_plane;
+use crate::tenant::{AccessKeyRegistry, ensure_tenant, tenant_context};
 use crate::wire::{self, WireResponse};
+
+/// Surface label recorded on every DynamoDB-originated tenant context.
+const DISPATCH_SURFACE: &str = "DynamoDB";
+
+/// Capabilities a dispatched request operates over: the shared engine `Service`
+/// and the access-key → tenant registry. Borrowed (not owned) so the server can
+/// build one per request from long-lived state without cloning.
+pub struct DispatchContext<'a> {
+    /// Shared engine handle every handler scopes its reads/writes through.
+    pub service: &'a Arc<Service>,
+    /// AWS access-key id → tenant bindings used to authenticate the request.
+    pub access_keys: &'a AccessKeyRegistry,
+}
 
 /// Every DynamoDB operation the adapter targets across tiers T0–T7 (data plane,
 /// Query/Scan, batch/transact, Streams, TTL, tagging). GSI/LSI changes ride on
@@ -63,11 +93,10 @@ pub fn is_known_operation(operation: &str) -> bool {
 /// Dispatch a DynamoDB request to its operation handler.
 ///
 /// Returns a [`WireResponse`] `(status, body)`; `nimbus-server` turns it into an
-/// HTTP response. Capability parameters (`Arc<Service>`, resolved tenant/auth)
-/// are threaded in once the first storage-touching/authenticated handler lands
-/// (D0.5/D0.6); the X-Amz-Target switch and error envelope are complete now.
+/// HTTP response. See the module docs for the ordered flow (unknown-op and
+/// malformed-body rejection precede auth; auth precedes routing).
 #[must_use]
-pub fn dispatch(headers: &HeaderMap, body: &[u8]) -> WireResponse {
+pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> WireResponse {
     // 1. Parse X-Amz-Target.
     let operation = match wire::extract_operation(headers) {
         Ok(op) => op,
@@ -80,31 +109,160 @@ pub fn dispatch(headers: &HeaderMap, body: &[u8]) -> WireResponse {
     }
 
     // 3. Reject malformed JSON bodies before auth.
-    if let Err(error) = serde_json::from_slice::<serde_json::Value>(body) {
-        return wire::render_error(&DynamoDbError::SerializationException(format!(
-            "Start of structure or map found where not expected: {error}"
-        )));
+    let request: Value = match serde_json::from_slice(body) {
+        Ok(value) => value,
+        Err(error) => {
+            return wire::render_error(&DynamoDbError::SerializationException(format!(
+                "Start of structure or map found where not expected: {error}"
+            )));
+        }
+    };
+
+    // 4. Authenticate (lookup mode): access key → tenant.
+    let context = match authenticate(ctx, headers) {
+        Ok(context) => context,
+        Err(error) => return wire::render_error(&error),
+    };
+
+    // 5. Ensure the resolved tenant exists (idempotent).
+    if let Err(error) = ensure_tenant(ctx.service, &context) {
+        return wire::render_error(&error);
     }
 
-    // 4. Route to the operation handler. No handlers are implemented yet; they
-    //    land per roadmap item and replace this placeholder.
-    wire::render_error(&DynamoDbError::InternalServerError(format!(
-        "{operation} is not yet implemented"
-    )))
+    // 6. Route to the per-operation handler.
+    route(ctx, &context, &operation, request)
+}
+
+/// Resolve the request's tenant from the SigV4 `Authorization` header.
+///
+/// Lookup mode (D0.8): parse the header for its access-key id and map it to a
+/// tenant. The signature is not verified here — strict verification is D7. A
+/// missing header is `MissingAuthenticationToken`; a malformed header is
+/// `IncompleteSignature` (from the parser); an unbound key is
+/// `UnrecognizedClientException` (from the registry).
+fn authenticate(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+) -> Result<TenantIsolationContext, DynamoDbError> {
+    let header = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            DynamoDbError::MissingAuthenticationToken("Missing Authentication Token".to_owned())
+        })?;
+    let parsed = parse_authorization(header)?;
+    let tenant = ctx.access_keys.resolve(&parsed.access_key_id)?.clone();
+    Ok(tenant_context(tenant, DISPATCH_SURFACE))
+}
+
+/// Route an authenticated request to its handler. Operations without a handler
+/// yet are recognized but return the not-yet-implemented placeholder.
+fn route(
+    ctx: &DispatchContext<'_>,
+    context: &TenantIsolationContext,
+    operation: &str,
+    request: Value,
+) -> WireResponse {
+    match operation {
+        "CreateTable" => run(request, |input| {
+            control_plane::create_table(ctx.service, context, input)
+        }),
+        "DescribeTable" => run(request, |input| {
+            control_plane::describe_table(ctx.service, context, input)
+        }),
+        "DeleteTable" => run(request, |input| {
+            control_plane::delete_table(ctx.service, context, input)
+        }),
+        "ListTables" => run(request, |input| {
+            control_plane::list_tables(ctx.service, context, input)
+        }),
+        "UpdateTable" => run(request, |input| {
+            control_plane::update_table(ctx.service, context, input)
+        }),
+        other => wire::render_error(&DynamoDbError::InternalServerError(format!(
+            "{other} is not yet implemented"
+        ))),
+    }
+}
+
+/// Deserialize `request` into the handler's input type, invoke the handler, and
+/// serialize its output into a success envelope.
+///
+/// A body that is valid JSON but the wrong shape for the operation is a
+/// `SerializationException` (the JSON-protocol code AWS returns for a
+/// deserialize failure); semantic validation (key schema, names) is the
+/// handler's job and surfaces as `ValidationException`.
+fn run<I, O>(request: Value, handler: impl FnOnce(I) -> Result<O, DynamoDbError>) -> WireResponse
+where
+    I: serde::de::DeserializeOwned,
+    O: serde::Serialize,
+{
+    let input = match serde_json::from_value::<I>(request) {
+        Ok(input) => input,
+        Err(error) => {
+            return wire::render_error(&DynamoDbError::SerializationException(error.to_string()));
+        }
+    };
+    match handler(input) {
+        Ok(output) => match serde_json::to_value(output) {
+            Ok(body) => wire::render_success(body),
+            Err(error) => {
+                wire::render_error(&DynamoDbError::InternalServerError(error.to_string()))
+            }
+        },
+        Err(error) => wire::render_error(&error),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nimbus_core::TenantId;
 
-    fn target_headers(target: &str) -> HeaderMap {
+    const ACCESS_KEY: &str = "AKIAACME";
+
+    /// A `Service` + registry binding `ACCESS_KEY` → tenant `acme`. The tempdir
+    /// is returned so the caller holds it for the test's lifetime.
+    fn fixture() -> (tempfile::TempDir, Arc<Service>, AccessKeyRegistry) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let registry =
+            AccessKeyRegistry::new().bind(ACCESS_KEY, TenantId::new("acme").expect("tenant"));
+        (temp, service, registry)
+    }
+
+    /// A well-formed SigV4 `Authorization` header for `access_key`. The
+    /// signature is arbitrary — lookup mode (D0.8) does not verify it.
+    fn signed_authorization(access_key: &str) -> String {
+        format!(
+            "AWS4-HMAC-SHA256 Credential={access_key}/20260101/us-east-1/dynamodb/aws4_request, \
+             SignedHeaders=host;x-amz-target, Signature=deadbeef"
+        )
+    }
+
+    fn headers_for(operation: &str, authorization: Option<&str>) -> HeaderMap {
         let mut h = HeaderMap::new();
-        h.insert("x-amz-target", http::HeaderValue::from_str(target).unwrap());
         h.insert(
-            "authorization",
-            http::HeaderValue::from_static("AWS4-HMAC-SHA256 x"),
+            "x-amz-target",
+            http::HeaderValue::from_str(&format!("DynamoDB_20120810.{operation}")).unwrap(),
         );
+        if let Some(auth) = authorization {
+            h.insert("authorization", http::HeaderValue::from_str(auth).unwrap());
+        }
         h
+    }
+
+    fn create_table_body(name: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "TableName": name,
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+        }))
+        .unwrap()
+    }
+
+    fn error_type(body: &Value) -> String {
+        body["__type"].as_str().unwrap_or_default().to_owned()
     }
 
     #[test]
@@ -120,55 +278,199 @@ mod tests {
     }
 
     #[test]
-    fn unknown_operation_rejected() {
-        let (status, body) = dispatch(&target_headers("DynamoDB_20120810.Frobnicate"), b"{}");
+    fn unknown_operation_rejected_before_auth() {
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        // No authorization header at all, yet the unknown op is still rejected
+        // first (the missing-key auth path is never reached).
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-amz-target",
+            http::HeaderValue::from_static("DynamoDB_20120810.Frobnicate"),
+        );
+        headers.insert(
+            "authorization",
+            http::HeaderValue::from_static("AWS4-HMAC-SHA256 x"),
+        );
+        let (status, body) = dispatch(&ctx, &headers, b"{}");
         assert_eq!(status, 400);
         assert!(
-            body["__type"]
-                .as_str()
-                .unwrap()
-                .ends_with("UnknownOperationException")
+            error_type(&body).ends_with("UnknownOperationException"),
+            "{body}"
         );
     }
 
     #[test]
-    fn known_operation_with_malformed_body_is_serialization_exception() {
-        let (status, body) = dispatch(&target_headers("DynamoDB_20120810.PutItem"), b"not json");
+    fn malformed_body_is_serialization_exception_before_auth() {
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        // Body parsing precedes auth, so even a garbage authorization header
+        // does not turn this into an auth error.
+        let headers = headers_for("PutItem", Some("AWS4-HMAC-SHA256 garbage"));
+        let (status, body) = dispatch(&ctx, &headers, b"not json");
         assert_eq!(status, 400);
         assert!(
-            body["__type"]
-                .as_str()
-                .unwrap()
-                .ends_with("SerializationException"),
-            "got {body}"
+            error_type(&body).ends_with("SerializationException"),
+            "{body}"
         );
     }
 
     #[test]
-    fn known_operation_with_valid_body_reaches_handler_placeholder() {
-        // Until handlers land, a recognized op with a valid body hits the
-        // not-yet-implemented placeholder (500). Each op's roadmap item replaces
-        // this with a real success/modeled-error response.
-        let (status, body) = dispatch(&target_headers("DynamoDB_20120810.PutItem"), b"{}");
+    fn missing_authorization_is_missing_token() {
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let headers = headers_for("CreateTable", None);
+        let (_status, body) = dispatch(&ctx, &headers, &create_table_body("orders"));
+        assert!(
+            error_type(&body).ends_with("MissingAuthenticationToken"),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn malformed_authorization_is_incomplete_signature() {
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let headers = headers_for("CreateTable", Some("AWS4-HMAC-SHA256 nonsense"));
+        let (_status, body) = dispatch(&ctx, &headers, &create_table_body("orders"));
+        assert!(error_type(&body).ends_with("IncompleteSignature"), "{body}");
+    }
+
+    #[test]
+    fn unknown_access_key_is_unrecognized_client() {
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let headers = headers_for("CreateTable", Some(&signed_authorization("AKIAUNBOUND")));
+        let (_status, body) = dispatch(&ctx, &headers, &create_table_body("orders"));
+        assert!(
+            error_type(&body).ends_with("UnrecognizedClientException"),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn unimplemented_known_operation_returns_placeholder_after_auth() {
+        // PutItem is recognized but has no handler yet. With valid auth it
+        // passes authentication and tenant-ensure, then hits the placeholder.
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let headers = headers_for("PutItem", Some(&signed_authorization(ACCESS_KEY)));
+        let (status, body) = dispatch(&ctx, &headers, b"{}");
         assert_eq!(status, 500);
         assert!(
             body["message"]
                 .as_str()
                 .unwrap()
-                .contains("not yet implemented")
+                .contains("not yet implemented"),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn create_table_succeeds_through_dispatch() {
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let headers = headers_for("CreateTable", Some(&signed_authorization(ACCESS_KEY)));
+        let (status, body) = dispatch(&ctx, &headers, &create_table_body("Orders"));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            body["TableDescription"]["TableName"].as_str().unwrap(),
+            "Orders"
+        );
+        assert_eq!(
+            body["TableDescription"]["TableStatus"].as_str().unwrap(),
+            "ACTIVE"
         );
     }
 
     #[test]
     fn missing_target_rejected_before_body() {
-        let mut h = HeaderMap::new();
-        h.insert(
+        let (_temp, service, registry) = fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
             "authorization",
             http::HeaderValue::from_static("AWS4-HMAC-SHA256 x"),
         );
-        let (status, _body) = dispatch(&h, b"not json");
-        // Unknown-operation (missing target) is decided before body parsing, so
-        // the malformed body does not surface as SerializationException.
+        // Missing target (with auth present) is decided before body parsing, so
+        // the malformed body never surfaces as SerializationException.
+        let (status, body) = dispatch(&ctx, &headers, b"not json");
         assert_eq!(status, 400);
+        assert!(
+            error_type(&body).ends_with("UnknownOperationException"),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn two_access_keys_isolate_tenants_through_dispatch() {
+        // The trust-critical end-to-end isolation check: a table created under
+        // one AWS access key is invisible to a request authenticated with a
+        // different access key (a different tenant), and visible to its own.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let registry = AccessKeyRegistry::new()
+            .bind("AKIAACME", TenantId::new("acme").expect("tenant"))
+            .bind("AKIAGLOBEX", TenantId::new("globex").expect("tenant"));
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+
+        // acme creates "Orders".
+        let (status, _) = dispatch(
+            &ctx,
+            &headers_for("CreateTable", Some(&signed_authorization("AKIAACME"))),
+            &create_table_body("Orders"),
+        );
+        assert_eq!(status, 200);
+
+        let describe_body =
+            serde_json::to_vec(&serde_json::json!({ "TableName": "Orders" })).unwrap();
+
+        // globex cannot see acme's table.
+        let (status, body) = dispatch(
+            &ctx,
+            &headers_for("DescribeTable", Some(&signed_authorization("AKIAGLOBEX"))),
+            &describe_body,
+        );
+        assert_eq!(status, 400, "{body}");
+        assert!(
+            error_type(&body).ends_with("ResourceNotFoundException"),
+            "{body}"
+        );
+
+        // acme still sees its own table.
+        let (status, body) = dispatch(
+            &ctx,
+            &headers_for("DescribeTable", Some(&signed_authorization("AKIAACME"))),
+            &describe_body,
+        );
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["Table"]["TableName"].as_str().unwrap(), "Orders");
     }
 }
