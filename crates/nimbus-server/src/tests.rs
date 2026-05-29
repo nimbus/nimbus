@@ -1206,6 +1206,8 @@ mod convex_runtime;
 mod core_http;
 #[path = "tests/deploy.rs"]
 mod deploy;
+#[path = "tests/dynamodb_wire.rs"]
+mod dynamodb_wire;
 #[path = "tests/firebase/auth_and_availability.rs"]
 mod firebase_auth_and_availability;
 #[path = "tests/firebase/grpc_unary.rs"]

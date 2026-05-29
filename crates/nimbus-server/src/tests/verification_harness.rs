@@ -82,7 +82,7 @@ impl ServerVerificationHarnessCase {
     }
 }
 
-const REQUIRED_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 7] = [
+const REQUIRED_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 12] = [
     ServerVerificationHarnessCase::new(
         super::auth::websocket_auth::WEBSOCKET_DISCONNECT_CLEANUP_CASE,
         run_websocket_disconnect_cleanup_case,
@@ -110,10 +110,30 @@ const REQUIRED_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 7] = [
     ServerVerificationHarnessCase::new(
         super::mongodb_wire::MONGODB_WIRE_HANDSHAKE_CASE,
         run_mongodb_wire_handshake_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_WIRE_HANDSHAKE_AND_CONTROL_PLANE_CASE,
+        run_dynamodb_wire_handshake_and_control_plane_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_ITEM_CRUD_ROUNDTRIP_CASE,
+        run_dynamodb_item_crud_roundtrip_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_QUERY_SCAN_WITH_PAGINATION_CASE,
+        run_dynamodb_query_scan_with_pagination_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_TRANSACT_WRITE_COMMIT_ABORT_CASE,
+        run_dynamodb_transact_write_commit_abort_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_STREAMS_EVENT_DELIVERY_CASE,
+        run_dynamodb_streams_event_delivery_case,
     ),
 ];
 
-const NIGHTLY_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 7] = [
+const NIGHTLY_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 12] = [
     ServerVerificationHarnessCase::new(
         super::auth::websocket_auth::WEBSOCKET_DISCONNECT_CLEANUP_CASE,
         run_websocket_disconnect_cleanup_case,
@@ -141,6 +161,26 @@ const NIGHTLY_SERVER_VERIFICATION_CASES: [ServerVerificationHarnessCase; 7] = [
     ServerVerificationHarnessCase::new(
         super::mongodb_wire::MONGODB_WIRE_HANDSHAKE_CASE,
         run_mongodb_wire_handshake_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_WIRE_HANDSHAKE_AND_CONTROL_PLANE_CASE,
+        run_dynamodb_wire_handshake_and_control_plane_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_ITEM_CRUD_ROUNDTRIP_CASE,
+        run_dynamodb_item_crud_roundtrip_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_QUERY_SCAN_WITH_PAGINATION_CASE,
+        run_dynamodb_query_scan_with_pagination_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_TRANSACT_WRITE_COMMIT_ABORT_CASE,
+        run_dynamodb_transact_write_commit_abort_case,
+    ),
+    ServerVerificationHarnessCase::new(
+        super::dynamodb_wire::DYNAMODB_STREAMS_EVENT_DELIVERY_CASE,
+        run_dynamodb_streams_event_delivery_case,
     ),
 ];
 
@@ -206,6 +246,46 @@ fn run_mongodb_wire_handshake_case() {
         .build()
         .expect("tokio runtime should build")
         .block_on(super::mongodb_wire::mongodb_wire_handshake_inner());
+}
+
+fn run_dynamodb_wire_handshake_and_control_plane_case() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(super::dynamodb_wire::handshake_and_control_plane_inner());
+}
+
+fn run_dynamodb_item_crud_roundtrip_case() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(super::dynamodb_wire::item_crud_roundtrip_inner());
+}
+
+fn run_dynamodb_query_scan_with_pagination_case() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(super::dynamodb_wire::query_scan_with_pagination_inner());
+}
+
+fn run_dynamodb_transact_write_commit_abort_case() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(super::dynamodb_wire::transact_write_commit_abort_inner());
+}
+
+fn run_dynamodb_streams_event_delivery_case() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(super::dynamodb_wire::streams_event_delivery_inner());
 }
 
 fn server_verification_corpus(
