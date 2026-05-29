@@ -197,8 +197,9 @@ fn route(
         "UpdateItem" => run(request, |input| {
             item::update_item(ctx.service, context, input)
         }),
-        // T2 — Query.
+        // T2 — Query / Scan.
         "Query" => run(request, |input| query::query(ctx.service, context, input)),
+        "Scan" => run(request, |input| query::scan(ctx.service, context, input)),
         other => wire::render_error(&DynamoDbError::InternalServerError(format!(
             "{other} is not yet implemented"
         ))),
@@ -389,14 +390,14 @@ mod tests {
 
     #[test]
     fn unimplemented_known_operation_returns_placeholder_after_auth() {
-        // Scan is recognized but has no handler yet. With valid auth it passes
-        // authentication and tenant-ensure, then hits the placeholder.
+        // BatchGetItem is recognized but has no handler yet. With valid auth it
+        // passes authentication and tenant-ensure, then hits the placeholder.
         let (_temp, service, registry) = fixture();
         let ctx = DispatchContext {
             service: &service,
             access_keys: &registry,
         };
-        let headers = headers_for("Scan", Some(&signed_authorization(ACCESS_KEY)));
+        let headers = headers_for("BatchGetItem", Some(&signed_authorization(ACCESS_KEY)));
         let (status, body) = dispatch(&ctx, &headers, b"{}");
         assert_eq!(status, 500);
         assert!(

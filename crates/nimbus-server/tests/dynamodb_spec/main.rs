@@ -613,6 +613,62 @@ async fn query_filter_and_projection_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scan_through_official_sdk() {
+    // Scan end-to-end: full-table read, a FilterExpression (Count post-filter,
+    // ScannedCount over all items), and Limit/ExclusiveStartKey pagination that
+    // covers the table exactly once.
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_events(&client).await;
+    for (pk, kind) in [("p1", "a"), ("p2", "b"), ("p3", "a"), ("p4", "a")] {
+        client
+            .put_item()
+            .table_name("Events")
+            .item("pk", AttributeValue::S(pk.into()))
+            .item("sk", AttributeValue::N("1".into()))
+            .item("kind", AttributeValue::S(kind.into()))
+            .send()
+            .await
+            .expect("put");
+    }
+
+    let filtered = client
+        .scan()
+        .table_name("Events")
+        .filter_expression("kind = :k")
+        .expression_attribute_values(":k", AttributeValue::S("a".into()))
+        .send()
+        .await
+        .expect("scan filter");
+    assert_eq!(filtered.count(), 3, "three kind=a items");
+    assert_eq!(filtered.scanned_count(), 4, "all four scanned");
+
+    // Paginate the whole table with Limit=2; collect every pk exactly once.
+    let mut seen: Vec<String> = Vec::new();
+    let mut start = None;
+    loop {
+        let mut req = client.scan().table_name("Events").limit(2);
+        if let Some(cursor) = start.take() {
+            req = req.set_exclusive_start_key(Some(cursor));
+        }
+        let page = req.send().await.expect("scan page");
+        for item in page.items() {
+            seen.push(item.get("pk").unwrap().as_s().unwrap().clone());
+        }
+        match page.last_evaluated_key() {
+            Some(key) => start = Some(key.clone()),
+            None => break,
+        }
+    }
+    seen.sort();
+    assert_eq!(
+        seen,
+        vec!["p1", "p2", "p3", "p4"],
+        "scan covers the table once"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
