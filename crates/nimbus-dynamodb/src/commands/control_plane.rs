@@ -16,10 +16,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
     AttributeDefinition, BillingMode, BillingModeSummary, CreateTableInput, CreateTableOutput,
-    DeleteTableInput, DeleteTableOutput, DescribeTableInput, DescribeTableOutput, GsiDescription,
-    KeySchemaElement, KeyType, ListTablesInput, ListTablesOutput, LsiDescription,
-    ProvisionedThroughputDescription, TableDescription, TableStatus, UpdateTableInput,
-    UpdateTableOutput,
+    DeleteTableInput, DeleteTableOutput, DescribeTableInput, DescribeTableOutput,
+    GlobalSecondaryIndexUpdate, GsiDescription, KeySchemaElement, KeyType, ListTablesInput,
+    ListTablesOutput, LsiDescription, ProvisionedThroughputDescription, TableDescription,
+    TableStatus, UpdateTableInput, UpdateTableOutput,
 };
 use nimbus_core::{Document, DocumentId, StructuredQuery, TableName};
 use nimbus_engine::Service;
@@ -151,17 +151,25 @@ pub fn update_table(
     context: &TenantIsolationContext,
     input: UpdateTableInput,
 ) -> Result<UpdateTableOutput, DynamoDbError> {
-    if input
-        .global_secondary_index_updates
-        .as_ref()
-        .is_some_and(|updates| !updates.is_empty())
-    {
-        return Err(DynamoDbError::ValidationException(
-            "GlobalSecondaryIndexUpdates are not yet supported (planned in D4)".to_owned(),
-        ));
+    let mut description = load_description(service, context, &input.table_name)?;
+
+    // Merge any new attribute definitions (a new GSI may key on new attributes).
+    if let Some(new_defs) = &input.attribute_definitions {
+        for def in new_defs {
+            if !description
+                .attribute_definitions
+                .iter()
+                .any(|existing| existing.attribute_name == def.attribute_name)
+            {
+                description.attribute_definitions.push(def.clone());
+            }
+        }
     }
 
-    let mut description = load_description(service, context, &input.table_name)?;
+    // Apply GSI Create/Update/Delete actions.
+    if let Some(updates) = &input.global_secondary_index_updates {
+        apply_gsi_updates(&mut description, updates)?;
+    }
 
     if let Some(billing_mode) = input.billing_mode {
         description.billing_mode_summary = Some(BillingModeSummary {
@@ -184,10 +192,17 @@ pub fn update_table(
         description.stream_specification = Some(stream);
     }
 
+    // Re-persist the catalog doc as a full replace (delete + insert).
+    // `update_document` is a field-merge that cannot *remove* fields, so
+    // clearing the last GSI (`GlobalSecondaryIndexes` → absent) needs a wholesale
+    // rewrite. (Catalog-doc overwrite atomicity is the DDB-DIV-005 follow-up.)
     let fields = description_to_fields(&description)?;
     let id = catalog_id(&input.table_name)?;
     service
-        .update_document(context.tenant_id(), catalog_table(), id, fields)
+        .delete_document(context.tenant_id(), catalog_table(), id.clone())
+        .map_err(map_core_error)?;
+    service
+        .insert_document_with_id(context.tenant_id(), catalog_table(), id, fields)
         .map_err(map_core_error)?;
 
     Ok(UpdateTableOutput {
@@ -415,6 +430,88 @@ fn validate_secondary_indexes(input: &CreateTableInput) -> Result<(), DynamoDbEr
         validate_key_attributes_defined(&gsi.key_schema, &input.attribute_definitions)?;
     }
     Ok(())
+}
+
+/// Apply `GlobalSecondaryIndexUpdates` (Create/Update/Delete) to the table
+/// description. GSIs become `ACTIVE` immediately (DDB-DIV-004).
+///
+/// # Errors
+/// `ValidationException` for a malformed action, a Create whose key schema is
+/// invalid or keys an undefined attribute, a Create of an existing index, or an
+/// Update/Delete of a missing index.
+fn apply_gsi_updates(
+    description: &mut TableDescription,
+    updates: &[GlobalSecondaryIndexUpdate],
+) -> Result<(), DynamoDbError> {
+    for update in updates {
+        match (&update.create, &update.update, &update.delete) {
+            (Some(create), None, None) => {
+                validate_key_schema(&create.key_schema)?;
+                validate_key_attributes_defined(
+                    &create.key_schema,
+                    &description.attribute_definitions,
+                )?;
+                let arn = format!("{}/index/{}", description.table_arn, create.index_name);
+                let gsis = description
+                    .global_secondary_indexes
+                    .get_or_insert_with(Vec::new);
+                if gsis.iter().any(|gsi| gsi.index_name == create.index_name) {
+                    return Err(DynamoDbError::ValidationException(format!(
+                        "Attempting to create an index which already exists: {}",
+                        create.index_name
+                    )));
+                }
+                gsis.push(GsiDescription {
+                    index_name: create.index_name.clone(),
+                    key_schema: create.key_schema.clone(),
+                    projection: create.projection.clone(),
+                    index_status: "ACTIVE".to_owned(),
+                    provisioned_throughput: None,
+                    index_size_bytes: 0,
+                    item_count: 0,
+                    index_arn: arn,
+                });
+            }
+            (None, Some(action), None) => {
+                let exists = description
+                    .global_secondary_indexes
+                    .as_ref()
+                    .is_some_and(|gsis| gsis.iter().any(|gsi| gsi.index_name == action.index_name));
+                if !exists {
+                    return Err(index_not_found(&action.index_name));
+                }
+                // UpdateGsiAction only carries the index name (throughput is the
+                // sole settable field and is not metered here) — no-op.
+            }
+            (None, None, Some(action)) => {
+                let gsis = description
+                    .global_secondary_indexes
+                    .get_or_insert_with(Vec::new);
+                let before = gsis.len();
+                gsis.retain(|gsi| gsi.index_name != action.index_name);
+                if gsis.len() == before {
+                    return Err(index_not_found(&action.index_name));
+                }
+                if gsis.is_empty() {
+                    description.global_secondary_indexes = None;
+                }
+            }
+            _ => {
+                return Err(DynamoDbError::ValidationException(
+                    "Each GlobalSecondaryIndexUpdate must contain exactly one of Create, Update, \
+                     or Delete"
+                        .to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn index_not_found(index_name: &str) -> DynamoDbError {
+    DynamoDbError::ValidationException(format!(
+        "The table does not have the specified index: {index_name}"
+    ))
 }
 
 fn build_table_description(input: &CreateTableInput) -> TableDescription {
@@ -895,18 +992,73 @@ mod tests {
     }
 
     #[test]
-    fn update_table_rejects_gsi_updates_for_now() {
+    fn update_table_gsi_create_update_delete() {
         let (service, ctx, _t) = fixture();
         create_table(&service, &ctx, input("orders", false)).expect("create");
-        let input = serde_json::from_value::<UpdateTableInput>(serde_json::json!({
+
+        // Create a GSI (its key attribute `gsk` is supplied via AttributeDefinitions).
+        let create: UpdateTableInput = serde_json::from_value(serde_json::json!({
             "TableName": "orders",
-            "GlobalSecondaryIndexUpdates": [
-                { "Delete": { "IndexName": "gsi1" } }
-            ],
+            "AttributeDefinitions": [{ "AttributeName": "gsk", "AttributeType": "S" }],
+            "GlobalSecondaryIndexUpdates": [{
+                "Create": {
+                    "IndexName": "by_gsk",
+                    "KeySchema": [{ "AttributeName": "gsk", "KeyType": "HASH" }],
+                    "Projection": { "ProjectionType": "ALL" }
+                }
+            }],
         }))
-        .expect("parse");
+        .unwrap();
+        let after_create = update_table(&service, &ctx, create).expect("create gsi");
+        let gsis = after_create
+            .table_description
+            .global_secondary_indexes
+            .expect("gsi present");
+        assert_eq!(gsis.len(), 1);
+        assert_eq!(gsis[0].index_name, "by_gsk");
+        assert_eq!(gsis[0].index_status, "ACTIVE");
+
+        // Creating the same index again is rejected.
+        let dup: UpdateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "orders",
+            "AttributeDefinitions": [{ "AttributeName": "gsk", "AttributeType": "S" }],
+            "GlobalSecondaryIndexUpdates": [{
+                "Create": {
+                    "IndexName": "by_gsk",
+                    "KeySchema": [{ "AttributeName": "gsk", "KeyType": "HASH" }],
+                    "Projection": { "ProjectionType": "ALL" }
+                }
+            }],
+        }))
+        .unwrap();
         assert!(matches!(
-            update_table(&service, &ctx, input),
+            update_table(&service, &ctx, dup),
+            Err(DynamoDbError::ValidationException(_))
+        ));
+
+        // Delete the GSI.
+        let delete: UpdateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "orders",
+            "GlobalSecondaryIndexUpdates": [{ "Delete": { "IndexName": "by_gsk" } }],
+        }))
+        .unwrap();
+        let after_delete = update_table(&service, &ctx, delete).expect("delete gsi");
+        assert!(
+            after_delete
+                .table_description
+                .global_secondary_indexes
+                .is_none(),
+            "last GSI removed"
+        );
+
+        // Deleting a missing index is rejected.
+        let missing: UpdateTableInput = serde_json::from_value(serde_json::json!({
+            "TableName": "orders",
+            "GlobalSecondaryIndexUpdates": [{ "Delete": { "IndexName": "ghost" } }],
+        }))
+        .unwrap();
+        assert!(matches!(
+            update_table(&service, &ctx, missing),
             Err(DynamoDbError::ValidationException(_))
         ));
     }
