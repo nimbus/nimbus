@@ -28,8 +28,9 @@ use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
 use crate::auth::sigv4::parse::parse_authorization;
+use crate::auth::sigv4::verify;
 use crate::commands::{batch, control_plane, discovery, item, query, stream, tag, transact, ttl};
-use crate::tenant::{AccessKeyRegistry, ensure_tenant, tenant_context};
+use crate::tenant::{AccessKeyRegistry, AuthMode, ensure_tenant, tenant_context};
 use crate::wire::{self, WireResponse};
 
 /// Surface label recorded on every DynamoDB-originated tenant context.
@@ -118,8 +119,9 @@ pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> 
         }
     };
 
-    // 4. Authenticate (lookup mode): access key → tenant.
-    let context = match authenticate(ctx, headers) {
+    // 4. Authenticate: access key → tenant (and, in strict mode, verify the
+    //    SigV4 signature against the per-key secret + timestamp window).
+    let context = match authenticate(ctx, headers, body) {
         Ok(context) => context,
         Err(error) => return wire::render_error(&error),
     };
@@ -138,16 +140,23 @@ pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> 
     route(ctx, &context, &operation, request, host)
 }
 
-/// Resolve the request's tenant from the SigV4 `Authorization` header.
+/// Resolve the request's tenant from the SigV4 `Authorization` header, and —
+/// under [`AuthMode::Strict`] — verify the signature.
 ///
-/// Lookup mode (D0.8): parse the header for its access-key id and map it to a
-/// tenant. The signature is not verified here — strict verification is D7. A
-/// missing header is `MissingAuthenticationToken`; a malformed header is
-/// `IncompleteSignature` (from the parser); an unbound key is
+/// Both modes parse the header for its access-key id and resolve it to a tenant
+/// binding. A missing header is `MissingAuthenticationToken`; a malformed header
+/// is `IncompleteSignature` (from the parser); an unbound key is
 /// `UnrecognizedClientException` (from the registry).
+///
+/// In `Strict` mode the request must also carry a valid `X-Amz-Date` within the
+/// ±15-minute window and a signature that matches the per-key secret over the
+/// canonical `POST /` request; otherwise the binding's secret being absent is a
+/// configuration error surfaced as `UnrecognizedClientException`. `LookupOnly`
+/// (the default) skips signature verification — convenient for local dev.
 fn authenticate(
     ctx: &DispatchContext<'_>,
     headers: &HeaderMap,
+    body: &[u8],
 ) -> Result<TenantIsolationContext, DynamoDbError> {
     let header = headers
         .get("authorization")
@@ -156,8 +165,20 @@ fn authenticate(
             DynamoDbError::MissingAuthenticationToken("Missing Authentication Token".to_owned())
         })?;
     let parsed = parse_authorization(header)?;
-    let tenant = ctx.access_keys.resolve(&parsed.access_key_id)?.clone();
-    Ok(tenant_context(tenant, DISPATCH_SURFACE))
+    let binding = ctx.access_keys.binding(&parsed.access_key_id)?;
+
+    if ctx.access_keys.mode() == AuthMode::Strict {
+        let secret = binding.secret.as_deref().ok_or_else(|| {
+            DynamoDbError::UnrecognizedClientException(
+                "The security token included in the request is invalid.".to_owned(),
+            )
+        })?;
+        verify::validate_timestamp(headers)?;
+        // DynamoDB is always `POST /` with no query string.
+        verify::verify_signature(&parsed, secret, "POST", "/", "", headers, body)?;
+    }
+
+    Ok(tenant_context(binding.tenant.clone(), DISPATCH_SURFACE))
 }
 
 /// Route an authenticated request to its handler. Operations without a handler
@@ -583,5 +604,68 @@ mod tests {
         );
         assert_eq!(status, 200, "{body}");
         assert_eq!(body["Table"]["TableName"].as_str().unwrap(), "Orders");
+    }
+
+    // ---- D7.2: strict-mode rejection paths ----
+
+    /// A strict-mode `Service` + registry binding `ACCESS_KEY` with a secret.
+    fn strict_fixture() -> (tempfile::TempDir, Arc<Service>, AccessKeyRegistry) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let registry = AccessKeyRegistry::new()
+            .bind_signed(ACCESS_KEY, TenantId::new("acme").expect("tenant"), "secret")
+            .with_mode(AuthMode::Strict);
+        (temp, service, registry)
+    }
+
+    #[test]
+    fn lookup_mode_is_the_default() {
+        let (_temp, _service, registry) = fixture();
+        assert_eq!(registry.mode(), AuthMode::LookupOnly);
+        assert_eq!(strict_fixture().2.mode(), AuthMode::Strict);
+    }
+
+    #[test]
+    fn strict_mode_missing_amz_date_is_incomplete_signature() {
+        // validate_timestamp runs first in strict mode: no X-Amz-Date header is
+        // an IncompleteSignature, even though the access key is bound.
+        let (_temp, service, registry) = strict_fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let headers = headers_for("CreateTable", Some(&signed_authorization(ACCESS_KEY)));
+        let (status, body) = dispatch(&ctx, &headers, &create_table_body("orders"));
+        assert_eq!(status, 400, "{body}");
+        assert!(error_type(&body).ends_with("IncompleteSignature"), "{body}");
+    }
+
+    #[test]
+    fn strict_mode_expired_request_is_rejected() {
+        // A well-formed but stale X-Amz-Date (far outside the ±15-minute window)
+        // is rejected before signature comparison.
+        let (_temp, service, registry) = strict_fixture();
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let mut headers = headers_for("CreateTable", Some(&signed_authorization(ACCESS_KEY)));
+        headers.insert(
+            "x-amz-date",
+            http::HeaderValue::from_static("20200101T000000Z"),
+        );
+        headers.insert("host", http::HeaderValue::from_static("localhost:8000"));
+        let (_status, body) = dispatch(&ctx, &headers, &create_table_body("orders"));
+        assert!(
+            error_type(&body).ends_with("UnrecognizedClientException"),
+            "{body}"
+        );
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("expired"),
+            "{body}"
+        );
     }
 }

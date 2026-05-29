@@ -24,7 +24,7 @@ use aws_sdk_dynamodb::types::{
     ScalarAttributeType, TableStatus,
 };
 use nimbus_core::TenantId;
-use nimbus_dynamodb::AccessKeyRegistry;
+use nimbus_dynamodb::{AccessKeyRegistry, AuthMode};
 use nimbus_engine::Service;
 use nimbus_server::adapters_dynamodb::listener::run_listener;
 use tokio::net::TcpListener;
@@ -112,6 +112,29 @@ async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
 
 async fn fixture() -> Fixture {
     fixture_with_keys(&[(ACCESS_KEY, TENANT)]).await
+}
+
+/// The secret every [`Fixture::client`] signs with (see `client`). A strict
+/// fixture bound with this same secret accepts those signatures.
+const CLIENT_SECRET: &str = "test-secret";
+
+/// Boot a strict-mode adapter binding `ACCESS_KEY` to `TENANT` with `secret`.
+/// In strict mode the adapter verifies the full SigV4 signature, so a client
+/// signing with a different secret is rejected.
+async fn fixture_strict(secret: &str) -> Fixture {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let service = Arc::new(Service::new(temp.path()).expect("service"));
+    let registry = AccessKeyRegistry::new()
+        .bind_signed(ACCESS_KEY, TenantId::new(TENANT).expect("tenant"), secret)
+        .with_mode(AuthMode::Strict);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let handle = tokio::spawn(run_listener(listener, service, registry));
+    Fixture {
+        addr,
+        _temp: temp,
+        listener: handle,
+    }
 }
 
 /// CreateTable "Orders" with a single HASH key `pk` (String), on-demand billing.
@@ -1669,4 +1692,64 @@ async fn unknown_access_key_is_unrecognized_client_through_official_sdk() {
         Some("UnrecognizedClientException"),
         "unbound key must map to UnrecognizedClientException, got {service_err:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn strict_mode_accepts_a_correctly_signed_request() {
+    // D7.1: under strict SigV4, a request signed by the real aws-sdk-rust with
+    // the matching secret must verify end-to-end — proving the adapter's
+    // canonical request, derived-key chain, and signature comparison all agree
+    // with the official SDK signer.
+    let fx = fixture_strict(CLIENT_SECRET).await;
+    let created = create_orders(&fx.client(ACCESS_KEY)).await;
+    assert_eq!(
+        created.table_description().and_then(|t| t.table_name()),
+        Some("Orders"),
+        "a correctly-signed request is accepted in strict mode"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn strict_mode_rejects_a_wrong_secret() {
+    // D7.2: strict mode bound with a different secret than the client signs with
+    // → the signatures cannot match → InvalidSignatureException.
+    let fx = fixture_strict("a-different-secret").await;
+    let err = fx
+        .client(ACCESS_KEY)
+        .create_table()
+        .table_name("Orders")
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name("pk")
+                .key_type(KeyType::Hash)
+                .build()
+                .expect("key schema"),
+        )
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("pk")
+                .attribute_type(ScalarAttributeType::S)
+                .build()
+                .expect("attribute definition"),
+        )
+        .billing_mode(BillingMode::PayPerRequest)
+        .send()
+        .await
+        .expect_err("a mis-signed request must be rejected in strict mode");
+    assert_eq!(
+        err.into_service_error().code(),
+        Some("InvalidSignatureException"),
+        "a signature computed with the wrong secret is InvalidSignatureException"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn strict_mode_still_isolates_tenants() {
+    // Strict verification does not weaken tenant isolation: the verified key is
+    // still scoped to exactly its bound tenant.
+    let fx = fixture_strict(CLIENT_SECRET).await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+    let listed = client.list_tables().send().await.expect("list");
+    assert!(listed.table_names().contains(&"Orders".to_string()));
 }

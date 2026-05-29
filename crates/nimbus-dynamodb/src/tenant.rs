@@ -26,24 +26,89 @@ use nimbus_tenant::TenantIsolationContext;
 
 use crate::error::map_core_error;
 
-/// Configured bindings from AWS access-key id to Nimbus tenant.
+/// How the adapter authenticates requests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AuthMode {
+    /// Extract the access key and resolve it to a tenant without verifying the
+    /// SigV4 signature. The default; convenient for local development where the
+    /// secret is arbitrary.
+    #[default]
+    LookupOnly,
+    /// Verify the full SigV4 signature against the per-key secret and reject
+    /// requests outside the ±15-minute timestamp window.
+    Strict,
+}
+
+/// One access key's binding: the tenant it scopes to, plus the secret access
+/// key (required only in [`AuthMode::Strict`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyBinding {
+    /// The Nimbus tenant this access key is scoped to.
+    pub tenant: TenantId,
+    /// The secret access key, used for `Strict` signature verification. `None`
+    /// for lookup-only keys.
+    pub secret: Option<String>,
+}
+
+/// Configured bindings from AWS access-key id to Nimbus tenant, plus the auth
+/// mode applied to every request.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AccessKeyRegistry {
-    bindings: BTreeMap<String, TenantId>,
+    bindings: BTreeMap<String, KeyBinding>,
+    mode: AuthMode,
 }
 
 impl AccessKeyRegistry {
-    /// An empty registry (no access keys configured).
+    /// An empty registry (no access keys configured), `LookupOnly` mode.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Bind an access-key id to a tenant (builder style).
+    /// Bind a lookup-only access-key id to a tenant (no secret; usable in
+    /// `LookupOnly` mode). Builder style.
     #[must_use]
     pub fn bind(mut self, access_key_id: impl Into<String>, tenant: TenantId) -> Self {
-        self.bindings.insert(access_key_id.into(), tenant);
+        self.bindings.insert(
+            access_key_id.into(),
+            KeyBinding {
+                tenant,
+                secret: None,
+            },
+        );
         self
+    }
+
+    /// Bind an access-key id to a tenant with its secret access key, so the key
+    /// can be used under `Strict` signature verification. Builder style.
+    #[must_use]
+    pub fn bind_signed(
+        mut self,
+        access_key_id: impl Into<String>,
+        tenant: TenantId,
+        secret: impl Into<String>,
+    ) -> Self {
+        self.bindings.insert(
+            access_key_id.into(),
+            KeyBinding {
+                tenant,
+                secret: Some(secret.into()),
+            },
+        );
+        self
+    }
+
+    /// Set the authentication mode (builder style).
+    #[must_use]
+    pub fn with_mode(mut self, mode: AuthMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// The configured authentication mode.
+    #[must_use]
+    pub fn mode(&self) -> AuthMode {
+        self.mode
     }
 
     /// Resolve an access-key id to its bound tenant.
@@ -51,6 +116,14 @@ impl AccessKeyRegistry {
     /// # Errors
     /// `UnrecognizedClientException` if the access-key id has no binding.
     pub fn resolve(&self, access_key_id: &str) -> Result<&TenantId, DynamoDbError> {
+        self.binding(access_key_id).map(|binding| &binding.tenant)
+    }
+
+    /// Resolve an access-key id to its full binding (tenant + optional secret).
+    ///
+    /// # Errors
+    /// `UnrecognizedClientException` if the access-key id has no binding.
+    pub fn binding(&self, access_key_id: &str) -> Result<&KeyBinding, DynamoDbError> {
         self.bindings.get(access_key_id).ok_or_else(|| {
             DynamoDbError::UnrecognizedClientException(
                 "The security token included in the request is invalid.".to_owned(),
@@ -75,9 +148,9 @@ impl AccessKeyRegistry {
     #[must_use]
     pub fn tenants(&self) -> Vec<TenantId> {
         let mut tenants: Vec<TenantId> = Vec::new();
-        for tenant in self.bindings.values() {
-            if !tenants.contains(tenant) {
-                tenants.push(tenant.clone());
+        for binding in self.bindings.values() {
+            if !tenants.contains(&binding.tenant) {
+                tenants.push(binding.tenant.clone());
             }
         }
         tenants
