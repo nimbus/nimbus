@@ -39,6 +39,12 @@ pub mod adapters_mongodb {
     pub use super::adapters::mongodb::listener;
     pub use super::adapters::mongodb::wire;
 }
+/// Test-only re-export of the otherwise-crate-private DynamoDB adapter, so the
+/// `dynamodb_spec` parity runner can boot the listener (mirrors
+/// [`adapters_mongodb`]).
+pub mod adapters_dynamodb {
+    pub use super::adapters::dynamodb::listener;
+}
 pub use construction::{ServeOptions, serve};
 pub use license::{
     LICENSE_FILE_ENV, LicenseDocument, LicenseEntitlements, LicenseKind, LicenseLoadError,
