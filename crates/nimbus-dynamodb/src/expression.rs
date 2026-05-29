@@ -28,7 +28,7 @@ use extenddb_core::expression::{
     tokenize_for, validate_no_reserved_words,
 };
 use extenddb_core::limits::LimitsConfig;
-use extenddb_core::types::AttributeValue;
+use extenddb_core::types::{AttributeValue, Item};
 
 // Re-export the upstream evaluators so handlers import everything expression
 // from one place. These take the parsed AST + an `Item` + the `ExpressionMaps`.
@@ -127,6 +127,44 @@ pub fn parse_key_condition_expression(
         validate_no_reserved_words(&tokens)?;
     }
     parse_key_condition(&tokens)
+}
+
+/// The AWS message for a failed conditional write.
+const CONDITION_FAILED_MESSAGE: &str = "The conditional request failed";
+
+/// Evaluate an optional `ConditionExpression` against `item` as a write gate.
+///
+/// `Ok(())` when there is no condition (or it passes); a
+/// `ConditionalCheckFailedException` (item omitted) when a well-formed
+/// condition evaluates to false. PutItem/DeleteItem/UpdateItem call this before
+/// mutating; the handler attaches the existing item to the error when
+/// `ReturnValuesOnConditionCheckFailure` requests it. The condition is evaluated
+/// against the *current* item — for a create-if-absent (`attribute_not_exists`)
+/// the caller passes an empty item when no row exists.
+///
+/// # Errors
+/// `ValidationException` for a malformed/empty expression;
+/// `ConditionalCheckFailedException` when the condition is not satisfied.
+pub fn check_condition(
+    condition: Option<&str>,
+    names: Option<&HashMap<String, String>>,
+    values: Option<&HashMap<String, AttributeValue>>,
+    item: &Item,
+    limits: &LimitsConfig,
+) -> Result<(), DynamoDbError> {
+    let Some(expr_str) = condition.filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let expr = parse_condition(expr_str, limits)?;
+    let maps = build_maps(names, values);
+    if evaluate_condition(&expr, item, &maps)? {
+        Ok(())
+    } else {
+        Err(DynamoDbError::ConditionalCheckFailedException(
+            CONDITION_FAILED_MESSAGE.to_owned(),
+            None,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -235,6 +273,172 @@ mod tests {
         assert!(matches!(
             parse_update_expression("", &limits),
             Err(DynamoDbError::ValidationException(_))
+        ));
+    }
+
+    // ---- D1.2: ConditionExpression integration coverage ----
+
+    /// `{ alpha: S "alice", score: N 30, tags: SS ["x","y"], nested: M {city:
+    /// "nyc"}, nums: L [N1,N2,N3] }` — covers scalar, set, map, and list shapes.
+    fn rich_item() -> Item {
+        use std::collections::BTreeMap;
+        let mut m: Item = BTreeMap::new();
+        m.insert("alpha".into(), AttributeValue::S("alice".into()));
+        m.insert("score".into(), AttributeValue::N("30".into()));
+        m.insert(
+            "tags".into(),
+            AttributeValue::SS(["x", "y"].iter().map(|s| (*s).to_string()).collect()),
+        );
+        let mut nested = BTreeMap::new();
+        nested.insert("city".into(), AttributeValue::S("nyc".into()));
+        m.insert("nested".into(), AttributeValue::M(nested));
+        m.insert(
+            "nums".into(),
+            AttributeValue::L(vec![
+                AttributeValue::N("1".into()),
+                AttributeValue::N("2".into()),
+                AttributeValue::N("3".into()),
+            ]),
+        );
+        m
+    }
+
+    /// True if the condition passes against `rich_item`, false if it fails the
+    /// conditional check. Panics on any non-condition error.
+    fn passes(cond: &str, vals: &[(&str, AttributeValue)]) -> bool {
+        passes_with_names(cond, None, vals)
+    }
+
+    fn passes_with_names(
+        cond: &str,
+        names: Option<&HashMap<String, String>>,
+        vals: &[(&str, AttributeValue)],
+    ) -> bool {
+        let limits = default_limits();
+        let vmap = values(vals);
+        match check_condition(Some(cond), names, Some(&vmap), &rich_item(), &limits) {
+            Ok(()) => true,
+            Err(DynamoDbError::ConditionalCheckFailedException(..)) => false,
+            Err(error) => panic!("unexpected error for `{cond}`: {error:?}"),
+        }
+    }
+
+    #[test]
+    fn no_condition_always_passes() {
+        let limits = default_limits();
+        assert!(check_condition(None, None, None, &rich_item(), &limits).is_ok());
+        assert!(check_condition(Some(""), None, None, &rich_item(), &limits).is_ok());
+    }
+
+    #[test]
+    fn failed_condition_maps_to_conditional_check_failed() {
+        let limits = default_limits();
+        let err = check_condition(
+            Some("score = :v"),
+            None,
+            Some(&values(&[(":v", AttributeValue::N("99".into()))])),
+            &rich_item(),
+            &limits,
+        )
+        .expect_err("condition should fail");
+        match err {
+            DynamoDbError::ConditionalCheckFailedException(message, item) => {
+                assert_eq!(message, "The conditional request failed");
+                assert!(item.is_none(), "gate omits the item; handler attaches it");
+            }
+            other => panic!("expected ConditionalCheckFailedException, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn comparison_operators() {
+        let n = |s: &str| AttributeValue::N(s.into());
+        assert!(passes("score = :v", &[(":v", n("30"))]));
+        assert!(!passes("score = :v", &[(":v", n("31"))]));
+        assert!(passes("score <> :v", &[(":v", n("31"))]));
+        assert!(passes("score < :v", &[(":v", n("31"))]));
+        assert!(passes("score <= :v", &[(":v", n("30"))]));
+        assert!(passes("score > :v", &[(":v", n("29"))]));
+        assert!(passes("score >= :v", &[(":v", n("30"))]));
+        assert!(!passes("score > :v", &[(":v", n("30"))]));
+    }
+
+    #[test]
+    fn logical_operators_and_between_and_in() {
+        let n = |s: &str| AttributeValue::N(s.into());
+        let s = |v: &str| AttributeValue::S(v.into());
+        assert!(passes(
+            "score > :lo AND score < :hi",
+            &[(":lo", n("10")), (":hi", n("40"))]
+        ));
+        assert!(!passes(
+            "score > :lo AND score < :hi",
+            &[(":lo", n("10")), (":hi", n("20"))]
+        ));
+        assert!(passes(
+            "score < :lo OR score > :hi",
+            &[(":lo", n("10")), (":hi", n("20"))]
+        ));
+        assert!(passes("NOT attribute_exists(absentattr)", &[]));
+        assert!(passes(
+            "score BETWEEN :lo AND :hi",
+            &[(":lo", n("20")), (":hi", n("40"))]
+        ));
+        assert!(!passes(
+            "score BETWEEN :lo AND :hi",
+            &[(":lo", n("31")), (":hi", n("40"))]
+        ));
+        assert!(passes(
+            "alpha IN (:a, :b)",
+            &[(":a", s("bob")), (":b", s("alice"))]
+        ));
+        assert!(!passes(
+            "alpha IN (:a, :b)",
+            &[(":a", s("bob")), (":b", s("carol"))]
+        ));
+    }
+
+    #[test]
+    fn functions_exist_type_begins_with_contains_size() {
+        let s = |v: &str| AttributeValue::S(v.into());
+        let n = |v: &str| AttributeValue::N(v.into());
+        // attribute_exists / attribute_not_exists
+        assert!(passes("attribute_exists(alpha)", &[]));
+        assert!(!passes("attribute_exists(absentattr)", &[]));
+        assert!(passes("attribute_not_exists(absentattr)", &[]));
+        assert!(!passes("attribute_not_exists(alpha)", &[]));
+        // attribute_type
+        assert!(passes("attribute_type(score, :t)", &[(":t", s("N"))]));
+        assert!(!passes("attribute_type(score, :t)", &[(":t", s("S"))]));
+        assert!(passes("attribute_type(tags, :t)", &[(":t", s("SS"))]));
+        // begins_with (string prefix)
+        assert!(passes("begins_with(alpha, :p)", &[(":p", s("al"))]));
+        assert!(!passes("begins_with(alpha, :p)", &[(":p", s("zz"))]));
+        // contains (substring of a string, and set membership)
+        assert!(passes("contains(alpha, :sub)", &[(":sub", s("lic"))]));
+        assert!(passes("contains(tags, :member)", &[(":member", s("x"))]));
+        assert!(!passes("contains(tags, :member)", &[(":member", s("z"))]));
+        // size (string length, set size, list length)
+        assert!(passes("size(alpha) = :len", &[(":len", n("5"))]));
+        assert!(passes("size(tags) = :len", &[(":len", n("2"))]));
+        assert!(passes("size(nums) = :len", &[(":len", n("3"))]));
+    }
+
+    #[test]
+    fn nested_path_and_expression_attribute_names_resolve() {
+        // Nested map path through the resolver.
+        assert!(passes(
+            "nested.city = :c",
+            &[(":c", AttributeValue::S("nyc".into()))]
+        ));
+        // A reserved-word-safe alias still flows through ExpressionAttributeNames.
+        let names: HashMap<String, String> = [("#a".to_string(), "alpha".to_string())]
+            .into_iter()
+            .collect();
+        assert!(passes_with_names(
+            "#a = :v",
+            Some(&names),
+            &[(":v", AttributeValue::S("alice".into()))]
         ));
     }
 }
