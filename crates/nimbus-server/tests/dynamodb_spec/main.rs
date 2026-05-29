@@ -1092,6 +1092,78 @@ async fn global_secondary_index_crud_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gsi_query_projection_through_official_sdk() {
+    use aws_sdk_dynamodb::types::{GlobalSecondaryIndex, Projection, ProjectionType};
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    let ks = |name: &str, kt: KeyType| {
+        KeySchemaElement::builder()
+            .attribute_name(name)
+            .key_type(kt)
+            .build()
+            .expect("ks")
+    };
+    let attr = |name: &str, t: ScalarAttributeType| {
+        AttributeDefinition::builder()
+            .attribute_name(name)
+            .attribute_type(t)
+            .build()
+            .expect("attr")
+    };
+    client
+        .create_table()
+        .table_name("Catalog")
+        .key_schema(ks("pk", KeyType::Hash))
+        .attribute_definitions(attr("pk", ScalarAttributeType::S))
+        .attribute_definitions(attr("g", ScalarAttributeType::S))
+        .global_secondary_indexes(
+            GlobalSecondaryIndex::builder()
+                .index_name("by_g")
+                .key_schema(ks("g", KeyType::Hash))
+                .projection(
+                    Projection::builder()
+                        .projection_type(ProjectionType::KeysOnly)
+                        .build(),
+                )
+                .build()
+                .expect("gsi"),
+        )
+        .billing_mode(BillingMode::PayPerRequest)
+        .send()
+        .await
+        .expect("create Catalog with GSI");
+
+    client
+        .put_item()
+        .table_name("Catalog")
+        .item("pk", AttributeValue::S("a".into()))
+        .item("g", AttributeValue::S("x".into()))
+        .item("extra", AttributeValue::N("9".into()))
+        .send()
+        .await
+        .expect("put");
+
+    let out = client
+        .query()
+        .table_name("Catalog")
+        .index_name("by_g")
+        .key_condition_expression("g = :g")
+        .expression_attribute_values(":g", AttributeValue::S("x".into()))
+        .send()
+        .await
+        .expect("GSI query");
+    let items = out.items();
+    assert_eq!(items.len(), 1);
+    let item = &items[0];
+    assert!(item.contains_key("pk") && item.contains_key("g"));
+    assert!(
+        !item.contains_key("extra"),
+        "KEYS_ONLY GSI must not project non-key attributes"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
