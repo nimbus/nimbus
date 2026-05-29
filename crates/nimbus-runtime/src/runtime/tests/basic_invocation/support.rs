@@ -1018,6 +1018,7 @@ pub(super) fn assert_host_heavy_canary_result(
                     "native addon module",
                     "ffi/native-addon authority",
                     "Could not load the \"sharp\" module",
+                    "Requires sys access to \"cpus\"",
                     ".node",
                 ],
             )

@@ -142,24 +142,23 @@ pub async fn handle_batch_get_documents(
         batch_get_documents_for_database(service, &tenant_context, &database, principal, &request)
             .map_err(firebase_grpc_status)?;
     let read_time = Some(prost_timestamp_from_core(outcome.read_time)?);
-    let responses = outcome
-        .entries
-        .into_iter()
-        .map(|entry| {
-            let result = match entry.document {
-                Some(document) => BatchGetResult::Found(
+    let mut responses = Vec::with_capacity(outcome.entries.len());
+    for entry in outcome.entries {
+        let result = match entry.document {
+            Some(document) => {
+                let document =
                     proto_document(&entry.document_name, &document, request.mask.as_deref())
-                        .map_err(|status| *status)?,
-                ),
-                None => BatchGetResult::Missing(entry.document_name),
-            };
-            Ok(BatchGetDocumentsResponse {
-                transaction: Vec::new(),
-                read_time,
-                result: Some(result),
-            })
-        })
-        .collect::<Result<Vec<_>, Status>>()?;
+                        .map_err(|status| *status)?;
+                BatchGetResult::Found(document)
+            }
+            None => BatchGetResult::Missing(entry.document_name),
+        };
+        responses.push(BatchGetDocumentsResponse {
+            transaction: Vec::new(),
+            read_time,
+            result: Some(result),
+        });
+    }
 
     let output: tonic::codegen::BoxStream<BatchGetDocumentsResponse> =
         Box::pin(stream::iter(responses.into_iter().map(Ok::<_, Status>)));
@@ -183,15 +182,17 @@ pub async fn handle_batch_write(
         batch_write_for_database(service, &tenant_context, &database, principal, batch.writes)
             .map_err(firebase_grpc_status)?;
 
+    let mut write_results = Vec::with_capacity(outcome.entries.len());
+    for entry in &outcome.entries {
+        let write_result = match entry.write_result.as_ref() {
+            Some(write_result) => proto_write_result(write_result)?,
+            None => proto::WriteResult::default(),
+        };
+        write_results.push(write_result);
+    }
+
     Ok(Response::new(BatchWriteResponse {
-        write_results: outcome
-            .entries
-            .iter()
-            .map(|entry| match entry.write_result.as_ref() {
-                Some(write_result) => proto_write_result(write_result),
-                None => Ok(proto::WriteResult::default()),
-            })
-            .collect::<Result<Vec<_>, _>>()?,
+        write_results,
         status: outcome
             .entries
             .into_iter()
