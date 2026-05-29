@@ -190,6 +190,7 @@ fn route(
         "DescribeLimits" => render_output(&discovery::describe_limits()),
         // T1 — single-item data plane.
         "PutItem" => run(request, |input| item::put_item(ctx.service, context, input)),
+        "GetItem" => run(request, |input| item::get_item(ctx.service, context, input)),
         other => wire::render_error(&DynamoDbError::InternalServerError(format!(
             "{other} is not yet implemented"
         ))),

@@ -246,6 +246,91 @@ async fn put_item_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_get_roundtrip_through_official_sdk() {
+    use aws_sdk_dynamodb::primitives::Blob;
+    use std::collections::HashMap;
+
+    // The lossless-storage proof: write every typed shape through the official
+    // SDK and read it back byte-for-byte, including 38-digit N precision and
+    // binary, which a naive clean-JSON projection would corrupt.
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+
+    let mut nested = HashMap::new();
+    nested.insert("city".to_string(), AttributeValue::S("nyc".into()));
+    let big = "99999999999999999999999999999999999999"; // 38 nines
+
+    client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("o1".into()))
+        .item("n", AttributeValue::N("42".into()))
+        .item("big", AttributeValue::N(big.into()))
+        .item("bin", AttributeValue::B(Blob::new(vec![0u8, 250, 7])))
+        .item(
+            "tags",
+            AttributeValue::Ss(vec!["a".into(), "b".into(), "c".into()]),
+        )
+        .item("m", AttributeValue::M(nested))
+        .send()
+        .await
+        .expect("put_item");
+
+    let got = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("o1".into()))
+        .send()
+        .await
+        .expect("get_item");
+    let item = got.item().expect("item present");
+
+    assert_eq!(item.get("n"), Some(&AttributeValue::N("42".into())));
+    assert_eq!(
+        item.get("big"),
+        Some(&AttributeValue::N(big.into())),
+        "38-digit N precision must survive the round-trip"
+    );
+    assert_eq!(
+        item.get("bin"),
+        Some(&AttributeValue::B(Blob::new(vec![0u8, 250, 7]))),
+        "binary bytes must survive exactly"
+    );
+    // String sets are unordered; compare as sorted multisets.
+    let mut tags = item.get("tags").unwrap().as_ss().unwrap().clone();
+    tags.sort();
+    assert_eq!(tags, vec!["a", "b", "c"]);
+    assert_eq!(
+        item.get("m").unwrap().as_m().unwrap().get("city"),
+        Some(&AttributeValue::S("nyc".into()))
+    );
+
+    // Projection returns only the requested attributes.
+    let projected = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("o1".into()))
+        .projection_expression("n")
+        .send()
+        .await
+        .expect("projected get_item");
+    let pitem = projected.item().expect("item present");
+    assert_eq!(pitem.len(), 1);
+    assert!(pitem.contains_key("n"));
+
+    // A missing key yields no Item.
+    let missing = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("absent".into()))
+        .send()
+        .await
+        .expect("get_item missing");
+    assert!(missing.item().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.
