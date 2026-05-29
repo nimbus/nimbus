@@ -16,6 +16,8 @@ workspace = true
 # DynamoDB protocol core (AttributeValue, expression language, validation,
 # error taxonomy) — pinned git rev; see docs/plans/dynamodb-adapter-plan.md.
 extenddb-core = { workspace = true }
+# Nimbus document value model (StoredValue typed sidecar, promoted in D0.1b).
+nimbus-core = { path = "../nimbus-core" }
 serde_json.workspace = true
 # SigV4 verification primitives (vendored module in src/auth/sigv4/).
 hex.workspace = true
