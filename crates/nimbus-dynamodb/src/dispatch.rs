@@ -28,7 +28,7 @@ use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
 use crate::auth::sigv4::parse::parse_authorization;
-use crate::commands::{batch, control_plane, discovery, item, query, stream, transact, ttl};
+use crate::commands::{batch, control_plane, discovery, item, query, stream, tag, transact, ttl};
 use crate::tenant::{AccessKeyRegistry, ensure_tenant, tenant_context};
 use crate::wire::{self, WireResponse};
 
@@ -233,6 +233,20 @@ fn route(
         "DescribeTimeToLive" => run(request, |input| {
             ttl::describe_time_to_live(ctx.service, context, input)
         }),
+        "TagResource" => run(request, |input| {
+            tag::tag_resource(ctx.service, context, input)
+        }),
+        "UntagResource" => run(request, |input| {
+            tag::untag_resource(ctx.service, context, input)
+        }),
+        "ListTagsOfResource" => run(request, |input| {
+            tag::list_tags_of_resource(ctx.service, context, input)
+        }),
+        // Defensive guard: every entry in `KNOWN_OPERATIONS` is routed above, so
+        // a known op never reaches here. This arm only fires if a future op is
+        // added to the recognized set without a handler — surfaced loudly rather
+        // than silently mis-routed. The `every_known_operation_is_routed` test
+        // asserts this arm is unreachable for the current surface.
         other => wire::render_error(&DynamoDbError::InternalServerError(format!(
             "{other} is not yet implemented"
         ))),
@@ -422,24 +436,25 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_known_operation_returns_placeholder_after_auth() {
-        // TagResource is recognized but has no handler yet. With valid auth it
-        // passes authentication and tenant-ensure, then hits the placeholder.
+    fn every_known_operation_is_routed() {
+        // The whole T0–T6 surface now has a handler: no recognized operation
+        // falls through to the "not yet implemented" guard. Each authenticated
+        // op with an empty body may legitimately fail (Validation /
+        // ResourceNotFound / Serialization), but must never hit the placeholder.
         let (_temp, service, registry) = fixture();
         let ctx = DispatchContext {
             service: &service,
             access_keys: &registry,
         };
-        let headers = headers_for("TagResource", Some(&signed_authorization(ACCESS_KEY)));
-        let (status, body) = dispatch(&ctx, &headers, b"{}");
-        assert_eq!(status, 500);
-        assert!(
-            body["message"]
-                .as_str()
-                .unwrap()
-                .contains("not yet implemented"),
-            "{body}"
-        );
+        for operation in KNOWN_OPERATIONS {
+            let headers = headers_for(operation, Some(&signed_authorization(ACCESS_KEY)));
+            let (_status, body) = dispatch(&ctx, &headers, b"{}");
+            let message = body["message"].as_str().unwrap_or_default();
+            assert!(
+                !message.contains("not yet implemented"),
+                "operation {operation} is recognized but unrouted: {body}"
+            );
+        }
     }
 
     #[test]
