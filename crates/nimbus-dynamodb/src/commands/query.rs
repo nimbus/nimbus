@@ -16,7 +16,8 @@ use extenddb_core::error::DynamoDbError;
 use extenddb_core::expression::{CompareOp, Expr, ExpressionMaps, SortKeyCondition};
 use extenddb_core::limits::LimitsConfig;
 use extenddb_core::types::{
-    AttributeValue, Item, KeySchemaElement, KeyType, QueryInput, QueryOutput, Select,
+    AttributeValue, Item, KeySchemaElement, KeyType, QueryInput, QueryOutput, ScanInput,
+    ScanOutput, Select,
 };
 use nimbus_core::{StructuredQuery, TableName};
 use nimbus_engine::Service;
@@ -136,20 +137,7 @@ pub fn query(
 
     // FilterExpression applies after key selection + Limit; filtered-out items
     // still count toward ScannedCount.
-    if let Some(filter) = input
-        .filter_expression
-        .as_deref()
-        .filter(|expression| !expression.is_empty())
-    {
-        let filter_expr = parse_condition(filter, &limits)?;
-        let mut kept = Vec::with_capacity(matched.len());
-        for item in matched {
-            if evaluate_condition(&filter_expr, &item, &maps)? {
-                kept.push(item);
-            }
-        }
-        matched = kept;
-    }
+    matched = filter_items(matched, input.filter_expression.as_deref(), &maps, &limits)?;
 
     let count = matched.len() as i64;
     let items = select_items(
@@ -167,6 +155,112 @@ pub fn query(
         last_evaluated_key,
         consumed_capacity: None,
     })
+}
+
+/// Scan a full table with an optional `FilterExpression`, paginating by the
+/// primary-key `DocumentId` (a stable total order over the table).
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table is absent; `ValidationException`
+/// for an `IndexName` (D4) or a malformed `ExclusiveStartKey`.
+pub fn scan(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    input: ScanInput,
+) -> Result<ScanOutput, DynamoDbError> {
+    if input.index_name.is_some() {
+        return Err(DynamoDbError::ValidationException(
+            "Scanning a secondary index is not yet supported (planned in D4)".to_owned(),
+        ));
+    }
+    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let table = TableName::new(&input.table_name).map_err(map_core_error)?;
+    let limits = default_limits();
+
+    // Stable scan order by primary-key DocumentId for deterministic pagination.
+    let mut ordered: Vec<(String, Item)> = Vec::new();
+    for item in enumerate(service, context, &table)? {
+        let doc_id = crate::commands::item::primary_key_id(&item, &key_schema)?;
+        ordered.push((doc_id.as_str().to_owned(), item));
+    }
+    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Segment partitioning (Segment/TotalSegments) lands in D2.4; a single-
+    // segment scan reads the whole table.
+
+    // ExclusiveStartKey: skip items at or before the cursor's DocumentId.
+    if let Some(start) = &input.exclusive_start_key {
+        let start_id = crate::commands::item::primary_key_id(start, &key_schema)
+            .map_err(|_| invalid_start_key())?
+            .as_str()
+            .to_owned();
+        ordered.retain(|(id, _)| id.as_str() > start_id.as_str());
+    }
+
+    // Limit caps the items *evaluated* (pre-filter); LastEvaluatedKey is the
+    // last evaluated item's key when truncated.
+    let limit = input
+        .limit
+        .filter(|limit| *limit > 0)
+        .map(|limit| limit as usize);
+    let truncated = limit.is_some_and(|limit| ordered.len() > limit);
+    if let Some(limit) = limit {
+        ordered.truncate(limit);
+    }
+    let last_evaluated_key = truncated
+        .then(|| ordered.last().map(|(_, item)| key_item(item, &key_schema)))
+        .flatten();
+    let scanned_count = ordered.len() as i64;
+
+    let evaluated: Vec<Item> = ordered.into_iter().map(|(_, item)| item).collect();
+    let maps = build_maps(
+        input.expression_attribute_names.as_ref(),
+        input.expression_attribute_values.as_ref(),
+    );
+    let surviving = filter_items(
+        evaluated,
+        input.filter_expression.as_deref(),
+        &maps,
+        &limits,
+    )?;
+
+    let count = surviving.len() as i64;
+    let items = select_items(
+        surviving,
+        input.select,
+        input.projection_expression.as_deref(),
+        input.expression_attribute_names.as_ref(),
+        &limits,
+    )?;
+
+    Ok(ScanOutput {
+        items,
+        count,
+        scanned_count,
+        last_evaluated_key,
+        consumed_capacity: None,
+    })
+}
+
+/// Apply an optional `FilterExpression` (ConditionExpression grammar) to a set
+/// of items, keeping those that satisfy it. Shared by Query and Scan.
+fn filter_items(
+    items: Vec<Item>,
+    filter: Option<&str>,
+    maps: &ExpressionMaps,
+    limits: &LimitsConfig,
+) -> Result<Vec<Item>, DynamoDbError> {
+    let Some(filter) = filter.filter(|expression| !expression.is_empty()) else {
+        return Ok(items);
+    };
+    let filter_expr = parse_condition(filter, limits)?;
+    let mut kept = Vec::with_capacity(items.len());
+    for item in items {
+        if evaluate_condition(&filter_expr, &item, maps)? {
+            kept.push(item);
+        }
+    }
+    Ok(kept)
 }
 
 /// Apply the `Select` mode + `ProjectionExpression` to the surviving items.
@@ -673,6 +767,104 @@ mod tests {
             out.last_evaluated_key.is_some(),
             "more items beyond the Limit window"
         );
+    }
+
+    // ---- D2.3: Scan ----
+
+    fn scan_run(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        input: serde_json::Value,
+    ) -> ScanOutput {
+        scan(service, context, serde_json::from_value(input).unwrap()).expect("scan")
+    }
+
+    #[test]
+    fn scan_returns_all_items_across_partitions() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        put_event(&service, &ctx, "p1", "1");
+        put_event(&service, &ctx, "p1", "2");
+        put_event(&service, &ctx, "p2", "1");
+        let out = scan_run(&service, &ctx, json!({ "TableName": "Events" }));
+        assert_eq!(out.count, 3, "scan reads the whole table");
+        assert_eq!(out.scanned_count, 3);
+    }
+
+    #[test]
+    fn scan_with_filter_expression() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        put_kind(&service, &ctx, "p1", "1", "a");
+        put_kind(&service, &ctx, "p2", "1", "b");
+        put_kind(&service, &ctx, "p3", "1", "a");
+        let out = scan_run(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Events",
+                "FilterExpression": "kind = :k",
+                "ExpressionAttributeValues": { ":k": {"S": "a"} },
+            }),
+        );
+        assert_eq!(out.count, 2, "two kind=a items survive");
+        assert_eq!(out.scanned_count, 3, "all three scanned");
+    }
+
+    #[test]
+    fn scan_pagination_is_stable_and_complete() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        for (pk, sk) in [("p1", "1"), ("p2", "1"), ("p3", "1"), ("p4", "1")] {
+            put_event(&service, &ctx, pk, sk);
+        }
+        // Page through with Limit=2; union must be the full table, no dupes.
+        let mut seen: Vec<String> = Vec::new();
+        let mut start: Option<serde_json::Value> = None;
+        loop {
+            let mut req = serde_json::json!({ "TableName": "Events", "Limit": 2 });
+            if let Some(cursor) = &start {
+                req["ExclusiveStartKey"] = cursor.clone();
+            }
+            let out = scan_run(&service, &ctx, req);
+            for item in out.items.as_ref().unwrap() {
+                let pk = match item.get("pk") {
+                    Some(AttributeValue::S(s)) => s.clone(),
+                    other => panic!("pk: {other:?}"),
+                };
+                seen.push(pk);
+            }
+            match out.last_evaluated_key {
+                Some(key) => {
+                    start = Some(
+                        key.iter()
+                            .map(|(k, v)| (k.clone(), serde_json::to_value(v).unwrap()))
+                            .collect::<serde_json::Map<_, _>>()
+                            .into(),
+                    );
+                }
+                None => break,
+            }
+        }
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec!["p1", "p2", "p3", "p4"],
+            "every item exactly once"
+        );
+    }
+
+    #[test]
+    fn scan_index_name_is_rejected_until_d4() {
+        let (service, ctx, _t) = fixture();
+        create_events(&service, &ctx);
+        let err = scan(
+            &service,
+            &ctx,
+            serde_json::from_value(json!({ "TableName": "Events", "IndexName": "gsi1" })).unwrap(),
+        )
+        .expect_err("GSI scan not yet supported");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
     }
 
     #[test]
