@@ -10,12 +10,14 @@ license-file.workspace = true
 default = []
 cloud-functions = ["dep:nimbus-cloud-functions"]
 convex = ["dep:nimbus-convex"]
+dynamodb = ["dep:nimbus-dynamodb"]
 firebase = ["dep:nimbus-firebase"]
 mongodb = ["dep:nimbus-mongodb"]
 
 [dependencies]
 nimbus-cloud-functions = { path = "../nimbus-cloud-functions", optional = true }
 nimbus-convex = { path = "../nimbus-convex", optional = true }
+nimbus-dynamodb = { path = "../nimbus-dynamodb", optional = true }
 nimbus-firebase = { path = "../nimbus-firebase", optional = true }
 nimbus-mongodb = { path = "../nimbus-mongodb", optional = true }
 
