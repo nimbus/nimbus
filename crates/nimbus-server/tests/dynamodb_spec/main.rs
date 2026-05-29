@@ -383,6 +383,70 @@ async fn delete_item_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_item_through_official_sdk() {
+    // UpdateItem end-to-end: SET + ADD (on an absent number → base 0), with
+    // ReturnValues=UPDATED_NEW returning only the touched attributes; the
+    // mutation then reads back through GetItem.
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+    client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("o1".into()))
+        .item("v", AttributeValue::N("1".into()))
+        .send()
+        .await
+        .expect("put_item");
+
+    let updated = client
+        .update_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("o1".into()))
+        .update_expression("SET v = :v ADD n :i")
+        .expression_attribute_values(":v", AttributeValue::N("9".into()))
+        .expression_attribute_values(":i", AttributeValue::N("5".into()))
+        .return_values(ReturnValue::UpdatedNew)
+        .send()
+        .await
+        .expect("update_item");
+    let changed = updated.attributes().expect("UPDATED_NEW attributes");
+    assert_eq!(changed.get("v"), Some(&AttributeValue::N("9".into())));
+    assert_eq!(changed.get("n"), Some(&AttributeValue::N("5".into())));
+    assert!(
+        !changed.contains_key("pk"),
+        "only touched attributes returned"
+    );
+
+    let got = client
+        .get_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("o1".into()))
+        .send()
+        .await
+        .expect("get_item");
+    let item = got.item().expect("item present");
+    assert_eq!(item.get("v"), Some(&AttributeValue::N("9".into())));
+    assert_eq!(item.get("n"), Some(&AttributeValue::N("5".into())));
+
+    // Updating a key attribute is rejected with ValidationException.
+    let err = client
+        .update_item()
+        .table_name("Orders")
+        .key("pk", AttributeValue::S("o1".into()))
+        .update_expression("SET pk = :p")
+        .expression_attribute_values(":p", AttributeValue::S("other".into()))
+        .send()
+        .await
+        .expect_err("key-attribute update should be rejected");
+    assert_eq!(
+        err.into_service_error().code(),
+        Some("ValidationException"),
+        "updating a key attribute must be ValidationException"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.

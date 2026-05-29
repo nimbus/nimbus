@@ -11,7 +11,7 @@ use std::sync::Arc;
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
     DeleteItemInput, DeleteItemOutput, GetItemInput, GetItemOutput, Item, KeySchemaElement,
-    KeyType, PutItemInput, PutItemOutput, ReturnValues,
+    KeyType, PutItemInput, PutItemOutput, ReturnValues, UpdateItemInput, UpdateItemOutput,
 };
 use nimbus_core::{DocumentId, TableName};
 use nimbus_engine::Service;
@@ -20,7 +20,10 @@ use nimbus_tenant::TenantIsolationContext;
 use crate::attribute_value::{fields_to_item, item_to_fields, validate_item};
 use crate::commands::control_plane;
 use crate::error::map_core_error;
-use crate::expression::{check_condition, default_limits, project_item};
+use crate::expression::{
+    apply_update, build_maps, check_condition, default_limits, parse_update_expression,
+    project_item, reject_key_updates, updated_attributes,
+};
 use crate::key::encode_key;
 
 /// PutItem: validate the item, gate on any `ConditionExpression`, replace-or-
@@ -167,6 +170,84 @@ pub fn delete_item(
         _ => None,
     };
     Ok(DeleteItemOutput {
+        attributes,
+        consumed_capacity: None,
+        item_collection_metrics: None,
+    })
+}
+
+/// UpdateItem: parse the `UpdateExpression`, gate on any `ConditionExpression`,
+/// upsert-and-mutate the item, and return the requested `ReturnValues` view
+/// (NONE / ALL_OLD / ALL_NEW / UPDATED_OLD / UPDATED_NEW).
+///
+/// No `UpdateExpression` is a no-op upsert (the item is created with just its
+/// key when absent); `Some("")` errors via the tokenizer. Updates to a key
+/// attribute are rejected. UPDATED_OLD/UPDATED_NEW return only the touched
+/// attributes (leaf-wrapped for nested paths) and omit `Attributes` when empty.
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table is absent; `ValidationException`
+/// for a missing key, empty/malformed expression, or a key-attribute update;
+/// `ConditionalCheckFailedException` if the condition fails.
+pub fn update_item(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    input: UpdateItemInput,
+) -> Result<UpdateItemOutput, DynamoDbError> {
+    let key_schema = control_plane::load_key_schema(service, context, &input.table_name)?;
+    let id = primary_key_id(&input.key, &key_schema)?;
+    let table = TableName::new(&input.table_name).map_err(map_core_error)?;
+    let limits = default_limits();
+
+    let actions = match input.update_expression.as_deref() {
+        Some(expression) => parse_update_expression(expression, &limits)?,
+        None => Vec::new(),
+    };
+    let maps = build_maps(
+        input.expression_attribute_names.as_ref(),
+        input.expression_attribute_values.as_ref(),
+    );
+    reject_key_updates(&actions, &key_schema, &maps)?;
+
+    let old_item = read_item(service, context, &table, id.clone())?;
+
+    let gate_item = old_item.clone().unwrap_or_default();
+    check_condition(
+        input.condition_expression.as_deref(),
+        input.expression_attribute_names.as_ref(),
+        input.expression_attribute_values.as_ref(),
+        &gate_item,
+        &limits,
+    )?;
+
+    // Upsert: base on the existing item, else the Key item (so a created item
+    // carries its key attributes), then apply the actions.
+    let mut new_item = old_item.clone().unwrap_or_else(|| input.key.clone());
+    apply_update(&actions, &mut new_item, &maps)?;
+
+    // Store the result (replace; overwrite atomicity per DDB-DIV-005).
+    let fields = item_to_fields(&new_item)?;
+    if old_item.is_some() {
+        service
+            .delete_document(context.tenant_id(), table.clone(), id.clone())
+            .map_err(map_core_error)?;
+    }
+    service
+        .insert_document_with_id(context.tenant_id(), table, id, fields)
+        .map_err(map_core_error)?;
+
+    let attributes = match input.return_values {
+        ReturnValues::None => None,
+        ReturnValues::AllOld => old_item,
+        ReturnValues::AllNew => Some(new_item),
+        ReturnValues::UpdatedOld => old_item
+            .map(|item| updated_attributes(&item, &actions, &maps))
+            .filter(|item| !item.is_empty()),
+        ReturnValues::UpdatedNew => {
+            Some(updated_attributes(&new_item, &actions, &maps)).filter(|item| !item.is_empty())
+        }
+    };
+    Ok(UpdateItemOutput {
         attributes,
         consumed_capacity: None,
         item_collection_metrics: None,
@@ -605,5 +686,235 @@ mod tests {
             DynamoDbError::ConditionalCheckFailedException(_, _)
         ));
         assert!(stored(&service, &ctx, "o1").is_some(), "item not deleted");
+    }
+
+    // ---- D1.8: UpdateItem ----
+
+    fn update(
+        service: &Arc<Service>,
+        context: &TenantIsolationContext,
+        input: serde_json::Value,
+    ) -> Result<UpdateItemOutput, DynamoDbError> {
+        update_item(service, context, serde_json::from_value(input).unwrap())
+    }
+
+    #[test]
+    fn update_set_modifies_and_all_new_returns_full_item() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "v": {"N": "1"} } }),
+        )
+        .expect("put");
+        let out = update(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "UpdateExpression": "SET v = :v, label = :l",
+                "ExpressionAttributeValues": { ":v": {"N": "9"}, ":l": {"S": "hi"} },
+                "ReturnValues": "ALL_NEW",
+            }),
+        )
+        .expect("update");
+        let item = out.attributes.expect("ALL_NEW item");
+        assert_eq!(item.get("v"), Some(&AttributeValue::N("9".into())));
+        assert_eq!(item.get("label"), Some(&AttributeValue::S("hi".into())));
+        assert_eq!(item.get("pk"), Some(&AttributeValue::S("o1".into())));
+    }
+
+    #[test]
+    fn update_upsert_creates_when_absent() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        update(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "new"} },
+                "UpdateExpression": "SET v = :v",
+                "ExpressionAttributeValues": { ":v": {"N": "5"} },
+            }),
+        )
+        .expect("upsert update");
+        let item = stored(&service, &ctx, "new").expect("item created");
+        assert_eq!(item.get("pk"), Some(&AttributeValue::S("new".into())));
+        assert_eq!(item.get("v"), Some(&AttributeValue::N("5".into())));
+    }
+
+    #[test]
+    fn update_no_op_upsert_creates_key_only_item() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        // No UpdateExpression on an absent key creates a key-only item.
+        update(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Key": { "pk": {"S": "bare"} } }),
+        )
+        .expect("no-op upsert");
+        let item = stored(&service, &ctx, "bare").expect("key-only item created");
+        assert_eq!(item.len(), 1);
+        assert_eq!(item.get("pk"), Some(&AttributeValue::S("bare".into())));
+    }
+
+    #[test]
+    fn update_updated_new_returns_only_changed_attributes() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "a": {"N": "1"}, "b": {"N": "2"} } }),
+        )
+        .expect("put");
+        let out = update(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "UpdateExpression": "SET a = :a",
+                "ExpressionAttributeValues": { ":a": {"N": "10"} },
+                "ReturnValues": "UPDATED_NEW",
+            }),
+        )
+        .expect("update");
+        let item = out.attributes.expect("UPDATED_NEW");
+        assert_eq!(item.len(), 1, "only the changed attribute is returned");
+        assert_eq!(item.get("a"), Some(&AttributeValue::N("10".into())));
+    }
+
+    #[test]
+    fn update_updated_old_omits_attributes_when_empty() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"} } }),
+        )
+        .expect("put");
+        // SET a brand-new attribute: UPDATED_OLD has no prior value → Attributes omitted.
+        let out = update(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "UpdateExpression": "SET fresh = :v",
+                "ExpressionAttributeValues": { ":v": {"N": "1"} },
+                "ReturnValues": "UPDATED_OLD",
+            }),
+        )
+        .expect("update");
+        assert!(
+            out.attributes.is_none(),
+            "UPDATED_OLD omits Attributes when nothing had a prior value"
+        );
+    }
+
+    #[test]
+    fn update_nested_path_updated_new_leaf_wraps() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Item": { "pk": {"S": "o1"}, "m": {"M": { "a": {"N": "1"}, "b": {"N": "2"} }} },
+            }),
+        )
+        .expect("put");
+        let out = update(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "UpdateExpression": "SET m.a = :v",
+                "ExpressionAttributeValues": { ":v": {"N": "9"} },
+                "ReturnValues": "UPDATED_NEW",
+            }),
+        )
+        .expect("update");
+        // UPDATED_NEW leaf-wraps the nested path: { m: { a: 9 } } (only a).
+        let item = out.attributes.expect("UPDATED_NEW");
+        let mut inner = std::collections::BTreeMap::new();
+        inner.insert("a".to_string(), AttributeValue::N("9".into()));
+        assert_eq!(item.get("m"), Some(&AttributeValue::M(inner)));
+    }
+
+    #[test]
+    fn update_rejects_key_attribute_mutation() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        let err = update(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "UpdateExpression": "SET pk = :v",
+                "ExpressionAttributeValues": { ":v": {"S": "other"} },
+            }),
+        )
+        .expect_err("updating the key must be rejected");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    #[test]
+    fn update_empty_expression_string_errors() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        let err = update(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "UpdateExpression": "",
+            }),
+        )
+        .expect_err("empty UpdateExpression must error");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    #[test]
+    fn update_condition_gate_blocks_mutation() {
+        let (service, ctx, _t) = fixture();
+        create_orders(&service, &ctx);
+        put(
+            &service,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "o1"}, "v": {"N": "1"} } }),
+        )
+        .expect("put");
+        let err = update(
+            &service,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "o1"} },
+                "UpdateExpression": "SET v = :v",
+                "ExpressionAttributeValues": { ":v": {"N": "9"} },
+                "ConditionExpression": "attribute_not_exists(pk)",
+            }),
+        )
+        .expect_err("condition should block");
+        assert!(matches!(
+            err,
+            DynamoDbError::ConditionalCheckFailedException(_, _)
+        ));
+        // The item is unchanged.
+        assert_eq!(
+            stored(&service, &ctx, "o1").unwrap().get("v"),
+            Some(&AttributeValue::N("1".into()))
+        );
     }
 }
