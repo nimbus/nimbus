@@ -1,5 +1,12 @@
 # cargo-deny configuration
 # https://embarkstudios.github.io/cargo-deny/
+#
+# zbus_systemd is pinned exact at `=0.26000.0` in Cargo.toml: its version
+# tracks the systemd D-Bus interface revision it was generated against
+# (0.26000.x == systemd 260), not semver, so it intentionally sits still for
+# long stretches between bumps. It needs no [bans] carve-out below — the
+# zbus/zvariant subtree it pulls adds no duplicate-version entries and its
+# licenses are all MIT/Apache (already in the allow list).
 
 [graph]
 all-features = true

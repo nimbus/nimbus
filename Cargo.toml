@@ -134,6 +134,18 @@ ulid = { version = "1", features = ["serde"] }
 sys_traits = "0.1.28"
 url = "2"
 v8 = "149.0.0"
+# Direct zbus is required for the session/system test-bus utilities and any
+# hand-rolled `#[proxy]` escape hatch; pin the latest 5.x (the line
+# `zbus_systemd 0.26000.0` selects via its own `zbus = "5.3"` floor) so the
+# generated bindings and our direct usage share one resolved crate.
+# `zbus-async-tokio` on `zbus_systemd` enables `zbus/tokio`, so the async
+# runtime feature is unified across both.
+zbus = { version = "5.15", default-features = false, features = ["tokio"] }
+# Pinned exact: zbus_systemd's version tracks the systemd interface revision it
+# was generated against (0.26000.x == systemd 260). Bump deliberately on an LTS
+# systemd, an upstream patch, or an advisory. See deny.toml and
+# docs/plans/research/systemd-dbus-binding-rust-2026.md.
+zbus_systemd = { version = "=0.26000.0", default-features = false, features = ["systemd1", "zbus-async-tokio"] }
 zeroize = { version = "1", features = ["derive"] }
 
 [profile.release]

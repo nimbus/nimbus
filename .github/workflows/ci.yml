@@ -481,6 +481,76 @@ jobs:
           bash scripts/verify-node-lts-canaries-and-oracles.sh
           bash scripts/verify-node-host-heavy-diagnostics.sh
 
+  node-dbus-integration:
+    name: Node D-Bus Integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-node-dbus-no-bin-v2
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Bootstrap user-mode systemd
+        # GitHub runners have no interactive login session, so the per-user
+        # systemd manager is not running by default. Enable lingering and start
+        # user@<uid> explicitly, then wait for the session bus socket.
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y dbus-user-session systemd-container
+          uid="$(id -u)"
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@${uid}.service" || true
+          for _ in $(seq 1 30); do
+            [ -S "/run/user/${uid}/bus" ] && break
+            sleep 1
+          done
+          {
+            echo "XDG_RUNTIME_DIR=/run/user/${uid}"
+            echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify session systemd is reachable (hard fail if not)
+        # `is-system-running` may report degraded/starting on a fresh runner —
+        # that is an acceptable reachability signal, NOT a reason to skip. But a
+        # Manager interface that cannot be reached at all fails the job, so a
+        # broken bootstrap can never masquerade as a vacuous pass.
+        run: |
+          set -uxo pipefail
+          systemctl --user is-system-running || true
+          systemctl --user show --property=Version
+
+      - name: Run live systemd integration tests
+        run: |
+          set -o pipefail
+          cargo test -p nimbus-node \
+            --features systemd-dbus,systemd-dbus-integration-tests \
+            --test zbus_systemd_live --no-fail-fast 2>&1 | tee /tmp/ndb-live.log
+
+      - name: Summarize per-test results
+        if: always()
+        run: |
+          {
+            echo "## Node D-Bus integration"
+            echo
+            echo "| test | result |"
+            echo "|---|---|"
+            grep -E '^test .* \.\.\. (ok|FAILED)$' /tmp/ndb-live.log 2>/dev/null \
+              | while read -r _ name _ res; do
+                  icon=":white_check_mark:"; [ "$res" = "FAILED" ] && icon=":x:"
+                  echo "| ${name} | ${icon} ${res} |"
+                done
+            echo
+            grep -E '^test result:' /tmp/ndb-live.log 2>/dev/null || true
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   rust-gate-summary:
     name: Rust Gate Summary
     runs-on: ubuntu-24.04
@@ -495,6 +565,7 @@ jobs:
       - rust-workspace-tests
       - external-provider-tests
       - node-faas-compatibility
+      - node-dbus-integration
 
     steps:
       - name: Check Rust gate results
@@ -507,6 +578,7 @@ jobs:
           WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
           EXTERNAL_PROVIDER_TEST_RESULT: ${{ needs['external-provider-tests'].result }}
           NODE_FAAS_COMPATIBILITY_RESULT: ${{ needs['node-faas-compatibility'].result }}
+          NODE_DBUS_RESULT: ${{ needs['node-dbus-integration'].result }}
         run: |
           printf 'format=%s\n' "${FORMAT_RESULT}"
           printf 'clippy=%s\n' "${CLIPPY_RESULT}"
@@ -516,6 +588,7 @@ jobs:
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
           printf 'external-provider-test=%s\n' "${EXTERNAL_PROVIDER_TEST_RESULT}"
           printf 'node-faas-compatibility=%s\n' "${NODE_FAAS_COMPATIBILITY_RESULT}"
+          printf 'node-dbus-integration=%s\n' "${NODE_DBUS_RESULT}"
           icon() {
             case "$1" in
               success) echo ":white_check_mark:" ;;
@@ -538,6 +611,7 @@ jobs:
             echo "| rust-workspace-tests | $(icon "${WORKSPACE_TEST_RESULT}") ${WORKSPACE_TEST_RESULT} |"
             echo "| external-provider-tests | $(icon "${EXTERNAL_PROVIDER_TEST_RESULT}") ${EXTERNAL_PROVIDER_TEST_RESULT} |"
             echo "| node-faas-compatibility | $(icon "${NODE_FAAS_COMPATIBILITY_RESULT}") ${NODE_FAAS_COMPATIBILITY_RESULT} |"
+            echo "| node-dbus-integration | $(icon "${NODE_DBUS_RESULT}") ${NODE_DBUS_RESULT} |"
           } >> "${GITHUB_STEP_SUMMARY}"
           test "${FORMAT_RESULT}" = success
           test "${CLIPPY_RESULT}" = success
@@ -547,6 +621,7 @@ jobs:
           test "${WORKSPACE_TEST_RESULT}" = success
           test "${EXTERNAL_PROVIDER_TEST_RESULT}" = success
           test "${NODE_FAAS_COMPATIBILITY_RESULT}" = success
+          test "${NODE_DBUS_RESULT}" = success
 
   ui-artifacts:
     # CC4: leader job that builds the nimbus-ui artifacts (convex codegen +
