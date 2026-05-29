@@ -121,8 +121,9 @@ If you find yourself writing compatibility code, stop and make the breaking chan
   Snapshot/fork S0..S5 is Linux-KVM-only by construction.
 - Node-side systemd D-Bus binding (`SystemdDbusClient` /
   `SystemdTransientUnitBackend` / `NodeWorkloadReconciler`):
-  `docs/plans/node-dbus-client-binding-plan.md` is the active
-  execution plan (NDB0..NDB7). Lifts the TSB7 deferral recorded in
+  `docs/plans/archive/node-dbus-client-binding-plan.md` is the
+  completed baseline (NDB0..NDB7, closed 2026-05-29 via PR #3). Lifted
+  the TSB7 deferral recorded in
   `docs/plans/proof/tenant-domain-and-node-enforcement-boundary/tsb7-systemd-transient.md`
   by attaching `lucab/zbus_systemd` (pin `=0.26000.0`, features
   `systemd1` + `zbus-async-tokio`) and direct `zbus` to the existing

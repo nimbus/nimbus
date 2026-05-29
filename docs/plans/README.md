@@ -13,15 +13,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     serving snapshot manager, retention compaction, PITR/export/import, CDC
     cursors, deterministic parity checks, MVCC metamorphic tests, and
     operator MVCC diagnostics. Activation is gated on the SATH verifier.
-- `docs/plans/node-dbus-client-binding-plan.md`
-  - active Node-side systemd D-Bus binding plan (NDB0..NDB7). Attaches
-    `lucab/zbus_systemd` (pin `=0.26000.0`, features `systemd1` +
-    `zbus-async-tokio`) and direct `zbus` to the existing
-    `SystemdDbusClient` trait, with `Manager.Subscribe` + JobRemoved
-    completion, centralized `OwnedValue` property encoding, Linux-gated
-    `systemctl --user` tests, `node-dbus-integration` CI, and Linux
-    default-constructor/factory closeout. Does not wire a production
-    `NodeWorkloadReconciler` caller.
 - `docs/plans/node-default-runtime-support-hardening-plan.md`
   - active Node runtime default-quality plan (NDS0..NDS10). Starts from
     the completed NFRC baseline where Node24 is the product default,
@@ -186,6 +177,19 @@ historical execution detail.
     public support docs, added release-train drift automation, and wired
     PR/nightly CI gates. `/goal` control plane gated on
     `bash scripts/verify-node-faas-runtime-compatibility.sh`.
+- `docs/plans/archive/node-dbus-client-binding-plan.md`
+  - completed Node-side systemd D-Bus binding wave (NDB0-NDB7, closed
+    2026-05-29 via PR #3). Attached `lucab/zbus_systemd` (pin `=0.26000.0`)
+    and direct `zbus` to the `SystemdDbusClient` trait with a live
+    `ZbusSystemdClient`: `Manager.Subscribe` + signal-correlated `JobRemoved`
+    completion (no polling), centralized `OwnedValue` property encoding,
+    `nimbus_core::Error` `Transport`/`NotFound` taxonomy, Linux-gated
+    `systemctl --user` integration tests proven green in the
+    `node-dbus-integration` CI lane, and `systemd-dbus` default +
+    `SystemdTransientUnitBackend::linux_systemd_default()`. Does not wire a
+    production `NodeWorkloadReconciler` caller (TSB14 deferral stands).
+    `/goal` control plane gated on
+    `bash scripts/verify-node-dbus-binding.sh`.
 - `docs/plans/archive/storage-architecture-trust-hardening-plan.md`
   - completed execution record for the storage architecture trust-hardening
     wave (SATH0-SATH11, closed 2026-05-27). Added the durable tenant event
