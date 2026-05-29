@@ -337,6 +337,19 @@ fn projected_set(
     }
 }
 
+/// Load a table's full `TableDescription` from the catalog (tenant-scoped).
+/// Public so Streams (D5) can resolve a table from its stream ARN.
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table does not exist.
+pub fn load_table_description(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<TableDescription, DynamoDbError> {
+    load_description(service, context, table_name)
+}
+
 fn load_description(
     service: &Arc<Service>,
     context: &TenantIsolationContext,

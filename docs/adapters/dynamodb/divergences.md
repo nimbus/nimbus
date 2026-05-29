@@ -108,3 +108,24 @@ before the D9 enterprise-readiness gate.
 `tests::put_overwrite_fully_replaces_not_merges` (replace, not merge).
 
 **Status:** accepted (D1.5); atomic-upsert follow-up tracked.
+
+## DDB-DIV-006 — Single-shard streams (`nimbus-divergence`)
+
+**Real DynamoDB:** a stream is a tree of shards that split and merge over the
+table's lifetime; consumers walk parent→child shard lineage. ExtendDB models 4
+shards.
+
+**Nimbus:** a stream-enabled table exposes exactly **one** open shard with a
+stable shard id (`shardId-00000000000000000000-<table_id>`) and no parent. Stream
+sequence numbers are zero-padded `i64` strings.
+
+**Rationale:** a single shard is sufficient for ordered change capture and is
+actually simpler for consumers — every change record is totally ordered with no
+cross-shard ordering or shard-lineage bookkeeping. DynamoDB's shard tree exists
+to scale throughput across partitions, which Nimbus's storage model does not
+require here.
+
+**Regression test:** `crates/nimbus-dynamodb/src/commands/stream.rs` →
+`tests::describe_stream_returns_single_open_shard`.
+
+**Status:** accepted (D5.2).
