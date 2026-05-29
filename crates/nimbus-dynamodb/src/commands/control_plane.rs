@@ -17,9 +17,10 @@ use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
     AttributeDefinition, BillingMode, BillingModeSummary, CreateTableInput, CreateTableOutput,
     DeleteTableInput, DeleteTableOutput, DescribeTableInput, DescribeTableOutput, KeySchemaElement,
-    KeyType, ProvisionedThroughputDescription, TableDescription, TableStatus,
+    KeyType, ListTablesInput, ListTablesOutput, ProvisionedThroughputDescription, TableDescription,
+    TableStatus, UpdateTableInput, UpdateTableOutput,
 };
-use nimbus_core::{Document, DocumentId, TableName};
+use nimbus_core::{Document, DocumentId, StructuredQuery, TableName};
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
@@ -91,6 +92,99 @@ pub fn delete_table(
         .map_err(map_core_error)?;
     description.table_status = TableStatus::Deleting;
     Ok(DeleteTableOutput {
+        table_description: description,
+    })
+}
+
+/// ListTables: enumerate the tenant's tables (catalog doc ids), sorted, with
+/// `ExclusiveStartTableName`/`Limit` pagination (Limit clamped to 1..=100).
+pub fn list_tables(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    input: ListTablesInput,
+) -> Result<ListTablesOutput, DynamoDbError> {
+    let documents = match service.query_documents_structured(
+        context.tenant_id(),
+        &catalog_table(),
+        &StructuredQuery::default(),
+    ) {
+        Ok(documents) => documents,
+        // No tables created yet → the catalog table does not exist.
+        Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
+            Vec::new()
+        }
+        Err(error) => return Err(map_core_error(error)),
+    };
+
+    let mut names: Vec<String> = documents
+        .iter()
+        .map(|document| document.id.as_str().to_owned())
+        .collect();
+    names.sort();
+
+    if let Some(start) = input.exclusive_start_table_name.as_deref() {
+        names.retain(|name| name.as_str() > start);
+    }
+
+    let limit = input.limit.unwrap_or(100).clamp(1, 100) as usize;
+    let truncated = names.len() > limit;
+    names.truncate(limit);
+    let last_evaluated_table_name = truncated.then(|| names.last().cloned()).flatten();
+
+    Ok(ListTablesOutput {
+        table_names: names,
+        last_evaluated_table_name,
+    })
+}
+
+/// UpdateTable: apply the supported in-place changes (billing mode, deletion
+/// protection, stream specification) and re-persist. GSI updates are deferred to
+/// D4 and rejected for now.
+pub fn update_table(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    input: UpdateTableInput,
+) -> Result<UpdateTableOutput, DynamoDbError> {
+    if input
+        .global_secondary_index_updates
+        .as_ref()
+        .is_some_and(|updates| !updates.is_empty())
+    {
+        return Err(DynamoDbError::ValidationException(
+            "GlobalSecondaryIndexUpdates are not yet supported (planned in D4)".to_owned(),
+        ));
+    }
+
+    let mut description = load_description(service, context, &input.table_name)?;
+
+    if let Some(billing_mode) = input.billing_mode {
+        description.billing_mode_summary = Some(BillingModeSummary {
+            billing_mode,
+            last_update_to_pay_per_request_date_time: None,
+        });
+        if billing_mode == BillingMode::PayPerRequest {
+            description.provisioned_throughput.read_capacity_units = 0;
+            description.provisioned_throughput.write_capacity_units = 0;
+        } else if let Some(throughput) = &input.provisioned_throughput {
+            description.provisioned_throughput.read_capacity_units = throughput.read_capacity_units;
+            description.provisioned_throughput.write_capacity_units =
+                throughput.write_capacity_units;
+        }
+    }
+    if let Some(enabled) = input.deletion_protection_enabled {
+        description.deletion_protection_enabled = enabled;
+    }
+    if let Some(stream) = input.stream_specification.clone() {
+        description.stream_specification = Some(stream);
+    }
+
+    let fields = description_to_fields(&description)?;
+    let id = catalog_id(&input.table_name)?;
+    service
+        .update_document(context.tenant_id(), catalog_table(), id, fields)
+        .map_err(map_core_error)?;
+
+    Ok(UpdateTableOutput {
         table_description: description,
     })
 }
@@ -411,6 +505,105 @@ mod tests {
                 }
             ),
             Err(DynamoDbError::ResourceNotFoundException(_))
+        ));
+        // ListTables is likewise tenant-scoped.
+        let globex_list = list_tables(
+            &service,
+            &globex,
+            ListTablesInput {
+                limit: None,
+                exclusive_start_table_name: None,
+            },
+        )
+        .expect("globex list");
+        assert!(globex_list.table_names.is_empty());
+    }
+
+    fn list_input(limit: Option<i32>, start: Option<&str>) -> ListTablesInput {
+        ListTablesInput {
+            limit,
+            exclusive_start_table_name: start.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn list_tables_is_sorted_and_paginates() {
+        let (service, ctx, _t) = fixture();
+        for name in ["orders", "users", "events"] {
+            create_table(&service, &ctx, input(name, false)).expect("create");
+        }
+
+        // Empty start, no limit → all three, sorted.
+        let all = list_tables(&service, &ctx, list_input(None, None)).expect("list");
+        assert_eq!(all.table_names, vec!["events", "orders", "users"]);
+        assert!(all.last_evaluated_table_name.is_none());
+
+        // Limit 2 → first page + LastEvaluatedTableName.
+        let page1 = list_tables(&service, &ctx, list_input(Some(2), None)).expect("page1");
+        assert_eq!(page1.table_names, vec!["events", "orders"]);
+        assert_eq!(page1.last_evaluated_table_name.as_deref(), Some("orders"));
+
+        // Continue from the cursor → remaining page, no further cursor.
+        let page2 =
+            list_tables(&service, &ctx, list_input(Some(2), Some("orders"))).expect("page2");
+        assert_eq!(page2.table_names, vec!["users"]);
+        assert!(page2.last_evaluated_table_name.is_none());
+    }
+
+    #[test]
+    fn list_tables_empty_when_none_created() {
+        let (service, ctx, _t) = fixture();
+        let listed = list_tables(&service, &ctx, list_input(None, None)).expect("list");
+        assert!(listed.table_names.is_empty());
+    }
+
+    #[test]
+    fn update_table_sets_deletion_protection_and_persists() {
+        let (service, ctx, _t) = fixture();
+        create_table(&service, &ctx, input("orders", false)).expect("create");
+
+        let updated = update_table(
+            &service,
+            &ctx,
+            UpdateTableInput {
+                table_name: "orders".to_owned(),
+                billing_mode: None,
+                provisioned_throughput: None,
+                deletion_protection_enabled: Some(true),
+                global_secondary_index_updates: None,
+                attribute_definitions: None,
+                stream_specification: None,
+            },
+        )
+        .expect("update");
+        assert!(updated.table_description.deletion_protection_enabled);
+
+        // The change is persisted (visible on a fresh describe).
+        let described = describe_table(
+            &service,
+            &ctx,
+            DescribeTableInput {
+                table_name: "orders".to_owned(),
+            },
+        )
+        .expect("describe");
+        assert!(described.table.deletion_protection_enabled);
+    }
+
+    #[test]
+    fn update_table_rejects_gsi_updates_for_now() {
+        let (service, ctx, _t) = fixture();
+        create_table(&service, &ctx, input("orders", false)).expect("create");
+        let input = serde_json::from_value::<UpdateTableInput>(serde_json::json!({
+            "TableName": "orders",
+            "GlobalSecondaryIndexUpdates": [
+                { "Delete": { "IndexName": "gsi1" } }
+            ],
+        }))
+        .expect("parse");
+        assert!(matches!(
+            update_table(&service, &ctx, input),
+            Err(DynamoDbError::ValidationException(_))
         ));
     }
 }
