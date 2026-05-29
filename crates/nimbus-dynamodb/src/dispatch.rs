@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use http::HeaderMap;
+use nimbus_core::TenantId;
 use nimbus_engine::Service;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
@@ -30,6 +31,8 @@ use serde_json::Value;
 use crate::auth::sigv4::parse::parse_authorization;
 use crate::auth::sigv4::verify;
 use crate::commands::{batch, control_plane, discovery, item, query, stream, tag, transact, ttl};
+use crate::error::map_core_error;
+use crate::key_management;
 use crate::tenant::{AccessKeyRegistry, AuthMode, ensure_tenant, tenant_context};
 use crate::wire::{self, WireResponse};
 
@@ -165,20 +168,42 @@ fn authenticate(
             DynamoDbError::MissingAuthenticationToken("Missing Authentication Token".to_owned())
         })?;
     let parsed = parse_authorization(header)?;
-    let binding = ctx.access_keys.binding(&parsed.access_key_id)?;
+    let (tenant, secret) = resolve_binding(ctx, &parsed.access_key_id)?;
 
     if ctx.access_keys.mode() == AuthMode::Strict {
-        let secret = binding.secret.as_deref().ok_or_else(|| {
+        let secret = secret.ok_or_else(|| {
             DynamoDbError::UnrecognizedClientException(
                 "The security token included in the request is invalid.".to_owned(),
             )
         })?;
         verify::validate_timestamp(headers)?;
         // DynamoDB is always `POST /` with no query string.
-        verify::verify_signature(&parsed, secret, "POST", "/", "", headers, body)?;
+        verify::verify_signature(&parsed, &secret, "POST", "/", "", headers, body)?;
     }
 
-    Ok(tenant_context(binding.tenant.clone(), DISPATCH_SURFACE))
+    Ok(tenant_context(tenant, DISPATCH_SURFACE))
+}
+
+/// Resolve an access-key id to its `(tenant, secret)` binding. The static
+/// in-memory registry is the fast path; on a miss the persisted key store
+/// (D7.3) is consulted so runtime-configured keys authenticate without a
+/// restart. An id in neither is `UnrecognizedClientException`.
+fn resolve_binding(
+    ctx: &DispatchContext<'_>,
+    access_key_id: &str,
+) -> Result<(TenantId, Option<String>), DynamoDbError> {
+    if let Ok(binding) = ctx.access_keys.binding(access_key_id) {
+        return Ok((binding.tenant.clone(), binding.secret.clone()));
+    }
+    match key_management::lookup(ctx.service, access_key_id)? {
+        Some(stored) => Ok((
+            TenantId::new(stored.tenant).map_err(map_core_error)?,
+            stored.secret,
+        )),
+        None => Err(DynamoDbError::UnrecognizedClientException(
+            "The security token included in the request is invalid.".to_owned(),
+        )),
+    }
 }
 
 /// Route an authenticated request to its handler. Operations without a handler
@@ -616,6 +641,36 @@ mod tests {
             .bind_signed(ACCESS_KEY, TenantId::new("acme").expect("tenant"), "secret")
             .with_mode(AuthMode::Strict);
         (temp, service, registry)
+    }
+
+    #[test]
+    fn persisted_access_key_authenticates_via_the_store() {
+        // A key absent from the static in-memory registry but configured at
+        // runtime in the persisted store still authenticates and routes
+        // (D7.3 — no restart needed). It scopes to its configured tenant.
+        let (_temp, service, registry) = fixture();
+        key_management::put_access_key(
+            &service,
+            "AKIAPERSIST",
+            &TenantId::new("persisted").expect("tenant"),
+            None,
+            None,
+        )
+        .expect("configure persisted key");
+        let ctx = DispatchContext {
+            service: &service,
+            access_keys: &registry,
+        };
+        let (status, body) = dispatch(
+            &ctx,
+            &headers_for("CreateTable", Some(&signed_authorization("AKIAPERSIST"))),
+            &create_table_body("orders"),
+        );
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            body["TableDescription"]["TableName"].as_str().unwrap(),
+            "orders"
+        );
     }
 
     #[test]
