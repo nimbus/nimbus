@@ -1,0 +1,29 @@
+Nimbus
+Copyright Nimbus contributors
+
+This product includes third-party software, listed below, under the terms of
+their respective licenses. The Nimbus combined work ships under the Nimbus
+Community License 1.0; the files below retain their original licenses.
+
+================================================================================
+ExtendDB — https://github.com/ExtendDB/extenddb
+Copyright 2026 ExtendDB contributors
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+these files except in compliance with the License. A copy of the License is
+available at http://www.apache.org/licenses/LICENSE-2.0.
+
+nimbus-dynamodb depends on the `extenddb-core` crate from ExtendDB via a pinned
+git revision (0448ca066c86bddf2eb465092b8b6854923665ee); see
+crates/nimbus-dynamodb/Cargo.toml.
+
+The following files are vendored from ExtendDB (crates/auth/src/sigv4/) at the
+same revision. Each retains its Apache-2.0 SPDX header; modified files carry a
+"Modified from ExtendDB by Nimbus contributors" banner per Apache-2.0 section
+4(b):
+
+  crates/nimbus-dynamodb/src/auth/sigv4/mod.rs          (verbatim)
+  crates/nimbus-dynamodb/src/auth/sigv4/parse.rs        (verbatim)
+  crates/nimbus-dynamodb/src/auth/sigv4/signing_key.rs  (verbatim)
+  crates/nimbus-dynamodb/src/auth/sigv4/canonical.rs    (modified: axum::http -> http)
+  crates/nimbus-dynamodb/src/auth/sigv4/verify.rs       (modified: axum::http -> http)
+================================================================================

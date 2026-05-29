@@ -94,4 +94,7 @@ unknown-registry = "deny"
 allow-git = [
   "https://github.com/nimbus/deno",
   "https://github.com/nimbus/rusty_v8",
+  # DynamoDB adapter: extenddb-core (Apache-2.0) consumed by nimbus-dynamodb via
+  # a pinned git rev. See docs/plans/dynamodb-adapter-plan.md (Upstream Crate Reuse).
+  "https://github.com/ExtendDB/extenddb",
 ]
