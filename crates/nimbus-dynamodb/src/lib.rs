@@ -23,7 +23,7 @@ pub mod tenant;
 pub mod wire;
 
 pub use error::map_core_error;
-pub use tenant::AccessKeyRegistry;
+pub use tenant::{AccessKeyRegistry, ensure_tenant, tenant_context};
 
 pub use attribute_value::{
     attribute_value_to_stored, item_to_stored, stored_to_attribute_value, validate_item,

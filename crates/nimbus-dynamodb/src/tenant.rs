@@ -17,9 +17,14 @@
 //! `AccessDeniedException`.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
-use nimbus_core::TenantId;
+use nimbus_core::{PrincipalContext, TenantId};
+use nimbus_engine::Service;
+use nimbus_tenant::TenantIsolationContext;
+
+use crate::error::map_core_error;
 
 /// Configured bindings from AWS access-key id to Nimbus tenant.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -63,6 +68,31 @@ impl AccessKeyRegistry {
     #[must_use]
     pub fn len(&self) -> usize {
         self.bindings.len()
+    }
+}
+
+/// Build the tenant isolation context for a DynamoDB request scoped to `tenant`.
+///
+/// The principal is `system` — the adapter has already authenticated the request
+/// by access key (D0.5/D7) before scoping the engine call to this tenant.
+#[must_use]
+pub fn tenant_context(tenant: TenantId, surface: &'static str) -> TenantIsolationContext {
+    TenantIsolationContext::application(tenant, PrincipalContext::system(), surface)
+}
+
+/// Ensure the context's tenant exists in the engine (idempotent), mapping engine
+/// errors to the DynamoDB taxonomy.
+///
+/// # Errors
+/// A mapped `DynamoDbError` if tenant creation fails for any reason other than
+/// the tenant already existing.
+pub fn ensure_tenant(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+) -> Result<(), DynamoDbError> {
+    match service.create_tenant(context.tenant_id().clone()) {
+        Ok(()) | Err(nimbus_core::Error::AlreadyExists(_)) => Ok(()),
+        Err(error) => Err(map_core_error(error)),
     }
 }
 
@@ -112,5 +142,26 @@ mod tests {
             registry.resolve("key-a").unwrap(),
             registry.resolve("key-b").unwrap()
         );
+    }
+
+    #[test]
+    fn tenant_context_scopes_to_the_bound_tenant() {
+        let context = tenant_context(tenant("acme"), "DynamoDB test");
+        assert_eq!(context.tenant_id().as_str(), "acme");
+        // A request for a different tenant must be rejected by the context guard.
+        assert!(
+            context
+                .ensure_tenant_matches(&tenant("globex"), "cross-tenant probe")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn ensure_tenant_is_idempotent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let service = Arc::new(Service::new(temp.path()).expect("service"));
+        let context = tenant_context(tenant("acme"), "DynamoDB test");
+        ensure_tenant(&service, &context).expect("first create");
+        ensure_tenant(&service, &context).expect("idempotent second create");
     }
 }

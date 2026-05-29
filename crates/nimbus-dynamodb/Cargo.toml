@@ -18,6 +18,9 @@ workspace = true
 extenddb-core = { workspace = true }
 # Nimbus document value model (StoredValue typed sidecar, promoted in D0.1b).
 nimbus-core = { path = "../nimbus-core" }
+# Engine Service (table/document lifecycle) + tenant isolation context.
+nimbus-engine = { path = "../nimbus-engine" }
+nimbus-tenant = { path = "../nimbus-tenant" }
 base64.workspace = true
 # Exact decimal parsing for the order-preserving Number sort-key projection.
 bigdecimal = "0.4"
@@ -27,3 +30,6 @@ hex.workspace = true
 hmac.workspace = true
 http.workspace = true
 sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
