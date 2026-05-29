@@ -175,12 +175,14 @@ fi
 step C6 "Implemented operations carry request-shape/success/error/limit/malformed tests"
 # ---------------------------------------------------------------------------
 # Proxy: coverage doc present AND every 'implemented' row references a test lane.
-if have "${COVERAGE_DOC}" && ! grep -Eiq 'implemented' "${COVERAGE_DOC}"; then
+if ! have "${COVERAGE_DOC}"; then
+  fail "Operation test lanes not yet proven" "coverage doc absent"
+elif ! grep -Eiq 'implemented' "${COVERAGE_DOC}"; then
   fail "No implemented operations yet" "coverage doc has no implemented rows"
-elif have "${COVERAGE_DOC}" && grep_q 'NO-TEST' "${COVERAGE_DOC}"; then
+elif grep_q 'NO-TEST' "${COVERAGE_DOC}"; then
   fail "An implemented operation lacks a test lane" "remove all NO-TEST markers"
 else
-  fail "Operation test lanes not yet proven" "coverage doc absent"
+  pass "Coverage doc present; implemented rows carry test lanes (no NO-TEST markers)"
 fi
 
 # ===========================================================================
