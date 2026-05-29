@@ -8,7 +8,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/runtime/node/oracle-run.sh --lane <node20|node22|node24> --fixture <test-relative-path> [--output-root <path>] [--node-bin <path>]
+  bash scripts/runtime/node/oracle-run.sh --lane <node20|node22|node24|node26> --fixture <test-relative-path> [--output-root <path>] [--node-bin <path>]
 
 Examples:
   bash scripts/runtime/node/oracle-run.sh --lane node22 --fixture test/parallel/test-buffer-alloc.js

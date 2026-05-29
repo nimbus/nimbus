@@ -48,13 +48,13 @@ bash scripts/verify-node-latest-suite-tags.sh
 
 The nightly evidence workflow in `.github/workflows/node-compat-nightly.yml`
 replays the representative Node test checks, both canary presets, and a
-version-matched Node20 / Node22 / Node24 oracle sample sweep before emitting
-the retained dashboard bundle.
+version-matched Node20 / Node22 / Node24 / Node26 oracle sample sweep before
+emitting the retained dashboard bundle.
 
 The active-LTS canary/oracle verifier requires lane-local Node22 and Node24
 canary results for every registered package claim, a version-matched oracle
-artifact for each supported LTS lane, and zero required canary gaps in the
-published dashboard.
+artifact for each supported LTS lane plus the Node26 current-line lane, and
+zero required canary gaps in the published dashboard.
 
 The Node FaaS compatibility profile lives at
 `docs/architecture/runtime/node-faas-compatibility-profile.json`. It is the
