@@ -74,6 +74,7 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 # Official AWS Rust SDK — drives the dynamodb_spec parity runner against an
 # in-process listener via endpoint override (dev/test only; not shipped).
 aws-sdk-dynamodb = { workspace = true }
+aws-sdk-dynamodbstreams = { workspace = true }
 nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
 nimbus-storage = { path = "../nimbus-storage" }
 nimbus-testing = { path = "../nimbus-testing" }

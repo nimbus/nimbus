@@ -69,6 +69,26 @@ impl Fixture {
             .build();
         Client::from_conf(config)
     }
+
+    /// An `aws-sdk-dynamodbstreams` client pointed at the same listener. The
+    /// streams data plane shares the endpoint and access-key auth; only the
+    /// `X-Amz-Target` prefix differs (`DynamoDBStreams_20120810.`).
+    fn streams_client(&self, access_key: &str) -> aws_sdk_dynamodbstreams::Client {
+        let config = aws_sdk_dynamodbstreams::Config::builder()
+            .behavior_version(aws_sdk_dynamodbstreams::config::BehaviorVersion::latest())
+            .region(aws_sdk_dynamodbstreams::config::Region::new("us-east-1"))
+            .endpoint_url(format!("http://{}", self.addr))
+            .retry_config(aws_sdk_dynamodbstreams::config::retry::RetryConfig::disabled())
+            .credentials_provider(aws_sdk_dynamodbstreams::config::Credentials::new(
+                access_key.to_owned(),
+                "test-secret",
+                None,
+                None,
+                "dynamodb_spec",
+            ))
+            .build();
+        aws_sdk_dynamodbstreams::Client::from_conf(config)
+    }
 }
 
 /// Boot a fresh adapter on `127.0.0.1:0` with the given access-key → tenant
@@ -1212,6 +1232,169 @@ async fn stream_specification_through_official_sdk() {
         Some(&StreamViewType::NewAndOldImages)
     );
     assert!(table.latest_stream_arn().is_some(), "stream ARN reported");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streams_data_plane_through_official_streams_sdk() {
+    use aws_sdk_dynamodb::types::{StreamSpecification, StreamViewType};
+    use aws_sdk_dynamodbstreams::types::AttributeValue as StreamAv;
+    use aws_sdk_dynamodbstreams::types::{OperationType, ShardIteratorType};
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+
+    // A stream-enabled table carrying both before/after images.
+    client
+        .create_table()
+        .table_name("Streamed")
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name("pk")
+                .key_type(KeyType::Hash)
+                .build()
+                .expect("ks"),
+        )
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name("pk")
+                .attribute_type(ScalarAttributeType::S)
+                .build()
+                .expect("attr"),
+        )
+        .stream_specification(
+            StreamSpecification::builder()
+                .stream_enabled(true)
+                .stream_view_type(StreamViewType::NewAndOldImages)
+                .build()
+                .expect("stream spec"),
+        )
+        .billing_mode(BillingMode::PayPerRequest)
+        .send()
+        .await
+        .expect("create streamed table");
+
+    // Drive INSERT → MODIFY → REMOVE on the same key through the data plane.
+    client
+        .put_item()
+        .table_name("Streamed")
+        .item("pk", AttributeValue::S("a".into()))
+        .item("v", AttributeValue::N("1".into()))
+        .send()
+        .await
+        .expect("insert");
+    client
+        .put_item()
+        .table_name("Streamed")
+        .item("pk", AttributeValue::S("a".into()))
+        .item("v", AttributeValue::N("2".into()))
+        .send()
+        .await
+        .expect("modify");
+    client
+        .delete_item()
+        .table_name("Streamed")
+        .key("pk", AttributeValue::S("a".into()))
+        .send()
+        .await
+        .expect("remove");
+
+    let arn = client
+        .describe_table()
+        .table_name("Streamed")
+        .send()
+        .await
+        .expect("describe")
+        .table()
+        .and_then(|t| t.latest_stream_arn())
+        .expect("stream arn")
+        .to_owned();
+
+    let streams = fx.streams_client(ACCESS_KEY);
+
+    // ListStreams enumerates the stream, and the TableName filter narrows it.
+    let listed = streams.list_streams().send().await.expect("list streams");
+    assert!(
+        listed
+            .streams()
+            .iter()
+            .any(|s| s.stream_arn() == Some(arn.as_str())),
+        "the stream is enumerated by ListStreams"
+    );
+    let filtered = streams
+        .list_streams()
+        .table_name("Streamed")
+        .send()
+        .await
+        .expect("filtered list");
+    assert_eq!(filtered.streams().len(), 1, "filtered to the one table");
+    assert_eq!(filtered.streams()[0].table_name(), Some("Streamed"));
+
+    // DescribeStream → single open shard (DDB-DIV-006).
+    let described = streams
+        .describe_stream()
+        .stream_arn(&arn)
+        .send()
+        .await
+        .expect("describe stream");
+    let description = described.stream_description().expect("stream description");
+    assert_eq!(description.shards().len(), 1, "single shard");
+    let shard_id = description.shards()[0]
+        .shard_id()
+        .expect("shard id")
+        .to_owned();
+
+    // GetShardIterator(TRIM_HORIZON) + GetRecords → the three change events.
+    let iterator = streams
+        .get_shard_iterator()
+        .stream_arn(&arn)
+        .shard_id(shard_id)
+        .shard_iterator_type(ShardIteratorType::TrimHorizon)
+        .send()
+        .await
+        .expect("shard iterator")
+        .shard_iterator()
+        .expect("iterator")
+        .to_owned();
+    let got = streams
+        .get_records()
+        .shard_iterator(iterator)
+        .send()
+        .await
+        .expect("get records");
+    let records = got.records();
+    assert_eq!(records.len(), 3, "INSERT + MODIFY + REMOVE captured");
+
+    assert_eq!(records[0].event_name(), Some(&OperationType::Insert));
+    let insert = records[0].dynamodb().expect("insert image");
+    assert!(insert.old_image().is_none(), "INSERT has no old image");
+    assert_eq!(
+        insert.new_image().expect("new image").get("v"),
+        Some(&StreamAv::N("1".into()))
+    );
+
+    assert_eq!(records[1].event_name(), Some(&OperationType::Modify));
+    let modify = records[1].dynamodb().expect("modify image");
+    assert_eq!(
+        modify.old_image().expect("old image").get("v"),
+        Some(&StreamAv::N("1".into()))
+    );
+    assert_eq!(
+        modify.new_image().expect("new image").get("v"),
+        Some(&StreamAv::N("2".into()))
+    );
+
+    assert_eq!(records[2].event_name(), Some(&OperationType::Remove));
+    let remove = records[2].dynamodb().expect("remove image");
+    assert!(remove.new_image().is_none(), "REMOVE has no new image");
+    assert_eq!(
+        remove.old_image().expect("old image").get("v"),
+        Some(&StreamAv::N("2".into()))
+    );
+
+    assert!(
+        got.next_shard_iterator().is_some(),
+        "the open shard always returns a next iterator"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
