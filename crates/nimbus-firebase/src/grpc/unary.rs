@@ -275,24 +275,26 @@ pub async fn handle_list_documents(
     )
     .map_err(firebase_grpc_status)?;
 
-    let mut documents = outcome
+    let mut documents: Vec<_> = outcome
         .documents
         .into_iter()
         .map(|entry| {
             let document_name = firestore_document_name(&parent.database, &entry.document_path);
-            Ok::<(String, Document), Status>((document_name, entry.document))
+            (document_name, entry.document)
         })
-        .collect::<Result<Vec<_>, Status>>()?;
+        .collect();
     documents.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
 
+    let mut proto_documents = Vec::with_capacity(documents.len());
+    for (document_name, document) in documents {
+        proto_documents.push(
+            proto_document(&document_name, &document, response_mask.as_deref())
+                .map_err(|status| *status)?,
+        );
+    }
+
     Ok(Response::new(proto::ListDocumentsResponse {
-        documents: documents
-            .into_iter()
-            .map(|(document_name, document)| {
-                proto_document(&document_name, &document, response_mask.as_deref())
-                    .map_err(|status| *status)
-            })
-            .collect::<Result<Vec<_>, _>>()?,
+        documents: proto_documents,
         next_page_token: String::new(),
     }))
 }
@@ -599,30 +601,26 @@ pub async fn handle_run_query(
             continuation_selector: None,
         }]
     } else {
-        outcome
-            .documents
-            .into_iter()
-            .enumerate()
-            .map(|(index, entry)| {
-                let document_name =
-                    firestore_document_name(&request.database, &entry.document_path);
-                Ok(RunQueryResponse {
-                    transaction: Vec::new(),
-                    document: Some(
-                        proto_document(&document_name, &entry.document, None)
-                            .map_err(|status| *status)?,
-                    ),
-                    read_time,
-                    skipped_results: if index == 0 {
-                        outcome.skipped_results as i32
-                    } else {
-                        0
-                    },
-                    explain_metrics: None,
-                    continuation_selector: None,
-                })
-            })
-            .collect::<Result<Vec<_>, Status>>()?
+        let mut responses = Vec::with_capacity(outcome.documents.len());
+        for (index, entry) in outcome.documents.into_iter().enumerate() {
+            let document_name = firestore_document_name(&request.database, &entry.document_path);
+            responses.push(RunQueryResponse {
+                transaction: Vec::new(),
+                document: Some(
+                    proto_document(&document_name, &entry.document, None)
+                        .map_err(|status| *status)?,
+                ),
+                read_time,
+                skipped_results: if index == 0 {
+                    outcome.skipped_results as i32
+                } else {
+                    0
+                },
+                explain_metrics: None,
+                continuation_selector: None,
+            });
+        }
+        responses
     };
 
     let output: tonic::codegen::BoxStream<RunQueryResponse> =
@@ -1037,15 +1035,12 @@ fn lower_count_up_to(up_to: Option<i64>) -> FirestoreGrpcLoweringResult<Option<u
 fn proto_aggregation_result(
     result: &nimbus_core::StructuredAggregationResult,
 ) -> FirestoreGrpcLoweringResult<proto::AggregationResult> {
-    Ok(proto::AggregationResult {
-        aggregate_fields: result
-            .aggregate_fields
-            .iter()
-            .map(|(alias, value)| {
-                encode_nimbus_value_to_grpc(value).map(|value| (alias.clone(), value))
-            })
-            .collect::<Result<HashMap<_, _>, _>>()?,
-    })
+    let mut aggregate_fields = HashMap::with_capacity(result.aggregate_fields.len());
+    for (alias, value) in &result.aggregate_fields {
+        aggregate_fields.insert(alias.clone(), encode_nimbus_value_to_grpc(value)?);
+    }
+
+    Ok(proto::AggregationResult { aggregate_fields })
 }
 
 fn lower_collection_selector(
@@ -1277,16 +1272,14 @@ fn lower_find_nearest(
         limit,
         distance_result_field: (!find_nearest.distance_result_field.is_empty())
             .then_some(find_nearest.distance_result_field),
-        distance_threshold: find_nearest
-            .distance_threshold
-            .map(|threshold| {
-                Number::from_f64(threshold).ok_or_else(|| {
-                    Status::invalid_argument(
-                        "structured query find_nearest distance_threshold must be finite",
-                    )
-                })
-            })
-            .transpose()?,
+        distance_threshold: match find_nearest.distance_threshold {
+            Some(threshold) => Some(Number::from_f64(threshold).ok_or_else(|| {
+                Status::invalid_argument(
+                    "structured query find_nearest distance_threshold must be finite",
+                )
+            })?),
+            None => None,
+        },
     })
 }
 
@@ -1295,27 +1288,27 @@ fn proto_document(
     document: &Document,
     mask: Option<&[String]>,
 ) -> FirestoreGrpcLoweringResult<proto::Document> {
-    let fields = match mask {
-        Some(mask) => mask
-            .iter()
-            .filter_map(|field| {
-                document
-                    .fields
-                    .get(field)
-                    .map(|value| (field.clone(), value))
-            })
-            .map(|(field, value)| {
-                encode_document_field_to_grpc(document, &field, value).map(|value| (field, value))
-            })
-            .collect::<Result<HashMap<_, _>, _>>()?,
-        None => document
-            .fields
-            .iter()
-            .map(|(field, value)| {
-                encode_document_field_to_grpc(document, field, value)
-                    .map(|value| (field.clone(), value))
-            })
-            .collect::<Result<HashMap<_, _>, _>>()?,
+    let mut fields = HashMap::new();
+    match mask {
+        Some(mask) => {
+            for field in mask {
+                if let Some(value) = document.fields.get(field) {
+                    fields.insert(
+                        field.clone(),
+                        encode_document_field_to_grpc(document, field, value)?,
+                    );
+                }
+            }
+        }
+        None => {
+            fields.reserve(document.fields.len());
+            for (field, value) in &document.fields {
+                fields.insert(
+                    field.clone(),
+                    encode_document_field_to_grpc(document, field, value)?,
+                );
+            }
+        }
     };
     let create_time = Some(prost_timestamp_from_core(document.creation_time)?);
     let update_time = Some(prost_timestamp_from_core(document.update_time)?);
