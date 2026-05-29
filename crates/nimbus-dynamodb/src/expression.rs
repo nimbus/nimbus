@@ -188,6 +188,24 @@ pub fn apply_update_to_item(
     apply_update(&actions, item, &maps)
 }
 
+/// Parse and apply a `ProjectionExpression` to `item`, returning the projected
+/// subset — the shaping GetItem (D1.6) / Query / Scan perform on each returned
+/// item. Dot (`a.b`) and bracket (`a[0]`) notation select nested values;
+/// `ExpressionAttributeNames` aliases resolve through `names`.
+///
+/// # Errors
+/// `ValidationException` for a malformed/empty projection.
+pub fn project_item(
+    projection: &str,
+    names: Option<&HashMap<String, String>>,
+    item: &Item,
+    limits: &LimitsConfig,
+) -> Result<Item, DynamoDbError> {
+    let paths = parse_projection_expression(projection, limits)?;
+    let maps = build_maps(names, None);
+    apply_projection(item, &paths, &maps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,5 +611,61 @@ mod tests {
         assert_eq!(r.get("label"), Some(&AttributeValue::S("multi".into())));
         assert!(!r.contains_key("alpha"));
         assert_eq!(r.get("score"), Some(&n("40")));
+    }
+
+    // ---- D1.4: ProjectionExpression integration coverage ----
+
+    fn project(projection: &str) -> Item {
+        let limits = default_limits();
+        project_item(projection, None, &rich_item(), &limits).expect("projection should succeed")
+    }
+
+    #[test]
+    fn projection_selects_top_level_attributes() {
+        let r = project("alpha, score");
+        assert_eq!(r.len(), 2);
+        assert_eq!(r.get("alpha"), Some(&AttributeValue::S("alice".into())));
+        assert_eq!(r.get("score"), Some(&AttributeValue::N("30".into())));
+        assert!(
+            !r.contains_key("tags"),
+            "unprojected attributes are dropped"
+        );
+    }
+
+    #[test]
+    fn projection_selects_nested_map_path() {
+        // `nested.city` → { nested: { city: "nyc" } }
+        let r = project("nested.city");
+        let mut expected_nested = std::collections::BTreeMap::new();
+        expected_nested.insert("city".to_string(), AttributeValue::S("nyc".into()));
+        assert_eq!(r.get("nested"), Some(&AttributeValue::M(expected_nested)));
+    }
+
+    #[test]
+    fn projection_selects_list_index() {
+        // `nums[0]` → { nums: [ 1 ] } (DynamoDB wraps the selected element).
+        let r = project("nums[0]");
+        assert_eq!(
+            r.get("nums"),
+            Some(&AttributeValue::L(vec![AttributeValue::N("1".into())]))
+        );
+    }
+
+    #[test]
+    fn projection_resolves_expression_attribute_names() {
+        let limits = default_limits();
+        let names: HashMap<String, String> = [
+            ("#a".to_string(), "alpha".to_string()),
+            ("#c".to_string(), "city".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        // `#a` → alpha, and a nested alias `nested.#c` → nested.city.
+        let r =
+            project_item("#a, nested.#c", Some(&names), &rich_item(), &limits).expect("projection");
+        assert_eq!(r.get("alpha"), Some(&AttributeValue::S("alice".into())));
+        let mut expected_nested = std::collections::BTreeMap::new();
+        expected_nested.insert("city".to_string(), AttributeValue::S("nyc".into()));
+        assert_eq!(r.get("nested"), Some(&AttributeValue::M(expected_nested)));
     }
 }
