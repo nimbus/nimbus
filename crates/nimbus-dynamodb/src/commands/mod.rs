@@ -9,5 +9,6 @@ pub mod discovery;
 pub mod item;
 pub mod query;
 pub mod stream;
+pub mod tag;
 pub mod transact;
 pub mod ttl;

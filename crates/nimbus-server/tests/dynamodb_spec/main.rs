@@ -1488,6 +1488,86 @@ async fn time_to_live_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tagging_through_official_sdk() {
+    use aws_sdk_dynamodb::types::Tag;
+
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    let arn = create_orders(&client)
+        .await
+        .table_description()
+        .and_then(|t| t.table_arn())
+        .expect("table arn")
+        .to_owned();
+
+    // No tags initially.
+    let initial = client
+        .list_tags_of_resource()
+        .resource_arn(&arn)
+        .send()
+        .await
+        .expect("list tags");
+    assert!(initial.tags().is_empty());
+
+    // Tag, then read them back.
+    client
+        .tag_resource()
+        .resource_arn(&arn)
+        .tags(
+            Tag::builder()
+                .key("env")
+                .value("prod")
+                .build()
+                .expect("tag"),
+        )
+        .tags(
+            Tag::builder()
+                .key("team")
+                .value("payments")
+                .build()
+                .expect("tag"),
+        )
+        .send()
+        .await
+        .expect("tag resource");
+    let mut tagged: Vec<(String, String)> = client
+        .list_tags_of_resource()
+        .resource_arn(&arn)
+        .send()
+        .await
+        .expect("list tags")
+        .tags()
+        .iter()
+        .map(|tag| (tag.key().to_owned(), tag.value().to_owned()))
+        .collect();
+    tagged.sort();
+    assert_eq!(
+        tagged,
+        vec![
+            ("env".to_owned(), "prod".to_owned()),
+            ("team".to_owned(), "payments".to_owned())
+        ]
+    );
+
+    // Untag one key.
+    client
+        .untag_resource()
+        .resource_arn(&arn)
+        .tag_keys("env")
+        .send()
+        .await
+        .expect("untag resource");
+    let remaining = client
+        .list_tags_of_resource()
+        .resource_arn(&arn)
+        .send()
+        .await
+        .expect("list tags");
+    assert_eq!(remaining.tags().len(), 1);
+    assert_eq!(remaining.tags()[0].key(), "team");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn describe_limits_through_official_sdk() {
     // DescribeLimits round-trips through the official SDK with the documented
     // default limit shape.

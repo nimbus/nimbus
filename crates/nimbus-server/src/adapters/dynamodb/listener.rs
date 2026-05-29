@@ -155,18 +155,12 @@ mod tests {
 
     #[tokio::test]
     async fn known_target_dispatches_through_to_handler() {
-        // TagResource is recognized; until its handler lands it returns the
-        // not-yet-implemented placeholder. This proves an authenticated request
-        // wires through the `POST /` route into `nimbus_dynamodb::dispatch`.
-        let (status, body) = post("DynamoDB_20120810.TagResource", "{}").await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(
-            body["message"]
-                .as_str()
-                .unwrap()
-                .contains("not yet implemented"),
-            "got {body}"
-        );
+        // DescribeLimits is a no-argument read; an authenticated call returns 200
+        // with the limit shape. Proves an authenticated request wires through the
+        // `POST /` route into `nimbus_dynamodb::dispatch` and back.
+        let (status, body) = post("DynamoDB_20120810.DescribeLimits", "{}").await;
+        assert_eq!(status, StatusCode::OK, "got {body}");
+        assert_eq!(body["AccountMaxReadCapacityUnits"].as_i64(), Some(80_000));
     }
 
     #[tokio::test]
