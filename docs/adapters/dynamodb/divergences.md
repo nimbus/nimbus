@@ -199,3 +199,26 @@ isolation guarantee.
 `tests::update_is_idempotent_with_no_cooldown`.
 
 **Status:** accepted (D6.1).
+
+## DDB-DIV-010 — ConsistentRead on a GSI query is served, not rejected (`nimbus-divergence`)
+
+**Real DynamoDB:** a `Query` (or `Scan`) on a **global** secondary index with
+`ConsistentRead=true` is rejected with `ValidationException` — GSIs in DynamoDB
+are maintained asynchronously and only support eventually-consistent reads.
+
+**Nimbus:** accepts `ConsistentRead=true` on a GSI query and serves the result.
+Nimbus maintains index entries inside the same storage transaction as the base
+write (no async index propagation), so every index read is already strongly
+consistent — there is nothing to reject.
+
+**Rationale:** the DynamoDB rejection exists only because its GSIs lag the base
+table; Nimbus has no such lag, so honoring the flag is a strict upgrade that
+never returns stale data. Accepting (rather than rejecting) is also the more
+permissive, drop-in-compatible choice: a client that never sets the flag is
+unaffected, and a client that does gets a stronger guarantee instead of an
+error. (D4.4 decision: accept-and-serve over match-DynamoDB-rejection.)
+
+**Regression test:** `crates/nimbus-dynamodb/src/commands/query.rs` →
+`tests::query_gsi_with_consistent_read_is_served_consistently`.
+
+**Status:** accepted (D4.4).
