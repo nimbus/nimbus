@@ -59,11 +59,15 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
+            package-lock.json
             tests/runtime/node/convex-canaries/package-lock.json
             tests/runtime/node/host-heavy-canaries/package-lock.json
             tests/runtime/node/networking-canaries/package-lock.json
             tests/runtime/node/sdk-canaries/package-lock.json
             tests/runtime/node/tooling-canaries/package-lock.json
+
+      - name: Install JS dependencies
+        run: npm ci
 
       - name: Verify release-train metadata and docs
         run: |
