@@ -203,6 +203,19 @@ fn catalog_id(table_name: &str) -> Result<DocumentId, DynamoDbError> {
     DocumentId::from_key(table_name).map_err(map_core_error)
 }
 
+/// Load a table's key schema (HASH + optional RANGE elements) from the catalog,
+/// for the item handlers' primary-key extraction.
+///
+/// # Errors
+/// `ResourceNotFoundException` if the table does not exist.
+pub fn load_key_schema(
+    service: &Arc<Service>,
+    context: &TenantIsolationContext,
+    table_name: &str,
+) -> Result<Vec<KeySchemaElement>, DynamoDbError> {
+    Ok(load_description(service, context, table_name)?.key_schema)
+}
+
 fn load_description(
     service: &Arc<Service>,
     context: &TenantIsolationContext,

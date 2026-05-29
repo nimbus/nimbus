@@ -20,7 +20,8 @@ use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_dynamodb::error::ProvideErrorMetadata;
 use aws_sdk_dynamodb::operation::create_table::CreateTableOutput;
 use aws_sdk_dynamodb::types::{
-    AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType, TableStatus,
+    AttributeDefinition, AttributeValue, BillingMode, KeySchemaElement, KeyType, ReturnValue,
+    ScalarAttributeType, TableStatus,
 };
 use nimbus_core::TenantId;
 use nimbus_dynamodb::AccessKeyRegistry;
@@ -191,6 +192,56 @@ async fn control_plane_roundtrip_through_official_sdk() {
             .into_service_error()
             .is_resource_not_found_exception(),
         "describe of a deleted table must be ResourceNotFoundException"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_item_through_official_sdk() {
+    // PutItem end-to-end through the official SDK: insert, replace with
+    // ReturnValues=ALL_OLD, and a create-if-absent condition that fails.
+    let fx = fixture().await;
+    let client = fx.client(ACCESS_KEY);
+    create_orders(&client).await;
+
+    // Fresh insert; ALL_OLD has nothing to return.
+    let first = client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("o1".into()))
+        .item("v", AttributeValue::N("1".into()))
+        .return_values(ReturnValue::AllOld)
+        .send()
+        .await
+        .expect("first put_item");
+    assert!(first.attributes().is_none(), "no previous item to return");
+
+    // Overwrite; ALL_OLD returns the previous item.
+    let second = client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("o1".into()))
+        .item("v", AttributeValue::N("2".into()))
+        .return_values(ReturnValue::AllOld)
+        .send()
+        .await
+        .expect("second put_item");
+    let old = second.attributes().expect("previous item");
+    assert_eq!(old.get("v"), Some(&AttributeValue::N("1".into())));
+
+    // create-if-absent must fail now that the item exists.
+    let err = client
+        .put_item()
+        .table_name("Orders")
+        .item("pk", AttributeValue::S("o1".into()))
+        .item("v", AttributeValue::N("3".into()))
+        .condition_expression("attribute_not_exists(pk)")
+        .send()
+        .await
+        .expect_err("create-if-absent should fail");
+    assert!(
+        err.into_service_error()
+            .is_conditional_check_failed_exception(),
+        "overwriting with attribute_not_exists must be ConditionalCheckFailedException"
     );
 }
 

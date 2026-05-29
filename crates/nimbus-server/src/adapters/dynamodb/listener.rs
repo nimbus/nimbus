@@ -155,10 +155,10 @@ mod tests {
 
     #[tokio::test]
     async fn known_target_dispatches_through_to_handler() {
-        // PutItem is recognized; until its handler lands it returns the
+        // Query is recognized; until its handler lands it returns the
         // not-yet-implemented placeholder. This proves an authenticated request
         // wires through the `POST /` route into `nimbus_dynamodb::dispatch`.
-        let (status, body) = post("DynamoDB_20120810.PutItem", "{}").await;
+        let (status, body) = post("DynamoDB_20120810.Query", "{}").await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert!(
             body["message"]

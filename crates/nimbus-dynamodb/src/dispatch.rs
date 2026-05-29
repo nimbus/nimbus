@@ -28,7 +28,7 @@ use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
 use crate::auth::sigv4::parse::parse_authorization;
-use crate::commands::{control_plane, discovery};
+use crate::commands::{control_plane, discovery, item};
 use crate::tenant::{AccessKeyRegistry, ensure_tenant, tenant_context};
 use crate::wire::{self, WireResponse};
 
@@ -188,6 +188,8 @@ fn route(
         // Discovery ops take no meaningful input and touch no tenant data.
         "DescribeEndpoints" => render_output(&discovery::describe_endpoints(host)),
         "DescribeLimits" => render_output(&discovery::describe_limits()),
+        // T1 — single-item data plane.
+        "PutItem" => run(request, |input| item::put_item(ctx.service, context, input)),
         other => wire::render_error(&DynamoDbError::InternalServerError(format!(
             "{other} is not yet implemented"
         ))),
@@ -378,14 +380,14 @@ mod tests {
 
     #[test]
     fn unimplemented_known_operation_returns_placeholder_after_auth() {
-        // PutItem is recognized but has no handler yet. With valid auth it
-        // passes authentication and tenant-ensure, then hits the placeholder.
+        // Query is recognized but has no handler yet. With valid auth it passes
+        // authentication and tenant-ensure, then hits the placeholder.
         let (_temp, service, registry) = fixture();
         let ctx = DispatchContext {
             service: &service,
             access_keys: &registry,
         };
-        let headers = headers_for("PutItem", Some(&signed_authorization(ACCESS_KEY)));
+        let headers = headers_for("Query", Some(&signed_authorization(ACCESS_KEY)));
         let (status, body) = dispatch(&ctx, &headers, b"{}");
         assert_eq!(status, 500);
         assert!(
