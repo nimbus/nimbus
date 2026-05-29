@@ -57,7 +57,7 @@ export const sendAndSchedule = mutation({
   const manifest = await readConvexJson(appDir, "functions.json");
   assert.equal(manifest.functions[0].plan, null);
   assertDefaultRuntimeMetadata(manifest.functions[0]);
-  assertRuntimeLanes(manifest, "node22");
+  assertRuntimeLanes(manifest, "node24");
   assert.match(manifest.functions[0].runtime_handler, /ctx\.db\.insert/);
   assert.match(manifest.functions[0].runtime_handler, /ctx\.scheduler\.runAfter/);
 
@@ -340,7 +340,7 @@ export const send = mutation({
   assert.equal(manifest.functions[0].name, "messages:send");
   assert.equal(manifest.functions[0].plan, null);
   assertBunJscRuntimeMetadata(manifest.functions[0]);
-  assertRuntimeLanes(manifest, "node22");
+  assertRuntimeLanes(manifest, "node24");
 
   const bunProgramBundle = await readConvexFile(appDir, "bun_program_bundle.js");
   const bunProgramBundleHash = await readConvexFile(appDir, "bun_program_bundle.sha256");

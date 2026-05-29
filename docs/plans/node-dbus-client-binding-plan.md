@@ -1,6 +1,6 @@
 # Node D-Bus Client Binding Plan (NDB)
 
-The TSB7 wave of `docs/plans/tenant-domain-and-node-enforcement-boundary-plan.md`
+The TSB7 wave of `docs/plans/archive/tenant-domain-and-node-enforcement-boundary-plan.md`
 designed the `SystemdDbusClient` trait and built `FakeSystemdDbusClient` +
 `UnavailableSystemdDbusClient` to satisfy its completion gate. The gate
 deliberately required only typed request construction, property

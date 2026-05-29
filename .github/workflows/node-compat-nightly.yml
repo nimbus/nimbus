@@ -59,8 +59,20 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
+            tests/runtime/node/convex-canaries/package-lock.json
+            tests/runtime/node/host-heavy-canaries/package-lock.json
             tests/runtime/node/networking-canaries/package-lock.json
+            tests/runtime/node/sdk-canaries/package-lock.json
             tests/runtime/node/tooling-canaries/package-lock.json
+
+      - name: Verify release-train metadata and docs
+        run: |
+          bash scripts/verify-node-lts-docs.sh
+          bash scripts/verify-node-latest-suite-tags.sh
+          NIMBUS_ENFORCE_CURRENT_NODE_CORPORA=1 bash scripts/verify-node-latest-suite-tags.sh
+          bash scripts/verify-node-release-train.sh
+          python3 scripts/runtime/node/release_train.py probe-live
+          make node-compat-validate-watchpoints
 
       - name: Emit seeded slice reports
         run: |
@@ -104,6 +116,15 @@ jobs:
       - name: Run representative Node24 oracle sample
         run: |
           make node-compat-oracle LANE=node24 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
+
+      - name: Set up Node.js 26 for current-line oracle sample
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+
+      - name: Run representative Node26 current-line oracle sample
+        run: |
+          make node-compat-oracle LANE=node26 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
 
       - name: Build dashboard summary
         run: |

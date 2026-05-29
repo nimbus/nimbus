@@ -4,16 +4,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Active execution plans
 
-- `docs/plans/server-crate-extraction-completion-plan.md`
-  - proposed final extraction wave after the completed server seam readiness
-    plan. Ends in real crate extraction for `nimbus-artifacts`,
-    `nimbus-provenance`, `nimbus-services`, `nimbus-operator`, and the
-    per-adapter crates (`nimbus-mongodb`,
-    `nimbus-firebase`, `nimbus-cloud-functions`,
-    `nimbus-convex`) while keeping route mounting, listener
-    lifecycle, AppState construction, shutdown, and global composition in
-    `nimbus-server`. `nimbus-adapters` is allowed only as a final thin
-    re-export facade after per-adapter crates are clean.
 - `docs/plans/storage-engine-quality-and-mvcc-plan.md`
   - proposed follow-on plan after storage architecture trust hardening
     completes. Targets the larger storage-engine quality features that would
@@ -23,20 +13,6 @@ This directory prefers a small-number-of-plans model with clear ownership.
     serving snapshot manager, retention compaction, PITR/export/import, CDC
     cursors, deterministic parity checks, MVCC metamorphic tests, and
     operator MVCC diagnostics. Activation is gated on the SATH verifier.
-- `docs/plans/tenant-domain-and-node-enforcement-boundary-plan.md`
-  - proposed follow-on naming and boundary plan with its repository
-    architecture-quality precondition met. Starts from the current
-    tenant-isolation, storage-trust, system-tenant, and container-image
-    baselines; preserves explicit `TenantIsolation*` type names for security
-    artifacts; and separates tenant admission from `nimbus-node` local
-    enforcement, sandbox primitives, runtime primitives, storage/API PEPs,
-    system-tenant evidence, and the Iroh-backed control plane. Includes a
-    comparative review against Kubernetes, CockroachDB, Convex, workerd,
-    Podman/Quadlet, and OpenShell patterns for node-scoped status writes,
-    typed tenant capabilities, runtime trust monotonicity, strict host artifact
-    rendering, and explicit system-tenant boundaries. The plan now includes a
-    resumable agent-control-plane protocol and proof bundle under
-    `docs/plans/proof/tenant-domain-and-node-enforcement-boundary/`.
 - `docs/plans/node-dbus-client-binding-plan.md`
   - active Node-side systemd D-Bus binding plan (NDB0..NDB7). Attaches
     `lucab/zbus_systemd` (pin `=0.26000.0`, features `systemd1` +
@@ -46,6 +22,19 @@ This directory prefers a small-number-of-plans model with clear ownership.
     `systemctl --user` tests, `node-dbus-integration` CI, and Linux
     default-constructor/factory closeout. Does not wire a production
     `NodeWorkloadReconciler` caller.
+- `docs/plans/node-default-runtime-support-hardening-plan.md`
+  - active Node runtime default-quality plan (NDS0..NDS10). Starts from
+    the completed NFRC baseline where Node24 is the product default,
+    Node22 is supported LTS, Node26 is Current/non-LTS, and package
+    canaries pass, but treats the current Node24 19.3% official
+    full-corpus pass rate and Node26 0 official fixture passes as
+    insufficient for a "well-supported default" claim. Introduces a
+    default-support posture with explicit full-corpus, FaaS-required,
+    local-dev-only, service/microVM-routed, and out-of-scope denominators;
+    subsumes `docs/plans/node-compat-cron-greening-plan.md`; expands
+    Node24/Node22 fixture and package evidence; adds real Convex app
+    suites; gives Node26 real Current-line fixture evidence; and gates
+    docs/CI on the stricter posture.
 - `docs/plans/nimbus-sandbox-plan.md`
   - proposed unified sandbox plan for every Nimbus workload on the
     `nimbus-libkrun` fork via capability profiles (lambda / desktop / gpu).
@@ -137,19 +126,47 @@ This directory prefers a small-number-of-plans model with clear ownership.
 
 ## Current Reference Baselines
 
-Completed execution plans live under `docs/plans/archive/` and are not
-enumerated here. Use current architecture and operating docs first; open
-archived plans only when you need historical execution detail.
+Completed execution plans live under `docs/plans/archive/`. Use current
+architecture and operating docs first; open archived plans only when you need
+historical execution detail.
 
-- `docs/plans/server-seam-extraction-readiness-plan.md`
+- `docs/plans/archive/server-crate-extraction-completion-plan.md`
+  - completed final server crate extraction wave (FCE0-FCE10, closed
+    2026-05-28). Extracted `nimbus-artifacts`, `nimbus-provenance`,
+    `nimbus-services`, `nimbus-operator`, `nimbus-mongodb`,
+    `nimbus-firebase`, `nimbus-cloud-functions`, `nimbus-convex`, and the
+    thin feature-gated `nimbus-adapters` facade while keeping route mounting,
+    listener lifecycle, `AppState` construction, shutdown, and global
+    composition in `nimbus-server`. `/goal` control plane gated on
+    `bash scripts/verify-server-crate-extraction-completion.sh`.
+- `docs/plans/archive/server-seam-extraction-readiness-plan.md`
   - completed readiness baseline after
-    `docs/plans/nimbus-system-bridge-adapters-extraction-plan.md`. Prepared
-    the remaining server seams for honest extraction without creating
-    decorative crates: per-adapter readiness in MongoDB →
-    Firebase/provider-family → Cloud Functions → Convex order, artifact
-    effects, provenance, services, and operator/local admin. Completion is
-    gated on `scripts/verify-server-seam-extraction-readiness.sh`, focused
-    behavior tests, formatting, and `cargo check --workspace`.
+    `docs/plans/archive/nimbus-system-bridge-adapters-extraction-plan.md`
+    (SSE0-SSE7, closed 2026-05-28). Prepared the remaining server seams for
+    honest extraction without creating decorative crates: per-adapter readiness
+    in MongoDB → Firebase/provider-family → Cloud Functions → Convex order,
+    artifact effects, provenance, services, and operator/local admin. `/goal`
+    control plane gated on
+    `bash scripts/verify-server-seam-extraction-readiness.sh`.
+- `docs/plans/archive/nimbus-system-bridge-adapters-extraction-plan.md`
+  - completed first server extraction wave (SBA0-SBA8, closed 2026-05-28).
+    Extracted `nimbus-system`, `nimbus-bridge`, `nimbus-auth`, and
+    `nimbus-license`; rejected an aggregate adapter crate until per-adapter
+    readiness was proven; and recorded follow-on decisions for artifacts,
+    provenance, operator, and services. `/goal` control plane gated on
+    `bash scripts/verify-server-system-bridge-adapters-extraction.sh`.
+- `docs/plans/archive/tenant-and-node-crate-extraction-readiness-plan.md`
+  - completed tenant/node extraction readiness wave (TNE0-TNE5). Split
+    artifact verifier host effects out of the tenant domain, extracted
+    `nimbus-tenant`, added a production `NodeWorkloadReconciler`, extracted
+    `nimbus-node`, and closed with
+    `bash scripts/verify-tenant-node-extraction-readiness.sh`.
+- `docs/plans/archive/tenant-domain-and-node-enforcement-boundary-plan.md`
+  - completed tenant-domain and node-enforcement boundary baseline
+    (TSB0-TSB14). Renamed the server tenant domain while keeping
+    `TenantIsolation*` security names, added local enforcement and
+    host-lifecycle seams, documented node lifecycle and Quadlet export
+    roles, and recorded the predecessor deferrals that TNE later closed.
 - `docs/plans/archive/node-lts-runtime-trust-plan.md`
   - completed execution record for the Node LTS runtime trust wave (NLRT0-NLRT11,
     closed 2026-05-28). Added a data-driven Node LTS lane registry, truthful
@@ -159,6 +176,16 @@ archived plans only when you need historical execution detail.
     production Node permission profiles, and active-LTS canary/oracle evidence
     for Node22 and Node24. `/goal` control plane gated on
     `bash scripts/verify-node-lts-runtime-trust.sh`.
+- `docs/plans/archive/node-faas-runtime-compatibility-plan.md`
+  - completed execution record for the Node FaaS runtime compatibility wave
+    (NFRC0-NFRC13, closed 2026-05-28). Made Node24 the product default,
+    kept Node22 as supported Maintenance LTS, kept Node20 legacy-grace only,
+    added Node26 Current/non-LTS lane-local evidence, vendored and classified
+    current official fixture corpora, added real Convex app and SDK canaries,
+    added host-heavy service/microVM diagnostic canaries, generated Deno-style
+    public support docs, added release-train drift automation, and wired
+    PR/nightly CI gates. `/goal` control plane gated on
+    `bash scripts/verify-node-faas-runtime-compatibility.sh`.
 - `docs/plans/archive/storage-architecture-trust-hardening-plan.md`
   - completed execution record for the storage architecture trust-hardening
     wave (SATH0-SATH11, closed 2026-05-27). Added the durable tenant event

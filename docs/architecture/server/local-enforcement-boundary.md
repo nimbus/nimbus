@@ -12,7 +12,7 @@ It complements:
 - [runtime capability and adapter boundary](../runtime/adapter-boundary.md)
 - [table identity](../storage/table-identity.md)
 - [container image](../../operating/container-image.md)
-- [tenant domain and node enforcement boundary plan](../../plans/tenant-domain-and-node-enforcement-boundary-plan.md)
+- [tenant domain and node enforcement boundary plan](../../plans/archive/tenant-domain-and-node-enforcement-boundary-plan.md)
 
 ## Purpose
 

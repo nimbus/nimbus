@@ -26,11 +26,14 @@ impl NimbusRuntime {
             OnceLock::new();
         static NODE24_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
             OnceLock::new();
+        static NODE26_BOOTSTRAP_SNAPSHOT: OnceLock<std::result::Result<V8StartupSnapshot, String>> =
+            OnceLock::new();
         let snapshot = match self.policy.limits().compatibility_target {
             RuntimeCompatibilityTarget::WebStandardIsolate => &WEB_STANDARD_BOOTSTRAP_SNAPSHOT,
             RuntimeCompatibilityTarget::Node20 => &NODE20_BOOTSTRAP_SNAPSHOT,
             RuntimeCompatibilityTarget::Node22 => &NODE22_BOOTSTRAP_SNAPSHOT,
             RuntimeCompatibilityTarget::Node24 => &NODE24_BOOTSTRAP_SNAPSHOT,
+            RuntimeCompatibilityTarget::Node26 => &NODE26_BOOTSTRAP_SNAPSHOT,
             RuntimeCompatibilityTarget::BunJsc => {
                 return Err(NimbusRuntimeError::Contract(
                     "Bun/JSC compatibility target cannot use the V8 bootstrap snapshot path"
@@ -139,6 +142,7 @@ impl NimbusRuntime {
                 RuntimeCompatibilityTarget::Node20
                     | RuntimeCompatibilityTarget::Node22
                     | RuntimeCompatibilityTarget::Node24
+                    | RuntimeCompatibilityTarget::Node26
             ),
             startup_snapshot: startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot),
             shared_array_buffer_store: Some(SharedArrayBufferStore::default()),

@@ -52,6 +52,7 @@ function runtimeLaneMetadata(projectConfig) {
     node20: nodeLane("node20"),
     node22: nodeLane("node22"),
     node24: nodeLane("node24"),
+    node26: nodeLane("node26"),
     bunJsc: {
       runtime_engine: BUN_JSC_RUNTIME_ENGINE,
       runtime_bundle_content_kind: RUNTIME_BUNDLE_CONTENT_KIND,

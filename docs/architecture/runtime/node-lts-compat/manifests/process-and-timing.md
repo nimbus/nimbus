@@ -8,9 +8,9 @@ Source corpus:
   `~/src/github.com/nimbus/deno @ v2.7.14-locker.28`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
-- pinned official Node20 supported corpus:
+- pinned official Node20 legacy corpus:
   `nodejs/node @ v20.20.2`
-- staged future Node24 supported corpus:
+- pinned official Node24 default corpus:
   `nodejs/node @ v24.15.0`
 
 This file records the currently manifested official-fixture subset for the
@@ -39,10 +39,10 @@ and the `PROCESS_AND_TIMING_BATCH` table in
 
 Current manifested batch counts:
 
-- Node22 default lane: `48` official files
-- Node20 supported lane: `46` official files
-- Node24 supported lane: `48` staged official files
-  - latest explicit supported-lane watchpoint run: `45` passed, `3` failed
+- Node22 supported lane: `48` official files
+- Node20 legacy lane: `46` official files
+- Node24 default lane: `48` staged official files
+  - latest explicit default-lane watchpoint run: `45` passed, `3` failed
 
 Current manifested slice coverage:
 
@@ -108,24 +108,24 @@ Family-level notes:
   and is therefore owned by the later VM/worker family rather than this
   process/timing item.
 - Official `test-perf-hooks-resourcetiming.js` is now part of the Node22
-  default lane and the staged Node24 supported lane, but it remains outside the
-  Node20 supported green subset because official `v20.20.2`
+  default lane and the staged Node24 default lane, but it remains outside the
+  Node20 legacy green subset because official `v20.20.2`
   `PerformanceResourceTiming#toJSON()` omits the later `deliveryType` and
   `responseStatus` fields that Nimbus intentionally keeps in its single
   Node22-shaped runtime contract.
 - Official `test-process-load-env-file.js` files are now manifested in the
-  Node22 default lane, the official Node20 supported lane, and the staged
-  Node24 supported lane. The imported file remains a good example of the owner
+  Node22 supported lane, the official Node20 legacy lane, and the staged
+  Node24 default lane. The imported file remains a good example of the owner
   split rule: the underlying Deno op still loads env content, but the final
   batch-stability and Node-style runtime contract fixes belong in Nimbus's
   embedded bootstrap and subprocess harness rather than the Deno fork.
 
 ## Current Local Evidence
 
-- `runtime::tests::node_compat::node22_default_lane_executes_manifested_process_and_timing_subset`
-- `runtime::tests::node_compat::node20_supported_lane_executes_official_process_and_timing_subset`
-- `runtime::tests::node_compat::node24_supported_lane_executes_manifested_process_and_timing_subset`
-  *(ignored by default; supported-lane watchpoint, not a green support claim)*
+- `runtime::tests::node_compat::node22_supported_lane_executes_manifested_process_and_timing_subset`
+- `runtime::tests::node_compat::node20_legacy_lane_executes_official_process_and_timing_subset`
+- `runtime::tests::node_compat::node24_default_lane_executes_manifested_process_and_timing_subset`
+  *(ignored by default; default-lane watchpoint, not a green support claim)*
 
 ## Notes
 

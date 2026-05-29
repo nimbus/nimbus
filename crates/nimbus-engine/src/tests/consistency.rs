@@ -257,7 +257,11 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
         .await
         .expect("first journal page should read");
     assert_eq!(first_page.cursor_floor, SequenceNumber(0));
-    assert_eq!(first_page.latest_sequence, latest_sequence);
+    assert!(
+        first_page.latest_sequence.0 >= latest_sequence.0,
+        "stream pages may observe tenant metadata events appended after the initial latest-sequence read"
+    );
+    let mut observed_latest_sequence = first_page.latest_sequence;
     assert!(first_page.has_more);
     assert_eq!(first_page.next_cursor, SequenceNumber(1));
     assert_eq!(first_page.records.len(), 1);
@@ -284,11 +288,13 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
         first_page.records[0].clone(),
         second_page.records[0].clone(),
     ];
-    while cursor.0 < latest_sequence.0 {
+    observed_latest_sequence = observed_latest_sequence.max(second_page.latest_sequence);
+    while cursor.0 < observed_latest_sequence.0 {
         let page = service
             .stream_durable_journal_async(tenant_id.clone(), cursor, 1)
             .await
             .expect("next journal page should read");
+        observed_latest_sequence = observed_latest_sequence.max(page.latest_sequence);
         assert_eq!(page.records.len(), 1);
         assert_eq!(page.records[0].sequence, SequenceNumber(cursor.0 + 1));
         cursor = page.next_cursor;
@@ -298,7 +304,7 @@ async fn durable_journal_stream_resumes_from_sequence_cursor_with_duplicate_tole
             "a non-final page should report a latest sequence beyond its returned cursor"
         );
     }
-    assert!(cursor.0 >= latest_sequence.0);
+    assert!(cursor.0 >= observed_latest_sequence.0);
     assert_eq!(
         streamed_records
             .iter()
@@ -737,9 +743,31 @@ async fn shadow_materializer_queries_match_live_service_path() {
         .latest_sequence_async(tenant_id.clone())
         .await
         .expect("latest sequence should load");
-    assert_eq!(shadow.manifest().current_sequence, latest_sequence);
-    assert_eq!(shadow.current_snapshot().applied_sequence, latest_sequence);
+    let shadow_sequence = shadow.manifest().current_sequence;
     let snapshot = shadow.current_snapshot();
+    assert_eq!(snapshot.applied_sequence, shadow_sequence);
+    assert_eq!(snapshot.durable_head, shadow_sequence);
+    assert!(
+        shadow_sequence.0 <= latest_sequence.0,
+        "shadow materializer sequence {} must not exceed latest durable sequence {}",
+        shadow_sequence.0,
+        latest_sequence.0
+    );
+    if shadow_sequence.0 < latest_sequence.0 {
+        let tail_after_shadow = service
+            .read_durable_journal_async(tenant_id.clone(), shadow_sequence)
+            .await
+            .expect("tail after shadow cut should read");
+        let document_bearing_tail = tail_after_shadow
+            .iter()
+            .filter(|record| !record.writes.is_empty())
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>();
+        assert!(
+            document_bearing_tail.is_empty(),
+            "shadow materializer cut missed document-bearing records after its bootstrap cut: {document_bearing_tail:?}"
+        );
+    }
 
     let ordered_query = Query {
         table: tasks_table(),

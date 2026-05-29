@@ -522,8 +522,8 @@ slice it:
 
 The embedded codegen runner exists only as an experimental pilot behind
 `NIMBUS_EXPERIMENTAL_EMBEDDED_CODEGEN`. Convex-compatible Node action runtime
-execution supports configured Node20, Node22, and Node24 targets through
-`convex.json`, with Node22 as the default. Firebase / Cloud Functions package
+execution supports configured Node20, Node22, Node24, and Node26 targets through
+`convex.json`, with Node24 as the default. Firebase / Cloud Functions package
 layouts still fall back to the external Node.js runner; the embedded pilot does
 not yet support that structure.
 - watches the selected `nimbus/` or `convex/` source root for source changes

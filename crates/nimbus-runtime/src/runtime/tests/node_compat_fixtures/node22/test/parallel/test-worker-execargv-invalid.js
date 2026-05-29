@@ -1,12 +1,8 @@
 'use strict';
 
-const common = require('../common');
+require('../common');
 const assert = require('assert');
 const { Worker } = require('worker_threads');
-
-if (process.config.variables.node_without_node_options) {
-  common.skip('missing NODE_OPTIONS support');
-}
 
 {
   const expectedErr = {

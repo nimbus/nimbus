@@ -9,7 +9,7 @@ Nimbus models runtime execution with separate axes:
 | Permission mode | `Restricted`, `Standard`, `Privileged` | The permission ceiling. |
 | Grants | read/write roots, net, env, secret, identity, service, run, sys, ffi, worker, tool | The exact resource surface. |
 | Runtime language | `JavaScript` | Other languages are future work. |
-| Compatibility target | `WebStandardIsolate`, `Node20`, `Node22`, `Node24`, `BunJsc` | JavaScript/API compatibility, not permission. |
+| Compatibility target | `WebStandardIsolate`, `Node20`, `Node22`, `Node24`, `Node26`, `BunJsc` | JavaScript/API compatibility, not permission. |
 | Runtime preset | `Application`, `Tooling`, `Oracle`, `Operator`, `Code` | Internal workload bundles that lower to mode plus grants. |
 
 ## Execution Trust Tiers
@@ -71,9 +71,9 @@ the current `in_process_untrusted` gate and its canonical routing fallbacks:
 | Workload or backend | Tier assignment | Notes |
 | --- | --- | --- |
 | Deno/V8 `WebStandardIsolate` application functions | `in_process_untrusted` | Production default when policy normalization keeps grants within the untrusted subset. |
-| Deno/V8 `Node20`, `Node22`, and `Node24` production application functions | `in_process_untrusted` | Node compatibility target is API shape only. The production in-process profile has no generic loopback, listen, worker, inspector, subprocess, FFI, or ambient TLS-disable env grants. |
-| Deno/V8 `Node20`, `Node22`, and `Node24` local-development application functions | `in_process_untrusted` in local-development mode only | Uses explicit local-dev grants for loopback/listen, inspector, worker threads, and `NODE_TLS_REJECT_UNAUTHORIZED` compatibility. Production admission routes the same grant set away from in-process untrusted execution. |
-| Deno/V8 `Node20`, `Node22`, and `Node24` service profiles | `microvm_service` | Uses the broad service/microVM grant constructor for host-heavy Node behavior; the microVM tier owns OS isolation outside the in-process gate. |
+| Deno/V8 `Node20`, `Node22`, `Node24`, and `Node26` production application functions | `in_process_untrusted` | Node compatibility target is API shape only. The production in-process profile has no generic loopback, listen, worker, inspector, subprocess, FFI, or ambient TLS-disable env grants. |
+| Deno/V8 `Node20`, `Node22`, `Node24`, and `Node26` local-development application functions | `in_process_untrusted` in local-development mode only | Uses explicit local-dev grants for loopback/listen, inspector, worker threads, and `NODE_TLS_REJECT_UNAUTHORIZED` compatibility. Production admission routes the same grant set away from in-process untrusted execution. |
+| Deno/V8 `Node20`, `Node22`, `Node24`, and `Node26` service profiles | `microvm_service` | Uses the broad service/microVM grant constructor for host-heavy Node behavior; the microVM tier owns OS isolation outside the in-process gate. |
 | Deno/V8 tooling or operator workloads with `run`, `tool`, `identity`, or `Privileged` grants | `in_process_trusted_only` | These are trusted workload classes even when the engine is V8. |
 | Bun/JSC fresh/discard application profile | `in_process_untrusted` | Admitted only as `RuntimeBackendKind::BunJsc`, `RuntimeCompatibilityTarget::BunJsc`, `BackendOwnedEventLoop`, `bun_jsc_in_process_untrusted`, `bun_jsc_fresh_discard_pool_outer_quota_required`, and `bun_jsc_fresh_discard`. Default builds remain adapter-not-linked; linked builds must load the verified Bun/JSC shared adapter before execution. |
 | Bun/JSC proof or retained-VM profiles | `in_process_trusted_only` | Retained reuse is trusted-only until a hard isolation boundary and deliberate promotion exist. |
@@ -201,6 +201,7 @@ Node application presets have deployment-specific constructors:
 Compatibility targets describe JavaScript/runtime API shape. They do not grant
 ambient host access.
 
-For example, `Node22` and `Node24` expose measured Node-compatible API
-surfaces, but filesystem, env, network, subprocess, secret, service, identity,
-FFI, worker, and tool access still depend on the active mode and grants.
+For example, `Node22`, `Node24`, and `Node26` expose measured Node-compatible
+API surfaces, but filesystem, env, network, subprocess, secret, service,
+identity, FFI, worker, and tool access still depend on the active mode and
+grants.

@@ -1,0 +1,169 @@
+{
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profile_kind",
+    "as_of",
+    "owning_plan",
+    "description",
+    "engine",
+    "support_statuses",
+    "verification_states",
+    "failure_classes",
+    "wide_then_focused_strategy",
+    "lane_targets",
+    "evidence_refs",
+    "api_families",
+    "package_classes",
+    "doc_generation",
+    "doc_claims"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "profile_kind": {
+      "const": "nimbus_node_faas_compatibility_profile"
+    },
+    "as_of": {
+      "type": "string",
+      "minLength": 10
+    },
+    "owning_plan": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "engine": {
+      "type": "object",
+      "required": [
+        "id",
+        "implementation_claim",
+        "new_engine_proof_harness"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "v8_deno_core"
+        },
+        "implementation_claim": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new_engine_proof_harness": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "support_statuses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "description"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "verification_states": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "failure_classes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "wide_then_focused_strategy": {
+      "type": "object",
+      "required": [
+        "required",
+        "wide_run_inventory_required",
+        "focused_fix_required_for_supported_bugs",
+        "final_wide_rerun_required",
+        "proof_fields"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "wide_run_inventory_required": {
+          "type": "boolean"
+        },
+        "focused_fix_required_for_supported_bugs": {
+          "type": "boolean"
+        },
+        "final_wide_rerun_required": {
+          "type": "boolean"
+        },
+        "proof_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "lane_targets": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "api_families": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "package_classes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "doc_generation": {
+      "type": "object"
+    },
+    "doc_claims": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

@@ -26,7 +26,7 @@ Set `node.nodeVersion` in `convex.json`:
 ```json
 {
   "node": {
-    "nodeVersion": "22"
+    "nodeVersion": "24"
   }
 }
 ```
@@ -36,12 +36,18 @@ Allowed values:
 | Value | Meaning |
 | --- | --- |
 | `"20"` | Run eligible Node action modules with the Node20 legacy-grace compatibility target |
-| `"22"` | Run eligible Node action modules with the Node22 Maintenance LTS compatibility target; current product default |
-| `"24"` | Run eligible Node action modules with the Node24 Active LTS compatibility target |
+| `"22"` | Run eligible Node action modules with the Node22 Maintenance LTS compatibility target |
+| `"24"` | Run eligible Node action modules with the Node24 Active LTS compatibility target; current product default |
+| `"26"` | Run eligible Node action modules with the Node26 Current/non-LTS compatibility target |
 
 If no value is configured, Nimbus uses the product default from the lane
-registry, currently Node22. Product default is a routing default, not an
+registry, currently Node24. Product default is a routing default, not an
 evidence priority.
+
+Node26 is a Current/non-LTS compatibility target, not a preview label and not
+enterprise LTS support until Node itself enters LTS and supported-LTS gates
+pass. The generated [compatibility](compatibility.md) page is the source of
+truth for per-version support status.
 
 ## Debug Node API Usage
 
@@ -69,3 +75,7 @@ import fsPromises from "node:fs/promises";
 
 Specifier support does not imply full built-in compatibility. The supported
 surface is bounded by the compatibility matrix and generated evidence.
+
+Use [reference/node-apis.md](reference/node-apis.md) for API-family support and
+service/microVM boundaries. Use [reference/packages.md](reference/packages.md)
+for package canary support and diagnostic package rows.

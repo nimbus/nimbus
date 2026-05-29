@@ -72,6 +72,288 @@
       "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
     },
     {
+      "id": "convex-use-node-real-app",
+      "package": "convex-use-node-real-app",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "convex",
+      "canary_surfaces": [
+        "convex_use_node_action_invocation",
+        "convex_use_node_package_import",
+        "convex_use_node_ctx_run_query",
+        "convex_use_node_ctx_run_mutation",
+        "convex_use_node_ctx_run_action",
+        "convex_use_node_scheduler",
+        "convex_use_node_value_serialization",
+        "convex_use_node_fetch_env_secret_crypto_stream_path_fs_temp",
+        "convex_use_node_dangling_promise_diagnostic"
+      ],
+      "public_claim": "Convex-compatible use node action app flow is fixture-backed for each supported LTS lane and exercises runtime invocation, package import, ctx calls, scheduling, serialization, Node builtins, env/secret boundary semantics, and dangling-promise diagnostics.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-openai",
+      "package": "openai",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "OpenAI SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-anthropic",
+      "package": "@anthropic-ai/sdk",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "Anthropic SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-vercel-ai",
+      "package": "ai",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
+      "public_claim": "Vercel AI SDK helper smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-stripe",
+      "package": "stripe",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "Stripe SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-resend",
+      "package": "resend",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Resend SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-aws-sdk-v3-s3",
+      "package": "@aws-sdk/client-s3",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["fetch_http", "streams", "crypto", "esm_cjs_loading"],
+      "public_claim": "AWS SDK v3 S3 client application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-slack-web-api",
+      "package": "@slack/web-api",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["fetch_http", "streams", "esm_cjs_loading"],
+      "public_claim": "Slack Web API SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-octokit",
+      "package": "octokit",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Octokit SDK application smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-jose",
+      "package": "jose",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["crypto", "esm_cjs_loading"],
+      "public_claim": "jose JWT signing and verification smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-zod",
+      "package": "zod",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["esm_cjs_loading", "value_serialization"],
+      "public_claim": "Zod validation smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-uuid",
+      "package": "uuid",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["crypto", "esm_cjs_loading"],
+      "public_claim": "uuid deterministic ID smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-nanoid",
+      "package": "nanoid",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["crypto", "esm_cjs_loading"],
+      "public_claim": "nanoid ID-generation smoke is fixture-backed for each supported LTS lane.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "application-sdk-upstash-redis",
+      "package": "@upstash/redis",
+      "runtime_preset": "Application",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "sdk",
+      "canary_surfaces": ["fetch_http", "esm_cjs_loading"],
+      "public_claim": "Upstash Redis HTTP client smoke is fixture-backed for each supported LTS lane against a local HTTP service.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-child-process-denied",
+      "package": "node:child_process",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["child_process_denial"],
+      "public_claim": "Production in-process Node application functions deny child_process execution with an actionable service/microVM boundary diagnostic.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-worker-threads-denied",
+      "package": "node:worker_threads",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["worker_threads_denial"],
+      "public_claim": "Production in-process Node application functions deny worker thread creation with an actionable service/microVM boundary diagnostic.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-inspector-denied",
+      "package": "node:inspector",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["inspector_denial"],
+      "public_claim": "Production in-process Node application functions deny inspector authority with an actionable service/microVM boundary diagnostic.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-repl-denied",
+      "package": "node:repl",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["repl_denial"],
+      "public_claim": "Production in-process Node application functions deny REPL authority with an actionable service/microVM boundary diagnostic.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-node-test-runner-denied",
+      "package": "node --test",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["node_test_runner_denial"],
+      "public_claim": "Production in-process Node application functions deny Node CLI test-runner subprocess execution with an actionable service/microVM boundary diagnostic.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-native-addon-denied",
+      "package": "native-addon",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["native_addon_denial"],
+      "public_claim": "Production in-process Node application functions reject .node native addon loading with an actionable service/microVM boundary diagnostic.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-persistent-filesystem-denied",
+      "package": "persistent-filesystem",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["persistent_filesystem_denial"],
+      "public_claim": "Production in-process Node application functions deny persistent filesystem assumptions outside declared runtime roots with an actionable service/microVM boundary diagnostic.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-raw-server-listen-denied",
+      "package": "raw-server-listen",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["raw_server_listen_denial"],
+      "public_claim": "Production in-process Node application functions deny raw server listen behavior with an actionable service/microVM boundary diagnostic.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-prisma-engine-routed",
+      "package": "prisma",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["prisma_engine_service_route"],
+      "public_claim": "Prisma engine execution is service/microVM-routed rather than granted to production in-process Node application functions.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-sharp-native-routed",
+      "package": "sharp",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["sharp_native_service_route"],
+      "public_claim": "sharp native module loading is service/microVM-routed rather than granted to production in-process Node application functions.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
+      "id": "host-heavy-esbuild-binary-routed",
+      "package": "esbuild",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "lane_coverage": ["node22", "node24"],
+      "compat_family": "host-heavy",
+      "canary_surfaces": ["esbuild_binary_service_route"],
+      "public_claim": "esbuild binary execution is service/microVM-routed rather than granted to production in-process Node application functions.",
+      "doc_path": "docs/architecture/runtime/node-compat-surface-matrix.md"
+    },
+    {
       "id": "tooling-loader-tsx",
       "package": "tsx",
       "runtime_preset": "Tooling",
@@ -277,7 +559,7 @@
       "pinned_version": "nimbus",
       "status": "active",
       "root": "tests/runtime/node/networking-canaries",
-      "bundle": "convex-use-node-action",
+      "bundle": null,
       "runtime_preset": "Application",
       "compat_family_dependency": "loader-context",
       "claim_ids": ["convex-use-node-action-packaging"],
@@ -293,6 +575,731 @@
           "compatibility_target": "Node24",
           "cargo_package": "nimbus-convex",
           "cargo_test": "convex_use_node_action_package_canary_node24"
+        }
+      ]
+    },
+    {
+      "id": "convex-use-node-real-app",
+      "package": "convex-use-node-real-app",
+      "pinned_version": "nimbus",
+      "status": "active",
+      "root": "tests/runtime/node/convex-canaries",
+      "bundle": null,
+      "runtime_preset": "Application",
+      "compat_family_dependency": "convex",
+      "claim_ids": ["convex-use-node-real-app"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_package": "nimbus-server",
+          "cargo_test": "convex_use_node_real_app_canary_node22"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_package": "nimbus-server",
+          "cargo_test": "convex_use_node_real_app_canary_node24"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_package": "nimbus-server",
+          "cargo_test": "convex_use_node_real_app_canary_node26_current"
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "package": "openai",
+      "pinned_version": "6.39.1",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "openai.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-openai"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "package": "@anthropic-ai/sdk",
+      "pinned_version": "0.100.0",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "anthropic.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-anthropic"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "vercel-ai",
+      "package": "ai",
+      "pinned_version": "6.0.192",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "ai.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-vercel-ai"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "stripe",
+      "package": "stripe",
+      "pinned_version": "22.2.0",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "stripe.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-stripe"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "resend",
+      "package": "resend",
+      "pinned_version": "6.12.4",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "resend.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-resend"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "aws-sdk-v3-s3",
+      "package": "@aws-sdk/client-s3",
+      "pinned_version": "3.1056.0",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "aws-s3.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-aws-sdk-v3-s3"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "slack-web-api",
+      "package": "@slack/web-api",
+      "pinned_version": "7.16.0",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "slack.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-slack-web-api"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "octokit",
+      "package": "octokit",
+      "pinned_version": "5.0.5",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "octokit.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-octokit"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "jose",
+      "package": "jose",
+      "pinned_version": "6.2.3",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "jose.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-jose"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "zod",
+      "package": "zod",
+      "pinned_version": "4.4.3",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "zod.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-zod"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "uuid",
+      "package": "uuid",
+      "pinned_version": "14.0.0",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "uuid.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-uuid"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "nanoid",
+      "package": "nanoid",
+      "pinned_version": "5.1.11",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "nanoid.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-nanoid"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "upstash-redis",
+      "package": "@upstash/redis",
+      "pinned_version": "1.38.0",
+      "status": "active",
+      "root": "tests/runtime/node/sdk-canaries",
+      "bundle": "upstash-redis.mjs",
+      "runtime_preset": "Application",
+      "compat_family_dependency": "sdk",
+      "claim_ids": ["application-sdk-upstash-redis"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_sdk_package_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_sdk_package_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-child-process",
+      "package": "node:child_process",
+      "pinned_version": "builtin",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "child-process.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-child-process-denied"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-worker-threads",
+      "package": "node:worker_threads",
+      "pinned_version": "builtin",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "worker-threads.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-worker-threads-denied"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-inspector",
+      "package": "node:inspector",
+      "pinned_version": "builtin",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "inspector.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-inspector-denied"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-repl",
+      "package": "node:repl",
+      "pinned_version": "builtin",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "repl.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-repl-denied"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-node-test-runner",
+      "package": "node --test",
+      "pinned_version": "builtin",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "node-test-runner.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-node-test-runner-denied"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-native-addon",
+      "package": "native-addon",
+      "pinned_version": "nimbus",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "native-addon.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-native-addon-denied"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-persistent-filesystem",
+      "package": "persistent-filesystem",
+      "pinned_version": "nimbus",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "persistent-fs.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-persistent-filesystem-denied"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-raw-server-listen",
+      "package": "raw-server-listen",
+      "pinned_version": "builtin",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "raw-server-listen.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-raw-server-listen-denied"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-prisma-engine",
+      "package": "prisma",
+      "pinned_version": "engine-boundary",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "prisma-engine.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-prisma-engine-routed"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-sharp-native",
+      "package": "sharp",
+      "pinned_version": "0.34.5",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "sharp-native.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-sharp-native-routed"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
+        }
+      ]
+    },
+    {
+      "id": "host-heavy-esbuild-binary",
+      "package": "esbuild",
+      "pinned_version": "0.28.0",
+      "status": "active",
+      "root": "tests/runtime/node/host-heavy-canaries",
+      "bundle": "esbuild-binary.mjs",
+      "runtime_preset": "Application",
+      "evidence_kind": "diagnostic",
+      "support_status": "service_microvm_required",
+      "compat_family_dependency": "host-heavy",
+      "claim_ids": ["host-heavy-esbuild-binary-routed"],
+      "lane_runs": [
+        {
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_test": "application_node22_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "cargo_test": "application_node24_host_heavy_diagnostic_canary_batch"
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "cargo_test": "application_node26_host_heavy_diagnostic_canary_batch"
         }
       ]
     },

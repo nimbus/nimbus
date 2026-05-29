@@ -12,7 +12,7 @@ three previously-separate plans: `nimbus-libkrun-snapshot-port-plan.md`,
 - **Status:** `proposed` (per-band gates ship semi-independently)
 - **Activation precondition:** finish or explicitly checkpoint the host
   lifecycle backend seam in
-  [`docs/plans/tenant-domain-and-node-enforcement-boundary-plan.md`](./tenant-domain-and-node-enforcement-boundary-plan.md);
+  [`docs/plans/archive/tenant-domain-and-node-enforcement-boundary-plan.md`](archive/tenant-domain-and-node-enforcement-boundary-plan.md);
   the six research baselines below must be landed.
 - **Primary goal:** stand up a tenant-isolated `libkrun_session` sandbox
   backend on the `nimbus-libkrun` fork, with capability profiles for

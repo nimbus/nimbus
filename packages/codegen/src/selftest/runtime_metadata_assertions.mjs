@@ -63,6 +63,13 @@ function assertRuntimeLanes(manifest, selectedNode) {
       runtime_compatibility_target: "node24",
       runtime_package_resolution: "node_external_packages",
     },
+    node26: {
+      runtime_engine: "v8",
+      runtime_bundle_content_kind: "javascript",
+      runtime_javascript_evaluation_format: "es_module",
+      runtime_compatibility_target: "node26",
+      runtime_package_resolution: "node_external_packages",
+    },
     bunJsc: {
       runtime_engine: "bun_jsc",
       runtime_bundle_content_kind: "javascript",

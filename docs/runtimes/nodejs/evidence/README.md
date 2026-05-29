@@ -9,6 +9,13 @@ Generated outputs:
 - `node20.md`
 - `node22.md`
 - `node24.md`
+- `node26.md`
+
+The generated Deno-style public support pages next to this directory are:
+
+- `../compatibility.md`
+- `../reference/node-apis.md`
+- `../reference/packages.md`
 
 The generated pages in this directory are published by
 `scripts/runtime/node/publish_docs.py` from the checked-in engineering

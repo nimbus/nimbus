@@ -16,7 +16,7 @@ upstream Node fixture corpus:
     harness inventory
 - `schemas/`
   - dependency-free JSON schemas for expectation catalogs, sync reports,
-    refresh reports, and trend snapshots
+    refresh reports, trend snapshots, and the Node FaaS compatibility profile
 
 Canonical developer entrypoints:
 
@@ -42,6 +42,8 @@ make node-compat-status
 make node-compat-dashboard
 make node-compat-trends
 make node-compat-publish-evidence
+bash scripts/verify-node-faas-compat-profile.sh
+bash scripts/verify-node-latest-suite-tags.sh
 ```
 
 The nightly evidence workflow in `.github/workflows/node-compat-nightly.yml`
@@ -53,6 +55,14 @@ The active-LTS canary/oracle verifier requires lane-local Node22 and Node24
 canary results for every registered package claim, a version-matched oracle
 artifact for each supported LTS lane, and zero required canary gaps in the
 published dashboard.
+
+The Node FaaS compatibility profile lives at
+`docs/architecture/runtime/node-faas-compatibility-profile.json`. It is the
+machine-readable support vocabulary for realistic functions-as-a-service and
+Convex-compatible `"use node"` app support. Its verifier rejects unknown support
+statuses, doc claims without evidence refs, unknown evidence refs, missing
+evidence paths, and any attempt to disable the wide-then-focused compatibility
+loop.
 
 Generated evidence lands under `target/node-compat/`, including:
 
@@ -75,7 +85,7 @@ lane-separation metadata needed for successor-scope trust work:
 `make node-compat-status` is the truthful suite-wide denominator surface. It
 counts every lane-local vendored `test-*` JS/CJS/MJS fixture and compares that
 denominator to the documented green manifested subset plus explicit lane
-classification catalogs. The Node22 default lane uses reconstructable
+classification catalogs. The Node22 supported lane uses reconstructable
 path-owned fixture evidence as its green numerator when prose family counts and
 path evidence disagree. Anything outside the manifested green denominator and
 classification catalogs is reported as `unmanifested_or_unclassified`, not as

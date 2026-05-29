@@ -1,0 +1,3 @@
+# Vendored Node dotenv fixtures intentionally contain blank-looking lines with
+# spaces and tabs; those bytes are semantic input for parser compatibility tests.
+crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node*/test/fixtures/dotenv/lines-with-only-spaces.env whitespace=-blank-at-eol,-space-before-tab

@@ -1,0 +1,577 @@
+{
+  "schema_version": 1,
+  "profile_kind": "nimbus_node_faas_compatibility_profile",
+  "as_of": "2026-05-28",
+  "owning_plan": "docs/plans/archive/node-faas-runtime-compatibility-plan.md",
+  "description": "Machine-readable support contract for realistic Node.js FaaS and Convex-compatible use-node actions on Nimbus' current in-process v8_deno_core engine.",
+  "engine": {
+    "id": "v8_deno_core",
+    "implementation_claim": "Node lanes are compatibility targets on the current in-process Deno/V8 runtime substrate, not embedded official Node or libnode runtimes.",
+    "new_engine_proof_harness": "docs/architecture/runtime/new-engine-proof-harness.md"
+  },
+  "support_statuses": [
+    {
+      "id": "supported_in_process",
+      "label": "Supported in-process",
+      "description": "Passes production in-process FaaS app canaries on supported LTS lanes and may support public claims."
+    },
+    {
+      "id": "supported_local_dev_only",
+      "label": "Supported local-dev only",
+      "description": "Useful for local tooling or development but excluded from production in-process support claims."
+    },
+    {
+      "id": "service_microvm_required",
+      "label": "Service/microVM required",
+      "description": "Supported only when explicitly routed to a service or microVM profile with host authority."
+    },
+    {
+      "id": "import_compatible_stub",
+      "label": "Import-compatible stub",
+      "description": "Module import may succeed for package probing, but runtime use must throw a clear Nimbus diagnostic."
+    },
+    {
+      "id": "unsupported",
+      "label": "Unsupported",
+      "description": "Rejected with a documented diagnostic and no support claim."
+    },
+    {
+      "id": "not_applicable_to_faas",
+      "label": "Not applicable to FaaS",
+      "description": "CLI, interactive, daemon, or process-wide behavior that does not map to function invocation."
+    }
+  ],
+  "verification_states": [
+    "current_evidence",
+    "planned_by_nfrc",
+    "requires_service_route",
+    "unsupported_boundary"
+  ],
+  "failure_classes": [
+    "supported_bug",
+    "unsupported",
+    "service_microvm_required",
+    "supported_local_dev_only",
+    "not_applicable_to_faas",
+    "flaky",
+    "harness_bug"
+  ],
+  "wide_then_focused_strategy": {
+    "required": true,
+    "wide_run_inventory_required": true,
+    "focused_fix_required_for_supported_bugs": true,
+    "final_wide_rerun_required": true,
+    "proof_fields": [
+      "initial_wide_run_inventory",
+      "focused_fix_or_classification_evidence",
+      "final_wide_run_result"
+    ]
+  },
+  "lane_targets": [
+    {
+      "lane": "node20",
+      "node_release_phase": "eol_legacy",
+      "faas_role": "legacy_grace_regression",
+      "product_default_after_nfrc": false,
+      "enterprise_lts_support": false,
+      "public_status": "supported_local_dev_only",
+      "verification_state": "current_evidence",
+      "evidence_refs": [
+        "node-lts-lane-registry",
+        "node-compat-dashboard"
+      ],
+      "doc_generation": {
+        "public_label": "Legacy-grace regression only",
+        "show_in_version_table": true
+      }
+    },
+    {
+      "lane": "node22",
+    "node_release_phase": "maintenance_lts",
+    "faas_role": "supported_lts",
+    "product_default_after_nfrc": false,
+    "enterprise_lts_support": true,
+    "public_status": "supported_in_process",
+    "verification_state": "current_evidence",
+      "evidence_refs": [
+        "node-lts-lane-registry",
+        "node-compat-dashboard",
+        "canary-registry"
+      ],
+      "doc_generation": {
+        "public_label": "Supported Maintenance LTS",
+        "show_in_version_table": true
+      }
+    },
+    {
+      "lane": "node24",
+    "node_release_phase": "active_lts",
+    "faas_role": "supported_lts_default",
+    "product_default_after_nfrc": true,
+    "enterprise_lts_support": true,
+    "public_status": "supported_in_process",
+    "verification_state": "current_evidence",
+      "evidence_refs": [
+        "node-lts-lane-registry",
+        "node-compat-dashboard",
+        "canary-registry"
+      ],
+      "doc_generation": {
+        "public_label": "Default supported Active LTS",
+        "show_in_version_table": true
+      }
+    },
+        {
+            "lane": "node26",
+            "node_release_phase": "current_non_lts",
+            "faas_role": "current_line",
+            "product_default_after_nfrc": false,
+            "enterprise_lts_support": false,
+            "public_status": "supported_in_process",
+            "verification_state": "current_evidence",
+            "evidence_refs": [
+                "node-lts-lane-registry",
+                "node-compat-dashboard",
+                "canary-registry"
+            ],
+            "doc_generation": {
+                "public_label": "Current-line, non-LTS compatibility",
+                "show_in_version_table": true
+            }
+    }
+  ],
+  "evidence_refs": [
+    {
+      "id": "node-lts-lane-registry",
+      "source_kind": "lane_registry",
+      "path": "docs/architecture/runtime/node-lts-compat/node-lts-lanes.json",
+      "description": "Canonical Node lane lifecycle, metadata, and default-role registry."
+    },
+    {
+      "id": "node-compat-dashboard",
+      "source_kind": "generated_dashboard",
+      "path": "docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json",
+      "description": "Generated Node fixture, canary, oracle, and inventory dashboard."
+    },
+    {
+      "id": "node-compat-status",
+      "source_kind": "generated_status",
+      "path": "docs/architecture/runtime/node-compat-evidence/latest/status-summary.json",
+      "description": "Generated suite-wide fixture status and classification denominator."
+    },
+    {
+      "id": "canary-registry",
+      "source_kind": "canary_registry",
+      "path": "tests/runtime/node/canary-registry.json",
+      "description": "Pinned package/framework canary claim map."
+    },
+    {
+      "id": "permission-model",
+      "source_kind": "architecture_doc",
+      "path": "docs/architecture/runtime/permission-model.md",
+      "description": "Runtime permission profile split and production in-process authority boundary."
+    },
+    {
+      "id": "nfrc-plan",
+      "source_kind": "execution_plan",
+            "path": "docs/plans/archive/node-faas-runtime-compatibility-plan.md",
+      "description": "Active NFRC control plane and acceptance criteria."
+    }
+  ],
+  "api_families": [
+    {
+            "id": "invocation_lifecycle",
+            "label": "Invocation lifecycle",
+            "required_status": "supported_in_process",
+            "verification_state": "current_evidence",
+            "doc_section": "invocation-lifecycle",
+            "evidence_refs": [
+                "node-compat-dashboard",
+                "canary-registry",
+                "nfrc-plan"
+            ],
+      "coverage_requirements": [
+        "module load once",
+        "repeat invocation",
+        "awaited async completion",
+        "dangling promise diagnostics",
+        "warm-isolate semantics"
+      ]
+    },
+    {
+      "id": "module_system",
+      "label": "Module system",
+      "required_status": "supported_in_process",
+      "verification_state": "current_evidence",
+      "doc_section": "module-system",
+      "evidence_refs": [
+        "node-compat-dashboard",
+        "canary-registry"
+      ],
+      "coverage_requirements": [
+        "ESM",
+        "CommonJS",
+        "node: specifiers",
+        "bare built-in specifiers",
+        "package exports",
+        "conditional exports"
+      ]
+    },
+    {
+      "id": "package_loading",
+      "label": "Package loading",
+      "required_status": "supported_in_process",
+      "verification_state": "current_evidence",
+      "doc_section": "package-loading",
+      "evidence_refs": [
+        "canary-registry",
+        "nfrc-plan"
+      ],
+      "coverage_requirements": [
+        "pinned npm dependencies",
+        "transitive builtins",
+        "dynamic import where supported",
+        "deterministic bundling diagnostics",
+        "private registry guidance"
+      ]
+    },
+    {
+      "id": "web_http_apis",
+      "label": "Web and HTTP APIs",
+      "required_status": "supported_in_process",
+      "verification_state": "current_evidence",
+      "doc_section": "web-and-http-apis",
+      "evidence_refs": [
+        "node-compat-dashboard",
+        "canary-registry"
+      ],
+      "coverage_requirements": [
+        "fetch",
+        "Request",
+        "Response",
+        "Headers",
+        "URL",
+        "Web Crypto",
+        "streams",
+        "AbortController",
+        "timers"
+      ]
+    },
+    {
+            "id": "node_app_builtins",
+            "label": "Node builtins for app code",
+            "required_status": "supported_in_process",
+            "verification_state": "current_evidence",
+            "doc_section": "node-builtins-for-app-code",
+            "evidence_refs": [
+                "node-compat-dashboard",
+                "canary-registry"
+      ],
+      "coverage_requirements": [
+        "buffer",
+        "events",
+        "util",
+        "crypto",
+        "stream",
+        "path",
+        "url",
+        "querystring",
+        "zlib",
+        "assert",
+        "diagnostics_channel",
+        "selected fs/promises",
+        "selected os/process metadata"
+      ]
+    },
+    {
+      "id": "networking",
+      "label": "Networking",
+      "required_status": "supported_in_process",
+      "verification_state": "current_evidence",
+      "doc_section": "networking",
+      "evidence_refs": [
+        "node-compat-dashboard",
+        "canary-registry",
+        "permission-model"
+      ],
+      "coverage_requirements": [
+        "outbound HTTP(S)",
+        "DNS",
+        "TLS",
+        "request timeouts",
+        "abort behavior",
+        "no ambient production listen grants"
+      ]
+    },
+    {
+            "id": "environment_and_secrets",
+            "label": "Environment and secrets",
+            "required_status": "supported_in_process",
+            "verification_state": "current_evidence",
+            "doc_section": "environment-and-secrets",
+            "evidence_refs": [
+                "permission-model",
+                "canary-registry",
+                "nfrc-plan"
+            ],
+      "coverage_requirements": [
+        "explicit environment access",
+        "secret injection",
+        "no ambient NODE_TLS_REJECT_UNAUTHORIZED",
+        "clear process.env semantics"
+      ]
+    },
+    {
+            "id": "observability",
+            "label": "Observability",
+            "required_status": "supported_in_process",
+            "verification_state": "current_evidence",
+            "doc_section": "observability",
+            "evidence_refs": [
+                "node-compat-dashboard",
+                "canary-registry",
+                "nfrc-plan"
+            ],
+      "coverage_requirements": [
+        "console",
+        "structured logs",
+        "error stacks",
+        "unhandled rejection diagnostics",
+        "source-map posture",
+        "invocation IDs"
+      ]
+    },
+    {
+            "id": "convex_integration",
+            "label": "Convex integration",
+            "required_status": "supported_in_process",
+            "verification_state": "current_evidence",
+            "doc_section": "convex-integration",
+            "evidence_refs": [
+                "canary-registry",
+                "node-compat-dashboard",
+                "nfrc-plan"
+            ],
+      "coverage_requirements": [
+        "use node action files",
+        "generated server APIs",
+        "ctx.runQuery",
+        "ctx.runMutation",
+        "ctx.runAction where intended",
+        "scheduler interaction",
+        "value serialization",
+        "Node package action deployment"
+      ]
+    },
+    {
+            "id": "ai_saas_sdks",
+            "label": "AI and SaaS SDKs",
+            "required_status": "supported_in_process",
+            "verification_state": "current_evidence",
+            "doc_section": "ai-and-saas-sdks",
+            "evidence_refs": [
+                "canary-registry",
+                "node-compat-dashboard",
+                "nfrc-plan"
+            ],
+      "coverage_requirements": [
+        "OpenAI",
+        "Anthropic",
+        "Vercel AI SDK",
+        "Stripe",
+        "Resend or SendGrid",
+        "AWS SDK v3",
+        "Slack",
+        "Octokit",
+        "Jose",
+        "Zod",
+        "uuid",
+        "nanoid",
+        "database HTTP client"
+      ]
+    },
+    {
+      "id": "host_heavy_behavior",
+      "label": "Host-heavy behavior",
+      "required_status": "service_microvm_required",
+      "verification_state": "requires_service_route",
+      "doc_section": "host-heavy-behavior",
+      "evidence_refs": [
+        "canary-registry",
+        "node-compat-dashboard",
+        "permission-model",
+        "nfrc-plan"
+      ],
+      "coverage_requirements": [
+        "child processes",
+        "worker threads",
+        "inspector",
+        "REPL",
+        "node --test",
+        "native addons",
+        "raw TCP servers",
+        "Unix sockets",
+        "FFI",
+        "persistent writable filesystem"
+      ]
+    }
+  ],
+  "package_classes": [
+    {
+      "id": "convex_use_node_actions",
+      "label": "Convex use-node actions",
+      "required_status": "supported_in_process",
+      "verification_state": "current_evidence",
+      "evidence_refs": [
+        "canary-registry",
+        "nfrc-plan"
+      ],
+      "doc_section": "convex-use-node-actions"
+    },
+    {
+      "id": "http_saas_sdks",
+      "label": "HTTP SaaS SDKs",
+      "required_status": "supported_in_process",
+      "verification_state": "current_evidence",
+      "evidence_refs": [
+        "canary-registry",
+        "node-compat-dashboard",
+        "nfrc-plan"
+      ],
+      "doc_section": "http-saas-sdks"
+    },
+    {
+      "id": "framework_networking",
+      "label": "Framework networking packages",
+      "required_status": "supported_in_process",
+      "verification_state": "current_evidence",
+      "evidence_refs": [
+        "canary-registry",
+        "node-compat-dashboard"
+      ],
+      "doc_section": "framework-networking"
+    },
+    {
+      "id": "local_tooling",
+      "label": "Local tooling packages",
+      "required_status": "supported_local_dev_only",
+      "verification_state": "current_evidence",
+      "evidence_refs": [
+        "canary-registry"
+      ],
+      "doc_section": "local-tooling"
+    },
+    {
+      "id": "native_addons",
+      "label": "Native addon packages",
+      "required_status": "service_microvm_required",
+      "verification_state": "requires_service_route",
+      "evidence_refs": [
+        "canary-registry",
+        "node-compat-dashboard",
+        "permission-model",
+        "nfrc-plan"
+      ],
+      "doc_section": "native-addons"
+    },
+    {
+      "id": "subprocess_tooling",
+      "label": "Subprocess tooling packages",
+      "required_status": "service_microvm_required",
+      "verification_state": "requires_service_route",
+      "evidence_refs": [
+        "canary-registry",
+        "node-compat-dashboard",
+        "permission-model",
+        "nfrc-plan"
+      ],
+      "doc_section": "subprocess-tooling"
+    },
+    {
+      "id": "raw_server_frameworks",
+      "label": "Raw server/listen behavior",
+      "required_status": "service_microvm_required",
+      "verification_state": "requires_service_route",
+      "evidence_refs": [
+        "canary-registry",
+        "node-compat-dashboard",
+        "permission-model",
+        "nfrc-plan"
+      ],
+      "doc_section": "raw-server-listen"
+    }
+  ],
+  "doc_generation": {
+    "generator_planned_by": "NFRC10",
+    "source_manifest": "docs/architecture/runtime/node-faas-compatibility-profile.json",
+    "generated_targets": [
+      {
+        "path": "docs/runtimes/nodejs/reference/node-apis.md",
+        "kind": "api_reference",
+        "source_arrays": [
+          "api_families",
+          "lane_targets"
+        ]
+      },
+      {
+        "path": "docs/runtimes/nodejs/reference/packages.md",
+        "kind": "package_reference",
+        "source_arrays": [
+          "package_classes",
+          "lane_targets"
+        ]
+      },
+      {
+        "path": "docs/runtimes/nodejs/compatibility.md",
+        "kind": "compatibility_summary",
+        "source_arrays": [
+          "support_statuses",
+          "lane_targets"
+        ]
+      }
+    ],
+    "claim_guard_requirements": [
+      "Public support claims must cite at least one evidence_ref.",
+      "Generated docs must use only support_statuses defined by this profile.",
+      "Generated docs must distinguish Node release phase from Nimbus support promise.",
+      "Generated docs must not imply per-major official Node or libnode embedding."
+    ]
+  },
+  "doc_claims": [
+    {
+      "id": "node-lanes-are-compatibility-contracts",
+      "claim": "Node lanes are compatibility targets on Nimbus' current in-process engine, not embedded official Node runtimes.",
+      "status": "supported_in_process",
+      "evidence_refs": [
+        "nfrc-plan"
+      ]
+    },
+    {
+      "id": "supported-lts-faas-profile-requires-lane-local-canaries",
+      "claim": "Supported LTS FaaS claims require lane-local canary evidence before they can be public support promises.",
+      "status": "supported_in_process",
+      "evidence_refs": [
+        "nfrc-plan",
+        "canary-registry"
+      ]
+    },
+    {
+      "id": "host-heavy-behavior-is-service-routed",
+      "claim": "Host-heavy Node behavior is unsupported in production in-process FaaS unless routed to a service or microVM profile.",
+      "status": "service_microvm_required",
+      "evidence_refs": [
+        "permission-model",
+        "nfrc-plan"
+      ]
+    },
+    {
+      "id": "node26-is-current-non-lts",
+      "claim": "Node26 is Current/non-LTS in Nimbus support docs until Node itself enters LTS and supported-LTS gates pass.",
+      "status": "supported_in_process",
+      "evidence_refs": [
+        "node-lts-lane-registry",
+        "nfrc-plan"
+      ]
+    }
+  ]
+}

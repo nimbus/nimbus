@@ -388,7 +388,7 @@ fn node24_loader_context_crypto_kdf_and_stream_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: test-crypto-scrypt.js expects ERR_INCOMPATIBLE_OPTION_PAIR for duplicate short/long option pairs, while the current runtime still throws the older ERR_CRYPTO_SCRYPT_INVALID_PARAMETER shape used by the verified Node22 baseline"]
+#[ignore = "Pinned Node24 default-lane divergence: test-crypto-scrypt.js expects ERR_INCOMPATIBLE_OPTION_PAIR for duplicate short/long option pairs, while the current runtime still throws the older ERR_CRYPTO_SCRYPT_INVALID_PARAMETER shape used by the verified Node22 baseline"]
 fn node24_loader_context_crypto_scrypt_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-crypto-scrypt.js",
@@ -506,7 +506,7 @@ fn node24_loader_context_crypto_dh_safe_prime_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane drift: test-crypto-dh-stateless.js still expects ERR_OSSL_FAILED_DURING_DERIVATION on the invalid X25519 public-key case"]
+#[ignore = "Pinned Node24 default-lane drift: test-crypto-dh-stateless.js still expects ERR_OSSL_FAILED_DURING_DERIVATION on the invalid X25519 public-key case"]
 fn node24_loader_context_crypto_dh_stateless_supported_watchpoint_batch() {
     run_node_compat_watchpoint_entry_batch(
         "node24-loader-context-crypto-dh-stateless-supported-watchpoints",
@@ -516,10 +516,10 @@ fn node24_loader_context_crypto_dh_stateless_supported_watchpoint_batch() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 supported-lane divergence: test-crypto-dh.js still expects the older OpenSSL invalid-secret message while the verified Node22 baseline now returns the newer unspecified-validation shape"]
-fn node20_loader_context_crypto_dh_supported_watchpoint_batch() {
+#[ignore = "Pinned Node20 legacy-lane divergence: test-crypto-dh.js still expects the older OpenSSL invalid-secret message while the verified Node22 baseline now returns the newer unspecified-validation shape"]
+fn node20_loader_context_crypto_dh_legacy_watchpoint_batch() {
     run_node_compat_watchpoint_entry_batch(
-        "node20-loader-context-crypto-dh-supported-watchpoints",
+        "node20-loader-context-crypto-dh-legacy-watchpoints",
         NodeCompatLane::Node20,
         NODE20_LOADER_CONTEXT_CRYPTO_DH_SUPPORTED_WATCHPOINT_BATCH,
     );
@@ -556,10 +556,10 @@ fn node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 supported-lane divergence: test-crypto-authenticated.js still expects the older deprecation-warning ordering without DEP0182"]
-fn node20_loader_context_crypto_authenticated_supported_watchpoint_batch() {
+#[ignore = "Pinned Node20 legacy-lane divergence: test-crypto-authenticated.js still expects the older deprecation-warning ordering without DEP0182"]
+fn node20_loader_context_crypto_authenticated_legacy_watchpoint_batch() {
     run_node_compat_watchpoint_entry_batch(
-        "node20-loader-context-crypto-authenticated-supported-watchpoints",
+        "node20-loader-context-crypto-authenticated-legacy-watchpoints",
         NodeCompatLane::Node20,
         NODE20_LOADER_CONTEXT_CRYPTO_AUTHENTICATED_SUPPORTED_WATCHPOINT_BATCH,
     );
@@ -593,7 +593,7 @@ fn node24_https_hwm_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 supported-lane divergence: test-https-hwm.js still times out on the current Node20 lane while the Node22/Node24 official files complete"]
+#[ignore = "Pinned Node20 legacy-lane divergence: test-https-hwm.js still times out on the current Node20 lane while the Node22/Node24 official files complete"]
 fn node20_https_hwm_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-https-hwm.js",
@@ -603,7 +603,7 @@ fn node20_https_hwm_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 supported-lane divergence: test-tls-connect-hwm-option.js still times out on the current Node20 lane while the Node22/Node24 official files complete"]
+#[ignore = "Pinned Node20 legacy-lane divergence: test-tls-connect-hwm-option.js still times out on the current Node20 lane while the Node22/Node24 official files complete"]
 fn node20_tls_connect_hwm_option_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-tls-connect-hwm-option.js",
@@ -713,7 +713,7 @@ fn node22_net_local_address_port_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: test-stream-pipeline.js currently returns an AbortError-style 'The operation was aborted' message where the staged Node24 fixture still expects the inner 'Boom!' pipeline error message"]
+#[ignore = "Pinned Node24 default-lane divergence: test-stream-pipeline.js currently returns an AbortError-style 'The operation was aborted' message where the staged Node24 fixture still expects the inner 'Boom!' pipeline error message"]
 fn node24_stream_pipeline_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-stream-pipeline.js",
@@ -823,7 +823,7 @@ fn node20_fs_stat_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-constants.js expects a newer constant-surface TypeError gate that Nimbus has not adopted into the current Node22 contract"]
+#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-constants.js expects a newer constant-surface TypeError gate that Nimbus has not adopted into the default lane yet"]
 fn node24_fs_constants_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-constants.js",
@@ -833,7 +833,7 @@ fn node24_fs_constants_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-promises-file-handle-dispose.js now also asserts opendir Dir[Symbol.asyncDispose]() close semantics that the current runtime does not yet match"]
+#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-file-handle-dispose.js now also asserts opendir Dir[Symbol.asyncDispose]() close semantics that the current runtime does not yet match"]
 fn node24_fs_promises_file_handle_dispose_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-promises-file-handle-dispose.js",
@@ -843,7 +843,7 @@ fn node24_fs_promises_file_handle_dispose_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current Node22 contract still follows the older file semantics"]
+#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream.js now also requires fs.close() to be observed when destroying WriteStream directly, while the current older Node22-compatible contract still follows the older file semantics"]
 fn node24_fs_write_stream_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-write-stream.js",
@@ -853,7 +853,7 @@ fn node24_fs_write_stream_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current Node22 contract still follows the older surface"]
+#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-write-stream-autoclose-option.js now also asserts ERR_INVALID_THIS when probing WriteStream.prototype.autoClose, while the current older Node22-compatible contract still follows the older surface"]
 fn node24_fs_write_stream_autoclose_option_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-write-stream-autoclose-option.js",
@@ -863,7 +863,7 @@ fn node24_fs_write_stream_autoclose_option_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the Node22 ERR_FS_INVALID_SYMLINK_TYPE behavior"]
+#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-symlink.js still expects the newer invalid-type ERR_INVALID_ARG_VALUE contract, while the current runtime intentionally keeps the older Node22-compatible ERR_FS_INVALID_SYMLINK_TYPE behavior"]
 fn node24_fs_symlink_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-symlink.js",
@@ -873,7 +873,7 @@ fn node24_fs_symlink_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-opendir.js now also asserts ERR_INVALID_THIS for newer Dir handle receiver checks, while the current runtime intentionally keeps the Node22 directory-handle surface"]
+#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-opendir.js now also asserts ERR_INVALID_THIS for newer Dir handle receiver checks, while the current runtime intentionally keeps the older Node22-compatible directory-handle surface"]
 fn node24_fs_opendir_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-opendir.js",
@@ -883,7 +883,7 @@ fn node24_fs_opendir_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node24 supported-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the current Node22-based fs.watch contract"]
+#[ignore = "Pinned Node24 default-lane divergence: official v24.15.0 test-fs-promises-watch.js adds maxQueue and overflow option validation that Nimbus has not adopted into the default lane yet"]
 fn node24_fs_promises_watch_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-promises-watch.js",
@@ -993,7 +993,7 @@ fn node22_url_parse_deprecation_watchpoint() {
 }
 
 #[test]
-fn node20_supported_lane_executes_official_core_semantics_subset() {
+fn node20_legacy_lane_executes_official_core_semantics_subset() {
     run_manifested_subset_for_lane(
         "core-semantics",
         NodeCompatLane::Node20,
@@ -1002,7 +1002,7 @@ fn node20_supported_lane_executes_official_core_semantics_subset() {
 }
 
 #[test]
-fn node22_default_lane_executes_manifested_core_semantics_subset() {
+fn node22_supported_lane_executes_manifested_core_semantics_subset() {
     run_manifested_subset_for_lane(
         "core-semantics",
         NodeCompatLane::Node22,
@@ -1011,8 +1011,8 @@ fn node22_default_lane_executes_manifested_core_semantics_subset() {
 }
 
 #[test]
-#[ignore = "Node24 supported lane watchpoint: the broad core semantics batch includes known newer-console-clear drift and remains classified until that fixture is promoted green"]
-fn node24_supported_lane_core_semantics_watchpoint() {
+#[ignore = "Node24 default lane watchpoint: the broad core semantics batch includes known newer-console-clear drift and remains classified until that fixture is promoted green"]
+fn node24_default_lane_core_semantics_watchpoint() {
     run_manifested_subset_for_lane(
         "core-semantics",
         NodeCompatLane::Node24,
@@ -1021,7 +1021,7 @@ fn node24_supported_lane_core_semantics_watchpoint() {
 }
 
 #[test]
-fn node20_supported_lane_executes_official_process_and_timing_subset() {
+fn node20_legacy_lane_executes_official_process_and_timing_subset() {
     run_manifested_subset_for_lane(
         "process-and-timing",
         NodeCompatLane::Node20,
@@ -1030,7 +1030,7 @@ fn node20_supported_lane_executes_official_process_and_timing_subset() {
 }
 
 #[test]
-fn node22_default_lane_executes_manifested_process_and_timing_subset() {
+fn node22_supported_lane_executes_manifested_process_and_timing_subset() {
     run_manifested_subset_for_lane(
         "process-and-timing",
         NodeCompatLane::Node22,
@@ -1039,8 +1039,8 @@ fn node22_default_lane_executes_manifested_process_and_timing_subset() {
 }
 
 #[test]
-#[ignore = "Node24 supported lane watchpoint: the broad process/timing batch is classified until each carried fixture is replayed and promoted under the supported-lane gate"]
-fn node24_supported_lane_process_and_timing_watchpoint() {
+#[ignore = "Node24 default lane watchpoint: the broad process/timing batch is classified until each carried fixture is replayed and promoted under the default-lane gate"]
+fn node24_default_lane_process_and_timing_watchpoint() {
     run_manifested_subset_for_lane(
         "process-and-timing",
         NodeCompatLane::Node24,
@@ -1049,7 +1049,7 @@ fn node24_supported_lane_process_and_timing_watchpoint() {
 }
 
 #[test]
-fn node20_supported_lane_executes_official_streams_and_local_io_subset() {
+fn node20_legacy_lane_executes_official_streams_and_local_io_subset() {
     run_manifested_subset_for_lane(
         "streams-and-local-io",
         NodeCompatLane::Node20,
@@ -1058,7 +1058,7 @@ fn node20_supported_lane_executes_official_streams_and_local_io_subset() {
 }
 
 #[test]
-fn node22_default_lane_executes_manifested_streams_and_local_io_subset() {
+fn node22_supported_lane_executes_manifested_streams_and_local_io_subset() {
     run_manifested_subset_for_lane(
         "streams-and-local-io",
         NodeCompatLane::Node22,
@@ -1067,8 +1067,8 @@ fn node22_default_lane_executes_manifested_streams_and_local_io_subset() {
 }
 
 #[test]
-#[ignore = "Node24 supported lane watchpoint: the broad streams/local-I/O batch is classified until each carried fixture is replayed and promoted under the supported-lane gate"]
-fn node24_supported_lane_streams_and_local_io_watchpoint() {
+#[ignore = "Node24 default lane watchpoint: the broad streams/local-I/O batch is classified until each carried fixture is replayed and promoted under the default-lane gate"]
+fn node24_default_lane_streams_and_local_io_watchpoint() {
     run_manifested_subset_for_lane(
         "streams-and-local-io",
         NodeCompatLane::Node24,
@@ -1077,23 +1077,23 @@ fn node24_supported_lane_streams_and_local_io_watchpoint() {
 }
 
 #[test]
-fn node20_supported_lane_executes_official_networking_subset() {
+fn node20_legacy_lane_executes_official_networking_subset() {
     run_manifested_subset_for_lane("networking", NodeCompatLane::Node20, NETWORKING_BATCH);
 }
 
 #[test]
-fn node22_default_lane_executes_manifested_networking_subset() {
+fn node22_supported_lane_executes_manifested_networking_subset() {
     run_manifested_subset_for_lane("networking", NodeCompatLane::Node22, NETWORKING_BATCH);
 }
 
 #[test]
-#[ignore = "Node24 supported lane watchpoint: the broad networking batch is classified until each carried fixture is replayed and promoted under the supported-lane gate"]
-fn node24_supported_lane_networking_watchpoint() {
+#[ignore = "Node24 default lane watchpoint: the broad networking batch is classified until each carried fixture is replayed and promoted under the default-lane gate"]
+fn node24_default_lane_networking_watchpoint() {
     run_manifested_subset_for_lane("networking", NodeCompatLane::Node24, NETWORKING_BATCH);
 }
 
 #[test]
-fn node20_supported_lane_executes_official_loader_context_subset() {
+fn node20_legacy_lane_executes_official_loader_context_subset() {
     run_manifested_subset_for_lane(
         "loader-context",
         NodeCompatLane::Node20,
@@ -1102,7 +1102,7 @@ fn node20_supported_lane_executes_official_loader_context_subset() {
 }
 
 #[test]
-fn node22_default_lane_executes_manifested_loader_context_subset() {
+fn node22_supported_lane_executes_manifested_loader_context_subset() {
     run_manifested_subset_for_lane(
         "loader-context",
         NodeCompatLane::Node22,
@@ -1111,8 +1111,8 @@ fn node22_default_lane_executes_manifested_loader_context_subset() {
 }
 
 #[test]
-#[ignore = "Node24 supported lane watchpoint: the broad loader/context batch is classified until each carried fixture is replayed and promoted under the supported-lane gate"]
-fn node24_supported_lane_loader_context_watchpoint() {
+#[ignore = "Node24 default lane watchpoint: the broad loader/context batch is classified until each carried fixture is replayed and promoted under the default-lane gate"]
+fn node24_default_lane_loader_context_watchpoint() {
     run_manifested_subset_for_lane(
         "loader-context",
         NodeCompatLane::Node24,

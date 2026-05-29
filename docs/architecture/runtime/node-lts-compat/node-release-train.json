@@ -1,0 +1,119 @@
+{
+  "as_of": "2026-05-28",
+  "dashboard_summary": {
+    "canary_check_count": 101,
+    "canary_claim_count": 37,
+    "required_canary_gap_count": 0
+  },
+  "drift": {
+    "lifecycle_drift": [],
+    "metadata": [],
+    "proof_drift": [],
+    "role_drift": [],
+    "tag_drift": []
+  },
+  "drift_detected": false,
+  "generated_from": [
+    "docs/architecture/runtime/node-lts-compat/node-lts-lanes.json",
+    "docs/architecture/runtime/node-lts-compat/node-latest-suite-tags.json",
+    "docs/architecture/runtime/node-compat-evidence/latest/status-summary.json",
+    "docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json"
+  ],
+  "lane_contracts": [
+    {
+      "dashboard_lane_role": "legacy",
+      "evidence_policy": "legacy_grace_regression_only",
+      "fixture_corpus_current_tag": "v20.20.2",
+      "fixture_sync_required": false,
+      "lane": "node20",
+      "latest_official_tag": "v20.20.2",
+      "major": 20,
+      "product_default": false,
+      "release_train_role": "legacy_grace",
+      "runtime_compatibility_target": "Node20",
+      "support_phase": "eol_legacy",
+      "upstream_tag": "v20.20.2"
+    },
+    {
+      "dashboard_lane_role": "supported",
+      "evidence_policy": "supported_lts_lane_local_evidence",
+      "fixture_corpus_current_tag": "v22.22.3",
+      "fixture_sync_required": false,
+      "lane": "node22",
+      "latest_official_tag": "v22.22.3",
+      "major": 22,
+      "product_default": false,
+      "release_train_role": "supported_lts",
+      "runtime_compatibility_target": "Node22",
+      "support_phase": "maintenance_lts",
+      "upstream_tag": "v22.22.3"
+    },
+    {
+      "dashboard_lane_role": "default",
+      "evidence_policy": "supported_lts_lane_local_evidence",
+      "fixture_corpus_current_tag": "v24.16.0",
+      "fixture_sync_required": false,
+      "lane": "node24",
+      "latest_official_tag": "v24.16.0",
+      "major": 24,
+      "product_default": true,
+      "release_train_role": "product_default",
+      "runtime_compatibility_target": "Node24",
+      "support_phase": "active_lts",
+      "upstream_tag": "v24.16.0"
+    },
+    {
+      "dashboard_lane_role": "current",
+      "evidence_policy": "current_non_lts_lane_local_evidence_until_lts_promotion",
+      "fixture_corpus_current_tag": "v26.2.0",
+      "fixture_sync_required": false,
+      "lane": "node26",
+      "latest_official_tag": "v26.2.0",
+      "major": 26,
+      "product_default": false,
+      "release_train_role": "current_non_lts",
+      "runtime_compatibility_target": "Node26",
+      "support_phase": "current_non_lts",
+      "upstream_tag": "v26.2.0"
+    }
+  ],
+  "live_probe": {
+    "dist_index_checked": false,
+    "schedule_checked": false
+  },
+  "proof_gate": {
+    "missing_digest_markers": [],
+    "proof_artifact": "docs/plans/proof/node-faas-runtime-compatibility/nfrc11-release-train-automation.md",
+    "proof_file_present": true,
+    "proof_readme": "docs/plans/proof/node-faas-runtime-compatibility/README.md",
+    "proof_readme_lists_artifact": true,
+    "required_digest_markers": [
+      "docs/architecture/runtime/node-lts-compat/node-lts-lanes.json sha256: beaa3816420eb6263aa186340217a662978e9e9098efb1241fb27e23f61bb7e1",
+      "docs/architecture/runtime/node-lts-compat/node-latest-suite-tags.json sha256: 48d7181e4be7e5928342e0a87eae81c62adf47d0546ad186c3630e0985a98038"
+    ]
+  },
+  "report_kind": "nimbus_node_release_train",
+  "schema_version": 1,
+  "source_digests": [
+    {
+      "path": "docs/architecture/runtime/node-lts-compat/node-lts-lanes.json",
+      "sha256": "beaa3816420eb6263aa186340217a662978e9e9098efb1241fb27e23f61bb7e1"
+    },
+    {
+      "path": "docs/architecture/runtime/node-lts-compat/node-latest-suite-tags.json",
+      "sha256": "48d7181e4be7e5928342e0a87eae81c62adf47d0546ad186c3630e0985a98038"
+    },
+    {
+      "path": "docs/architecture/runtime/node-compat-evidence/latest/status-summary.json",
+      "sha256": "4128b0d167b4b17a8cbd421cbbcd87409d689a4fb901b9f7c0fdc7dfceea3f72"
+    },
+    {
+      "path": "docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json",
+      "sha256": "95229679b7a9523cec20a991f962fea59240ff85962b84697721b7e07d166b0b"
+    }
+  ],
+  "source_urls": [
+    "https://nodejs.org/dist/index.json",
+    "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json"
+  ]
+}

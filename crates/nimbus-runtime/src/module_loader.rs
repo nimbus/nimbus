@@ -57,9 +57,18 @@ impl RestrictedModuleLoader {
             }
             RuntimeCompatibilityTarget::Node20
             | RuntimeCompatibilityTarget::Node22
-            | RuntimeCompatibilityTarget::Node24 => {
-                "unsupported node: builtin for the current Node-compatible surface; the verified extension-backed lane currently includes core semantics builtins (node:assert/strict, node:buffer, node:console, node:events, node:path including posix/win32, node:punycode, node:querystring, node:string_decoder, node:url), process/timing builtins (node:process, node:timers, node:timers/promises, node:util, node:diagnostics_channel, node:perf_hooks), selected host/runtime builtins (node:fs, node:fs/promises, node:os, node:tty, node:stream including consumers/promises/web, node:child_process, node:crypto, node:worker_threads), and the in-progress networking family (node:dns, node:net, node:dgram, node:tls, node:http, node:https, node:http2), plus minimal Node globals"
-            }
+            | RuntimeCompatibilityTarget::Node24
+            | RuntimeCompatibilityTarget::Node26 => match specifier {
+                "node:inspector" => {
+                    "node:inspector requires a service/microVM route or an explicit local-development inspector grant; production in-process Node profiles do not expose inspector authority"
+                }
+                "node:repl" => {
+                    "node:repl requires an interactive host process and is service/microVM-routed; production in-process Node profiles do not expose REPL authority"
+                }
+                _ => {
+                    "unsupported node: builtin for the current Node-compatible surface; the verified extension-backed lane currently includes core semantics builtins (node:assert/strict, node:buffer, node:console, node:events, node:path including posix/win32, node:punycode, node:querystring, node:string_decoder, node:url), process/timing builtins (node:process, node:timers, node:timers/promises, node:util, node:diagnostics_channel, node:perf_hooks), selected host/runtime builtins (node:fs, node:fs/promises, node:os, node:tty, node:stream including consumers/promises/web, node:child_process, node:crypto, node:worker_threads), and the in-progress networking family (node:dns, node:net, node:dgram, node:tls, node:http, node:https, node:http2), plus minimal Node globals"
+                }
+            },
         };
         JsErrorBox::generic(format!(
             "unsupported runtime module import {specifier}: {reason}"

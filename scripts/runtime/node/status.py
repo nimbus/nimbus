@@ -75,7 +75,7 @@ def is_node_test_file(path: Path) -> bool:
 
 
 def normalize_rust_fixture_path(path: str) -> str:
-    return re.sub(r"^node(?:20|22|24)/", "", path)
+    return re.sub(r"^node[0-9]+/", "", path)
 
 
 def discover_fixture_files(fixture_root: Path) -> list[str]:
@@ -90,7 +90,7 @@ def extract_rust_referenced_tests(vendored_tests: set[str]) -> list[str]:
     source = repo_root() / RUST_NODE_COMPAT_PATH
     text = source.read_text(encoding="utf-8")
     pattern = re.compile(
-        r'"((?:node(?:20|22|24)/)?test/[^"\\]*(?:\.js|\.mjs|\.cjs))"'
+        r'"((?:node[0-9]+/)?test/[^"\\]*(?:\.js|\.mjs|\.cjs))"'
     )
     referenced: set[str] = set()
     for match in pattern.finditer(text):

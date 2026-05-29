@@ -7,10 +7,18 @@ The checked-in registry is
 Node major support phase, product default, upstream release line, fixture corpus
 binding, Node release metadata, ABI/module version, and evidence policy.
 
+Latest official suite tags and current fixture-corpus drift are tracked in
+[`node-latest-suite-tags.json`](node-latest-suite-tags.json) and summarized in
+[`node-latest-suite-tags.md`](node-latest-suite-tags.md).
+Release-train drift, dashboard role separation, and proof-gated release
+metadata changes are summarized in
+[`node-release-train.md`](node-release-train.md).
+
 Validate it with:
 
 ```bash
 bash scripts/verify-node-lts-lanes.sh
+bash scripts/verify-node-release-train.sh
 ```
 
 ## Contract

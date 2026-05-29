@@ -38,7 +38,7 @@ EXPECTED_PHASES = {
     "node20": "eol_legacy",
     "node22": "maintenance_lts",
     "node24": "active_lts",
-    "node26": "preview_current",
+    "node26": "current_non_lts",
 }
 EXPECTED_MODULE_VERSIONS = {
     "node20": "115",
@@ -137,15 +137,10 @@ def validate_registry() -> list[str]:
         fixture_tag = lane.get("fixture_corpus_upstream_tag")
         runtime_target = lane.get("runtime_compatibility_target")
         if lane_name == "node26":
-            if fixture_path is not None or fixture_tag is not None:
-                errors.append("node26 preview lane should not claim a vendored fixture corpus")
-            if runtime_target is not None:
-                errors.append(
-                    "node26 preview lane should not claim a runtime compatibility target before NLRT3 promotion"
-                )
-            if lane.get("evidence_policy") != "preview_no_enterprise_support_until_lts_and_evidence":
-                errors.append("node26 preview lane must use preview evidence policy")
-            continue
+            if runtime_target != "Node26":
+                errors.append("node26 Current/non-LTS lane must claim the Node26 compatibility target")
+            if lane.get("evidence_policy") != "current_non_lts_lane_local_evidence_until_lts_promotion":
+                errors.append("node26 Current/non-LTS lane must use current-line evidence policy")
 
         if not isinstance(fixture_path, str):
             errors.append(f"{lane_name} fixture_corpus_path must be set")

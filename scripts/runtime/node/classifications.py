@@ -12,9 +12,10 @@ from typing import Any
 
 TEST_FILE_SUFFIXES = {".js", ".mjs", ".cjs"}
 RUST_NODE_COMPAT_ROOT = Path("crates/nimbus-runtime/src/runtime/tests/node")
+RUST_EXECUTED_FIXTURE_LANES = {"node20", "node22", "node24"}
 LANE_AWARE_BATCH_MACROS = {
     "node20_only_batch_case",
-    "node22_default_only_batch_case",
+    "node22_exclusive_batch_case",
     "node22_only_batch_case",
     "shared_batch_case",
     "shared_batch_case_with_extra",
@@ -96,7 +97,7 @@ def rust_source_lines() -> list[str]:
 
 def fixture_literals(text: str) -> set[str]:
     return set(
-        re.findall(r'"((?:node(?:20|22|24)/)?test/[^"\\]*(?:\.js|\.mjs|\.cjs))"', text)
+        re.findall(r'"((?:node[0-9]+/)?test/[^"\\]*(?:\.js|\.mjs|\.cjs))"', text)
     )
 
 
@@ -194,7 +195,7 @@ def lane_fixture_literals(text: str, lane: str) -> set[str]:
                 add(test_relative_path)
             elif lane == "node24":
                 add(test_relative_path)
-        elif name == "node22_default_only_batch_case":
+        elif name == "node22_exclusive_batch_case":
             if lane == "node22" and has_fixture_source_path:
                 add(test_relative_path)
         elif name in {
@@ -316,6 +317,8 @@ def collect_test_functions(
 
 
 def rust_fixture_refs(lane: str, fixtures: set[str]) -> RustFixtureRefs:
+    if lane not in RUST_EXECUTED_FIXTURE_LANES:
+        return RustFixtureRefs(nonignored=set(), ignored={})
     lines = rust_source_lines()
     const_blocks = collect_const_blocks(lines)
     functions = collect_test_functions(lines, const_blocks, lane)

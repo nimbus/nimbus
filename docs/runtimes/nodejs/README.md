@@ -1,17 +1,29 @@
 # Node.js Runtime
 
 Nimbus supports a Node.js-compatible runtime for code that intentionally opts
-into Node APIs. Node22 is the product default today, Node24 is an active LTS
-peer, and Node20 remains selectable only as legacy-grace regression coverage
-after its 2026-04-30 EOL.
+into Node APIs. Node24 is the product default and active LTS target, Node22 is
+a supported Maintenance LTS peer, Node26 is a Current/non-LTS compatibility
+target, and Node20 remains
+selectable only as legacy-grace regression coverage after its 2026-04-30 EOL.
 
 This is a measured compatibility surface, not a blanket claim that every Node
 built-in or CLI behavior is available.
 
 Node compatibility is orthogonal to permission posture. Selecting Node20,
-Node22, or Node24 chooses the JavaScript compatibility target; filesystem,
-network, environment, subprocess, secret, identity, service, FFI, worker, and
-tool access still come from the active runtime mode and explicit grants.
+Node22, Node24, or Node26 chooses the JavaScript compatibility target;
+filesystem, network, environment, subprocess, secret, identity, service, FFI,
+worker, and tool access still come from the active runtime mode and explicit
+grants.
+
+## Start Here
+
+- [Fundamentals](fundamentals.md) explains when to use `"use node"`, which
+  Node targets are selectable, and how the permission boundary works.
+- [Compatibility](compatibility.md) is the generated support contract.
+- [Node API reference](reference/node-apis.md) lists supported, denied, and
+  service-routed API families.
+- [Package reference](reference/packages.md) lists package canaries and
+  host-heavy diagnostic boundaries.
 
 ## Quick Example
 
@@ -20,13 +32,13 @@ Use `"use node"` at the top of a Convex-compatible action module:
 ```ts
 "use node";
 
-import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { action } from "./_generated/server";
 
-export const readReadme = action({
+export const digest = action({
   args: {},
   handler: async () => {
-    return fs.readFileSync("README.md", "utf8");
+    return createHash("sha256").update("nimbus").digest("hex");
   },
 });
 ```
@@ -44,8 +56,9 @@ import nodeFs from "node:fs";
 | Node target | Product role | Upstream fixture line | Current evidence |
 | --- | --- | --- | --- |
 | Node20 | Legacy-grace selectable target; EOL | `v20.20.2` | [Compatibility](compatibility.md) |
-| Node22 | Product default; Maintenance LTS | `v22.15.0` | [Compatibility](compatibility.md) |
-| Node24 | Supported peer; Active LTS | `v24.15.0` | [Compatibility](compatibility.md) |
+| Node22 | Supported Maintenance LTS | `v22.22.3` | [Compatibility](compatibility.md) |
+| Node24 | Product default; Active LTS | `v24.16.0` | [Compatibility](compatibility.md) |
+| Node26 | Current/non-LTS compatibility target | `v26.2.0` | [Compatibility](compatibility.md) |
 
 Product default is a routing default, not an evidence priority. Current lane
 support phase, release metadata, and evidence policy come from
@@ -58,7 +71,7 @@ Use `convex.json` for Convex-compatible projects:
 ```json
 {
   "node": {
-    "nodeVersion": "22"
+    "nodeVersion": "24"
   }
 }
 ```
@@ -70,13 +83,16 @@ debugging commands.
 
 Node action modules can use local packages through the staged package pipeline.
 See [packages and bundling](packages-and-bundling.md) for
-`node.externalPackages`, local `node_modules` behavior, and current limits.
+`node.externalPackages`, local `node_modules` behavior, current limits, and
+the generated [package reference](reference/packages.md).
 
 ## Compatibility Evidence
 
 The current compatibility contract is summarized in
-[compatibility](compatibility.md). Generated evidence snapshots live under
-[evidence](evidence/latest.md).
+[compatibility](compatibility.md). API and package support are generated in
+[reference/node-apis.md](reference/node-apis.md) and
+[reference/packages.md](reference/packages.md). Generated evidence snapshots
+live under [evidence](evidence/latest.md).
 
 Maintainers refresh lane evidence with the workflow in
 [refreshing Node.js runtime evidence](evidence/refreshing.md).

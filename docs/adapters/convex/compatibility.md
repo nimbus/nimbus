@@ -96,15 +96,15 @@ Project-level Node action version selection is read from `convex.json`:
 ```json
 {
   "node": {
-    "nodeVersion": "22"
+    "nodeVersion": "24"
   }
 }
 ```
 
-Supported values are `"20"`, `"22"`, and `"24"`. Nimbus defaults to `"22"`
-until a deliberate Node24-default migration. Node builtin imports are accepted
-in both bare and `node:` forms, so `fs` and `node:fs` resolve to the same
-runtime family. Use `nimbus dev --once --debug-node-apis` or
+Supported values are `"20"`, `"22"`, `"24"`, and `"26"`. Nimbus defaults to
+`"24"`. Node builtin imports are accepted in both bare and `node:` forms, so
+`fs` and `node:fs` resolve to the same runtime family. Use
+`nimbus dev --once --debug-node-apis` or
 `nimbus codegen --app . --debug-node-apis` to diagnose default-runtime modules
 that import Node builtins without `"use node"`.
 
@@ -171,7 +171,7 @@ with an adapter-not-linked error instead of falling back to V8 or Node.
 - generated and runtime-backed `ctx.runQuery(...)`, `ctx.runMutation(...)`, and
   `ctx.runAction(...)` composition
 - Convex-compatible `"use node"` action modules with `convex.json`
-  `node.nodeVersion` values `"20"`, `"22"`, and `"24"`
+  `node.nodeVersion` values `"20"`, `"22"`, `"24"`, and `"26"`
 - Convex-compatible Node action `node.externalPackages` explicit and `["*"]`
   configuration backed by local package validation, generated staging, runtime
   bindings, and package evidence metadata

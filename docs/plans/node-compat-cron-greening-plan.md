@@ -1,9 +1,15 @@
 # Node Compat Cron Greening Plan (NCG)
 
-Status: `active`
+Status: `superseded by docs/plans/node-default-runtime-support-hardening-plan.md`
 Owner: `node-compat`
 Verifier: `scripts/verify-node-compat-cron-greening.sh` (scaffolded in NCG0)
 Baseline proof: `docs/plans/proof/node-compat-cron-greening/ncg0-baseline.md`
+
+Supersession note: this plan is intentionally narrow. It greens the historical
+Node Compatibility cron foundation failures, but it does not define or prove
+that Node24 is a well-supported product default. The broader active control
+plane is `docs/plans/node-default-runtime-support-hardening-plan.md`, which
+subsumes the NCG foundation-slice work in NDS2.
 
 ## Why this plan exists
 

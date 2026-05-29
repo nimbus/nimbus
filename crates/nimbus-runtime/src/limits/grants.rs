@@ -55,6 +55,7 @@ impl RuntimeGrants {
             sys: vec![
                 "hostname".to_string(),
                 "gid".to_string(),
+                "osRelease".to_string(),
                 "statfs".to_string(),
                 "uid".to_string(),
             ],
@@ -166,9 +167,17 @@ impl RuntimeGrants {
 pub(super) fn validate_mode_grant_ceiling(mode: RuntimeMode, grants: &RuntimeGrants) {
     match mode {
         RuntimeMode::Restricted => {
+            assert_grant_family_empty(mode, "read", &grants.read);
+            assert_grant_family_empty(mode, "write", &grants.write);
+            assert_grant_family_empty(mode, "net_connect", &grants.net_connect);
+            assert_grant_family_empty(mode, "net_listen", &grants.net_listen);
+            assert_grant_family_empty(mode, "env_read", &grants.env_read);
             assert_grant_family_empty(mode, "env_write", &grants.env_write);
+            assert_grant_family_empty(mode, "secret", &grants.secret);
             assert_grant_family_empty(mode, "identity", &grants.identity);
+            assert_grant_family_empty(mode, "service", &grants.service);
             assert_grant_family_empty(mode, "run", &grants.run);
+            assert_grant_family_empty(mode, "sys", &grants.sys);
             assert_grant_family_empty(mode, "ffi", &grants.ffi);
             assert_grant_family_empty(mode, "worker", &grants.worker);
             assert_grant_family_empty(mode, "tool", &grants.tool);

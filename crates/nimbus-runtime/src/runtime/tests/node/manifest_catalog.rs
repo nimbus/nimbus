@@ -30,14 +30,19 @@ pub(super) enum NodeCompatLaneRole {
     Default,
     Supported,
     Legacy,
+    Current,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub(super) enum NodeCompatPublicContractRole {
-    DefaultContract,
-    SupportedContract,
-    LegacyContract,
+    #[serde(rename = "default_contract")]
+    Default,
+    #[serde(rename = "supported_contract")]
+    Supported,
+    #[serde(rename = "legacy_contract")]
+    Legacy,
+    #[serde(rename = "current_contract")]
+    Current,
 }
 
 #[derive(Debug, Deserialize)]

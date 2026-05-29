@@ -15,11 +15,36 @@ REQUIRED_CANARY_PACKAGES: tuple[tuple[str, str], ...] = (
     ("undici", "Application"),
     ("axios", "Application"),
     ("convex-use-node-action", "Application"),
+    ("convex-use-node-real-app", "Application"),
+    ("openai", "Application"),
+    ("@anthropic-ai/sdk", "Application"),
+    ("ai", "Application"),
+    ("stripe", "Application"),
+    ("resend", "Application"),
+    ("@aws-sdk/client-s3", "Application"),
+    ("@slack/web-api", "Application"),
+    ("octokit", "Application"),
+    ("jose", "Application"),
+    ("zod", "Application"),
+    ("uuid", "Application"),
+    ("nanoid", "Application"),
+    ("@upstash/redis", "Application"),
     ("jest", "Tooling"),
     ("tsx", "Tooling"),
     ("ts-node", "Tooling"),
     ("prisma", "Tooling"),
     ("next", "Tooling"),
+    ("node:child_process", "Application"),
+    ("node:worker_threads", "Application"),
+    ("node:inspector", "Application"),
+    ("node:repl", "Application"),
+    ("node --test", "Application"),
+    ("native-addon", "Application"),
+    ("persistent-filesystem", "Application"),
+    ("raw-server-listen", "Application"),
+    ("prisma", "Application"),
+    ("sharp", "Application"),
+    ("esbuild", "Application"),
 )
 
 
@@ -192,6 +217,8 @@ def build_claim_summaries(registry: dict, canary_reports: list[dict]) -> list[di
                 "id": claim["id"],
                 "package": claim["package"],
                 "runtime_preset": claim["runtime_preset"],
+                "evidence_kind": claim.get("evidence_kind", "positive_support"),
+                "support_status": claim.get("support_status", "supported"),
                 "lane_coverage": claim["lane_coverage"],
                 "compat_family": claim["compat_family"],
                 "status": summary_status,
@@ -282,6 +309,21 @@ def build_markdown(summary: dict) -> str:
             "skipped": "Skipped",
         }
         return labels.get(value, value.replace("_", " ").capitalize())
+
+    def evidence_label(value: str) -> str:
+        labels = {
+            "positive_support": "Support",
+            "diagnostic": "Diagnostic",
+        }
+        return labels.get(value, value.replace("_", " ").title())
+
+    def support_status_label(value: str) -> str:
+        labels = {
+            "supported": "Supported",
+            "service_microvm_required": "Service/microVM required",
+            "unsupported_boundary": "Unsupported boundary",
+        }
+        return labels.get(value, value.replace("_", " ").title())
 
     lines = [
         "# Node.js Runtime Support Dashboard",
@@ -385,8 +427,8 @@ def build_markdown(summary: dict) -> str:
             "",
             "## Package/Framework Canaries",
             "",
-            "| Claim | Preset | Status | Required lanes | Observed lanes |",
-            "| --- | --- | --- | --- | --- |",
+            "| Claim | Preset | Evidence | Support boundary | Result | Required lanes | Observed lanes |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for claim in summary["claim_summaries"]:
@@ -396,6 +438,8 @@ def build_markdown(summary: dict) -> str:
         )
         lines.append(
             f"| `{claim['id']}` | `{claim['runtime_preset']}` | "
+            f"{evidence_label(claim.get('evidence_kind', 'positive_support'))} | "
+            f"{support_status_label(claim.get('support_status', 'supported'))} | "
             f"{label(claim['status'])} | {', '.join(claim['lane_coverage'])} | "
             f"{lane_details or 'none'} |"
         )

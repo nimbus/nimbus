@@ -104,24 +104,24 @@ Integrated ownership result:
     `runtime::tests::node_compat::node22_process_finalization_before_exit_fixture`,
     `runtime::tests::node_compat::node22_process_finalization_unregister_fixture`,
     `runtime::tests::node_compat::node22_process_finalization_watchpoint`
-## Node24 Preview Divergences
+## Node24 Default-Lane Divergences
 
-- Status: `supported-lane watchpoint; not a green support claim`
-- Latest explicit supported-lane watchpoint run:
+- Status: `default-lane watchpoint; not a green support claim`
+- Latest explicit default-lane watchpoint run:
   - `45` passed
   - `3` failed
-- Current supported-lane failures:
+- Current default-lane failures:
   - `test/parallel/test-process-features.js`
-    - classification: `supported_lane_divergence`
+    - classification: `default_lane_divergence`
     - reason: Nimbus still carries the current Node22-shaped
       `process.features` contract and does not yet expose
       `openssl_is_boringssl`
   - `test/parallel/test-util-deprecate.js`
-    - classification: `supported_lane_divergence`
+    - classification: `default_lane_divergence`
     - reason: the embedded `internalUtil.pendingDeprecate()` surface required
       by the Node24 file is not yet implemented
   - `test/parallel/test-util-format.js`
-    - classification: `supported_lane_divergence`
+    - classification: `default_lane_divergence`
     - reason: SharedArrayBuffer inspect output still prints `byteLength`
       instead of Node24's `[byteLength]` formatting
 
@@ -141,8 +141,8 @@ to `streams-and-local-io` family.
 
 ## Current Local Evidence
 
-- `runtime::tests::node_compat::node22_default_lane_executes_manifested_process_and_timing_subset`
-- `runtime::tests::node_compat::node20_supported_lane_executes_official_process_and_timing_subset`
+- `runtime::tests::node_compat::node22_supported_lane_executes_manifested_process_and_timing_subset`
+- `runtime::tests::node_compat::node20_legacy_lane_executes_official_process_and_timing_subset`
 - `runtime::tests::node_compat::node20_process_features_watchpoint`
 - `docs/architecture/runtime/node-lts-compat/manifests/process-and-timing.md`
 

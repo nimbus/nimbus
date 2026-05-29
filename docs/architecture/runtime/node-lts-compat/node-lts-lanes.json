@@ -9,7 +9,7 @@
     "https://nodejs.org/en/download",
     "https://raw.githubusercontent.com/nodejs/node/main/doc/abi_version_registry.json"
   ],
-  "product_default_lane": "node22",
+  "product_default_lane": "node24",
   "consumer_crates": [
     {
       "crate": "nimbus-runtime",
@@ -58,11 +58,11 @@
       "upstream_tag": "v22.22.3",
       "node_module_version": "127",
       "fixture_corpus_path": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node22/test",
-      "fixture_corpus_upstream_tag": "v22.15.0",
+      "fixture_corpus_upstream_tag": "v22.22.3",
       "lts_start": "2024-10-29",
       "maintenance_start": "2025-10-21",
       "eol_date": "2027-04-30",
-      "product_default": true,
+      "product_default": false,
       "evidence_policy": "supported_lts_lane_local_evidence"
     },
     {
@@ -76,30 +76,30 @@
       "upstream_tag": "v24.16.0",
       "node_module_version": "137",
       "fixture_corpus_path": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
-      "fixture_corpus_upstream_tag": "v24.15.0",
+      "fixture_corpus_upstream_tag": "v24.16.0",
       "lts_start": "2025-10-28",
       "maintenance_start": "2026-10-20",
       "eol_date": "2028-04-30",
-      "product_default": false,
+      "product_default": true,
       "evidence_policy": "supported_lts_lane_local_evidence"
     },
     {
       "major": 26,
       "lane_name": "node26",
-      "runtime_compatibility_target": null,
-      "support_phase": "preview_current",
+      "runtime_compatibility_target": "Node26",
+      "support_phase": "current_non_lts",
       "codename": null,
       "release_name": "node",
       "upstream_version": "26.2.0",
       "upstream_tag": "v26.2.0",
       "node_module_version": "147",
-      "fixture_corpus_path": null,
-      "fixture_corpus_upstream_tag": null,
+      "fixture_corpus_path": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node26/test",
+      "fixture_corpus_upstream_tag": "v26.2.0",
       "lts_start": "2026-10-28",
       "maintenance_start": "2027-10-20",
       "eol_date": "2029-04-30",
       "product_default": false,
-      "evidence_policy": "preview_no_enterprise_support_until_lts_and_evidence"
+      "evidence_policy": "current_non_lts_lane_local_evidence_until_lts_promotion"
     }
   ]
 }

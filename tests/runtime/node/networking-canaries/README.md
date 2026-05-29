@@ -35,9 +35,11 @@ That command now emits a machine-readable report at:
 
 Current lane mapping:
 
-- Node22 default Application lane:
+- Node24 default Application lane:
   `express`, `fastify`, `socket.io`, `undici`, `axios`
-- Node20 supported Application lane:
+- Node22 supported Application lane:
+  `express`, `fastify`, `socket.io`, `undici`, `axios`
+- Node20 legacy-grace Application lane:
   `express`, `fastify`
 
 Checked-in registry:

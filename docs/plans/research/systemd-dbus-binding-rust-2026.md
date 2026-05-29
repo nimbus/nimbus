@@ -8,7 +8,7 @@ execution plan: `docs/plans/node-dbus-client-binding-plan.md`.
 ## Context
 
 The TSB7 wave of
-`docs/plans/tenant-domain-and-node-enforcement-boundary-plan.md`
+`docs/plans/archive/tenant-domain-and-node-enforcement-boundary-plan.md`
 recorded the unresolved dependency choice on lines 582-586:
 
 > "The product implementation should use D-Bus directly, with

@@ -442,16 +442,18 @@ Python parity corpus at
 `/Users/jack/src/github.com/ExtendDB/extenddb/tests/` (each `test_*.py` is a
 ready-made behavior set covering one operation family — item ops, query/scan,
 batch, transact, conditional writes, streams, TTL, GSI, etc.). Translate the
-scenarios into the Nimbus scenario model; do not copy ExtendDB Python code
-into the Nimbus tree.
+scenarios into the Nimbus scenario model for deterministic PR coverage. Also
+evaluate the full upstream suite for vendoring under the external test adoption
+policy below; the plan must not reject copying reputable Apache-2.0 tests just
+because the suite is large.
 
-In addition to translated scenarios, add a canary runner that can execute
-external suites by path, modeled after ExtendDB's `external-suites.toml`
-approach. The runner records the suite name, upstream path, commit SHA,
-command, environment, client SDK, target endpoint, pass/fail count, skipped
-tests, and artifacts. External canaries are allowed to be slower than PR lanes;
-they should run in nightly/manual lanes, with a small critical subset promoted
-to PR once stable.
+In addition to translated scenarios, add an external compatibility-suite runner
+that can execute upstream test suites by path, modeled after ExtendDB's
+`external-suites.toml` approach. The runner records the suite name, upstream
+path, release tag or commit SHA, command, environment, client SDK, target
+endpoint, pass/fail count, skipped tests, and artifacts. External suites are
+allowed to be slower than PR lanes; they should run in nightly/manual lanes,
+with a small critical subset promoted to PR once stable.
 
 Every scenario records its provenance: DynamoDB Local probe, AWS SDK/CLI source
 test, botocore model shape, ExtendDB test path, moto test path, or Nimbus-only
@@ -460,47 +462,85 @@ the Rust handler accepts a manually assembled JSON body. At least one official
 SDK client must exercise each supported operation family before the tier can be
 called complete.
 
-### External Test Reuse And Canary Policy
+### External Test Adoption And Canary App Policy
 
 Nimbus needs its own tests and it should also reuse external compatibility
 knowledge. Large known-good suites are valuable and should be treated like the
-Node LTS compatibility suites: pinned, repeatable external canary corpora that
-run against Nimbus by endpoint override. The default is not "copy only small
-fixtures." The default is:
+Node LTS fixture suites: pinned, repeatable corpora with provenance, refresh
+commands, pass/fail/skip evidence, and release/SHA traceability. A canary is a
+real app, framework, library, or SDK integration that already works against the
+target platform; a test suite is not a canary. The default is not "copy only
+small fixtures." The default is:
 
-1. Run large external suites by reference from their own checkout or package
-   installation.
-2. Translate important scenarios into Nimbus-native tests when they become
+1. Run reputable external suites by reference first so Nimbus can measure
+   compatibility quickly before copying code.
+2. Vendor valuable suites into the Nimbus repository before a release claim
+   when the source is reputable, license-compatible, endpoint-overridable, and
+   maintainable. Prefer an upstream release tag; if no release includes the
+   target corpus, pin the upstream commit SHA.
+3. Translate important scenarios into Nimbus-native tests when they become
    product invariants or need deterministic PR coverage.
-3. Vendor fixtures or whole suites only when copying is legally clean,
-   maintainable, and better than a path-referenced canary lane.
+4. Keep a path-referenced external suite only as an interim proving lane, a
+   very expensive nightly/manual lane, or for sources that cannot legally or
+   operationally be copied.
+5. Add canary apps separately from test suites: small real projects that use
+   official SDKs or reputable DynamoDB libraries/frameworks against Nimbus by
+   endpoint override, with their dependency versions and observed behavior
+   recorded.
 
-Use four explicit categories:
+Use six explicit categories:
 
 - `source-reference`: upstream source, SDK tests, or docs were read and cited,
   but no code or fixture was copied.
-- `external-canary-suite`: a large upstream or customer-like suite is run from
+- `external-test-suite`: a large upstream or customer-like suite is run from
   its own checkout/package path against Nimbus using endpoint override. The
   suite is not copied into the Nimbus tree, but its commit/version, command,
   environment, pass/fail count, and exclusions are recorded.
+- `vendored-suite`: a complete or substantial upstream suite is copied into
+  Nimbus under `crates/nimbus-dynamodb/tests/upstream/<source>/` or another
+  recorded adapter-owned testdata path. Its manifest records upstream release
+  tag if available, otherwise commit SHA, sync date, selection command, license
+  and NOTICE handling, local modifications, refresh command, owner, update
+  cadence, lane, and last pass/fail/skip counts.
 - `translated-scenario`: an upstream behavior case was rewritten into the
   Nimbus scenario model, with provenance recorded as the upstream repo path,
   test name, commit SHA, and any semantic changes.
 - `vendored-fixture`: a small upstream fixture, golden request/response, SigV4
   vector, or focused test helper was copied into the Nimbus tree.
+- `canary-app`: a real application, framework sample, library integration, or
+  SDK project runs against Nimbus. It is not accepted as evidence unless it
+  exercises Nimbus through a normal client configuration, records dependency
+  versions, and asserts observable behavior rather than only process startup.
 
-External canary suites are required for enterprise DynamoDB compatibility.
-Initial required canaries:
+External test suites, vendored suites, and canary apps are required for
+enterprise DynamoDB compatibility. Initial test-suite adoption targets:
 
 - ExtendDB Python/boto3 suites from `/Users/jack/src/github.com/ExtendDB/extenddb/tests/`
-  and `/Users/jack/src/github.com/ExtendDB/extenddb/tests/python/`, pinned by
-  ExtendDB commit SHA.
+  and `/Users/jack/src/github.com/ExtendDB/extenddb/tests/python/`. Run them by
+  path first, then vendor the high-value compatible slices by ExtendDB release
+  tag if available, otherwise by commit SHA.
 - ExtendDB Rust SDK suite from
-  `/Users/jack/src/github.com/ExtendDB/extenddb/tests/rust/`, pinned by
-  ExtendDB commit SHA and the AWS SDK Rust checkout/revision it uses.
-- Official AWS CLI command suite for supported T0-T7 operation families.
-- Official AWS SDK suites or Nimbus-authored canary projects using
-  JavaScript v3, Rust, Python/boto3, and, when practical, Java v2.
+  `/Users/jack/src/github.com/ExtendDB/extenddb/tests/rust/`. Pin both the
+  ExtendDB release/SHA and the AWS SDK Rust checkout/revision it uses; vendor
+  the suite or a substantial compatible slice once the runner proves the
+  endpoint-overridden behavior is stable.
+- AWS CLI command corpus for supported T0-T7 operation families. If no
+  official reusable corpus exists, keep a Nimbus-owned corpus that drives the
+  official AWS CLI and records the CLI version.
+- Official AWS SDK suites when the upstream repo exposes endpoint-overridable,
+  license-compatible tests.
+
+Initial canary-app targets:
+
+- A JavaScript application using the official AWS SDK v3 DynamoDB client and
+  document-client behavior against Nimbus.
+- A Python application using boto3 client/resource APIs against Nimbus.
+- A Rust application using `aws-sdk-dynamodb` against Nimbus.
+- A practical Java v2 application when the Java client setup is available in
+  the workspace.
+- Any reputable DynamoDB library or framework discovered during D9.2 that is
+  license-compatible, actively maintained, endpoint-overridable, and valuable
+  enough to include in release evidence.
 
 ExtendDB does not need a separate client SDK for Nimbus to reuse. Its README
 states that unmodified AWS SDKs, CLI, and tools should work by changing the
@@ -508,44 +548,58 @@ endpoint, and its tests are built around that model. Nimbus should therefore
 use ExtendDB as both a behavior corpus and an example of endpoint-overridden
 official SDK verification.
 
-Before a suite is accepted as a canary, perform a quality audit and record:
+Before a suite is accepted as an external or vendored suite, perform a quality
+audit and record:
 
+- Source reputation: maintainer, release cadence, and whether the suite is
+  part of a real compatibility program rather than ad hoc examples.
 - License and whether code is copied, referenced, or translated.
-- Upstream commit SHA or package version.
+- Upstream release tag when available, otherwise commit SHA or package version.
 - Whether the suite can run against real DynamoDB, DynamoDB Local, ExtendDB,
   and Nimbus by endpoint/config only.
 - Which official client it uses, such as AWS CLI, boto3/botocore,
   `@aws-sdk/client-dynamodb`, `aws-sdk-dynamodb`, or AWS SDK for Java v2.
 - Coverage by operation family, modeled errors, pagination, SigV4, retry
   behavior, streams, TTL, tags, transactions, and secondary indexes.
-- Skip/xfail policy. Required canaries must not hide supported-operation
+- Skip/xfail policy. Required suites must not hide supported-operation
   failures behind broad skips or expected failures.
 - Cleanup/isolation behavior, credential handling, determinism, runtime cost,
   and whether tests can run in PR, nightly, or manual lanes.
 
-Vendoring is allowed when all of these are true:
+Before a canary app is accepted as release evidence, record:
+
+- The app/library/framework name, version, source, license, and dependency
+  lockfile.
+- Why it is representative of real DynamoDB usage.
+- Which operation families it exercises and what assertions prove success.
+- Endpoint override, auth mode, region, and SDK/client configuration.
+- Whether it runs in PR, nightly, manual, or release-blocking lanes.
+
+Vendoring is expected before release when all of these are true:
 
 - The upstream license is compatible with the Nimbus repository license
   posture, such as Apache-2.0, MIT, or BSD-style terms.
-- The copied artifact is stable enough to audit and maintain. A large suite may
-  be vendored only with an explicit owner, update cadence, license/NOTICE
-  proof, and reason the external-canary path is insufficient.
+- The copied artifact is stable enough to audit and maintain. A large suite
+  must have an explicit owner, update cadence, license/NOTICE proof, and a
+  repeatable refresh command.
 - Original license headers are preserved, modifications are marked, and
   repo-root `NOTICE` coverage is updated when required.
 - The test does not require upstream-private services, credentials, or brittle
   timing assumptions.
-- The execution log records the upstream commit SHA and why translation was
-  insufficient.
+- The execution log records the upstream release tag or commit SHA and the
+  reason the suite belongs in Nimbus rather than remaining only a referenced
+  external suite.
 
 Never copy GPL/AGPL or unknown-license tests into Nimbus. For those, use
-`source-reference` or `external-canary-suite` only if execution is legally and
+`source-reference` or `external-test-suite` only if execution is legally and
 operationally acceptable, or use `translated-scenario` without copying code.
 
 Nimbus-owned tests are still required for Nimbus-specific guarantees:
 tenant isolation, access-key binding, engine/storage atomicity, cancellation
 boundaries, crate dependency boundaries, `_nimbus` ownership, performance
-baselines, and soak/failure-injection behavior. External suites can prove
-compatibility; they cannot prove Nimbus production safety by themselves.
+baselines, and soak/failure-injection behavior. External suites prove protocol
+compatibility; canary apps prove realistic client usage; neither proves Nimbus
+production safety by itself.
 
 ## Control Plan Rules
 
@@ -1216,9 +1270,11 @@ Context window budget: 6-9 focused windows.
 
 Exit gate: `@nimbus/dynamodb` selftest passes; parity-test runner emits a
 classification report covering at least 80% of AWS-SDK-generated request
-shapes for tiers T0-T6; official JS, Rust, Python, and AWS CLI client smoke
-suites pass against Nimbus for every supported operation family; verification
-harness includes the five DynamoDB cases in PR and nightly lanes.
+shapes for tiers T0-T6; external compatibility suites pass where adopted;
+official JS, Rust, Python, and AWS CLI client workflows pass against Nimbus for
+every supported operation family; real canary apps pass for the selected
+SDK/library matrix; verification harness includes the five DynamoDB cases in
+PR and nightly lanes.
 
 ### D9: Enterprise Readiness, Reliability, And Performance Closeout
 
@@ -1474,7 +1530,7 @@ header in the tree and confirms `NOTICE` coverage.
 | D5: Streams | `pending` | 4-6 context windows | D1 is `done` | DescribeStream/GetShardIterator/GetRecords work; insert/update/delete events appear with correct StreamViewType |
 | D6: TTL, tagging, control-plane completion | `pending` | 3-5 context windows | D1 is `done` | TTL enable/describe/expire and tag CRUD work end-to-end |
 | D7: SigV4 strict mode | `pending` | 3-5 context windows | D0 is `done` | SigV4Strict mode verifies SDK requests and rejects malformed signatures |
-| D8: SDK + parity tests + verification harness | `pending` | 6-9 context windows | D1-D6 are `done` | `@nimbus/dynamodb` selftest passes; parity classification report covers ≥80% of SDK shapes for T0-T6; official SDK smoke suites pass for supported operation families; harness includes the five DynamoDB cases |
+| D8: SDK + parity tests + verification harness | `pending` | 6-9 context windows | D1-D6 are `done` | `@nimbus/dynamodb` selftest passes; parity classification report covers ≥80% of SDK shapes for T0-T6; external compatibility suites and canary apps pass for supported operation families; harness includes the five DynamoDB cases |
 | D9: Enterprise readiness, reliability, and performance closeout | `pending` | 4-7 context windows | D0-D8 are `done` | Feature coverage table, SDK matrix, reliability proof, tenant-isolation proof, soak report, benchmark baseline, and enterprise-readiness doc are committed |
 
 ## Roadmap Items
@@ -1575,14 +1631,15 @@ checkpoint update loaded at once, split it before starting.
 | D8.5 Parity-test corpus T4-T6 | `pending` | D8.3, D6 done | Scenarios for GSI/LSI, streams, TTL, tagging. | Classification report committed. |
 | D8.6 ExtendDB parity comparison | `pending` | D8.3 | ExtendDB run alongside DynamoDB Local when the local checkout builds. Divergences classified as `accept-extenddb-divergence` where Nimbus matches ExtendDB but not real DynamoDB. If ExtendDB cannot build, the failure and next action are recorded instead of silently skipping the column. | Classification report includes ExtendDB column or a recorded build/run failure with command output. |
 | D8.7 Verification harness integration | `pending` | D8.3 | Five DynamoDB harness cases added to PR and nightly lanes (handshake/control-plane, item-CRUD, query-scan, transact, streams). | `cargo test -p nimbus-server verification_harness_pr` includes all five. |
-| D8.8 External canary suite runner | `pending` | D8.3 | Add a path-referenced canary registry for large external suites. Initial entries cover ExtendDB Python/boto3 suites, ExtendDB Rust SDK suite, AWS CLI suite, and official SDK canary projects. Suites are pinned by path + commit/version and run against Nimbus by endpoint override. | Canary report records suite name, command, environment, SDK, upstream SHA/version, pass/fail/skip counts, artifacts, and lane (`pr`, `nightly`, or `manual`). |
+| D8.8 External compatibility-suite runner | `pending` | D8.3 | Add a path-referenced and vendored-suite registry for large external compatibility suites. Initial entries cover ExtendDB Python/boto3 suites, ExtendDB Rust SDK suite, AWS CLI corpus, and official AWS SDK suites when available. Suites are pinned by release tag when available, otherwise by commit/version, and run against Nimbus by endpoint override. | Suite report records suite name, command, environment, SDK, upstream release/SHA/version, pass/fail/skip counts, artifacts, lane (`pr`, `nightly`, or `manual`), and whether the suite remains path-referenced or has been vendored. |
+| D8.9 Canary application matrix | `pending` | D8.2, D8.8 | Add real app/library canaries distinct from test suites. Initial canaries cover JavaScript AWS SDK v3 document-client usage, Python boto3 client/resource usage, Rust `aws-sdk-dynamodb` usage, practical Java v2 usage when available, and any reputable DynamoDB library/framework selected by the D9.2 quality audit. | Canary report records app/library name, version, lockfile, endpoint/auth configuration, operation families exercised, assertions, pass/fail counts, lane, and release-blocking status. |
 
 ### D9 Work Queue: Enterprise Readiness, Reliability, And Performance
 
 | Item | Status | Hard deps | Completion gate | Verification evidence |
 |------|--------|-----------|-----------------|-----------------------|
 | D9.1 Feature-parity coverage table | `pending` | D8.4, D8.5 | `docs/adapters/dynamodb/feature-coverage.md` lists every T0-T7 operation, modeled request/response fields, modeled exceptions, pagination shape, idempotency fields, and status (`implemented`, `classified-divergence`, `unsupported-deferred`). | Generated coverage table committed; 100% of supported operations have a row; 0 unclassified fields/exceptions for implemented operations. |
-| D9.2 External suite quality audit and official SDK matrix | `pending` | D8.2, D8.4, D8.5, D8.8, D7.2 | Audit every accepted external suite for license, endpoint-overridden target support, real-DynamoDB/DynamoDB-Local/ExtendDB/Nimbus targetability, SDK used, operation coverage, skip policy, cleanup, determinism, runtime cost, and credential safety. AWS CLI, JS v3, Rust, Python, and practical Java clients each run supported operation-family scenarios against Nimbus with endpoint override and SigV4 mode recorded. | `docs/adapters/dynamodb/sdk-compatibility.md` records suite-quality audit, exact versions/SHAs, pass/fail/skip counts, auth mode, endpoint URL, and divergences; no supported operation fails through an official SDK due to Nimbus protocol drift. |
+| D9.2 External suite quality audit, official SDK matrix, and canary-app selection | `pending` | D8.2, D8.4, D8.5, D8.8, D8.9, D7.2 | Audit every accepted external suite for license, endpoint-overridden target support, real-DynamoDB/DynamoDB-Local/ExtendDB/Nimbus targetability, SDK used, operation coverage, skip policy, cleanup, determinism, runtime cost, and credential safety. Audit canary apps separately for representativeness, maintenance, license, endpoint override, lockfile stability, and behavior assertions. AWS CLI, JS v3, Rust, Python, and practical Java clients each run supported operation-family scenarios against Nimbus with endpoint override and SigV4 mode recorded. | `docs/adapters/dynamodb/sdk-compatibility.md` records suite-quality audit, canary-app audit, exact versions/SHAs, pass/fail/skip counts, auth mode, endpoint URL, and divergences; no supported operation fails through an official SDK due to Nimbus protocol drift. |
 | D9.3 Failure injection and cancellation proof | `pending` | D8.4 | Malformed input, oversized payloads, invalid keys/tokens, dropped connections, pre-commit cancellation, post-commit cancellation, engine errors, storage errors, and timeout paths fail closed without panics or partial-success envelopes. | Focused failure-injection tests pass; report records 0 panics and 0 unclassified 5xx responses. |
 | D9.4 Tenant isolation and auth isolation proof | `pending` | D7.3, D8.4, D8.5 | Two or more tenants/access keys cannot cross-read, cross-write, list, stream, tag, TTL-configure, or infer each other's tables. Wrong access key, wrong signature, and wrong tenant binding fail closed. | Tenant-isolation conformance tests pass; report records 0 cross-tenant visibility or mutation violations. |
 | D9.5 Mixed-workload soak test | `pending` | D9.2, D9.3, D9.4 | Mixed SDK traffic runs for a fixed duration across reads, writes, conditional writes, queries, streams, TTL/tag metadata, and auth failures. | Soak report records duration, request count, error count by class, task count before/after, memory high-water mark, and 0 panics/task leaks/unclassified failures. |
@@ -1608,8 +1665,9 @@ checkpoint update loaded at once, split it before starting.
 | MongoDB adapter plan (archived) | `docs/plans/archive/mongodb-adapter-plan.md` | Template for this plan's shape |
 | MongoDB hardening plan (archived) | `docs/plans/archive/mongodb-adapter-hardening-plan.md` | Audit-finding pattern to anticipate for hardening-plan follow-on |
 | Firebase adapter (completed) | `crates/nimbus-firebase/` | Typed-scalar metadata precedent |
-| Server extraction completion plan | `docs/plans/server-crate-extraction-completion-plan.md` | Current crate naming and facade rules for concrete adapter crates |
+| Server extraction completion plan | `docs/plans/archive/server-crate-extraction-completion-plan.md` | Current crate naming and facade rules for concrete adapter crates |
 | Runtime-capability adapter boundary baseline | `docs/plans/archive/runtime-capability-adapter-boundary-plan.md` | Adapter/runtime ownership baseline |
+| Node LTS runtime trust plan | `docs/plans/node-lts-runtime-trust-plan.md` | Provenance precedent for vendored fixture corpora and separate app/library canaries |
 
 ## Execution Log
 
@@ -1620,4 +1678,4 @@ checkpoint update loaded at once, split it before starting.
 | 2026-05-26 | — | `pending` | Surveyed ExtendDB crate-by-crate for reuse: `extenddb-core` (12,587 LOC, zero workspace deps, pure sync) selected as direct git-rev dependency to inherit AttributeValue, expression language, type model, validation, and error taxonomy. `extenddb-auth/sigv4/` (4 files, ~760 LOC) selected for verbatim vendoring under `auth/sigv4/`. `extenddb-storage` traits + `extenddb-engine` handlers + `extenddb-server` + `extenddb-storage-postgres` rejected (too coupled to ExtendDB's StorageEngine trait and PostgreSQL backend; adapter cost exceeds reimplementation cost). Plan updated with "Upstream Crate Reuse" section, dependency-wiring D0.0 added to the work queue, dependency-management list aligned, module structure annotated `[uses extenddb-core]` where appropriate, D1.1–D1.4 expression items converted from "build parser/evaluator" to "wire upstream parser/evaluator into Nimbus shim". | `find /Users/jack/src/github.com/ExtendDB/extenddb/crates -name '*.rs' \| xargs wc -l` = 49,397 total; per-crate breakdown recorded in plan. |
 | 2026-05-28 | — | `pending` | Updated the plan after the adapter crate extraction and naming change. DynamoDB now targets the concrete `crates/nimbus-dynamodb` crate, keeps DynamoDB protocol dependencies out of `nimbus-server`, permits `nimbus-adapters` only as a default-empty optional facade, moves parity/spec tests under the concrete adapter crate, and adds crate-boundary verification gates. | Stale package/path audit recorded no old adapter-suffix crate names and no old server-local parity-test path. |
 | 2026-05-28 | — | `pending` | Added enterprise compatibility and production-readiness gates: official SDK matrix, botocore model coverage, feature-parity coverage table, failure injection, tenant isolation proof, soak testing, performance baselines, and an external test reuse policy distinguishing source references, translated scenarios, and vendored fixtures. | `git diff --check -- docs/plans/dynamodb-adapter-plan.md`; stale old-path audit remained clean. |
-| 2026-05-28 | — | `pending` | Re-reviewed the freshly updated ExtendDB checkout (`5f5e511`) and changed the plan from "small vendored fixtures only" to a Node-LTS-style external canary policy. ExtendDB has dual-target Python/boto3 tests, a Rust SDK integration test crate, external suite registry precedent, real-DynamoDB validation mode, and explicit supported-operation/difference docs. Large suites should run by pinned path/version against Nimbus, with selected scenarios translated into PR-stable Nimbus tests. | `git pull --ff-only` in ExtendDB; `find tests -type f`; `rg -n "def test_" tests \| wc -l` = 729; `rg -n "#\\[(tokio::test\|test)\\]" tests/rust/src \| wc -l` = 348; inspected `tests/README.md`, `tests/python/README.md`, `tests/rust/Cargo.toml`, `tests/rust/src/test_base.rs`, `docs/design/09-testing.md`, `external-suites.sample.toml`. |
+| 2026-05-28 | — | `pending` | Re-reviewed the freshly updated ExtendDB checkout (`5f5e511`) and changed the plan from "small vendored fixtures only" to a Node-LTS-style external suite adoption policy plus a separate canary-app matrix. ExtendDB has dual-target Python/boto3 tests, a Rust SDK integration test crate, external suite registry precedent, real-DynamoDB validation mode, and explicit supported-operation/difference docs. Large reputable suites should run by pinned path/version first, then be vendored by upstream release tag or commit SHA before release when license-compatible and valuable. Canary evidence is reserved for real apps/framework/library integrations, not upstream test suites. | `git pull --ff-only` in ExtendDB; `find tests -type f`; `rg -n "def test_" tests \| wc -l` = 729; `rg -n "#\\[(tokio::test\|test)\\]" tests/rust/src \| wc -l` = 348; inspected `tests/README.md`, `tests/python/README.md`, `tests/rust/Cargo.toml`, `tests/rust/src/test_base.rs`, `docs/design/09-testing.md`, `external-suites.sample.toml`; compared terminology with `docs/plans/node-lts-runtime-trust-plan.md`. |

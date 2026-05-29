@@ -12,9 +12,10 @@ Nimbus currently carries these selectable Node.js compatibility lanes:
 
 | Lane | Public role | Notes |
 | --- | --- | --- |
-| `node20` | Supported | Supported LTS compatibility lane. |
-| `node22` | Default | Current default Node.js runtime target. |
-| `node24` | Supported | Supported current-line compatibility lane. |
+| `node20` | Legacy grace | EOL regression lane, not active enterprise LTS support. |
+| `node22` | Supported | Maintenance LTS lane. |
+| `node24` | Default | Current default Node.js runtime target and Active LTS lane. |
+| `node26` | Current/non-LTS | Current-line compatibility lane; not enterprise LTS until LTS promotion gates pass. |
 
 Future lanes should use the same `nodeNN` shape and start with checked-in lane
 metadata under `crates/nimbus-runtime/src/runtime/tests/node_compat_manifests/lanes/`.
@@ -32,13 +33,13 @@ make node-compat-refresh LANE=node22 DRY_RUN=1
 Compare a lane against an upstream Node tag without applying fixture changes:
 
 ```bash
-make node-compat-refresh LANE=node24 TAG=v24.15.0 COMPARE_UPSTREAM=1
+make node-compat-refresh LANE=node24 TAG=v24.16.0 COMPARE_UPSTREAM=1 SOURCE_ROOT=~/src/github.com/nodejs/node
 ```
 
 Apply a deliberate lane tag and fixture refresh:
 
 ```bash
-make node-compat-refresh LANE=node24 TAG=v24.15.0 APPLY=1
+make node-compat-refresh LANE=node24 TAG=v24.16.0 APPLY=1 SOURCE_ROOT=~/src/github.com/nodejs/node
 ```
 
 Run representative live Node test checks during the refresh when validating runtime

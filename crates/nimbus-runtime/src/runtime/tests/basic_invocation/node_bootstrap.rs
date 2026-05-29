@@ -73,6 +73,61 @@ export {};
 }
 
 #[tokio::test]
+async fn node26_current_target_exposes_truthful_process_metadata() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = function () {
+  return {
+    processVersion: globalThis.process?.version ?? null,
+    nodeVersion: globalThis.process?.versions?.node ?? null,
+    moduleVersion: globalThis.process?.versions?.modules ?? null,
+    releaseName: globalThis.process?.release?.name ?? null,
+    releaseLts: globalThis.process?.release?.lts ?? null,
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node26())),
+    );
+    let result = runtime
+        .invoke_bundle(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "processVersion": "v26.2.0",
+            "nodeVersion": "26.2.0",
+            "moduleVersion": "147",
+            "releaseName": "node",
+            "releaseLts": null,
+        })
+    );
+}
+
+#[tokio::test]
 async fn node22_target_delivers_manual_process_warning_events() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");

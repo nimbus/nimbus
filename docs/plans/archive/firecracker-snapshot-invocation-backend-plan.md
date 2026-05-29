@@ -16,7 +16,7 @@ snapshot/restore for fast, isolated, full-Linux workloads.
 
 - **Status:** `archived` (closed 2026-05-27, subsumed by unified libkrun-session architecture)
 - **Activation precondition:** finish or explicitly checkpoint
-  `docs/plans/tenant-domain-and-node-enforcement-boundary-plan.md` through its
+  `docs/plans/archive/tenant-domain-and-node-enforcement-boundary-plan.md` through its
   host lifecycle backend seam.
 - **Primary goal:** prove and then implement a tenant-safe Firecracker
   snapshot-backed invocation lane without weakening Nimbus's existing
@@ -24,7 +24,7 @@ snapshot/restore for fast, isolated, full-Linux workloads.
   runtime pools.
 - **References:** `docs/plans/research/firecracker-container-runtime.md`,
   `docs/architecture/sandbox/microvm-service-baseline.md`,
-  `docs/plans/tenant-domain-and-node-enforcement-boundary-plan.md`,
+  `docs/plans/archive/tenant-domain-and-node-enforcement-boundary-plan.md`,
   Firecracker `design.md`, Firecracker `snapshot-support.md`, and Firecracker
   `jailer.md`.
 

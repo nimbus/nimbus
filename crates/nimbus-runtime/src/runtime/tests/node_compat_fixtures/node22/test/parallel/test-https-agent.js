@@ -46,23 +46,25 @@ const N = 4;
 const M = 4;
 
 
-server.listen(0, common.mustCall(() => {
+server.listen(0, () => {
   for (let i = 0; i < N; i++) {
-    setTimeout(common.mustCall(() => {
+    setTimeout(() => {
       for (let j = 0; j < M; j++) {
         https.get({
           path: '/',
           port: server.address().port,
           rejectUnauthorized: false
-        }, common.mustCall((res) => {
+        }, function(res) {
           res.resume();
           assert.strictEqual(res.statusCode, 200);
           if (++responses === N * M) server.close();
-        })).on('error', common.mustNotCall());
+        }).on('error', (e) => {
+          throw e;
+        });
       }
-    }), i);
+    }, i);
   }
-}));
+});
 
 
 process.on('exit', () => {

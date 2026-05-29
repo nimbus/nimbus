@@ -161,15 +161,15 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             [
                 (
                     "node20",
-                    "runtime::tests::node_compat::node20_supported_lane_executes_official_core_semantics_subset",
+                    "runtime::tests::node_compat::node20_legacy_lane_executes_official_core_semantics_subset",
                 ),
                 (
                     "node22",
-                    "runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset",
+                    "runtime::tests::node_compat::node22_supported_lane_executes_manifested_core_semantics_subset",
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_supported_lane_core_semantics_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_core_semantics_watchpoint",
                 ),
             ],
         ),
@@ -182,15 +182,15 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             [
                 (
                     "node20",
-                    "runtime::tests::node_compat::node20_supported_lane_executes_official_process_and_timing_subset",
+                    "runtime::tests::node_compat::node20_legacy_lane_executes_official_process_and_timing_subset",
                 ),
                 (
                     "node22",
-                    "runtime::tests::node_compat::node22_default_lane_executes_manifested_process_and_timing_subset",
+                    "runtime::tests::node_compat::node22_supported_lane_executes_manifested_process_and_timing_subset",
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_supported_lane_process_and_timing_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_process_and_timing_watchpoint",
                 ),
             ],
         ),
@@ -203,15 +203,15 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             [
                 (
                     "node20",
-                    "runtime::tests::node_compat::node20_supported_lane_executes_official_streams_and_local_io_subset",
+                    "runtime::tests::node_compat::node20_legacy_lane_executes_official_streams_and_local_io_subset",
                 ),
                 (
                     "node22",
-                    "runtime::tests::node_compat::node22_default_lane_executes_manifested_streams_and_local_io_subset",
+                    "runtime::tests::node_compat::node22_supported_lane_executes_manifested_streams_and_local_io_subset",
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_supported_lane_streams_and_local_io_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_streams_and_local_io_watchpoint",
                 ),
             ],
         ),
@@ -224,15 +224,15 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             [
                 (
                     "node20",
-                    "runtime::tests::node_compat::node20_supported_lane_executes_official_networking_subset",
+                    "runtime::tests::node_compat::node20_legacy_lane_executes_official_networking_subset",
                 ),
                 (
                     "node22",
-                    "runtime::tests::node_compat::node22_default_lane_executes_manifested_networking_subset",
+                    "runtime::tests::node_compat::node22_supported_lane_executes_manifested_networking_subset",
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_supported_lane_networking_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_networking_watchpoint",
                 ),
             ],
         ),
@@ -245,15 +245,15 @@ fn node_compat_family_catalog_files_parse_and_point_at_real_docs_and_batches() {
             [
                 (
                     "node20",
-                    "runtime::tests::node_compat::node20_supported_lane_executes_official_loader_context_subset",
+                    "runtime::tests::node_compat::node20_legacy_lane_executes_official_loader_context_subset",
                 ),
                 (
                     "node22",
-                    "runtime::tests::node_compat::node22_default_lane_executes_manifested_loader_context_subset",
+                    "runtime::tests::node_compat::node22_supported_lane_executes_manifested_loader_context_subset",
                 ),
                 (
                     "node24",
-                    "runtime::tests::node_compat::node24_supported_lane_loader_context_watchpoint",
+                    "runtime::tests::node_compat::node24_default_lane_loader_context_watchpoint",
                 ),
             ],
         ),
@@ -675,7 +675,7 @@ fn node_compat_manifest_directory_layout_is_deterministic() {
     );
     assert_eq!(
         lane_files,
-        vec!["node20.json", "node22.json", "node24.json"]
+        vec!["node20.json", "node22.json", "node24.json", "node26.json"]
     );
     assert_eq!(
         fixture_files,
@@ -700,7 +700,7 @@ fn node_compat_manifest_topology_loader_composes_deterministically_from_disk() {
     let resolved = load_family_catalogs_from_disk();
     assert_eq!(
         resolved.lane_files,
-        vec!["node20.json", "node22.json", "node24.json"]
+        vec!["node20.json", "node22.json", "node24.json", "node26.json"]
     );
     assert_eq!(
         resolved.family_files,
@@ -1180,7 +1180,7 @@ fn node_compat_preset_capability_model_rejects_ambiguous_seed_entries() {
         "lane_batches": [
             {
                 "lane": "node22",
-                "subset_test": "runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset"
+                "subset_test": "runtime::tests::node_compat::node22_supported_lane_executes_manifested_core_semantics_subset"
             }
         ],
         "manifest_doc": "docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md",

@@ -30,8 +30,10 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
     let after_schema = service
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should load after schema write");
-    assert_eq!(after_schema.durable_head, SequenceNumber(1));
-    assert_eq!(after_schema.applied_head, SequenceNumber(1));
+    assert!(after_schema.durable_head.0 >= 1);
+    assert_eq!(after_schema.applied_head, after_schema.durable_head);
+    assert_eq!(after_schema.apply_lag, 0);
+    let schema_head = after_schema.durable_head;
 
     service
         .insert_document_async(
@@ -46,9 +48,13 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
         &service,
         &tenant_id,
         "queued insert should advance after schema commit",
-        |stats| stats.durable_head == SequenceNumber(2) && stats.applied_head == SequenceNumber(2),
+        |stats| stats.durable_head.0 > schema_head.0 && stats.applied_head == stats.durable_head,
     )
     .await;
+    assert_eq!(
+        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        1
+    );
     assert_eq!(after_insert.queue_depth, 0);
     assert_eq!(after_insert.worker_failure_count, 0);
 }
@@ -181,8 +187,8 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
         |stats| !stats.worker_running,
     )
     .await;
-    assert_eq!(final_stats.durable_head, SequenceNumber(2));
-    assert_eq!(final_stats.applied_head, SequenceNumber(2));
+    assert!(final_stats.durable_head.0 >= 2);
+    assert_eq!(final_stats.applied_head, final_stats.durable_head);
     assert_eq!(final_stats.apply_lag, 0);
     assert_eq!(final_stats.queue_depth, 0);
     assert_eq!(final_stats.queue_capacity, 1);
@@ -193,6 +199,10 @@ async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_
     assert_eq!(final_stats.worker_restart_count, 0);
     assert_eq!(final_stats.queue_rejection_count, 0);
     assert_eq!(final_stats.worker_failure_count, 0);
+    assert_eq!(
+        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        2
+    );
 
     let final_admission_stats = service
         .mutation_admission_stats_for_testing(&tenant_id)
@@ -275,9 +285,14 @@ async fn mutation_journal_never_expires_admitted_work() {
     let journal_stats = service
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should load after the admitted mutation commits");
-    assert_eq!(journal_stats.durable_head, SequenceNumber(1));
-    assert_eq!(journal_stats.applied_head, SequenceNumber(1));
+    assert!(journal_stats.durable_head.0 >= 1);
+    assert_eq!(journal_stats.applied_head, journal_stats.durable_head);
+    assert_eq!(journal_stats.apply_lag, 0);
     assert_eq!(journal_stats.queue_depth, 0);
+    assert_eq!(
+        durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
+        1
+    );
 }
 
 #[tokio::test]

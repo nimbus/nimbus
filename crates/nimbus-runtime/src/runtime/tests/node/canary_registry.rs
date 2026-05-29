@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -30,7 +30,15 @@ struct NodeCompatCanaryClaim {
 struct NodeCompatCanaryLaneRun {
     lane: String,
     compatibility_target: String,
+    #[serde(default)]
+    cargo_package: Option<String>,
     cargo_test: String,
+}
+
+impl NodeCompatCanaryLaneRun {
+    fn cargo_package(&self) -> &str {
+        self.cargo_package.as_deref().unwrap_or("nimbus-runtime")
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,7 +48,8 @@ struct NodeCompatCanaryEntry {
     pinned_version: String,
     status: String,
     root: String,
-    bundle: String,
+    #[serde(default)]
+    bundle: Option<String>,
     runtime_preset: String,
     compat_family_dependency: String,
     claim_ids: Vec<String>,
@@ -93,46 +102,51 @@ fn package_versions_for_root(root: &std::path::Path) -> BTreeMap<String, String>
         .collect()
 }
 
-fn basic_invocation_sources(repo_root: &std::path::Path) -> String {
-    let basic_invocation_root =
-        repo_root.join("crates/nimbus-runtime/src/runtime/tests/basic_invocation.rs");
-    let basic_invocation_dir =
-        repo_root.join("crates/nimbus-runtime/src/runtime/tests/basic_invocation");
-    let mut sources = String::new();
-    sources.push_str(
-        &std::fs::read_to_string(&basic_invocation_root).unwrap_or_else(|error| {
-            panic!(
-                "failed to read {}: {error}",
-                basic_invocation_root.display()
-            )
-        }),
-    );
-    let mut entries: Vec<_> = std::fs::read_dir(&basic_invocation_dir)
-        .unwrap_or_else(|error| {
-            panic!("failed to read {}: {error}", basic_invocation_dir.display())
-        })
-        .map(|entry| {
-            entry
-                .expect("basic invocation source entry should load")
-                .path()
-        })
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+fn append_rs_sources(root: &Path, sources: &mut String) {
+    let mut entries: Vec<_> = std::fs::read_dir(root)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", root.display()))
+        .map(|entry| entry.expect("source entry should load").path())
         .collect();
     entries.sort();
+
     for path in entries {
-        sources.push_str(
-            &std::fs::read_to_string(&path)
-                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
-        );
+        if path.is_dir() {
+            append_rs_sources(&path, sources);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            sources.push_str(
+                &std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
+            );
+        }
+    }
+}
+
+fn cargo_package_sources(repo_root: &Path, package: &str) -> String {
+    let crate_root = repo_root.join("crates").join(package);
+    assert!(
+        crate_root.is_dir(),
+        "canary cargo package {} should exist at {}",
+        package,
+        crate_root.display()
+    );
+    let mut sources = String::new();
+    for source_root in [crate_root.join("src"), crate_root.join("tests")] {
+        if source_root.is_dir() {
+            append_rs_sources(&source_root, &mut sources);
+        }
     }
     sources
+}
+
+fn is_pseudo_package_version(version: &str) -> bool {
+    matches!(version, "builtin" | "nimbus" | "engine-boundary")
 }
 
 #[test]
 fn node_compat_canary_registry_parses_and_points_at_real_roots() {
     let repo_root = repo_root();
     let registry = load_canary_registry();
-    let basic_invocation_source = basic_invocation_sources(&repo_root);
+    let mut cargo_sources_by_package: BTreeMap<String, String> = BTreeMap::new();
 
     assert_eq!(registry.schema_version, 2);
 
@@ -177,20 +191,41 @@ fn node_compat_canary_registry_parses_and_points_at_real_roots() {
             "canary root should exist: {}",
             root.display()
         );
-        assert!(
-            root.join("bundles").join(&canary.bundle).is_file(),
-            "canary bundle should exist: {}",
-            root.join("bundles").join(&canary.bundle).display()
-        );
-        let package_versions = package_versions_for_root(&root);
-        let pinned_version = package_versions
-            .get(&canary.package)
-            .unwrap_or_else(|| panic!("missing package {} in package.json", canary.package));
-        assert_eq!(
-            pinned_version, &canary.pinned_version,
-            "registry version should match canary package.json for {}",
-            canary.package
-        );
+        if let Some(bundle) = &canary.bundle {
+            assert!(
+                root.join("bundles").join(bundle).is_file(),
+                "canary bundle should exist: {}",
+                root.join("bundles").join(bundle).display()
+            );
+        } else {
+            assert!(
+                canary
+                    .lane_runs
+                    .iter()
+                    .all(|lane_run| lane_run.cargo_package.is_some()),
+                "bundleless canary {} should point at explicit cargo-package tests",
+                canary.id
+            );
+        }
+        if is_pseudo_package_version(&canary.pinned_version) {
+            assert!(
+                canary.package.starts_with("node:")
+                    || !canary.package.contains('/')
+                    || canary.package == "node --test",
+                "pseudo package {} should be a builtin or Nimbus-owned boundary",
+                canary.package
+            );
+        } else {
+            let package_versions = package_versions_for_root(&root);
+            let pinned_version = package_versions
+                .get(&canary.package)
+                .unwrap_or_else(|| panic!("missing package {} in package.json", canary.package));
+            assert_eq!(
+                pinned_version, &canary.pinned_version,
+                "registry version should match canary package.json for {}",
+                canary.package
+            );
+        }
         assert!(
             !canary.lane_runs.is_empty(),
             "canary {} should define at least one lane run",
@@ -198,7 +233,10 @@ fn node_compat_canary_registry_parses_and_points_at_real_roots() {
         );
         for lane_run in &canary.lane_runs {
             assert!(
-                matches!(lane_run.lane.as_str(), "node20" | "node22" | "node24"),
+                matches!(
+                    lane_run.lane.as_str(),
+                    "node20" | "node22" | "node24" | "node26"
+                ),
                 "unsupported lane {} for canary {}",
                 lane_run.lane,
                 canary.id
@@ -206,16 +244,21 @@ fn node_compat_canary_registry_parses_and_points_at_real_roots() {
             assert!(
                 matches!(
                     lane_run.compatibility_target.as_str(),
-                    "Node20" | "Node22" | "Node24"
+                    "Node20" | "Node22" | "Node24" | "Node26"
                 ),
                 "unsupported compatibility target {} for canary {}",
                 lane_run.compatibility_target,
                 canary.id
             );
+            let cargo_package = lane_run.cargo_package();
+            let cargo_sources = cargo_sources_by_package
+                .entry(cargo_package.to_string())
+                .or_insert_with(|| cargo_package_sources(&repo_root, cargo_package));
             assert!(
-                basic_invocation_source.contains(&format!("fn {}()", lane_run.cargo_test)),
-                "cargo test {} should exist in basic_invocation.rs",
-                lane_run.cargo_test
+                cargo_sources.contains(&format!("fn {}(", lane_run.cargo_test)),
+                "cargo test {} should exist in package {}",
+                lane_run.cargo_test,
+                cargo_package
             );
         }
     }

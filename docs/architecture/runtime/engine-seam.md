@@ -48,7 +48,7 @@ The runtime engine seam therefore separates these axes:
 | Axis | Meaning | Examples |
 | --- | --- | --- |
 | Engine | The embedded execution implementation and VM ownership model. | Deno/V8 today; Bun/JSC or wasmtime later. |
-| Compatibility target | The JavaScript or guest API contract exposed to user code. | `WebStandardIsolate`, `Node20`, `Node22`, `Node24`, `BunJsc`, future component targets. |
+| Compatibility target | The JavaScript or guest API contract exposed to user code. | `WebStandardIsolate`, `Node20`, `Node22`, `Node24`, `Node26`, `BunJsc`, future component targets. |
 | Execution model | How a worker drives progress and scheduling. | run-to-completion, cooperative V8 Locker, future fuel/epoch or engine-specific cooperative loops. |
 | Pooling model | What is retained between invocations. | V8 `startup_snapshot_cache` / `warm_pool`; Bun/JSC `bun_jsc_trusted_retained` / `bun_jsc_fresh_discard`; component cache. |
 | Permission policy | The host resources the invocation may access. | Runtime mode plus `RuntimeGrants`; independent of engine and compatibility target. |
@@ -193,7 +193,7 @@ Runtime engine selection crosses the codegen and server registry boundary, not
 just the VM boundary. The current Convex-compatible artifact model is
 Node-specific: `"use node"` modules emit `runtime_environment = "node"` plus a
 `node_runtime_target`, and the server routes those functions to Node20, Node22,
-or Node24 runtime lanes.
+Node24, or Node26 runtime lanes.
 
 Bun/JSC is the first non-V8 lane to cross this boundary. Before any additional
 engine becomes selectable:
@@ -219,7 +219,7 @@ selected functions emit `runtime_environment = "bun"`, use
 silently bleed into the Bun/JSC lane.
 
 Convex runtime lanes are policy-first and executor-lazy: default V8, Node20,
-Node22, Node24, and Bun/JSC policies can be inspected through runtime
+Node22, Node24, Node26, and Bun/JSC policies can be inspected through runtime
 diagnostics without starting worker threads. The diagnostics surface reports
 per-lane executor-started state, adapter link state, reset capabilities, metrics,
 and memory-enforcement semantics so the optional Bun/JSC lane cannot be hidden
@@ -298,7 +298,7 @@ them.
 
 Compatibility target and engine are separate choices.
 
-- `Node20`, `Node22`, and `Node24` currently mean the measured Nimbus
+- `Node20`, `Node22`, `Node24`, and `Node26` currently mean the measured Nimbus
   Node-compatible API surface implemented through Deno/V8.
 - A Bun-backed target is explicit: `runtime_engine = "bun_jsc"` with
   `RuntimeCompatibilityTarget::BunJsc`. Do not silently treat Bun as `Node22`

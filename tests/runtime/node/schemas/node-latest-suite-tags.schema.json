@@ -1,0 +1,101 @@
+{
+  "type": "object",
+  "required": [
+    "schema_version",
+    "registry_kind",
+    "as_of",
+    "source_urls",
+    "local_node_checkout",
+    "lanes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "registry_kind": {
+      "const": "nimbus_node_latest_suite_tags"
+    },
+    "as_of": {
+      "type": "string",
+      "minLength": 10
+    },
+    "source_urls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "local_node_checkout": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lanes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "lane",
+          "support_phase",
+          "latest_official_tag",
+          "latest_official_tag_object",
+          "latest_official_commit",
+          "fixture_corpus_current_tag",
+          "fixture_corpus_current_tag_object",
+          "fixture_corpus_current_commit",
+          "fixture_sync_required",
+          "intended_sync_command"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "lane": {
+            "type": "string",
+            "minLength": 1
+          },
+          "support_phase": {
+            "type": "string",
+            "minLength": 1
+          },
+          "latest_official_tag": {
+            "type": "string",
+            "minLength": 1
+          },
+          "latest_official_tag_object": {
+            "type": "string",
+            "minLength": 40
+          },
+          "latest_official_commit": {
+            "type": "string",
+            "minLength": 40
+          },
+          "fixture_corpus_current_tag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fixture_corpus_current_tag_object": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fixture_corpus_current_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fixture_sync_required": {
+            "type": "boolean"
+          },
+          "intended_sync_command": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

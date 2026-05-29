@@ -17,6 +17,7 @@ async function runActionFixtures() {
   await testActionCompositionServerFixture();
   await testSchedulerServerFixture();
   await testNodeRuntimeConfigFixture();
+  await testNodeRuntimeCurrentConfigFixture();
   await testNodeExternalPackagesMetadataFixture();
   await testNodeExternalPackagesStarFixture();
   await testNodePackageImportRequiresExternalizationFixture();
@@ -532,6 +533,48 @@ export const readFile = action({
   });
 }
 
+async function testNodeRuntimeCurrentConfigFixture() {
+  const appDir = await createAppFixture(
+    {
+      "messages.ts": `
+"use node";
+
+import { action } from "./_generated/server";
+
+export const current = action({
+  args: {},
+  handler: async () => "ok",
+});
+`,
+    },
+    {
+      rootFiles: {
+        "convex.json": `{
+  "node": {
+    "nodeVersion": "26"
+  }
+}
+`,
+      },
+    },
+  );
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.deepEqual(manifest.node, {
+    externalPackages: [],
+    nodeVersion: "26",
+    runtimeTarget: "node26",
+  });
+  assertRuntimeLanes(manifest, "node26");
+  assertNodeRuntimeMetadata(manifest.functions[0], {
+    nodeVersion: "26",
+    runtimeTarget: "node26",
+  });
+}
+
 async function testUseNodeActionFixture() {
   const appDir = await createAppFixture({
     "messages.ts": `
@@ -555,13 +598,13 @@ export const runInternal = internalAction({
   const manifest = await readConvexJson(appDir, "functions.json");
   assert.deepEqual(manifest.node, {
     externalPackages: [],
-    nodeVersion: "22",
-    runtimeTarget: "node22",
+    nodeVersion: "24",
+    runtimeTarget: "node24",
   });
-  assertRuntimeLanes(manifest, "node22");
+  assertRuntimeLanes(manifest, "node24");
   assertNodeRuntimeMetadata(manifest.functions[0], {
-    nodeVersion: "22",
-    runtimeTarget: "node22",
+    nodeVersion: "24",
+    runtimeTarget: "node24",
   });
 
   const runtimeBundle = await readConvexFile(appDir, "bundle.mjs");
@@ -657,7 +700,7 @@ export const read = action({
   const result = runCli(appDir);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /node\.nodeVersion/);
-  assert.match(result.stderr, /"20", "22", or "24"/);
+  assert.match(result.stderr, /"20", "22", "24", "26"/);
 }
 
 export { runActionFixtures };

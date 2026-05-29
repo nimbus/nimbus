@@ -6,7 +6,7 @@ This file is the checked-in failure inventory for the currently manifested
 `streams-and-local-io` subset.
 
 It records only the explicit red/skip remainder for the current family:
-watchpoints, validation-lane divergences, supported-lane drift, later-family
+watchpoints, validation-lane divergences, default-lane drift, later-family
 dependencies, and preset/capability restrictions. Requirements and closeout
 decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 
@@ -178,13 +178,13 @@ decisions belong in `docs/plans/archive/node-lts-compatibility-plan.md`.
 
 ## Node24 Preview Status
 
-- Status: `supported-lane watchpoint; not a green support claim`
-- Latest explicit supported-lane watchpoint run:
+- Status: `default-lane watchpoint; not a green support claim`
+- Latest explicit default-lane watchpoint run:
   - `308` passed
   - `0` failed
-  - `7` explicit supported-lane divergences outside the green subset
+  - `7` explicit default-lane divergences outside the green subset
 
-The Node24 supported denominator intentionally excludes
+The Node24 default denominator intentionally excludes
 `test-stream-compose-operator.js`, because that official file exists in the
 Node20 and Node22 corpora but is not present in `nodejs/node v24.15.0`.
 The same denominator also excludes `test-stream-writable-samecb-singletick.js`,
@@ -198,7 +198,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
   - reason: the official Node24 file expects a newer constant-surface
     `TypeError` gate that Nimbus has not adopted into the current Node22
     contract
-  - owner: supported-lane future contract drift, not a current Node22 blocker
+  - owner: default-lane future contract drift, not a current Node22 blocker
   - evidence:
     `runtime::tests::node_compat::node24_fs_constants_watchpoint`
 
@@ -208,7 +208,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
     `Dir[Symbol.asyncDispose]()` close semantics after repeated disposal,
   while the current runtime only matches the older Node20/Node22 filehandle
   disposal contract
-  - owner: supported-lane future directory-handle disposal drift, not the
+  - owner: default-lane future directory-handle disposal drift, not the
     current Node22 `fs.promises` filehandle contract
   - evidence:
     `runtime::tests::node_compat::node24_fs_promises_file_handle_dispose_watchpoint`
@@ -218,7 +218,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
   - reason: the official Node24 file now also requires `fs.close()` to be
     observed when destroying `WriteStream` directly, while the current runtime
     still matches the older Node20/Node22 file semantics
-  - owner: supported-lane future write-stream lifecycle drift, not the current
+  - owner: default-lane future write-stream lifecycle drift, not the current
     Node22 `fs` contract
   - evidence:
     `runtime::tests::node_compat::node24_fs_write_stream_watchpoint`
@@ -228,7 +228,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
   - reason: the official Node24 file now also asserts `ERR_INVALID_THIS` when
     probing `WriteStream.prototype.autoClose`, while the current runtime still
     matches the older Node20/Node22 surface
-  - owner: supported-lane future write-stream prototype-surface drift, not the
+  - owner: default-lane future write-stream prototype-surface drift, not the
     current Node22 `fs` contract
   - evidence:
     `runtime::tests::node_compat::node24_fs_write_stream_autoclose_option_watchpoint`
@@ -239,7 +239,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
     `ERR_INVALID_ARG_VALUE` contract for `fs.symlink(..., type)`, while the
     current runtime intentionally preserves the Node22
     `ERR_FS_INVALID_SYMLINK_TYPE` behavior
-  - owner: supported-lane future symlink validation drift, not the current
+  - owner: default-lane future symlink validation drift, not the current
     Node22 `fs` contract
   - evidence:
     `runtime::tests::node_compat::node24_fs_symlink_watchpoint`
@@ -249,7 +249,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
   - reason: the official Node24 file now also asserts newer `ERR_INVALID_THIS`
     receiver checks on `Dir` handles, while the current runtime intentionally
     keeps the Node22 directory-handle surface
-  - owner: supported-lane future directory-handle receiver drift, not the
+  - owner: default-lane future directory-handle receiver drift, not the
     current Node22 `fs` contract
   - evidence:
     `runtime::tests::node_compat::node24_fs_opendir_watchpoint`
@@ -259,7 +259,7 @@ task-accounting dependency rather than a pure `node:stream` contract probe.
   - reason: the official Node24 file adds `maxQueue` and `overflow` option
     validation that Nimbus has not adopted into the current Node22-based
     `fs.watch()` / `fs.promises.watch()` contract
-  - owner: supported-lane future watch option-validation drift, not a current
+  - owner: default-lane future watch option-validation drift, not a current
     Node22 blocker
   - evidence:
     `runtime::tests::node_compat::node24_fs_promises_watch_watchpoint`
@@ -281,8 +281,8 @@ boundaries or documented application-preset limitations:
 
 ## Current Local Evidence
 
-- `runtime::tests::node_compat::node22_default_lane_executes_manifested_streams_and_local_io_subset`
-- `runtime::tests::node_compat::node20_supported_lane_executes_official_streams_and_local_io_subset`
+- `runtime::tests::node_compat::node22_supported_lane_executes_manifested_streams_and_local_io_subset`
+- `runtime::tests::node_compat::node20_legacy_lane_executes_official_streams_and_local_io_subset`
 - `runtime::tests::node_compat::node22_stream_finished_watchpoint`
 - `runtime::tests::node_compat::node22_stream_pipeline_watchpoint`
 - `runtime::tests::node_compat::node22_fs_open_watchpoint`
@@ -314,5 +314,5 @@ boundaries or documented application-preset limitations:
 - `runtime::tests::node_compat::node24_fs_promises_file_handle_dispose_watchpoint`
 - `runtime::tests::node_compat::node24_fs_symlink_watchpoint`
 - `runtime::tests::node_compat::node24_fs_opendir_watchpoint`
-- `runtime::tests::node_compat::node24_supported_lane_executes_manifested_streams_and_local_io_subset`
+- `runtime::tests::node_compat::node24_default_lane_executes_manifested_streams_and_local_io_subset`
 - `docs/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md`

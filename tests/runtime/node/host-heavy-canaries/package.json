@@ -1,0 +1,9 @@
+{
+  "name": "nimbus-host-heavy-canaries",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "esbuild": "0.28.0",
+    "sharp": "0.34.5"
+  }
+}

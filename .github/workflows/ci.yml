@@ -434,6 +434,53 @@ jobs:
       - name: Run external provider integration tests
         run: make test-external-providers
 
+  node-faas-compatibility:
+    name: Node FaaS Compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-node-faas-compat-no-bin-v2
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Set up Node.js 24 for package canaries
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            tests/runtime/node/convex-canaries/package-lock.json
+            tests/runtime/node/host-heavy-canaries/package-lock.json
+            tests/runtime/node/networking-canaries/package-lock.json
+            tests/runtime/node/sdk-canaries/package-lock.json
+
+      - name: Verify Node support docs and release metadata
+        run: |
+          bash scripts/verify-node-lts-docs.sh
+          bash scripts/verify-node-release-train.sh
+          bash scripts/verify-node-latest-suite-tags.sh
+
+      - name: Bootstrap application canaries
+        run: make node-compat-canaries-bootstrap PRESET=application
+
+      - name: Gate supported-LTS application canaries
+        run: |
+          make node-compat-validate-claims
+          make node-compat-canaries PRESET=application LANE=node22
+          make node-compat-canaries PRESET=application LANE=node24
+
+      - name: Verify checked-in canary support boundaries
+        run: |
+          bash scripts/verify-node-lts-canaries-and-oracles.sh
+          bash scripts/verify-node-host-heavy-diagnostics.sh
+
   rust-gate-summary:
     name: Rust Gate Summary
     runs-on: ubuntu-24.04
@@ -447,6 +494,7 @@ jobs:
       - bun-runtime-contract
       - rust-workspace-tests
       - external-provider-tests
+      - node-faas-compatibility
 
     steps:
       - name: Check Rust gate results
@@ -458,6 +506,7 @@ jobs:
           BUN_RUNTIME_CONTRACT_RESULT: ${{ needs['bun-runtime-contract'].result }}
           WORKSPACE_TEST_RESULT: ${{ needs['rust-workspace-tests'].result }}
           EXTERNAL_PROVIDER_TEST_RESULT: ${{ needs['external-provider-tests'].result }}
+          NODE_FAAS_COMPATIBILITY_RESULT: ${{ needs['node-faas-compatibility'].result }}
         run: |
           printf 'format=%s\n' "${FORMAT_RESULT}"
           printf 'clippy=%s\n' "${CLIPPY_RESULT}"
@@ -466,6 +515,7 @@ jobs:
           printf 'bun-runtime-contract=%s\n' "${BUN_RUNTIME_CONTRACT_RESULT}"
           printf 'workspace-test=%s\n' "${WORKSPACE_TEST_RESULT}"
           printf 'external-provider-test=%s\n' "${EXTERNAL_PROVIDER_TEST_RESULT}"
+          printf 'node-faas-compatibility=%s\n' "${NODE_FAAS_COMPATIBILITY_RESULT}"
           icon() {
             case "$1" in
               success) echo ":white_check_mark:" ;;
@@ -487,6 +537,7 @@ jobs:
             echo "| bun-runtime-contract | $(icon "${BUN_RUNTIME_CONTRACT_RESULT}") ${BUN_RUNTIME_CONTRACT_RESULT} |"
             echo "| rust-workspace-tests | $(icon "${WORKSPACE_TEST_RESULT}") ${WORKSPACE_TEST_RESULT} |"
             echo "| external-provider-tests | $(icon "${EXTERNAL_PROVIDER_TEST_RESULT}") ${EXTERNAL_PROVIDER_TEST_RESULT} |"
+            echo "| node-faas-compatibility | $(icon "${NODE_FAAS_COMPATIBILITY_RESULT}") ${NODE_FAAS_COMPATIBILITY_RESULT} |"
           } >> "${GITHUB_STEP_SUMMARY}"
           test "${FORMAT_RESULT}" = success
           test "${CLIPPY_RESULT}" = success
@@ -495,6 +546,7 @@ jobs:
           test "${BUN_RUNTIME_CONTRACT_RESULT}" = success
           test "${WORKSPACE_TEST_RESULT}" = success
           test "${EXTERNAL_PROVIDER_TEST_RESULT}" = success
+          test "${NODE_FAAS_COMPATIBILITY_RESULT}" = success
 
   ui-artifacts:
     # CC4: leader job that builds the nimbus-ui artifacts (convex codegen +
@@ -757,6 +809,8 @@ jobs:
           bash -n scripts/verify-bun-jsc-adapter-package-helper.sh
           bash -n scripts/verify-bun-jsc-release-assets.sh
           bash -n scripts/verify-bun-jsc-release-assets-helper.sh
+          bash -n scripts/verify-node-release-train.sh
+          bash -n scripts/verify-node-ci-nightly-lanes.sh
           bash -n scripts/build-linux-release-packages.sh
           bash -n scripts/verify-build-linux-release-packages-helper.sh
           bash -n scripts/verify-collect-sqlcipher-proof-bundles-helper.sh

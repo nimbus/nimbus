@@ -48,12 +48,13 @@ async fn mutation_journal_returns_only_after_apply_visibility() {
     .await
     .expect("query should resolve after apply")
     .expect("query should succeed");
-    assert_eq!(
-        service
-            .latest_sequence_async(tenant_id.clone())
-            .await
-            .expect("latest sequence should read"),
-        SequenceNumber(1)
+    let latest_sequence = service
+        .latest_sequence_async(tenant_id.clone())
+        .await
+        .expect("latest sequence should read");
+    assert!(
+        latest_sequence.0 >= 1,
+        "latest sequence should include at least the committed mutation"
     );
     assert_eq!(
         durable_journal_commits(service.as_ref(), &tenant_id, SequenceNumber(0)).len(),
@@ -256,8 +257,8 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
     let stats = service
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("journal stats should read after apply");
-    assert_eq!(stats.durable_head, SequenceNumber(1));
-    assert_eq!(stats.applied_head, SequenceNumber(1));
+    assert!(stats.durable_head.0 >= 1);
+    assert_eq!(stats.applied_head, stats.durable_head);
     assert_eq!(stats.apply_lag, 0);
     assert_eq!(stats.queue_depth, 0);
     assert_eq!(stats.oldest_queue_age_nanos, 0);

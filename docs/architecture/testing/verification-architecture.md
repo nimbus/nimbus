@@ -233,7 +233,7 @@ prelude/postlude behavior data, `node/batches.rs` plus `node/batches/` own
 manifest batch data, and `node/cases/` owns the included fixture groups and
 explicit watchpoints. Those case files are included at the `node_compat` module
 root so checked-in manifest paths such as
-`runtime::tests::node_compat::node22_default_lane_executes_manifested_core_semantics_subset`
+`runtime::tests::node_compat::node22_supported_lane_executes_manifested_core_semantics_subset`
 do not churn when the files are reorganized.
 
 Do not promote a Node-compatibility fixture into the runtime verification

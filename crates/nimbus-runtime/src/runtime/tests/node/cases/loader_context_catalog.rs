@@ -209,39 +209,39 @@ const LOADER_CONTEXT_BATCH: &[NodeCompatBatchEntry] = &[
         node22_extra_files: &[],
         node24_extra_files: &[],
     },
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-binding.js",
         "node22/test/parallel/test-trace-events-binding.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-bootstrap.js",
         "node22/test/parallel/test-trace-events-bootstrap.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-category-used.js",
         "node22/test/parallel/test-trace-events-category-used.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-console.js",
         "node22/test/parallel/test-trace-events-console.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-dynamic-enable.js",
         "node22/test/parallel/test-trace-events-dynamic-enable.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-environment.js",
         "node22/test/parallel/test-trace-events-environment.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-metadata.js",
         "node22/test/parallel/test-trace-events-metadata.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-none.js",
         "node22/test/parallel/test-trace-events-none.js"
     ),
-    node22_default_only_batch_case!(
+    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-process-exit.js",
         "node22/test/parallel/test-trace-events-process-exit.js"
     ),

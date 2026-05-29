@@ -12,9 +12,9 @@ Source corpus:
   `~/src/github.com/nimbus/deno @ v2.7.14-locker.31`
 - pinned official Node22 validation corpus:
   `nodejs/node @ v22.15.0`
-- pinned official Node20 supported corpus:
+- pinned official Node20 legacy corpus:
   `nodejs/node @ v20.20.2`
-- staged future Node24 supported corpus:
+- pinned official Node24 default corpus:
   `nodejs/node @ v24.15.0`
 
 The current work starts the same way `core-semantics` family and `process-and-timing` family eventually succeeded:
@@ -39,7 +39,7 @@ The first-pass official candidate corpus from the canonical local
 
 - Node22: `512` files
 - Node20: `509` files
-- Node24 supported: `627` files
+- Node24 default: `627` files
 
 These are intentionally broad candidate counts, not the future green
 denominator. The next `streams-and-local-io` family step is to carve out the first manifested batch by
@@ -52,11 +52,11 @@ The first manifested `streams-and-local-io` family batch is now live in
 
 Current manifested batch counts:
 
-- Node22 default lane: `317` official files
-- Node20 supported lane: `311` official files
-- Node24 supported lane: `308` staged official files
-  - current explicit supported-lane watchpoint run: `308` passed, `0` failed
-  - supported-lane denominator intentionally excludes
+- Node22 supported lane: `317` official files
+- Node20 legacy lane: `311` official files
+- Node24 default lane: `308` staged official files
+  - current explicit default-lane watchpoint run: `308` passed, `0` failed
+  - default-lane denominator intentionally excludes
     `test-stream-compose-operator.js`, which is not present in the official
     `nodejs/node v24.15.0` corpus
 

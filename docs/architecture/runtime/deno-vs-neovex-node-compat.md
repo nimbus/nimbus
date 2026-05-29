@@ -27,9 +27,10 @@ Use the Deno-family fork operating contract for runtime-fork bump proof:
 - `docs/operating/deno-fork-workflow.md`
 - `docs/architecture/runtime/deno-fork-bump-ledger.md`
 
-Product default is a routing default, not an evidence priority. Node22 and
-Node24 are the current supported LTS lanes. Node20 remains selectable only as
-legacy-grace regression coverage after its 2026-04-30 EOL.
+Product default is a routing default, not an evidence priority. Node24 is the
+current default, Node22 and Node24 are the supported LTS lanes, and Node20
+remains selectable only as legacy-grace regression coverage after its
+2026-04-30 EOL.
 
 ## Comparison Summary
 

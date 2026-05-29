@@ -194,6 +194,8 @@ pub enum OperatorRuntimeProfile {
     Node22,
     #[serde(alias = "24", alias = "Node24")]
     Node24,
+    #[serde(alias = "26", alias = "Node26")]
+    Node26,
 }
 
 impl OperatorRuntimeProfile {
@@ -203,6 +205,7 @@ impl OperatorRuntimeProfile {
             Self::Node20 => "node20",
             Self::Node22 => "node22",
             Self::Node24 => "node24",
+            Self::Node26 => "node26",
         }
     }
 
@@ -212,6 +215,7 @@ impl OperatorRuntimeProfile {
             Self::Node20 => Some(RuntimeCompatibilityTarget::Node20),
             Self::Node22 => Some(RuntimeCompatibilityTarget::Node22),
             Self::Node24 => Some(RuntimeCompatibilityTarget::Node24),
+            Self::Node26 => Some(RuntimeCompatibilityTarget::Node26),
         }
     }
 }

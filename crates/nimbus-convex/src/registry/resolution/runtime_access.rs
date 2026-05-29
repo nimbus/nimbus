@@ -110,6 +110,11 @@ impl ConvexRegistry {
             }) => &self.node24_runtime_lane,
             Some(ConvexRuntimeSelection {
                 engine: nimbus_runtime::RuntimeBackendKind::V8,
+                compatibility_target: RuntimeCompatibilityTarget::Node26,
+                ..
+            }) => &self.node26_runtime_lane,
+            Some(ConvexRuntimeSelection {
+                engine: nimbus_runtime::RuntimeBackendKind::V8,
                 compatibility_target: RuntimeCompatibilityTarget::BunJsc,
                 ..
             }) => unreachable!("V8/BunJsc target manifests are rejected at registry load"),
@@ -146,6 +151,7 @@ impl ConvexRegistry {
             self.node20_runtime_lane.diagnostics("node20", false),
             self.node22_runtime_lane.diagnostics("node22", false),
             self.node24_runtime_lane.diagnostics("node24", false),
+            self.node26_runtime_lane.diagnostics("node26", false),
             self.bun_jsc_runtime_lane.diagnostics("bun_jsc", false),
         ]
     }
@@ -173,7 +179,9 @@ impl ConvexRegistry {
 #[cfg(all(test, not(feature = "bun-jsc-linked-adapter")))]
 mod tests {
     use super::*;
-    use nimbus_runtime::{RuntimeBundle, RuntimeCompatibilityTarget, RuntimeNodeSupportPhase};
+    use nimbus_runtime::{
+        RuntimeBundle, RuntimeCompatibilityTarget, RuntimeLimits, RuntimeNodeSupportPhase,
+    };
     use serde_json::json;
     use std::fs;
     use tempfile::tempdir;
@@ -206,6 +214,13 @@ mod tests {
                         "runtime_environment": "node",
                         "runtime_compatibility_target": "24",
                         "plan": null
+                    },
+                    {
+                        "name": "messages:currentNode26",
+                        "kind": "action",
+                        "runtime_environment": "node",
+                        "runtime_compatibility_target": "26",
+                        "plan": null
                     }
                 ]
             }))
@@ -231,13 +246,19 @@ mod tests {
             (
                 "messages:defaultNode",
                 RuntimeCompatibilityTarget::product_default_node_lts_target(),
-                RuntimeNodeSupportPhase::MaintenanceLts,
+                RuntimeNodeSupportPhase::ActiveLts,
                 true,
             ),
             (
                 "messages:activeNode24",
                 RuntimeCompatibilityTarget::Node24,
                 RuntimeNodeSupportPhase::ActiveLts,
+                true,
+            ),
+            (
+                "messages:currentNode26",
+                RuntimeCompatibilityTarget::Node26,
+                RuntimeNodeSupportPhase::CurrentNonLts,
                 false,
             ),
         ] {
@@ -266,6 +287,72 @@ mod tests {
                 "Convex Node lanes should use production in-process grants by default"
             );
         }
+    }
+
+    #[test]
+    fn convex_node_runtime_same_target_override_preserves_policy_grants() {
+        let tempdir = tempdir().expect("convex manifest tempdir should build");
+        let convex_dir = tempdir.path().join(".nimbus").join("convex");
+        fs::create_dir_all(&convex_dir).expect("convex manifest directory should build");
+        fs::write(
+            convex_dir.join("functions.json"),
+            serde_json::to_vec_pretty(&json!({
+                "functions": [
+                    {
+                        "name": "messages:localNode22",
+                        "kind": "action",
+                        "runtime_environment": "node",
+                        "runtime_compatibility_target": "22",
+                        "plan": null
+                    },
+                    {
+                        "name": "messages:prodNode24",
+                        "kind": "action",
+                        "runtime_environment": "node",
+                        "runtime_compatibility_target": "24",
+                        "plan": null
+                    }
+                ]
+            }))
+            .expect("convex manifest json should serialize"),
+        )
+        .expect("convex manifest should write");
+        fs::write(
+            convex_dir.join("http_routes.json"),
+            serde_json::to_vec_pretty(&json!({ "routes": [] }))
+                .expect("convex http route manifest should serialize"),
+        )
+        .expect("convex http route manifest should write");
+
+        let registry = ConvexRegistry::from_app_dir(tempdir.path())
+            .expect("convex registry should load")
+            .with_runtime_limits(RuntimeLimits::application_node22_local_development());
+        let local_node22 = registry.runtime_limits_for_function("messages:localNode22");
+        let prod_node24 = registry.runtime_limits_for_function("messages:prodNode24");
+
+        assert_eq!(
+            local_node22.compatibility_target,
+            RuntimeCompatibilityTarget::Node22
+        );
+        assert!(
+            local_node22
+                .grants
+                .net_connect
+                .contains(&"localhost".to_string()),
+            "same-target Node override should preserve explicit network grants"
+        );
+        assert!(
+            local_node22.grants.worker.contains(&"thread".to_string()),
+            "same-target Node override should preserve worker grants"
+        );
+        assert_eq!(
+            prod_node24.compatibility_target,
+            RuntimeCompatibilityTarget::Node24
+        );
+        assert!(
+            prod_node24.grants.net_connect.is_empty(),
+            "other Node targets should keep production in-process grants"
+        );
     }
 
     fn assert_convex_use_node_action_package_canary(
@@ -363,6 +450,12 @@ mod tests {
     #[ignore = "Convex use-node action package canary: executed by node-compat canary registry"]
     fn convex_use_node_action_package_canary_node24() {
         assert_convex_use_node_action_package_canary(RuntimeCompatibilityTarget::Node24, "24");
+    }
+
+    #[test]
+    #[ignore = "Convex use-node action package canary: executed by node-compat canary registry"]
+    fn convex_use_node_action_package_canary_node26_current() {
+        assert_convex_use_node_action_package_canary(RuntimeCompatibilityTarget::Node26, "26");
     }
 
     #[test]

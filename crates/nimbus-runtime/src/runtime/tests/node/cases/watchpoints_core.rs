@@ -850,7 +850,7 @@ fn node24_loader_context_async_local_storage_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 supported-lane divergence: official v20.20.2 test-async-local-storage-exit-does-not-leak.js still expects the old JavaScript AsyncLocalStorage _propagate hook, while the current runtime matches the newer Node22/Node24 implementation shape"]
+#[ignore = "Pinned Node20 legacy-lane divergence: official v20.20.2 test-async-local-storage-exit-does-not-leak.js still expects the old JavaScript AsyncLocalStorage _propagate hook, while the current runtime matches the newer Node22/Node24 implementation shape"]
 fn node20_async_local_storage_exit_does_not_leak_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-async-local-storage-exit-does-not-leak.js",
@@ -939,4 +939,3 @@ fn node24_loader_context_async_hooks_promise_core_batch_fixture() {
         NODE22_LOADER_CONTEXT_ASYNC_HOOKS_PROMISE_CORE_BATCH,
     );
 }
-

@@ -146,9 +146,10 @@ impl ConvexHostBridge {
     ) -> Result<Value, Error> {
         let NestedRuntimeInvocationPlan { bundle, request } =
             self.prepare_nested_runtime_invocation(kind, name, args, visibility, auth)?;
+        let (runtime_executor, runtime_policy) = self.registry().runtime_lane_for_function(name)?;
         let response = invoke_runtime_bundle_on_worker_with_host(
-            &self.registry().runtime_executor(),
-            self.registry().runtime_policy(),
+            &runtime_executor,
+            runtime_policy,
             Arc::new(self.clone()),
             bundle,
             request,
@@ -177,9 +178,10 @@ impl ConvexHostBridge {
     ) -> Result<Value, Error> {
         let NestedRuntimeInvocationPlan { bundle, request } =
             self.prepare_nested_runtime_invocation(kind, name, args, visibility, auth)?;
+        let (runtime_executor, runtime_policy) = self.registry().runtime_lane_for_function(name)?;
         let response = invoke_runtime_bundle_blocking_with_host(
-            &self.registry().runtime_executor(),
-            self.registry().runtime_policy(),
+            &runtime_executor,
+            runtime_policy,
             Arc::new(self.clone()),
             bundle,
             request,
