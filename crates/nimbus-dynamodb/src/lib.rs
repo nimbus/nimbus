@@ -30,7 +30,7 @@ pub use attribute_value::{
     attribute_value_to_stored, item_to_stored, stored_to_attribute_value, validate_item,
 };
 pub use config::DynamoDbConfig;
-pub use dispatch::{KNOWN_OPERATIONS, dispatch, is_known_operation};
+pub use dispatch::{DispatchContext, KNOWN_OPERATIONS, dispatch, is_known_operation};
 pub use key::{
     decode_key, encode_key, is_reserved_attribute_name, sortable_key, validate_attribute_names,
 };

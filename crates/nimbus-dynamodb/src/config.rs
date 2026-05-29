@@ -7,11 +7,19 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+use nimbus_core::TenantId;
+
+use crate::tenant::AccessKeyRegistry;
+
 /// Configuration for the DynamoDB-compatible HTTP listener.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DynamoDbConfig {
     /// Address the DynamoDB listener binds to.
     pub bind_addr: SocketAddr,
+    /// AWS access-key id → Nimbus tenant bindings. Every authenticated request
+    /// resolves its tenant through this registry (see [`AccessKeyRegistry`]);
+    /// an empty registry rejects every request as `UnrecognizedClientException`.
+    pub access_keys: AccessKeyRegistry,
 }
 
 impl DynamoDbConfig {
@@ -25,6 +33,7 @@ impl DynamoDbConfig {
     pub fn new(port: u16) -> Self {
         Self {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            access_keys: AccessKeyRegistry::new(),
         }
     }
 
@@ -32,6 +41,14 @@ impl DynamoDbConfig {
     #[must_use]
     pub fn with_bind_addr(mut self, bind_addr: SocketAddr) -> Self {
         self.bind_addr = bind_addr;
+        self
+    }
+
+    /// Bind an AWS access-key id to a Nimbus tenant (builder style). Requests
+    /// authenticated with this access key are scoped to `tenant`.
+    #[must_use]
+    pub fn with_access_key(mut self, access_key_id: impl Into<String>, tenant: TenantId) -> Self {
+        self.access_keys = self.access_keys.bind(access_key_id, tenant);
         self
     }
 }
@@ -64,5 +81,22 @@ mod tests {
         let addr: SocketAddr = "0.0.0.0:8123".parse().unwrap();
         let cfg = DynamoDbConfig::new(8000).with_bind_addr(addr);
         assert_eq!(cfg.bind_addr, addr);
+    }
+
+    #[test]
+    fn default_has_no_access_keys() {
+        // An unconfigured listener authenticates nothing: every request is
+        // UnrecognizedClient until an operator binds an access key.
+        assert!(DynamoDbConfig::default().access_keys.is_empty());
+    }
+
+    #[test]
+    fn with_access_key_binds_tenant() {
+        let tenant = TenantId::new("acme").expect("valid tenant");
+        let cfg = DynamoDbConfig::new(8000)
+            .with_access_key("AKIAACME", tenant.clone())
+            .with_access_key("AKIAGLOBEX", TenantId::new("globex").expect("valid tenant"));
+        assert_eq!(cfg.access_keys.len(), 2);
+        assert_eq!(cfg.access_keys.resolve("AKIAACME").unwrap(), &tenant);
     }
 }
