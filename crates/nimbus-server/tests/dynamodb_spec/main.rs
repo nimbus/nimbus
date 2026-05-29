@@ -195,6 +195,23 @@ async fn control_plane_roundtrip_through_official_sdk() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn describe_limits_through_official_sdk() {
+    // DescribeLimits round-trips through the official SDK with the documented
+    // default limit shape.
+    let fx = fixture().await;
+    let limits = fx
+        .client(ACCESS_KEY)
+        .describe_limits()
+        .send()
+        .await
+        .expect("describe_limits");
+    assert_eq!(limits.account_max_read_capacity_units(), Some(80_000));
+    assert_eq!(limits.account_max_write_capacity_units(), Some(80_000));
+    assert_eq!(limits.table_max_read_capacity_units(), Some(40_000));
+    assert_eq!(limits.table_max_write_capacity_units(), Some(40_000));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn duplicate_create_is_resource_in_use_through_official_sdk() {
     let fx = fixture().await;
     let client = fx.client(ACCESS_KEY);
